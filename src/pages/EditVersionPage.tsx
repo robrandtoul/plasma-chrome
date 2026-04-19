@@ -664,24 +664,6 @@ export default function EditVersionPage() {
 
           </section>
 
-          {/* Pricing — read-only. Hidden when this version is a custom quote. */}
-          {!isCustomQuote && pricingSnapshot && (
-            <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-              <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-                <h2 className="text-sm font-semibold uppercase tracking-widest text-gray-400">Pricing</h2>
-                <span className="text-xs text-gray-400">Read-only — locked at creation</span>
-              </div>
-              <PricingDisplay
-                snapshot={pricingSnapshot}
-                currency={currency}
-                featuredQuantities={featuredQuantities}
-              />
-              <div className="border-t border-gray-100 px-6 py-3">
-                <p className="text-xs text-gray-400">{shippingNote}</p>
-              </div>
-            </section>
-          )}
-
           {/* Images */}
           <section ref={imageSectionRef} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
@@ -813,6 +795,24 @@ export default function EditVersionPage() {
               className={inputClass}
             />
           </section>
+
+          {/* Pricing — read-only. Hidden when this version is a custom quote. */}
+          {!isCustomQuote && pricingSnapshot && (
+            <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+              <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+                <h2 className="text-sm font-semibold uppercase tracking-widest text-gray-400">Pricing</h2>
+                <span className="text-xs text-gray-400">Read-only — locked at creation</span>
+              </div>
+              <PricingDisplay
+                snapshot={pricingSnapshot}
+                currency={currency}
+                featuredQuantities={featuredQuantities}
+              />
+              <div className="border-t border-gray-100 px-6 py-3">
+                <p className="text-xs text-gray-400">{shippingNote}</p>
+              </div>
+            </section>
+          )}
 
           {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
 

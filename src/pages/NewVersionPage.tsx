@@ -730,55 +730,6 @@ export default function NewVersionPage() {
 
           </section>
 
-          {/* Pricing — one section per selected variant. Hidden in custom-quote
-              mode and until a currency is picked. */}
-          {!isCustomQuote && selectedVariantIds.length > 0 && currency !== null && selectedVariantIds.map((vid) => {
-            const variant = variants.find((v) => v.id === vid)
-            const tiers = variantTiers[vid] ?? []
-            const snap = variantSnapshots[vid] ?? {}
-            if (!variant) return null
-            return (
-              <section key={vid} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-                <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
-                  Pricing — {variantType === 'default' ? material_display_for(selectedMaterialId, materials) : variant.display_name}
-                </h2>
-                <p className="mb-4 text-xs text-gray-400">
-                  {tiers.length > 0 ? 'Pre-filled from live pricing. Edit any value to override.' : 'No price tiers found for this variant and currency.'}
-                </p>
-                {tiers.length > 0 && (
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-gray-100">
-                        <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Qty</th>
-                        <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Total ({currency})</th>
-                        <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Per card</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tiers.map((tier) => {
-                        const val = snap[tier.quantity] ?? ''
-                        const parsed = parseFloat(val)
-                        return (
-                          <tr key={tier.quantity} className="border-b border-gray-50 last:border-0">
-                            <td className="py-2 pr-4 font-medium text-gray-900">{tier.quantity.toLocaleString()}</td>
-                            <td className="py-2 pr-4">
-                              <input type="number" step="0.01" min="0" value={val}
-                                onChange={(e) => updatePrice(vid, tier.quantity, e.target.value)}
-                                className="w-28 rounded border border-gray-200 px-2 py-1 text-sm focus:border-gray-900 focus:outline-none" />
-                            </td>
-                            <td className="py-2 text-xs text-gray-500">
-                              {!isNaN(parsed) && parsed > 0 ? formatPrice(parsed / tier.quantity, currency, 2) : '—'}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                )}
-              </section>
-            )
-          })}
-
           {/* Image upload */}
           <section ref={imageSectionRef} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
@@ -902,6 +853,55 @@ export default function NewVersionPage() {
             <textarea rows={3} placeholder="What changed in this version? Shown to the customer."
               value={changeNotes} onChange={(e) => setChangeNotes(e.target.value)} className={inputClass} />
           </section>
+
+          {/* Pricing — one section per selected variant. Hidden in custom-quote
+              mode and until a currency is picked. */}
+          {!isCustomQuote && selectedVariantIds.length > 0 && currency !== null && selectedVariantIds.map((vid) => {
+            const variant = variants.find((v) => v.id === vid)
+            const tiers = variantTiers[vid] ?? []
+            const snap = variantSnapshots[vid] ?? {}
+            if (!variant) return null
+            return (
+              <section key={vid} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+                <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
+                  Pricing — {variantType === 'default' ? material_display_for(selectedMaterialId, materials) : variant.display_name}
+                </h2>
+                <p className="mb-4 text-xs text-gray-400">
+                  {tiers.length > 0 ? 'Pre-filled from live pricing. Edit any value to override.' : 'No price tiers found for this variant and currency.'}
+                </p>
+                {tiers.length > 0 && (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100">
+                        <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Qty</th>
+                        <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Total ({currency})</th>
+                        <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Per card</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {tiers.map((tier) => {
+                        const val = snap[tier.quantity] ?? ''
+                        const parsed = parseFloat(val)
+                        return (
+                          <tr key={tier.quantity} className="border-b border-gray-50 last:border-0">
+                            <td className="py-2 pr-4 font-medium text-gray-900">{tier.quantity.toLocaleString()}</td>
+                            <td className="py-2 pr-4">
+                              <input type="number" step="0.01" min="0" value={val}
+                                onChange={(e) => updatePrice(vid, tier.quantity, e.target.value)}
+                                className="w-28 rounded border border-gray-200 px-2 py-1 text-sm focus:border-gray-900 focus:outline-none" />
+                            </td>
+                            <td className="py-2 text-xs text-gray-500">
+                              {!isNaN(parsed) && parsed > 0 ? formatPrice(parsed / tier.quantity, currency, 2) : '—'}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </section>
+            )
+          })}
 
           {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
 
