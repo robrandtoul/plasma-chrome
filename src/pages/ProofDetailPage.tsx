@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
@@ -29,6 +29,8 @@ export default function ProofDetailPage() {
   const [versions, setVersions] = useState<Version[]>([])
   const [loading, setLoading] = useState(true)
   const [settingCurrent, setSettingCurrent] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const fallbackInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (id) loadProof(id)
@@ -69,6 +71,22 @@ export default function ProofDetailPage() {
     )
   }
 
+  async function copyCustomerUrl() {
+    const url = `${window.location.origin}/p/${proof!.id}`
+    try {
+      await navigator.clipboard.writeText(url)
+    } catch {
+      // Clipboard API unavailable — select text from a hidden input as fallback.
+      if (fallbackInputRef.current) {
+        fallbackInputRef.current.value = url
+        fallbackInputRef.current.select()
+        document.execCommand('copy')
+      }
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   if (!proof) return null
 
   return (
@@ -87,14 +105,29 @@ export default function ProofDetailPage() {
             {proof.company && <p className="mt-1 text-gray-500">{proof.company}</p>}
           </div>
           <div className="flex gap-2">
-            <a
-              href={`/p/${proof.id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
+            <button
+              onClick={copyCustomerUrl}
+              className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
             >
-              Customer link ↗
-            </a>
+              {copied ? (
+                <>
+                  <svg className="h-4 w-4 text-emerald-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l3.5 3.5 6.5-7" />
+                  </svg>
+                  <span className="text-emerald-600">Link copied</span>
+                </>
+              ) : (
+                <>
+                  <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <rect x="5" y="5" width="8" height="8" rx="1.5" />
+                    <path strokeLinecap="round" d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" />
+                  </svg>
+                  Copy customer URL
+                </>
+              )}
+            </button>
+            {/* Hidden input for clipboard fallback in restricted browser contexts */}
+            <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
             <Link
               to={`/proofs/${proof.id}/versions/new`}
               className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
