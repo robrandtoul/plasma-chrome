@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import type { PublicProof, PublicProofVersion, AppSettings } from '../lib/types'
+import type { PublicProof, PublicProofVersion, AppSettings, PricingSnapshot, Currency } from '../lib/types'
 import { formatPrice } from '../lib/currency'
 
 const SIGNED_URL_TTL = 60 * 60 * 24 // 24 hours in seconds
@@ -121,7 +121,6 @@ export default function CustomerProofPage() {
               </h2>
               <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
                 <SpecItem label="Material" value={activeVersion.material_display} />
-                <SpecItem label="Variant" value={activeVersion.variant_display} />
                 {activeVersion.ink_names.length > 0 && (
                   <SpecItem label="Inks" value={activeVersion.ink_names.join(', ')} />
                 )}
@@ -135,7 +134,7 @@ export default function CustomerProofPage() {
                   Pricing
                 </h2>
               </div>
-              <PricingTable snapshot={activeVersion.pricing_snapshot} currency={activeVersion.currency} />
+              <PricingDisplay snapshot={activeVersion.pricing_snapshot} currency={activeVersion.currency} />
               <div className="border-t border-gray-100 px-6 py-3">
                 <p className="text-xs text-gray-400">{activeVersion.shipping_note}</p>
               </div>
@@ -174,14 +173,16 @@ function SpecItem({ label, value }: { label: string; value: string }) {
   )
 }
 
-function PricingTable({
-  snapshot,
-  currency,
-}: {
-  snapshot: Record<string, number>
-  currency: string
-}) {
-  const rows = Object.entries(snapshot)
+function PricingDisplay({ snapshot, currency }: { snapshot: PricingSnapshot; currency: Currency }) {
+  const { variants } = snapshot
+  if (!variants?.length) return null
+  return variants.length === 1
+    ? <SingleVariantTable variant={variants[0]} currency={currency} />
+    : <MultiVariantGrid variants={variants} currency={currency} />
+}
+
+function SingleVariantTable({ variant, currency }: { variant: PricingSnapshot['variants'][0]; currency: Currency }) {
+  const rows = Object.entries(variant.prices)
     .map(([qty, price]) => ({ qty: parseInt(qty, 10), price }))
     .sort((a, b) => a.qty - b.qty)
 
@@ -191,31 +192,71 @@ function PricingTable({
     <table className="w-full text-sm">
       <thead>
         <tr className="border-b border-gray-100">
-          <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">
-            Quantity
-          </th>
-          <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400">
-            Total
-          </th>
-          <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400">
-            Per card
-          </th>
+          <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Quantity</th>
+          <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400">Total</th>
+          <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400">Per card</th>
         </tr>
       </thead>
       <tbody>
         {rows.map(({ qty, price }) => (
           <tr key={qty} className="border-b border-gray-50 last:border-0">
             <td className="px-6 py-3 font-medium text-gray-900">{qty.toLocaleString()}</td>
-            <td className="px-6 py-3 text-right text-gray-900">
-              {formatPrice(price, currency as 'GBP' | 'EUR' | 'USD')}
-            </td>
-            <td className="px-6 py-3 text-right text-gray-500">
-              {formatPrice(price / qty, currency as 'GBP' | 'EUR' | 'USD', 2)}
-            </td>
+            <td className="px-6 py-3 text-right text-gray-900">{formatPrice(price, currency)}</td>
+            <td className="px-6 py-3 text-right text-gray-500">{formatPrice(price / qty, currency, 2)}</td>
           </tr>
         ))}
       </tbody>
     </table>
+  )
+}
+
+function MultiVariantGrid({ variants, currency }: { variants: PricingSnapshot['variants']; currency: Currency }) {
+  // Union of all quantities across all variants, sorted ascending
+  const quantities = [...new Set(
+    variants.flatMap((v) => Object.keys(v.prices).map(Number))
+  )].sort((a, b) => a - b)
+
+  if (quantities.length === 0) return null
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-gray-100">
+            <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">
+              Quantity
+            </th>
+            {variants.map((v) => (
+              <th key={v.variant_id} className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400">
+                {v.display}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {quantities.map((qty) => (
+            <tr key={qty} className="border-b border-gray-50 last:border-0">
+              <td className="px-6 py-3 font-medium text-gray-900">{qty.toLocaleString()}</td>
+              {variants.map((v) => {
+                const price = v.prices[String(qty)]
+                return (
+                  <td key={v.variant_id} className="px-4 py-3 text-right">
+                    {price != null ? (
+                      <>
+                        <div className="font-medium text-gray-900">{formatPrice(price, currency)}</div>
+                        <div className="text-xs text-gray-400">{formatPrice(price / qty, currency, 2)} each</div>
+                      </>
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 
