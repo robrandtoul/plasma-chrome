@@ -5,7 +5,7 @@ export interface PublicProof {
   customer_name: string
   company: string | null
   created_at: string
-  status: 'in_progress' | 'approved'
+  status: 'in_progress' | 'approved' | 'dormant'
   approved_at: string | null
 }
 

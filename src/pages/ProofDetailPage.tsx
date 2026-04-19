@@ -5,7 +5,7 @@ import VersionDetailModal, { type ModalVersion } from '../components/VersionDeta
 
 interface Proof {
   id: string
-  status: 'in_progress' | 'approved'
+  status: 'in_progress' | 'approved' | 'dormant'
   approved_at: string | null
   helpscout_thread_url: string | null
   internal_notes: string | null
@@ -131,6 +131,7 @@ export default function ProofDetailPage() {
   if (!proof) return null
 
   const isApproved = proof.status === 'approved'
+  const isDormant  = proof.status === 'dormant'
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -155,6 +156,13 @@ export default function ProofDetailPage() {
                 <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
                   Approved{proof.approved_at ? ` on ${formatApprovedDate(proof.approved_at)}` : ''}
                 </span>
+              ) : isDormant ? (
+                <>
+                  <span className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-500">
+                    Dormant
+                  </span>
+                  <p className="mt-1.5 text-xs text-gray-400">No activity for 30+ days. Add a version to reactivate.</p>
+                </>
               ) : (
                 <span className="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
                   In progress

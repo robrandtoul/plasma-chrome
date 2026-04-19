@@ -6,7 +6,8 @@ import { supabase } from '../lib/supabase'
 
 type SortMode = 'date' | 'name'
 
-const SORT_KEY = 'proofViewer.dashboard.sort'
+const SORT_KEY         = 'proofViewer.dashboard.sort'
+const SHOW_DORMANT_KEY = 'proofViewer.dashboard.showDormant'
 
 function readSort(): SortMode {
   try {
@@ -17,12 +18,20 @@ function readSort(): SortMode {
   }
 }
 
+function readShowDormant(): boolean {
+  try {
+    return localStorage.getItem(SHOW_DORMANT_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
 interface ProofItem {
   id: string
   created_at: string
   current_version: number | null
   material_display: string | null
-  status: 'in_progress' | 'approved'
+  status: 'in_progress' | 'approved' | 'dormant'
 }
 
 interface ContactGroup {
@@ -40,16 +49,21 @@ interface CompanySection {
 
 // ── Section builder ───────────────────────────────────────────────────────────
 
-function buildSections(rawProofs: any[], sort: SortMode): CompanySection[] {
+function buildSections(rawProofs: any[], sort: SortMode, showDormant: boolean): CompanySection[] {
   const map = new Map<string, CompanySection>()
 
   for (const p of rawProofs) {
-    const contact   = p.contacts   as any
-    const company   = contact?.companies as any
+    const contact    = p.contacts        as any
+    const company    = contact?.companies as any
     const companyKey  = company?.id   ?? '__individual__'
     const companyName: string | null = company?.name ?? null
     const contactId   = contact?.id   ?? ''
     const contactName = contact?.full_name ?? ''
+
+    const status: ProofItem['status'] = p.status ?? 'in_progress'
+
+    // When dormant proofs are hidden, skip them entirely
+    if (!showDormant && status === 'dormant') continue
 
     if (!map.has(companyKey)) {
       map.set(companyKey, {
@@ -78,14 +92,19 @@ function buildSections(rawProofs: any[], sort: SortMode): CompanySection[] {
       created_at: p.created_at,
       current_version:  current?.version_number   ?? null,
       material_display: current?.material_display ?? null,
-      status: p.status ?? 'in_progress',
+      status,
     })
   }
 
-  // Sort internals: proofs newest-first, contacts alphabetically
+  // Sort internals: active proofs newest-first, dormant proofs after (also newest-first)
   for (const section of map.values()) {
     for (const cg of section.contacts) {
-      cg.proofs.sort((a, b) => b.created_at.localeCompare(a.created_at))
+      cg.proofs.sort((a, b) => {
+        const aDormant = a.status === 'dormant' ? 1 : 0
+        const bDormant = b.status === 'dormant' ? 1 : 0
+        if (aDormant !== bDormant) return aDormant - bDormant
+        return b.created_at.localeCompare(a.created_at)
+      })
     }
     section.contacts.sort((a, b) =>
       a.contactName.localeCompare(b.contactName, 'en', { sensitivity: 'base' })
@@ -112,10 +131,11 @@ function buildSections(rawProofs: any[], sort: SortMode): CompanySection[] {
 
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const [rawProofs, setRawProofs] = useState<any[]>([])
-  const [loading, setLoading]     = useState(true)
-  const [search, setSearch]       = useState('')
-  const [sort, setSort]           = useState<SortMode>(readSort)
+  const [rawProofs, setRawProofs]       = useState<any[]>([])
+  const [loading, setLoading]           = useState(true)
+  const [search, setSearch]             = useState('')
+  const [sort, setSort]                 = useState<SortMode>(readSort)
+  const [showDormant, setShowDormant]   = useState(readShowDormant)
 
   useEffect(() => { loadProofs() }, [])
 
@@ -138,22 +158,30 @@ export default function DashboardPage() {
     try { localStorage.setItem(SORT_KEY, s) } catch { /* storage may be unavailable */ }
   }
 
+  function toggleShowDormant() {
+    const next = !showDormant
+    setShowDormant(next)
+    try { localStorage.setItem(SHOW_DORMANT_KEY, String(next)) } catch { /* */ }
+  }
+
   async function handleSignOut() {
     await supabase.auth.signOut()
     navigate('/login')
   }
 
-  // Filter before building sections
+  // Filter by search, then count dormant before building sections
   const q = search.trim().toLowerCase()
   const filtered = q
     ? rawProofs.filter((p: any) => {
-        const name    = (p.contacts?.full_name     ?? '').toLowerCase()
+        const name    = (p.contacts?.full_name      ?? '').toLowerCase()
         const company = (p.contacts?.companies?.name ?? '').toLowerCase()
         return name.includes(q) || company.includes(q)
       })
     : rawProofs
 
-  const sections = buildSections(filtered, sort)
+  const dormantCount = filtered.filter((p: any) => p.status === 'dormant').length
+
+  const sections = buildSections(filtered, sort, showDormant)
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -210,21 +238,31 @@ export default function DashboardPage() {
                 onChange={(e) => setSearch(e.target.value)}
                 className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
               />
-              <div className="flex shrink-0 rounded-lg border border-gray-200 bg-white p-0.5">
-                {(['date', 'name'] as const).map((mode) => (
+              <div className="flex shrink-0 items-center gap-2">
+                {dormantCount > 0 && (
                   <button
-                    key={mode}
-                    onClick={() => handleSortChange(mode)}
-                    className={[
-                      'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
-                      sort === mode
-                        ? 'bg-gray-900 text-white'
-                        : 'text-gray-500 hover:text-gray-900',
-                    ].join(' ')}
+                    onClick={toggleShowDormant}
+                    className="rounded-lg px-3 py-2 text-sm font-medium text-gray-400 hover:text-gray-700"
                   >
-                    {mode === 'date' ? 'Date' : 'Name'}
+                    {showDormant ? 'Hide dormant' : `Show dormant (${dormantCount})`}
                   </button>
-                ))}
+                )}
+                <div className="flex shrink-0 rounded-lg border border-gray-200 bg-white p-0.5">
+                  {(['date', 'name'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => handleSortChange(mode)}
+                      className={[
+                        'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
+                        sort === mode
+                          ? 'bg-gray-900 text-white'
+                          : 'text-gray-500 hover:text-gray-900',
+                      ].join(' ')}
+                    >
+                      {mode === 'date' ? 'Date' : 'Name'}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -273,7 +311,10 @@ export default function DashboardPage() {
                             <div
                               key={proof.id}
                               onClick={() => navigate(`/proofs/${proof.id}`)}
-                              className="flex cursor-pointer items-center gap-4 border-t border-gray-50 px-5 py-2.5 hover:bg-gray-50"
+                              className={[
+                                'flex cursor-pointer items-center gap-4 border-t border-gray-50 px-5 py-2.5 hover:bg-gray-50',
+                                proof.status === 'dormant' ? 'opacity-50' : '',
+                              ].join(' ')}
                             >
                               {/* Version */}
                               <span className="w-8 shrink-0 text-sm text-gray-400">
@@ -291,6 +332,10 @@ export default function DashboardPage() {
                               {proof.status === 'approved' ? (
                                 <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
                                   Approved
+                                </span>
+                              ) : proof.status === 'dormant' ? (
+                                <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">
+                                  Dormant
                                 </span>
                               ) : (
                                 <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
