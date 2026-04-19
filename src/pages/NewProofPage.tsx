@@ -55,7 +55,9 @@ export default function NewProofPage() {
       .then(({ data }) => setAllCompanies((data ?? []) as Company[]))
   }, [])
 
-  // Load contacts whenever the selected company (or individual mode) changes
+  // Load contacts whenever the selected company (or individual mode) changes.
+  // Auto-enters add-new mode when the contact list is empty (new company,
+  // or an existing company that has no contacts yet).
   useEffect(() => {
     setAllContacts([])
     setSelectedContact(null)
@@ -64,17 +66,33 @@ export default function NewProofPage() {
     setNewContactName('')
     setNewContactEmail('')
 
-    if (isIndividual) {
-      supabase.from('contacts').select('id, full_name, email')
-        .is('company_id', null).order('full_name')
-        .then(({ data }) => setAllContacts((data ?? []) as Contact[]))
-    } else if (selectedCompany?.id) {
-      // existing company — id is a UUID
-      supabase.from('contacts').select('id, full_name, email')
-        .eq('company_id', selectedCompany.id).order('full_name')
-        .then(({ data }) => setAllContacts((data ?? []) as Contact[]))
-      // new company (id = null) → no contacts exist yet; list stays empty
+    if (!isIndividual && !selectedCompany) return
+
+    async function load() {
+      let contacts: Contact[] = []
+
+      if (isIndividual) {
+        const { data } = await supabase
+          .from('contacts').select('id, full_name, email')
+          .is('company_id', null).order('full_name')
+        contacts = (data ?? []) as Contact[]
+      } else if (selectedCompany!.id) {
+        // existing company — UUID present
+        const { data } = await supabase
+          .from('contacts').select('id, full_name, email')
+          .eq('company_id', selectedCompany!.id).order('full_name')
+        contacts = (data ?? []) as Contact[]
+      }
+      // new company (id = null) → contacts stays [], falls through to add mode
+
+      setAllContacts(contacts)
+      if (contacts.length === 0) {
+        // Nothing to choose from — drop straight into the add-new form
+        setAddingContact(true)
+      }
     }
+
+    load()
   }, [selectedCompany?.id, isIndividual])
 
   // Close dropdowns when clicking outside their containers
@@ -151,6 +169,8 @@ export default function NewProofPage() {
   }
 
   function chooseAddContact() {
+    // Pre-populate the name field with whatever the user typed in the search box
+    if (contactSearch.trim()) setNewContactName(contactSearch.trim())
     setAddingContact(true)
     setSelectedContact(null)
     setContactOpen(false)
@@ -395,7 +415,14 @@ export default function NewProofPage() {
                         ].join(' ')}
                       >
                         <span className="text-gray-400">+</span>
-                        Add new contact
+                        {contactSearch.trim() ? (
+                          <>
+                            Add new contact:{' '}
+                            <span className="font-medium text-gray-900">"{contactSearch.trim()}"</span>
+                          </>
+                        ) : (
+                          'Add new contact'
+                        )}
                       </button>
                     </div>
                   )}
@@ -424,13 +451,16 @@ export default function NewProofPage() {
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium text-gray-700">New contact</span>
-                    <button
-                      type="button"
-                      onClick={clearContact}
-                      className="text-xs text-gray-400 underline hover:text-gray-700"
-                    >
-                      Cancel
-                    </button>
+                    {/* Only show Cancel when there are existing contacts to revert to */}
+                    {allContacts.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={clearContact}
+                        className="text-xs text-gray-400 underline hover:text-gray-700"
+                      >
+                        Cancel
+                      </button>
+                    )}
                   </div>
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-gray-700">
