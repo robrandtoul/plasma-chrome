@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import type { PublicProof, PublicProofVersion, AppSettings, PricingSnapshot, Currency } from '../lib/types'
@@ -26,6 +26,7 @@ export default function CustomerProofPage() {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
+  const tabStripRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!id) { setNotFound(true); return }
@@ -40,6 +41,18 @@ export default function CustomerProofPage() {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [lightboxSrc])
+
+  // On initial load, scroll the active tab to the left edge of the strip.
+  // Tabs are ordered highest-first, so the latest version is always leftmost;
+  // this scroll only matters when is_current points to an older version.
+  useEffect(() => {
+    if (loading) return
+    const strip = tabStripRef.current
+    if (!strip) return
+    const activeTab = strip.querySelector<HTMLElement>('[data-active="true"]')
+    if (!activeTab) return
+    strip.scrollLeft = Math.max(0, activeTab.offsetLeft - 8)
+  }, [loading])
 
   async function loadProof(proofId: string) {
     setLoading(true)
@@ -108,28 +121,35 @@ export default function CustomerProofPage() {
           )}
         </header>
 
-        {/* Version tabs */}
+        {/* Version tabs — highest version first so latest is always leftmost */}
         {versions.length > 1 && (
-          <div className="mb-6 flex gap-2 overflow-x-auto">
-            {versions.map((v) => (
-              <button
-                key={v.id}
-                onClick={() => setActiveVersion(v)}
-                className={[
-                  'shrink-0 rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
-                  activeVersion?.id === v.id
-                    ? 'bg-gray-900 text-white'
-                    : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
-                ].join(' ')}
-              >
-                Version {v.version_number}
-                {v.is_current && (
-                  <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
-                    Current
-                  </span>
-                )}
-              </button>
-            ))}
+          <div ref={tabStripRef} className="mb-6 flex gap-2 overflow-x-auto pb-1">
+            {[...versions].reverse().map((v) => {
+              const isActive = activeVersion?.id === v.id
+              return (
+                <button
+                  key={v.id}
+                  data-active={isActive ? 'true' : undefined}
+                  onClick={() => setActiveVersion(v)}
+                  className={[
+                    'shrink-0 rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                    isActive
+                      ? 'bg-gray-900 text-white'
+                      : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
+                  ].join(' ')}
+                >
+                  Version {v.version_number}
+                  {v.is_current && (
+                    <span className={[
+                      'ml-2 rounded-full px-2 py-0.5 text-xs font-semibold',
+                      isActive ? 'bg-emerald-700 text-emerald-100' : 'bg-emerald-100 text-emerald-700',
+                    ].join(' ')}>
+                      Current
+                    </span>
+                  )}
+                </button>
+              )
+            })}
           </div>
         )}
 
