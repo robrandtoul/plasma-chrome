@@ -98,8 +98,23 @@ export default function CustomerProofPage() {
   if (loading) return <LoadingScreen />
   if (notFound || !proof) return <NotFoundScreen />
 
+  const isApproved = proof.status === 'approved'
+
   return (
     <div className="min-h-screen bg-gray-50">
+
+      {/* Approval banner */}
+      {isApproved && (
+        <div className="bg-emerald-100 px-4 py-4 text-center">
+          <p className="text-sm font-bold text-emerald-800">This proof has been approved</p>
+          {proof.approved_at && (
+            <p className="mt-0.5 text-xs text-emerald-700">
+              Approved on {new Date(proof.approved_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
 
         {/* Header */}
@@ -134,7 +149,7 @@ export default function CustomerProofPage() {
                       'ml-2 rounded-full px-2 py-0.5 text-xs font-semibold',
                       isActive ? 'bg-emerald-700 text-emerald-100' : 'bg-emerald-100 text-emerald-700',
                     ].join(' ')}>
-                      Current
+                      {isApproved ? 'Approved' : 'Current'}
                     </span>
                   )}
                 </button>
