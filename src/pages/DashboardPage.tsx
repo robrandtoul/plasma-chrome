@@ -208,7 +208,7 @@ export default function DashboardPage() {
               to="/proofs/new"
               className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
             >
-              New proof
+              New project
             </Link>
             <button
               onClick={handleSignOut}
