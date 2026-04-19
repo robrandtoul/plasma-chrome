@@ -498,7 +498,7 @@ export default function NewProofPage() {
             <div className="mb-4">
               <label className="mb-1.5 block text-sm font-medium text-gray-700">
                 Help Scout thread URL{' '}
-                <span className="font-normal text-gray-400">(optional)</span>
+                <span className="font-normal text-gray-400">(recommended)</span>
               </label>
               <input
                 type="url"
