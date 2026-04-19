@@ -291,7 +291,7 @@ export default function CustomerProofPage() {
                 <SpecItem label="Material" value={activeVersion.material_display} />
                 {activeOption && <SpecItem label={optionLabelSingular} value={activeOption.display_name} />}
                 {activeVersion.ink_names.length > 0 && (
-                  <SpecItem label="Inks" value={activeVersion.ink_names.join(', ')} />
+                  <SpecItem label="Inks" value={activeVersion.ink_names.join('\n')} />
                 )}
               </dl>
             </div>
@@ -389,7 +389,7 @@ function SpecItem({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</dt>
-      <dd className="mt-1 text-sm font-medium text-gray-900">{value}</dd>
+      <dd className="mt-1 whitespace-pre-line text-sm font-medium text-gray-900">{value}</dd>
     </div>
   )
 }
