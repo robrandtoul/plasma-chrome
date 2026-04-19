@@ -1,12 +1,15 @@
 export type Currency = 'GBP' | 'EUR' | 'USD'
 
+export type ProofStatus = 'in_progress' | 'approved' | 'dormant' | 'abandoned'
+
 export interface PublicProof {
   id: string
   customer_name: string
   company: string | null
   created_at: string
-  status: 'in_progress' | 'approved' | 'dormant'
+  status: ProofStatus
   approved_at: string | null
+  abandoned_at: string | null
 }
 
 // One entry per variant exposed on a proof version.

@@ -34,14 +34,16 @@ const DEFAULT_FEATURED = [100, 250, 500, 750, 1000]
 export default function VersionDetailModal({
   version,
   proofId,
-  proofApproved,
+  proofLocked,
+  lockReason,
   allVersions,
   onClose,
   onVersionUpdated,
 }: {
   version: ModalVersion
   proofId: string
-  proofApproved: boolean
+  proofLocked: boolean
+  lockReason: 'approved' | 'abandoned' | null
   allVersions: ModalVersion[]
   onClose: () => void
   onVersionUpdated: (message: string) => void
@@ -277,10 +279,12 @@ export default function VersionDetailModal({
 
           {/* Footer actions */}
           <div className="shrink-0 border-t border-gray-100 px-6 py-4">
-            {proofApproved ? (
+            {proofLocked ? (
               <div className="flex items-center justify-between gap-3">
                 <p className="text-xs text-gray-400">
-                  This proof is approved and locked. Reopen the proof to make changes.
+                  {lockReason === 'abandoned'
+                    ? 'This proof is abandoned and locked. Reopen the proof to make changes.'
+                    : 'This proof is approved and locked. Reopen the proof to make changes.'}
                 </p>
                 <button
                   onClick={onClose}

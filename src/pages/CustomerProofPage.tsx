@@ -129,6 +129,7 @@ export default function CustomerProofPage() {
 
   if (loading) return <LoadingScreen />
   if (notFound || !proof) return <NotFoundScreen />
+  if (proof.status === 'abandoned') return <AbandonedScreen proof={proof} />
 
   const isApproved = proof.status === 'approved'
 
@@ -382,6 +383,28 @@ function NotFoundScreen() {
       <div className="text-center">
         <p className="text-4xl font-bold text-gray-200">404</p>
         <p className="mt-2 text-sm text-gray-400">This proof link isn't valid or has expired.</p>
+      </div>
+    </div>
+  )
+}
+
+function AbandonedScreen({ proof }: { proof: PublicProof }) {
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
+        <header className="mb-12">
+          <p className="text-sm font-medium uppercase tracking-widest text-gray-400">Proof for</p>
+          <h1 className="mt-1 text-3xl font-bold text-gray-900">{proof.customer_name}</h1>
+          {proof.company && (
+            <p className="mt-1 text-lg text-gray-500">{proof.company}</p>
+          )}
+        </header>
+        <div className="rounded-2xl bg-white p-10 text-center shadow-sm ring-1 ring-gray-200">
+          <h2 className="text-xl font-semibold text-gray-800">This proof is closed</h2>
+          <p className="mx-auto mt-2 max-w-md text-sm text-gray-500">
+            If you'd like to revisit your business cards, please get in touch.
+          </p>
+        </div>
       </div>
     </div>
   )

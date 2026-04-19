@@ -5,8 +5,9 @@ import VersionDetailModal, { type ModalVersion } from '../components/VersionDeta
 
 interface Proof {
   id: string
-  status: 'in_progress' | 'approved' | 'dormant'
+  status: 'in_progress' | 'approved' | 'dormant' | 'abandoned'
   approved_at: string | null
+  abandoned_at: string | null
   helpscout_thread_url: string | null
   internal_notes: string | null
   created_at: string
@@ -17,7 +18,7 @@ interface Proof {
   }
 }
 
-function formatApprovedDate(iso: string): string {
+function formatLongDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
 }
 
@@ -30,7 +31,7 @@ export default function ProofDetailPage() {
   const [selectedVersion, setSelectedVersion] = useState<ModalVersion | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
-  const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | null>(null)
+  const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | 'abandon' | null>(null)
   const [statusWorking, setStatusWorking] = useState(false)
   const fallbackInputRef = useRef<HTMLInputElement>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -43,7 +44,7 @@ export default function ProofDetailPage() {
     const [proofResult, versionsResult] = await Promise.all([
       supabase
         .from('proofs')
-        .select('id, status, approved_at, helpscout_thread_url, internal_notes, created_at, contacts(full_name, email, companies(name))')
+        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, internal_notes, created_at, contacts(full_name, email, companies(name))')
         .eq('id', proofId)
         .single(),
       supabase
@@ -93,14 +94,30 @@ export default function ProofDetailPage() {
   async function handleReopen() {
     if (!proof) return
     setStatusWorking(true)
+    // Clear both terminal timestamps so the same flow works for approved and abandoned.
     const { error } = await supabase
       .from('proofs')
-      .update({ status: 'in_progress', approved_at: null })
+      .update({ status: 'in_progress', approved_at: null, abandoned_at: null })
       .eq('id', proof.id)
     setStatusWorking(false)
     setStatusDialog(null)
     if (!error) {
       showToast('Proof reopened')
+      if (id) loadProof(id)
+    }
+  }
+
+  async function handleAbandon() {
+    if (!proof) return
+    setStatusWorking(true)
+    const { error } = await supabase
+      .from('proofs')
+      .update({ status: 'abandoned', abandoned_at: new Date().toISOString() })
+      .eq('id', proof.id)
+    setStatusWorking(false)
+    setStatusDialog(null)
+    if (!error) {
+      showToast('Proof abandoned')
       if (id) loadProof(id)
     }
   }
@@ -130,8 +147,10 @@ export default function ProofDetailPage() {
 
   if (!proof) return null
 
-  const isApproved = proof.status === 'approved'
-  const isDormant  = proof.status === 'dormant'
+  const isApproved  = proof.status === 'approved'
+  const isDormant   = proof.status === 'dormant'
+  const isAbandoned = proof.status === 'abandoned'
+  const isLocked    = isApproved || isAbandoned
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -154,7 +173,11 @@ export default function ProofDetailPage() {
             <div className="mt-3">
               {isApproved ? (
                 <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                  Approved{proof.approved_at ? ` on ${formatApprovedDate(proof.approved_at)}` : ''}
+                  Approved{proof.approved_at ? ` on ${formatLongDate(proof.approved_at)}` : ''}
+                </span>
+              ) : isAbandoned ? (
+                <span className="inline-flex items-center rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">
+                  Abandoned{proof.abandoned_at ? ` on ${formatLongDate(proof.abandoned_at)}` : ''}
                 </span>
               ) : isDormant ? (
                 <>
@@ -206,7 +229,7 @@ export default function ProofDetailPage() {
             {/* Hidden input for clipboard fallback */}
             <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
 
-            {isApproved ? (
+            {isLocked ? (
               <button
                 onClick={() => setStatusDialog('reopen')}
                 className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
@@ -220,6 +243,12 @@ export default function ProofDetailPage() {
                   className="rounded-lg px-4 py-2 text-sm font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
                 >
                   Mark as approved
+                </button>
+                <button
+                  onClick={() => setStatusDialog('abandon')}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 ring-1 ring-slate-300 hover:bg-slate-50"
+                >
+                  Abandon proof
                 </button>
                 <Link
                   to={`/proofs/${proof.id}/versions/new`}
@@ -317,7 +346,8 @@ export default function ProofDetailPage() {
         <VersionDetailModal
           version={selectedVersion}
           proofId={proof.id}
-          proofApproved={isApproved}
+          proofLocked={isLocked}
+          lockReason={isAbandoned ? 'abandoned' : isApproved ? 'approved' : null}
           allVersions={versions}
           onClose={() => setSelectedVersion(null)}
           onVersionUpdated={handleVersionUpdated}
@@ -336,10 +366,26 @@ export default function ProofDetailPage() {
         />
       )}
 
+      {/* Abandon confirm dialog */}
+      {statusDialog === 'abandon' && (
+        <ConfirmDialog
+          message="Abandon this proof? This will lock the proof. No new versions can be added, and the customer-facing page will show a closed state. You can reopen the proof later if needed."
+          confirmLabel="Abandon proof"
+          confirmClass="bg-slate-700 hover:bg-slate-800 text-white"
+          working={statusWorking}
+          onConfirm={handleAbandon}
+          onCancel={() => setStatusDialog(null)}
+        />
+      )}
+
       {/* Reopen confirm dialog */}
       {statusDialog === 'reopen' && (
         <ConfirmDialog
-          message="Reopen this proof? It will go back to in progress and you'll be able to add new versions."
+          message={
+            isAbandoned
+              ? 'Reopen this proof? This will reopen the proof and allow new versions to be added.'
+              : 'Reopen this proof? It will go back to in progress and you\'ll be able to add new versions.'
+          }
           confirmLabel="Reopen"
           confirmClass="bg-gray-900 hover:bg-gray-700 text-white"
           working={statusWorking}

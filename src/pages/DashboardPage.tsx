@@ -31,7 +31,7 @@ interface ProofItem {
   created_at: string
   current_version: number | null
   material_display: string | null
-  status: 'in_progress' | 'approved' | 'dormant'
+  status: 'in_progress' | 'approved' | 'dormant' | 'abandoned'
 }
 
 interface ContactGroup {
@@ -332,6 +332,10 @@ export default function DashboardPage() {
                               {proof.status === 'approved' ? (
                                 <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
                                   Approved
+                                </span>
+                              ) : proof.status === 'abandoned' ? (
+                                <span className="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                                  Abandoned
                                 </span>
                               ) : proof.status === 'dormant' ? (
                                 <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">
