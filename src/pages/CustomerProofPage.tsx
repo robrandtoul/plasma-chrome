@@ -134,7 +134,11 @@ export default function CustomerProofPage() {
                   Pricing
                 </h2>
               </div>
-              <PricingDisplay snapshot={activeVersion.pricing_snapshot} currency={activeVersion.currency} />
+              <PricingDisplay
+                snapshot={activeVersion.pricing_snapshot}
+                currency={activeVersion.currency}
+                featuredQuantities={activeVersion.featured_quantities}
+              />
               <div className="border-t border-gray-100 px-6 py-3">
                 <p className="text-xs text-gray-400">{activeVersion.shipping_note}</p>
               </div>
@@ -173,18 +177,63 @@ function SpecItem({ label, value }: { label: string; value: string }) {
   )
 }
 
-function PricingDisplay({ snapshot, currency }: { snapshot: PricingSnapshot; currency: Currency }) {
+function PricingDisplay({
+  snapshot,
+  currency,
+  featuredQuantities,
+}: {
+  snapshot: PricingSnapshot
+  currency: Currency
+  featuredQuantities: number[]
+}) {
+  const [showAll, setShowAll] = useState(false)
   const { variants } = snapshot
   if (!variants?.length) return null
-  return variants.length === 1
-    ? <SingleVariantTable variant={variants[0]} currency={currency} />
-    : <MultiVariantGrid variants={variants} currency={currency} />
+
+  // All quantities present in the snapshot, sorted ascending
+  const allQuantities = [...new Set(
+    variants.flatMap((v) => Object.keys(v.prices).map(Number))
+  )].sort((a, b) => a - b)
+
+  const featured = new Set(featuredQuantities)
+  const visibleQuantities = showAll
+    ? allQuantities
+    : allQuantities.filter((q) => featured.has(q))
+
+  const hasHidden = allQuantities.length > visibleQuantities.length
+
+  return (
+    <>
+      {variants.length === 1
+        ? <SingleVariantTable variant={variants[0]} currency={currency} quantities={visibleQuantities} />
+        : <MultiVariantGrid variants={variants} currency={currency} quantities={visibleQuantities} />
+      }
+      {(hasHidden || showAll) && (
+        <div className="border-t border-gray-50 px-6 py-3">
+          <button
+            onClick={() => setShowAll((v) => !v)}
+            className="text-xs text-gray-400 underline underline-offset-2 hover:text-gray-600"
+          >
+            {showAll ? 'Show fewer quantities' : 'Show all quantities'}
+          </button>
+        </div>
+      )}
+    </>
+  )
 }
 
-function SingleVariantTable({ variant, currency }: { variant: PricingSnapshot['variants'][0]; currency: Currency }) {
-  const rows = Object.entries(variant.prices)
-    .map(([qty, price]) => ({ qty: parseInt(qty, 10), price }))
-    .sort((a, b) => a.qty - b.qty)
+function SingleVariantTable({
+  variant,
+  currency,
+  quantities,
+}: {
+  variant: PricingSnapshot['variants'][0]
+  currency: Currency
+  quantities: number[]
+}) {
+  const rows = quantities
+    .filter((qty) => variant.prices[String(qty)] != null)
+    .map((qty) => ({ qty, price: variant.prices[String(qty)] }))
 
   if (rows.length === 0) return null
 
@@ -210,12 +259,15 @@ function SingleVariantTable({ variant, currency }: { variant: PricingSnapshot['v
   )
 }
 
-function MultiVariantGrid({ variants, currency }: { variants: PricingSnapshot['variants']; currency: Currency }) {
-  // Union of all quantities across all variants, sorted ascending
-  const quantities = [...new Set(
-    variants.flatMap((v) => Object.keys(v.prices).map(Number))
-  )].sort((a, b) => a - b)
-
+function MultiVariantGrid({
+  variants,
+  currency,
+  quantities,
+}: {
+  variants: PricingSnapshot['variants']
+  currency: Currency
+  quantities: number[]
+}) {
   if (quantities.length === 0) return null
 
   return (

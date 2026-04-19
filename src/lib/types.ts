@@ -33,6 +33,7 @@ export interface PublicProofVersion {
   change_notes: string | null
   is_current: boolean
   created_at: string
+  featured_quantities: number[]
   // Resolved client-side — not a DB column.
   signed_image_url?: string
 }
