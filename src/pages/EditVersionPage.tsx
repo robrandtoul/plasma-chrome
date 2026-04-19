@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { PricingDisplay } from '../components/PricingDisplay'
 import { PricingDisplayField, type PricingDisplayValue } from '../components/PricingDisplayField'
+import { CurrencyField } from '../components/CurrencyField'
 import { PageDropOverlay } from '../components/PageDropOverlay'
 import type { Currency, PricingSnapshot } from '../lib/types'
 
@@ -684,9 +685,10 @@ export default function EditVersionPage() {
 
             <div>
               <label className="mb-1.5 block text-sm font-medium text-gray-700">Currency</label>
-              <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500">
-                {currency} <span className="text-gray-400">(cannot be changed after creation)</span>
-              </p>
+              <div>
+                <CurrencyField value={currency} onChange={() => {}} disabled />
+                <p className="mt-1.5 text-xs text-gray-400">Cannot be changed after creation.</p>
+              </div>
             </div>
 
           </section>

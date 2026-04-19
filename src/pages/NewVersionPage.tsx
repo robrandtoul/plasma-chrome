@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { formatPrice } from '../lib/currency'
 import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { PricingDisplayField, type PricingDisplayValue } from '../components/PricingDisplayField'
+import { CurrencyField } from '../components/CurrencyField'
 import { PageDropOverlay } from '../components/PageDropOverlay'
 import type { Currency } from '../lib/types'
 
@@ -41,7 +42,6 @@ interface ImageEntry {
   label: string
 }
 
-const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
 const MAX_FILE_SIZE = 10 * 1024 * 1024
 const ACCEPTED_TYPES = ['image/jpeg', 'image/png']
 const MAX_IMAGES = 10
@@ -61,7 +61,7 @@ export default function NewVersionPage() {
   const [selectedMaterialId, setSelectedMaterialId] = useState('')
   const [variants, setVariants] = useState<Variant[]>([])
   const [selectedVariantIds, setSelectedVariantIds] = useState<string[]>([])
-  const [currency, setCurrency] = useState<Currency>('GBP')
+  const [currency, setCurrency] = useState<Currency | null>(null)
   const [variantSnapshots, setVariantSnapshots] = useState<Record<string, Record<number, string>>>({})
   const [variantTiers, setVariantTiers] = useState<Record<string, PriceTierRow[]>>({})
   const [inkNames, setInkNames] = useState('')
@@ -150,7 +150,7 @@ export default function NewVersionPage() {
   useEffect(() => {
     setVariantTiers({})
     setVariantSnapshots({})
-    if (selectedVariantIds.length === 0) return
+    if (selectedVariantIds.length === 0 || currency === null) return
 
     supabase.from('price_tiers')
       .select('material_variant_id, quantity, total_price')
@@ -356,6 +356,9 @@ export default function NewVersionPage() {
       return
     }
 
+    // Button is disabled until these are set, but narrow the types defensively.
+    if (pricingDisplay === null || currency === null) return
+
     setSubmitting(true)
 
     // Flatten images across all finish tabs (in selectedFinishes order)
@@ -453,6 +456,17 @@ export default function NewVersionPage() {
   const variantType = variants[0]?.variant_type
   const isThickness = variantType === 'thickness'
 
+  // Save-button gating — both the pricing-display choice and the currency must be
+  // set before the button enables. Messaging prefers the most specific reason.
+  const canSave = pricingDisplay !== null && currency !== null
+  const disabledReason = canSave
+    ? undefined
+    : pricingDisplay === null && currency === null
+      ? 'Complete required fields to save'
+      : pricingDisplay === null
+        ? 'Choose a pricing display option to save'
+        : 'Choose a currency to save'
+
   return (
     <div className="min-h-screen bg-gray-50">
       <PageDropOverlay visible={isPageDragOver} />
@@ -478,9 +492,9 @@ export default function NewVersionPage() {
             <button
               type="submit"
               form="new-version-form"
-              disabled={submitting || pricingDisplay === null}
-              title={pricingDisplay === null ? 'Choose a pricing display option to save' : undefined}
-              aria-label={pricingDisplay === null ? 'Save version — choose a pricing display option first' : undefined}
+              disabled={submitting || !canSave}
+              title={disabledReason}
+              aria-label={disabledReason}
               className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {submitting ? 'Uploading and saving…' : 'Save version'}
@@ -696,9 +710,7 @@ export default function NewVersionPage() {
 
             <div className="mb-4">
               <label className="mb-1.5 block text-sm font-medium text-gray-700">Currency</label>
-              <select value={currency} onChange={(e) => setCurrency(e.target.value as Currency)} className={selectClass}>
-                {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <CurrencyField value={currency} onChange={setCurrency} />
             </div>
 
             <div>
@@ -711,8 +723,8 @@ export default function NewVersionPage() {
 
           </section>
 
-          {/* Pricing — one section per selected variant */}
-          {selectedVariantIds.length > 0 && selectedVariantIds.map((vid) => {
+          {/* Pricing — one section per selected variant. Hidden until a currency is picked. */}
+          {selectedVariantIds.length > 0 && currency !== null && selectedVariantIds.map((vid) => {
             const variant = variants.find((v) => v.id === vid)
             const tiers = variantTiers[vid] ?? []
             const snap = variantSnapshots[vid] ?? {}
