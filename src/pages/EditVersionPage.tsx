@@ -809,7 +809,10 @@ export default function EditVersionPage() {
                 featuredQuantities={featuredQuantities}
               />
               <div className="border-t border-gray-100 px-6 py-3">
-                <p className="text-xs text-gray-400">{shippingNote}</p>
+                <p className="text-xs text-gray-400">
+                  {currency === 'GBP' ? 'Prices include VAT. ' : ''}
+                  {shippingNote}
+                </p>
               </div>
             </section>
           )}

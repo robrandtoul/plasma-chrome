@@ -274,7 +274,10 @@ export default function VersionDetailModal({
                 featuredQuantities={featuredQuantities}
               />
               <div className="border-t border-gray-100 px-6 py-3">
-                <p className="text-xs text-gray-400">{version.shipping_note}</p>
+                <p className="text-xs text-gray-400">
+                  {!version.custom_quote && version.currency === 'GBP' ? 'Prices include VAT. ' : ''}
+                  {version.shipping_note}
+                </p>
               </div>
             </div>
 

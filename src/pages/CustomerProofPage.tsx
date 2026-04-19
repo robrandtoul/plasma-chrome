@@ -354,7 +354,10 @@ export default function CustomerProofPage() {
                     quantitySurcharges={quantitySurcharges}
                   />
                   <div className="border-t border-gray-100 px-6 py-3">
-                    <p className="text-xs text-gray-400">{activeVersion.shipping_note}</p>
+                    <p className="text-xs text-gray-400">
+                      {activeVersion.currency === 'GBP' ? 'Prices include VAT. ' : ''}
+                      {activeVersion.shipping_note}
+                    </p>
                   </div>
                 </>
               )}
