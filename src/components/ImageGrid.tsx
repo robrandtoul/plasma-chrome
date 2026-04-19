@@ -6,16 +6,44 @@ export interface GridImage {
   original_filename?: string | null
 }
 
-function Caption({ label, filename }: { label: string; filename?: string | null }) {
+async function downloadImage(url: string, filename: string) {
+  const resp = await fetch(url)
+  const blob = await resp.blob()
+  const blobUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = blobUrl
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(blobUrl)
+}
+
+function Caption({ label, filename, signedUrl }: { label: string; filename?: string | null; signedUrl: string }) {
   if (!label && !filename) return null
   return (
-    <div className="border-t border-gray-100 px-4 py-2 text-center">
-      {label && <div className="text-sm text-gray-500">{label}</div>}
-      {filename && (
-        <div className="truncate text-xs text-gray-400" title={filename}>
-          {filename}
-        </div>
-      )}
+    <div className="border-t border-gray-100 px-4 py-2">
+      {label && <div className="text-center text-sm text-gray-500">{label}</div>}
+      <div className="mt-0.5 flex items-center justify-center gap-2">
+        {filename && (
+          <div className="min-w-0 truncate text-xs text-gray-400" title={filename}>
+            {filename}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            downloadImage(signedUrl, filename ?? 'proof.jpg')
+          }}
+          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" className="h-3.5 w-3.5">
+            <path fillRule="evenodd" d="M10 3a.75.75 0 0 1 .75.75v8.69l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V3.75A.75.75 0 0 1 10 3Zm-6 12.25a.75.75 0 0 1 .75.75v.25c0 .414.336.75.75.75h9c.414 0 .75-.336.75-.75V16a.75.75 0 0 1 1.5 0v.25A2.25 2.25 0 0 1 14.5 18.5h-9A2.25 2.25 0 0 1 3.25 16.25V16a.75.75 0 0 1 .75-.75Z" clipRule="evenodd" />
+          </svg>
+          Download
+        </button>
+      </div>
     </div>
   )
 }
@@ -50,7 +78,7 @@ export function ImageGrid({
           alt={`Proof version ${versionNumber}`}
           className="w-full object-contain"
         />
-        <Caption label={images[0].label} filename={images[0].original_filename} />
+        <Caption label={images[0].label} filename={images[0].original_filename} signedUrl={images[0].signed_url} />
       </div>
     )
   }
@@ -68,7 +96,7 @@ export function ImageGrid({
             alt={img.label || `Proof version ${versionNumber}`}
             className="w-full object-contain"
           />
-          <Caption label={img.label} filename={img.original_filename} />
+          <Caption label={img.label} filename={img.original_filename} signedUrl={img.signed_url} />
         </div>
       ))}
     </div>
