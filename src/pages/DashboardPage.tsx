@@ -22,6 +22,7 @@ interface ProofItem {
   created_at: string
   current_version: number | null
   material_display: string | null
+  status: 'in_progress' | 'approved'
 }
 
 interface ContactGroup {
@@ -77,6 +78,7 @@ function buildSections(rawProofs: any[], sort: SortMode): CompanySection[] {
       created_at: p.created_at,
       current_version:  current?.version_number   ?? null,
       material_display: current?.material_display ?? null,
+      status: p.status ?? 'in_progress',
     })
   }
 
@@ -121,7 +123,7 @@ export default function DashboardPage() {
     const { data } = await supabase
       .from('proofs')
       .select(
-        'id, created_at,' +
+        'id, created_at, status,' +
         'contacts(id, full_name, companies(id, name)),' +
         'proof_versions(version_number, is_current, material_display)'
       )
@@ -285,6 +287,16 @@ export default function DashboardPage() {
                               <span className="shrink-0 text-sm tabular-nums text-gray-400">
                                 {new Date(proof.created_at).toLocaleDateString('en-GB')}
                               </span>
+                              {/* Status pill */}
+                              {proof.status === 'approved' ? (
+                                <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                                  Approved
+                                </span>
+                              ) : (
+                                <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                                  In progress
+                                </span>
+                              )}
                               {/* Customer link — stopPropagation so the row click doesn't also fire */}
                               <a
                                 href={`/p/${proof.id}`}

@@ -5,6 +5,8 @@ import VersionDetailModal, { type ModalVersion } from '../components/VersionDeta
 
 interface Proof {
   id: string
+  status: 'in_progress' | 'approved'
+  approved_at: string | null
   helpscout_thread_url: string | null
   internal_notes: string | null
   created_at: string
@@ -13,6 +15,10 @@ interface Proof {
     email: string
     companies: { name: string } | null
   }
+}
+
+function formatApprovedDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
 }
 
 export default function ProofDetailPage() {
@@ -24,6 +30,8 @@ export default function ProofDetailPage() {
   const [selectedVersion, setSelectedVersion] = useState<ModalVersion | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | null>(null)
+  const [statusWorking, setStatusWorking] = useState(false)
   const fallbackInputRef = useRef<HTMLInputElement>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -35,7 +43,7 @@ export default function ProofDetailPage() {
     const [proofResult, versionsResult] = await Promise.all([
       supabase
         .from('proofs')
-        .select('id, helpscout_thread_url, internal_notes, created_at, contacts(full_name, email, companies(name))')
+        .select('id, status, approved_at, helpscout_thread_url, internal_notes, created_at, contacts(full_name, email, companies(name))')
         .eq('id', proofId)
         .single(),
       supabase
@@ -67,6 +75,36 @@ export default function ProofDetailPage() {
     if (id) loadProof(id)
   }
 
+  async function handleApprove() {
+    if (!proof) return
+    setStatusWorking(true)
+    const { error } = await supabase
+      .from('proofs')
+      .update({ status: 'approved', approved_at: new Date().toISOString() })
+      .eq('id', proof.id)
+    setStatusWorking(false)
+    setStatusDialog(null)
+    if (!error) {
+      showToast('Proof marked as approved')
+      if (id) loadProof(id)
+    }
+  }
+
+  async function handleReopen() {
+    if (!proof) return
+    setStatusWorking(true)
+    const { error } = await supabase
+      .from('proofs')
+      .update({ status: 'in_progress', approved_at: null })
+      .eq('id', proof.id)
+    setStatusWorking(false)
+    setStatusDialog(null)
+    if (!error) {
+      showToast('Proof reopened')
+      if (id) loadProof(id)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50">
@@ -92,6 +130,8 @@ export default function ProofDetailPage() {
 
   if (!proof) return null
 
+  const isApproved = proof.status === 'approved'
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
@@ -109,8 +149,20 @@ export default function ProofDetailPage() {
               <p className="mt-1 text-gray-500">{proof.contacts.companies.name}</p>
             )}
             <p className="mt-0.5 text-sm text-gray-400">{proof.contacts.email}</p>
+            {/* Status badge */}
+            <div className="mt-3">
+              {isApproved ? (
+                <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                  Approved{proof.approved_at ? ` on ${formatApprovedDate(proof.approved_at)}` : ''}
+                </span>
+              ) : (
+                <span className="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
+                  In progress
+                </span>
+              )}
+            </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <a
               href={`/p/${proof.id}`}
               target="_blank"
@@ -145,12 +197,30 @@ export default function ProofDetailPage() {
             </button>
             {/* Hidden input for clipboard fallback */}
             <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
-            <Link
-              to={`/proofs/${proof.id}/versions/new`}
-              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
-            >
-              Add version
-            </Link>
+
+            {isApproved ? (
+              <button
+                onClick={() => setStatusDialog('reopen')}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
+              >
+                Reopen
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => setStatusDialog('approve')}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
+                >
+                  Mark as approved
+                </button>
+                <Link
+                  to={`/proofs/${proof.id}/versions/new`}
+                  className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+                >
+                  Add version
+                </Link>
+              </>
+            )}
           </div>
         </div>
 
@@ -179,10 +249,12 @@ export default function ProofDetailPage() {
         {versions.length === 0 ? (
           <div className="rounded-2xl bg-white py-16 text-center shadow-sm ring-1 ring-gray-200">
             <p className="text-gray-400">No versions yet.</p>
-            <Link to={`/proofs/${proof.id}/versions/new`}
-              className="mt-3 inline-block text-sm font-medium text-gray-900 underline">
-              Add the first version
-            </Link>
+            {!isApproved && (
+              <Link to={`/proofs/${proof.id}/versions/new`}
+                className="mt-3 inline-block text-sm font-medium text-gray-900 underline">
+                Add the first version
+              </Link>
+            )}
           </div>
         ) : (
           <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
@@ -237,9 +309,34 @@ export default function ProofDetailPage() {
         <VersionDetailModal
           version={selectedVersion}
           proofId={proof.id}
+          proofApproved={isApproved}
           allVersions={versions}
           onClose={() => setSelectedVersion(null)}
           onVersionUpdated={handleVersionUpdated}
+        />
+      )}
+
+      {/* Approve confirm dialog */}
+      {statusDialog === 'approve' && (
+        <ConfirmDialog
+          message="Mark this proof as approved? This locks the proof — no more versions can be added."
+          confirmLabel="Mark as approved"
+          confirmClass="bg-emerald-600 hover:bg-emerald-700 text-white"
+          working={statusWorking}
+          onConfirm={handleApprove}
+          onCancel={() => setStatusDialog(null)}
+        />
+      )}
+
+      {/* Reopen confirm dialog */}
+      {statusDialog === 'reopen' && (
+        <ConfirmDialog
+          message="Reopen this proof? It will go back to in progress and you'll be able to add new versions."
+          confirmLabel="Reopen"
+          confirmClass="bg-gray-900 hover:bg-gray-700 text-white"
+          working={statusWorking}
+          onConfirm={handleReopen}
+          onCancel={() => setStatusDialog(null)}
         />
       )}
 
@@ -250,5 +347,48 @@ export default function ProofDetailPage() {
         </div>
       )}
     </div>
+  )
+}
+
+function ConfirmDialog({
+  message,
+  confirmLabel,
+  confirmClass,
+  working,
+  onConfirm,
+  onCancel,
+}: {
+  message: string
+  confirmLabel: string
+  confirmClass: string
+  working: boolean
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !working && onCancel()} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+          <p className="text-sm text-gray-700">{message}</p>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              onClick={onCancel}
+              disabled={working}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onConfirm}
+              disabled={working}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50 ${confirmClass}`}
+            >
+              {working ? 'Working…' : confirmLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
   )
 }

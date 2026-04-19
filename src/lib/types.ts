@@ -5,6 +5,8 @@ export interface PublicProof {
   customer_name: string
   company: string | null
   created_at: string
+  status: 'in_progress' | 'approved'
+  approved_at: string | null
 }
 
 // One entry per variant exposed on a proof version.

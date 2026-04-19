@@ -34,12 +34,14 @@ const DEFAULT_FEATURED = [100, 250, 500, 750, 1000]
 export default function VersionDetailModal({
   version,
   proofId,
+  proofApproved,
   allVersions,
   onClose,
   onVersionUpdated,
 }: {
   version: ModalVersion
   proofId: string
+  proofApproved: boolean
   allVersions: ModalVersion[]
   onClose: () => void
   onVersionUpdated: (message: string) => void
@@ -275,7 +277,19 @@ export default function VersionDetailModal({
 
           {/* Footer actions */}
           <div className="shrink-0 border-t border-gray-100 px-6 py-4">
-            {deleteState === 'confirm' || deleteState === 'working' ? (
+            {proofApproved ? (
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-gray-400">
+                  This proof is approved and locked. Reopen the proof to make changes.
+                </p>
+                <button
+                  onClick={onClose}
+                  className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+                >
+                  Close
+                </button>
+              </div>
+            ) : deleteState === 'confirm' || deleteState === 'working' ? (
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm text-gray-700">{deleteConfirmText}</p>
                 <div className="flex shrink-0 gap-2">
