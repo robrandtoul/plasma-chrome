@@ -350,14 +350,15 @@ export default function NewVersionPage() {
       materialRef.current?.focus()
       return
     }
-    if (selectedVariantIds.length === 0) {
+    // Variant selection is only required when the proof will show standard pricing.
+    if (pricingDisplay !== 'custom' && selectedVariantIds.length === 0) {
       setVariantError('Please select at least one variant.')
       variantRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       return
     }
 
-    // Button is disabled until these are set, but narrow the types defensively.
-    if (pricingDisplay === null || currency === null) return
+    // Button is disabled until pricingDisplay is set, but narrow defensively.
+    if (pricingDisplay === null) return
 
     setSubmitting(true)
 
@@ -404,6 +405,11 @@ export default function NewVersionPage() {
 
     const parsedInkNames = inkNames.split(',').map((s) => s.trim()).filter(Boolean)
 
+    // The currency column is NOT NULL; default to GBP when the designer picked
+    // Custom quote without explicitly selecting a currency. Value is not shown
+    // to the customer in custom-quote mode.
+    const currencyForInsert: Currency = currency ?? 'GBP'
+
     const { data: versionData, error: insertError } = await supabase
       .from('proof_versions')
       .insert({
@@ -411,7 +417,7 @@ export default function NewVersionPage() {
         material_id: selectedMaterialId,
         material_display: material.display_name,
         ink_names: parsedInkNames,
-        currency,
+        currency: currencyForInsert,
         pricing_snapshot: pricingSnapshot,
         change_notes: changeNotes.trim() || null,
         finishes: selectedFinishes,
@@ -455,17 +461,16 @@ export default function NewVersionPage() {
 
   const variantType = variants[0]?.variant_type
   const isThickness = variantType === 'thickness'
+  const isCustomQuote = pricingDisplay === 'custom'
 
-  // Save-button gating — both the pricing-display choice and the currency must be
-  // set before the button enables. Messaging prefers the most specific reason.
-  const canSave = pricingDisplay !== null && currency !== null
+  // Save-button gating — pricingDisplay is always required. Currency is only
+  // required in standard-pricing mode; custom quote hides the currency pill.
+  const canSave = pricingDisplay !== null && (isCustomQuote || currency !== null)
   const disabledReason = canSave
     ? undefined
-    : pricingDisplay === null && currency === null
-      ? 'Complete required fields to save'
-      : pricingDisplay === null
-        ? 'Choose a pricing display option to save'
-        : 'Choose a currency to save'
+    : pricingDisplay === null
+      ? 'Choose a pricing display option to save'
+      : 'Choose a currency to save'
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -640,7 +645,7 @@ export default function NewVersionPage() {
               {materialError && <p className="mt-1.5 text-sm text-red-600">{materialError}</p>}
             </div>
 
-            {variants.length > 0 && variantType !== 'default' && (
+            {!isCustomQuote && variants.length > 0 && variantType !== 'default' && (
               <div ref={variantRef} className="mb-4">
                 <label className="mb-2 block text-sm font-medium text-gray-700">
                   {variantLabel(variantType)}
@@ -708,10 +713,12 @@ export default function NewVersionPage() {
               </div>
             )}
 
-            <div className="mb-4">
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">Currency</label>
-              <CurrencyField value={currency} onChange={setCurrency} />
-            </div>
+            {!isCustomQuote && (
+              <div className="mb-4">
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">Currency</label>
+                <CurrencyField value={currency} onChange={setCurrency} />
+              </div>
+            )}
 
             <div>
               <label className="mb-1.5 block text-sm font-medium text-gray-700">
@@ -723,8 +730,9 @@ export default function NewVersionPage() {
 
           </section>
 
-          {/* Pricing — one section per selected variant. Hidden until a currency is picked. */}
-          {selectedVariantIds.length > 0 && currency !== null && selectedVariantIds.map((vid) => {
+          {/* Pricing — one section per selected variant. Hidden in custom-quote
+              mode and until a currency is picked. */}
+          {!isCustomQuote && selectedVariantIds.length > 0 && currency !== null && selectedVariantIds.map((vid) => {
             const variant = variants.find((v) => v.id === vid)
             const tiers = variantTiers[vid] ?? []
             const snap = variantSnapshots[vid] ?? {}

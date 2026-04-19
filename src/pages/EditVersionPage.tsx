@@ -171,6 +171,7 @@ export default function EditVersionPage() {
   const finishMode    = hasFinishes && selectedFinishes.length > 0
   const activeKey     = finishMode ? activeImageFinish : ''
   const currentImages = editImagesByFinish[activeKey] ?? []
+  const isCustomQuote = pricingDisplay === 'custom'
 
   function toggleFinish(code: string) {
     setSelectedFinishes(prev => {
@@ -683,18 +684,20 @@ export default function EditVersionPage() {
               />
             </div>
 
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">Currency</label>
+            {!isCustomQuote && (
               <div>
-                <CurrencyField value={currency} onChange={() => {}} disabled />
-                <p className="mt-1.5 text-xs text-gray-400">Cannot be changed after creation.</p>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">Currency</label>
+                <div>
+                  <CurrencyField value={currency} onChange={() => {}} disabled />
+                  <p className="mt-1.5 text-xs text-gray-400">Cannot be changed after creation.</p>
+                </div>
               </div>
-            </div>
+            )}
 
           </section>
 
-          {/* Pricing — read-only */}
-          {pricingSnapshot && (
+          {/* Pricing — read-only. Hidden when this version is a custom quote. */}
+          {!isCustomQuote && pricingSnapshot && (
             <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
               <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
                 <h2 className="text-sm font-semibold uppercase tracking-widest text-gray-400">Pricing</h2>
