@@ -133,6 +133,7 @@ export default function CustomerProofPage() {
   if (proof.status === 'abandoned') return <AbandonedScreen proof={proof} />
 
   const isApproved = proof.status === 'approved'
+  const viewingApprovedVersion = isApproved && activeVersion?.is_current === true
 
   // Derived: options for the currently-viewed version.
   const versionOptions = activeVersion?.material_options ?? []
@@ -185,8 +186,8 @@ export default function CustomerProofPage() {
   return (
     <div className="min-h-screen bg-gray-50">
 
-      {/* Approval banner */}
-      {isApproved && (
+      {/* Approval banner — only when viewing the approved version */}
+      {viewingApprovedVersion && (
         <div className="bg-emerald-100 px-4 py-4 text-center">
           <p className="text-sm font-bold text-emerald-800">This proof has been approved</p>
           {proof.approved_at && (
