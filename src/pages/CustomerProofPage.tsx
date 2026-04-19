@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import type { PublicProof, PublicProofVersion, SiteSettings } from '../lib/types'
+import type { PublicProof, PublicProofVersion, PublicFinish, PublicFinishSurcharge, SiteSettings } from '../lib/types'
+import { formatPrice } from '../lib/currency'
 import { PricingDisplay } from '../components/PricingDisplay'
 import { ImageGrid, type GridImage } from '../components/ImageGrid'
 
@@ -14,6 +15,9 @@ export default function CustomerProofPage() {
   const [versions, setVersions] = useState<PublicProofVersion[]>([])
   const [activeVersion, setActiveVersion] = useState<PublicProofVersion | null>(null)
   const [versionImages, setVersionImages] = useState<Record<string, GridImage[]>>({})
+  const [finishes, setFinishes] = useState<PublicFinish[]>([])
+  const [finishSurcharges, setFinishSurcharges] = useState<PublicFinishSurcharge[]>([])
+  const [activeFinishCode, setActiveFinishCode] = useState<string | null>(null)
   const [globalDisclaimer, setGlobalDisclaimer] = useState<string | null>(null)
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -44,6 +48,12 @@ export default function CustomerProofPage() {
     strip.scrollLeft = Math.max(0, activeTab.offsetLeft - 8)
   }, [loading])
 
+  // When active version changes, reset finish selection to the version's first finish.
+  useEffect(() => {
+    if (!activeVersion) return
+    setActiveFinishCode(activeVersion.finishes[0] ?? null)
+  }, [activeVersion?.id])
+
   async function loadProof(proofId: string) {
     setLoading(true)
 
@@ -64,9 +74,11 @@ export default function CustomerProofPage() {
 
     const rawVersions = (versionsResult.data ?? []) as PublicProofVersion[]
     setVersions(rawVersions)
-    setActiveVersion(rawVersions.find((v) => v.is_current) ?? rawVersions[rawVersions.length - 1] ?? null)
+    const initialVersion = rawVersions.find((v) => v.is_current) ?? rawVersions[rawVersions.length - 1] ?? null
+    setActiveVersion(initialVersion)
 
     if (rawVersions.length > 0) {
+      // Load images for all versions
       const versionIds = rawVersions.map((v) => v.id)
       const { data: imageRows } = await supabase
         .from('public_proof_version_images')
@@ -90,6 +102,26 @@ export default function CustomerProofPage() {
         byVersion[pvid].push(img as GridImage)
       })
       setVersionImages(byVersion)
+
+      // Load finishes for all materials used across versions
+      const materialIds = [...new Set(rawVersions.map(v => v.material_id))]
+      const { data: finishRows } = await supabase
+        .from('public_finishes')
+        .select('*')
+        .in('material_id', materialIds)
+        .order('sort_order')
+
+      const loadedFinishes = (finishRows ?? []) as PublicFinish[]
+      setFinishes(loadedFinishes)
+
+      if (loadedFinishes.length > 0) {
+        const finishIds = loadedFinishes.map(f => f.id)
+        const { data: surchargeRows } = await supabase
+          .from('public_finish_surcharges')
+          .select('*')
+          .in('finish_id', finishIds)
+        setFinishSurcharges((surchargeRows ?? []) as PublicFinishSurcharge[])
+      }
     }
 
     setLoading(false)
@@ -99,6 +131,30 @@ export default function CustomerProofPage() {
   if (notFound || !proof) return <NotFoundScreen />
 
   const isApproved = proof.status === 'approved'
+
+  // Finish logic for the active version
+  const versionFinishes = activeVersion?.finishes ?? []
+  const showFinishSwitcher = versionFinishes.length >= 2
+  const activeFinish = activeFinishCode && activeVersion
+    ? finishes.find(f => f.material_id === activeVersion.material_id && f.code === activeFinishCode) ?? null
+    : null
+
+  // Filter images for the active finish (if in finish mode)
+  const allVersionImages = activeVersion ? (versionImages[activeVersion.id] ?? []) : []
+  const displayImages = versionFinishes.length > 0 && activeFinishCode
+    ? allVersionImages.filter(img => img.finish === activeFinishCode || img.finish == null)
+    : allVersionImages
+
+  // Surcharges for the active non-base finish at the featured quantities
+  const finishSurchargeRows = (activeFinish && !activeFinish.is_base && activeVersion)
+    ? finishSurcharges
+        .filter(s =>
+          s.finish_id === activeFinish.id &&
+          s.currency === activeVersion.currency &&
+          activeVersion.featured_quantities.includes(s.quantity)
+        )
+        .sort((a, b) => a.quantity - b.quantity)
+    : []
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -160,10 +216,34 @@ export default function CustomerProofPage() {
 
         {activeVersion && (
           <>
+            {/* Finish switcher — shown when this version offers 2+ finishes */}
+            {showFinishSwitcher && (
+              <div className="mb-6 flex gap-2">
+                {versionFinishes.map(fCode => {
+                  const f = finishes.find(x => x.material_id === activeVersion.material_id && x.code === fCode)
+                  const isActive = activeFinishCode === fCode
+                  return (
+                    <button
+                      key={fCode}
+                      onClick={() => setActiveFinishCode(fCode)}
+                      className={[
+                        'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                        isActive
+                          ? 'bg-gray-900 text-white'
+                          : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
+                      ].join(' ')}
+                    >
+                      {f?.display_name ?? fCode}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
             {/* Proof images */}
             <div className="mb-8">
               <ImageGrid
-                images={versionImages[activeVersion.id] ?? []}
+                images={displayImages}
                 versionNumber={activeVersion.version_number}
                 onImageClick={setLightboxSrc}
               />
@@ -176,6 +256,7 @@ export default function CustomerProofPage() {
               </h2>
               <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
                 <SpecItem label="Material" value={activeVersion.material_display} />
+                {activeFinish && <SpecItem label="Finish" value={activeFinish.display_name} />}
                 {activeVersion.ink_names.length > 0 && (
                   <SpecItem label="Inks" value={activeVersion.ink_names.join(', ')} />
                 )}
@@ -226,6 +307,24 @@ export default function CustomerProofPage() {
                 currency={activeVersion.currency}
                 featuredQuantities={activeVersion.featured_quantities}
               />
+              {/* Finish upgrade surcharge — shown when a non-base finish is selected */}
+              {finishSurchargeRows.length > 0 && activeFinish && (
+                <div className="border-t border-gray-100 px-6 py-4">
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">
+                    {activeFinish.display_name} finish upgrade
+                  </p>
+                  <div className="flex flex-wrap gap-x-6 gap-y-1.5">
+                    {finishSurchargeRows.map(s => (
+                      <span key={s.quantity} className="text-sm text-gray-700">
+                        {s.quantity.toLocaleString()}
+                        <span className="ml-1 text-gray-400">
+                          +{formatPrice(s.surcharge, activeVersion.currency, 0)}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="border-t border-gray-100 px-6 py-3">
                 <p className="text-xs text-gray-400">{activeVersion.shipping_note}</p>
               </div>

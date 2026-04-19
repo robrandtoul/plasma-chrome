@@ -34,8 +34,26 @@ export interface PublicProofVersion {
   change_notes: string | null
   is_current: boolean
   created_at: string
+  finishes: string[]
   featured_quantities: number[]
   material_disclaimer: string | null
+}
+
+export interface PublicFinish {
+  id: string
+  material_id: string
+  code: string
+  display_name: string
+  is_base: boolean
+  sort_order: number
+}
+
+export interface PublicFinishSurcharge {
+  id: string
+  finish_id: string
+  currency: Currency
+  quantity: number
+  surcharge: number
 }
 
 export interface SiteSettings {
@@ -48,6 +66,7 @@ export interface ProofVersionImage {
   image_path: string
   label: string
   sort_order: number
+  finish: string | null
   // Resolved client-side — not a DB column.
   signed_url?: string
 }

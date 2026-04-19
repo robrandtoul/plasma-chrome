@@ -5,11 +5,19 @@ import { supabase } from '../lib/supabase'
 import { PricingDisplay } from '../components/PricingDisplay'
 import type { Currency, PricingSnapshot } from '../lib/types'
 
-// ── Image state ────────────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 type EditImage =
-  | { kind: 'existing'; id: string; image_path: string; label: string; preview: string }
+  | { kind: 'existing'; id: string; image_path: string; label: string; preview: string; finish: string | null }
   | { kind: 'new'; localId: string; file: File; preview: string; label: string }
+
+interface Finish {
+  id: string
+  code: string
+  display_name: string
+  is_base: boolean
+  sort_order: number
+}
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -39,7 +47,10 @@ export default function EditVersionPage() {
   const [pricingSnapshot, setPricingSnapshot] = useState<PricingSnapshot | null>(null)
   const [shippingNote, setShippingNote] = useState('')
   const [featuredQuantities, setFeaturedQuantities] = useState<number[]>([100, 250, 500, 750, 1000])
-  const [editImages, setEditImages] = useState<EditImage[]>([])
+  const [availableFinishes, setAvailableFinishes] = useState<Finish[]>([])
+  const [selectedFinishes, setSelectedFinishes] = useState<string[]>([])
+  const [editImagesByFinish, setEditImagesByFinish] = useState<Record<string, EditImage[]>>({ '': [] })
+  const [activeImageFinish, setActiveImageFinish] = useState('')
   const [originalImageIds, setOriginalImageIds] = useState<Set<string>>(new Set())
   const [fileError, setFileError] = useState('')
   const [imagesError, setImagesError] = useState('')
@@ -62,12 +73,12 @@ export default function EditVersionPage() {
       supabase.from('proofs').select('contacts(full_name)').eq('id', pid).single(),
       supabase
         .from('proof_versions')
-        .select('version_number, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, materials(featured_quantities)')
+        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, finishes, materials(featured_quantities)')
         .eq('id', vid)
         .single(),
       supabase
         .from('proof_version_images')
-        .select('id, image_path, label, sort_order')
+        .select('id, image_path, label, sort_order, finish')
         .eq('proof_version_id', vid)
         .order('sort_order'),
     ])
@@ -90,7 +101,21 @@ export default function EditVersionPage() {
     setShippingNote(v.shipping_note)
     setFeaturedQuantities(v.materials?.featured_quantities ?? [100, 250, 500, 750, 1000])
 
-    const rawImages = (imagesResult.data ?? []) as { id: string; image_path: string; label: string; sort_order: number }[]
+    const versionFinishes = (v.finishes as string[]) ?? []
+    const materialId = v.material_id as string
+
+    // Load available finishes for this material
+    const { data: finishData } = await supabase
+      .from('finishes')
+      .select('id, code, display_name, is_base, sort_order')
+      .eq('material_id', materialId)
+      .order('sort_order')
+    const finishes = (finishData ?? []) as Finish[]
+    setAvailableFinishes(finishes)
+    setSelectedFinishes(versionFinishes)
+    setActiveImageFinish(versionFinishes[0] ?? '')
+
+    const rawImages = (imagesResult.data ?? []) as { id: string; image_path: string; label: string; sort_order: number; finish: string | null }[]
     const ids = new Set(rawImages.map((img) => img.id))
     setOriginalImageIds(ids)
 
@@ -104,12 +129,67 @@ export default function EditVersionPage() {
           id: img.id,
           image_path: img.image_path,
           label: img.label,
+          finish: img.finish,
           preview: data?.signedUrl ?? '',
         }
       })
     )
-    setEditImages(withPreviews)
+
+    // Group images by finish key
+    const ibf: Record<string, EditImage[]> = {}
+    for (const img of withPreviews) {
+      let key: string
+      if (versionFinishes.length === 0) {
+        key = ''
+      } else {
+        // Images with null finish belong to the base finish (for migrated data)
+        key = img.finish ?? (finishes.find(f => f.is_base)?.code ?? versionFinishes[0])
+      }
+      if (!ibf[key]) ibf[key] = []
+      ibf[key].push(img)
+    }
+    // Ensure all selectedFinishes have entries (some may have no images yet)
+    for (const fCode of versionFinishes) {
+      if (!ibf[fCode]) ibf[fCode] = []
+    }
+    if (versionFinishes.length === 0 && !ibf['']) ibf[''] = []
+    setEditImagesByFinish(ibf)
+
     setLoading(false)
+  }
+
+  // Derived
+  const hasFinishes   = availableFinishes.length > 0
+  const finishMode    = hasFinishes && selectedFinishes.length > 0
+  const activeKey     = finishMode ? activeImageFinish : ''
+  const currentImages = editImagesByFinish[activeKey] ?? []
+
+  function toggleFinish(code: string) {
+    setSelectedFinishes(prev => {
+      if (prev.includes(code)) {
+        // Deselecting — revoke new image previews and remove from map
+        setEditImagesByFinish(ibf => {
+          const imgs = ibf[code] ?? []
+          imgs.forEach(img => { if (img.kind === 'new') URL.revokeObjectURL(img.preview) })
+          const { [code]: _removed, ...rest } = ibf
+          return rest
+        })
+        const next = prev.filter(c => c !== code)
+        if (activeImageFinish === code) setActiveImageFinish(next[0] ?? '')
+        return next
+      } else {
+        // Selecting — if entering finish mode for first time, migrate '' images
+        setEditImagesByFinish(ibf => {
+          if (prev.length === 0) {
+            const { '': noFinishImgs = [], ...rest } = ibf
+            return { ...rest, [code]: noFinishImgs }
+          }
+          return { ...ibf, [code]: [] }
+        })
+        if (prev.length === 0) setActiveImageFinish(code)
+        return [...prev, code]
+      }
+    })
   }
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
@@ -118,7 +198,7 @@ export default function EditVersionPage() {
     const files = Array.from(e.target.files ?? [])
     if (!files.length) return
 
-    const remaining = MAX_IMAGES - editImages.length
+    const remaining = MAX_IMAGES - currentImages.length
     const toAdd = files.slice(0, remaining)
 
     const invalidType = toAdd.find((f) => !ACCEPTED_TYPES.includes(f.type))
@@ -126,42 +206,48 @@ export default function EditVersionPage() {
     if (invalidType) { setFileError('Only JPEG and PNG files are accepted.'); return }
     if (tooLarge) { setFileError('Each file must be 10 MB or smaller.'); return }
 
-    setEditImages((prev) => {
-      const currentCount = prev.length
-      return [
+    setEditImagesByFinish(prev => {
+      const cur = prev[activeKey] ?? []
+      const currentCount = cur.length
+      return {
         ...prev,
-        ...toAdd.map((file, i) => ({
-          kind: 'new' as const,
-          localId: uuidv4(),
-          file,
-          preview: URL.createObjectURL(file),
-          label: defaultLabel(currentCount + i),
-        })),
-      ]
+        [activeKey]: [
+          ...cur,
+          ...toAdd.map((file, i) => ({
+            kind: 'new' as const,
+            localId: uuidv4(),
+            file,
+            preview: URL.createObjectURL(file),
+            label: defaultLabel(currentCount + i),
+          })),
+        ],
+      }
     })
     if (fileRef.current) fileRef.current.value = ''
   }
 
   function removeImage(key: string) {
-    setEditImages((prev) =>
-      prev.filter((img) => {
+    setEditImagesByFinish(prev => ({
+      ...prev,
+      [activeKey]: (prev[activeKey] ?? []).filter(img => {
         if (img.kind === 'existing') return img.id !== key
         if (img.kind === 'new') {
           if (img.localId === key) { URL.revokeObjectURL(img.preview); return false }
         }
         return true
-      })
-    )
+      }),
+    }))
   }
 
   function updateLabel(key: string, label: string) {
-    setEditImages((prev) =>
-      prev.map((img) => {
+    setEditImagesByFinish(prev => ({
+      ...prev,
+      [activeKey]: (prev[activeKey] ?? []).map(img => {
         if (img.kind === 'existing' && img.id === key) return { ...img, label }
         if (img.kind === 'new' && img.localId === key) return { ...img, label }
         return img
-      })
-    )
+      }),
+    }))
   }
 
   function handleDragStart(index: number) { dragIndexRef.current = index }
@@ -170,11 +256,11 @@ export default function EditVersionPage() {
     e.preventDefault()
     const from = dragIndexRef.current
     if (from === null || from === index) return
-    setEditImages((prev) => {
-      const next = [...prev]
-      const [item] = next.splice(from, 1)
-      next.splice(index, 0, item)
-      return next
+    setEditImagesByFinish(prev => {
+      const cur = [...(prev[activeKey] ?? [])]
+      const [item] = cur.splice(from, 1)
+      cur.splice(index, 0, item)
+      return { ...prev, [activeKey]: cur }
     })
     dragIndexRef.current = index
   }
@@ -187,11 +273,21 @@ export default function EditVersionPage() {
     setImagesError('')
     setMaterialError('')
 
-    if (editImages.length === 0) {
-      setImagesError('Please add at least one proof image.')
-      imageSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      return
+    // Validate images — each selected finish must have at least one image
+    const finishKeys = finishMode ? selectedFinishes : ['']
+    for (const fk of finishKeys) {
+      if ((editImagesByFinish[fk] ?? []).length === 0) {
+        const finishName = fk === '' ? '' : availableFinishes.find(f => f.code === fk)?.display_name ?? fk
+        setImagesError(
+          finishName
+            ? `Please add at least one image for ${finishName}.`
+            : 'Please add at least one proof image.'
+        )
+        imageSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        return
+      }
     }
+
     if (!materialDisplay.trim()) {
       setMaterialError('Material display name cannot be empty.')
       materialRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -201,17 +297,22 @@ export default function EditVersionPage() {
 
     setSubmitting(true)
 
-    const uploadResults = await Promise.all(
-      editImages
+    // Upload new images across all finish tabs
+    const newImages = finishKeys.flatMap(fk =>
+      (editImagesByFinish[fk] ?? [])
         .filter((img): img is Extract<EditImage, { kind: 'new' }> => img.kind === 'new')
-        .map(async (entry) => {
-          const ext = entry.file.type === 'image/png' ? 'png' : 'jpg'
-          const path = `${proofId}/${uuidv4()}.${ext}`
-          const { error: uploadError } = await supabase.storage
-            .from('proof-images')
-            .upload(path, entry.file, { contentType: entry.file.type, upsert: false })
-          return { localId: entry.localId, path, error: uploadError }
-        })
+        .map(img => ({ img, fk }))
+    )
+
+    const uploadResults = await Promise.all(
+      newImages.map(async ({ img }) => {
+        const ext = img.file.type === 'image/png' ? 'png' : 'jpg'
+        const path = `${proofId}/${uuidv4()}.${ext}`
+        const { error: uploadError } = await supabase.storage
+          .from('proof-images')
+          .upload(path, img.file, { contentType: img.file.type, upsert: false })
+        return { localId: img.localId, path, error: uploadError }
+      })
     )
 
     const failedUpload = uploadResults.find((r) => r.error)
@@ -225,10 +326,13 @@ export default function EditVersionPage() {
 
     const uploadedPathByLocalId = Object.fromEntries(uploadResults.map((r) => [r.localId, r.path]))
 
+    // Determine which original images were removed
     const remainingExistingIds = new Set(
-      editImages.filter((img): img is Extract<EditImage, { kind: 'existing' }> => img.kind === 'existing').map((img) => img.id)
+      Object.values(editImagesByFinish).flat()
+        .filter((img): img is Extract<EditImage, { kind: 'existing' }> => img.kind === 'existing')
+        .map(img => img.id)
     )
-    const removedIds = [...originalImageIds].filter((id) => !remainingExistingIds.has(id))
+    const removedIds = [...originalImageIds].filter(id => !remainingExistingIds.has(id))
 
     let removedPaths: string[] = []
     if (removedIds.length > 0) {
@@ -239,12 +343,14 @@ export default function EditVersionPage() {
       removedPaths = (removedRows ?? []).map((r: any) => r.image_path)
     }
 
+    // Update proof_version (now includes finishes)
     const { error: updateErr } = await supabase
       .from('proof_versions')
       .update({
         material_display: materialDisplay.trim(),
         ink_names: inkNames.split(',').map((s) => s.trim()).filter(Boolean),
         change_notes: changeNotes.trim() || null,
+        finishes: selectedFinishes,
       })
       .eq('id', versionId!)
 
@@ -254,6 +360,7 @@ export default function EditVersionPage() {
       return
     }
 
+    // Delete removed images
     if (removedIds.length > 0) {
       await supabase.from('proof_version_images').delete().in('id', removedIds)
       if (removedPaths.length > 0) {
@@ -261,31 +368,40 @@ export default function EditVersionPage() {
       }
     }
 
+    // Update sort_order, label, and finish on remaining existing images
     await Promise.all(
-      editImages
-        .filter((img): img is Extract<EditImage, { kind: 'existing' }> => img.kind === 'existing')
-        .map((img) => {
-          const sortOrder = editImages.findIndex((x) => x.kind === 'existing' && x.id === img.id)
-          return supabase
-            .from('proof_version_images')
-            .update({ label: img.label, sort_order: sortOrder })
-            .eq('id', img.id)
-        })
+      finishKeys.flatMap(fk => {
+        const finishValue = fk === '' ? null : fk
+        return (editImagesByFinish[fk] ?? [])
+          .map((img, idx) => {
+            if (img.kind !== 'existing') return null
+            return supabase
+              .from('proof_version_images')
+              .update({ label: img.label, sort_order: idx, finish: finishValue })
+              .eq('id', img.id)
+          })
+          .filter((p): p is NonNullable<typeof p> => p !== null)
+      })
     )
 
-    const newImageInserts = editImages
-      .map((img, i) => {
-        if (img.kind !== 'new') return null
-        const path = uploadedPathByLocalId[img.localId]
-        if (!path) return null
-        return {
-          proof_version_id: versionId!,
-          image_path: path,
-          label: img.label,
-          sort_order: i,
-        }
-      })
-      .filter((x): x is NonNullable<typeof x> => x !== null)
+    // Insert new images
+    const newImageInserts = finishKeys.flatMap(fk => {
+      const finishValue = fk === '' ? null : fk
+      return (editImagesByFinish[fk] ?? [])
+        .map((img, idx) => {
+          if (img.kind !== 'new') return null
+          const path = uploadedPathByLocalId[(img as Extract<EditImage, { kind: 'new' }>).localId]
+          if (!path) return null
+          return {
+            proof_version_id: versionId!,
+            image_path: path,
+            label: img.label,
+            sort_order: idx,
+            finish: finishValue,
+          }
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null)
+    })
 
     if (newImageInserts.length > 0) {
       const { error: insertErr } = await supabase.from('proof_version_images').insert(newImageInserts)
@@ -345,14 +461,42 @@ export default function EditVersionPage() {
           <section ref={imageSectionRef} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
               Proof images
-              {editImages.length > 0 && (
+              {currentImages.length > 0 && (
                 <span className="ml-2 font-normal normal-case text-gray-400">— drag to reorder</span>
               )}
             </h2>
 
-            {editImages.length > 0 && (
+            {/* Finish tabs */}
+            {finishMode && selectedFinishes.length > 0 && (
+              <div className="mb-4 flex gap-0 border-b border-gray-100">
+                {selectedFinishes.map(fCode => {
+                  const f = availableFinishes.find(x => x.code === fCode)
+                  const isActive = activeImageFinish === fCode
+                  return (
+                    <button
+                      key={fCode}
+                      type="button"
+                      onClick={() => setActiveImageFinish(fCode)}
+                      className={[
+                        '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
+                        isActive
+                          ? 'border-gray-900 text-gray-900'
+                          : 'border-transparent text-gray-400 hover:text-gray-700',
+                      ].join(' ')}
+                    >
+                      {f?.display_name ?? fCode}
+                      <span className={['ml-1.5 text-xs', isActive ? 'text-gray-400' : 'text-gray-300'].join(' ')}>
+                        ({(editImagesByFinish[fCode] ?? []).length})
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {currentImages.length > 0 && (
               <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {editImages.map((entry, index) => {
+                {currentImages.map((entry, index) => {
                   const key = entry.kind === 'existing' ? entry.id : entry.localId
                   return (
                     <div
@@ -388,7 +532,7 @@ export default function EditVersionPage() {
               </div>
             )}
 
-            {editImages.length < MAX_IMAGES && (
+            {currentImages.length < MAX_IMAGES && (
               <>
                 <input
                   ref={fileRef}
@@ -408,9 +552,9 @@ export default function EditVersionPage() {
                       : 'border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600',
                   ].join(' ')}
                 >
-                  {editImages.length === 0
+                  {currentImages.length === 0
                     ? 'Click to upload JPEG or PNG (max 10 MB each)'
-                    : `Add more images (${editImages.length} / ${MAX_IMAGES})`}
+                    : `Add more images (${currentImages.length} / ${MAX_IMAGES})`}
                 </button>
               </>
             )}
@@ -434,6 +578,36 @@ export default function EditVersionPage() {
               />
               {materialError && <p className="mt-1.5 text-sm text-red-600">{materialError}</p>}
             </div>
+
+            {/* Finish selection — only for materials that support finishes */}
+            {hasFinishes && (
+              <div className="mb-4">
+                <label className="mb-2 block text-sm font-medium text-gray-700">Finishes</label>
+                <div className="flex flex-wrap gap-2">
+                  {availableFinishes.map(f => {
+                    const selected = selectedFinishes.includes(f.code)
+                    return (
+                      <button
+                        key={f.code}
+                        type="button"
+                        onClick={() => toggleFinish(f.code)}
+                        className={[
+                          'rounded-full px-4 py-1.5 text-sm font-medium ring-1 transition-colors',
+                          selected
+                            ? 'bg-gray-900 text-white ring-gray-900'
+                            : 'bg-white text-gray-600 ring-gray-200 hover:bg-gray-50',
+                        ].join(' ')}
+                      >
+                        {f.display_name}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className="mt-1.5 text-xs text-gray-400">
+                  Select which finishes to offer. Each finish gets its own proof images.
+                </p>
+              </div>
+            )}
 
             <div className="mb-4">
               <label className="mb-1.5 block text-sm font-medium text-gray-700">

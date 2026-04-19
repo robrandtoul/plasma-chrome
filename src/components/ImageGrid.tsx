@@ -2,6 +2,7 @@ export interface GridImage {
   id: string
   signed_url: string
   label: string
+  finish?: string | null
 }
 
 export function ImageGrid({

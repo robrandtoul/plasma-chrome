@@ -17,6 +17,14 @@ interface Variant {
   sort_order: number
 }
 
+interface Finish {
+  id: string
+  code: string
+  display_name: string
+  is_base: boolean
+  sort_order: number
+}
+
 interface PriceTierRow {
   material_variant_id: string
   quantity: number
@@ -55,7 +63,10 @@ export default function NewVersionPage() {
   const [variantTiers, setVariantTiers] = useState<Record<string, PriceTierRow[]>>({})
   const [inkNames, setInkNames] = useState('')
   const [changeNotes, setChangeNotes] = useState('')
-  const [images, setImages] = useState<ImageEntry[]>([])
+  const [availableFinishes, setAvailableFinishes] = useState<Finish[]>([])
+  const [selectedFinishes, setSelectedFinishes] = useState<string[]>([])
+  const [imagesByFinish, setImagesByFinish] = useState<Record<string, ImageEntry[]>>({ '': [] })
+  const [activeImageFinish, setActiveImageFinish] = useState('')
   const [fileError, setFileError] = useState('')
   const [imagesError, setImagesError] = useState('')
   const [materialError, setMaterialError] = useState('')
@@ -85,24 +96,50 @@ export default function NewVersionPage() {
     setSelectedVariantIds([])
     setVariantTiers({})
     setVariantSnapshots({})
+    setAvailableFinishes([])
+    setSelectedFinishes([])
+    setActiveImageFinish('')
+    setImagesByFinish({ '': [] })
     if (!selectedMaterialId) return
 
-    supabase.from('material_variants')
-      .select('id, display_name, variant_type, sort_order')
-      .eq('material_id', selectedMaterialId)
-      .eq('is_active', true)
-      .order('sort_order')
-      .then(({ data }) => {
-        const v = (data ?? []) as Variant[]
-        setVariants(v)
-        if (v[0]?.variant_type === 'thickness') {
-          setSelectedVariantIds(v.map((x) => x.id))
-        } else if (v.length === 1) {
-          setSelectedVariantIds([v[0].id])
-        } else {
-          setSelectedVariantIds([])
-        }
-      })
+    let cancelled = false
+
+    async function load() {
+      const [variantsResult, finishesResult] = await Promise.all([
+        supabase.from('material_variants')
+          .select('id, display_name, variant_type, sort_order')
+          .eq('material_id', selectedMaterialId)
+          .eq('is_active', true)
+          .order('sort_order'),
+        supabase.from('finishes')
+          .select('id, code, display_name, is_base, sort_order')
+          .eq('material_id', selectedMaterialId)
+          .order('sort_order'),
+      ])
+      if (cancelled) return
+
+      const v = (variantsResult.data ?? []) as Variant[]
+      setVariants(v)
+      if (v[0]?.variant_type === 'thickness') {
+        setSelectedVariantIds(v.map((x) => x.id))
+      } else if (v.length === 1) {
+        setSelectedVariantIds([v[0].id])
+      } else {
+        setSelectedVariantIds([])
+      }
+
+      const finishes = (finishesResult.data ?? []) as Finish[]
+      setAvailableFinishes(finishes)
+      if (finishes.length > 0) {
+        const base = finishes.find(f => f.is_base) ?? finishes[0]
+        setSelectedFinishes([base.code])
+        setActiveImageFinish(base.code)
+        setImagesByFinish({ [base.code]: [] })
+      }
+    }
+
+    load()
+    return () => { cancelled = true }
   }, [selectedMaterialId])
 
   useEffect(() => {
@@ -130,13 +167,47 @@ export default function NewVersionPage() {
       })
   }, [selectedVariantIds, currency])
 
+  // activeKey is the map key for the currently visible finish tab
+  const hasFinishes = availableFinishes.length > 0
+  const finishMode  = hasFinishes && selectedFinishes.length > 0
+  const activeKey   = finishMode ? activeImageFinish : ''
+  const currentImages = imagesByFinish[activeKey] ?? []
+
+  function toggleFinish(code: string) {
+    setSelectedFinishes(prev => {
+      if (prev.includes(code)) {
+        // Deselecting — revoke previews and remove from map
+        setImagesByFinish(ibf => {
+          const imgs = ibf[code] ?? []
+          imgs.forEach(img => URL.revokeObjectURL(img.preview))
+          const { [code]: _removed, ...rest } = ibf
+          return rest
+        })
+        const next = prev.filter(c => c !== code)
+        if (activeImageFinish === code) setActiveImageFinish(next[0] ?? '')
+        return next
+      } else {
+        // Selecting — if entering finish mode for first time, migrate '' images
+        setImagesByFinish(ibf => {
+          if (prev.length === 0) {
+            const { '': noFinishImgs = [], ...rest } = ibf
+            return { ...rest, [code]: noFinishImgs }
+          }
+          return { ...ibf, [code]: [] }
+        })
+        if (prev.length === 0) setActiveImageFinish(code)
+        return [...prev, code]
+      }
+    })
+  }
+
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     setFileError('')
     setImagesError('')
     const files = Array.from(e.target.files ?? [])
     if (!files.length) return
 
-    const remaining = MAX_IMAGES - images.length
+    const remaining = MAX_IMAGES - currentImages.length
     const toAdd = files.slice(0, remaining)
 
     const invalidType = toAdd.find((f) => !ACCEPTED_TYPES.includes(f.type))
@@ -144,32 +215,40 @@ export default function NewVersionPage() {
     if (invalidType) { setFileError('Only JPEG and PNG files are accepted.'); return }
     if (tooLarge) { setFileError('Each file must be 10 MB or smaller.'); return }
 
-    setImages((prev) => {
-      const currentCount = prev.length
-      return [
+    setImagesByFinish(prev => {
+      const cur = prev[activeKey] ?? []
+      const currentCount = cur.length
+      return {
         ...prev,
-        ...toAdd.map((file, i) => ({
-          localId: uuidv4(),
-          file,
-          preview: URL.createObjectURL(file),
-          label: defaultLabel(currentCount + i),
-        })),
-      ]
+        [activeKey]: [
+          ...cur,
+          ...toAdd.map((file, i) => ({
+            localId: uuidv4(),
+            file,
+            preview: URL.createObjectURL(file),
+            label: defaultLabel(currentCount + i),
+          })),
+        ],
+      }
     })
 
     if (fileRef.current) fileRef.current.value = ''
   }
 
   function removeImage(localId: string) {
-    setImages((prev) => {
-      const removed = prev.find((e) => e.localId === localId)
+    setImagesByFinish(prev => {
+      const cur = prev[activeKey] ?? []
+      const removed = cur.find((e) => e.localId === localId)
       if (removed) URL.revokeObjectURL(removed.preview)
-      return prev.filter((e) => e.localId !== localId)
+      return { ...prev, [activeKey]: cur.filter((e) => e.localId !== localId) }
     })
   }
 
   function updateLabel(localId: string, label: string) {
-    setImages((prev) => prev.map((e) => (e.localId === localId ? { ...e, label } : e)))
+    setImagesByFinish(prev => ({
+      ...prev,
+      [activeKey]: (prev[activeKey] ?? []).map(e => e.localId === localId ? { ...e, label } : e),
+    }))
   }
 
   function handleDragStart(index: number) { dragIndexRef.current = index }
@@ -178,11 +257,11 @@ export default function NewVersionPage() {
     e.preventDefault()
     const from = dragIndexRef.current
     if (from === null || from === index) return
-    setImages((prev) => {
-      const next = [...prev]
-      const [item] = next.splice(from, 1)
-      next.splice(index, 0, item)
-      return next
+    setImagesByFinish(prev => {
+      const cur = [...(prev[activeKey] ?? [])]
+      const [item] = cur.splice(from, 1)
+      cur.splice(index, 0, item)
+      return { ...prev, [activeKey]: cur }
     })
     dragIndexRef.current = index
   }
@@ -210,12 +289,21 @@ export default function NewVersionPage() {
     setMaterialError('')
     setVariantError('')
 
-    // Validate — collect first failure and scroll to it
-    if (images.length === 0) {
-      setImagesError('Please add at least one proof image.')
-      imageSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      return
+    // Validate images — each selected finish must have at least one image
+    const finishKeys = finishMode ? selectedFinishes : ['']
+    for (const fk of finishKeys) {
+      if ((imagesByFinish[fk] ?? []).length === 0) {
+        const finishName = fk === '' ? '' : availableFinishes.find(f => f.code === fk)?.display_name ?? fk
+        setImagesError(
+          finishName
+            ? `Please add at least one image for ${finishName}.`
+            : 'Please add at least one proof image.'
+        )
+        imageSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        return
+      }
     }
+
     if (!selectedMaterialId) {
       setMaterialError('Please select a material.')
       materialRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -230,8 +318,13 @@ export default function NewVersionPage() {
 
     setSubmitting(true)
 
+    // Flatten images across all finish tabs (in selectedFinishes order)
+    const allEntries = finishKeys.flatMap(fk =>
+      (imagesByFinish[fk] ?? []).map(entry => ({ entry, finish: fk === '' ? null : fk }))
+    )
+
     const uploadResults = await Promise.all(
-      images.map(async (entry) => {
+      allEntries.map(async ({ entry }) => {
         const ext = entry.file.type === 'image/png' ? 'png' : 'jpg'
         const path = `${proofId}/${uuidv4()}.${ext}`
         const { error: uploadError } = await supabase.storage
@@ -278,6 +371,7 @@ export default function NewVersionPage() {
         currency,
         pricing_snapshot: pricingSnapshot,
         change_notes: changeNotes.trim() || null,
+        finishes: selectedFinishes,
       })
       .select('id')
       .single()
@@ -289,19 +383,24 @@ export default function NewVersionPage() {
       return
     }
 
-    const imageInserts = images.map((entry, i) => ({
-      proof_version_id: versionData.id,
-      image_path: uploadedPaths[i],
-      label: entry.label,
-      sort_order: i,
-    }))
+    const imageInserts = allEntries.map(({ entry, finish }, i) => {
+      const finishKey = finish ?? ''
+      const sortOrder = (imagesByFinish[finishKey] ?? []).findIndex(e => e.localId === entry.localId)
+      return {
+        proof_version_id: versionData.id,
+        image_path: uploadedPaths[i],
+        label: entry.label,
+        sort_order: sortOrder,
+        finish,
+      }
+    })
 
-    const { error: imagesError } = await supabase.from('proof_version_images').insert(imageInserts)
+    const { error: imgInsertError } = await supabase.from('proof_version_images').insert(imageInserts)
 
-    if (imagesError) {
+    if (imgInsertError) {
       await supabase.from('proof_versions').delete().eq('id', versionData.id)
       await supabase.storage.from('proof-images').remove(uploadedPaths)
-      setError(`Failed to save images: ${imagesError.message}`)
+      setError(`Failed to save images: ${imgInsertError.message}`)
       setSubmitting(false)
       return
     }
@@ -350,14 +449,42 @@ export default function NewVersionPage() {
           <section ref={imageSectionRef} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
               Proof images
-              {images.length > 0 && (
+              {currentImages.length > 0 && (
                 <span className="ml-2 font-normal normal-case text-gray-400">— drag to reorder</span>
               )}
             </h2>
 
-            {images.length > 0 && (
+            {/* Finish tabs */}
+            {finishMode && selectedFinishes.length > 0 && (
+              <div className="mb-4 flex gap-0 border-b border-gray-100">
+                {selectedFinishes.map(fCode => {
+                  const f = availableFinishes.find(x => x.code === fCode)
+                  const isActive = activeImageFinish === fCode
+                  return (
+                    <button
+                      key={fCode}
+                      type="button"
+                      onClick={() => setActiveImageFinish(fCode)}
+                      className={[
+                        '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
+                        isActive
+                          ? 'border-gray-900 text-gray-900'
+                          : 'border-transparent text-gray-400 hover:text-gray-700',
+                      ].join(' ')}
+                    >
+                      {f?.display_name ?? fCode}
+                      <span className={['ml-1.5 text-xs', isActive ? 'text-gray-400' : 'text-gray-300'].join(' ')}>
+                        ({(imagesByFinish[fCode] ?? []).length})
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {currentImages.length > 0 && (
               <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {images.map((entry, index) => (
+                {currentImages.map((entry, index) => (
                   <div
                     key={entry.localId}
                     draggable
@@ -390,7 +517,7 @@ export default function NewVersionPage() {
               </div>
             )}
 
-            {images.length < MAX_IMAGES && (
+            {currentImages.length < MAX_IMAGES && (
               <>
                 <input
                   ref={fileRef}
@@ -410,9 +537,9 @@ export default function NewVersionPage() {
                       : 'border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600',
                   ].join(' ')}
                 >
-                  {images.length === 0
+                  {currentImages.length === 0
                     ? 'Click to upload JPEG or PNG (max 10 MB each)'
-                    : `Add more images (${images.length} / ${MAX_IMAGES})`}
+                    : `Add more images (${currentImages.length} / ${MAX_IMAGES})`}
                 </button>
               </>
             )}
@@ -421,7 +548,7 @@ export default function NewVersionPage() {
             {imagesError && <p className="mt-2 text-sm text-red-600">{imagesError}</p>}
           </section>
 
-          {/* Material + variant selection */}
+          {/* Material + variant + finishes selection */}
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Specification</h2>
 
@@ -474,6 +601,36 @@ export default function NewVersionPage() {
                   </select>
                 )}
                 {variantError && <p className="mt-1.5 text-sm text-red-600">{variantError}</p>}
+              </div>
+            )}
+
+            {/* Finish selection — only for materials that support finishes (Steel, Gold) */}
+            {hasFinishes && (
+              <div className="mb-4">
+                <label className="mb-2 block text-sm font-medium text-gray-700">Finishes</label>
+                <div className="flex flex-wrap gap-2">
+                  {availableFinishes.map(f => {
+                    const selected = selectedFinishes.includes(f.code)
+                    return (
+                      <button
+                        key={f.code}
+                        type="button"
+                        onClick={() => toggleFinish(f.code)}
+                        className={[
+                          'rounded-full px-4 py-1.5 text-sm font-medium ring-1 transition-colors',
+                          selected
+                            ? 'bg-gray-900 text-white ring-gray-900'
+                            : 'bg-white text-gray-600 ring-gray-200 hover:bg-gray-50',
+                        ].join(' ')}
+                      >
+                        {f.display_name}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className="mt-1.5 text-xs text-gray-400">
+                  Select which finishes to offer. Each finish gets its own proof images.
+                </p>
               </div>
             )}
 
