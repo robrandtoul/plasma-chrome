@@ -9,13 +9,13 @@ interface Material {
   id: string
   code: string
   display_name: string
-  variant_type: string
 }
 
 interface Variant {
   id: string
   code: string
   display_name: string
+  variant_type: string
   sort_order: number
 }
 
@@ -57,7 +57,7 @@ export default function NewVersionPage() {
       .then(({ data }) => { if (data) setProofName(data.customer_name) })
 
     supabase.from('materials')
-      .select('id, code, display_name, variant_type')
+      .select('id, code, display_name')
       .eq('is_active', true)
       .order('sort_order')
       .then(({ data }) => setMaterials((data ?? []) as Material[]))
@@ -72,7 +72,7 @@ export default function NewVersionPage() {
     if (!selectedMaterialId) return
 
     supabase.from('material_variants')
-      .select('id, code, display_name, sort_order')
+      .select('id, code, display_name, variant_type, sort_order')
       .eq('material_id', selectedMaterialId)
       .eq('is_active', true)
       .order('sort_order')
@@ -154,7 +154,7 @@ export default function NewVersionPage() {
     // Resolve display names
     const material = materials.find((m) => m.id === selectedMaterialId)!
     const variant = variants.find((v) => v.id === selectedVariantId)!
-    const variantDisplay = material.variant_type === 'default' ? 'Default' : variant.display_name
+    const variantDisplay = variant.variant_type === 'default' ? 'Default' : variant.display_name
 
     const parsedInkNames = inkNames
       .split(',')
@@ -184,7 +184,7 @@ export default function NewVersionPage() {
     navigate(`/proofs/${proofId}`)
   }
 
-  const selectedMaterial = materials.find((m) => m.id === selectedMaterialId)
+
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -255,10 +255,10 @@ export default function NewVersionPage() {
               </select>
             </div>
 
-            {variants.length > 0 && selectedMaterial?.variant_type !== 'default' && (
+            {variants.length > 0 && variants[0]?.variant_type !== 'default' && (
               <div className="mb-4">
                 <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                  {variantLabel(selectedMaterial?.variant_type)}
+                  {variantLabel(variants[0]?.variant_type)}
                 </label>
                 <select
                   value={selectedVariantId}
