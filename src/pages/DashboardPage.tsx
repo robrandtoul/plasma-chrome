@@ -127,6 +127,16 @@ function buildSections(rawProofs: any[], sort: SortMode, showDormant: boolean): 
   return sections
 }
 
+// ── Icons ─────────────────────────────────────────────────────────────────────
+
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.75">
+      <path strokeLinecap="round" d="M8 3v10M3 8h10" />
+    </svg>
+  )
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -289,6 +299,16 @@ export default function DashboardPage() {
                       <span className="whitespace-nowrap text-xs font-semibold uppercase tracking-widest text-gray-500">
                         {section.companyName ?? 'No company'}
                       </span>
+                      {section.companyKey !== '__individual__' && (
+                        <Link
+                          to={`/proofs/new?companyId=${section.companyKey}`}
+                          title={`New proof for ${section.companyName}`}
+                          aria-label={`New proof for ${section.companyName}`}
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-gray-300 transition-colors hover:bg-gray-100 hover:text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300"
+                        >
+                          <PlusIcon />
+                        </Link>
+                      )}
                       <div className="flex-1 border-t border-gray-200" />
                     </div>
 
@@ -300,10 +320,18 @@ export default function DashboardPage() {
                           className={ci > 0 ? 'border-t border-gray-100' : ''}
                         >
                           {/* Contact label */}
-                          <div className="bg-gray-50/80 px-5 py-2.5">
+                          <div className="group flex items-center justify-between bg-gray-50/80 px-5 py-1">
                             <span className="text-sm font-medium text-gray-600">
                               {cg.contactName}
                             </span>
+                            <Link
+                              to={`/proofs/new?contactId=${cg.contactId}`}
+                              title={`New proof for ${cg.contactName}`}
+                              aria-label={`New proof for ${cg.contactName}`}
+                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-gray-300 opacity-0 transition-opacity hover:bg-gray-100 hover:text-gray-600 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300"
+                            >
+                              <PlusIcon />
+                            </Link>
                           </div>
 
                           {/* Proof rows */}

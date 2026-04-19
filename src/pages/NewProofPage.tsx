@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 
@@ -24,6 +24,9 @@ type SelectedCompany = { id: string; name: string } | { id: null; name: string }
 export default function NewProofPage() {
   const { session } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const prefillCompanyId = searchParams.get('companyId')
+  const prefillContactId = searchParams.get('contactId')
 
   // ── Company state ──────────────────────────────────────────────────────────
   const [allCompanies, setAllCompanies] = useState<Company[]>([])
@@ -42,6 +45,11 @@ export default function NewProofPage() {
   const [newContactName, setNewContactName] = useState('')
   const [newContactEmail, setNewContactEmail] = useState('')
   const contactRef = useRef<HTMLDivElement>(null)
+  const contactInputRef = useRef<HTMLInputElement>(null)
+
+  // Prefill tokens — consumed once so later user edits don't re-apply them.
+  const pendingContactPrefillRef = useRef<string | null>(prefillContactId)
+  const pendingFocusContactRef   = useRef<boolean>(!!prefillCompanyId && !prefillContactId)
 
   // ── Proof fields ───────────────────────────────────────────────────────────
   const [helpscoutUrl, setHelpscoutUrl] = useState('')
@@ -53,6 +61,40 @@ export default function NewProofPage() {
   useEffect(() => {
     supabase.from('companies').select('id, name').order('name')
       .then(({ data }) => setAllCompanies((data ?? []) as Company[]))
+  }, [])
+
+  // Apply URL prefill once on mount. Contact selection is deferred to the
+  // contact-load effect below so it survives that effect's reset pass.
+  useEffect(() => {
+    async function applyPrefill() {
+      if (prefillContactId) {
+        const { data } = await supabase
+          .from('contacts')
+          .select('id, full_name, email, company_id, companies(id, name)')
+          .eq('id', prefillContactId)
+          .single()
+        if (!data) return
+        const company = (data as any).companies as { id: string; name: string } | null
+        if (company) {
+          setSelectedCompany({ id: company.id, name: company.name })
+          setCompanySearch(company.name)
+        } else {
+          setIsIndividual(true)
+        }
+      } else if (prefillCompanyId) {
+        const { data } = await supabase
+          .from('companies')
+          .select('id, name')
+          .eq('id', prefillCompanyId)
+          .single()
+        if (!data) return
+        setSelectedCompany({ id: data.id, name: data.name })
+        setCompanySearch(data.name)
+      }
+    }
+    applyPrefill()
+    // Intentionally run once on mount — consumers read the prefill refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Load contacts whenever the selected company (or individual mode) changes.
@@ -86,9 +128,30 @@ export default function NewProofPage() {
       // new company (id = null) → contacts stays [], falls through to add mode
 
       setAllContacts(contacts)
+
+      // Apply pending contact prefill if it belongs to this company
+      if (pendingContactPrefillRef.current) {
+        const match = contacts.find(c => c.id === pendingContactPrefillRef.current)
+        pendingContactPrefillRef.current = null
+        if (match) {
+          setSelectedContact(match)
+          setContactSearch(match.full_name)
+          return
+        }
+      }
+
       if (contacts.length === 0) {
         // Nothing to choose from — drop straight into the add-new form
         setAddingContact(true)
+        return
+      }
+
+      // If we prefilled the company but not a contact, open the picker so the
+      // designer can immediately choose the person.
+      if (pendingFocusContactRef.current) {
+        pendingFocusContactRef.current = false
+        setContactOpen(true)
+        setTimeout(() => contactInputRef.current?.focus(), 0)
       }
     }
 
@@ -377,6 +440,7 @@ export default function NewProofPage() {
               {!selectedContact && !addingContact && (
                 <div ref={contactRef} className="relative">
                   <input
+                    ref={contactInputRef}
                     type="text"
                     placeholder="Search by name or email…"
                     value={contactSearch}
