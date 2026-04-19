@@ -26,38 +26,104 @@ export function PricingDisplay({
     ? allQuantities
     : allQuantities.filter((q) => featured.has(q))
 
-  const hasHidden = allQuantities.length > visibleQuantities.length
+  const hiddenCount = allQuantities.length - allQuantities.filter((q) => featured.has(q)).length
+  const showToggle = hiddenCount > 0
 
-  return (
-    <>
-      {variants.length === 1
-        ? <SingleVariantTable variant={variants[0]} currency={currency} quantities={visibleQuantities} quantitySurcharges={quantitySurcharges} />
-        : <MultiVariantGrid variants={variants} currency={currency} quantities={visibleQuantities} quantitySurcharges={quantitySurcharges} />
-      }
-      {(hasHidden || showAll) && (
-        <div className="border-t border-gray-50 px-6 py-3">
-          <button
-            onClick={() => setShowAll((v) => !v)}
-            className="text-xs text-gray-400 underline underline-offset-2 hover:text-gray-600"
-          >
-            {showAll ? 'Show fewer quantities' : 'Show all quantities'}
-          </button>
-        </div>
-      )}
-    </>
+  return variants.length === 1 ? (
+    <SingleVariantTable
+      variant={variants[0]}
+      currency={currency}
+      quantities={visibleQuantities}
+      featured={featured}
+      quantitySurcharges={quantitySurcharges}
+      showToggle={showToggle}
+      showAll={showAll}
+      hiddenCount={hiddenCount}
+      onToggle={() => setShowAll((v) => !v)}
+    />
+  ) : (
+    <MultiVariantGrid
+      variants={variants}
+      currency={currency}
+      quantities={visibleQuantities}
+      featured={featured}
+      quantitySurcharges={quantitySurcharges}
+      showToggle={showToggle}
+      showAll={showAll}
+      hiddenCount={hiddenCount}
+      onToggle={() => setShowAll((v) => !v)}
+    />
   )
 }
+
+// ── Toggle row ────────────────────────────────────────────────────────────────
+
+function ToggleRow({
+  colSpan,
+  showAll,
+  hiddenCount,
+  onToggle,
+}: {
+  colSpan: number
+  showAll: boolean
+  hiddenCount: number
+  onToggle: () => void
+}) {
+  return (
+    <tr>
+      <td colSpan={colSpan} className="border-t border-gray-100 p-0">
+        <button
+          type="button"
+          aria-expanded={showAll}
+          onClick={onToggle}
+          className="flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-1.5 px-6 py-3 text-sm font-medium text-gray-500 transition-colors duration-150 hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-300"
+        >
+          <span>{showAll ? 'Show fewer quantities' : `Show ${hiddenCount} more quantities`}</span>
+          <svg
+            viewBox="0 0 16 16"
+            aria-hidden="true"
+            className={[
+              'h-3.5 w-3.5 transition-transform duration-200',
+              showAll ? 'rotate-180' : '',
+            ].join(' ')}
+          >
+            <path
+              d="M6 3l5 5-5 5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      </td>
+    </tr>
+  )
+}
+
+// ── Single variant ────────────────────────────────────────────────────────────
 
 function SingleVariantTable({
   variant,
   currency,
   quantities,
+  featured,
   quantitySurcharges,
+  showToggle,
+  showAll,
+  hiddenCount,
+  onToggle,
 }: {
   variant: PricingSnapshot['variants'][0]
   currency: Currency
   quantities: number[]
+  featured: Set<number>
   quantitySurcharges: Record<number, number>
+  showToggle: boolean
+  showAll: boolean
+  hiddenCount: number
+  onToggle: () => void
 }) {
   const rows = quantities
     .filter((qty) => variant.prices[String(qty)] != null)
@@ -75,30 +141,56 @@ function SingleVariantTable({
         </tr>
       </thead>
       <tbody>
-        {rows.map(({ qty, price }) => (
-          <tr key={qty} className="border-b border-gray-50 last:border-0">
-            <td className="px-6 py-3 font-medium text-gray-900">{qty.toLocaleString()}</td>
-            <td className="px-6 py-3 text-right text-gray-900">{formatPrice(price, currency)}</td>
-            <td className="px-6 py-3 text-right text-gray-500">{formatPrice(price / qty, currency, 2)}</td>
-          </tr>
-        ))}
+        {rows.map(({ qty, price }) => {
+          const isReveal = !featured.has(qty)
+          return (
+            <tr
+              key={qty}
+              className={[
+                'border-b border-gray-50 last:border-0',
+                isReveal ? 'animate-[reveal-row_200ms_ease-out]' : '',
+              ].join(' ')}
+            >
+              <td className="px-6 py-3 font-medium text-gray-900">{qty.toLocaleString()}</td>
+              <td className="px-6 py-3 text-right text-gray-900">{formatPrice(price, currency)}</td>
+              <td className="px-6 py-3 text-right text-gray-500">{formatPrice(price / qty, currency, 2)}</td>
+            </tr>
+          )
+        })}
+        {showToggle && (
+          <ToggleRow colSpan={3} showAll={showAll} hiddenCount={hiddenCount} onToggle={onToggle} />
+        )}
       </tbody>
     </table>
   )
 }
 
+// ── Multi-variant grid ────────────────────────────────────────────────────────
+
 function MultiVariantGrid({
   variants,
   currency,
   quantities,
+  featured,
   quantitySurcharges,
+  showToggle,
+  showAll,
+  hiddenCount,
+  onToggle,
 }: {
   variants: PricingSnapshot['variants']
   currency: Currency
   quantities: number[]
+  featured: Set<number>
   quantitySurcharges: Record<number, number>
+  showToggle: boolean
+  showAll: boolean
+  hiddenCount: number
+  onToggle: () => void
 }) {
   if (quantities.length === 0) return null
+
+  const colSpan = 1 + variants.length
 
   return (
     <div className="overflow-x-auto">
@@ -118,8 +210,15 @@ function MultiVariantGrid({
         <tbody>
           {quantities.map((qty) => {
             const surcharge = quantitySurcharges[qty] ?? 0
+            const isReveal = !featured.has(qty)
             return (
-              <tr key={qty} className="border-b border-gray-50 last:border-0">
+              <tr
+                key={qty}
+                className={[
+                  'border-b border-gray-50 last:border-0',
+                  isReveal ? 'animate-[reveal-row_200ms_ease-out]' : '',
+                ].join(' ')}
+              >
                 <td className="px-6 py-3 font-medium text-gray-900">{qty.toLocaleString()}</td>
                 {variants.map((v) => {
                   const base = v.prices[String(qty)]
@@ -141,6 +240,9 @@ function MultiVariantGrid({
               </tr>
             )
           })}
+          {showToggle && (
+            <ToggleRow colSpan={colSpan} showAll={showAll} hiddenCount={hiddenCount} onToggle={onToggle} />
+          )}
         </tbody>
       </table>
     </div>
