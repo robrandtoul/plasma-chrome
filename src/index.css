@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/*
+  Design tokens will be added here once the Claude Design handoff bundle arrives.
+  Tailwind v4 uses CSS custom properties for theming — tokens go in @theme {}.
+*/
