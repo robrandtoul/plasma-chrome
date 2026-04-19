@@ -17,6 +17,7 @@ export interface ModalVersion {
   change_notes: string | null
   pricing_snapshot: PricingSnapshot
   shipping_note: string
+  custom_quote: boolean
   materials: { featured_quantities: number[] } | null
 }
 
@@ -194,6 +195,11 @@ export default function VersionDetailModal({
               {version.is_current && (
                 <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
                   Current
+                </span>
+              )}
+              {version.custom_quote && (
+                <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
+                  Custom quote
                 </span>
               )}
             </div>

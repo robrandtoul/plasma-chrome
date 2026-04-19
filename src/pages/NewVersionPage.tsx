@@ -63,6 +63,7 @@ export default function NewVersionPage() {
   const [variantTiers, setVariantTiers] = useState<Record<string, PriceTierRow[]>>({})
   const [inkNames, setInkNames] = useState('')
   const [changeNotes, setChangeNotes] = useState('')
+  const [customQuote, setCustomQuote] = useState(false)
   const [availableFinishes, setAvailableFinishes] = useState<Finish[]>([])
   const [selectedFinishes, setSelectedFinishes] = useState<string[]>([])
   const [imagesByFinish, setImagesByFinish] = useState<Record<string, ImageEntry[]>>({ '': [] })
@@ -372,6 +373,7 @@ export default function NewVersionPage() {
         pricing_snapshot: pricingSnapshot,
         change_notes: changeNotes.trim() || null,
         finishes: selectedFinishes,
+        custom_quote: customQuote,
       })
       .select('id')
       .single()
@@ -654,6 +656,26 @@ export default function NewVersionPage() {
               </label>
               <input type="text" placeholder="e.g. Pantone 185 C, Metallic Gold" value={inkNames}
                 onChange={(e) => setInkNames(e.target.value)} className={inputClass} />
+            </div>
+
+            {/* Custom quote — hides pricing on the customer page */}
+            <div className="mt-5 border-t border-gray-100 pt-4">
+              <label className="flex cursor-pointer items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={customQuote}
+                  onChange={(e) => setCustomQuote(e.target.checked)}
+                  className="mt-0.5 rounded border-gray-300"
+                />
+                <div>
+                  <span className="text-sm font-medium text-gray-700">Custom quote (hide pricing on customer page)</span>
+                  {customQuote && (
+                    <p className="mt-1 text-xs text-gray-400">
+                      Pricing will be hidden on the customer's proof page. The customer will see a message saying you'll quote separately.
+                    </p>
+                  )}
+                </div>
+              </label>
             </div>
           </section>
 

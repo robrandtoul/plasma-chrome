@@ -44,6 +44,7 @@ export default function EditVersionPage() {
   const [inkNames, setInkNames] = useState('')
   const [currency, setCurrency] = useState<Currency>('GBP')
   const [changeNotes, setChangeNotes] = useState('')
+  const [customQuote, setCustomQuote] = useState(false)
   const [pricingSnapshot, setPricingSnapshot] = useState<PricingSnapshot | null>(null)
   const [shippingNote, setShippingNote] = useState('')
   const [featuredQuantities, setFeaturedQuantities] = useState<number[]>([100, 250, 500, 750, 1000])
@@ -73,7 +74,7 @@ export default function EditVersionPage() {
       supabase.from('proofs').select('contacts(full_name)').eq('id', pid).single(),
       supabase
         .from('proof_versions')
-        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, finishes, materials(featured_quantities)')
+        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, finishes, custom_quote, materials(featured_quantities)')
         .eq('id', vid)
         .single(),
       supabase
@@ -97,6 +98,7 @@ export default function EditVersionPage() {
     setInkNames((v.ink_names as string[]).join(', '))
     setCurrency(v.currency as Currency)
     setChangeNotes(v.change_notes ?? '')
+    setCustomQuote(!!v.custom_quote)
     setPricingSnapshot(v.pricing_snapshot as PricingSnapshot)
     setShippingNote(v.shipping_note)
     setFeaturedQuantities(v.materials?.featured_quantities ?? [100, 250, 500, 750, 1000])
@@ -352,6 +354,7 @@ export default function EditVersionPage() {
         ink_names: inkNames.split(',').map((s) => s.trim()).filter(Boolean),
         change_notes: changeNotes.trim() || null,
         finishes: selectedFinishes,
+        custom_quote: customQuote,
       })
       .eq('id', versionId!)
 
@@ -635,6 +638,26 @@ export default function EditVersionPage() {
               <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500">
                 {currency} <span className="text-gray-400">(cannot be changed after creation)</span>
               </p>
+            </div>
+
+            {/* Custom quote — hides pricing on the customer page */}
+            <div className="mt-5 border-t border-gray-100 pt-4">
+              <label className="flex cursor-pointer items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={customQuote}
+                  onChange={(e) => setCustomQuote(e.target.checked)}
+                  className="mt-0.5 rounded border-gray-300"
+                />
+                <div>
+                  <span className="text-sm font-medium text-gray-700">Custom quote (hide pricing on customer page)</span>
+                  {customQuote && (
+                    <p className="mt-1 text-xs text-gray-400">
+                      Pricing will be hidden on the customer's proof page. The customer will see a message saying you'll quote separately.
+                    </p>
+                  )}
+                </div>
+              </label>
             </div>
           </section>
 

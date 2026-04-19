@@ -49,7 +49,7 @@ export default function ProofDetailPage() {
         .single(),
       supabase
         .from('proof_versions')
-        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, change_notes, pricing_snapshot, shipping_note, materials(featured_quantities)')
+        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, change_notes, pricing_snapshot, shipping_note, custom_quote, materials(featured_quantities)')
         .eq('proof_id', proofId)
         .order('version_number', { ascending: false }),
     ])
@@ -152,6 +152,9 @@ export default function ProofDetailPage() {
   const isAbandoned = proof.status === 'abandoned'
   const isLocked    = isApproved || isAbandoned
 
+  const currentVersion = versions.find((v) => v.is_current)
+  const currentIsCustomQuote = !!currentVersion?.custom_quote
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
@@ -171,25 +174,32 @@ export default function ProofDetailPage() {
             <p className="mt-0.5 text-sm text-gray-400">{proof.contacts.email}</p>
             {/* Status badge */}
             <div className="mt-3">
-              {isApproved ? (
-                <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                  Approved{proof.approved_at ? ` on ${formatLongDate(proof.approved_at)}` : ''}
-                </span>
-              ) : isAbandoned ? (
-                <span className="inline-flex items-center rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">
-                  Abandoned{proof.abandoned_at ? ` on ${formatLongDate(proof.abandoned_at)}` : ''}
-                </span>
-              ) : isDormant ? (
-                <>
+              <div className="flex flex-wrap items-center gap-2">
+                {isApproved ? (
+                  <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                    Approved{proof.approved_at ? ` on ${formatLongDate(proof.approved_at)}` : ''}
+                  </span>
+                ) : isAbandoned ? (
+                  <span className="inline-flex items-center rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">
+                    Abandoned{proof.abandoned_at ? ` on ${formatLongDate(proof.abandoned_at)}` : ''}
+                  </span>
+                ) : isDormant ? (
                   <span className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-500">
                     Dormant
                   </span>
-                  <p className="mt-1.5 text-xs text-gray-400">No activity for 30+ days. Add a version to reactivate.</p>
-                </>
-              ) : (
-                <span className="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
-                  In progress
-                </span>
+                ) : (
+                  <span className="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
+                    In progress
+                  </span>
+                )}
+                {currentIsCustomQuote && (
+                  <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                    Custom quote
+                  </span>
+                )}
+              </div>
+              {isDormant && (
+                <p className="mt-1.5 text-xs text-gray-400">No activity for 30+ days. Add a version to reactivate.</p>
               )}
             </div>
           </div>
@@ -322,11 +332,18 @@ export default function ProofDetailPage() {
                       {new Date(v.created_at).toLocaleDateString('en-GB')}
                     </td>
                     <td className="px-6 py-4">
-                      {v.is_current && (
-                        <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
-                          Current
-                        </span>
-                      )}
+                      <div className="flex flex-wrap gap-1">
+                        {v.is_current && (
+                          <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+                            Current
+                          </span>
+                        )}
+                        {v.custom_quote && (
+                          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
+                            Custom quote
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-4">
                       <svg className="h-4 w-4 text-gray-300" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">

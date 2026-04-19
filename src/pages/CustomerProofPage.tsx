@@ -247,7 +247,7 @@ export default function CustomerProofPage() {
                       ].join(' ')}
                     >
                       {f?.display_name ?? fCode}
-                      {fromPrice != null && (
+                      {fromPrice != null && !activeVersion.custom_quote && (
                         <span className={['ml-1.5 font-normal', isActive ? 'text-gray-300' : 'text-gray-400'].join(' ')}>
                           (+from {formatPrice(fromPrice, activeVersion.currency, 0)})
                         </span>
@@ -313,27 +313,37 @@ export default function CustomerProofPage() {
               </div>
             )}
 
-            {/* Pricing table */}
+            {/* Pricing table — replaced with a quote message when the version is custom-quote */}
             <div className="mb-8 rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
               <div className="border-b border-gray-100 px-6 py-4">
                 <h2 className="text-sm font-semibold uppercase tracking-widest text-gray-400">
                   Pricing
                 </h2>
-                {activeFinish && versionFinishes.length > 0 && (
+                {!activeVersion.custom_quote && activeFinish && versionFinishes.length > 0 && (
                   <p className="mt-1 text-xs text-gray-400">
                     Prices shown for {activeFinish.display_name} finish
                   </p>
                 )}
               </div>
-              <PricingDisplay
-                snapshot={activeVersion.pricing_snapshot}
-                currency={activeVersion.currency}
-                featuredQuantities={activeVersion.featured_quantities}
-                quantitySurcharges={quantitySurcharges}
-              />
-              <div className="border-t border-gray-100 px-6 py-3">
-                <p className="text-xs text-gray-400">{activeVersion.shipping_note}</p>
-              </div>
+              {activeVersion.custom_quote ? (
+                <div className="px-6 py-8 text-center">
+                  <p className="mx-auto max-w-md text-sm text-gray-600">
+                    This proof requires a custom quote. We'll be in touch separately with pricing.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <PricingDisplay
+                    snapshot={activeVersion.pricing_snapshot}
+                    currency={activeVersion.currency}
+                    featuredQuantities={activeVersion.featured_quantities}
+                    quantitySurcharges={quantitySurcharges}
+                  />
+                  <div className="border-t border-gray-100 px-6 py-3">
+                    <p className="text-xs text-gray-400">{activeVersion.shipping_note}</p>
+                  </div>
+                </>
+              )}
             </div>
           </>
         )}

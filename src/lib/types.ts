@@ -40,6 +40,7 @@ export interface PublicProofVersion {
   finishes: string[]
   featured_quantities: number[]
   material_disclaimer: string | null
+  custom_quote: boolean
 }
 
 export interface PublicFinish {
