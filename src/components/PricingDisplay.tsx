@@ -6,10 +6,12 @@ export function PricingDisplay({
   snapshot,
   currency,
   featuredQuantities,
+  quantitySurcharges = {},
 }: {
   snapshot: PricingSnapshot
   currency: Currency
   featuredQuantities: number[]
+  quantitySurcharges?: Record<number, number>
 }) {
   const [showAll, setShowAll] = useState(false)
   const { variants } = snapshot
@@ -29,8 +31,8 @@ export function PricingDisplay({
   return (
     <>
       {variants.length === 1
-        ? <SingleVariantTable variant={variants[0]} currency={currency} quantities={visibleQuantities} />
-        : <MultiVariantGrid variants={variants} currency={currency} quantities={visibleQuantities} />
+        ? <SingleVariantTable variant={variants[0]} currency={currency} quantities={visibleQuantities} quantitySurcharges={quantitySurcharges} />
+        : <MultiVariantGrid variants={variants} currency={currency} quantities={visibleQuantities} quantitySurcharges={quantitySurcharges} />
       }
       {(hasHidden || showAll) && (
         <div className="border-t border-gray-50 px-6 py-3">
@@ -50,14 +52,16 @@ function SingleVariantTable({
   variant,
   currency,
   quantities,
+  quantitySurcharges,
 }: {
   variant: PricingSnapshot['variants'][0]
   currency: Currency
   quantities: number[]
+  quantitySurcharges: Record<number, number>
 }) {
   const rows = quantities
     .filter((qty) => variant.prices[String(qty)] != null)
-    .map((qty) => ({ qty, price: variant.prices[String(qty)] }))
+    .map((qty) => ({ qty, price: variant.prices[String(qty)] + (quantitySurcharges[qty] ?? 0) }))
 
   if (rows.length === 0) return null
 
@@ -87,10 +91,12 @@ function MultiVariantGrid({
   variants,
   currency,
   quantities,
+  quantitySurcharges,
 }: {
   variants: PricingSnapshot['variants']
   currency: Currency
   quantities: number[]
+  quantitySurcharges: Record<number, number>
 }) {
   if (quantities.length === 0) return null
 
@@ -110,26 +116,31 @@ function MultiVariantGrid({
           </tr>
         </thead>
         <tbody>
-          {quantities.map((qty) => (
-            <tr key={qty} className="border-b border-gray-50 last:border-0">
-              <td className="px-6 py-3 font-medium text-gray-900">{qty.toLocaleString()}</td>
-              {variants.map((v) => {
-                const price = v.prices[String(qty)]
-                return (
-                  <td key={v.variant_id} className="px-4 py-3 text-right">
-                    {price != null ? (
-                      <>
-                        <div className="font-medium text-gray-900">{formatPrice(price, currency)}</div>
-                        <div className="text-xs text-gray-400">{formatPrice(price / qty, currency, 2)} each</div>
-                      </>
-                    ) : (
-                      <span className="text-gray-300">—</span>
-                    )}
-                  </td>
-                )
-              })}
-            </tr>
-          ))}
+          {quantities.map((qty) => {
+            const surcharge = quantitySurcharges[qty] ?? 0
+            return (
+              <tr key={qty} className="border-b border-gray-50 last:border-0">
+                <td className="px-6 py-3 font-medium text-gray-900">{qty.toLocaleString()}</td>
+                {variants.map((v) => {
+                  const base = v.prices[String(qty)]
+                  if (base == null) {
+                    return (
+                      <td key={v.variant_id} className="px-4 py-3 text-right">
+                        <span className="text-gray-300">—</span>
+                      </td>
+                    )
+                  }
+                  const price = base + surcharge
+                  return (
+                    <td key={v.variant_id} className="px-4 py-3 text-right">
+                      <div className="font-medium text-gray-900">{formatPrice(price, currency)}</div>
+                      <div className="text-xs text-gray-400">{formatPrice(price / qty, currency, 2)} each</div>
+                    </td>
+                  )
+                })}
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>

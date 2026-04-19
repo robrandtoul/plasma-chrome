@@ -145,16 +145,27 @@ export default function CustomerProofPage() {
     ? allVersionImages.filter(img => img.finish === activeFinishCode || img.finish == null)
     : allVersionImages
 
-  // Surcharges for the active non-base finish at the featured quantities
-  const finishSurchargeRows = (activeFinish && !activeFinish.is_base && activeVersion)
-    ? finishSurcharges
-        .filter(s =>
-          s.finish_id === activeFinish.id &&
-          s.currency === activeVersion.currency &&
-          activeVersion.featured_quantities.includes(s.quantity)
-        )
-        .sort((a, b) => a.quantity - b.quantity)
-    : []
+  // Per-quantity surcharge map for the active finish, used to bake surcharges
+  // into every pricing cell. Empty for base finishes (no surcharge rows exist).
+  const quantitySurcharges: Record<number, number> = {}
+  if (activeFinish && activeVersion) {
+    finishSurcharges
+      .filter(s => s.finish_id === activeFinish.id && s.currency === activeVersion.currency)
+      .forEach(s => { quantitySurcharges[s.quantity] = s.surcharge })
+  }
+
+  // "From" price per finish — the smallest-quantity surcharge in the active currency.
+  // Null for finishes with no surcharges (base / Natural).
+  function finishFromPrice(finishCode: string): number | null {
+    if (!activeVersion) return null
+    const f = finishes.find(x => x.material_id === activeVersion.material_id && x.code === finishCode)
+    if (!f) return null
+    const sorted = finishSurcharges
+      .filter(s => s.finish_id === f.id && s.currency === activeVersion.currency)
+      .sort((a, b) => a.quantity - b.quantity)
+    const first = sorted[0]
+    return first && first.surcharge > 0 ? first.surcharge : null
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -218,10 +229,11 @@ export default function CustomerProofPage() {
           <>
             {/* Finish switcher — shown when this version offers 2+ finishes */}
             {showFinishSwitcher && (
-              <div className="mb-6 flex gap-2">
+              <div className="mb-6 flex flex-wrap gap-2">
                 {versionFinishes.map(fCode => {
                   const f = finishes.find(x => x.material_id === activeVersion.material_id && x.code === fCode)
                   const isActive = activeFinishCode === fCode
+                  const fromPrice = finishFromPrice(fCode)
                   return (
                     <button
                       key={fCode}
@@ -234,6 +246,11 @@ export default function CustomerProofPage() {
                       ].join(' ')}
                     >
                       {f?.display_name ?? fCode}
+                      {fromPrice != null && (
+                        <span className={['ml-1.5 font-normal', isActive ? 'text-gray-300' : 'text-gray-400'].join(' ')}>
+                          (+from {formatPrice(fromPrice, activeVersion.currency, 0)})
+                        </span>
+                      )}
                     </button>
                   )
                 })}
@@ -301,30 +318,18 @@ export default function CustomerProofPage() {
                 <h2 className="text-sm font-semibold uppercase tracking-widest text-gray-400">
                   Pricing
                 </h2>
+                {activeFinish && versionFinishes.length > 0 && (
+                  <p className="mt-1 text-xs text-gray-400">
+                    Prices shown for {activeFinish.display_name} finish
+                  </p>
+                )}
               </div>
               <PricingDisplay
                 snapshot={activeVersion.pricing_snapshot}
                 currency={activeVersion.currency}
                 featuredQuantities={activeVersion.featured_quantities}
+                quantitySurcharges={quantitySurcharges}
               />
-              {/* Finish upgrade surcharge — shown when a non-base finish is selected */}
-              {finishSurchargeRows.length > 0 && activeFinish && (
-                <div className="border-t border-gray-100 px-6 py-4">
-                  <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">
-                    {activeFinish.display_name} finish upgrade
-                  </p>
-                  <div className="flex flex-wrap gap-x-6 gap-y-1.5">
-                    {finishSurchargeRows.map(s => (
-                      <span key={s.quantity} className="text-sm text-gray-700">
-                        {s.quantity.toLocaleString()}
-                        <span className="ml-1 text-gray-400">
-                          +{formatPrice(s.surcharge, activeVersion.currency, 0)}
-                        </span>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
               <div className="border-t border-gray-100 px-6 py-3">
                 <p className="text-xs text-gray-400">{activeVersion.shipping_note}</p>
               </div>
