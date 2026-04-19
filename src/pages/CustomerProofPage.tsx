@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import type { PublicProof, PublicProofVersion, AppSettings } from '../lib/types'
+import type { PublicProof, PublicProofVersion, SiteSettings } from '../lib/types'
 import { PricingDisplay } from '../components/PricingDisplay'
 import { ImageGrid, type GridImage } from '../components/ImageGrid'
 
@@ -14,7 +14,7 @@ export default function CustomerProofPage() {
   const [versions, setVersions] = useState<PublicProofVersion[]>([])
   const [activeVersion, setActiveVersion] = useState<PublicProofVersion | null>(null)
   const [versionImages, setVersionImages] = useState<Record<string, GridImage[]>>({})
-  const [disclaimer, setDisclaimer] = useState<string>('')
+  const [globalDisclaimer, setGlobalDisclaimer] = useState<string | null>(null)
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -50,7 +50,7 @@ export default function CustomerProofPage() {
     const [proofResult, versionsResult, settingsResult] = await Promise.all([
       supabase.from('public_proofs').select('*').eq('id', proofId).maybeSingle(),
       supabase.from('public_proof_versions').select('*').eq('proof_id', proofId).order('version_number', { ascending: true }),
-      supabase.from('app_settings').select('disclaimer_html').eq('id', 1).maybeSingle(),
+      supabase.from('public_site_settings').select('global_disclaimer').maybeSingle(),
     ])
 
     if (proofResult.error || !proofResult.data) {
@@ -60,7 +60,7 @@ export default function CustomerProofPage() {
     }
 
     setProof(proofResult.data as PublicProof)
-    if (settingsResult.data) setDisclaimer((settingsResult.data as AppSettings).disclaimer_html)
+    if (settingsResult.data) setGlobalDisclaimer((settingsResult.data as SiteSettings).global_disclaimer)
 
     const rawVersions = (versionsResult.data ?? []) as PublicProofVersion[]
     setVersions(rawVersions)
@@ -196,12 +196,26 @@ export default function CustomerProofPage() {
           </>
         )}
 
-        {/* Disclaimer */}
-        {disclaimer && (
-          <div
-            className="prose prose-sm max-w-none text-gray-400"
-            dangerouslySetInnerHTML={{ __html: disclaimer }}
-          />
+        {/* Disclaimers — rendered only when at least one block has content */}
+        {(globalDisclaimer || activeVersion?.material_disclaimer) && (
+          <div className="space-y-4">
+            {globalDisclaimer && (
+              <div className="rounded-2xl bg-gray-50 p-6 ring-1 ring-gray-200">
+                <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
+                  Important information
+                </h2>
+                <p className="whitespace-pre-line text-sm text-gray-500">{globalDisclaimer}</p>
+              </div>
+            )}
+            {activeVersion?.material_disclaimer && (
+              <div className="rounded-2xl bg-gray-50 p-6 ring-1 ring-gray-200">
+                <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
+                  About {activeVersion.material_display}
+                </h2>
+                <p className="whitespace-pre-line text-sm text-gray-500">{activeVersion.material_disclaimer}</p>
+              </div>
+            )}
+          </div>
         )}
       </div>
 

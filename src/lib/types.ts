@@ -33,6 +33,11 @@ export interface PublicProofVersion {
   is_current: boolean
   created_at: string
   featured_quantities: number[]
+  material_disclaimer: string | null
+}
+
+export interface SiteSettings {
+  global_disclaimer: string | null
 }
 
 export interface ProofVersionImage {
