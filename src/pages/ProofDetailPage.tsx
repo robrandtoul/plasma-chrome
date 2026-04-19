@@ -15,7 +15,6 @@ interface Version {
   id: string
   version_number: number
   material_display: string
-  variant_display: string
   currency: string
   is_current: boolean
   created_at: string
@@ -39,7 +38,7 @@ export default function ProofDetailPage() {
   async function loadProof(proofId: string) {
     const [proofResult, versionsResult] = await Promise.all([
       supabase.from('proofs').select('*').eq('id', proofId).single(),
-      supabase.from('proof_versions').select('id, version_number, material_display, variant_display, currency, is_current, created_at, change_notes')
+      supabase.from('proof_versions').select('id, version_number, material_display, currency, is_current, created_at, change_notes')
         .eq('proof_id', proofId)
         .order('version_number', { ascending: false }),
     ])
@@ -186,7 +185,6 @@ export default function ProofDetailPage() {
                     <td className="px-6 py-4 font-medium text-gray-900">v{v.version_number}</td>
                     <td className="px-6 py-4 text-gray-700">
                       {v.material_display}
-                      <span className="ml-1 text-gray-400">· {v.variant_display}</span>
                     </td>
                     <td className="px-6 py-4 text-gray-500">{v.currency}</td>
                     <td className="px-6 py-4 text-gray-500 max-w-xs truncate">{v.change_notes ?? '—'}</td>
