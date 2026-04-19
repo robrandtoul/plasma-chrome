@@ -167,6 +167,38 @@ export default function CustomerProofPage() {
               </dl>
             </div>
 
+            {/* Change notes */}
+            {activeVersion.change_notes && (
+              <div className="mb-8 rounded-2xl bg-amber-50 p-6 ring-1 ring-amber-100">
+                <h2 className="mb-2 text-sm font-semibold uppercase tracking-widest text-amber-600">
+                  Notes on this version
+                </h2>
+                <p className="text-sm text-amber-900">{activeVersion.change_notes}</p>
+              </div>
+            )}
+
+            {/* Disclaimers — rendered only when at least one block has content */}
+            {(globalDisclaimer || activeVersion.material_disclaimer) && (
+              <div className="mb-8 space-y-4">
+                {globalDisclaimer && (
+                  <div className="rounded-2xl bg-gray-50 p-6 ring-1 ring-gray-200">
+                    <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
+                      Important information
+                    </h2>
+                    <p className="whitespace-pre-line text-sm text-gray-500">{globalDisclaimer}</p>
+                  </div>
+                )}
+                {activeVersion.material_disclaimer && (
+                  <div className="rounded-2xl bg-gray-50 p-6 ring-1 ring-gray-200">
+                    <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
+                      About {activeVersion.material_display}
+                    </h2>
+                    <p className="whitespace-pre-line text-sm text-gray-500">{activeVersion.material_disclaimer}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Pricing table */}
             <div className="mb-8 rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
               <div className="border-b border-gray-100 px-6 py-4">
@@ -183,39 +215,7 @@ export default function CustomerProofPage() {
                 <p className="text-xs text-gray-400">{activeVersion.shipping_note}</p>
               </div>
             </div>
-
-            {/* Change notes */}
-            {activeVersion.change_notes && (
-              <div className="mb-8 rounded-2xl bg-amber-50 p-6 ring-1 ring-amber-100">
-                <h2 className="mb-2 text-sm font-semibold uppercase tracking-widest text-amber-600">
-                  Notes on this version
-                </h2>
-                <p className="text-sm text-amber-900">{activeVersion.change_notes}</p>
-              </div>
-            )}
           </>
-        )}
-
-        {/* Disclaimers — rendered only when at least one block has content */}
-        {(globalDisclaimer || activeVersion?.material_disclaimer) && (
-          <div className="space-y-4">
-            {globalDisclaimer && (
-              <div className="rounded-2xl bg-gray-50 p-6 ring-1 ring-gray-200">
-                <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
-                  Important information
-                </h2>
-                <p className="whitespace-pre-line text-sm text-gray-500">{globalDisclaimer}</p>
-              </div>
-            )}
-            {activeVersion?.material_disclaimer && (
-              <div className="rounded-2xl bg-gray-50 p-6 ring-1 ring-gray-200">
-                <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
-                  About {activeVersion.material_display}
-                </h2>
-                <p className="whitespace-pre-line text-sm text-gray-500">{activeVersion.material_disclaimer}</p>
-              </div>
-            )}
-          </div>
         )}
       </div>
 
