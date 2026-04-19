@@ -4,11 +4,14 @@ import { supabase } from '../lib/supabase'
 
 interface Proof {
   id: string
-  customer_name: string
-  company: string | null
   helpscout_thread_url: string | null
   internal_notes: string | null
   created_at: string
+  contacts: {
+    full_name: string
+    email: string
+    companies: { name: string } | null
+  }
 }
 
 interface Version {
@@ -37,7 +40,7 @@ export default function ProofDetailPage() {
 
   async function loadProof(proofId: string) {
     const [proofResult, versionsResult] = await Promise.all([
-      supabase.from('proofs').select('*').eq('id', proofId).single(),
+      supabase.from('proofs').select('id, helpscout_thread_url, internal_notes, created_at, contacts(full_name, email, companies(name))').eq('id', proofId).single(),
       supabase.from('proof_versions').select('id, version_number, material_display, currency, is_current, created_at, change_notes')
         .eq('proof_id', proofId)
         .order('version_number', { ascending: false }),
@@ -48,7 +51,7 @@ export default function ProofDetailPage() {
       return
     }
 
-    setProof(proofResult.data as Proof)
+    setProof(proofResult.data as unknown as Proof)
     setVersions((versionsResult.data ?? []) as Version[])
     setLoading(false)
   }
@@ -100,8 +103,11 @@ export default function ProofDetailPage() {
         {/* Proof header */}
         <div className="mb-8 flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">{proof.customer_name}</h1>
-            {proof.company && <p className="mt-1 text-gray-500">{proof.company}</p>}
+            <h1 className="text-2xl font-bold text-gray-900">{proof.contacts.full_name}</h1>
+            {proof.contacts.companies?.name && (
+              <p className="mt-1 text-gray-500">{proof.contacts.companies.name}</p>
+            )}
+            <p className="mt-0.5 text-sm text-gray-400">{proof.contacts.email}</p>
           </div>
           <div className="flex gap-2">
             <button

@@ -129,13 +129,13 @@ export default function DashboardPage() {
   async function loadProofs() {
     const { data } = await supabase
       .from('proofs')
-      .select('id, customer_name, company, created_at, proof_versions(version_number, is_current)')
+      .select('id, created_at, contacts(full_name, companies(name)), proof_versions(version_number, is_current)')
       .order('created_at', { ascending: false })
 
     const rows = (data ?? []).map((p: any) => ({
       id: p.id,
-      customer_name: p.customer_name,
-      company: p.company,
+      customer_name: p.contacts?.full_name ?? '',
+      company: p.contacts?.companies?.name ?? null,
       created_at: p.created_at,
       current_version: p.proof_versions?.find((v: any) => v.is_current)?.version_number ?? null,
     }))
