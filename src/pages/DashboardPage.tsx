@@ -1,14 +1,8 @@
-import { Fragment, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 
-interface ProofRow {
-  id: string
-  customer_name: string
-  company: string | null
-  created_at: string
-  current_version: number | null
-}
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 type SortMode = 'date' | 'name'
 
@@ -23,124 +17,117 @@ function readSort(): SortMode {
   }
 }
 
-// ── Date grouping ─────────────────────────────────────────────────────────────
-
-const DATE_GROUP_ORDER = ['Today', 'Yesterday', 'This week', 'Last week', 'Earlier this month']
-
-function getDateGroup(dateStr: string): string {
-  const date = new Date(dateStr)
-  const now = new Date()
-
-  const today = new Date(now)
-  today.setHours(0, 0, 0, 0)
-
-  const yesterday = new Date(today)
-  yesterday.setDate(today.getDate() - 1)
-
-  // Monday of the current week (local timezone)
-  const dow = today.getDay() // 0 = Sun, 1 = Mon, ...
-  const daysToMonday = dow === 0 ? 6 : dow - 1
-  const thisWeekStart = new Date(today)
-  thisWeekStart.setDate(today.getDate() - daysToMonday)
-
-  const lastWeekStart = new Date(thisWeekStart)
-  lastWeekStart.setDate(thisWeekStart.getDate() - 7)
-
-  const thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1)
-
-  if (date >= today) return 'Today'
-  if (date >= yesterday) return 'Yesterday'
-  if (date >= thisWeekStart) return 'This week'
-  if (date >= lastWeekStart) return 'Last week'
-  if (date >= thisMonthStart) return 'Earlier this month'
-  // Older: "March 2026", "February 2026", …
-  return date.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+interface ProofItem {
+  id: string
+  created_at: string
+  current_version: number | null
+  material_display: string | null
 }
 
-// ── Name grouping ─────────────────────────────────────────────────────────────
-
-function getNameGroup(name: string): string {
-  const first = (name.trim()[0] ?? '').toUpperCase()
-  return /[A-Z]/.test(first) ? first : '#'
+interface ContactGroup {
+  contactId: string
+  contactName: string
+  proofs: ProofItem[]
 }
 
-// ── Group builder ─────────────────────────────────────────────────────────────
-
-interface Group {
-  label: string
-  proofs: ProofRow[]
+interface CompanySection {
+  companyKey: string       // company UUID or '__individual__' for no-company contacts
+  companyName: string | null
+  latestProofDate: string  // ISO string — used for date-sort ordering
+  contacts: ContactGroup[]
 }
 
-function buildGroups(proofs: ProofRow[], sort: SortMode): Group[] {
-  if (sort === 'date') {
-    const sorted = [...proofs].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    )
-    const map = new Map<string, ProofRow[]>()
-    for (const p of sorted) {
-      const label = getDateGroup(p.created_at)
-      if (!map.has(label)) map.set(label, [])
-      map.get(label)!.push(p)
+// ── Section builder ───────────────────────────────────────────────────────────
+
+function buildSections(rawProofs: any[], sort: SortMode): CompanySection[] {
+  const map = new Map<string, CompanySection>()
+
+  for (const p of rawProofs) {
+    const contact   = p.contacts   as any
+    const company   = contact?.companies as any
+    const companyKey  = company?.id   ?? '__individual__'
+    const companyName: string | null = company?.name ?? null
+    const contactId   = contact?.id   ?? ''
+    const contactName = contact?.full_name ?? ''
+
+    if (!map.has(companyKey)) {
+      map.set(companyKey, {
+        companyKey,
+        companyName,
+        latestProofDate: p.created_at,
+        contacts: [],
+      })
     }
-    const result: Group[] = []
-    for (const label of DATE_GROUP_ORDER) {
-      if (map.has(label)) {
-        result.push({ label, proofs: map.get(label)! })
-        map.delete(label)
-      }
+
+    const section = map.get(companyKey)!
+    if (p.created_at > section.latestProofDate) {
+      section.latestProofDate = p.created_at
     }
-    // Remaining entries are month labels, in newest-first insertion order
-    for (const [label, ps] of map) result.push({ label, proofs: ps })
-    return result
-  } else {
-    const sorted = [...proofs].sort((a, b) =>
-      a.customer_name.localeCompare(b.customer_name, 'en', { sensitivity: 'base' })
-    )
-    const map = new Map<string, ProofRow[]>()
-    for (const p of sorted) {
-      const label = getNameGroup(p.customer_name)
-      if (!map.has(label)) map.set(label, [])
-      map.get(label)!.push(p)
+
+    let cg = section.contacts.find((c) => c.contactId === contactId)
+    if (!cg) {
+      cg = { contactId, contactName, proofs: [] }
+      section.contacts.push(cg)
     }
-    const result: Group[] = []
-    // Letter groups first (map insertion order is alphabetical since input is sorted)
-    for (const [label, ps] of map) {
-      if (label !== '#') result.push({ label, proofs: ps })
-    }
-    // Numeric / symbol names at the end
-    if (map.has('#')) result.push({ label: '#', proofs: map.get('#')! })
-    return result
+
+    const versions = (p.proof_versions ?? []) as any[]
+    const current  = versions.find((v) => v.is_current)
+    cg.proofs.push({
+      id: p.id,
+      created_at: p.created_at,
+      current_version:  current?.version_number   ?? null,
+      material_display: current?.material_display ?? null,
+    })
   }
+
+  // Sort internals: proofs newest-first, contacts alphabetically
+  for (const section of map.values()) {
+    for (const cg of section.contacts) {
+      cg.proofs.sort((a, b) => b.created_at.localeCompare(a.created_at))
+    }
+    section.contacts.sort((a, b) =>
+      a.contactName.localeCompare(b.contactName, 'en', { sensitivity: 'base' })
+    )
+  }
+
+  // Separate "no company" — always pinned to the bottom
+  const individual = map.get('__individual__') ?? null
+  const sections   = [...map.values()].filter((s) => s.companyKey !== '__individual__')
+
+  if (sort === 'date') {
+    sections.sort((a, b) => b.latestProofDate.localeCompare(a.latestProofDate))
+  } else {
+    sections.sort((a, b) =>
+      (a.companyName ?? '').localeCompare(b.companyName ?? '', 'en', { sensitivity: 'base' })
+    )
+  }
+
+  if (individual) sections.push(individual)
+  return sections
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const [proofs, setProofs] = useState<ProofRow[]>([])
-  const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [sort, setSort] = useState<SortMode>(readSort)
+  const [rawProofs, setRawProofs] = useState<any[]>([])
+  const [loading, setLoading]     = useState(true)
+  const [search, setSearch]       = useState('')
+  const [sort, setSort]           = useState<SortMode>(readSort)
 
-  useEffect(() => {
-    loadProofs()
-  }, [])
+  useEffect(() => { loadProofs() }, [])
 
   async function loadProofs() {
     const { data } = await supabase
       .from('proofs')
-      .select('id, created_at, contacts(full_name, companies(name)), proof_versions(version_number, is_current)')
+      .select(
+        'id, created_at,' +
+        'contacts(id, full_name, companies(id, name)),' +
+        'proof_versions(version_number, is_current, material_display)'
+      )
       .order('created_at', { ascending: false })
 
-    const rows = (data ?? []).map((p: any) => ({
-      id: p.id,
-      customer_name: p.contacts?.full_name ?? '',
-      company: p.contacts?.companies?.name ?? null,
-      created_at: p.created_at,
-      current_version: p.proof_versions?.find((v: any) => v.is_current)?.version_number ?? null,
-    }))
-
-    setProofs(rows)
+    setRawProofs(data ?? [])
     setLoading(false)
   }
 
@@ -154,23 +141,23 @@ export default function DashboardPage() {
     navigate('/login')
   }
 
-  // Filter before grouping
+  // Filter before building sections
   const q = search.trim().toLowerCase()
   const filtered = q
-    ? proofs.filter(
-        (p) =>
-          p.customer_name.toLowerCase().includes(q) ||
-          (p.company?.toLowerCase().includes(q) ?? false)
-      )
-    : proofs
+    ? rawProofs.filter((p: any) => {
+        const name    = (p.contacts?.full_name     ?? '').toLowerCase()
+        const company = (p.contacts?.companies?.name ?? '').toLowerCase()
+        return name.includes(q) || company.includes(q)
+      })
+    : rawProofs
 
-  const groups = buildGroups(filtered, sort)
+  const sections = buildSections(filtered, sort)
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
 
-        {/* Header */}
+        {/* Page header */}
         <div className="mb-8 flex items-center justify-between">
           <div>
             <p className="text-sm font-medium uppercase tracking-widest text-gray-400">Plasma Design</p>
@@ -192,21 +179,28 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {/* ── Loading ────────────────────────────────────────────────────────── */}
         {loading ? (
           <div className="flex justify-center py-20">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
           </div>
-        ) : proofs.length === 0 ? (
+
+        ) : rawProofs.length === 0 ? (
+        /* ── Truly empty ───────────────────────────────────────────────────── */
           <div className="rounded-2xl bg-white py-20 text-center shadow-sm ring-1 ring-gray-200">
             <p className="text-gray-400">No proofs yet.</p>
-            <Link to="/proofs/new" className="mt-3 inline-block text-sm font-medium text-gray-900 underline">
+            <Link
+              to="/proofs/new"
+              className="mt-3 inline-block text-sm font-medium text-gray-900 underline"
+            >
               Create the first one
             </Link>
           </div>
+
         ) : (
           <>
-            {/* Toolbar */}
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+            {/* ── Toolbar ──────────────────────────────────────────────────── */}
+            <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
               <input
                 type="search"
                 placeholder="Search customer or company"
@@ -232,8 +226,8 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Empty search state */}
-            {groups.length === 0 ? (
+            {/* ── Empty search ─────────────────────────────────────────────── */}
+            {sections.length === 0 ? (
               <div className="rounded-2xl bg-white py-16 text-center shadow-sm ring-1 ring-gray-200">
                 <p className="text-gray-400">No proofs match "{search}"</p>
                 <button
@@ -243,66 +237,71 @@ export default function DashboardPage() {
                   Clear search
                 </button>
               </div>
+
             ) : (
-              <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-100">
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Customer</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Company</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Current version</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Created</th>
-                      <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Customer link</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {groups.map((group) => (
-                      <Fragment key={group.label}>
-                        {/* Group header row */}
-                        <tr>
-                          <td colSpan={5} className="px-6 pb-1.5 pt-5">
-                            <div className="flex items-center gap-3">
-                              <span className="whitespace-nowrap text-xs font-semibold uppercase tracking-widest text-gray-400">
-                                {group.label}
+            /* ── Company sections ──────────────────────────────────────────── */
+              <div className="space-y-8">
+                {sections.map((section) => (
+                  <div key={section.companyKey}>
+
+                    {/* Company header */}
+                    <div className="mb-3 flex items-center gap-3">
+                      <span className="whitespace-nowrap text-xs font-semibold uppercase tracking-widest text-gray-500">
+                        {section.companyName ?? 'No company'}
+                      </span>
+                      <div className="flex-1 border-t border-gray-200" />
+                    </div>
+
+                    {/* Contacts + proofs card */}
+                    <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+                      {section.contacts.map((cg, ci) => (
+                        <div
+                          key={cg.contactId}
+                          className={ci > 0 ? 'border-t border-gray-100' : ''}
+                        >
+                          {/* Contact label */}
+                          <div className="bg-gray-50/80 px-5 py-2.5">
+                            <span className="text-sm font-medium text-gray-600">
+                              {cg.contactName}
+                            </span>
+                          </div>
+
+                          {/* Proof rows */}
+                          {cg.proofs.map((proof) => (
+                            <div
+                              key={proof.id}
+                              onClick={() => navigate(`/proofs/${proof.id}`)}
+                              className="flex cursor-pointer items-center gap-4 border-t border-gray-50 px-5 py-2.5 hover:bg-gray-50"
+                            >
+                              {/* Version */}
+                              <span className="w-8 shrink-0 text-sm text-gray-400">
+                                {proof.current_version != null ? `v${proof.current_version}` : '—'}
                               </span>
-                              <div className="flex-1 border-t border-gray-100" />
-                            </div>
-                          </td>
-                        </tr>
-                        {/* Data rows */}
-                        {group.proofs.map((proof) => (
-                          <tr key={proof.id} className="border-t border-gray-50 hover:bg-gray-50">
-                            <td className="px-6 py-3.5">
-                              <Link
-                                to={`/proofs/${proof.id}`}
-                                className="font-medium text-gray-900 hover:underline"
-                              >
-                                {proof.customer_name}
-                              </Link>
-                            </td>
-                            <td className="px-6 py-3.5 text-gray-500">{proof.company ?? '—'}</td>
-                            <td className="px-6 py-3.5 text-gray-500">
-                              {proof.current_version != null ? `v${proof.current_version}` : '—'}
-                            </td>
-                            <td className="px-6 py-3.5 text-gray-500">
-                              {new Date(proof.created_at).toLocaleDateString('en-GB')}
-                            </td>
-                            <td className="px-6 py-3.5">
+                              {/* Material */}
+                              <span className="flex-1 truncate text-sm text-gray-400">
+                                {proof.material_display ?? '—'}
+                              </span>
+                              {/* Date */}
+                              <span className="shrink-0 text-sm tabular-nums text-gray-400">
+                                {new Date(proof.created_at).toLocaleDateString('en-GB')}
+                              </span>
+                              {/* Customer link — stopPropagation so the row click doesn't also fire */}
                               <a
                                 href={`/p/${proof.id}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-gray-400 hover:text-gray-900"
+                                onClick={(e) => e.stopPropagation()}
+                                className="shrink-0 text-xs text-gray-300 hover:text-gray-600"
                               >
                                 /p/{proof.id.slice(0, 8)}…
                               </a>
-                            </td>
-                          </tr>
-                        ))}
-                      </Fragment>
-                    ))}
-                  </tbody>
-                </table>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </>
