@@ -361,9 +361,9 @@ export default function EditVersionPage() {
         key: keyof typeof validations
         ref: React.RefObject<HTMLElement | null>
       }> = [
-        { key: 'images',   ref: imageSectionRef },
         { key: 'material', ref: materialRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'inkNames', ref: inkNamesRef as unknown as React.RefObject<HTMLElement | null> },
+        { key: 'images',   ref: imageSectionRef },
       ]
       const first = order.find(o => !validations[o.key])
       first?.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -559,126 +559,6 @@ export default function EditVersionPage() {
 
         <form id="edit-version-form" onSubmit={handleSubmit} className="space-y-6">
 
-          {/* Images */}
-          <section ref={imageSectionRef} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
-              Proof images
-              {currentImages.length > 0 && (
-                <span className="ml-2 font-normal normal-case text-gray-400">— drag to reorder</span>
-              )}
-            </h2>
-
-            {/* Finish tabs */}
-            {optionMode && selectedOptions.length > 0 && (
-              <div className="mb-4 flex gap-0 border-b border-gray-100">
-                {selectedOptions.map(fCode => {
-                  const f = availableOptions.find(x => x.code === fCode)
-                  const isActive = activeImageOption === fCode
-                  return (
-                    <button
-                      key={fCode}
-                      type="button"
-                      onClick={() => setActiveImageOption(fCode)}
-                      className={[
-                        '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
-                        isActive
-                          ? 'border-gray-900 text-gray-900'
-                          : 'border-transparent text-gray-400 hover:text-gray-700',
-                      ].join(' ')}
-                    >
-                      {f?.display_name ?? fCode}
-                      <span className={['ml-1.5 text-xs', isActive ? 'text-gray-400' : 'text-gray-300'].join(' ')}>
-                        ({(editImagesByOption[fCode] ?? []).length})
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-
-            {currentImages.length > 0 && (
-              <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {currentImages.map((entry, index) => {
-                  const key = entry.kind === 'existing' ? entry.id : entry.localId
-                  const filename = entry.kind === 'existing' ? entry.original_filename : entry.file.name
-                  return (
-                    <div
-                      key={key}
-                      draggable
-                      onDragStart={() => handleDragStart(index)}
-                      onDragOver={(e) => handleDragOver(e, index)}
-                      onDragEnd={handleDragEnd}
-                      className="group relative cursor-grab rounded-xl border border-gray-200 bg-gray-50 p-2 active:cursor-grabbing"
-                    >
-                      <img
-                        src={entry.preview}
-                        alt={entry.label}
-                        className="mb-2 aspect-square w-full rounded-lg object-contain"
-                      />
-                      <input
-                        type="text"
-                        value={entry.label}
-                        onChange={(e) => updateLabel(key, e.target.value)}
-                        className="w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-gray-900 focus:outline-none"
-                        placeholder="Label"
-                      />
-                      {filename && (
-                        <p className="mt-1 truncate text-[11px] text-gray-400" title={filename}>
-                          {filename}
-                        </p>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => removeImage(key)}
-                        className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-gray-800 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-
-            {currentImages.length < MAX_IMAGES && (
-              <>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="image/jpeg,image/png"
-                  multiple
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => fileRef.current?.click()}
-                  {...zoneProps}
-                  className={[
-                    'flex w-full items-center justify-center rounded-xl border-2 py-8 text-sm transition-colors',
-                    isZoneDragOver
-                      ? 'border-solid border-gray-900 bg-gray-50 text-gray-900'
-                      : shouldHighlight('images')
-                        ? 'border-dashed border-rose-300 text-rose-500 hover:border-rose-400 hover:text-rose-600'
-                        : 'border-dashed border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600',
-                  ].join(' ')}
-                >
-                  {isZoneDragOver
-                    ? 'Drop to add images'
-                    : currentImages.length === 0
-                      ? 'Click or drop to upload JPEG or PNG (max 10 MB each)'
-                      : `Add more images (${currentImages.length} / ${MAX_IMAGES})`}
-                </button>
-              </>
-            )}
-
-            {fileError && <p className="mt-2 text-sm text-red-600">{fileError}</p>}
-            {fileNote && <p className="mt-2 text-sm text-gray-500">{fileNote}</p>}
-            {shouldHighlight('images') && (
-              <p className="mt-2 text-xs font-medium text-rose-500">{imagesHint}</p>
-            )}
-          </section>
-
           {/* Pricing display — required choice between standard grid and custom quote */}
           <PricingDisplayField value={pricingDisplay} onChange={setPricingDisplay} />
 
@@ -801,6 +681,126 @@ export default function EditVersionPage() {
               </div>
             </section>
           )}
+
+          {/* Images */}
+          <section ref={imageSectionRef} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
+              Proof images
+              {currentImages.length > 0 && (
+                <span className="ml-2 font-normal normal-case text-gray-400">— drag to reorder</span>
+              )}
+            </h2>
+
+            {/* Option tabs */}
+            {optionMode && selectedOptions.length > 0 && (
+              <div className="mb-4 flex gap-0 border-b border-gray-100">
+                {selectedOptions.map(fCode => {
+                  const f = availableOptions.find(x => x.code === fCode)
+                  const isActive = activeImageOption === fCode
+                  return (
+                    <button
+                      key={fCode}
+                      type="button"
+                      onClick={() => setActiveImageOption(fCode)}
+                      className={[
+                        '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
+                        isActive
+                          ? 'border-gray-900 text-gray-900'
+                          : 'border-transparent text-gray-400 hover:text-gray-700',
+                      ].join(' ')}
+                    >
+                      {f?.display_name ?? fCode}
+                      <span className={['ml-1.5 text-xs', isActive ? 'text-gray-400' : 'text-gray-300'].join(' ')}>
+                        ({(editImagesByOption[fCode] ?? []).length})
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {currentImages.length > 0 && (
+              <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {currentImages.map((entry, index) => {
+                  const key = entry.kind === 'existing' ? entry.id : entry.localId
+                  const filename = entry.kind === 'existing' ? entry.original_filename : entry.file.name
+                  return (
+                    <div
+                      key={key}
+                      draggable
+                      onDragStart={() => handleDragStart(index)}
+                      onDragOver={(e) => handleDragOver(e, index)}
+                      onDragEnd={handleDragEnd}
+                      className="group relative cursor-grab rounded-xl border border-gray-200 bg-gray-50 p-2 active:cursor-grabbing"
+                    >
+                      <img
+                        src={entry.preview}
+                        alt={entry.label}
+                        className="mb-2 aspect-square w-full rounded-lg object-contain"
+                      />
+                      <input
+                        type="text"
+                        value={entry.label}
+                        onChange={(e) => updateLabel(key, e.target.value)}
+                        className="w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-gray-900 focus:outline-none"
+                        placeholder="Label"
+                      />
+                      {filename && (
+                        <p className="mt-1 truncate text-[11px] text-gray-400" title={filename}>
+                          {filename}
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeImage(key)}
+                        className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-gray-800 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {currentImages.length < MAX_IMAGES && (
+              <>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/jpeg,image/png"
+                  multiple
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  {...zoneProps}
+                  className={[
+                    'flex w-full items-center justify-center rounded-xl border-2 py-8 text-sm transition-colors',
+                    isZoneDragOver
+                      ? 'border-solid border-gray-900 bg-gray-50 text-gray-900'
+                      : shouldHighlight('images')
+                        ? 'border-dashed border-rose-300 text-rose-500 hover:border-rose-400 hover:text-rose-600'
+                        : 'border-dashed border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600',
+                  ].join(' ')}
+                >
+                  {isZoneDragOver
+                    ? 'Drop to add images'
+                    : currentImages.length === 0
+                      ? 'Click or drop to upload JPEG or PNG (max 10 MB each)'
+                      : `Add more images (${currentImages.length} / ${MAX_IMAGES})`}
+                </button>
+              </>
+            )}
+
+            {fileError && <p className="mt-2 text-sm text-red-600">{fileError}</p>}
+            {fileNote && <p className="mt-2 text-sm text-gray-500">{fileNote}</p>}
+            {shouldHighlight('images') && (
+              <p className="mt-2 text-xs font-medium text-rose-500">{imagesHint}</p>
+            )}
+          </section>
 
           {/* Change notes */}
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
