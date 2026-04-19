@@ -45,7 +45,12 @@ export default function EditVersionPage() {
   const [proofName, setProofName] = useState('')
   const [versionNumber, setVersionNumber] = useState(0)
   const [materialDisplay, setMaterialDisplay] = useState('')
-  const [inkNames, setInkNames] = useState('')
+  // Two ink states: one for the comma-separated optional UI, one for the
+  // per-ink mandatory UI. Only the one matching the loaded material's
+  // requires_ink_names flag is populated on mount.
+  const [inkNamesText, setInkNamesText] = useState('')
+  const [inkNamesArray, setInkNamesArray] = useState<string[]>([])
+  const [requiresInkNames, setRequiresInkNames] = useState(false)
   const [currency, setCurrency] = useState<Currency>('GBP')
   const [changeNotes, setChangeNotes] = useState('')
   const [pricingDisplay, setPricingDisplay] = useState<PricingDisplayValue | null>(null)
@@ -79,7 +84,7 @@ export default function EditVersionPage() {
       supabase.from('proofs').select('contacts(full_name)').eq('id', pid).single(),
       supabase
         .from('proof_versions')
-        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, finishes, custom_quote, materials(featured_quantities)')
+        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, finishes, custom_quote, materials(featured_quantities, requires_ink_names)')
         .eq('id', vid)
         .single(),
       supabase
@@ -100,7 +105,14 @@ export default function EditVersionPage() {
     const v = versionResult.data as any
     setVersionNumber(v.version_number)
     setMaterialDisplay(v.material_display)
-    setInkNames((v.ink_names as string[]).join(', '))
+    const rawInkNames = (v.ink_names as string[]) ?? []
+    const materialRequiresInkNames: boolean = !!(v.materials && (v.materials as any).requires_ink_names)
+    setRequiresInkNames(materialRequiresInkNames)
+    if (materialRequiresInkNames) {
+      setInkNamesArray(rawInkNames)
+    } else {
+      setInkNamesText(rawInkNames.join(', '))
+    }
     setCurrency(v.currency as Currency)
     setChangeNotes(v.change_notes ?? '')
     setPricingDisplay(v.custom_quote ? 'custom' : 'standard')
@@ -172,6 +184,21 @@ export default function EditVersionPage() {
   const activeKey     = finishMode ? activeImageFinish : ''
   const currentImages = editImagesByFinish[activeKey] ?? []
   const isCustomQuote = pricingDisplay === 'custom'
+
+  // Edit doesn't allow variant changes, so ink-field count defaults to what
+  // was saved (min 1 so a version somehow created with no names can be fixed).
+  const editInkCount = requiresInkNames ? Math.max(inkNamesArray.length, 1) : 0
+  const inkNamesValid = !requiresInkNames || (
+    editInkCount > 0 &&
+    Array.from({ length: editInkCount }).every((_, i) => (inkNamesArray[i] ?? '').trim() !== '')
+  )
+
+  const canSave = pricingDisplay !== null && inkNamesValid
+  const disabledReason = canSave
+    ? undefined
+    : pricingDisplay === null
+      ? 'Choose a pricing display option to save'
+      : 'Fill in all ink names to save'
 
   function toggleFinish(code: string) {
     setSelectedFinishes(prev => {
@@ -390,7 +417,9 @@ export default function EditVersionPage() {
       .from('proof_versions')
       .update({
         material_display: materialDisplay.trim(),
-        ink_names: inkNames.split(',').map((s) => s.trim()).filter(Boolean),
+        ink_names: requiresInkNames
+          ? inkNamesArray.map(s => s.trim())
+          : inkNamesText.split(',').map(s => s.trim()).filter(Boolean),
         change_notes: changeNotes.trim() || null,
         finishes: selectedFinishes,
         custom_quote: pricingDisplay === 'custom',
@@ -492,9 +521,9 @@ export default function EditVersionPage() {
             <button
               type="submit"
               form="edit-version-form"
-              disabled={submitting || pricingDisplay === null}
-              title={pricingDisplay === null ? 'Choose a pricing display option to save' : undefined}
-              aria-label={pricingDisplay === null ? 'Save version — choose a pricing display option first' : undefined}
+              disabled={submitting || !canSave}
+              title={disabledReason}
+              aria-label={disabledReason}
               className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {submitting ? 'Saving…' : 'Save version'}
@@ -671,18 +700,42 @@ export default function EditVersionPage() {
               </div>
             )}
 
-            <div className="mb-4">
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                Ink names <span className="font-normal text-gray-400">(optional, comma-separated)</span>
-              </label>
-              <input
-                type="text"
-                value={inkNames}
-                onChange={(e) => setInkNames(e.target.value)}
-                placeholder="e.g. Pantone 185 C, Metallic Gold"
-                className={inputClass}
-              />
-            </div>
+            {requiresInkNames ? (
+              <div className="mb-4">
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">Ink names</label>
+                <div className="space-y-2">
+                  {Array.from({ length: editInkCount }).map((_, i) => (
+                    <div key={i}>
+                      <label className="mb-0.5 block text-xs font-medium text-gray-500">Ink {i + 1}</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Pantone 185 C"
+                        value={inkNamesArray[i] ?? ''}
+                        onChange={(e) => {
+                          const next = [...inkNamesArray]
+                          next[i] = e.target.value
+                          setInkNamesArray(next)
+                        }}
+                        className={inputClass}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="mb-4">
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                  Ink names <span className="font-normal text-gray-400">(optional, comma-separated)</span>
+                </label>
+                <input
+                  type="text"
+                  value={inkNamesText}
+                  onChange={(e) => setInkNamesText(e.target.value)}
+                  placeholder="e.g. Pantone 185 C, Metallic Gold"
+                  className={inputClass}
+                />
+              </div>
+            )}
 
             {!isCustomQuote && (
               <div>

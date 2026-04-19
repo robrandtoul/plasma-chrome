@@ -12,6 +12,7 @@ import type { Currency } from '../lib/types'
 interface Material {
   id: string
   display_name: string
+  requires_ink_names: boolean
 }
 
 interface Variant {
@@ -19,6 +20,7 @@ interface Variant {
   display_name: string
   variant_type: string
   sort_order: number
+  ink_count: number | null
 }
 
 interface Finish {
@@ -64,7 +66,11 @@ export default function NewVersionPage() {
   const [currency, setCurrency] = useState<Currency | null>(null)
   const [variantSnapshots, setVariantSnapshots] = useState<Record<string, Record<number, string>>>({})
   const [variantTiers, setVariantTiers] = useState<Record<string, PriceTierRow[]>>({})
-  const [inkNames, setInkNames] = useState('')
+  // Two separate ink states so each form path (free-text vs per-ink) keeps
+  // typing feel. They only cross over when the designer switches materials
+  // between the "requires per-ink names" set and everything else.
+  const [inkNamesText, setInkNamesText] = useState('')
+  const [inkNamesArray, setInkNamesArray] = useState<string[]>([])
   const [changeNotes, setChangeNotes] = useState('')
   const [pricingDisplay, setPricingDisplay] = useState<PricingDisplayValue | null>(null)
   const [availableFinishes, setAvailableFinishes] = useState<Finish[]>([])
@@ -92,7 +98,7 @@ export default function NewVersionPage() {
         const c = (data?.contacts as any)
         if (c) setProofName(c.full_name ?? '')
       })
-    supabase.from('materials').select('id, display_name').eq('is_active', true).order('sort_order')
+    supabase.from('materials').select('id, display_name, requires_ink_names').eq('is_active', true).order('sort_order')
       .then(({ data }) => setMaterials((data ?? []) as Material[]))
   }, [proofId])
 
@@ -112,7 +118,7 @@ export default function NewVersionPage() {
     async function load() {
       const [variantsResult, finishesResult] = await Promise.all([
         supabase.from('material_variants')
-          .select('id, display_name, variant_type, sort_order')
+          .select('id, display_name, variant_type, sort_order, ink_count')
           .eq('material_id', selectedMaterialId)
           .eq('is_active', true)
           .order('sort_order'),
@@ -350,8 +356,9 @@ export default function NewVersionPage() {
       materialRef.current?.focus()
       return
     }
-    // Variant selection is only required when the proof will show standard pricing.
-    if (pricingDisplay !== 'custom' && selectedVariantIds.length === 0) {
+    // Variant selection is required in standard-pricing mode, or when the
+    // material requires per-ink names (variant.ink_count drives that count).
+    if (variantRequired && selectedVariantIds.length === 0) {
       setVariantError('Please select at least one variant.')
       variantRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       return
@@ -403,7 +410,11 @@ export default function NewVersionPage() {
       }),
     }
 
-    const parsedInkNames = inkNames.split(',').map((s) => s.trim()).filter(Boolean)
+    // Ink names come from either the comma-separated text field (optional
+    // materials) or the per-ink array (mandatory materials).
+    const parsedInkNames: string[] = requiresInkNames
+      ? inkNamesArray.slice(0, inkCount).map(s => s.trim())
+      : inkNamesText.split(',').map(s => s.trim()).filter(Boolean)
 
     // The currency column is NOT NULL; default to GBP when the designer picked
     // Custom quote without explicitly selecting a currency. Value is not shown
@@ -463,14 +474,62 @@ export default function NewVersionPage() {
   const isThickness = variantType === 'thickness'
   const isCustomQuote = pricingDisplay === 'custom'
 
-  // Save-button gating — pricingDisplay is always required. Currency is only
-  // required in standard-pricing mode; custom quote hides the currency pill.
-  const canSave = pricingDisplay !== null && (isCustomQuote || currency !== null)
+  const selectedMaterial = materials.find(m => m.id === selectedMaterialId)
+  const requiresInkNames = selectedMaterial?.requires_ink_names ?? false
+
+  // For requires-ink-names materials the variant's ink_count drives how many
+  // labelled fields are shown. Always variant_type = 'ink_count' here.
+  const selectedVariant = variants.find(v => v.id === selectedVariantIds[0])
+  const inkCount = requiresInkNames ? (selectedVariant?.ink_count ?? 0) : 0
+
+  // All N ink fields must be non-empty before save enables.
+  const inkNamesValid = !requiresInkNames || (
+    inkCount > 0 &&
+    Array.from({ length: inkCount }).every((_, i) => (inkNamesArray[i] ?? '').trim() !== '')
+  )
+
+  // Requires-ink-names materials keep variant selection visible even in
+  // custom-quote mode — the variant is now semantic (ink count), not purely
+  // pricing-driven.
+  const variantRequired = !isCustomQuote || requiresInkNames
+
+  // Save-button gating. Pricing display is always required. Currency is
+  // required only in standard-pricing mode. Ink names, when mandatory, block
+  // save too — and we distinguish "no variant picked yet" from "variant
+  // picked but fields empty" in the tooltip.
+  const canSave = pricingDisplay !== null
+    && (isCustomQuote || currency !== null)
+    && inkNamesValid
+
   const disabledReason = canSave
     ? undefined
     : pricingDisplay === null
       ? 'Choose a pricing display option to save'
-      : 'Choose a currency to save'
+      : !isCustomQuote && currency === null
+        ? 'Choose a currency to save'
+        : requiresInkNames && selectedVariantIds.length === 0
+          ? 'Select a variant to save'
+          : !inkNamesValid
+            ? 'Fill in all ink names to save'
+            : undefined
+
+  // Preserve previously-entered ink data when switching between "requires
+  // per-ink" and optional materials — best-effort, joined/split on commas.
+  function handleMaterialChange(nextId: string) {
+    const prev = materials.find(m => m.id === selectedMaterialId)
+    const next = materials.find(m => m.id === nextId)
+    const wasRequired = prev?.requires_ink_names ?? false
+    const isRequired  = next?.requires_ink_names ?? false
+    if (wasRequired && !isRequired) {
+      const joined = inkNamesArray.filter(s => s.trim()).join(', ')
+      if (joined) setInkNamesText(joined)
+    } else if (!wasRequired && isRequired) {
+      const parts = inkNamesText.split(',').map(s => s.trim()).filter(Boolean)
+      if (parts.length > 0) setInkNamesArray(parts)
+    }
+    setSelectedMaterialId(nextId)
+    setMaterialError('')
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -636,7 +695,7 @@ export default function NewVersionPage() {
               <select
                 ref={materialRef}
                 value={selectedMaterialId}
-                onChange={(e) => { setSelectedMaterialId(e.target.value); setMaterialError('') }}
+                onChange={(e) => handleMaterialChange(e.target.value)}
                 className={[selectClass, materialError ? 'border-red-400 focus:border-red-500 focus:ring-red-500' : ''].join(' ')}
               >
                 <option value="">Select a material…</option>
@@ -645,7 +704,7 @@ export default function NewVersionPage() {
               {materialError && <p className="mt-1.5 text-sm text-red-600">{materialError}</p>}
             </div>
 
-            {!isCustomQuote && variants.length > 0 && variantType !== 'default' && (
+            {variantRequired && variants.length > 0 && variantType !== 'default' && (
               <div ref={variantRef} className="mb-4">
                 <label className="mb-2 block text-sm font-medium text-gray-700">
                   {variantLabel(variantType)}
@@ -720,13 +779,41 @@ export default function NewVersionPage() {
               </div>
             )}
 
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                Ink names <span className="font-normal text-gray-400">(optional, comma-separated)</span>
-              </label>
-              <input type="text" placeholder="e.g. Pantone 185 C, Metallic Gold" value={inkNames}
-                onChange={(e) => setInkNames(e.target.value)} className={inputClass} />
-            </div>
+            {requiresInkNames ? (
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">Ink names</label>
+                {inkCount === 0 ? (
+                  <p className="text-sm text-gray-400">Select a variant to enter ink names.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {Array.from({ length: inkCount }).map((_, i) => (
+                      <div key={i}>
+                        <label className="mb-0.5 block text-xs font-medium text-gray-500">Ink {i + 1}</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Pantone 185 C"
+                          value={inkNamesArray[i] ?? ''}
+                          onChange={(e) => {
+                            const next = [...inkNamesArray]
+                            next[i] = e.target.value
+                            setInkNamesArray(next)
+                          }}
+                          className={inputClass}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                  Ink names <span className="font-normal text-gray-400">(optional, comma-separated)</span>
+                </label>
+                <input type="text" placeholder="e.g. Pantone 185 C, Metallic Gold" value={inkNamesText}
+                  onChange={(e) => setInkNamesText(e.target.value)} className={inputClass} />
+              </div>
+            )}
 
           </section>
 
