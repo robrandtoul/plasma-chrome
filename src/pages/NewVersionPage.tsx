@@ -64,8 +64,11 @@ export default function NewVersionPage() {
 
   useEffect(() => {
     if (!proofId) return
-    supabase.from('proofs').select('customer_name').eq('id', proofId).single()
-      .then(({ data }) => { if (data) setProofName(data.customer_name) })
+    supabase.from('proofs').select('contacts(full_name)').eq('id', proofId).single()
+      .then(({ data }) => {
+        const c = (data?.contacts as any)
+        if (c) setProofName(c.full_name ?? '')
+      })
     supabase.from('materials').select('id, display_name').eq('is_active', true).order('sort_order')
       .then(({ data }) => setMaterials((data ?? []) as Material[]))
   }, [proofId])

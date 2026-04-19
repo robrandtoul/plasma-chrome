@@ -7,6 +7,7 @@ import DashboardPage from './pages/DashboardPage'
 import NewProofPage from './pages/NewProofPage'
 import ProofDetailPage from './pages/ProofDetailPage'
 import NewVersionPage from './pages/NewVersionPage'
+import EditVersionPage from './pages/EditVersionPage'
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/proofs/new" element={<RequireAuth><NewProofPage /></RequireAuth>} />
           <Route path="/proofs/:id" element={<RequireAuth><ProofDetailPage /></RequireAuth>} />
           <Route path="/proofs/:id/versions/new" element={<RequireAuth><NewVersionPage /></RequireAuth>} />
+          <Route path="/proofs/:id/versions/:versionId/edit" element={<RequireAuth><EditVersionPage /></RequireAuth>} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

@@ -1,19 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import type { PublicProof, PublicProofVersion, AppSettings, PricingSnapshot, Currency } from '../lib/types'
-import { formatPrice } from '../lib/currency'
+import type { PublicProof, PublicProofVersion, AppSettings } from '../lib/types'
+import { PricingDisplay } from '../components/PricingDisplay'
+import { ImageGrid, type GridImage } from '../components/ImageGrid'
 
-const SIGNED_URL_TTL = 60 * 60 * 24 // 24 hours in seconds
-
-interface VersionImage {
-  id: string
-  proof_version_id: string
-  image_path: string
-  label: string
-  sort_order: number
-  signed_url: string
-}
+const SIGNED_URL_TTL = 60 * 60 * 24 // 24 hours
 
 export default function CustomerProofPage() {
   const { id } = useParams<{ id: string }>()
@@ -21,7 +13,7 @@ export default function CustomerProofPage() {
   const [proof, setProof] = useState<PublicProof | null>(null)
   const [versions, setVersions] = useState<PublicProofVersion[]>([])
   const [activeVersion, setActiveVersion] = useState<PublicProofVersion | null>(null)
-  const [versionImages, setVersionImages] = useState<Record<string, VersionImage[]>>({})
+  const [versionImages, setVersionImages] = useState<Record<string, GridImage[]>>({})
   const [disclaimer, setDisclaimer] = useState<string>('')
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -43,8 +35,6 @@ export default function CustomerProofPage() {
   }, [lightboxSrc])
 
   // On initial load, scroll the active tab to the left edge of the strip.
-  // Tabs are ordered highest-first, so the latest version is always leftmost;
-  // this scroll only matters when is_current points to an older version.
   useEffect(() => {
     if (loading) return
     const strip = tabStripRef.current
@@ -76,7 +66,6 @@ export default function CustomerProofPage() {
     setVersions(rawVersions)
     setActiveVersion(rawVersions.find((v) => v.is_current) ?? rawVersions[rawVersions.length - 1] ?? null)
 
-    // Load images for all versions
     if (rawVersions.length > 0) {
       const versionIds = rawVersions.map((v) => v.id)
       const { data: imageRows } = await supabase
@@ -86,18 +75,19 @@ export default function CustomerProofPage() {
         .order('sort_order')
 
       const imagesWithUrls = await Promise.all(
-        ((imageRows ?? []) as Omit<VersionImage, 'signed_url'>[]).map(async (img) => {
+        ((imageRows ?? []) as Omit<GridImage, 'signed_url'>[]).map(async (img) => {
           const { data } = await supabase.storage
             .from('proof-images')
-            .createSignedUrl(img.image_path, SIGNED_URL_TTL)
+            .createSignedUrl((img as any).image_path, SIGNED_URL_TTL)
           return { ...img, signed_url: data?.signedUrl ?? '' }
         })
       )
 
-      const byVersion: Record<string, VersionImage[]> = {}
+      const byVersion: Record<string, GridImage[]> = {}
       imagesWithUrls.forEach((img) => {
-        if (!byVersion[img.proof_version_id]) byVersion[img.proof_version_id] = []
-        byVersion[img.proof_version_id].push(img)
+        const pvid = (img as any).proof_version_id as string
+        if (!byVersion[pvid]) byVersion[pvid] = []
+        byVersion[pvid].push(img as GridImage)
       })
       setVersionImages(byVersion)
     }
@@ -233,208 +223,11 @@ export default function CustomerProofPage() {
   )
 }
 
-function ImageGrid({
-  images,
-  versionNumber,
-  onImageClick,
-}: {
-  images: VersionImage[]
-  versionNumber: number
-  onImageClick: (src: string) => void
-}) {
-  if (images.length === 0) {
-    return (
-      <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-        <div className="flex h-64 items-center justify-center text-gray-400">
-          Image unavailable
-        </div>
-      </div>
-    )
-  }
-
-  if (images.length === 1) {
-    return (
-      <div
-        className="cursor-zoom-in overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200"
-        onClick={() => onImageClick(images[0].signed_url)}
-      >
-        <img
-          src={images[0].signed_url}
-          alt={`Proof version ${versionNumber}`}
-          className="w-full object-contain"
-        />
-        {images[0].label && (
-          <div className="border-t border-gray-100 px-4 py-2 text-center text-sm text-gray-500">
-            {images[0].label}
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-      {images.map((img) => (
-        <div
-          key={img.id}
-          className="cursor-zoom-in overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200"
-          onClick={() => onImageClick(img.signed_url)}
-        >
-          <img
-            src={img.signed_url}
-            alt={img.label || `Proof version ${versionNumber}`}
-            className="w-full object-contain"
-          />
-          {img.label && (
-            <div className="border-t border-gray-100 px-4 py-2 text-center text-sm text-gray-500">
-              {img.label}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  )
-}
-
 function SpecItem({ label, value }: { label: string; value: string }) {
   return (
     <div>
       <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</dt>
       <dd className="mt-1 text-sm font-medium text-gray-900">{value}</dd>
-    </div>
-  )
-}
-
-function PricingDisplay({
-  snapshot,
-  currency,
-  featuredQuantities,
-}: {
-  snapshot: PricingSnapshot
-  currency: Currency
-  featuredQuantities: number[]
-}) {
-  const [showAll, setShowAll] = useState(false)
-  const { variants } = snapshot
-  if (!variants?.length) return null
-
-  const allQuantities = [...new Set(
-    variants.flatMap((v) => Object.keys(v.prices).map(Number))
-  )].sort((a, b) => a - b)
-
-  const featured = new Set(featuredQuantities)
-  const visibleQuantities = showAll
-    ? allQuantities
-    : allQuantities.filter((q) => featured.has(q))
-
-  const hasHidden = allQuantities.length > visibleQuantities.length
-
-  return (
-    <>
-      {variants.length === 1
-        ? <SingleVariantTable variant={variants[0]} currency={currency} quantities={visibleQuantities} />
-        : <MultiVariantGrid variants={variants} currency={currency} quantities={visibleQuantities} />
-      }
-      {(hasHidden || showAll) && (
-        <div className="border-t border-gray-50 px-6 py-3">
-          <button
-            onClick={() => setShowAll((v) => !v)}
-            className="text-xs text-gray-400 underline underline-offset-2 hover:text-gray-600"
-          >
-            {showAll ? 'Show fewer quantities' : 'Show all quantities'}
-          </button>
-        </div>
-      )}
-    </>
-  )
-}
-
-function SingleVariantTable({
-  variant,
-  currency,
-  quantities,
-}: {
-  variant: PricingSnapshot['variants'][0]
-  currency: Currency
-  quantities: number[]
-}) {
-  const rows = quantities
-    .filter((qty) => variant.prices[String(qty)] != null)
-    .map((qty) => ({ qty, price: variant.prices[String(qty)] }))
-
-  if (rows.length === 0) return null
-
-  return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="border-b border-gray-100">
-          <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Quantity</th>
-          <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400">Total</th>
-          <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400">Per card</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map(({ qty, price }) => (
-          <tr key={qty} className="border-b border-gray-50 last:border-0">
-            <td className="px-6 py-3 font-medium text-gray-900">{qty.toLocaleString()}</td>
-            <td className="px-6 py-3 text-right text-gray-900">{formatPrice(price, currency)}</td>
-            <td className="px-6 py-3 text-right text-gray-500">{formatPrice(price / qty, currency, 2)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  )
-}
-
-function MultiVariantGrid({
-  variants,
-  currency,
-  quantities,
-}: {
-  variants: PricingSnapshot['variants']
-  currency: Currency
-  quantities: number[]
-}) {
-  if (quantities.length === 0) return null
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-gray-100">
-            <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">
-              Quantity
-            </th>
-            {variants.map((v) => (
-              <th key={v.variant_id} className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400">
-                {v.display}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {quantities.map((qty) => (
-            <tr key={qty} className="border-b border-gray-50 last:border-0">
-              <td className="px-6 py-3 font-medium text-gray-900">{qty.toLocaleString()}</td>
-              {variants.map((v) => {
-                const price = v.prices[String(qty)]
-                return (
-                  <td key={v.variant_id} className="px-4 py-3 text-right">
-                    {price != null ? (
-                      <>
-                        <div className="font-medium text-gray-900">{formatPrice(price, currency)}</div>
-                        <div className="text-xs text-gray-400">{formatPrice(price / qty, currency, 2)} each</div>
-                      </>
-                    ) : (
-                      <span className="text-gray-300">—</span>
-                    )}
-                  </td>
-                )
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   )
 }

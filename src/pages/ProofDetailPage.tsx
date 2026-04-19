@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import VersionDetailModal, { type ModalVersion } from '../components/VersionDetailModal'
 
 interface Proof {
   id: string
@@ -14,25 +15,17 @@ interface Proof {
   }
 }
 
-interface Version {
-  id: string
-  version_number: number
-  material_display: string
-  currency: string
-  is_current: boolean
-  created_at: string
-  change_notes: string | null
-}
-
 export default function ProofDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const [proof, setProof] = useState<Proof | null>(null)
-  const [versions, setVersions] = useState<Version[]>([])
+  const [versions, setVersions] = useState<ModalVersion[]>([])
   const [loading, setLoading] = useState(true)
-  const [settingCurrent, setSettingCurrent] = useState<string | null>(null)
+  const [selectedVersion, setSelectedVersion] = useState<ModalVersion | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const fallbackInputRef = useRef<HTMLInputElement>(null)
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (id) loadProof(id)
@@ -40,8 +33,14 @@ export default function ProofDetailPage() {
 
   async function loadProof(proofId: string) {
     const [proofResult, versionsResult] = await Promise.all([
-      supabase.from('proofs').select('id, helpscout_thread_url, internal_notes, created_at, contacts(full_name, email, companies(name))').eq('id', proofId).single(),
-      supabase.from('proof_versions').select('id, version_number, material_display, currency, is_current, created_at, change_notes')
+      supabase
+        .from('proofs')
+        .select('id, helpscout_thread_url, internal_notes, created_at, contacts(full_name, email, companies(name))')
+        .eq('id', proofId)
+        .single(),
+      supabase
+        .from('proof_versions')
+        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, change_notes, pricing_snapshot, shipping_note, materials(featured_quantities)')
         .eq('proof_id', proofId)
         .order('version_number', { ascending: false }),
     ])
@@ -52,17 +51,20 @@ export default function ProofDetailPage() {
     }
 
     setProof(proofResult.data as unknown as Proof)
-    setVersions((versionsResult.data ?? []) as Version[])
+    setVersions((versionsResult.data ?? []) as unknown as ModalVersion[])
     setLoading(false)
   }
 
-  async function makeCurrent(versionId: string) {
-    setSettingCurrent(versionId)
-    await supabase.from('proof_versions').update({ is_current: true }).eq('id', versionId)
-    setVersions((prev) =>
-      prev.map((v) => ({ ...v, is_current: v.id === versionId }))
-    )
-    setSettingCurrent(null)
+  function showToast(message: string) {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    setToast(message)
+    toastTimerRef.current = setTimeout(() => setToast(null), 3000)
+  }
+
+  function handleVersionUpdated(message: string) {
+    setSelectedVersion(null)
+    showToast(message)
+    if (id) loadProof(id)
   }
 
   if (loading) {
@@ -78,7 +80,6 @@ export default function ProofDetailPage() {
     try {
       await navigator.clipboard.writeText(url)
     } catch {
-      // Clipboard API unavailable — select text from a hidden input as fallback.
       if (fallbackInputRef.current) {
         fallbackInputRef.current.value = url
         fallbackInputRef.current.select()
@@ -142,7 +143,7 @@ export default function ProofDetailPage() {
                 </>
               )}
             </button>
-            {/* Hidden input for clipboard fallback in restricted browser contexts */}
+            {/* Hidden input for clipboard fallback */}
             <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
             <Link
               to={`/proofs/${proof.id}/versions/new`}
@@ -194,34 +195,34 @@ export default function ProofDetailPage() {
                   <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Notes</th>
                   <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Added</th>
                   <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Status</th>
+                  <th className="w-8 px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
                 {versions.map((v) => (
-                  <tr key={v.id} className="border-b border-gray-50 last:border-0">
+                  <tr
+                    key={v.id}
+                    onClick={() => setSelectedVersion(v)}
+                    className="cursor-pointer border-b border-gray-50 last:border-0 hover:bg-gray-50"
+                  >
                     <td className="px-6 py-4 font-medium text-gray-900">v{v.version_number}</td>
-                    <td className="px-6 py-4 text-gray-700">
-                      {v.material_display}
-                    </td>
+                    <td className="px-6 py-4 text-gray-700">{v.material_display}</td>
                     <td className="px-6 py-4 text-gray-500">{v.currency}</td>
-                    <td className="px-6 py-4 text-gray-500 max-w-xs truncate">{v.change_notes ?? '—'}</td>
+                    <td className="max-w-xs truncate px-6 py-4 text-gray-500">{v.change_notes ?? '—'}</td>
                     <td className="px-6 py-4 text-gray-500">
                       {new Date(v.created_at).toLocaleDateString('en-GB')}
                     </td>
                     <td className="px-6 py-4">
-                      {v.is_current ? (
+                      {v.is_current && (
                         <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
                           Current
                         </span>
-                      ) : (
-                        <button
-                          onClick={() => makeCurrent(v.id)}
-                          disabled={settingCurrent === v.id}
-                          className="text-xs text-gray-400 underline hover:text-gray-700 disabled:opacity-50"
-                        >
-                          {settingCurrent === v.id ? 'Setting…' : 'Make current'}
-                        </button>
                       )}
+                    </td>
+                    <td className="px-4 py-4">
+                      <svg className="h-4 w-4 text-gray-300" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 3l5 5-5 5" />
+                      </svg>
                     </td>
                   </tr>
                 ))}
@@ -230,6 +231,24 @@ export default function ProofDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Version detail modal */}
+      {selectedVersion && (
+        <VersionDetailModal
+          version={selectedVersion}
+          proofId={proof.id}
+          allVersions={versions}
+          onClose={() => setSelectedVersion(null)}
+          onVersionUpdated={handleVersionUpdated}
+        />
+      )}
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-gray-900 px-5 py-2.5 text-sm font-medium text-white shadow-lg">
+          {toast}
+        </div>
+      )}
     </div>
   )
 }
