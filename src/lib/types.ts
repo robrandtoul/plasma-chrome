@@ -67,6 +67,7 @@ export interface ProofVersionImage {
   label: string
   sort_order: number
   finish: string | null
+  original_filename: string | null
   // Resolved client-side — not a DB column.
   signed_url?: string
 }

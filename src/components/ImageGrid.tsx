@@ -3,6 +3,21 @@ export interface GridImage {
   signed_url: string
   label: string
   finish?: string | null
+  original_filename?: string | null
+}
+
+function Caption({ label, filename }: { label: string; filename?: string | null }) {
+  if (!label && !filename) return null
+  return (
+    <div className="border-t border-gray-100 px-4 py-2 text-center">
+      {label && <div className="text-sm text-gray-500">{label}</div>}
+      {filename && (
+        <div className="truncate text-xs text-gray-400" title={filename}>
+          {filename}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function ImageGrid({
@@ -35,11 +50,7 @@ export function ImageGrid({
           alt={`Proof version ${versionNumber}`}
           className="w-full object-contain"
         />
-        {images[0].label && (
-          <div className="border-t border-gray-100 px-4 py-2 text-center text-sm text-gray-500">
-            {images[0].label}
-          </div>
-        )}
+        <Caption label={images[0].label} filename={images[0].original_filename} />
       </div>
     )
   }
@@ -57,11 +68,7 @@ export function ImageGrid({
             alt={img.label || `Proof version ${versionNumber}`}
             className="w-full object-contain"
           />
-          {img.label && (
-            <div className="border-t border-gray-100 px-4 py-2 text-center text-sm text-gray-500">
-              {img.label}
-            </div>
-          )}
+          <Caption label={img.label} filename={img.original_filename} />
         </div>
       ))}
     </div>

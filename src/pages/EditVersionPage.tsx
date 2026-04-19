@@ -8,7 +8,7 @@ import type { Currency, PricingSnapshot } from '../lib/types'
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type EditImage =
-  | { kind: 'existing'; id: string; image_path: string; label: string; preview: string; finish: string | null }
+  | { kind: 'existing'; id: string; image_path: string; label: string; preview: string; finish: string | null; original_filename: string | null }
   | { kind: 'new'; localId: string; file: File; preview: string; label: string }
 
 interface Finish {
@@ -78,7 +78,7 @@ export default function EditVersionPage() {
         .single(),
       supabase
         .from('proof_version_images')
-        .select('id, image_path, label, sort_order, finish')
+        .select('id, image_path, label, sort_order, finish, original_filename')
         .eq('proof_version_id', vid)
         .order('sort_order'),
     ])
@@ -115,7 +115,7 @@ export default function EditVersionPage() {
     setSelectedFinishes(versionFinishes)
     setActiveImageFinish(versionFinishes[0] ?? '')
 
-    const rawImages = (imagesResult.data ?? []) as { id: string; image_path: string; label: string; sort_order: number; finish: string | null }[]
+    const rawImages = (imagesResult.data ?? []) as { id: string; image_path: string; label: string; sort_order: number; finish: string | null; original_filename: string | null }[]
     const ids = new Set(rawImages.map((img) => img.id))
     setOriginalImageIds(ids)
 
@@ -130,6 +130,7 @@ export default function EditVersionPage() {
           image_path: img.image_path,
           label: img.label,
           finish: img.finish,
+          original_filename: img.original_filename,
           preview: data?.signedUrl ?? '',
         }
       })
@@ -398,6 +399,7 @@ export default function EditVersionPage() {
             label: img.label,
             sort_order: idx,
             finish: finishValue,
+            original_filename: img.file.name,
           }
         })
         .filter((x): x is NonNullable<typeof x> => x !== null)
@@ -498,6 +500,7 @@ export default function EditVersionPage() {
               <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
                 {currentImages.map((entry, index) => {
                   const key = entry.kind === 'existing' ? entry.id : entry.localId
+                  const filename = entry.kind === 'existing' ? entry.original_filename : entry.file.name
                   return (
                     <div
                       key={key}
@@ -519,6 +522,11 @@ export default function EditVersionPage() {
                         className="w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-gray-900 focus:outline-none"
                         placeholder="Label"
                       />
+                      {filename && (
+                        <p className="mt-1 truncate text-[11px] text-gray-400" title={filename}>
+                          {filename}
+                        </p>
+                      )}
                       <button
                         type="button"
                         onClick={() => removeImage(key)}

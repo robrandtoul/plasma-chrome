@@ -392,6 +392,7 @@ export default function NewVersionPage() {
         label: entry.label,
         sort_order: sortOrder,
         finish,
+        original_filename: entry.file.name,
       }
     })
 
@@ -505,6 +506,12 @@ export default function NewVersionPage() {
                       className="w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-gray-900 focus:outline-none"
                       placeholder="Label"
                     />
+                    <p
+                      className="mt-1 truncate text-[11px] text-gray-400"
+                      title={entry.file.name}
+                    >
+                      {entry.file.name}
+                    </p>
                     <button
                       type="button"
                       onClick={() => removeImage(entry.localId)}
