@@ -6,16 +6,19 @@ export function CurrencyField({
   value,
   onChange,
   disabled = false,
+  invalid = false,
 }: {
   value: Currency | null
   onChange: (value: Currency) => void
   disabled?: boolean
+  invalid?: boolean
 }) {
   return (
     <fieldset
       disabled={disabled}
       className={[
-        'inline-flex rounded-xl border border-gray-200 bg-white p-0.5',
+        'inline-flex rounded-xl border p-0.5',
+        invalid ? 'border-rose-300 bg-rose-50' : 'border-gray-200 bg-white',
         disabled ? 'opacity-70' : '',
       ].join(' ')}
     >

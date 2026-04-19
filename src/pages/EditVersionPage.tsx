@@ -64,15 +64,17 @@ export default function EditVersionPage() {
   const [originalImageIds, setOriginalImageIds] = useState<Set<string>>(new Set())
   const [fileError, setFileError] = useState('')
   const [fileNote, setFileNote] = useState('')
-  const [imagesError, setImagesError] = useState('')
-  const [materialError, setMaterialError] = useState('')
+  const [submitAttempted, setSubmitAttempted] = useState(false)
+  const [validationToast, setValidationToast] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   const fileRef         = useRef<HTMLInputElement>(null)
   const dragIndexRef    = useRef<number | null>(null)
-  const imageSectionRef = useRef<HTMLElement>(null)
+  const imageSectionRef = useRef<HTMLElement | null>(null)
   const materialRef     = useRef<HTMLInputElement>(null)
+  const inkNamesRef     = useRef<HTMLDivElement>(null)
+  const toastTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (!proofId || !versionId) return
@@ -188,17 +190,26 @@ export default function EditVersionPage() {
   // Edit doesn't allow variant changes, so ink-field count defaults to what
   // was saved (min 1 so a version somehow created with no names can be fixed).
   const editInkCount = requiresInkNames ? Math.max(inkNamesArray.length, 1) : 0
-  const inkNamesValid = !requiresInkNames || (
-    editInkCount > 0 &&
-    Array.from({ length: editInkCount }).every((_, i) => (inkNamesArray[i] ?? '').trim() !== '')
-  )
 
-  const canSave = pricingDisplay !== null && inkNamesValid
-  const disabledReason = canSave
-    ? undefined
-    : pricingDisplay === null
-      ? 'Choose a pricing display option to save'
-      : 'Fill in all ink names to save'
+  const inkNameValidities = requiresInkNames && editInkCount > 0
+    ? Array.from({ length: editInkCount }, (_, i) => (inkNamesArray[i] ?? '').trim() !== '')
+    : []
+
+  const imagesFinishKeys = finishMode ? selectedFinishes : ['']
+  const validations = {
+    images:   imagesFinishKeys.every(fk => (editImagesByFinish[fk] ?? []).length > 0),
+    material: materialDisplay.trim() !== '',
+    inkNames: !requiresInkNames || (editInkCount > 0 && inkNameValidities.every(Boolean)),
+  } as const
+  const isValid = Object.values(validations).every(Boolean)
+  const shouldHighlight = (k: keyof typeof validations) => submitAttempted && !validations[k]
+
+  const invalidFinishKey = !validations.images
+    ? imagesFinishKeys.find(fk => (editImagesByFinish[fk] ?? []).length === 0)
+    : undefined
+  const imagesHint = invalidFinishKey !== undefined && invalidFinishKey !== ''
+    ? `At least one image required for ${availableFinishes.find(f => f.code === invalidFinishKey)?.display_name ?? invalidFinishKey}.`
+    : 'At least one proof image required.'
 
   function toggleFinish(code: string) {
     setSelectedFinishes(prev => {
@@ -231,7 +242,6 @@ export default function EditVersionPage() {
   function addFiles(files: File[]) {
     setFileError('')
     setFileNote('')
-    setImagesError('')
     if (files.length === 0) return
 
     const okByType = files.filter(f => ACCEPTED_TYPES.includes(f.type))
@@ -339,34 +349,30 @@ export default function EditVersionPage() {
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError('')
-    setImagesError('')
-    setMaterialError('')
+    setSubmitAttempted(true)
 
-    // Validate images — each selected finish must have at least one image
-    const finishKeys = finishMode ? selectedFinishes : ['']
-    for (const fk of finishKeys) {
-      if ((editImagesByFinish[fk] ?? []).length === 0) {
-        const finishName = fk === '' ? '' : availableFinishes.find(f => f.code === fk)?.display_name ?? fk
-        setImagesError(
-          finishName
-            ? `Please add at least one image for ${finishName}.`
-            : 'Please add at least one proof image.'
-        )
-        imageSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        return
-      }
-    }
+    if (!isValid) {
+      const order: Array<{
+        key: keyof typeof validations
+        ref: React.RefObject<HTMLElement | null>
+      }> = [
+        { key: 'images',   ref: imageSectionRef },
+        { key: 'material', ref: materialRef as unknown as React.RefObject<HTMLElement | null> },
+        { key: 'inkNames', ref: inkNamesRef as unknown as React.RefObject<HTMLElement | null> },
+      ]
+      const first = order.find(o => !validations[o.key])
+      first?.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 
-    if (!materialDisplay.trim()) {
-      setMaterialError('Material display name cannot be empty.')
-      materialRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      materialRef.current?.focus()
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      setValidationToast('Please complete all required fields to save')
+      toastTimerRef.current = setTimeout(() => setValidationToast(''), 5000)
       return
     }
 
     setSubmitting(true)
 
     // Upload new images across all finish tabs
+    const finishKeys = finishMode ? selectedFinishes : ['']
     const newImages = finishKeys.flatMap(fk =>
       (editImagesByFinish[fk] ?? [])
         .filter((img): img is Extract<EditImage, { kind: 'new' }> => img.kind === 'new')
@@ -499,6 +505,14 @@ export default function EditVersionPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <PageDropOverlay visible={isPageDragOver} />
+      {validationToast && (
+        <div
+          role="status"
+          className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full bg-rose-50 px-5 py-2.5 text-sm font-medium text-rose-700 shadow-lg ring-1 ring-rose-200"
+        >
+          {validationToast}
+        </div>
+      )}
       <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6">
 
         <div className="mb-6">
@@ -521,10 +535,17 @@ export default function EditVersionPage() {
             <button
               type="submit"
               form="edit-version-form"
-              disabled={submitting || !canSave}
-              title={disabledReason}
-              aria-label={disabledReason}
-              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={submitting}
+              aria-label={
+                submitAttempted && !isValid
+                  ? 'Save version — some required fields are incomplete'
+                  : undefined
+              }
+              className={[
+                'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
+                isValid ? 'bg-gray-900 hover:bg-gray-700' : 'bg-gray-900/60 hover:bg-gray-900/75',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+              ].join(' ')}
             >
               {submitting ? 'Saving…' : 'Save version'}
             </button>
@@ -632,8 +653,8 @@ export default function EditVersionPage() {
                     'flex w-full items-center justify-center rounded-xl border-2 py-8 text-sm transition-colors',
                     isZoneDragOver
                       ? 'border-solid border-gray-900 bg-gray-50 text-gray-900'
-                      : imagesError
-                        ? 'border-dashed border-red-300 text-red-400 hover:border-red-400 hover:text-red-600'
+                      : shouldHighlight('images')
+                        ? 'border-dashed border-rose-300 text-rose-500 hover:border-rose-400 hover:text-rose-600'
                         : 'border-dashed border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600',
                   ].join(' ')}
                 >
@@ -648,7 +669,9 @@ export default function EditVersionPage() {
 
             {fileError && <p className="mt-2 text-sm text-red-600">{fileError}</p>}
             {fileNote && <p className="mt-2 text-sm text-gray-500">{fileNote}</p>}
-            {imagesError && <p className="mt-2 text-sm text-red-600">{imagesError}</p>}
+            {shouldHighlight('images') && (
+              <p className="mt-2 text-xs font-medium text-rose-500">{imagesHint}</p>
+            )}
           </section>
 
           {/* Pricing display — required choice between standard grid and custom quote */}
@@ -664,10 +687,10 @@ export default function EditVersionPage() {
                 ref={materialRef}
                 type="text"
                 value={materialDisplay}
-                onChange={(e) => { setMaterialDisplay(e.target.value); setMaterialError('') }}
-                className={[inputClass, materialError ? 'border-red-400 focus:border-red-500 focus:ring-red-500' : ''].join(' ')}
+                onChange={(e) => setMaterialDisplay(e.target.value)}
+                className={[inputClass, shouldHighlight('material') ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
               />
-              {materialError && <p className="mt-1.5 text-sm text-red-600">{materialError}</p>}
+              {shouldHighlight('material') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
             </div>
 
             {/* Finish selection — only for materials that support finishes */}
@@ -701,25 +724,32 @@ export default function EditVersionPage() {
             )}
 
             {requiresInkNames ? (
-              <div className="mb-4">
+              <div ref={inkNamesRef} className="mb-4">
                 <label className="mb-1.5 block text-sm font-medium text-gray-700">Ink names</label>
                 <div className="space-y-2">
-                  {Array.from({ length: editInkCount }).map((_, i) => (
-                    <div key={i}>
-                      <label className="mb-0.5 block text-xs font-medium text-gray-500">Ink {i + 1}</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Pantone 185 C"
-                        value={inkNamesArray[i] ?? ''}
-                        onChange={(e) => {
-                          const next = [...inkNamesArray]
-                          next[i] = e.target.value
-                          setInkNamesArray(next)
-                        }}
-                        className={inputClass}
-                      />
-                    </div>
-                  ))}
+                  {Array.from({ length: editInkCount }).map((_, i) => {
+                    const fieldInvalid = submitAttempted && !inkNameValidities[i]
+                    return (
+                      <div key={i}>
+                        <label className="mb-0.5 block text-xs font-medium text-gray-500">Ink {i + 1}</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Pantone 185 C"
+                          value={inkNamesArray[i] ?? ''}
+                          onChange={(e) => {
+                            const next = [...inkNamesArray]
+                            next[i] = e.target.value
+                            setInkNamesArray(next)
+                          }}
+                          className={[
+                            inputClass,
+                            fieldInvalid ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : '',
+                          ].join(' ')}
+                        />
+                        {fieldInvalid && <p className="mt-1 text-xs font-medium text-rose-500">Required</p>}
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
             ) : (

@@ -3,12 +3,22 @@ export type PricingDisplayValue = 'standard' | 'custom'
 export function PricingDisplayField({
   value,
   onChange,
+  invalid = false,
+  forwardRef,
 }: {
   value: PricingDisplayValue | null
   onChange: (value: PricingDisplayValue) => void
+  invalid?: boolean
+  forwardRef?: React.RefObject<HTMLElement | null>
 }) {
   return (
-    <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+    <section
+      ref={forwardRef as React.RefObject<HTMLElement>}
+      className={[
+        'rounded-2xl bg-white p-6 shadow-sm ring-1',
+        invalid ? 'ring-rose-300' : 'ring-gray-200',
+      ].join(' ')}
+    >
       <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Pricing display</h2>
       <fieldset className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <legend className="sr-only">Choose how pricing is shown to the customer</legend>
@@ -27,6 +37,7 @@ export function PricingDisplayField({
           onChange={() => onChange('custom')}
         />
       </fieldset>
+      {invalid && <p className="mt-3 text-xs font-medium text-rose-500">Required</p>}
     </section>
   )
 }

@@ -79,17 +79,20 @@ export default function NewVersionPage() {
   const [activeImageFinish, setActiveImageFinish] = useState('')
   const [fileError, setFileError] = useState('')
   const [fileNote, setFileNote] = useState('')
-  const [imagesError, setImagesError] = useState('')
-  const [materialError, setMaterialError] = useState('')
-  const [variantError, setVariantError] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [submitAttempted, setSubmitAttempted] = useState(false)
+  const [validationToast, setValidationToast] = useState('')
 
-  const fileRef         = useRef<HTMLInputElement>(null)
-  const dragIndexRef    = useRef<number | null>(null)
-  const imageSectionRef = useRef<HTMLElement>(null)
-  const materialRef     = useRef<HTMLSelectElement>(null)
-  const variantRef      = useRef<HTMLDivElement>(null)
+  const fileRef             = useRef<HTMLInputElement>(null)
+  const dragIndexRef        = useRef<number | null>(null)
+  const imageSectionRef     = useRef<HTMLElement | null>(null)
+  const pricingDisplayRef   = useRef<HTMLElement | null>(null)
+  const materialRef         = useRef<HTMLSelectElement>(null)
+  const variantRef          = useRef<HTMLDivElement>(null)
+  const currencyRef         = useRef<HTMLDivElement>(null)
+  const inkNamesRef         = useRef<HTMLDivElement>(null)
+  const toastTimerRef       = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (!proofId) return
@@ -215,7 +218,6 @@ export default function NewVersionPage() {
   function addFiles(files: File[]) {
     setFileError('')
     setFileNote('')
-    setImagesError('')
     if (files.length === 0) return
 
     // Filter to accepted image types (drops from desktop may include anything)
@@ -315,7 +317,6 @@ export default function NewVersionPage() {
   function handleDragEnd() { dragIndexRef.current = null }
 
   function toggleVariant(variantId: string) {
-    setVariantError('')
     setSelectedVariantIds((prev) =>
       prev.includes(variantId) ? prev.filter((id) => id !== variantId) : [...prev, variantId]
     )
@@ -331,45 +332,40 @@ export default function NewVersionPage() {
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError('')
-    setImagesError('')
-    setMaterialError('')
-    setVariantError('')
+    setSubmitAttempted(true)
 
-    // Validate images — each selected finish must have at least one image
-    const finishKeys = finishMode ? selectedFinishes : ['']
-    for (const fk of finishKeys) {
-      if ((imagesByFinish[fk] ?? []).length === 0) {
-        const finishName = fk === '' ? '' : availableFinishes.find(f => f.code === fk)?.display_name ?? fk
-        setImagesError(
-          finishName
-            ? `Please add at least one image for ${finishName}.`
-            : 'Please add at least one proof image.'
-        )
-        imageSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        return
-      }
-    }
+    // Missing required fields: surface highlights + scroll to the first one in
+    // document order. No save attempt, no network. Live validation clears the
+    // highlights on the next render as each field becomes valid.
+    if (!isValid) {
+      const order: Array<{
+        key: keyof typeof validations
+        ref: React.RefObject<HTMLElement | null>
+      }> = [
+        { key: 'images',         ref: imageSectionRef },
+        { key: 'pricingDisplay', ref: pricingDisplayRef },
+        { key: 'material',       ref: materialRef as unknown as React.RefObject<HTMLElement | null> },
+        { key: 'variant',        ref: variantRef as unknown as React.RefObject<HTMLElement | null> },
+        { key: 'currency',       ref: currencyRef as unknown as React.RefObject<HTMLElement | null> },
+        { key: 'inkNames',       ref: inkNamesRef as unknown as React.RefObject<HTMLElement | null> },
+      ]
+      const first = order.find(o => !validations[o.key])
+      first?.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 
-    if (!selectedMaterialId) {
-      setMaterialError('Please select a material.')
-      materialRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      materialRef.current?.focus()
-      return
-    }
-    // Variant selection is required in standard-pricing mode, or when the
-    // material requires per-ink names (variant.ink_count drives that count).
-    if (variantRequired && selectedVariantIds.length === 0) {
-      setVariantError('Please select at least one variant.')
-      variantRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      setValidationToast('Please complete all required fields to save')
+      toastTimerRef.current = setTimeout(() => setValidationToast(''), 5000)
       return
     }
 
-    // Button is disabled until pricingDisplay is set, but narrow defensively.
+    // Button is still a submit-type, so narrow defensively even though
+    // isValid guarantees these values.
     if (pricingDisplay === null) return
 
     setSubmitting(true)
 
     // Flatten images across all finish tabs (in selectedFinishes order)
+    const finishKeys = finishMode ? selectedFinishes : ['']
     const allEntries = finishKeys.flatMap(fk =>
       (imagesByFinish[fk] ?? []).map(entry => ({ entry, finish: fk === '' ? null : fk }))
     )
@@ -476,42 +472,36 @@ export default function NewVersionPage() {
 
   const selectedMaterial = materials.find(m => m.id === selectedMaterialId)
   const requiresInkNames = selectedMaterial?.requires_ink_names ?? false
-
-  // For requires-ink-names materials the variant's ink_count drives how many
-  // labelled fields are shown. Always variant_type = 'ink_count' here.
   const selectedVariant = variants.find(v => v.id === selectedVariantIds[0])
   const inkCount = requiresInkNames ? (selectedVariant?.ink_count ?? 0) : 0
-
-  // All N ink fields must be non-empty before save enables.
-  const inkNamesValid = !requiresInkNames || (
-    inkCount > 0 &&
-    Array.from({ length: inkCount }).every((_, i) => (inkNamesArray[i] ?? '').trim() !== '')
-  )
-
-  // Requires-ink-names materials keep variant selection visible even in
-  // custom-quote mode — the variant is now semantic (ink count), not purely
-  // pricing-driven.
   const variantRequired = !isCustomQuote || requiresInkNames
 
-  // Save-button gating. Pricing display is always required. Currency is
-  // required only in standard-pricing mode. Ink names, when mandatory, block
-  // save too — and we distinguish "no variant picked yet" from "variant
-  // picked but fields empty" in the tooltip.
-  const canSave = pricingDisplay !== null
-    && (isCustomQuote || currency !== null)
-    && inkNamesValid
+  // Per-ink-field validity (for the requires-ink-names path). Empty slots fail.
+  const inkNameValidities = requiresInkNames && inkCount > 0
+    ? Array.from({ length: inkCount }, (_, i) => (inkNamesArray[i] ?? '').trim() !== '')
+    : []
 
-  const disabledReason = canSave
-    ? undefined
-    : pricingDisplay === null
-      ? 'Choose a pricing display option to save'
-      : !isCustomQuote && currency === null
-        ? 'Choose a currency to save'
-        : requiresInkNames && selectedVariantIds.length === 0
-          ? 'Select a variant to save'
-          : !inkNamesValid
-            ? 'Fill in all ink names to save'
-            : undefined
+  // All "requires a value before save succeeds" checks, derived from state.
+  // Flipping any failing field to valid clears its error highlight live.
+  const imagesFinishKeys = finishMode ? selectedFinishes : ['']
+  const validations = {
+    images:         imagesFinishKeys.every(fk => (imagesByFinish[fk] ?? []).length > 0),
+    pricingDisplay: pricingDisplay !== null,
+    material:       !!selectedMaterialId,
+    variant:        !variantRequired || selectedVariantIds.length > 0,
+    currency:       isCustomQuote || currency !== null,
+    inkNames:       !requiresInkNames || (inkCount > 0 && inkNameValidities.every(Boolean)),
+  } as const
+  const isValid = Object.values(validations).every(Boolean)
+  const shouldHighlight = (k: keyof typeof validations) => submitAttempted && !validations[k]
+
+  // Specific images message so the designer knows which finish tab needs attention.
+  const invalidFinishKey = !validations.images
+    ? imagesFinishKeys.find(fk => (imagesByFinish[fk] ?? []).length === 0)
+    : undefined
+  const imagesHint = invalidFinishKey !== undefined && invalidFinishKey !== ''
+    ? `At least one image required for ${availableFinishes.find(f => f.code === invalidFinishKey)?.display_name ?? invalidFinishKey}.`
+    : 'At least one proof image required.'
 
   // Preserve previously-entered ink data when switching between "requires
   // per-ink" and optional materials — best-effort, joined/split on commas.
@@ -528,12 +518,19 @@ export default function NewVersionPage() {
       if (parts.length > 0) setInkNamesArray(parts)
     }
     setSelectedMaterialId(nextId)
-    setMaterialError('')
   }
 
   return (
     <div className="min-h-screen bg-gray-50">
       <PageDropOverlay visible={isPageDragOver} />
+      {validationToast && (
+        <div
+          role="status"
+          className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full bg-rose-50 px-5 py-2.5 text-sm font-medium text-rose-700 shadow-lg ring-1 ring-rose-200"
+        >
+          {validationToast}
+        </div>
+      )}
       <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6">
 
         <div className="mb-6">
@@ -556,10 +553,17 @@ export default function NewVersionPage() {
             <button
               type="submit"
               form="new-version-form"
-              disabled={submitting || !canSave}
-              title={disabledReason}
-              aria-label={disabledReason}
-              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={submitting}
+              aria-label={
+                submitAttempted && !isValid
+                  ? 'Save version — some required fields are incomplete'
+                  : undefined
+              }
+              className={[
+                'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
+                isValid ? 'bg-gray-900 hover:bg-gray-700' : 'bg-gray-900/60 hover:bg-gray-900/75',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+              ].join(' ')}
             >
               {submitting ? 'Uploading and saving…' : 'Save version'}
             </button>
@@ -664,8 +668,8 @@ export default function NewVersionPage() {
                     'flex w-full items-center justify-center rounded-xl border-2 py-8 text-sm transition-colors',
                     isZoneDragOver
                       ? 'border-solid border-gray-900 bg-gray-50 text-gray-900'
-                      : imagesError
-                        ? 'border-dashed border-red-300 text-red-400 hover:border-red-400 hover:text-red-600'
+                      : shouldHighlight('images')
+                        ? 'border-dashed border-rose-300 text-rose-500 hover:border-rose-400 hover:text-rose-600'
                         : 'border-dashed border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600',
                   ].join(' ')}
                 >
@@ -680,11 +684,18 @@ export default function NewVersionPage() {
 
             {fileError && <p className="mt-2 text-sm text-red-600">{fileError}</p>}
             {fileNote && <p className="mt-2 text-sm text-gray-500">{fileNote}</p>}
-            {imagesError && <p className="mt-2 text-sm text-red-600">{imagesError}</p>}
+            {shouldHighlight('images') && (
+              <p className="mt-2 text-xs font-medium text-rose-500">{imagesHint}</p>
+            )}
           </section>
 
           {/* Pricing display — required choice between standard grid and custom quote */}
-          <PricingDisplayField value={pricingDisplay} onChange={setPricingDisplay} />
+          <PricingDisplayField
+            value={pricingDisplay}
+            onChange={setPricingDisplay}
+            invalid={shouldHighlight('pricingDisplay')}
+            forwardRef={pricingDisplayRef}
+          />
 
           {/* Material + variant + finishes selection */}
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
@@ -696,12 +707,12 @@ export default function NewVersionPage() {
                 ref={materialRef}
                 value={selectedMaterialId}
                 onChange={(e) => handleMaterialChange(e.target.value)}
-                className={[selectClass, materialError ? 'border-red-400 focus:border-red-500 focus:ring-red-500' : ''].join(' ')}
+                className={[selectClass, shouldHighlight('material') ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
               >
                 <option value="">Select a material…</option>
                 {materials.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
               </select>
-              {materialError && <p className="mt-1.5 text-sm text-red-600">{materialError}</p>}
+              {shouldHighlight('material') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
             </div>
 
             {variantRequired && variants.length > 0 && variantType !== 'default' && (
@@ -712,7 +723,10 @@ export default function NewVersionPage() {
                 </label>
 
                 {isThickness ? (
-                  <div className="flex flex-wrap gap-2">
+                  <div className={[
+                    'flex flex-wrap gap-2 rounded-lg',
+                    shouldHighlight('variant') ? 'p-2 ring-1 ring-rose-300' : '',
+                  ].join(' ')}>
                     {variants.map((v) => {
                       const checked = selectedVariantIds.includes(v.id)
                       return (
@@ -731,14 +745,14 @@ export default function NewVersionPage() {
                 ) : (
                   <select
                     value={selectedVariantIds[0] ?? ''}
-                    onChange={(e) => { setSelectedVariantIds(e.target.value ? [e.target.value] : []); setVariantError('') }}
-                    className={[selectClass, variantError ? 'border-red-400' : ''].join(' ')}
+                    onChange={(e) => setSelectedVariantIds(e.target.value ? [e.target.value] : [])}
+                    className={[selectClass, shouldHighlight('variant') ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
                   >
                     <option value="">Select…</option>
                     {variants.map((v) => <option key={v.id} value={v.id}>{v.display_name}</option>)}
                   </select>
                 )}
-                {variantError && <p className="mt-1.5 text-sm text-red-600">{variantError}</p>}
+                {shouldHighlight('variant') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
               </div>
             )}
 
@@ -773,35 +787,43 @@ export default function NewVersionPage() {
             )}
 
             {!isCustomQuote && (
-              <div className="mb-4">
+              <div ref={currencyRef} className="mb-4">
                 <label className="mb-1.5 block text-sm font-medium text-gray-700">Currency</label>
-                <CurrencyField value={currency} onChange={setCurrency} />
+                <CurrencyField value={currency} onChange={setCurrency} invalid={shouldHighlight('currency')} />
+                {shouldHighlight('currency') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
               </div>
             )}
 
             {requiresInkNames ? (
-              <div>
+              <div ref={inkNamesRef}>
                 <label className="mb-1.5 block text-sm font-medium text-gray-700">Ink names</label>
                 {inkCount === 0 ? (
                   <p className="text-sm text-gray-400">Select a variant to enter ink names.</p>
                 ) : (
                   <div className="space-y-2">
-                    {Array.from({ length: inkCount }).map((_, i) => (
-                      <div key={i}>
-                        <label className="mb-0.5 block text-xs font-medium text-gray-500">Ink {i + 1}</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Pantone 185 C"
-                          value={inkNamesArray[i] ?? ''}
-                          onChange={(e) => {
-                            const next = [...inkNamesArray]
-                            next[i] = e.target.value
-                            setInkNamesArray(next)
-                          }}
-                          className={inputClass}
-                        />
-                      </div>
-                    ))}
+                    {Array.from({ length: inkCount }).map((_, i) => {
+                      const fieldInvalid = submitAttempted && !inkNameValidities[i]
+                      return (
+                        <div key={i}>
+                          <label className="mb-0.5 block text-xs font-medium text-gray-500">Ink {i + 1}</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. Pantone 185 C"
+                            value={inkNamesArray[i] ?? ''}
+                            onChange={(e) => {
+                              const next = [...inkNamesArray]
+                              next[i] = e.target.value
+                              setInkNamesArray(next)
+                            }}
+                            className={[
+                              inputClass,
+                              fieldInvalid ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : '',
+                            ].join(' ')}
+                          />
+                          {fieldInvalid && <p className="mt-1 text-xs font-medium text-rose-500">Required</p>}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>
