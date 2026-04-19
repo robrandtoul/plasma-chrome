@@ -6,11 +6,12 @@ const CURRENCY_LOCALE: Record<Currency, string> = {
   USD: 'en-US',
 }
 
-export function formatPrice(amountPence: number, currency: Currency): string {
+// Prices in the DB and snapshots are in major currency units (e.g. 279.00 = £279).
+export function formatPrice(amount: number, currency: Currency, decimals = 0): string {
   return new Intl.NumberFormat(CURRENCY_LOCALE[currency], {
     style: 'currency',
     currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(amountPence / 100)
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(amount)
 }

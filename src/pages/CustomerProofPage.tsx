@@ -210,7 +210,7 @@ function PricingTable({
               {formatPrice(price, currency as 'GBP' | 'EUR' | 'USD')}
             </td>
             <td className="px-6 py-3 text-right text-gray-500">
-              {formatPrice(Math.round(price / qty), currency as 'GBP' | 'EUR' | 'USD')}
+              {formatPrice(price / qty, currency as 'GBP' | 'EUR' | 'USD', 2)}
             </td>
           </tr>
         ))}
