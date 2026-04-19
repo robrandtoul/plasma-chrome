@@ -38,7 +38,6 @@ export function PricingDisplay({
       quantitySurcharges={quantitySurcharges}
       showToggle={showToggle}
       showAll={showAll}
-      hiddenCount={hiddenCount}
       onToggle={() => setShowAll((v) => !v)}
     />
   ) : (
@@ -50,7 +49,6 @@ export function PricingDisplay({
       quantitySurcharges={quantitySurcharges}
       showToggle={showToggle}
       showAll={showAll}
-      hiddenCount={hiddenCount}
       onToggle={() => setShowAll((v) => !v)}
     />
   )
@@ -61,12 +59,10 @@ export function PricingDisplay({
 function ToggleRow({
   colSpan,
   showAll,
-  hiddenCount,
   onToggle,
 }: {
   colSpan: number
   showAll: boolean
-  hiddenCount: number
   onToggle: () => void
 }) {
   return (
@@ -78,7 +74,7 @@ function ToggleRow({
           onClick={onToggle}
           className="flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-1.5 px-6 py-3 text-sm font-medium text-gray-500 transition-colors duration-150 hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-300"
         >
-          <span>{showAll ? 'Show fewer quantities' : `Show ${hiddenCount} more quantities`}</span>
+          <span>{showAll ? 'Show fewer quantities' : 'Show all quantities'}</span>
           <svg
             viewBox="0 0 16 16"
             aria-hidden="true"
@@ -112,7 +108,6 @@ function SingleVariantTable({
   quantitySurcharges,
   showToggle,
   showAll,
-  hiddenCount,
   onToggle,
 }: {
   variant: PricingSnapshot['variants'][0]
@@ -122,7 +117,6 @@ function SingleVariantTable({
   quantitySurcharges: Record<number, number>
   showToggle: boolean
   showAll: boolean
-  hiddenCount: number
   onToggle: () => void
 }) {
   const rows = quantities
@@ -158,7 +152,7 @@ function SingleVariantTable({
           )
         })}
         {showToggle && (
-          <ToggleRow colSpan={3} showAll={showAll} hiddenCount={hiddenCount} onToggle={onToggle} />
+          <ToggleRow colSpan={3} showAll={showAll} onToggle={onToggle} />
         )}
       </tbody>
     </table>
@@ -175,7 +169,6 @@ function MultiVariantGrid({
   quantitySurcharges,
   showToggle,
   showAll,
-  hiddenCount,
   onToggle,
 }: {
   variants: PricingSnapshot['variants']
@@ -185,7 +178,6 @@ function MultiVariantGrid({
   quantitySurcharges: Record<number, number>
   showToggle: boolean
   showAll: boolean
-  hiddenCount: number
   onToggle: () => void
 }) {
   if (quantities.length === 0) return null
@@ -241,7 +233,7 @@ function MultiVariantGrid({
             )
           })}
           {showToggle && (
-            <ToggleRow colSpan={colSpan} showAll={showAll} hiddenCount={hiddenCount} onToggle={onToggle} />
+            <ToggleRow colSpan={colSpan} showAll={showAll} onToggle={onToggle} />
           )}
         </tbody>
       </table>
