@@ -304,7 +304,7 @@ export default function ProofDetailPage() {
             )}
           </div>
         ) : (
-          <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+          <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100">
