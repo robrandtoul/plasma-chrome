@@ -3,7 +3,9 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { v4 as uuidv4 } from 'uuid'
 import { supabase } from '../lib/supabase'
 import { formatPrice } from '../lib/currency'
+import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { PricingDisplayField, type PricingDisplayValue } from '../components/PricingDisplayField'
+import { PageDropOverlay } from '../components/PageDropOverlay'
 import type { Currency } from '../lib/types'
 
 interface Material {
@@ -70,6 +72,7 @@ export default function NewVersionPage() {
   const [imagesByFinish, setImagesByFinish] = useState<Record<string, ImageEntry[]>>({ '': [] })
   const [activeImageFinish, setActiveImageFinish] = useState('')
   const [fileError, setFileError] = useState('')
+  const [fileNote, setFileNote] = useState('')
   const [imagesError, setImagesError] = useState('')
   const [materialError, setMaterialError] = useState('')
   const [variantError, setVariantError] = useState('')
@@ -203,19 +206,49 @@ export default function NewVersionPage() {
     })
   }
 
-  function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
+  function addFiles(files: File[]) {
     setFileError('')
+    setFileNote('')
     setImagesError('')
-    const files = Array.from(e.target.files ?? [])
-    if (!files.length) return
+    if (files.length === 0) return
 
+    // Filter to accepted image types (drops from desktop may include anything)
+    const okByType = files.filter(f => ACCEPTED_TYPES.includes(f.type))
+    const rejectedByType = files.length - okByType.length
+    if (okByType.length === 0) {
+      setFileError('Only image files can be added.')
+      return
+    }
+
+    // 10 MB per-file size limit
+    const okBySize = okByType.filter(f => f.size <= MAX_FILE_SIZE)
+    const rejectedBySize = okByType.length - okBySize.length
+    if (okBySize.length === 0) {
+      setFileError('Each image must be 10 MB or smaller.')
+      return
+    }
+
+    // 10-images-per-finish cap
     const remaining = MAX_IMAGES - currentImages.length
-    const toAdd = files.slice(0, remaining)
+    if (remaining <= 0) {
+      setFileNote(`Can't add more — ${MAX_IMAGES}-image limit reached.`)
+      return
+    }
 
-    const invalidType = toAdd.find((f) => !ACCEPTED_TYPES.includes(f.type))
-    const tooLarge = toAdd.find((f) => f.size > MAX_FILE_SIZE)
-    if (invalidType) { setFileError('Only JPEG and PNG files are accepted.'); return }
-    if (tooLarge) { setFileError('Each file must be 10 MB or smaller.'); return }
+    const toAdd = okBySize.slice(0, remaining)
+    const rejectedByLimit = okBySize.length - toAdd.length
+
+    const notes: string[] = []
+    if (rejectedByLimit > 0) {
+      notes.push(`Added ${toAdd.length}. ${rejectedByLimit} skipped (${MAX_IMAGES}-image limit reached).`)
+    }
+    if (rejectedByType > 0 || rejectedBySize > 0) {
+      const reasons: string[] = []
+      if (rejectedByType > 0) reasons.push(`${rejectedByType} non-image`)
+      if (rejectedBySize > 0) reasons.push(`${rejectedBySize} over 10 MB`)
+      notes.push(`Ignored: ${reasons.join(', ')}.`)
+    }
+    if (notes.length > 0) setFileNote(notes.join(' '))
 
     setImagesByFinish(prev => {
       const cur = prev[activeKey] ?? []
@@ -233,9 +266,14 @@ export default function NewVersionPage() {
         ],
       }
     })
+  }
 
+  function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
+    addFiles(Array.from(e.target.files ?? []))
     if (fileRef.current) fileRef.current.value = ''
   }
+
+  const { isZoneDragOver, isPageDragOver, zoneProps } = useImageFileDrop({ onFiles: addFiles })
 
   function removeImage(localId: string) {
     setImagesByFinish(prev => {
@@ -417,6 +455,7 @@ export default function NewVersionPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <PageDropOverlay visible={isPageDragOver} />
       <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6">
 
         <div className="mb-6">
@@ -542,21 +581,27 @@ export default function NewVersionPage() {
                 <button
                   type="button"
                   onClick={() => fileRef.current?.click()}
+                  {...zoneProps}
                   className={[
-                    'flex w-full items-center justify-center rounded-xl border-2 border-dashed py-8 text-sm',
-                    imagesError
-                      ? 'border-red-300 text-red-400 hover:border-red-400 hover:text-red-600'
-                      : 'border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600',
+                    'flex w-full items-center justify-center rounded-xl border-2 py-8 text-sm transition-colors',
+                    isZoneDragOver
+                      ? 'border-solid border-gray-900 bg-gray-50 text-gray-900'
+                      : imagesError
+                        ? 'border-dashed border-red-300 text-red-400 hover:border-red-400 hover:text-red-600'
+                        : 'border-dashed border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600',
                   ].join(' ')}
                 >
-                  {currentImages.length === 0
-                    ? 'Click to upload JPEG or PNG (max 10 MB each)'
-                    : `Add more images (${currentImages.length} / ${MAX_IMAGES})`}
+                  {isZoneDragOver
+                    ? 'Drop to add images'
+                    : currentImages.length === 0
+                      ? 'Click or drop to upload JPEG or PNG (max 10 MB each)'
+                      : `Add more images (${currentImages.length} / ${MAX_IMAGES})`}
                 </button>
               </>
             )}
 
             {fileError && <p className="mt-2 text-sm text-red-600">{fileError}</p>}
+            {fileNote && <p className="mt-2 text-sm text-gray-500">{fileNote}</p>}
             {imagesError && <p className="mt-2 text-sm text-red-600">{imagesError}</p>}
           </section>
 
