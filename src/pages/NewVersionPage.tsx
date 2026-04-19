@@ -23,9 +23,23 @@ interface PriceTierRow {
   total_price: number
 }
 
+interface ImageEntry {
+  localId: string
+  file: File
+  preview: string
+  label: string
+}
+
 const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
 const MAX_FILE_SIZE = 10 * 1024 * 1024
 const ACCEPTED_TYPES = ['image/jpeg', 'image/png']
+const MAX_IMAGES = 10
+
+function defaultLabel(index: number): string {
+  if (index === 0) return 'Front'
+  if (index === 1) return 'Back'
+  return `Image ${index + 1}`
+}
 
 export default function NewVersionPage() {
   const { id: proofId } = useParams<{ id: string }>()
@@ -35,21 +49,18 @@ export default function NewVersionPage() {
   const [materials, setMaterials] = useState<Material[]>([])
   const [selectedMaterialId, setSelectedMaterialId] = useState('')
   const [variants, setVariants] = useState<Variant[]>([])
-  // For thickness: multiple selections; for others: single selection (array of one)
   const [selectedVariantIds, setSelectedVariantIds] = useState<string[]>([])
   const [currency, setCurrency] = useState<Currency>('GBP')
-  // variantId → { quantity → price string }
   const [variantSnapshots, setVariantSnapshots] = useState<Record<string, Record<number, string>>>({})
-  // variantId → sorted PriceTierRow[]
   const [variantTiers, setVariantTiers] = useState<Record<string, PriceTierRow[]>>({})
   const [inkNames, setInkNames] = useState('')
   const [changeNotes, setChangeNotes] = useState('')
-  const [imageFile, setImageFile] = useState<File | null>(null)
-  const [imagePreview, setImagePreview] = useState('')
+  const [images, setImages] = useState<ImageEntry[]>([])
   const [fileError, setFileError] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const dragIndexRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!proofId) return
@@ -59,7 +70,6 @@ export default function NewVersionPage() {
       .then(({ data }) => setMaterials((data ?? []) as Material[]))
   }, [proofId])
 
-  // Load variants when material changes
   useEffect(() => {
     setVariants([])
     setSelectedVariantIds([])
@@ -76,10 +86,8 @@ export default function NewVersionPage() {
         const v = (data ?? []) as Variant[]
         setVariants(v)
         if (v[0]?.variant_type === 'thickness') {
-          // Default: all thickness variants selected
           setSelectedVariantIds(v.map((x) => x.id))
         } else if (v.length === 1) {
-          // Single variant (default type) — auto-select
           setSelectedVariantIds([v[0].id])
         } else {
           setSelectedVariantIds([])
@@ -87,7 +95,6 @@ export default function NewVersionPage() {
       })
   }, [selectedMaterialId])
 
-  // Load price tiers whenever selection or currency changes
   useEffect(() => {
     setVariantTiers({})
     setVariantSnapshots({})
@@ -115,12 +122,64 @@ export default function NewVersionPage() {
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     setFileError('')
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (!ACCEPTED_TYPES.includes(file.type)) { setFileError('Only JPEG and PNG files are accepted.'); return }
-    if (file.size > MAX_FILE_SIZE) { setFileError('File must be 10 MB or smaller.'); return }
-    setImageFile(file)
-    setImagePreview(URL.createObjectURL(file))
+    const files = Array.from(e.target.files ?? [])
+    if (!files.length) return
+
+    const remaining = MAX_IMAGES - images.length
+    const toAdd = files.slice(0, remaining)
+
+    const invalidType = toAdd.find((f) => !ACCEPTED_TYPES.includes(f.type))
+    const tooLarge = toAdd.find((f) => f.size > MAX_FILE_SIZE)
+    if (invalidType) { setFileError('Only JPEG and PNG files are accepted.'); return }
+    if (tooLarge) { setFileError('Each file must be 10 MB or smaller.'); return }
+
+    setImages((prev) => {
+      const currentCount = prev.length
+      return [
+        ...prev,
+        ...toAdd.map((file, i) => ({
+          localId: uuidv4(),
+          file,
+          preview: URL.createObjectURL(file),
+          label: defaultLabel(currentCount + i),
+        })),
+      ]
+    })
+
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  function removeImage(localId: string) {
+    setImages((prev) => {
+      const removed = prev.find((e) => e.localId === localId)
+      if (removed) URL.revokeObjectURL(removed.preview)
+      return prev.filter((e) => e.localId !== localId)
+    })
+  }
+
+  function updateLabel(localId: string, label: string) {
+    setImages((prev) => prev.map((e) => (e.localId === localId ? { ...e, label } : e)))
+  }
+
+  function handleDragStart(index: number) {
+    dragIndexRef.current = index
+  }
+
+  function handleDragOver(e: React.DragEvent, index: number) {
+    e.preventDefault()
+    const from = dragIndexRef.current
+    if (from === null || from === index) return
+    setImages((prev) => {
+      const next = [...prev]
+      const [item] = next.splice(from, 1)
+      next.splice(index, 0, item)
+      return next
+    })
+    dragIndexRef.current = index
+  }
+
+  function handleDragEnd() {
+    dragIndexRef.current = null
   }
 
   function toggleVariant(variantId: string) {
@@ -140,23 +199,34 @@ export default function NewVersionPage() {
     e.preventDefault()
     setError('')
 
-    if (!imageFile) { setError('Please select a proof image.'); return }
+    if (images.length === 0) { setError('Please add at least one proof image.'); return }
     if (!selectedMaterialId) { setError('Please select a material.'); return }
     if (selectedVariantIds.length === 0) { setError('Please select at least one variant.'); return }
 
     setSubmitting(true)
 
-    const imagePath = `${proofId}/${uuidv4()}.jpg`
-    const { error: uploadError } = await supabase.storage
-      .from('proof-images')
-      .upload(imagePath, imageFile, { contentType: imageFile.type, upsert: false })
+    // Upload all images in parallel
+    const uploadResults = await Promise.all(
+      images.map(async (entry) => {
+        const ext = entry.file.type === 'image/png' ? 'png' : 'jpg'
+        const path = `${proofId}/${uuidv4()}.${ext}`
+        const { error: uploadError } = await supabase.storage
+          .from('proof-images')
+          .upload(path, entry.file, { contentType: entry.file.type, upsert: false })
+        return { path, error: uploadError }
+      })
+    )
 
-    if (uploadError) {
-      setError(`Image upload failed: ${uploadError.message}`)
+    const failedUpload = uploadResults.find((r) => r.error)
+    if (failedUpload) {
+      const successPaths = uploadResults.filter((r) => !r.error).map((r) => r.path)
+      if (successPaths.length > 0) await supabase.storage.from('proof-images').remove(successPaths)
+      setError(`Image upload failed: ${failedUpload.error!.message}`)
       setSubmitting(false)
       return
     }
 
+    const uploadedPaths = uploadResults.map((r) => r.path)
     const material = materials.find((m) => m.id === selectedMaterialId)!
 
     const pricingSnapshot = {
@@ -174,20 +244,40 @@ export default function NewVersionPage() {
 
     const parsedInkNames = inkNames.split(',').map((s) => s.trim()).filter(Boolean)
 
-    const { error: insertError } = await supabase.from('proof_versions').insert({
-      proof_id: proofId,
-      image_path: imagePath,
-      material_id: selectedMaterialId,
-      material_display: material.display_name,
-      ink_names: parsedInkNames,
-      currency,
-      pricing_snapshot: pricingSnapshot,
-      change_notes: changeNotes.trim() || null,
-    })
+    const { data: versionData, error: insertError } = await supabase
+      .from('proof_versions')
+      .insert({
+        proof_id: proofId,
+        material_id: selectedMaterialId,
+        material_display: material.display_name,
+        ink_names: parsedInkNames,
+        currency,
+        pricing_snapshot: pricingSnapshot,
+        change_notes: changeNotes.trim() || null,
+      })
+      .select('id')
+      .single()
 
-    if (insertError) {
-      await supabase.storage.from('proof-images').remove([imagePath])
-      setError(`Failed to save version: ${insertError.message}`)
+    if (insertError || !versionData) {
+      await supabase.storage.from('proof-images').remove(uploadedPaths)
+      setError(`Failed to save version: ${insertError?.message ?? 'Unknown error'}`)
+      setSubmitting(false)
+      return
+    }
+
+    const imageInserts = images.map((entry, i) => ({
+      proof_version_id: versionData.id,
+      image_path: uploadedPaths[i],
+      label: entry.label,
+      sort_order: i,
+    }))
+
+    const { error: imagesError } = await supabase.from('proof_version_images').insert(imageInserts)
+
+    if (imagesError) {
+      await supabase.from('proof_versions').delete().eq('id', versionData.id)
+      await supabase.storage.from('proof-images').remove(uploadedPaths)
+      setError(`Failed to save images: ${imagesError.message}`)
       setSubmitting(false)
       return
     }
@@ -213,22 +303,72 @@ export default function NewVersionPage() {
 
           {/* Image upload */}
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Proof image</h2>
-            <input ref={fileRef} type="file" accept="image/jpeg,image/png" onChange={handleFileChange} className="hidden" />
-            {imagePreview ? (
-              <div className="relative">
-                <img src={imagePreview} alt="Preview" className="w-full rounded-xl object-contain" />
-                <button type="button" onClick={() => { setImageFile(null); setImagePreview(''); if (fileRef.current) fileRef.current.value = '' }}
-                  className="absolute right-2 top-2 rounded-full bg-white px-2 py-1 text-xs text-gray-600 shadow hover:bg-gray-50">
-                  Remove
-                </button>
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
+              Proof images
+              {images.length > 0 && (
+                <span className="ml-2 font-normal normal-case text-gray-400">
+                  — drag to reorder
+                </span>
+              )}
+            </h2>
+
+            {images.length > 0 && (
+              <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {images.map((entry, index) => (
+                  <div
+                    key={entry.localId}
+                    draggable
+                    onDragStart={() => handleDragStart(index)}
+                    onDragOver={(e) => handleDragOver(e, index)}
+                    onDragEnd={handleDragEnd}
+                    className="group relative cursor-grab rounded-xl border border-gray-200 bg-gray-50 p-2 active:cursor-grabbing"
+                  >
+                    <img
+                      src={entry.preview}
+                      alt={entry.label}
+                      className="mb-2 aspect-square w-full rounded-lg object-contain"
+                    />
+                    <input
+                      type="text"
+                      value={entry.label}
+                      onChange={(e) => updateLabel(entry.localId, e.target.value)}
+                      className="w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-gray-900 focus:outline-none"
+                      placeholder="Label"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeImage(entry.localId)}
+                      className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-gray-800 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
               </div>
-            ) : (
-              <button type="button" onClick={() => fileRef.current?.click()}
-                className="flex w-full items-center justify-center rounded-xl border-2 border-dashed border-gray-200 py-12 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-600">
-                Click to upload JPEG or PNG (max 10 MB)
-              </button>
             )}
+
+            {images.length < MAX_IMAGES && (
+              <>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/jpeg,image/png"
+                  multiple
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  className="flex w-full items-center justify-center rounded-xl border-2 border-dashed border-gray-200 py-8 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-600"
+                >
+                  {images.length === 0
+                    ? 'Click to upload JPEG or PNG (max 10 MB each)'
+                    : `Add more images (${images.length} / ${MAX_IMAGES})`}
+                </button>
+              </>
+            )}
+
             {fileError && <p className="mt-2 text-sm text-red-600">{fileError}</p>}
           </section>
 
@@ -252,7 +392,6 @@ export default function NewVersionPage() {
                 </label>
 
                 {isThickness ? (
-                  // Multi-select chips for thickness
                   <div className="flex flex-wrap gap-2">
                     {variants.map((v) => {
                       const checked = selectedVariantIds.includes(v.id)
@@ -270,7 +409,6 @@ export default function NewVersionPage() {
                     })}
                   </div>
                 ) : (
-                  // Single select for ink_count / finish
                   <select value={selectedVariantIds[0] ?? ''} onChange={(e) => setSelectedVariantIds(e.target.value ? [e.target.value] : [])} className={selectClass}>
                     <option value="">Select…</option>
                     {variants.map((v) => <option key={v.id} value={v.id}>{v.display_name}</option>)}

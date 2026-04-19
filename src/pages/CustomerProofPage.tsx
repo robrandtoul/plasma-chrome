@@ -6,13 +6,24 @@ import { formatPrice } from '../lib/currency'
 
 const SIGNED_URL_TTL = 60 * 60 * 24 // 24 hours in seconds
 
+interface VersionImage {
+  id: string
+  proof_version_id: string
+  image_path: string
+  label: string
+  sort_order: number
+  signed_url: string
+}
+
 export default function CustomerProofPage() {
   const { id } = useParams<{ id: string }>()
 
   const [proof, setProof] = useState<PublicProof | null>(null)
   const [versions, setVersions] = useState<PublicProofVersion[]>([])
   const [activeVersion, setActiveVersion] = useState<PublicProofVersion | null>(null)
+  const [versionImages, setVersionImages] = useState<Record<string, VersionImage[]>>({})
   const [disclaimer, setDisclaimer] = useState<string>('')
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
 
@@ -20,6 +31,15 @@ export default function CustomerProofPage() {
     if (!id) { setNotFound(true); return }
     loadProof(id)
   }, [id])
+
+  useEffect(() => {
+    if (!lightboxSrc) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setLightboxSrc(null)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [lightboxSrc])
 
   async function loadProof(proofId: string) {
     setLoading(true)
@@ -40,19 +60,35 @@ export default function CustomerProofPage() {
     if (settingsResult.data) setDisclaimer((settingsResult.data as AppSettings).disclaimer_html)
 
     const rawVersions = (versionsResult.data ?? []) as PublicProofVersion[]
+    setVersions(rawVersions)
+    setActiveVersion(rawVersions.find((v) => v.is_current) ?? rawVersions[rawVersions.length - 1] ?? null)
 
-    // Resolve signed URLs for all versions in parallel.
-    const withUrls = await Promise.all(
-      rawVersions.map(async (v) => {
-        const { data } = await supabase.storage
-          .from('proof-images')
-          .createSignedUrl(v.image_path, SIGNED_URL_TTL)
-        return { ...v, signed_image_url: data?.signedUrl ?? '' }
+    // Load images for all versions
+    if (rawVersions.length > 0) {
+      const versionIds = rawVersions.map((v) => v.id)
+      const { data: imageRows } = await supabase
+        .from('public_proof_version_images')
+        .select('*')
+        .in('proof_version_id', versionIds)
+        .order('sort_order')
+
+      const imagesWithUrls = await Promise.all(
+        ((imageRows ?? []) as Omit<VersionImage, 'signed_url'>[]).map(async (img) => {
+          const { data } = await supabase.storage
+            .from('proof-images')
+            .createSignedUrl(img.image_path, SIGNED_URL_TTL)
+          return { ...img, signed_url: data?.signedUrl ?? '' }
+        })
+      )
+
+      const byVersion: Record<string, VersionImage[]> = {}
+      imagesWithUrls.forEach((img) => {
+        if (!byVersion[img.proof_version_id]) byVersion[img.proof_version_id] = []
+        byVersion[img.proof_version_id].push(img)
       })
-    )
+      setVersionImages(byVersion)
+    }
 
-    setVersions(withUrls)
-    setActiveVersion(withUrls.find((v) => v.is_current) ?? withUrls[withUrls.length - 1] ?? null)
     setLoading(false)
   }
 
@@ -99,19 +135,13 @@ export default function CustomerProofPage() {
 
         {activeVersion && (
           <>
-            {/* Proof image */}
-            <div className="mb-8 overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-              {activeVersion.signed_image_url ? (
-                <img
-                  src={activeVersion.signed_image_url}
-                  alt={`Proof version ${activeVersion.version_number}`}
-                  className="w-full object-contain"
-                />
-              ) : (
-                <div className="flex h-64 items-center justify-center text-gray-400">
-                  Image unavailable
-                </div>
-              )}
+            {/* Proof images */}
+            <div className="mb-8">
+              <ImageGrid
+                images={versionImages[activeVersion.id] ?? []}
+                versionNumber={activeVersion.version_number}
+                onImageClick={setLightboxSrc}
+              />
             </div>
 
             {/* Spec summary */}
@@ -164,6 +194,84 @@ export default function CustomerProofPage() {
           />
         )}
       </div>
+
+      {/* Lightbox */}
+      {lightboxSrc && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setLightboxSrc(null)}
+        >
+          <img
+            src={lightboxSrc}
+            alt="Proof image"
+            className="max-h-full max-w-full rounded-lg object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ImageGrid({
+  images,
+  versionNumber,
+  onImageClick,
+}: {
+  images: VersionImage[]
+  versionNumber: number
+  onImageClick: (src: string) => void
+}) {
+  if (images.length === 0) {
+    return (
+      <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+        <div className="flex h-64 items-center justify-center text-gray-400">
+          Image unavailable
+        </div>
+      </div>
+    )
+  }
+
+  if (images.length === 1) {
+    return (
+      <div
+        className="cursor-zoom-in overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200"
+        onClick={() => onImageClick(images[0].signed_url)}
+      >
+        <img
+          src={images[0].signed_url}
+          alt={`Proof version ${versionNumber}`}
+          className="w-full object-contain"
+        />
+        {images[0].label && (
+          <div className="border-t border-gray-100 px-4 py-2 text-center text-sm text-gray-500">
+            {images[0].label}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      {images.map((img) => (
+        <div
+          key={img.id}
+          className="cursor-zoom-in overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200"
+          onClick={() => onImageClick(img.signed_url)}
+        >
+          <img
+            src={img.signed_url}
+            alt={img.label || `Proof version ${versionNumber}`}
+            className="w-full object-contain"
+          />
+          {img.label && (
+            <div className="border-t border-gray-100 px-4 py-2 text-center text-sm text-gray-500">
+              {img.label}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   )
 }
@@ -190,7 +298,6 @@ function PricingDisplay({
   const { variants } = snapshot
   if (!variants?.length) return null
 
-  // All quantities present in the snapshot, sorted ascending
   const allQuantities = [...new Set(
     variants.flatMap((v) => Object.keys(v.prices).map(Number))
   )].sort((a, b) => a - b)

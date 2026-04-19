@@ -23,7 +23,6 @@ export interface PublicProofVersion {
   id: string
   proof_id: string
   version_number: number
-  image_path: string
   material_id: string
   material_display: string
   ink_names: string[]
@@ -34,8 +33,16 @@ export interface PublicProofVersion {
   is_current: boolean
   created_at: string
   featured_quantities: number[]
+}
+
+export interface ProofVersionImage {
+  id: string
+  proof_version_id: string
+  image_path: string
+  label: string
+  sort_order: number
   // Resolved client-side — not a DB column.
-  signed_image_url?: string
+  signed_url?: string
 }
 
 export interface AppSettings {
