@@ -42,10 +42,15 @@ export default function EditVersionPage() {
   const [editImages, setEditImages] = useState<EditImage[]>([])
   const [originalImageIds, setOriginalImageIds] = useState<Set<string>>(new Set())
   const [fileError, setFileError] = useState('')
+  const [imagesError, setImagesError] = useState('')
+  const [materialError, setMaterialError] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
-  const dragIndexRef = useRef<number | null>(null)
+
+  const fileRef         = useRef<HTMLInputElement>(null)
+  const dragIndexRef    = useRef<number | null>(null)
+  const imageSectionRef = useRef<HTMLElement>(null)
+  const materialRef     = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!proofId || !versionId) return
@@ -85,7 +90,6 @@ export default function EditVersionPage() {
     setShippingNote(v.shipping_note)
     setFeaturedQuantities(v.materials?.featured_quantities ?? [100, 250, 500, 750, 1000])
 
-    // Load existing images with signed URLs
     const rawImages = (imagesResult.data ?? []) as { id: string; image_path: string; label: string; sort_order: number }[]
     const ids = new Set(rawImages.map((img) => img.id))
     setOriginalImageIds(ids)
@@ -110,6 +114,7 @@ export default function EditVersionPage() {
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     setFileError('')
+    setImagesError('')
     const files = Array.from(e.target.files ?? [])
     if (!files.length) return
 
@@ -159,9 +164,7 @@ export default function EditVersionPage() {
     )
   }
 
-  function handleDragStart(index: number) {
-    dragIndexRef.current = index
-  }
+  function handleDragStart(index: number) { dragIndexRef.current = index }
 
   function handleDragOver(e: React.DragEvent, index: number) {
     e.preventDefault()
@@ -176,20 +179,28 @@ export default function EditVersionPage() {
     dragIndexRef.current = index
   }
 
-  function handleDragEnd() {
-    dragIndexRef.current = null
-  }
+  function handleDragEnd() { dragIndexRef.current = null }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError('')
+    setImagesError('')
+    setMaterialError('')
 
-    if (editImages.length === 0) { setError('Please add at least one proof image.'); return }
-    if (!materialDisplay.trim()) { setError('Material display name cannot be empty.'); return }
+    if (editImages.length === 0) {
+      setImagesError('Please add at least one proof image.')
+      imageSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return
+    }
+    if (!materialDisplay.trim()) {
+      setMaterialError('Material display name cannot be empty.')
+      materialRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      materialRef.current?.focus()
+      return
+    }
 
     setSubmitting(true)
 
-    // Upload new images
     const uploadResults = await Promise.all(
       editImages
         .filter((img): img is Extract<EditImage, { kind: 'new' }> => img.kind === 'new')
@@ -214,13 +225,11 @@ export default function EditVersionPage() {
 
     const uploadedPathByLocalId = Object.fromEntries(uploadResults.map((r) => [r.localId, r.path]))
 
-    // Determine removed existing images
     const remainingExistingIds = new Set(
       editImages.filter((img): img is Extract<EditImage, { kind: 'existing' }> => img.kind === 'existing').map((img) => img.id)
     )
     const removedIds = [...originalImageIds].filter((id) => !remainingExistingIds.has(id))
 
-    // Fetch image_paths of removed images so we can delete from storage
     let removedPaths: string[] = []
     if (removedIds.length > 0) {
       const { data: removedRows } = await supabase
@@ -230,7 +239,6 @@ export default function EditVersionPage() {
       removedPaths = (removedRows ?? []).map((r: any) => r.image_path)
     }
 
-    // Update proof_versions (pricing_snapshot is intentionally excluded — immutable)
     const { error: updateErr } = await supabase
       .from('proof_versions')
       .update({
@@ -246,7 +254,6 @@ export default function EditVersionPage() {
       return
     }
 
-    // Delete removed image rows
     if (removedIds.length > 0) {
       await supabase.from('proof_version_images').delete().in('id', removedIds)
       if (removedPaths.length > 0) {
@@ -254,11 +261,10 @@ export default function EditVersionPage() {
       }
     }
 
-    // Update existing image rows (label + sort_order may have changed)
     await Promise.all(
       editImages
         .filter((img): img is Extract<EditImage, { kind: 'existing' }> => img.kind === 'existing')
-        .map((img, _i) => {
+        .map((img) => {
           const sortOrder = editImages.findIndex((x) => x.kind === 'existing' && x.id === img.id)
           return supabase
             .from('proof_version_images')
@@ -267,7 +273,6 @@ export default function EditVersionPage() {
         })
     )
 
-    // Insert new image rows
     const newImageInserts = editImages
       .map((img, i) => {
         if (img.kind !== 'new') return null
@@ -310,13 +315,34 @@ export default function EditVersionPage() {
           <Link to={`/proofs/${proofId}`} className="text-sm text-gray-400 hover:text-gray-700">← Back to proof</Link>
         </div>
 
-        <h1 className="mb-2 text-2xl font-bold text-gray-900">Edit v{versionNumber}</h1>
-        {proofName && <p className="mb-8 text-gray-500">{proofName}</p>}
+        {/* Page heading + actions */}
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Edit v{versionNumber}</h1>
+            {proofName && <p className="mt-1 text-gray-500">{proofName}</p>}
+          </div>
+          <div className="flex items-center gap-3">
+            <Link
+              to={`/proofs/${proofId}`}
+              className="text-sm font-medium text-gray-500 hover:text-gray-700"
+            >
+              Cancel
+            </Link>
+            <button
+              type="submit"
+              form="edit-version-form"
+              disabled={submitting}
+              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+            >
+              {submitting ? 'Saving…' : 'Save version'}
+            </button>
+          </div>
+        </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form id="edit-version-form" onSubmit={handleSubmit} className="space-y-6">
 
           {/* Images */}
-          <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+          <section ref={imageSectionRef} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
               Proof images
               {editImages.length > 0 && (
@@ -375,7 +401,12 @@ export default function EditVersionPage() {
                 <button
                   type="button"
                   onClick={() => fileRef.current?.click()}
-                  className="flex w-full items-center justify-center rounded-xl border-2 border-dashed border-gray-200 py-8 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-600"
+                  className={[
+                    'flex w-full items-center justify-center rounded-xl border-2 border-dashed py-8 text-sm',
+                    imagesError
+                      ? 'border-red-300 text-red-400 hover:border-red-400 hover:text-red-600'
+                      : 'border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600',
+                  ].join(' ')}
                 >
                   {editImages.length === 0
                     ? 'Click to upload JPEG or PNG (max 10 MB each)'
@@ -385,6 +416,7 @@ export default function EditVersionPage() {
             )}
 
             {fileError && <p className="mt-2 text-sm text-red-600">{fileError}</p>}
+            {imagesError && <p className="mt-2 text-sm text-red-600">{imagesError}</p>}
           </section>
 
           {/* Specification */}
@@ -394,11 +426,13 @@ export default function EditVersionPage() {
             <div className="mb-4">
               <label className="mb-1.5 block text-sm font-medium text-gray-700">Material display name</label>
               <input
+                ref={materialRef}
                 type="text"
                 value={materialDisplay}
-                onChange={(e) => setMaterialDisplay(e.target.value)}
-                className={inputClass}
+                onChange={(e) => { setMaterialDisplay(e.target.value); setMaterialError('') }}
+                className={[inputClass, materialError ? 'border-red-400 focus:border-red-500 focus:ring-red-500' : ''].join(' ')}
               />
+              {materialError && <p className="mt-1.5 text-sm text-red-600">{materialError}</p>}
             </div>
 
             <div className="mb-4">
@@ -425,7 +459,7 @@ export default function EditVersionPage() {
           {/* Pricing — read-only */}
           {pricingSnapshot && (
             <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-              <div className="border-b border-gray-100 px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
                 <h2 className="text-sm font-semibold uppercase tracking-widest text-gray-400">Pricing</h2>
                 <span className="text-xs text-gray-400">Read-only — locked at creation</span>
               </div>
@@ -454,21 +488,6 @@ export default function EditVersionPage() {
 
           {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
 
-          <div className="flex gap-3">
-            <Link
-              to={`/proofs/${proofId}`}
-              className="flex-1 rounded-lg px-4 py-3 text-center text-sm font-semibold text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
-            >
-              Cancel
-            </Link>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="flex-1 rounded-lg bg-gray-900 px-4 py-3 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
-            >
-              {submitting ? 'Saving…' : 'Save changes'}
-            </button>
-          </div>
         </form>
       </div>
     </div>

@@ -57,10 +57,17 @@ export default function NewVersionPage() {
   const [changeNotes, setChangeNotes] = useState('')
   const [images, setImages] = useState<ImageEntry[]>([])
   const [fileError, setFileError] = useState('')
+  const [imagesError, setImagesError] = useState('')
+  const [materialError, setMaterialError] = useState('')
+  const [variantError, setVariantError] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
-  const dragIndexRef = useRef<number | null>(null)
+
+  const fileRef         = useRef<HTMLInputElement>(null)
+  const dragIndexRef    = useRef<number | null>(null)
+  const imageSectionRef = useRef<HTMLElement>(null)
+  const materialRef     = useRef<HTMLSelectElement>(null)
+  const variantRef      = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!proofId) return
@@ -125,6 +132,7 @@ export default function NewVersionPage() {
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     setFileError('')
+    setImagesError('')
     const files = Array.from(e.target.files ?? [])
     if (!files.length) return
 
@@ -164,9 +172,7 @@ export default function NewVersionPage() {
     setImages((prev) => prev.map((e) => (e.localId === localId ? { ...e, label } : e)))
   }
 
-  function handleDragStart(index: number) {
-    dragIndexRef.current = index
-  }
+  function handleDragStart(index: number) { dragIndexRef.current = index }
 
   function handleDragOver(e: React.DragEvent, index: number) {
     e.preventDefault()
@@ -181,11 +187,10 @@ export default function NewVersionPage() {
     dragIndexRef.current = index
   }
 
-  function handleDragEnd() {
-    dragIndexRef.current = null
-  }
+  function handleDragEnd() { dragIndexRef.current = null }
 
   function toggleVariant(variantId: string) {
+    setVariantError('')
     setSelectedVariantIds((prev) =>
       prev.includes(variantId) ? prev.filter((id) => id !== variantId) : [...prev, variantId]
     )
@@ -201,14 +206,30 @@ export default function NewVersionPage() {
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError('')
+    setImagesError('')
+    setMaterialError('')
+    setVariantError('')
 
-    if (images.length === 0) { setError('Please add at least one proof image.'); return }
-    if (!selectedMaterialId) { setError('Please select a material.'); return }
-    if (selectedVariantIds.length === 0) { setError('Please select at least one variant.'); return }
+    // Validate — collect first failure and scroll to it
+    if (images.length === 0) {
+      setImagesError('Please add at least one proof image.')
+      imageSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return
+    }
+    if (!selectedMaterialId) {
+      setMaterialError('Please select a material.')
+      materialRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      materialRef.current?.focus()
+      return
+    }
+    if (selectedVariantIds.length === 0) {
+      setVariantError('Please select at least one variant.')
+      variantRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return
+    }
 
     setSubmitting(true)
 
-    // Upload all images in parallel
     const uploadResults = await Promise.all(
       images.map(async (entry) => {
         const ext = entry.file.type === 'image/png' ? 'png' : 'jpg'
@@ -299,19 +320,38 @@ export default function NewVersionPage() {
           <Link to={`/proofs/${proofId}`} className="text-sm text-gray-400 hover:text-gray-700">← Back to proof</Link>
         </div>
 
-        <h1 className="mb-2 text-2xl font-bold text-gray-900">Add version</h1>
-        {proofName && <p className="mb-8 text-gray-500">{proofName}</p>}
+        {/* Page heading + actions */}
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Add version</h1>
+            {proofName && <p className="mt-1 text-gray-500">{proofName}</p>}
+          </div>
+          <div className="flex items-center gap-3">
+            <Link
+              to={`/proofs/${proofId}`}
+              className="text-sm font-medium text-gray-500 hover:text-gray-700"
+            >
+              Cancel
+            </Link>
+            <button
+              type="submit"
+              form="new-version-form"
+              disabled={submitting}
+              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+            >
+              {submitting ? 'Uploading and saving…' : 'Save version'}
+            </button>
+          </div>
+        </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form id="new-version-form" onSubmit={handleSubmit} className="space-y-6">
 
           {/* Image upload */}
-          <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+          <section ref={imageSectionRef} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
               Proof images
               {images.length > 0 && (
-                <span className="ml-2 font-normal normal-case text-gray-400">
-                  — drag to reorder
-                </span>
+                <span className="ml-2 font-normal normal-case text-gray-400">— drag to reorder</span>
               )}
             </h2>
 
@@ -363,7 +403,12 @@ export default function NewVersionPage() {
                 <button
                   type="button"
                   onClick={() => fileRef.current?.click()}
-                  className="flex w-full items-center justify-center rounded-xl border-2 border-dashed border-gray-200 py-8 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-600"
+                  className={[
+                    'flex w-full items-center justify-center rounded-xl border-2 border-dashed py-8 text-sm',
+                    imagesError
+                      ? 'border-red-300 text-red-400 hover:border-red-400 hover:text-red-600'
+                      : 'border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600',
+                  ].join(' ')}
                 >
                   {images.length === 0
                     ? 'Click to upload JPEG or PNG (max 10 MB each)'
@@ -373,6 +418,7 @@ export default function NewVersionPage() {
             )}
 
             {fileError && <p className="mt-2 text-sm text-red-600">{fileError}</p>}
+            {imagesError && <p className="mt-2 text-sm text-red-600">{imagesError}</p>}
           </section>
 
           {/* Material + variant selection */}
@@ -381,14 +427,20 @@ export default function NewVersionPage() {
 
             <div className="mb-4">
               <label className="mb-1.5 block text-sm font-medium text-gray-700">Material</label>
-              <select value={selectedMaterialId} onChange={(e) => setSelectedMaterialId(e.target.value)} className={selectClass}>
+              <select
+                ref={materialRef}
+                value={selectedMaterialId}
+                onChange={(e) => { setSelectedMaterialId(e.target.value); setMaterialError('') }}
+                className={[selectClass, materialError ? 'border-red-400 focus:border-red-500 focus:ring-red-500' : ''].join(' ')}
+              >
                 <option value="">Select a material…</option>
                 {materials.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
               </select>
+              {materialError && <p className="mt-1.5 text-sm text-red-600">{materialError}</p>}
             </div>
 
             {variants.length > 0 && variantType !== 'default' && (
-              <div className="mb-4">
+              <div ref={variantRef} className="mb-4">
                 <label className="mb-2 block text-sm font-medium text-gray-700">
                   {variantLabel(variantType)}
                   {isThickness && <span className="ml-2 font-normal text-gray-400">— select all to expose on the proof</span>}
@@ -412,11 +464,16 @@ export default function NewVersionPage() {
                     })}
                   </div>
                 ) : (
-                  <select value={selectedVariantIds[0] ?? ''} onChange={(e) => setSelectedVariantIds(e.target.value ? [e.target.value] : [])} className={selectClass}>
+                  <select
+                    value={selectedVariantIds[0] ?? ''}
+                    onChange={(e) => { setSelectedVariantIds(e.target.value ? [e.target.value] : []); setVariantError('') }}
+                    className={[selectClass, variantError ? 'border-red-400' : ''].join(' ')}
+                  >
                     <option value="">Select…</option>
                     {variants.map((v) => <option key={v.id} value={v.id}>{v.display_name}</option>)}
                   </select>
                 )}
+                {variantError && <p className="mt-1.5 text-sm text-red-600">{variantError}</p>}
               </div>
             )}
 
@@ -493,10 +550,6 @@ export default function NewVersionPage() {
 
           {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
 
-          <button type="submit" disabled={submitting}
-            className="w-full rounded-lg bg-gray-900 px-4 py-3 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50">
-            {submitting ? 'Uploading and saving…' : 'Save version'}
-          </button>
         </form>
       </div>
     </div>
