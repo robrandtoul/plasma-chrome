@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { supabase } from '../lib/supabase'
 import { formatPrice } from '../lib/currency'
 import { useImageFileDrop } from '../lib/useImageFileDrop'
+import { pluralLabel } from '../lib/labels'
 import { PricingDisplayField, type PricingDisplayValue } from '../components/PricingDisplayField'
 import { CurrencyField } from '../components/CurrencyField'
 import { PageDropOverlay } from '../components/PageDropOverlay'
@@ -13,6 +14,7 @@ interface Material {
   id: string
   display_name: string
   requires_ink_names: boolean
+  option_label: string | null
 }
 
 interface Variant {
@@ -23,7 +25,7 @@ interface Variant {
   ink_count: number | null
 }
 
-interface Finish {
+interface MaterialOption {
   id: string
   code: string
   display_name: string
@@ -73,10 +75,10 @@ export default function NewVersionPage() {
   const [inkNamesArray, setInkNamesArray] = useState<string[]>([])
   const [changeNotes, setChangeNotes] = useState('')
   const [pricingDisplay, setPricingDisplay] = useState<PricingDisplayValue | null>(null)
-  const [availableFinishes, setAvailableFinishes] = useState<Finish[]>([])
-  const [selectedFinishes, setSelectedFinishes] = useState<string[]>([])
-  const [imagesByFinish, setImagesByFinish] = useState<Record<string, ImageEntry[]>>({ '': [] })
-  const [activeImageFinish, setActiveImageFinish] = useState('')
+  const [availableOptions, setAvailableOptions] = useState<MaterialOption[]>([])
+  const [selectedOptions, setSelectedOptions] = useState<string[]>([])
+  const [imagesByOption, setImagesByOption] = useState<Record<string, ImageEntry[]>>({ '': [] })
+  const [activeImageOption, setActiveImageOption] = useState('')
   const [fileError, setFileError] = useState('')
   const [fileNote, setFileNote] = useState('')
   const [error, setError] = useState('')
@@ -101,7 +103,7 @@ export default function NewVersionPage() {
         const c = (data?.contacts as any)
         if (c) setProofName(c.full_name ?? '')
       })
-    supabase.from('materials').select('id, display_name, requires_ink_names').eq('is_active', true).order('sort_order')
+    supabase.from('materials').select('id, display_name, requires_ink_names, option_label').eq('is_active', true).order('sort_order')
       .then(({ data }) => setMaterials((data ?? []) as Material[]))
   }, [proofId])
 
@@ -110,22 +112,22 @@ export default function NewVersionPage() {
     setSelectedVariantIds([])
     setVariantTiers({})
     setVariantSnapshots({})
-    setAvailableFinishes([])
-    setSelectedFinishes([])
-    setActiveImageFinish('')
-    setImagesByFinish({ '': [] })
+    setAvailableOptions([])
+    setSelectedOptions([])
+    setActiveImageOption('')
+    setImagesByOption({ '': [] })
     if (!selectedMaterialId) return
 
     let cancelled = false
 
     async function load() {
-      const [variantsResult, finishesResult] = await Promise.all([
+      const [variantsResult, optionsResult] = await Promise.all([
         supabase.from('material_variants')
           .select('id, display_name, variant_type, sort_order, ink_count')
           .eq('material_id', selectedMaterialId)
           .eq('is_active', true)
           .order('sort_order'),
-        supabase.from('finishes')
+        supabase.from('material_options')
           .select('id, code, display_name, is_base, sort_order')
           .eq('material_id', selectedMaterialId)
           .order('sort_order'),
@@ -142,13 +144,13 @@ export default function NewVersionPage() {
         setSelectedVariantIds([])
       }
 
-      const finishes = (finishesResult.data ?? []) as Finish[]
-      setAvailableFinishes(finishes)
-      if (finishes.length > 0) {
-        const base = finishes.find(f => f.is_base) ?? finishes[0]
-        setSelectedFinishes([base.code])
-        setActiveImageFinish(base.code)
-        setImagesByFinish({ [base.code]: [] })
+      const options = (optionsResult.data ?? []) as MaterialOption[]
+      setAvailableOptions(options)
+      if (options.length > 0) {
+        const base = options.find(o => o.is_base) ?? options[0]
+        setSelectedOptions([base.code])
+        setActiveImageOption(base.code)
+        setImagesByOption({ [base.code]: [] })
       }
     }
 
@@ -182,34 +184,34 @@ export default function NewVersionPage() {
   }, [selectedVariantIds, currency])
 
   // activeKey is the map key for the currently visible finish tab
-  const hasFinishes = availableFinishes.length > 0
-  const finishMode  = hasFinishes && selectedFinishes.length > 0
-  const activeKey   = finishMode ? activeImageFinish : ''
-  const currentImages = imagesByFinish[activeKey] ?? []
+  const hasOptions = availableOptions.length > 0
+  const optionMode  = hasOptions && selectedOptions.length > 0
+  const activeKey   = optionMode ? activeImageOption : ''
+  const currentImages = imagesByOption[activeKey] ?? []
 
-  function toggleFinish(code: string) {
-    setSelectedFinishes(prev => {
+  function toggleOption(code: string) {
+    setSelectedOptions(prev => {
       if (prev.includes(code)) {
         // Deselecting — revoke previews and remove from map
-        setImagesByFinish(ibf => {
+        setImagesByOption(ibf => {
           const imgs = ibf[code] ?? []
           imgs.forEach(img => URL.revokeObjectURL(img.preview))
           const { [code]: _removed, ...rest } = ibf
           return rest
         })
         const next = prev.filter(c => c !== code)
-        if (activeImageFinish === code) setActiveImageFinish(next[0] ?? '')
+        if (activeImageOption === code) setActiveImageOption(next[0] ?? '')
         return next
       } else {
         // Selecting — if entering finish mode for first time, migrate '' images
-        setImagesByFinish(ibf => {
+        setImagesByOption(ibf => {
           if (prev.length === 0) {
             const { '': noFinishImgs = [], ...rest } = ibf
             return { ...rest, [code]: noFinishImgs }
           }
           return { ...ibf, [code]: [] }
         })
-        if (prev.length === 0) setActiveImageFinish(code)
+        if (prev.length === 0) setActiveImageOption(code)
         return [...prev, code]
       }
     })
@@ -258,7 +260,7 @@ export default function NewVersionPage() {
     }
     if (notes.length > 0) setFileNote(notes.join(' '))
 
-    setImagesByFinish(prev => {
+    setImagesByOption(prev => {
       const cur = prev[activeKey] ?? []
       const currentCount = cur.length
       return {
@@ -284,7 +286,7 @@ export default function NewVersionPage() {
   const { isZoneDragOver, isPageDragOver, zoneProps } = useImageFileDrop({ onFiles: addFiles })
 
   function removeImage(localId: string) {
-    setImagesByFinish(prev => {
+    setImagesByOption(prev => {
       const cur = prev[activeKey] ?? []
       const removed = cur.find((e) => e.localId === localId)
       if (removed) URL.revokeObjectURL(removed.preview)
@@ -293,7 +295,7 @@ export default function NewVersionPage() {
   }
 
   function updateLabel(localId: string, label: string) {
-    setImagesByFinish(prev => ({
+    setImagesByOption(prev => ({
       ...prev,
       [activeKey]: (prev[activeKey] ?? []).map(e => e.localId === localId ? { ...e, label } : e),
     }))
@@ -305,7 +307,7 @@ export default function NewVersionPage() {
     e.preventDefault()
     const from = dragIndexRef.current
     if (from === null || from === index) return
-    setImagesByFinish(prev => {
+    setImagesByOption(prev => {
       const cur = [...(prev[activeKey] ?? [])]
       const [item] = cur.splice(from, 1)
       cur.splice(index, 0, item)
@@ -364,10 +366,10 @@ export default function NewVersionPage() {
 
     setSubmitting(true)
 
-    // Flatten images across all finish tabs (in selectedFinishes order)
-    const finishKeys = finishMode ? selectedFinishes : ['']
-    const allEntries = finishKeys.flatMap(fk =>
-      (imagesByFinish[fk] ?? []).map(entry => ({ entry, finish: fk === '' ? null : fk }))
+    // Flatten images across all option tabs (in selectedOptions order)
+    const optionKeys = optionMode ? selectedOptions : ['']
+    const allEntries = optionKeys.flatMap(fk =>
+      (imagesByOption[fk] ?? []).map(entry => ({ entry, option: fk === '' ? null : fk }))
     )
 
     const uploadResults = await Promise.all(
@@ -427,7 +429,7 @@ export default function NewVersionPage() {
         currency: currencyForInsert,
         pricing_snapshot: pricingSnapshot,
         change_notes: changeNotes.trim() || null,
-        finishes: selectedFinishes,
+        material_options: selectedOptions,
         custom_quote: pricingDisplay === 'custom',
       })
       .select('id')
@@ -440,15 +442,15 @@ export default function NewVersionPage() {
       return
     }
 
-    const imageInserts = allEntries.map(({ entry, finish }, i) => {
-      const finishKey = finish ?? ''
-      const sortOrder = (imagesByFinish[finishKey] ?? []).findIndex(e => e.localId === entry.localId)
+    const imageInserts = allEntries.map(({ entry, option }, i) => {
+      const optionKey = option ?? ''
+      const sortOrder = (imagesByOption[optionKey] ?? []).findIndex(e => e.localId === entry.localId)
       return {
         proof_version_id: versionData.id,
         image_path: uploadedPaths[i],
         label: entry.label,
         sort_order: sortOrder,
-        finish,
+        material_option: option,
         original_filename: entry.file.name,
       }
     })
@@ -472,6 +474,11 @@ export default function NewVersionPage() {
 
   const selectedMaterial = materials.find(m => m.id === selectedMaterialId)
   const requiresInkNames = selectedMaterial?.requires_ink_names ?? false
+
+  // Option dimension label — singular ("Finish"/"Species") for in-copy use,
+  // plural ("Finishes"/"Species") for the section heading.
+  const optionLabelSingular = selectedMaterial?.option_label ?? 'Finish'
+  const optionLabelPlural   = pluralLabel(optionLabelSingular)
   const selectedVariant = variants.find(v => v.id === selectedVariantIds[0])
   const inkCount = requiresInkNames ? (selectedVariant?.ink_count ?? 0) : 0
   const variantRequired = !isCustomQuote || requiresInkNames
@@ -483,9 +490,9 @@ export default function NewVersionPage() {
 
   // All "requires a value before save succeeds" checks, derived from state.
   // Flipping any failing field to valid clears its error highlight live.
-  const imagesFinishKeys = finishMode ? selectedFinishes : ['']
+  const imagesFinishKeys = optionMode ? selectedOptions : ['']
   const validations = {
-    images:         imagesFinishKeys.every(fk => (imagesByFinish[fk] ?? []).length > 0),
+    images:         imagesFinishKeys.every(fk => (imagesByOption[fk] ?? []).length > 0),
     pricingDisplay: pricingDisplay !== null,
     material:       !!selectedMaterialId,
     variant:        !variantRequired || selectedVariantIds.length > 0,
@@ -496,11 +503,11 @@ export default function NewVersionPage() {
   const shouldHighlight = (k: keyof typeof validations) => submitAttempted && !validations[k]
 
   // Specific images message so the designer knows which finish tab needs attention.
-  const invalidFinishKey = !validations.images
-    ? imagesFinishKeys.find(fk => (imagesByFinish[fk] ?? []).length === 0)
+  const invalidOptionKey = !validations.images
+    ? imagesFinishKeys.find(fk => (imagesByOption[fk] ?? []).length === 0)
     : undefined
-  const imagesHint = invalidFinishKey !== undefined && invalidFinishKey !== ''
-    ? `At least one image required for ${availableFinishes.find(f => f.code === invalidFinishKey)?.display_name ?? invalidFinishKey}.`
+  const imagesHint = invalidOptionKey !== undefined && invalidOptionKey !== ''
+    ? `At least one image required for ${availableOptions.find(f => f.code === invalidOptionKey)?.display_name ?? invalidOptionKey}.`
     : 'At least one proof image required.'
 
   // Preserve previously-entered ink data when switching between "requires
@@ -582,16 +589,16 @@ export default function NewVersionPage() {
             </h2>
 
             {/* Finish tabs */}
-            {finishMode && selectedFinishes.length > 0 && (
+            {optionMode && selectedOptions.length > 0 && (
               <div className="mb-4 flex gap-0 border-b border-gray-100">
-                {selectedFinishes.map(fCode => {
-                  const f = availableFinishes.find(x => x.code === fCode)
-                  const isActive = activeImageFinish === fCode
+                {selectedOptions.map(fCode => {
+                  const f = availableOptions.find(x => x.code === fCode)
+                  const isActive = activeImageOption === fCode
                   return (
                     <button
                       key={fCode}
                       type="button"
-                      onClick={() => setActiveImageFinish(fCode)}
+                      onClick={() => setActiveImageOption(fCode)}
                       className={[
                         '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
                         isActive
@@ -601,7 +608,7 @@ export default function NewVersionPage() {
                     >
                       {f?.display_name ?? fCode}
                       <span className={['ml-1.5 text-xs', isActive ? 'text-gray-400' : 'text-gray-300'].join(' ')}>
-                        ({(imagesByFinish[fCode] ?? []).length})
+                        ({(imagesByOption[fCode] ?? []).length})
                       </span>
                     </button>
                   )
@@ -697,7 +704,7 @@ export default function NewVersionPage() {
             forwardRef={pricingDisplayRef}
           />
 
-          {/* Material + variant + finishes selection */}
+          {/* Material + variant + material-options selection */}
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Specification</h2>
 
@@ -756,18 +763,19 @@ export default function NewVersionPage() {
               </div>
             )}
 
-            {/* Finish selection — only for materials that support finishes (Steel, Gold) */}
-            {hasFinishes && (
+            {/* Option selection — for materials that expose multi-options
+                (finishes on metals, species on wood, etc.) */}
+            {hasOptions && (
               <div className="mb-4">
-                <label className="mb-2 block text-sm font-medium text-gray-700">Finishes</label>
+                <label className="mb-2 block text-sm font-medium text-gray-700">{optionLabelPlural}</label>
                 <div className="flex flex-wrap gap-2">
-                  {availableFinishes.map(f => {
-                    const selected = selectedFinishes.includes(f.code)
+                  {availableOptions.map(o => {
+                    const selected = selectedOptions.includes(o.code)
                     return (
                       <button
-                        key={f.code}
+                        key={o.code}
                         type="button"
-                        onClick={() => toggleFinish(f.code)}
+                        onClick={() => toggleOption(o.code)}
                         className={[
                           'rounded-full px-4 py-1.5 text-sm font-medium ring-1 transition-colors',
                           selected
@@ -775,13 +783,13 @@ export default function NewVersionPage() {
                             : 'bg-white text-gray-600 ring-gray-200 hover:bg-gray-50',
                         ].join(' ')}
                       >
-                        {f.display_name}
+                        {o.display_name}
                       </button>
                     )
                   })}
                 </div>
                 <p className="mt-1.5 text-xs text-gray-400">
-                  Select which finishes to offer. Each finish gets its own proof images.
+                  Select which {optionLabelPlural.toLowerCase()} to offer. Each {optionLabelSingular.toLowerCase()} gets its own proof images.
                 </p>
               </div>
             )}

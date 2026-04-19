@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import type { PublicProof, PublicProofVersion, PublicFinish, PublicFinishSurcharge, SiteSettings } from '../lib/types'
+import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, SiteSettings } from '../lib/types'
 import { formatPrice } from '../lib/currency'
 import { PricingDisplay } from '../components/PricingDisplay'
 import { ImageGrid, type GridImage } from '../components/ImageGrid'
@@ -15,9 +15,9 @@ export default function CustomerProofPage() {
   const [versions, setVersions] = useState<PublicProofVersion[]>([])
   const [activeVersion, setActiveVersion] = useState<PublicProofVersion | null>(null)
   const [versionImages, setVersionImages] = useState<Record<string, GridImage[]>>({})
-  const [finishes, setFinishes] = useState<PublicFinish[]>([])
-  const [finishSurcharges, setFinishSurcharges] = useState<PublicFinishSurcharge[]>([])
-  const [activeFinishCode, setActiveFinishCode] = useState<string | null>(null)
+  const [materialOptions, setMaterialOptions] = useState<PublicMaterialOption[]>([])
+  const [optionSurcharges, setOptionSurcharges] = useState<PublicMaterialOptionSurcharge[]>([])
+  const [activeOptionCode, setActiveOptionCode] = useState<string | null>(null)
   const [globalDisclaimer, setGlobalDisclaimer] = useState<string | null>(null)
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -48,10 +48,11 @@ export default function CustomerProofPage() {
     strip.scrollLeft = Math.max(0, activeTab.offsetLeft - 8)
   }, [loading])
 
-  // When active version changes, reset finish selection to the version's first finish.
+  // When active version changes, reset the option switcher to the first option
+  // this version exposes.
   useEffect(() => {
     if (!activeVersion) return
-    setActiveFinishCode(activeVersion.finishes[0] ?? null)
+    setActiveOptionCode(activeVersion.material_options[0] ?? null)
   }, [activeVersion?.id])
 
   async function loadProof(proofId: string) {
@@ -103,24 +104,24 @@ export default function CustomerProofPage() {
       })
       setVersionImages(byVersion)
 
-      // Load finishes for all materials used across versions
+      // Load material options for every material referenced by these versions
       const materialIds = [...new Set(rawVersions.map(v => v.material_id))]
-      const { data: finishRows } = await supabase
-        .from('public_finishes')
+      const { data: optionRows } = await supabase
+        .from('public_material_options')
         .select('*')
         .in('material_id', materialIds)
         .order('sort_order')
 
-      const loadedFinishes = (finishRows ?? []) as PublicFinish[]
-      setFinishes(loadedFinishes)
+      const loadedOptions = (optionRows ?? []) as PublicMaterialOption[]
+      setMaterialOptions(loadedOptions)
 
-      if (loadedFinishes.length > 0) {
-        const finishIds = loadedFinishes.map(f => f.id)
+      if (loadedOptions.length > 0) {
+        const optionIds = loadedOptions.map(o => o.id)
         const { data: surchargeRows } = await supabase
-          .from('public_finish_surcharges')
+          .from('public_material_option_surcharges')
           .select('*')
-          .in('finish_id', finishIds)
-        setFinishSurcharges((surchargeRows ?? []) as PublicFinishSurcharge[])
+          .in('material_option_id', optionIds)
+        setOptionSurcharges((surchargeRows ?? []) as PublicMaterialOptionSurcharge[])
       }
     }
 
@@ -133,40 +134,53 @@ export default function CustomerProofPage() {
 
   const isApproved = proof.status === 'approved'
 
-  // Finish logic for the active version
-  const versionFinishes = activeVersion?.finishes ?? []
-  const showFinishSwitcher = versionFinishes.length >= 2
-  const activeFinish = activeFinishCode && activeVersion
-    ? finishes.find(f => f.material_id === activeVersion.material_id && f.code === activeFinishCode) ?? null
+  // Derived: options for the currently-viewed version.
+  const versionOptions = activeVersion?.material_options ?? []
+  const showOptionSwitcher = versionOptions.length >= 2
+  const activeOption = activeOptionCode && activeVersion
+    ? materialOptions.find(o => o.material_id === activeVersion.material_id && o.code === activeOptionCode) ?? null
     : null
 
-  // Filter images for the active finish (if in finish mode)
+  // Filter images for the active option (if this version is in option mode)
   const allVersionImages = activeVersion ? (versionImages[activeVersion.id] ?? []) : []
-  const displayImages = versionFinishes.length > 0 && activeFinishCode
-    ? allVersionImages.filter(img => img.finish === activeFinishCode || img.finish == null)
+  const displayImages = versionOptions.length > 0 && activeOptionCode
+    ? allVersionImages.filter(img => img.material_option === activeOptionCode || img.material_option == null)
     : allVersionImages
 
-  // Per-quantity surcharge map for the active finish, used to bake surcharges
-  // into every pricing cell. Empty for base finishes (no surcharge rows exist).
+  // Per-quantity surcharge map for the active option, baked into every
+  // pricing cell. Empty for base options or materials with no surcharges
+  // (e.g. wood species).
   const quantitySurcharges: Record<number, number> = {}
-  if (activeFinish && activeVersion) {
-    finishSurcharges
-      .filter(s => s.finish_id === activeFinish.id && s.currency === activeVersion.currency)
+  if (activeOption && activeVersion) {
+    optionSurcharges
+      .filter(s => s.material_option_id === activeOption.id && s.currency === activeVersion.currency)
       .forEach(s => { quantitySurcharges[s.quantity] = s.surcharge })
   }
 
-  // "From" price per finish — the smallest-quantity surcharge in the active currency.
-  // Null for finishes with no surcharges (base / Natural).
-  function finishFromPrice(finishCode: string): number | null {
+  // Smallest-quantity surcharge for a given option in the active currency,
+  // or null if this option carries no surcharge (base/Natural, or wood).
+  function optionFromPrice(code: string): number | null {
     if (!activeVersion) return null
-    const f = finishes.find(x => x.material_id === activeVersion.material_id && x.code === finishCode)
-    if (!f) return null
-    const sorted = finishSurcharges
-      .filter(s => s.finish_id === f.id && s.currency === activeVersion.currency)
+    const o = materialOptions.find(x => x.material_id === activeVersion.material_id && x.code === code)
+    if (!o) return null
+    const sorted = optionSurcharges
+      .filter(s => s.material_option_id === o.id && s.currency === activeVersion.currency)
       .sort((a, b) => a.quantity - b.quantity)
     const first = sorted[0]
     return first && first.surcharge > 0 ? first.surcharge : null
   }
+
+  // Does this material carry any surcharges at all? Drives whether we show
+  // the "Prices shown for X" subtitle — for wood (no surcharges) the grid
+  // is identical across species so the subtitle would be noise.
+  const materialHasSurcharges = activeVersion
+    ? versionOptions.some(code => optionFromPrice(code) !== null)
+    : false
+
+  // Display label for the option dimension — singular form, used in copy
+  // like "Prices shown for Brushed finish" and the spec summary. No plural
+  // form is needed on the customer page (no section heading for options).
+  const optionLabelSingular = activeVersion?.option_label ?? 'Finish'
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -228,17 +242,17 @@ export default function CustomerProofPage() {
 
         {activeVersion && (
           <>
-            {/* Finish switcher — shown when this version offers 2+ finishes */}
-            {showFinishSwitcher && (
+            {/* Option switcher — shown when this version offers 2+ options */}
+            {showOptionSwitcher && (
               <div className="mb-6 flex flex-wrap gap-2">
-                {versionFinishes.map(fCode => {
-                  const f = finishes.find(x => x.material_id === activeVersion.material_id && x.code === fCode)
-                  const isActive = activeFinishCode === fCode
-                  const fromPrice = finishFromPrice(fCode)
+                {versionOptions.map(code => {
+                  const o = materialOptions.find(x => x.material_id === activeVersion.material_id && x.code === code)
+                  const isActive = activeOptionCode === code
+                  const fromPrice = optionFromPrice(code)
                   return (
                     <button
-                      key={fCode}
-                      onClick={() => setActiveFinishCode(fCode)}
+                      key={code}
+                      onClick={() => setActiveOptionCode(code)}
                       className={[
                         'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
                         isActive
@@ -246,7 +260,7 @@ export default function CustomerProofPage() {
                           : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
                       ].join(' ')}
                     >
-                      {f?.display_name ?? fCode}
+                      {o?.display_name ?? code}
                       {fromPrice != null && !activeVersion.custom_quote && (
                         <span className={['ml-1.5 font-normal', isActive ? 'text-gray-300' : 'text-gray-400'].join(' ')}>
                           (+from {formatPrice(fromPrice, activeVersion.currency, 0)})
@@ -274,7 +288,7 @@ export default function CustomerProofPage() {
               </h2>
               <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
                 <SpecItem label="Material" value={activeVersion.material_display} />
-                {activeFinish && <SpecItem label="Finish" value={activeFinish.display_name} />}
+                {activeOption && <SpecItem label={optionLabelSingular} value={activeOption.display_name} />}
                 {activeVersion.ink_names.length > 0 && (
                   <SpecItem label="Inks" value={activeVersion.ink_names.join(', ')} />
                 )}
@@ -319,9 +333,9 @@ export default function CustomerProofPage() {
                 <h2 className="text-sm font-semibold uppercase tracking-widest text-gray-400">
                   Pricing
                 </h2>
-                {!activeVersion.custom_quote && activeFinish && versionFinishes.length > 0 && (
+                {!activeVersion.custom_quote && activeOption && versionOptions.length > 0 && materialHasSurcharges && (
                   <p className="mt-1 text-xs text-gray-400">
-                    Prices shown for {activeFinish.display_name} finish
+                    Prices shown for {activeOption.display_name} {optionLabelSingular.toLowerCase()}
                   </p>
                 )}
               </div>

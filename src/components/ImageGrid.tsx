@@ -2,7 +2,7 @@ export interface GridImage {
   id: string
   signed_url: string
   label: string
-  finish?: string | null
+  material_option?: string | null
   original_filename?: string | null
 }
 

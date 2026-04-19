@@ -57,3 +57,9 @@ Engraving, edge colour and die-cut shape have no CSV pricing at all and are not 
 - Hostinger DNS for the custom subdomain
 
 Design and code briefs for the customer page and designer dashboard are pending re-share from Rob.
+
+## Git workflow
+
+Commit changes locally as you work, but DO NOT push to GitHub automatically. Rob will push manually at the end of a work session to trigger a single Netlify build. If Rob explicitly says "push" or "deploy", then push — otherwise stay local.
+
+Local dev workflow: Rob runs `npm run dev` in a separate terminal for testing. Changes are hot-reloaded in the browser, so no deploy is needed to verify work.

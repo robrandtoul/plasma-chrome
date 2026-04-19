@@ -37,13 +37,14 @@ export interface PublicProofVersion {
   change_notes: string | null
   is_current: boolean
   created_at: string
-  finishes: string[]
+  material_options: string[]
   featured_quantities: number[]
   material_disclaimer: string | null
+  option_label: string | null
   custom_quote: boolean
 }
 
-export interface PublicFinish {
+export interface PublicMaterialOption {
   id: string
   material_id: string
   code: string
@@ -52,9 +53,9 @@ export interface PublicFinish {
   sort_order: number
 }
 
-export interface PublicFinishSurcharge {
+export interface PublicMaterialOptionSurcharge {
   id: string
-  finish_id: string
+  material_option_id: string
   currency: Currency
   quantity: number
   surcharge: number
@@ -70,7 +71,7 @@ export interface ProofVersionImage {
   image_path: string
   label: string
   sort_order: number
-  finish: string | null
+  material_option: string | null
   original_filename: string | null
   // Resolved client-side — not a DB column.
   signed_url?: string
