@@ -273,6 +273,12 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-center gap-3">
             <Link
+              to="/customers"
+              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
+            >
+              Customers
+            </Link>
+            <Link
               to="/proofs/new"
               className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
             >
