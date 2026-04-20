@@ -50,8 +50,8 @@ interface ImageEntry {
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
-const ACCEPTED_TYPES = ['image/jpeg', 'image/png']
-const MAX_IMAGES = 10
+const ACCEPTED_TYPES = ['image/jpeg']
+const MAX_IMAGES = 12
 
 function defaultLabel(index: number): string {
   if (index === 0) return 'Front'
@@ -383,8 +383,7 @@ export default function NewVersionPage() {
 
     const uploadResults = await Promise.all(
       allEntries.map(async ({ entry }) => {
-        const ext = entry.file.type === 'image/png' ? 'png' : 'jpg'
-        const path = `${proofId}/${uuidv4()}.${ext}`
+        const path = `${proofId}/${uuidv4()}.jpg`
         const { error: uploadError } = await supabase.storage
           .from('proof-images')
           .upload(path, entry.file, { contentType: entry.file.type, upsert: false })
@@ -823,7 +822,7 @@ export default function NewVersionPage() {
                 <input
                   ref={fileRef}
                   type="file"
-                  accept="image/jpeg,image/png"
+                  accept="image/jpeg"
                   multiple
                   onChange={handleFileChange}
                   className="hidden"
@@ -844,7 +843,7 @@ export default function NewVersionPage() {
                   {isZoneDragOver
                     ? 'Drop to add images'
                     : currentImages.length === 0
-                      ? 'Click or drop to upload JPEG or PNG (max 10 MB each)'
+                      ? 'Click or drop to upload JPEG (max 10 MB each)'
                       : `Add more images (${currentImages.length} / ${MAX_IMAGES})`}
                 </button>
               </>
