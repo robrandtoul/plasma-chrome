@@ -13,6 +13,8 @@ import CustomersPage from './pages/CustomersPage'
 import AdminLayout from './pages/admin/AdminLayout'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
 import AdminPricingPage from './pages/admin/AdminPricingPage'
+import AdminMaterialEditor from './pages/admin/AdminMaterialEditor'
+import AdminAddOnEditor from './pages/admin/AdminAddOnEditor'
 
 export default function App() {
   return (
@@ -36,6 +38,8 @@ export default function App() {
             <Route index element={<Navigate to="users" replace />} />
             <Route path="users" element={<AdminUsersPage />} />
             <Route path="pricing" element={<AdminPricingPage />} />
+            <Route path="pricing/materials/:code" element={<AdminMaterialEditor />} />
+            <Route path="pricing/add-ons/:code" element={<AdminAddOnEditor />} />
           </Route>
         </Routes>
       </BrowserRouter>
