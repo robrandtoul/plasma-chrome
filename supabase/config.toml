@@ -393,6 +393,13 @@ verify_jwt = false
 [functions.reactivate-user]
 verify_jwt = false
 
+# Pricing import/export — also admin-gated inside the function body.
+[functions.export-pricing]
+verify_jwt = false
+
+[functions.import-pricing]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

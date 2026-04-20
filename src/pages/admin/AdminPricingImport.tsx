@@ -1,0 +1,258 @@
+import { useEffect, useRef, useState } from 'react'
+import { commitPricingImport, previewPricingImport, type ImportPreview } from '../../lib/pricingIO'
+
+interface Props {
+  onClose: () => void
+  onCommitted: () => void
+}
+
+export default function AdminPricingImport({ onClose, onCommitted }: Props) {
+  const [file, setFile] = useState<File | null>(null)
+  const [dragOver, setDragOver] = useState(false)
+  const [preview, setPreview] = useState<ImportPreview | null>(null)
+  const [working, setWorking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [showChanges, setShowChanges] = useState(false)
+  const [showUnchanged, setShowUnchanged] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && !working) onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose, working])
+
+  async function handleFile(f: File) {
+    setFile(f)
+    setError(null)
+    setPreview(null)
+    setWorking(true)
+    try {
+      const p = await previewPricingImport(f)
+      setPreview(p)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  async function handleCommit() {
+    if (!file) return
+    setWorking(true)
+    setError(null)
+    try {
+      const result = await commitPricingImport(file)
+      if (result.committed) {
+        onCommitted()
+        onClose()
+      } else {
+        setError(result.errors?.[0]?.message ?? 'Commit failed')
+        setPreview(result)
+      }
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !working && onClose()} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
+          <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+            <h3 className="text-lg font-semibold text-gray-900">Import pricing</h3>
+            <button
+              onClick={onClose}
+              disabled={working}
+              className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
+              aria-label="Close"
+            >
+              <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-6 py-5">
+            {!preview ? (
+              <div>
+                <p className="text-sm text-gray-500">
+                  Drag a CSV or ZIP here, or click to pick one. Imports update existing prices only — new quantity tiers, variants or materials aren't added at this stage.
+                </p>
+                <div
+                  onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    setDragOver(false)
+                    const f = e.dataTransfer.files?.[0]
+                    if (f) handleFile(f)
+                  }}
+                  onClick={() => inputRef.current?.click()}
+                  className={[
+                    'mt-4 flex h-40 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed text-sm text-gray-500 transition-colors',
+                    dragOver ? 'border-gray-900 bg-gray-50' : 'border-gray-300 hover:bg-gray-50',
+                  ].join(' ')}
+                >
+                  {working ? 'Parsing…' : 'Drop a .csv or .zip here, or click to browse'}
+                </div>
+                <input
+                  ref={inputRef}
+                  type="file"
+                  accept=".csv,.zip"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f) handleFile(f)
+                  }}
+                />
+                {error && (
+                  <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>
+                )}
+              </div>
+            ) : (
+              <PreviewView
+                preview={preview}
+                fileName={file?.name ?? ''}
+                showChanges={showChanges}
+                setShowChanges={setShowChanges}
+                showUnchanged={showUnchanged}
+                setShowUnchanged={setShowUnchanged}
+                error={error}
+              />
+            )}
+          </div>
+
+          {/* Footer actions */}
+          {preview && (
+            <div className="flex items-center justify-between gap-3 border-t border-gray-100 px-6 py-4">
+              <button
+                onClick={() => { setFile(null); setPreview(null); setError(null) }}
+                disabled={working}
+                className="text-xs text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline disabled:opacity-50"
+              >
+                Pick a different file
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={onClose}
+                  disabled={working}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCommit}
+                  disabled={working || preview.errors.length > 0 || preview.changes.length === 0}
+                  className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+                >
+                  {working ? 'Applying…' : `Apply ${preview.changes.length} change${preview.changes.length === 1 ? '' : 's'}`}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
+function PreviewView({
+  preview,
+  fileName,
+  showChanges,
+  setShowChanges,
+  showUnchanged,
+  setShowUnchanged,
+  error,
+}: {
+  preview: ImportPreview
+  fileName: string
+  showChanges: boolean
+  setShowChanges: (v: boolean) => void
+  showUnchanged: boolean
+  setShowUnchanged: (v: boolean) => void
+  error: string | null
+}) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="text-xs uppercase tracking-wider text-gray-400">{fileName}</p>
+        <p className="mt-1 text-sm text-gray-700">
+          <strong>{preview.changes.length}</strong> price{preview.changes.length === 1 ? '' : 's'} will change,
+          {' '}<strong>{preview.unchanged.length}</strong> unchanged,
+          {' '}<strong className={preview.errors.length > 0 ? 'text-rose-700' : ''}>{preview.errors.length}</strong> error{preview.errors.length === 1 ? '' : 's'}.
+        </p>
+      </div>
+
+      {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+
+      {preview.errors.length > 0 && (
+        <section>
+          <h4 className="mb-2 text-sm font-semibold text-rose-700">Errors</h4>
+          <ul className="space-y-1 rounded-lg bg-rose-50 px-4 py-3 text-xs text-rose-700">
+            {preview.errors.map((e, i) => (
+              <li key={i}>
+                <span className="font-medium">{e.file}{e.row != null ? ` · Row ${e.row}` : ''}:</span> {e.message}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {preview.changes.length > 0 && (
+        <section>
+          <button
+            onClick={() => setShowChanges(!showChanges)}
+            className="flex items-center gap-2 text-sm font-semibold text-gray-900 hover:text-gray-700"
+          >
+            <span>{showChanges ? '▾' : '▸'}</span>
+            Changes ({preview.changes.length})
+          </button>
+          {showChanges && (
+            <div className="mt-2 overflow-hidden rounded-lg ring-1 ring-gray-200">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50 text-left">
+                    <th className="px-3 py-2 font-semibold text-gray-500">What</th>
+                    <th className="px-3 py-2 font-semibold text-gray-500">Old</th>
+                    <th className="px-3 py-2 font-semibold text-gray-500">New</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.changes.map((c, i) => (
+                    <tr key={i} className="border-b border-gray-50 last:border-0">
+                      <td className="px-3 py-1.5 text-gray-700">{c.description}</td>
+                      <td className="px-3 py-1.5 tabular-nums text-gray-500">{c.oldValue}</td>
+                      <td className="px-3 py-1.5 tabular-nums font-medium text-gray-900">{c.newValue}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {preview.unchanged.length > 0 && (
+        <section>
+          <button
+            onClick={() => setShowUnchanged(!showUnchanged)}
+            className="flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-700"
+          >
+            <span>{showUnchanged ? '▾' : '▸'}</span>
+            Unchanged ({preview.unchanged.length})
+          </button>
+          {showUnchanged && (
+            <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
+              {preview.unchanged.map((u, i) => <li key={i}>{u.description}</li>)}
+            </ul>
+          )}
+        </section>
+      )}
+    </div>
+  )
+}

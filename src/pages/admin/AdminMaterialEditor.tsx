@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import PriceCell, { currencySymbol } from './PriceCell'
+import { downloadPricingExport } from '../../lib/pricingIO'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -131,12 +132,20 @@ export default function AdminMaterialEditor() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div>
-        <Link to="/admin/pricing" className="text-xs text-gray-400 hover:text-gray-700">← Back to pricing</Link>
-        <h2 className="mt-2 text-xl font-bold text-gray-900">{material.display_name}</h2>
-        <p className="mt-1 text-sm text-gray-500">
-          Changes save automatically. Customer-facing prices update immediately.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <Link to="/admin/pricing" className="text-xs text-gray-400 hover:text-gray-700">← Back to pricing</Link>
+          <h2 className="mt-2 text-xl font-bold text-gray-900">{material.display_name}</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Changes save automatically. Customer-facing prices update immediately.
+          </p>
+        </div>
+        <button
+          onClick={() => downloadPricingExport(`material:${material.code}`, `pricing_${material.code}.csv`).catch(() => {})}
+          className="shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+        >
+          Export this material
+        </button>
       </div>
 
       {/* Surcharges */}

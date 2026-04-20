@@ -8,7 +8,10 @@ import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 export const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  // Let the browser read the Content-Disposition filename so the frontend
+  // download helper can name the saved file correctly.
+  'Access-Control-Expose-Headers': 'Content-Disposition',
 }
 
 export function json(body: unknown, status = 200): Response {
@@ -19,7 +22,14 @@ export function json(body: unknown, status = 200): Response {
 }
 
 export interface CallerContext {
+  /** Service-role client — bypasses RLS. Use for reads/writes that need
+   *  unrestricted table access (e.g. fetching price catalogues, writing
+   *  profile rows). */
   admin: SupabaseClient
+  /** User-JWT client — sees RLS as the signed-in admin. Required for RPCs
+   *  that check auth.uid() / is_admin() internally, since service-role has
+   *  no user context and those checks would fail. */
+  user: SupabaseClient
   callerId: string
 }
 
@@ -56,5 +66,11 @@ export async function requireAdmin(req: Request): Promise<CallerContext | Respon
     return json({ error: 'Forbidden' }, 403)
   }
 
-  return { admin, callerId: userData.user.id }
+  const user = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+    { global: { headers: { Authorization: authHeader } } },
+  )
+
+  return { admin, user, callerId: userData.user.id }
 }

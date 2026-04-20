@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import PriceCell from './PriceCell'
+import { downloadPricingExport } from '../../lib/pricingIO'
 
 type Currency = 'GBP' | 'EUR' | 'USD'
 const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
@@ -120,13 +121,23 @@ export default function AdminAddOnEditor() {
   return (
     <div className="space-y-8">
       {/* Header */}
-      <div>
-        <Link to="/admin/pricing" className="text-xs text-gray-400 hover:text-gray-700">← Back to pricing</Link>
-        <h2 className="mt-2 text-xl font-bold text-gray-900">{addOn.display_name}</h2>
-        {addOn.notes && <p className="mt-1 max-w-xl text-xs text-gray-500">{addOn.notes}</p>}
-        <p className="mt-2 text-sm text-gray-500">
-          Changes save automatically. Customer-facing prices update immediately.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <Link to="/admin/pricing" className="text-xs text-gray-400 hover:text-gray-700">← Back to pricing</Link>
+          <h2 className="mt-2 text-xl font-bold text-gray-900">{addOn.display_name}</h2>
+          {addOn.notes && <p className="mt-1 max-w-xl text-xs text-gray-500">{addOn.notes}</p>}
+          <p className="mt-2 text-sm text-gray-500">
+            Changes save automatically. Customer-facing prices update immediately.
+          </p>
+        </div>
+        {addOn.pricing_model !== 'custom_quote' && (
+          <button
+            onClick={() => downloadPricingExport(`addon:${addOn.code}`, `pricing_addon_${addOn.code}.csv`).catch(() => {})}
+            className="shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+          >
+            Export this add-on
+          </button>
+        )}
       </div>
 
       {/* Editor — branches by pricing_model */}

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
+import { downloadPricingExport } from '../../lib/pricingIO'
+import AdminPricingImport from './AdminPricingImport'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,6 +49,33 @@ export default function AdminPricingPage() {
   const [addOns, setAddOns] = useState<AddOnRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [showImport, setShowImport] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
+
+  async function handleExportAll() {
+    setExportError(null)
+    setExporting(true)
+    try {
+      await downloadPricingExport('all', 'pricing_export.zip')
+    } catch (e) {
+      setExportError((e as Error).message)
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  async function handleExportSurcharges() {
+    setExportError(null)
+    setExporting(true)
+    try {
+      await downloadPricingExport('surcharges', 'pricing_surcharges.csv')
+    } catch (e) {
+      setExportError((e as Error).message)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   useEffect(() => { load() }, [])
 
@@ -129,12 +158,45 @@ export default function AdminPricingPage() {
 
   return (
     <div className="space-y-10">
-      <div>
-        <h2 className="text-xl font-bold text-gray-900">Pricing</h2>
-        <p className="mt-1 text-sm text-gray-500">
-          Edit materials, variants, price tiers and add-on surcharges. Changes save automatically and customer-facing prices update immediately.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">Pricing</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Edit materials, variants, price tiers and add-on surcharges. Changes save automatically and customer-facing prices update immediately.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={handleExportSurcharges}
+            disabled={exporting}
+            className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Export surcharges
+          </button>
+          <button
+            onClick={handleExportAll}
+            disabled={exporting}
+            className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {exporting ? 'Bundling…' : 'Export everything (ZIP)'}
+          </button>
+          <button
+            onClick={() => setShowImport(true)}
+            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+          >
+            Import
+          </button>
+        </div>
       </div>
+      {exportError && (
+        <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{exportError}</p>
+      )}
+      {showImport && (
+        <AdminPricingImport
+          onClose={() => setShowImport(false)}
+          onCommitted={() => load()}
+        />
+      )}
 
       {loading ? (
         <div className="flex justify-center py-20">
