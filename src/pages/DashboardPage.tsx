@@ -428,21 +428,24 @@ export default function DashboardPage() {
                     {showDormant ? 'Hide dormant' : `Show dormant (${dormantCount})`}
                   </button>
                 )}
-                <div className="flex shrink-0 rounded-lg border border-gray-200 bg-white p-0.5">
-                  {(['date', 'name'] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      onClick={() => handleSortChange(mode)}
-                      className={[
-                        'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
-                        sort === mode
-                          ? 'bg-gray-900 text-white'
-                          : 'text-gray-500 hover:text-gray-900',
-                      ].join(' ')}
-                    >
-                      {mode === 'date' ? 'Date' : 'Name'}
-                    </button>
-                  ))}
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="text-xs font-medium uppercase tracking-wider text-gray-400">Sort:</span>
+                  <div className="flex rounded-lg border border-gray-200 bg-white p-0.5">
+                    {(['date', 'name'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => handleSortChange(mode)}
+                        className={[
+                          'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
+                          sort === mode
+                            ? 'bg-gray-100 text-gray-900'
+                            : 'text-gray-500 hover:text-gray-900',
+                        ].join(' ')}
+                      >
+                        {mode === 'date' ? 'Date' : 'Name'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
