@@ -114,6 +114,18 @@ export default function NewVersionPage() {
       })
     supabase.from('materials').select('id, display_name, requires_ink_names, option_label, featured_quantities').eq('is_active', true).order('sort_order')
       .then(({ data }) => setMaterials((data ?? []) as Material[]))
+
+    // Pre-fill the pricing display + currency from admin-configured
+    // defaults. The designer can still override before saving.
+    supabase.from('settings')
+      .select('default_pricing_display, default_currency')
+      .eq('id', 1)
+      .single()
+      .then(({ data }) => {
+        if (!data) return
+        setPricingDisplay((data.default_pricing_display === 'custom_quote' ? 'custom' : 'standard') as PricingDisplayValue)
+        setCurrency(data.default_currency as Currency)
+      })
   }, [proofId])
 
   useEffect(() => {

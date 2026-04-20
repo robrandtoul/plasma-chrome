@@ -403,6 +403,9 @@ verify_jwt = false
 [functions.export-audit-log]
 verify_jwt = false
 
+[functions.helpscout-status]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

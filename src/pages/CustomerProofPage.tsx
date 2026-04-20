@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, SiteSettings } from '../lib/types'
+import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge } from '../lib/types'
 import { formatPrice } from '../lib/currency'
 import { PricingDisplay } from '../components/PricingDisplay'
 import { ImageGrid, type GridImage } from '../components/ImageGrid'
 import { logCustomerEvent } from '../lib/audit'
+import { getPublicSettings, type PublicSettings } from '../lib/publicSettings'
 
 const SIGNED_URL_TTL = 60 * 60 * 24 // 24 hours
 
@@ -19,7 +20,7 @@ export default function CustomerProofPage() {
   const [materialOptions, setMaterialOptions] = useState<PublicMaterialOption[]>([])
   const [optionSurcharges, setOptionSurcharges] = useState<PublicMaterialOptionSurcharge[]>([])
   const [activeOptionCode, setActiveOptionCode] = useState<string | null>(null)
-  const [globalDisclaimer, setGlobalDisclaimer] = useState<string | null>(null)
+  const [publicSettings, setPublicSettings] = useState<PublicSettings | null>(null)
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -62,7 +63,7 @@ export default function CustomerProofPage() {
     const [proofResult, versionsResult, settingsResult] = await Promise.all([
       supabase.from('public_proofs').select('*').eq('id', proofId).maybeSingle(),
       supabase.from('public_proof_versions').select('*').eq('proof_id', proofId).order('version_number', { ascending: true }),
-      supabase.from('public_site_settings').select('global_disclaimer').maybeSingle(),
+      getPublicSettings(),
     ])
 
     if (proofResult.error || !proofResult.data) {
@@ -73,7 +74,7 @@ export default function CustomerProofPage() {
 
     const freshProof = proofResult.data as PublicProof
     setProof(freshProof)
-    if (settingsResult.data) setGlobalDisclaimer((settingsResult.data as SiteSettings).global_disclaimer)
+    setPublicSettings(settingsResult)
 
     const rawVersions = (versionsResult.data ?? []) as PublicProofVersion[]
     setVersions(rawVersions)
@@ -323,14 +324,22 @@ export default function CustomerProofPage() {
             )}
 
             {/* Disclaimers — rendered only when at least one block has content */}
-            {(globalDisclaimer || activeVersion.material_disclaimer) && (
+            {(publicSettings?.disclaimer_text || activeVersion.material_disclaimer) && (
               <div className="mb-8 space-y-4">
-                {globalDisclaimer && (
+                {publicSettings?.disclaimer_text && (
                   <div className="rounded-2xl bg-gray-50 p-6 ring-1 ring-gray-200">
                     <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
                       Important information
                     </h2>
-                    <p className="whitespace-pre-line text-sm text-gray-500">{globalDisclaimer}</p>
+                    <p className="whitespace-pre-line text-sm text-gray-500">{publicSettings.disclaimer_text}</p>
+                    {publicSettings.reply_email && (
+                      <p className="mt-4 text-xs text-gray-400">
+                        Need changes? Reply to{' '}
+                        <a href={`mailto:${publicSettings.reply_email}`} className="text-gray-600 underline underline-offset-2 hover:text-gray-900">
+                          {publicSettings.reply_email}
+                        </a>.
+                      </p>
+                    )}
                   </div>
                 )}
                 {activeVersion.material_disclaimer && (

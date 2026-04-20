@@ -16,6 +16,7 @@ import AdminPricingPage from './pages/admin/AdminPricingPage'
 import AdminMaterialEditor from './pages/admin/AdminMaterialEditor'
 import AdminAddOnEditor from './pages/admin/AdminAddOnEditor'
 import AdminActivityPage from './pages/admin/AdminActivityPage'
+import AdminSettingsPage from './pages/admin/AdminSettingsPage'
 
 export default function App() {
   return (
@@ -42,6 +43,7 @@ export default function App() {
             <Route path="pricing/materials/:code" element={<AdminMaterialEditor />} />
             <Route path="pricing/add-ons/:code" element={<AdminAddOnEditor />} />
             <Route path="activity" element={<AdminActivityPage />} />
+            <Route path="settings" element={<AdminSettingsPage />} />
           </Route>
         </Routes>
       </BrowserRouter>
