@@ -61,6 +61,7 @@ export default function NewVersionPage() {
   const navigate = useNavigate()
 
   const [proofName, setProofName] = useState('')
+  const [proofCompany, setProofCompany] = useState('')
   const [materials, setMaterials] = useState<Material[]>([])
   const [selectedMaterialId, setSelectedMaterialId] = useState('')
   const [variants, setVariants] = useState<Variant[]>([])
@@ -98,10 +99,13 @@ export default function NewVersionPage() {
 
   useEffect(() => {
     if (!proofId) return
-    supabase.from('proofs').select('contacts(full_name)').eq('id', proofId).single()
+    supabase.from('proofs').select('contacts(full_name, companies(name))').eq('id', proofId).single()
       .then(({ data }) => {
         const c = (data?.contacts as any)
-        if (c) setProofName(c.full_name ?? '')
+        if (c) {
+          setProofName(c.full_name ?? '')
+          setProofCompany(c.companies?.name ?? '')
+        }
       })
     supabase.from('materials').select('id, display_name, requires_ink_names, option_label').eq('is_active', true).order('sort_order')
       .then(({ data }) => setMaterials((data ?? []) as Material[]))
@@ -549,6 +553,7 @@ export default function NewVersionPage() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Add version</h1>
             {proofName && <p className="mt-1 text-gray-500">{proofName}</p>}
+            {proofCompany && <p className="text-sm text-gray-400">{proofCompany}</p>}
           </div>
           <div className="flex items-center gap-3">
             <Link

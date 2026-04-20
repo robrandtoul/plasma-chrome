@@ -44,6 +44,7 @@ export default function EditVersionPage() {
 
   const [loading, setLoading] = useState(true)
   const [proofName, setProofName] = useState('')
+  const [proofCompany, setProofCompany] = useState('')
   const [versionNumber, setVersionNumber] = useState(0)
   const [materialDisplay, setMaterialDisplay] = useState('')
   // Two ink states: one for the comma-separated optional UI, one for the
@@ -85,7 +86,7 @@ export default function EditVersionPage() {
 
   async function loadAll(pid: string, vid: string) {
     const [proofResult, versionResult, imagesResult] = await Promise.all([
-      supabase.from('proofs').select('contacts(full_name)').eq('id', pid).single(),
+      supabase.from('proofs').select('contacts(full_name, companies(name))').eq('id', pid).single(),
       supabase
         .from('proof_versions')
         .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, materials(featured_quantities, requires_ink_names, option_label)')
@@ -104,7 +105,10 @@ export default function EditVersionPage() {
     }
 
     const c = (proofResult.data?.contacts as any)
-    if (c) setProofName(c.full_name ?? '')
+    if (c) {
+      setProofName(c.full_name ?? '')
+      setProofCompany(c.companies?.name ?? '')
+    }
 
     const v = versionResult.data as any
     setVersionNumber(v.version_number)
@@ -529,6 +533,7 @@ export default function EditVersionPage() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Edit v{versionNumber}</h1>
             {proofName && <p className="mt-1 text-gray-500">{proofName}</p>}
+            {proofCompany && <p className="text-sm text-gray-400">{proofCompany}</p>}
           </div>
           <div className="flex items-center gap-3">
             <Link
