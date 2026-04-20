@@ -33,17 +33,24 @@ export default function CustomersPage() {
 
   async function load() {
     setLoading(true)
+    // We pull the proof rows with their version count so we can ignore
+    // "shell" proofs (row exists but no version has been added). Those
+    // are cleaned up on delete by the RPC anyway.
     const [companiesResult, orphanResult] = await Promise.all([
       supabase
         .from('companies')
-        .select('id, name, contacts(id, full_name, email, proofs(count))')
+        .select('id, name, contacts(id, full_name, email, proofs(id, proof_versions(count)))')
         .order('name'),
       supabase
         .from('contacts')
-        .select('id, full_name, email, proofs(count)')
+        .select('id, full_name, email, proofs(id, proof_versions(count))')
         .is('company_id', null)
         .order('full_name'),
     ])
+
+    function countRealProofs(proofs: any[]): number {
+      return proofs.filter((p) => (p.proof_versions?.[0]?.count ?? 0) > 0).length
+    }
 
     const rawCompanies = (companiesResult.data ?? []) as any[]
     const compRows: CompanyRow[] = rawCompanies.map((c) => {
@@ -51,7 +58,7 @@ export default function CustomersPage() {
         id: k.id,
         full_name: k.full_name,
         email: k.email,
-        proofCount: k.proofs?.[0]?.count ?? 0,
+        proofCount: countRealProofs(k.proofs ?? []),
       }))
       contacts.sort((a, b) => a.full_name.localeCompare(b.full_name, 'en', { sensitivity: 'base' }))
       return {
@@ -67,7 +74,7 @@ export default function CustomersPage() {
       id: k.id,
       full_name: k.full_name,
       email: k.email,
-      proofCount: k.proofs?.[0]?.count ?? 0,
+      proofCount: countRealProofs(k.proofs ?? []),
     }))
 
     setCompanies(compRows)
