@@ -15,7 +15,10 @@ interface Material {
   display_name: string
   requires_ink_names: boolean
   option_label: string | null
+  featured_quantities: number[] | null
 }
+
+const DEFAULT_FEATURED = [100, 250, 500, 750, 1000]
 
 interface Variant {
   id: string
@@ -69,6 +72,7 @@ export default function NewVersionPage() {
   const [currency, setCurrency] = useState<Currency | null>(null)
   const [variantSnapshots, setVariantSnapshots] = useState<Record<string, Record<number, string>>>({})
   const [variantTiers, setVariantTiers] = useState<Record<string, PriceTierRow[]>>({})
+  const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({})
   // Two separate ink states so each form path (free-text vs per-ink) keeps
   // typing feel. They only cross over when the designer switches materials
   // between the "requires per-ink names" set and everything else.
@@ -107,7 +111,7 @@ export default function NewVersionPage() {
           setProofCompany(c.companies?.name ?? '')
         }
       })
-    supabase.from('materials').select('id, display_name, requires_ink_names, option_label').eq('is_active', true).order('sort_order')
+    supabase.from('materials').select('id, display_name, requires_ink_names, option_label, featured_quantities').eq('is_active', true).order('sort_order')
       .then(({ data }) => setMaterials((data ?? []) as Material[]))
   }, [proofId])
 
@@ -165,6 +169,7 @@ export default function NewVersionPage() {
   useEffect(() => {
     setVariantTiers({})
     setVariantSnapshots({})
+    setExpandedVariants({})
     if (selectedVariantIds.length === 0 || currency === null) return
 
     supabase.from('price_tiers')
@@ -866,6 +871,26 @@ export default function NewVersionPage() {
             const tiers = variantTiers[vid] ?? []
             const snap = variantSnapshots[vid] ?? {}
             if (!variant) return null
+
+            const material = materials.find((m) => m.id === selectedMaterialId)
+            const featuredSet = new Set(material?.featured_quantities ?? DEFAULT_FEATURED)
+            const isOverridden = (qty: number) => {
+              const t = tiers.find((x) => x.quantity === qty)
+              if (!t) return false
+              const v = snap[qty]
+              if (v === undefined) return false
+              return parseFloat(v) !== t.total_price
+            }
+            const hiddenOverrides = tiers.filter((t) => !featuredSet.has(t.quantity) && isOverridden(t.quantity))
+            const userExpanded = !!expandedVariants[vid]
+            const visibleTiers = tiers.filter((t) => {
+              if (featuredSet.has(t.quantity)) return true
+              if (isOverridden(t.quantity)) return true   // keep any user edits visible
+              return userExpanded
+            })
+            const hiddenCount = tiers.length - visibleTiers.length
+            const showToggle = hiddenCount > 0 || (userExpanded && tiers.length > featuredSet.size)
+
             return (
               <section key={vid} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
                 <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
@@ -875,34 +900,66 @@ export default function NewVersionPage() {
                   {tiers.length > 0 ? 'Pre-filled from live pricing. Edit any value to override.' : 'No price tiers found for this variant and currency.'}
                 </p>
                 {tiers.length > 0 && (
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-gray-100">
-                        <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Qty</th>
-                        <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Total ({currency})</th>
-                        <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Per card</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tiers.map((tier) => {
-                        const val = snap[tier.quantity] ?? ''
-                        const parsed = parseFloat(val)
-                        return (
-                          <tr key={tier.quantity} className="border-b border-gray-50 last:border-0">
-                            <td className="py-2 pr-4 font-medium text-gray-900">{tier.quantity.toLocaleString()}</td>
-                            <td className="py-2 pr-4">
-                              <input type="number" step="0.01" min="0" value={val}
-                                onChange={(e) => updatePrice(vid, tier.quantity, e.target.value)}
-                                className="w-28 rounded border border-gray-200 px-2 py-1 text-sm focus:border-gray-900 focus:outline-none" />
-                            </td>
-                            <td className="py-2 text-xs text-gray-500">
-                              {!isNaN(parsed) && parsed > 0 ? formatPrice(parsed / tier.quantity, currency, 2) : '—'}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
+                  <>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-100">
+                          <th className="w-6 pb-2" />
+                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Qty</th>
+                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Total ({currency})</th>
+                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Per card</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleTiers.map((tier) => {
+                          const val = snap[tier.quantity] ?? ''
+                          const parsed = parseFloat(val)
+                          const overridden = isOverridden(tier.quantity)
+                          return (
+                            <tr key={tier.quantity} className="border-b border-gray-50 last:border-0">
+                              <td className="py-2 pr-1">
+                                {overridden && (
+                                  <span
+                                    className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500"
+                                    title="Edited — differs from the live price"
+                                    aria-label="Edited"
+                                  />
+                                )}
+                              </td>
+                              <td className="py-2 pr-4 font-medium text-gray-900">{tier.quantity.toLocaleString()}</td>
+                              <td className="py-2 pr-4">
+                                <input
+                                  type="number" step="0.01" min="0" value={val}
+                                  onChange={(e) => updatePrice(vid, tier.quantity, e.target.value)}
+                                  className={[
+                                    'w-28 rounded border px-2 py-1 text-sm focus:outline-none',
+                                    overridden
+                                      ? 'border-amber-300 focus:border-amber-500'
+                                      : 'border-gray-200 focus:border-gray-900',
+                                  ].join(' ')}
+                                />
+                              </td>
+                              <td className="py-2 text-xs text-gray-500">
+                                {!isNaN(parsed) && parsed > 0 ? formatPrice(parsed / tier.quantity, currency, 2) : '—'}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                    {showToggle && (
+                      <button
+                        type="button"
+                        onClick={() => setExpandedVariants(prev => ({ ...prev, [vid]: !prev[vid] }))}
+                        className="mt-3 text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+                      >
+                        {userExpanded
+                          ? 'Hide extra tiers'
+                          : `Show all tiers${hiddenCount > 0 ? ` (${hiddenCount} more)` : ''}`}
+                      </button>
+                    )}
+                    {!userExpanded && hiddenOverrides.length === 0 && hiddenCount === 0 && null}
+                  </>
                 )}
               </section>
             )
