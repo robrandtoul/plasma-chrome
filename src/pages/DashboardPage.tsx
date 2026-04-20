@@ -30,7 +30,7 @@ type Status = 'in_progress' | 'approved' | 'dormant' | 'abandoned'
 
 interface ProofItem {
   id: string
-  created_at: string
+  lastActivityAt: string
   current_version: number | null
   material_display: string | null
   status: Status
@@ -76,18 +76,23 @@ function buildSections(rawProofs: any[], sort: SortMode, showDormant: boolean): 
     // When dormant proofs are hidden, skip them entirely
     if (!showDormant && status === 'dormant') continue
 
+    // last_activity_at is bumped by a trigger whenever a version is added;
+    // fall back to the proof's creation time for shell rows that predate the
+    // trigger or have no versions yet.
+    const lastActivityAt: string = p.last_activity_at ?? p.created_at
+
     if (!map.has(companyKey)) {
       map.set(companyKey, {
         companyKey,
         companyName,
-        latestProofDate: p.created_at,
+        latestProofDate: lastActivityAt,
         contacts: [],
       })
     }
 
     const section = map.get(companyKey)!
-    if (p.created_at > section.latestProofDate) {
-      section.latestProofDate = p.created_at
+    if (lastActivityAt > section.latestProofDate) {
+      section.latestProofDate = lastActivityAt
     }
 
     let cg = section.contacts.find((c) => c.contactId === contactId)
@@ -100,21 +105,21 @@ function buildSections(rawProofs: any[], sort: SortMode, showDormant: boolean): 
     const current  = versions.find((v) => v.is_current)
     cg.proofs.push({
       id: p.id,
-      created_at: p.created_at,
+      lastActivityAt,
       current_version:  current?.version_number   ?? null,
       material_display: current?.material_display ?? null,
       status,
     })
   }
 
-  // Sort internals: active proofs newest-first, dormant proofs after (also newest-first)
+  // Sort internals: active proofs newest-first (by last activity), dormant after
   for (const section of map.values()) {
     for (const cg of section.contacts) {
       cg.proofs.sort((a, b) => {
         const aDormant = a.status === 'dormant' ? 1 : 0
         const bDormant = b.status === 'dormant' ? 1 : 0
         if (aDormant !== bDormant) return aDormant - bDormant
-        return b.created_at.localeCompare(a.created_at)
+        return b.lastActivityAt.localeCompare(a.lastActivityAt)
       })
     }
     section.contacts.sort((a, b) =>
@@ -177,7 +182,9 @@ function buildRecent(versions: any[]): RecentProject[] {
       companyName: v.proofs?.contacts?.companies?.name ?? null,
       materialDisplay: v.material_display ?? '—',
       status: (v.proofs?.status ?? 'in_progress') as Status,
-      lastWorkedAt: v.created_at,
+      // Show the project's last activity (any user), not this user's version
+      // timestamp, so both views on the page agree on the date.
+      lastWorkedAt: v.proofs?.last_activity_at ?? v.created_at,
     })
     if (out.length >= 10) break
   }
@@ -253,22 +260,23 @@ export default function DashboardPage() {
     const proofsPromise = supabase
       .from('proofs')
       .select(
-        'id, created_at, status,' +
+        'id, created_at, last_activity_at, status,' +
         'contacts(id, full_name, companies(id, name)),' +
         'proof_versions(version_number, is_current, material_display)'
       )
-      .order('created_at', { ascending: false })
+      .order('last_activity_at', { ascending: false, nullsFirst: false })
 
     // Recent projects this designer has worked on. We pull the latest
     // versions they created, then dedupe by proof_id client-side so each
     // project appears once. Fetching 50 rows is overkill for showing 10
-    // projects but keeps the query simple.
+    // projects but keeps the query simple. The displayed date comes from
+    // proofs.last_activity_at so the two views on this page agree.
     const recentPromise = userId
       ? supabase
           .from('proof_versions')
           .select(
             'proof_id, created_at, material_display,' +
-            'proofs!inner(status, contacts(full_name, companies(name)))'
+            'proofs!inner(status, last_activity_at, contacts(full_name, companies(name)))'
           )
           .eq('created_by', userId)
           .order('created_at', { ascending: false })
@@ -517,7 +525,7 @@ export default function DashboardPage() {
                                   {proof.material_display ?? '—'}
                                 </span>
                                 <StatusPill status={proof.status} />
-                                <span className="text-sm text-gray-400">{formatRelative(proof.created_at)}</span>
+                                <span className="text-sm text-gray-400">{formatRelative(proof.lastActivityAt)}</span>
                                 <PreviewLink proofId={proof.id} />
                                 {canAddVersion
                                   ? <AddVersionLink proofId={proof.id} />
