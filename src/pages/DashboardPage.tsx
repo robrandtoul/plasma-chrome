@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/auth'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -244,6 +245,7 @@ function PlusIcon() {
 
 export default function DashboardPage() {
   const navigate = useNavigate()
+  const { role } = useAuth()
   const [rawProofs, setRawProofs]       = useState<any[]>([])
   const [recent, setRecent]             = useState<RecentProject[]>([])
   const [loading, setLoading]           = useState(true)
@@ -331,6 +333,14 @@ export default function DashboardPage() {
             <h1 className="mt-1 text-2xl font-bold text-gray-900">Proofs</h1>
           </div>
           <div className="flex items-center gap-3">
+            {role === 'admin' && (
+              <Link
+                to="/admin/users"
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
+              >
+                Admin
+              </Link>
+            )}
             <Link
               to="/customers"
               className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
