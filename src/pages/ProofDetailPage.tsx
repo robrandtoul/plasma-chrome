@@ -341,16 +341,16 @@ export default function ProofDetailPage() {
           </div>
         ) : (
           <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-            <table className="w-full text-sm">
+            <table className="w-full table-fixed text-sm">
               <thead>
                 <tr className="border-b border-gray-100">
-                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Version</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Material</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Currency</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Notes</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Added</th>
-                  <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Status</th>
-                  <th className="w-8 px-4 py-3" />
+                  <th className="w-24 truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Version</th>
+                  <th className="w-36 truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Material</th>
+                  <th className="w-28 truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Currency</th>
+                  <th className="truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Notes</th>
+                  <th className="w-28 truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Added</th>
+                  <th className="w-40 truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Status</th>
+                  <th className="w-12 px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
@@ -360,14 +360,14 @@ export default function ProofDetailPage() {
                     onClick={() => setSelectedVersion(v)}
                     className="cursor-pointer border-b border-gray-50 last:border-0 hover:bg-gray-50"
                   >
-                    <td className="px-6 py-4 font-medium text-gray-900">v{v.version_number}</td>
-                    <td className="px-6 py-4 text-gray-700">{v.material_display}</td>
-                    <td className="px-6 py-4 text-gray-500">{v.currency}</td>
-                    <td className="max-w-xs truncate px-6 py-4 text-gray-500">{v.change_notes ?? '—'}</td>
-                    <td className="px-6 py-4 text-gray-500">
+                    <td className="truncate px-4 py-4 font-medium text-gray-900">v{v.version_number}</td>
+                    <td className="truncate px-4 py-4 text-gray-700" title={v.material_display}>{v.material_display}</td>
+                    <td className="truncate px-4 py-4 text-gray-500">{v.currency}</td>
+                    <td className="truncate px-4 py-4 text-gray-500" title={v.change_notes ?? undefined}>{v.change_notes ?? '—'}</td>
+                    <td className="truncate px-4 py-4 text-gray-500">
                       {new Date(v.created_at).toLocaleDateString('en-GB')}
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4">
                       <div className="flex flex-wrap gap-1">
                         {v.is_current && (
                           <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
