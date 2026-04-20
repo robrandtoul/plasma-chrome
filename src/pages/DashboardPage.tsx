@@ -508,6 +508,16 @@ export default function DashboardPage() {
                               >
                                 /p/{proof.id.slice(0, 8)}…
                               </a>
+                              {/* Add version — only for unlocked statuses */}
+                              {(proof.status === 'in_progress' || proof.status === 'dormant') && (
+                                <Link
+                                  to={`/proofs/${proof.id}/versions/new`}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+                                >
+                                  Add version
+                                </Link>
+                              )}
                             </div>
                           ))}
                         </div>
