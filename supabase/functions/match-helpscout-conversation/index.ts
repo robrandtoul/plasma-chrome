@@ -58,14 +58,15 @@ async function getAccessToken(appId: string, appSecret: string): Promise<string>
   return data.access_token as string
 }
 
-async function fetchConversations(token: string, email: string): Promise<HelpScoutConversation[]> {
-  // Help Scout v2's /conversations endpoint ignores a bare `email=` param.
-  // Use the documented mailbox query DSL instead — double-quote the email
-  // and escape internal quotes defensively. Then filter to active+pending
-  // client-side (the `status` param only accepts a single value).
+async function searchByEmailAndStatus(
+  token: string,
+  email: string,
+  status: 'active' | 'pending',
+): Promise<HelpScoutConversation[]> {
   const safeEmail = email.replace(/"/g, '\\"')
   const params = new URLSearchParams({
     query: `(email:"${safeEmail}")`,
+    status,
     sortField: 'modifiedAt',
     sortOrder: 'desc',
   })
@@ -75,11 +76,30 @@ async function fetchConversations(token: string, email: string): Promise<HelpSco
   })
   if (!resp.ok) {
     const text = await resp.text()
-    throw new Error(`Help Scout conversations error (${resp.status}): ${text}`)
+    throw new Error(`Help Scout conversations error (${resp.status}) status=${status}: ${text}`)
   }
   const data = await resp.json()
-  const all = (data?._embedded?.conversations ?? []) as HelpScoutConversation[]
-  return all.filter((c) => c.status === 'active' || c.status === 'pending')
+  return (data?._embedded?.conversations ?? []) as HelpScoutConversation[]
+}
+
+async function fetchConversations(token: string, email: string): Promise<HelpScoutConversation[]> {
+  // Help Scout's /conversations search DSL appears to implicitly filter to
+  // `status=active` when no status is given, which misses pending threads.
+  // Run two explicit status-scoped searches and combine the results.
+  const [active, pending] = await Promise.all([
+    searchByEmailAndStatus(token, email, 'active'),
+    searchByEmailAndStatus(token, email, 'pending'),
+  ])
+  console.log(
+    `Help Scout search for ${email}: active=${active.length}, pending=${pending.length}`,
+    { active: active.map((c) => ({ id: c.id, subject: c.subject })),
+      pending: pending.map((c) => ({ id: c.id, subject: c.subject })) },
+  )
+  const byId = new Map<number, HelpScoutConversation>()
+  for (const c of [...active, ...pending]) if (!byId.has(c.id)) byId.set(c.id, c)
+  const combined = [...byId.values()]
+  combined.sort((a, b) => (b.modifiedAt ?? '').localeCompare(a.modifiedAt ?? ''))
+  return combined
 }
 
 Deno.serve(async (req) => {
