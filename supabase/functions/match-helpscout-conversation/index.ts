@@ -21,6 +21,7 @@ interface HelpScoutConversation {
   subject?: string | null
   status?: string | null
   modifiedAt?: string | null
+  mailboxId?: number | null
 }
 
 interface Match {
@@ -29,6 +30,8 @@ interface Match {
   status: string | null
   modifiedAt: string | null
   url: string
+  mailboxId: number | null
+  mailboxName: string | null
 }
 
 function json(body: unknown, status = 200) {
@@ -56,6 +59,16 @@ async function getAccessToken(appId: string, appSecret: string): Promise<string>
   const data = await resp.json()
   if (!data.access_token) throw new Error('Help Scout token response missing access_token')
   return data.access_token as string
+}
+
+async function fetchMailboxes(token: string): Promise<Map<number, string>> {
+  const resp = await fetch('https://api.helpscout.net/v2/mailboxes', {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  })
+  if (!resp.ok) return new Map()
+  const data = await resp.json()
+  const boxes = (data?._embedded?.mailboxes ?? []) as Array<{ id: number; name: string }>
+  return new Map(boxes.map((b) => [b.id, b.name]))
 }
 
 async function searchByEmailAndStatus(
@@ -145,13 +158,18 @@ Deno.serve(async (req) => {
 
   try {
     const token = await getAccessToken(appId, appSecret)
-    const conversations = await fetchConversations(token, email)
+    const [conversations, mailboxMap] = await Promise.all([
+      fetchConversations(token, email),
+      fetchMailboxes(token),
+    ])
     const matches: Match[] = conversations.map((c) => ({
       id: c.id,
       subject: c.subject ?? null,
       status: c.status ?? null,
       modifiedAt: c.modifiedAt ?? null,
       url: `https://secure.helpscout.net/conversation/${c.id}`,
+      mailboxId: c.mailboxId ?? null,
+      mailboxName: c.mailboxId != null ? (mailboxMap.get(c.mailboxId) ?? null) : null,
     }))
     return json({ matches })
   } catch (err) {

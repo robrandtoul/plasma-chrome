@@ -22,6 +22,8 @@ interface HelpScoutMatch {
   status: string | null
   modifiedAt: string | null
   url: string
+  mailboxId: number | null
+  mailboxName: string | null
 }
 
 // null id = not yet persisted (will be created on submit)
@@ -767,7 +769,10 @@ function HelpScoutPicker({
               >
                 <span className="font-medium text-gray-900">{m.subject ?? `Conversation #${m.id}`}</span>
                 <span className="text-xs text-gray-500">
-                  {m.status ?? 'unknown'}
+                  <span className={m.status === 'active' ? 'font-medium text-emerald-600' : 'text-gray-500'}>
+                    {m.status ?? 'unknown'}
+                  </span>
+                  {m.mailboxName && ` · ${m.mailboxName}`}
                   {m.modifiedAt && ` · ${new Date(m.modifiedAt).toLocaleDateString('en-GB')}`}
                 </span>
               </button>
