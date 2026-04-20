@@ -40,6 +40,7 @@ export default function VersionDetailModal({
   allVersions,
   onClose,
   onVersionUpdated,
+  onDeleteProofRequested,
 }: {
   version: ModalVersion
   proofId: string
@@ -48,6 +49,7 @@ export default function VersionDetailModal({
   allVersions: ModalVersion[]
   onClose: () => void
   onVersionUpdated: (message: string) => void
+  onDeleteProofRequested?: () => void
 }) {
   const navigate = useNavigate()
   const [images, setImages] = useState<ModalImage[]>([])
@@ -166,7 +168,7 @@ export default function VersionDetailModal({
   const isOnlyVersion = allVersions.length === 1
 
   const deleteConfirmText = isOnlyVersion
-    ? 'This is the only version — delete the whole proof instead.'
+    ? 'This is the only version. To remove it, delete the whole proof instead.'
     : version.is_current
     ? `Delete v${version.version_number}? The most recent remaining version will become current.`
     : `Delete v${version.version_number}? This removes its images too.`
@@ -313,7 +315,17 @@ export default function VersionDetailModal({
                   >
                     Cancel
                   </button>
-                  {!isOnlyVersion && (
+                  {isOnlyVersion ? (
+                    onDeleteProofRequested && (
+                      <button
+                        onClick={onDeleteProofRequested}
+                        disabled={deleteState === 'working'}
+                        className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                      >
+                        Delete proof
+                      </button>
+                    )
+                  ) : (
                     <button
                       onClick={handleDelete}
                       disabled={deleteState === 'working'}

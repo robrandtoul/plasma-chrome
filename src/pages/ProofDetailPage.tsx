@@ -31,8 +31,9 @@ export default function ProofDetailPage() {
   const [selectedVersion, setSelectedVersion] = useState<ModalVersion | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
-  const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | 'abandon' | null>(null)
+  const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | 'abandon' | 'delete' | null>(null)
   const [statusWorking, setStatusWorking] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const fallbackInputRef = useRef<HTMLInputElement>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -105,6 +106,41 @@ export default function ProofDetailPage() {
       showToast('Proof reopened')
       if (id) loadProof(id)
     }
+  }
+
+  async function handleDelete() {
+    if (!proof) return
+    setStatusWorking(true)
+    setDeleteError(null)
+
+    // Gather every storage path linked to any version of this proof so we
+    // can clean those files up after the DB cascade fires.
+    const versionIds = versions.map((v) => v.id)
+    let imagePaths: string[] = []
+    if (versionIds.length > 0) {
+      const { data: images } = await supabase
+        .from('proof_version_images')
+        .select('image_path')
+        .in('proof_version_id', versionIds)
+      imagePaths = (images ?? []).map((r: any) => r.image_path)
+    }
+
+    const { error } = await supabase.rpc('delete_proof_cascade', { p_proof_id: proof.id })
+    if (error) {
+      setDeleteError(error.message)
+      setStatusWorking(false)
+      return
+    }
+
+    // Best-effort storage cleanup — the DB record is already gone, so a
+    // storage miss just leaves orphan files (not a correctness issue).
+    if (imagePaths.length > 0) {
+      await supabase.storage.from('proof-images').remove(imagePaths)
+    }
+
+    setStatusWorking(false)
+    setStatusDialog(null)
+    navigate('/')
   }
 
   async function handleAbandon() {
@@ -356,6 +392,19 @@ export default function ProofDetailPage() {
             </table>
           </div>
         )}
+
+        {/* Danger zone — permanent delete, kept subtle to avoid accidental clicks */}
+        <div className="mt-12 flex flex-col gap-3 border-t border-gray-100 pt-6 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-gray-400">
+            Permanently remove this proof and all its versions. Different from abandon — this cannot be undone.
+          </p>
+          <button
+            onClick={() => { setDeleteError(null); setStatusDialog('delete') }}
+            className="shrink-0 self-start rounded-lg border border-rose-200 px-4 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 sm:self-auto"
+          >
+            Delete proof
+          </button>
+        </div>
       </div>
 
       {/* Version detail modal */}
@@ -368,6 +417,11 @@ export default function ProofDetailPage() {
           allVersions={versions}
           onClose={() => setSelectedVersion(null)}
           onVersionUpdated={handleVersionUpdated}
+          onDeleteProofRequested={() => {
+            setSelectedVersion(null)
+            setDeleteError(null)
+            setStatusDialog('delete')
+          }}
         />
       )}
 
@@ -392,6 +446,19 @@ export default function ProofDetailPage() {
           working={statusWorking}
           onConfirm={handleAbandon}
           onCancel={() => setStatusDialog(null)}
+        />
+      )}
+
+      {/* Delete confirm dialog */}
+      {statusDialog === 'delete' && (
+        <ConfirmDialog
+          message={`Permanently delete this proof and all ${versions.length} version${versions.length === 1 ? '' : 's'}? This cannot be undone.`}
+          confirmLabel="Delete proof"
+          confirmClass="bg-rose-600 hover:bg-rose-700 text-white"
+          working={statusWorking}
+          errorMsg={deleteError}
+          onConfirm={handleDelete}
+          onCancel={() => { setStatusDialog(null); setDeleteError(null) }}
         />
       )}
 
@@ -426,6 +493,7 @@ function ConfirmDialog({
   confirmLabel,
   confirmClass,
   working,
+  errorMsg,
   onConfirm,
   onCancel,
 }: {
@@ -433,6 +501,7 @@ function ConfirmDialog({
   confirmLabel: string
   confirmClass: string
   working: boolean
+  errorMsg?: string | null
   onConfirm: () => void
   onCancel: () => void
 }) {
@@ -442,6 +511,9 @@ function ConfirmDialog({
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
           <p className="text-sm text-gray-700">{message}</p>
+          {errorMsg && (
+            <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>
+          )}
           <div className="mt-5 flex justify-end gap-2">
             <button
               onClick={onCancel}
