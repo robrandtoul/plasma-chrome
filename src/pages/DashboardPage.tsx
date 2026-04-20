@@ -138,6 +138,31 @@ function buildSections(rawProofs: any[], sort: SortMode, showDormant: boolean): 
   return sections
 }
 
+// ── Date formatting ───────────────────────────────────────────────────────────
+
+// Relative date string used across both the Recent Projects card and the main
+// grouped list: Today / Yesterday / N days ago / 14 Apr / 14 Apr 2025.
+function formatRelative(iso: string): string {
+  const now = new Date()
+  const then = new Date(iso)
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const startOfThen = new Date(then.getFullYear(), then.getMonth(), then.getDate())
+  const daysDiff = Math.floor((startOfToday.getTime() - startOfThen.getTime()) / 86_400_000)
+  if (daysDiff <= 0) return 'Today'
+  if (daysDiff === 1) return 'Yesterday'
+  if (daysDiff <= 7) return `${daysDiff} days ago`
+  if (then.getFullYear() === now.getFullYear()) {
+    return then.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  }
+  return then.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+// Shared grid template so every row on this page — Recent Projects or main
+// grouped list — lines Material/Status/Date/Preview/AddVersion up in the
+// same horizontal positions. The leftmost column flexes for customer name
+// in Recent or a "v3" label in the main list.
+const ROW_GRID = 'grid items-center gap-3 grid-cols-[minmax(0,1fr)_8rem_7rem_5.5rem_5.5rem_6.5rem]'
+
 // ── Recent projects ───────────────────────────────────────────────────────────
 
 function buildRecent(versions: any[]): RecentProject[] {
@@ -161,15 +186,41 @@ function buildRecent(versions: any[]): RecentProject[] {
 
 function StatusPill({ status }: { status: Status }) {
   if (status === 'approved') {
-    return <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Approved</span>
+    return <span className="w-fit shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Approved</span>
   }
   if (status === 'abandoned') {
-    return <span className="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">Abandoned</span>
+    return <span className="w-fit shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">Abandoned</span>
   }
   if (status === 'dormant') {
-    return <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">Dormant</span>
+    return <span className="w-fit shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">Dormant</span>
   }
-  return <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">In progress</span>
+  return <span className="w-fit shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">In progress</span>
+}
+
+function PreviewLink({ proofId }: { proofId: string }) {
+  return (
+    <a
+      href={`/p/${proofId}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      className="w-fit shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+    >
+      Preview
+    </a>
+  )
+}
+
+function AddVersionLink({ proofId }: { proofId: string }) {
+  return (
+    <Link
+      to={`/proofs/${proofId}/versions/new`}
+      onClick={(e) => e.stopPropagation()}
+      className="w-fit shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+    >
+      Add version
+    </Link>
+  )
 }
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -325,37 +376,25 @@ export default function DashboardPage() {
                         key={r.proofId}
                         onClick={() => navigate(`/proofs/${r.proofId}`)}
                         className={[
-                          'flex cursor-pointer items-center gap-4 px-5 py-3 hover:bg-gray-50',
+                          ROW_GRID,
+                          'cursor-pointer px-5 py-3 hover:bg-gray-50',
                           i > 0 ? 'border-t border-gray-100' : '',
                         ].join(' ')}
                       >
                         {/* Customer + company */}
-                        <div className="min-w-0 flex-1">
+                        <div className="min-w-0">
                           <div className="truncate text-sm font-medium text-gray-900">{r.customerName}</div>
                           {r.companyName && (
                             <div className="truncate text-xs text-gray-400">{r.companyName}</div>
                           )}
                         </div>
-                        {/* Material */}
-                        <span className="hidden shrink-0 truncate text-sm text-gray-400 sm:block sm:max-w-[10rem]">
-                          {r.materialDisplay}
-                        </span>
-                        {/* Status */}
+                        <span className="truncate text-sm text-gray-400">{r.materialDisplay}</span>
                         <StatusPill status={r.status} />
-                        {/* Date */}
-                        <span className="shrink-0 text-sm tabular-nums text-gray-400">
-                          {new Date(r.lastWorkedAt).toLocaleDateString('en-GB')}
-                        </span>
-                        {/* Add version */}
-                        {!locked && (
-                          <Link
-                            to={`/proofs/${r.proofId}/versions/new`}
-                            onClick={(e) => e.stopPropagation()}
-                            className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
-                          >
-                            Add version
-                          </Link>
-                        )}
+                        <span className="text-sm text-gray-400">{formatRelative(r.lastWorkedAt)}</span>
+                        <PreviewLink proofId={r.proofId} />
+                        {locked
+                          ? <span />
+                          : <AddVersionLink proofId={r.proofId} />}
                       </div>
                     )
                   })}
@@ -459,67 +498,33 @@ export default function DashboardPage() {
                           </div>
 
                           {/* Proof rows */}
-                          {cg.proofs.map((proof) => (
-                            <div
-                              key={proof.id}
-                              onClick={() => navigate(`/proofs/${proof.id}`)}
-                              className={[
-                                'flex cursor-pointer items-center gap-4 border-t border-gray-50 px-5 py-2.5 hover:bg-gray-50',
-                                proof.status === 'dormant' ? 'opacity-50' : '',
-                              ].join(' ')}
-                            >
-                              {/* Version */}
-                              <span className="w-8 shrink-0 text-sm text-gray-400">
-                                {proof.current_version != null ? `v${proof.current_version}` : '—'}
-                              </span>
-                              {/* Material */}
-                              <span className="flex-1 truncate text-sm text-gray-400">
-                                {proof.material_display ?? '—'}
-                              </span>
-                              {/* Date */}
-                              <span className="shrink-0 text-sm tabular-nums text-gray-400">
-                                {new Date(proof.created_at).toLocaleDateString('en-GB')}
-                              </span>
-                              {/* Status pill */}
-                              {proof.status === 'approved' ? (
-                                <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
-                                  Approved
-                                </span>
-                              ) : proof.status === 'abandoned' ? (
-                                <span className="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">
-                                  Abandoned
-                                </span>
-                              ) : proof.status === 'dormant' ? (
-                                <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">
-                                  Dormant
-                                </span>
-                              ) : (
-                                <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                                  In progress
-                                </span>
-                              )}
-                              {/* Customer link — stopPropagation so the row click doesn't also fire */}
-                              <a
-                                href={`/p/${proof.id}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="shrink-0 text-xs text-gray-300 hover:text-gray-600"
+                          {cg.proofs.map((proof) => {
+                            const canAddVersion = proof.status === 'in_progress' || proof.status === 'dormant'
+                            return (
+                              <div
+                                key={proof.id}
+                                onClick={() => navigate(`/proofs/${proof.id}`)}
+                                className={[
+                                  ROW_GRID,
+                                  'cursor-pointer border-t border-gray-50 px-5 py-2.5 hover:bg-gray-50',
+                                  proof.status === 'dormant' ? 'opacity-50' : '',
+                                ].join(' ')}
                               >
-                                /p/{proof.id.slice(0, 8)}…
-                              </a>
-                              {/* Add version — only for unlocked statuses */}
-                              {(proof.status === 'in_progress' || proof.status === 'dormant') && (
-                                <Link
-                                  to={`/proofs/${proof.id}/versions/new`}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
-                                >
-                                  Add version
-                                </Link>
-                              )}
-                            </div>
-                          ))}
+                                <span className="truncate text-sm text-gray-400">
+                                  {proof.current_version != null ? `v${proof.current_version}` : '—'}
+                                </span>
+                                <span className="truncate text-sm text-gray-400">
+                                  {proof.material_display ?? '—'}
+                                </span>
+                                <StatusPill status={proof.status} />
+                                <span className="text-sm text-gray-400">{formatRelative(proof.created_at)}</span>
+                                <PreviewLink proofId={proof.id} />
+                                {canAddVersion
+                                  ? <AddVersionLink proofId={proof.id} />
+                                  : <span />}
+                              </div>
+                            )
+                          })}
                         </div>
                       ))}
                     </div>
