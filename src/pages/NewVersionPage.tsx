@@ -116,15 +116,21 @@ export default function NewVersionPage() {
       .then(({ data }) => setMaterials((data ?? []) as Material[]))
 
     // Pre-fill the pricing display + currency from admin-configured
-    // defaults. The designer can still override before saving.
+    // defaults. Either column may be null ("no default") — in that case
+    // we leave the picker unselected so the designer has to pick
+    // explicitly before saving.
     supabase.from('settings')
       .select('default_pricing_display, default_currency')
       .eq('id', 1)
       .single()
       .then(({ data }) => {
         if (!data) return
-        setPricingDisplay((data.default_pricing_display === 'custom_quote' ? 'custom' : 'standard') as PricingDisplayValue)
-        setCurrency(data.default_currency as Currency)
+        if (data.default_pricing_display != null) {
+          setPricingDisplay((data.default_pricing_display === 'custom_quote' ? 'custom' : 'standard') as PricingDisplayValue)
+        }
+        if (data.default_currency != null) {
+          setCurrency(data.default_currency as Currency)
+        }
       })
   }, [proofId])
 
@@ -596,15 +602,16 @@ export default function NewVersionPage() {
             <button
               type="submit"
               form="new-version-form"
-              disabled={submitting}
+              disabled={submitting || !isValid}
+              title={!isValid ? missingFieldsHint(validations) : undefined}
               aria-label={
-                submitAttempted && !isValid
-                  ? 'Save version — some required fields are incomplete'
+                !isValid
+                  ? `Save version — ${missingFieldsHint(validations)}`
                   : undefined
               }
               className={[
                 'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
-                isValid ? 'bg-gray-900 hover:bg-gray-700' : 'bg-gray-900/60 hover:bg-gray-900/75',
+                isValid ? 'bg-gray-900 hover:bg-gray-700' : 'bg-gray-900/60',
                 'disabled:cursor-not-allowed disabled:opacity-50',
               ].join(' ')}
             >
@@ -622,6 +629,9 @@ export default function NewVersionPage() {
             invalid={shouldHighlight('pricingDisplay')}
             forwardRef={pricingDisplayRef}
           />
+          {pricingDisplay === null && !shouldHighlight('pricingDisplay') && (
+            <p className="-mt-3 text-xs text-gray-400">Select one.</p>
+          )}
 
           {/* Material + variant + material-options selection */}
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
@@ -717,7 +727,11 @@ export default function NewVersionPage() {
               <div ref={currencyRef} className="mb-4">
                 <label className="mb-1.5 block text-sm font-medium text-gray-700">Currency</label>
                 <CurrencyField value={currency} onChange={setCurrency} invalid={shouldHighlight('currency')} />
-                {shouldHighlight('currency') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
+                {shouldHighlight('currency')
+                  ? <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>
+                  : currency === null
+                    ? <p className="mt-1.5 text-xs text-gray-400">Select one.</p>
+                    : null}
               </div>
             )}
 
@@ -997,6 +1011,24 @@ export default function NewVersionPage() {
       </div>
     </div>
   )
+}
+
+/** Build a compact "Select a X and a Y" hint for the Save button's
+ *  disabled tooltip from the current validation results. Pricing
+ *  display + currency are the two fields the admin "no default" setting
+ *  can leave unselected; other validation errors are reported inline. */
+function missingFieldsHint(validations: Record<string, boolean>): string {
+  const missing: string[] = []
+  if (!validations.pricingDisplay) missing.push('a pricing display')
+  if (!validations.currency) missing.push('a currency')
+  if (!validations.material) missing.push('a material')
+  if (!validations.variant) missing.push('a variant')
+  if (!validations.images) missing.push('at least one image')
+  if (!validations.inkNames) missing.push('ink names')
+  if (missing.length === 0) return 'Some required fields are incomplete'
+  if (missing.length === 1) return `Select ${missing[0]}`
+  if (missing.length === 2) return `Select ${missing[0]} and ${missing[1]}`
+  return `Select ${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}`
 }
 
 function material_display_for(id: string, materials: Material[]) {

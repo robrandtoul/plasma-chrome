@@ -12,8 +12,9 @@ interface Settings {
   disclaimer_text: string
   company_name: string
   reply_email: string
-  default_pricing_display: PricingDisplayValue
-  default_currency: CurrencyValue
+  /** null means "no default — force the designer to choose". */
+  default_pricing_display: PricingDisplayValue | null
+  default_currency: CurrencyValue | null
 }
 
 interface HelpScoutStatus {
@@ -233,35 +234,37 @@ export default function AdminSettingsPage() {
         <div className="space-y-5">
           <FieldRow
             label="Default pricing display"
-            help="What's pre-selected when a designer creates a new version."
+            help={`What's pre-selected when a designer creates a new version. Choosing "No default" means designers have to pick a value every time, which prevents mistakes from accepting the pre-filled choice.`}
             saved={recentlySaved('default_pricing_display')}
             working={working.default_pricing_display}
             error={errors.default_pricing_display}
           >
-            <RadioGroup<PricingDisplayValue>
+            <RadioGroup<PricingDisplayValue | null>
               value={settings.default_pricing_display}
               onChange={(v) => saveField('default_pricing_display', v)}
               options={[
                 { value: 'standard', label: 'Standard pricing' },
                 { value: 'custom_quote', label: 'Custom quote' },
+                { value: null, label: 'No default' },
               ]}
             />
           </FieldRow>
 
           <FieldRow
             label="Default currency"
-            help="What's pre-selected when a designer creates a new version."
+            help={`What's pre-selected when a designer creates a new version. Choosing "No default" means designers have to pick a value every time, which prevents mistakes from accepting the pre-filled choice.`}
             saved={recentlySaved('default_currency')}
             working={working.default_currency}
             error={errors.default_currency}
           >
-            <RadioGroup<CurrencyValue>
+            <RadioGroup<CurrencyValue | null>
               value={settings.default_currency}
               onChange={(v) => saveField('default_currency', v)}
               options={[
                 { value: 'GBP', label: 'GBP' },
                 { value: 'EUR', label: 'EUR' },
                 { value: 'USD', label: 'USD' },
+                { value: null, label: 'No default' },
               ]}
             />
           </FieldRow>
@@ -330,7 +333,7 @@ function FieldRow({ label, help, saved, working, error, children }: {
   )
 }
 
-function RadioGroup<T extends string>({ value, onChange, options }: {
+function RadioGroup<T extends string | null>({ value, onChange, options }: {
   value: T
   onChange: (v: T) => void
   options: { value: T; label: string }[]
@@ -341,7 +344,7 @@ function RadioGroup<T extends string>({ value, onChange, options }: {
         const active = o.value === value
         return (
           <button
-            key={o.value}
+            key={o.value ?? '__none__'}
             type="button"
             onClick={() => onChange(o.value)}
             className={[
