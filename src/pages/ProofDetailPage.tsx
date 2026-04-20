@@ -239,7 +239,8 @@ export default function ProofDetailPage() {
               )}
             </div>
           </div>
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className="flex flex-col items-end gap-4">
+            <div className="flex flex-wrap justify-end gap-2">
             <a
               href={`/p/${proof.id}`}
               target="_blank"
@@ -286,23 +287,26 @@ export default function ProofDetailPage() {
               <>
                 <button
                   onClick={() => setStatusDialog('approve')}
-                  className="rounded-lg px-4 py-2 text-sm font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-50"
+                  className="rounded-lg bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
                 >
                   Mark as approved
                 </button>
                 <button
                   onClick={() => setStatusDialog('abandon')}
-                  className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 ring-1 ring-slate-300 hover:bg-slate-50"
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-rose-500 ring-1 ring-rose-200 hover:bg-rose-50"
                 >
                   Abandon proof
                 </button>
-                <Link
-                  to={`/proofs/${proof.id}/versions/new`}
-                  className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
-                >
-                  Add version
-                </Link>
               </>
+            )}
+            </div>
+            {!isLocked && (
+              <Link
+                to={`/proofs/${proof.id}/versions/new`}
+                className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+              >
+                Add version
+              </Link>
             )}
           </div>
         </div>
@@ -396,13 +400,13 @@ export default function ProofDetailPage() {
         {/* Danger zone — permanent delete, kept subtle to avoid accidental clicks */}
         <div className="mt-12 flex flex-col gap-3 border-t border-gray-100 pt-6 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-gray-400">
-            Permanently remove this proof and all its versions. Different from abandon — this cannot be undone.
+            Permanently remove this project and all its proofs. Different from abandon, this cannot be undone.
           </p>
           <button
             onClick={() => { setDeleteError(null); setStatusDialog('delete') }}
             className="shrink-0 self-start rounded-lg border border-rose-200 px-4 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 sm:self-auto"
           >
-            Delete proof
+            Delete all proofs
           </button>
         </div>
       </div>
@@ -428,7 +432,7 @@ export default function ProofDetailPage() {
       {/* Approve confirm dialog */}
       {statusDialog === 'approve' && (
         <ConfirmDialog
-          message="Mark this proof as approved? This locks the proof — no more versions can be added."
+          message="Mark this project as approved? This locks the project — no more proofs can be added."
           confirmLabel="Mark as approved"
           confirmClass="bg-emerald-600 hover:bg-emerald-700 text-white"
           working={statusWorking}
@@ -440,7 +444,7 @@ export default function ProofDetailPage() {
       {/* Abandon confirm dialog */}
       {statusDialog === 'abandon' && (
         <ConfirmDialog
-          message="Abandon this proof? This will lock the proof. No new versions can be added, and the customer-facing page will show a closed state. You can reopen the proof later if needed."
+          message="Abandon this project? This will lock the project. No new proofs can be added, and the customer-facing page will show a closed state. You can reopen the project later if needed."
           confirmLabel="Abandon proof"
           confirmClass="bg-slate-700 hover:bg-slate-800 text-white"
           working={statusWorking}
@@ -452,8 +456,8 @@ export default function ProofDetailPage() {
       {/* Delete confirm dialog */}
       {statusDialog === 'delete' && (
         <ConfirmDialog
-          message={`Permanently delete this proof and all ${versions.length} version${versions.length === 1 ? '' : 's'}? This cannot be undone.`}
-          confirmLabel="Delete proof"
+          message={`Permanently delete this project and all ${versions.length} proof${versions.length === 1 ? '' : 's'}? This cannot be undone.`}
+          confirmLabel="Delete all proofs"
           confirmClass="bg-rose-600 hover:bg-rose-700 text-white"
           working={statusWorking}
           errorMsg={deleteError}
@@ -467,8 +471,8 @@ export default function ProofDetailPage() {
         <ConfirmDialog
           message={
             isAbandoned
-              ? 'Reopen this proof? This will reopen the proof and allow new versions to be added.'
-              : 'Reopen this proof? It will go back to in progress and you\'ll be able to add new versions.'
+              ? 'Reopen this project? This will reopen the project and allow new proofs to be added.'
+              : 'Reopen this project? It will go back to in progress and you\'ll be able to add new proofs.'
           }
           confirmLabel="Reopen"
           confirmClass="bg-gray-900 hover:bg-gray-700 text-white"

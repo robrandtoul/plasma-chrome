@@ -168,9 +168,9 @@ export default function VersionDetailModal({
   const isOnlyVersion = allVersions.length === 1
 
   const deleteConfirmText = isOnlyVersion
-    ? 'This is the only version. To remove it, delete the whole proof instead.'
+    ? 'This is the only proof. To remove it, delete the whole project instead.'
     : version.is_current
-    ? `Delete v${version.version_number}? The most recent remaining version will become current.`
+    ? `Delete v${version.version_number}? The most recent remaining proof will become current.`
     : `Delete v${version.version_number}? This removes its images too.`
 
   return (
@@ -322,7 +322,7 @@ export default function VersionDetailModal({
                         disabled={deleteState === 'working'}
                         className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
                       >
-                        Delete proof
+                        Delete all proofs
                       </button>
                     )
                   ) : (
