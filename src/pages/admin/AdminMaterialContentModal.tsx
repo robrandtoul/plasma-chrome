@@ -37,11 +37,13 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
   onClose: () => void
   onSaved: (updated: MaterialContent) => void
 }) {
+  const [draftName, setDraftName] = useState(material.display_name)
   const [draftDesc, setDraftDesc] = useState(material.description ?? '')
   const [currentIconUrl, setCurrentIconUrl] = useState(material.icon_url)
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [nameError, setNameError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -50,6 +52,61 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose, saving])
+
+  async function saveName() {
+    const trimmed = draftName.trim()
+    if (trimmed === material.display_name) { setNameError(null); return }
+    if (trimmed === '') {
+      setNameError('Name is required.')
+      setDraftName(material.display_name)
+      return
+    }
+
+    // Client-side duplicate check (case-insensitive). The DB unique
+    // index is the source of truth; this just gives a friendlier error
+    // before we issue the UPDATE.
+    const { data: dupes } = await supabase
+      .from('materials')
+      .select('id')
+      .ilike('display_name', trimmed)
+      .neq('id', material.id)
+      .limit(1)
+    if (dupes && dupes.length > 0) {
+      setNameError('A material with this name already exists.')
+      setDraftName(material.display_name)
+      return
+    }
+
+    setSaving(true)
+    setNameError(null)
+    const prev = material.display_name
+    const { error: err } = await supabase
+      .from('materials')
+      .update({ display_name: trimmed })
+      .eq('id', material.id)
+    setSaving(false)
+    if (err) {
+      // Unique-index violation from the DB (race condition).
+      if (err.code === '23505') {
+        setNameError('A material with this name already exists.')
+      } else {
+        setNameError(`Failed to rename: ${err.message}`)
+      }
+      setDraftName(prev)
+      return
+    }
+    setSavedAt(Date.now())
+    material.display_name = trimmed
+    onSaved({ ...material })
+    void logAudit({
+      action: 'material.name_updated',
+      targetType: 'material',
+      targetId: material.id,
+      targetLabel: trimmed,
+      beforeValue: { display_name: prev },
+      afterValue: { display_name: trimmed },
+    })
+  }
 
   async function saveDescription() {
     const trimmed = draftDesc.trim() === '' ? null : draftDesc
@@ -171,7 +228,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
           {/* Header */}
           <div className="flex items-start justify-between border-b border-gray-100 px-6 py-4">
             <div>
-              <h3 className="text-lg font-semibold text-gray-900">{material.display_name}</h3>
+              <h3 className="text-lg font-semibold text-gray-900">{draftName.trim() || material.display_name}</h3>
               <Link
                 to={`/admin/pricing/materials/${material.code}`}
                 className="text-xs text-gray-500 hover:text-gray-900 hover:underline"
@@ -196,6 +253,31 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
 
           {/* Body */}
           <div className="space-y-6 overflow-y-auto px-6 py-5">
+            {/* Name */}
+            <section>
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                Material name <span className="text-rose-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={draftName}
+                onChange={(e) => { setDraftName(e.target.value); if (nameError) setNameError(null) }}
+                onBlur={saveName}
+                className={[
+                  'w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1',
+                  nameError
+                    ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-300'
+                    : 'border-gray-300 focus:border-gray-900 focus:ring-gray-900',
+                ].join(' ')}
+              />
+              <p className="mt-1.5 text-xs text-gray-500">
+                This is what customers and designers see. The internal identifier (slug) won't change.
+              </p>
+              {nameError && (
+                <p className="mt-1.5 text-xs font-medium text-rose-500">{nameError}</p>
+              )}
+            </section>
+
             {/* Description */}
             <section>
               <label className="mb-1.5 block text-sm font-medium text-gray-700">Description</label>
