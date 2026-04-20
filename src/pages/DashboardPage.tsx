@@ -26,12 +26,23 @@ function readShowDormant(): boolean {
   }
 }
 
+type Status = 'in_progress' | 'approved' | 'dormant' | 'abandoned'
+
 interface ProofItem {
   id: string
   created_at: string
   current_version: number | null
   material_display: string | null
-  status: 'in_progress' | 'approved' | 'dormant' | 'abandoned'
+  status: Status
+}
+
+interface RecentProject {
+  proofId: string
+  customerName: string
+  companyName: string | null
+  materialDisplay: string
+  status: Status
+  lastWorkedAt: string
 }
 
 interface ContactGroup {
@@ -127,6 +138,40 @@ function buildSections(rawProofs: any[], sort: SortMode, showDormant: boolean): 
   return sections
 }
 
+// ── Recent projects ───────────────────────────────────────────────────────────
+
+function buildRecent(versions: any[]): RecentProject[] {
+  const seen = new Set<string>()
+  const out: RecentProject[] = []
+  for (const v of versions) {
+    if (seen.has(v.proof_id)) continue
+    seen.add(v.proof_id)
+    out.push({
+      proofId: v.proof_id,
+      customerName: v.proofs?.contacts?.full_name ?? '',
+      companyName: v.proofs?.contacts?.companies?.name ?? null,
+      materialDisplay: v.material_display ?? '—',
+      status: (v.proofs?.status ?? 'in_progress') as Status,
+      lastWorkedAt: v.created_at,
+    })
+    if (out.length >= 10) break
+  }
+  return out
+}
+
+function StatusPill({ status }: { status: Status }) {
+  if (status === 'approved') {
+    return <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Approved</span>
+  }
+  if (status === 'abandoned') {
+    return <span className="shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">Abandoned</span>
+  }
+  if (status === 'dormant') {
+    return <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">Dormant</span>
+  }
+  return <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">In progress</span>
+}
+
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
 function PlusIcon() {
@@ -142,6 +187,7 @@ function PlusIcon() {
 export default function DashboardPage() {
   const navigate = useNavigate()
   const [rawProofs, setRawProofs]       = useState<any[]>([])
+  const [recent, setRecent]             = useState<RecentProject[]>([])
   const [loading, setLoading]           = useState(true)
   const [search, setSearch]             = useState('')
   const [sort, setSort]                 = useState<SortMode>(readSort)
@@ -150,7 +196,10 @@ export default function DashboardPage() {
   useEffect(() => { loadProofs() }, [])
 
   async function loadProofs() {
-    const { data } = await supabase
+    const userResult = await supabase.auth.getUser()
+    const userId = userResult.data.user?.id ?? null
+
+    const proofsPromise = supabase
       .from('proofs')
       .select(
         'id, created_at, status,' +
@@ -159,7 +208,26 @@ export default function DashboardPage() {
       )
       .order('created_at', { ascending: false })
 
-    setRawProofs(data ?? [])
+    // Recent projects this designer has worked on. We pull the latest
+    // versions they created, then dedupe by proof_id client-side so each
+    // project appears once. Fetching 50 rows is overkill for showing 10
+    // projects but keeps the query simple.
+    const recentPromise = userId
+      ? supabase
+          .from('proof_versions')
+          .select(
+            'proof_id, created_at, material_display,' +
+            'proofs!inner(status, contacts(full_name, companies(name)))'
+          )
+          .eq('created_by', userId)
+          .order('created_at', { ascending: false })
+          .limit(50)
+      : Promise.resolve({ data: [] as any[] })
+
+    const [{ data: proofs }, { data: versions }] = await Promise.all([proofsPromise, recentPromise])
+
+    setRawProofs(proofs ?? [])
+    setRecent(buildRecent((versions ?? []) as any[]))
     setLoading(false)
   }
 
@@ -239,6 +307,56 @@ export default function DashboardPage() {
 
         ) : (
           <>
+            {/* ── Recent projects (your own) ───────────────────────────────── */}
+            {recent.length > 0 && (
+              <div className="mb-8">
+                <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-500">Recent projects</h2>
+                <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+                  {recent.map((r, i) => {
+                    const locked = r.status === 'approved' || r.status === 'abandoned'
+                    return (
+                      <div
+                        key={r.proofId}
+                        onClick={() => navigate(`/proofs/${r.proofId}`)}
+                        className={[
+                          'flex cursor-pointer items-center gap-4 px-5 py-3 hover:bg-gray-50',
+                          i > 0 ? 'border-t border-gray-100' : '',
+                        ].join(' ')}
+                      >
+                        {/* Customer + company */}
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium text-gray-900">{r.customerName}</div>
+                          {r.companyName && (
+                            <div className="truncate text-xs text-gray-400">{r.companyName}</div>
+                          )}
+                        </div>
+                        {/* Material */}
+                        <span className="hidden shrink-0 truncate text-sm text-gray-400 sm:block sm:max-w-[10rem]">
+                          {r.materialDisplay}
+                        </span>
+                        {/* Status */}
+                        <StatusPill status={r.status} />
+                        {/* Date */}
+                        <span className="shrink-0 text-sm tabular-nums text-gray-400">
+                          {new Date(r.lastWorkedAt).toLocaleDateString('en-GB')}
+                        </span>
+                        {/* Add version */}
+                        {!locked && (
+                          <Link
+                            to={`/proofs/${r.proofId}/versions/new`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+                          >
+                            Add version
+                          </Link>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* ── Toolbar ──────────────────────────────────────────────────── */}
             <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
               <input
