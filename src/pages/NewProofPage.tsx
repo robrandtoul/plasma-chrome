@@ -16,6 +16,14 @@ interface Contact {
   email: string
 }
 
+interface HelpScoutMatch {
+  id: number
+  subject: string | null
+  status: string | null
+  modifiedAt: string | null
+  url: string
+}
+
 // null id = not yet persisted (will be created on submit)
 type SelectedCompany = { id: string; name: string } | { id: null; name: string }
 
@@ -56,6 +64,15 @@ export default function NewProofPage() {
   const [internalNotes, setInternalNotes] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  // ── Help Scout auto-link ───────────────────────────────────────────────────
+  const [hsConversationId, setHsConversationId] = useState<string | null>(null)
+  const [hsLinkedSubject, setHsLinkedSubject] = useState<string | null>(null)
+  const [hsLookupEmail, setHsLookupEmail] = useState<string | null>(null)
+  const [hsPickerOpen, setHsPickerOpen] = useState(false)
+  const [hsPickerMatches, setHsPickerMatches] = useState<HelpScoutMatch[]>([])
+  const [hsLookupError, setHsLookupError] = useState<string | null>(null)
+  const [hsLookupInFlight, setHsLookupInFlight] = useState(false)
 
   // Load all companies once on mount
   useEffect(() => {
@@ -157,6 +174,63 @@ export default function NewProofPage() {
 
     load()
   }, [selectedCompany?.id, isIndividual])
+
+  // Trigger a Help Scout lookup whenever a contact's email becomes known.
+  // Selected contact: their email. New contact: only after the designer
+  // enters a valid-looking email (on blur, handled below) — we don't hit
+  // the endpoint on every keystroke.
+  useEffect(() => {
+    if (!selectedContact) return
+    runHelpscoutLookup(selectedContact.email)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedContact?.id])
+
+  async function runHelpscoutLookup(rawEmail: string) {
+    const email = rawEmail.trim().toLowerCase()
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return
+    if (email === hsLookupEmail) return // already done for this address
+    setHsLookupEmail(email)
+    setHsLookupError(null)
+    setHsLookupInFlight(true)
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('match-helpscout-conversation', {
+        body: { email },
+      })
+      if (fnError) throw new Error(fnError.message || 'Help Scout lookup failed')
+      const matches: HelpScoutMatch[] = (data?.matches ?? []) as HelpScoutMatch[]
+      if (matches.length === 0) {
+        // Only wipe the URL input if it came from a prior auto-link; preserve
+        // anything the designer typed manually.
+        if (hsConversationId) setHelpscoutUrl('')
+        clearHelpscoutLink()
+      } else if (matches.length === 1) {
+        applyHelpscoutMatch(matches[0])
+      } else {
+        setHsPickerMatches(matches)
+        setHsPickerOpen(true)
+      }
+    } catch (err) {
+      setHsLookupError((err as Error).message)
+    } finally {
+      setHsLookupInFlight(false)
+    }
+  }
+
+  function applyHelpscoutMatch(m: HelpScoutMatch) {
+    setHsConversationId(String(m.id))
+    setHsLinkedSubject(m.subject ?? `Conversation #${m.id}`)
+    setHelpscoutUrl(m.url)
+    setHsPickerOpen(false)
+    setHsPickerMatches([])
+  }
+
+  function clearHelpscoutLink() {
+    setHsConversationId(null)
+    setHsLinkedSubject(null)
+    // Don't wipe helpscoutUrl — it may contain a manually-pasted value.
+    setHsPickerOpen(false)
+    setHsPickerMatches([])
+  }
 
   // Close dropdowns when clicking outside their containers
   useEffect(() => {
@@ -318,11 +392,16 @@ export default function NewProofPage() {
       }
 
       // 3. Create proof
+      const trimmedUrl = helpscoutUrl.trim() || null
       const { data, error } = await supabase
         .from('proofs')
         .insert({
           contact_id: contactId,
-          helpscout_thread_url: helpscoutUrl.trim() || null,
+          // Mirror the resolved URL into the legacy column so the detail
+          // page's existing display works without conditional logic.
+          helpscout_thread_url: trimmedUrl,
+          helpscout_conversation_id: hsConversationId,
+          helpscout_conversation_url: hsConversationId ? trimmedUrl : null,
           internal_notes: internalNotes.trim() || null,
           created_by: session!.user.id,
         })
@@ -546,6 +625,7 @@ export default function NewProofPage() {
                       type="email"
                       value={newContactEmail}
                       onChange={(e) => setNewContactEmail(e.target.value)}
+                      onBlur={() => runHelpscoutLookup(newContactEmail)}
                       placeholder="e.g. alice@acmecorp.com"
                       className={inputClass}
                     />
@@ -567,10 +647,36 @@ export default function NewProofPage() {
               <input
                 type="url"
                 value={helpscoutUrl}
-                onChange={(e) => setHelpscoutUrl(e.target.value)}
+                onChange={(e) => {
+                  setHelpscoutUrl(e.target.value)
+                  // Any manual edit clears the API-linked state.
+                  if (hsConversationId) clearHelpscoutLink()
+                }}
                 placeholder="https://secure.helpscout.net/…"
                 className={inputClass}
               />
+              {hsLookupInFlight && (
+                <p className="mt-1.5 text-xs text-gray-400">Checking Help Scout…</p>
+              )}
+              {!hsLookupInFlight && hsLinkedSubject && (
+                <p className="mt-1.5 text-xs text-emerald-600">
+                  Linked to Help Scout thread: <span className="font-medium">{hsLinkedSubject}</span>
+                </p>
+              )}
+              {!hsLookupInFlight && hsPickerMatches.length > 1 && !hsConversationId && (
+                <button
+                  type="button"
+                  onClick={() => setHsPickerOpen(true)}
+                  className="mt-1.5 text-xs text-amber-600 underline hover:text-amber-700"
+                >
+                  Multiple Help Scout threads found — choose one
+                </button>
+              )}
+              {hsLookupError && (
+                <p className="mt-1.5 text-xs text-gray-400">
+                  Couldn't check Help Scout — {hsLookupError}. Paste a URL manually if needed.
+                </p>
+              )}
             </div>
 
             <div>
@@ -600,7 +706,92 @@ export default function NewProofPage() {
           </button>
         </form>
       </div>
+
+      {hsPickerOpen && (
+        <HelpScoutPicker
+          matches={hsPickerMatches}
+          onPick={(m) => applyHelpscoutMatch(m)}
+          onSkip={() => {
+            clearHelpscoutLink()
+            setHsPickerMatches([])
+          }}
+          onClose={() => setHsPickerOpen(false)}
+        />
+      )}
     </div>
+  )
+}
+
+function HelpScoutPicker({
+  matches,
+  onPick,
+  onSkip,
+  onClose,
+}: {
+  matches: HelpScoutMatch[]
+  onPick: (m: HelpScoutMatch) => void
+  onSkip: () => void
+  onClose: () => void
+}) {
+  const firstRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    firstRef.current?.focus()
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Multiple Help Scout threads found"
+        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      >
+        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+          <h3 className="text-sm font-semibold text-gray-900">Multiple Help Scout threads found</h3>
+          <p className="mt-1 text-xs text-gray-500">Pick the conversation this proof relates to.</p>
+          <div className="mt-4 max-h-72 space-y-1.5 overflow-y-auto">
+            {matches.map((m, i) => (
+              <button
+                key={m.id}
+                ref={i === 0 ? firstRef : undefined}
+                type="button"
+                onClick={() => onPick(m)}
+                className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left text-sm hover:bg-gray-50 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              >
+                <span className="font-medium text-gray-900">{m.subject ?? `Conversation #${m.id}`}</span>
+                <span className="text-xs text-gray-500">
+                  {m.status ?? 'unknown'}
+                  {m.modifiedAt && ` · ${new Date(m.modifiedAt).toLocaleDateString('en-GB')}`}
+                </span>
+              </button>
+            ))}
+          </div>
+          <div className="mt-4 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={onSkip}
+              className="text-xs text-gray-500 underline hover:text-gray-900"
+            >
+              None of these / link manually later
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
   )
 }
 

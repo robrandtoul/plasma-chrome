@@ -375,6 +375,12 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# The function does its own auth check (see index.ts), so we turn off the
+# platform-level JWT verification. Without this, Supabase rejects the call
+# with 401 before our code runs if the user JWT is stale.
+[functions.match-helpscout-conversation]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
