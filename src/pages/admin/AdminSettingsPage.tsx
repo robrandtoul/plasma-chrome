@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
 import { invalidatePublicSettings } from '../../lib/publicSettings'
+import AdminMaterialContentModal, { type MaterialContent } from './AdminMaterialContentModal'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,7 +52,11 @@ export default function AdminSettingsPage() {
   const [hsTesting, setHsTesting] = useState(false)
   const [hsTestResult, setHsTestResult] = useState<{ ok: boolean; message: string } | null>(null)
 
-  useEffect(() => { load() }, [])
+  // Materials + selected material for the editor modal.
+  const [materials, setMaterials] = useState<MaterialContent[]>([])
+  const [editingMaterial, setEditingMaterial] = useState<MaterialContent | null>(null)
+
+  useEffect(() => { load(); void loadMaterials() }, [])
 
   async function load() {
     const { data, error } = await supabase.from('settings').select('*').eq('id', 1).single()
@@ -60,6 +65,15 @@ export default function AdminSettingsPage() {
     setDrafts({})
     // Status check in the background
     void checkHelpScout()
+  }
+
+  async function loadMaterials() {
+    const { data } = await supabase
+      .from('materials')
+      .select('id, code, display_name, description, icon_url')
+      .eq('is_active', true)
+      .order('sort_order')
+    setMaterials((data ?? []) as MaterialContent[])
   }
 
   async function checkHelpScout() {
@@ -305,6 +319,56 @@ export default function AdminSettingsPage() {
           </button>
         </div>
       </section>
+
+      {/* ── Materials ──────────────────────────────────────────── */}
+      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+        <h3 className="mb-1 text-sm font-semibold text-gray-900">Materials</h3>
+        <p className="mb-4 text-xs text-gray-500">
+          Per-material description and icon for the customer-facing "About [Material]" block.
+        </p>
+        <div className="overflow-hidden rounded-lg ring-1 ring-gray-200">
+          {materials.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-gray-400">No materials.</p>
+          ) : (
+            materials.map((m, i) => (
+              <div
+                key={m.id}
+                className={['flex items-center gap-4 px-4 py-3', i > 0 ? 'border-t border-gray-100' : ''].join(' ')}
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded bg-gray-50 ring-1 ring-gray-200">
+                  {m.icon_url
+                    ? <img src={m.icon_url} alt="" className="max-h-full max-w-full object-contain" />
+                    : <svg viewBox="0 0 16 16" className="h-4 w-4 text-gray-300" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 12l3-4 3 3 3-5 3 4" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold text-gray-900">{m.display_name}</div>
+                  {!m.description && (
+                    <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                      Needs content
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => setEditingMaterial(m)}
+                  className="shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+                >
+                  Edit
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+
+      {editingMaterial && (
+        <AdminMaterialContentModal
+          material={editingMaterial}
+          onClose={() => { setEditingMaterial(null); void loadMaterials() }}
+          onSaved={(updated) => {
+            setMaterials((prev) => prev.map((m) => m.id === updated.id ? updated : m))
+          }}
+        />
+      )}
     </div>
   )
 }

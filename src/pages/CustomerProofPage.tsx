@@ -342,12 +342,33 @@ export default function CustomerProofPage() {
                     )}
                   </div>
                 )}
-                {activeVersion.material_disclaimer && (
+                {activeVersion.material_description && (
                   <div className="rounded-2xl bg-gray-50 p-6 ring-1 ring-gray-200">
                     <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
                       About {activeVersion.material_display}
                     </h2>
-                    <p className="whitespace-pre-line text-sm text-gray-500">{activeVersion.material_disclaimer}</p>
+                    <div
+                      className={[
+                        'grid gap-5 items-center',
+                        activeVersion.material_icon_url ? 'sm:grid-cols-3' : 'grid-cols-1',
+                      ].join(' ')}
+                    >
+                      {activeVersion.material_icon_url && (
+                        <div className="order-first flex items-center justify-center sm:order-last sm:col-span-1">
+                          <img
+                            src={activeVersion.material_icon_url}
+                            alt={`${activeVersion.material_display} icon`}
+                            className="max-h-48 max-w-[240px] object-contain"
+                          />
+                        </div>
+                      )}
+                      <p className={[
+                        'whitespace-pre-line text-sm text-gray-500',
+                        activeVersion.material_icon_url ? 'sm:col-span-2' : '',
+                      ].join(' ')}>
+                        {activeVersion.material_description}
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>

@@ -40,6 +40,10 @@ export interface PublicProofVersion {
   material_options: string[]
   featured_quantities: number[]
   material_disclaimer: string | null
+  /** Paragraph-style text shown in the customer-facing "About [Material]" block. */
+  material_description: string | null
+  /** Public URL of the material's icon image. */
+  material_icon_url: string | null
   option_label: string | null
   custom_quote: boolean
 }
