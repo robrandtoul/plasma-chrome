@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import PriceCell, { currencySymbol } from './PriceCell'
 import { downloadPricingExport } from '../../lib/pricingIO'
+import { logAudit } from '../../lib/audit'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -93,17 +94,29 @@ export default function AdminMaterialEditor() {
 
   async function saveSurcharge(currency: Currency, nextValue: number) {
     if (!material) return
-    const col = `split_name_surcharge_${currency.toLowerCase()}` as const
+    const col = `split_name_surcharge_${currency.toLowerCase()}` as
+      'split_name_surcharge_gbp' | 'split_name_surcharge_eur' | 'split_name_surcharge_usd'
+    const prevValue = material[col]
     const { error } = await supabase
       .from('materials')
       .update({ [col]: nextValue })
       .eq('id', material.id)
     if (error) throw new Error(error.message)
     setMaterial((prev) => prev ? ({ ...prev, [col]: nextValue } as Material) : prev)
+    void logAudit({
+      action: 'material_surcharge.updated',
+      targetType: 'material',
+      targetId: material.id,
+      targetLabel: `${material.display_name} (split-name ${currency})`,
+      beforeValue: { currency, surcharge: prevValue },
+      afterValue: { currency, surcharge: nextValue },
+    })
   }
 
   async function saveTier(tierId: string, quantity: number, nextTotal: number) {
     const nextUnit = Number((nextTotal / quantity).toFixed(4))
+    const existing = tiers.find((t) => t.id === tierId)
+    const prevTotal = existing?.total_price ?? null
     const { error } = await supabase
       .from('price_tiers')
       .update({ total_price: nextTotal, unit_price: nextUnit })
@@ -112,6 +125,15 @@ export default function AdminMaterialEditor() {
     setTiers((prev) => prev.map((t) =>
       t.id === tierId ? { ...t, total_price: nextTotal, unit_price: nextUnit } : t,
     ))
+    const variant = variants.find((v) => v.id === existing?.material_variant_id)
+    void logAudit({
+      action: 'price_tier.updated',
+      targetType: 'price_tier',
+      targetId: tierId,
+      targetLabel: `${material?.display_name ?? ''} ${variant?.display_name ?? ''} @ qty ${quantity}`,
+      beforeValue: { currency: existing?.currency, total_price: prevTotal },
+      afterValue: { currency: existing?.currency, total_price: nextTotal },
+    })
   }
 
   if (loading) {

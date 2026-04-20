@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import VersionDetailModal, { type ModalVersion } from '../components/VersionDetailModal'
+import { logAudit } from '../lib/audit'
 
 interface Proof {
   id: string
@@ -87,6 +88,14 @@ export default function ProofDetailPage() {
     setStatusWorking(false)
     setStatusDialog(null)
     if (!error) {
+      void logAudit({
+        action: 'proof.approved',
+        targetType: 'proof',
+        targetId: proof.id,
+        targetLabel: proof.contacts.full_name,
+        beforeValue: { status: proof.status },
+        afterValue: { status: 'approved' },
+      })
       showToast('Proof marked as approved')
       if (id) loadProof(id)
     }
@@ -138,6 +147,14 @@ export default function ProofDetailPage() {
       await supabase.storage.from('proof-images').remove(imagePaths)
     }
 
+    void logAudit({
+      action: 'proof.deleted',
+      targetType: 'proof',
+      targetId: proof.id,
+      targetLabel: proof.contacts.full_name,
+      metadata: { versions_deleted: versions.length, storage_paths_removed: imagePaths.length },
+    })
+
     setStatusWorking(false)
     setStatusDialog(null)
     navigate('/')
@@ -153,6 +170,14 @@ export default function ProofDetailPage() {
     setStatusWorking(false)
     setStatusDialog(null)
     if (!error) {
+      void logAudit({
+        action: 'proof.abandoned',
+        targetType: 'proof',
+        targetId: proof.id,
+        targetLabel: proof.contacts.full_name,
+        beforeValue: { status: proof.status },
+        afterValue: { status: 'abandoned' },
+      })
       showToast('Proof abandoned')
       if (id) loadProof(id)
     }

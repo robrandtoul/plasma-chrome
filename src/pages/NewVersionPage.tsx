@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, type ChangeEvent } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { v4 as uuidv4 } from 'uuid'
 import { supabase } from '../lib/supabase'
+import { logAudit } from '../lib/audit'
 import { formatPrice } from '../lib/currency'
 import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { pluralLabel } from '../lib/labels'
@@ -472,6 +473,20 @@ export default function NewVersionPage() {
       setSubmitting(false)
       return
     }
+
+    void logAudit({
+      action: 'version.added',
+      targetType: 'version',
+      targetId: versionData.id,
+      targetLabel: `${proofName || 'proof'} — ${material.display_name}`,
+      metadata: {
+        proof_id: proofId,
+        material_id: selectedMaterialId,
+        currency: currencyForInsert,
+        image_count: imageInserts.length,
+        custom_quote: pricingDisplay === 'custom',
+      },
+    })
 
     navigate(`/proofs/${proofId}`)
   }

@@ -3,6 +3,7 @@
 // Add user dialog.
 
 import { CORS_HEADERS, json, requireAdmin } from '../_shared/admin.ts'
+import { logAudit } from '../_shared/audit.ts'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
@@ -10,7 +11,7 @@ Deno.serve(async (req) => {
 
   const check = await requireAdmin(req)
   if (check instanceof Response) return check
-  const { admin } = check
+  const { admin, callerId, callerEmail, callerLabel } = check
 
   let body: { email?: string; full_name?: string; password?: string }
   try {
@@ -50,6 +51,17 @@ Deno.serve(async (req) => {
     await admin.auth.admin.deleteUser(created.user.id)
     return json({ error: `Failed to save profile: ${profileErr.message}` }, 500)
   }
+
+  await logAudit(admin, {
+    actorId: callerId,
+    actorEmail: callerEmail,
+    actorLabel: callerLabel,
+    action: 'user.created',
+    targetType: 'user',
+    targetId: created.user.id,
+    targetLabel: full_name,
+    afterValue: { email, full_name, role: 'designer' },
+  })
 
   return json({
     id: created.user.id,

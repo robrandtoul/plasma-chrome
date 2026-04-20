@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
+import { logAudit } from '../lib/audit'
 
 // ── Local types ───────────────────────────────────────────────────────────────
 
@@ -365,6 +366,12 @@ export default function NewProofPage() {
             throw new Error(`Failed to create company: ${error.message}`)
           }
           companyId = data.id
+          void logAudit({
+            action: 'company.created',
+            targetType: 'company',
+            targetId: companyId,
+            targetLabel: selectedCompany!.name.trim(),
+          })
         } else {
           companyId = selectedCompany!.id
         }
@@ -391,6 +398,13 @@ export default function NewProofPage() {
           throw new Error(`Failed to create contact: ${error.message}`)
         }
         contactId = data.id
+        void logAudit({
+          action: 'contact.created',
+          targetType: 'contact',
+          targetId: contactId,
+          targetLabel: newContactName.trim(),
+          metadata: { email: newContactEmail.trim().toLowerCase(), company_id: companyId },
+        })
       }
 
       // 3. Create proof
@@ -411,6 +425,26 @@ export default function NewProofPage() {
         .single()
 
       if (error) throw new Error(`Failed to create proof: ${error.message}`)
+      void logAudit({
+        action: 'proof.created',
+        targetType: 'proof',
+        targetId: data.id,
+        targetLabel: selectedContact?.full_name ?? newContactName.trim(),
+        metadata: { contact_id: contactId, company_id: companyId },
+      })
+      if (hsConversationId) {
+        void logAudit({
+          action: 'proof.helpscout_linked',
+          targetType: 'proof',
+          targetId: data.id,
+          targetLabel: selectedContact?.full_name ?? newContactName.trim(),
+          metadata: {
+            helpscout_conversation_id: hsConversationId,
+            helpscout_conversation_url: trimmedUrl,
+            source: hsPickerMatches.length > 0 ? 'picker' : 'auto',
+          },
+        })
+      }
       navigate(`/proofs/${data.id}`)
     } catch (err) {
       setError((err as Error).message)

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
+import { logAudit } from '../../lib/audit'
 import AddUserDialog from './AddUserDialog'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -101,6 +102,14 @@ export default function AdminUsersPage() {
       setActionError(error.message)
       return
     }
+    void logAudit({
+      action: 'user.role_changed',
+      targetType: 'user',
+      targetId: user.id,
+      targetLabel: user.full_name ?? user.email,
+      beforeValue: { role: user.role },
+      afterValue: { role: targetRole },
+    })
     setActionDialog(null)
     await load()
   }

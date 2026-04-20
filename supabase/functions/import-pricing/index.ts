@@ -16,6 +16,7 @@
 import JSZip from 'npm:jszip@3.10.1'
 import { CORS_HEADERS, json, requireAdmin } from '../_shared/admin.ts'
 import { parseCsv } from '../_shared/csv.ts'
+import { logAudit } from '../_shared/audit.ts'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,7 +49,7 @@ Deno.serve(async (req) => {
 
   const check = await requireAdmin(req)
   if (check instanceof Response) return check
-  const { admin, user } = check
+  const { admin, user, callerId, callerEmail, callerLabel } = check
 
   let form: FormData
   try {
@@ -108,6 +109,22 @@ Deno.serve(async (req) => {
   if (rpcErr) {
     return json({ changes, unchanged, errors: [{ file: '-', message: rpcErr.message }], committed: false }, 500)
   }
+
+  await logAudit(admin, {
+    actorId: callerId,
+    actorEmail: callerEmail,
+    actorLabel: callerLabel,
+    action: 'pricing.imported',
+    targetType: 'pricing',
+    targetLabel: file.name,
+    metadata: {
+      filename: file.name,
+      rows_changed: changes.length,
+      rows_unchanged: unchanged.length,
+      errors: 0,
+    },
+  })
+
   return json({ changes, unchanged, errors, committed: true })
 })
 

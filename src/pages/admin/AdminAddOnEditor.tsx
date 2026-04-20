@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import PriceCell from './PriceCell'
 import { downloadPricingExport } from '../../lib/pricingIO'
+import { logAudit } from '../../lib/audit'
 
 type Currency = 'GBP' | 'EUR' | 'USD'
 const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
@@ -62,12 +63,21 @@ export default function AdminAddOnEditor() {
   }
 
   async function saveSurcharge(priceId: string, next: number) {
+    const existing = prices.find((p) => p.id === priceId)
     const { error } = await supabase
       .from('add_on_prices')
       .update({ surcharge: next })
       .eq('id', priceId)
     if (error) throw new Error(error.message)
     setPrices((prev) => prev.map((p) => p.id === priceId ? { ...p, surcharge: next } : p))
+    void logAudit({
+      action: 'addon_price.updated',
+      targetType: 'add_on_price',
+      targetId: priceId,
+      targetLabel: `${addOn?.display_name ?? ''} ${existing?.quantity == null ? 'flat' : `qty ${existing?.quantity}`} ${existing?.currency ?? ''}`,
+      beforeValue: { currency: existing?.currency, quantity: existing?.quantity ?? null, surcharge: existing?.surcharge ?? null },
+      afterValue: { currency: existing?.currency, quantity: existing?.quantity ?? null, surcharge: next },
+    })
   }
 
   async function seedQuantities(quantities: number[]) {
@@ -85,6 +95,13 @@ export default function AdminAddOnEditor() {
     if (error) throw new Error(error.message)
     setPrices((prev) => [...prev, ...((data ?? []) as Price[])])
     setSeedDialog(false)
+    void logAudit({
+      action: 'addon_prices.seeded',
+      targetType: 'add_on',
+      targetId: addOn.id,
+      targetLabel: addOn.display_name,
+      metadata: { quantities, rows_created: rows.length, pricing_model: 'per_quantity_tier' },
+    })
   }
 
   async function seedFlat() {
@@ -101,6 +118,13 @@ export default function AdminAddOnEditor() {
       .select()
     if (error) throw new Error(error.message)
     setPrices((prev) => [...prev, ...((data ?? []) as Price[])])
+    void logAudit({
+      action: 'addon_prices.seeded',
+      targetType: 'add_on',
+      targetId: addOn.id,
+      targetLabel: addOn.display_name,
+      metadata: { rows_created: rows.length, pricing_model: 'flat' },
+    })
   }
 
   if (loading) {

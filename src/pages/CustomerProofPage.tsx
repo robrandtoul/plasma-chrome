@@ -5,6 +5,7 @@ import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMater
 import { formatPrice } from '../lib/currency'
 import { PricingDisplay } from '../components/PricingDisplay'
 import { ImageGrid, type GridImage } from '../components/ImageGrid'
+import { logCustomerEvent } from '../lib/audit'
 
 const SIGNED_URL_TTL = 60 * 60 * 24 // 24 hours
 
@@ -70,13 +71,28 @@ export default function CustomerProofPage() {
       return
     }
 
-    setProof(proofResult.data as PublicProof)
+    const freshProof = proofResult.data as PublicProof
+    setProof(freshProof)
     if (settingsResult.data) setGlobalDisclaimer((settingsResult.data as SiteSettings).global_disclaimer)
 
     const rawVersions = (versionsResult.data ?? []) as PublicProofVersion[]
     setVersions(rawVersions)
     const initialVersion = rawVersions.find((v) => v.is_current) ?? rawVersions[rawVersions.length - 1] ?? null
     setActiveVersion(initialVersion)
+
+    // Fire a single view audit entry per page load. We don't expose the
+    // customer's email on the public view, so actor_email stays null; the
+    // row still tells us "someone viewed this proof at this time".
+    void logCustomerEvent({
+      action: 'version.viewed',
+      targetType: 'proof',
+      targetId: freshProof.id,
+      targetLabel: freshProof.customer_name ?? 'proof view',
+      metadata: {
+        user_agent: navigator.userAgent,
+        viewed_version: initialVersion?.version_number ?? null,
+      },
+    })
 
     if (rawVersions.length > 0) {
       // Load images for all versions

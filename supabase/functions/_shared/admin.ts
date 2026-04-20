@@ -31,6 +31,9 @@ export interface CallerContext {
    *  no user context and those checks would fail. */
   user: SupabaseClient
   callerId: string
+  /** Caller's email + display label, ready to pass into audit log inserts. */
+  callerEmail: string
+  callerLabel: string
 }
 
 /**
@@ -59,7 +62,7 @@ export async function requireAdmin(req: Request): Promise<CallerContext | Respon
   )
   const { data: profile } = await admin
     .from('profiles')
-    .select('role, deactivated_at')
+    .select('role, deactivated_at, full_name')
     .eq('id', userData.user.id)
     .single()
   if (profile?.role !== 'admin' || profile?.deactivated_at) {
@@ -72,5 +75,8 @@ export async function requireAdmin(req: Request): Promise<CallerContext | Respon
     { global: { headers: { Authorization: authHeader } } },
   )
 
-  return { admin, user, callerId: userData.user.id }
+  const callerEmail = userData.user.email ?? ''
+  const callerLabel = (profile?.full_name as string | null) ?? callerEmail
+
+  return { admin, user, callerId: userData.user.id, callerEmail, callerLabel }
 }

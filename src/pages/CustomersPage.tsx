@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { logAudit } from '../lib/audit'
 
 interface ContactRow {
   id: string
@@ -95,10 +96,23 @@ export default function CustomersPage() {
       if (pending.kind === 'contact') {
         const { error } = await supabase.rpc('delete_contact_if_empty', { p_contact_id: pending.id })
         if (error) throw new Error(error.message)
+        void logAudit({
+          action: 'contact.deleted',
+          targetType: 'contact',
+          targetId: pending.id,
+          targetLabel: pending.label,
+        })
         showToast(`Deleted ${pending.label}`)
       } else {
         const { error } = await supabase.rpc('delete_company_if_empty', { p_company_id: pending.id })
         if (error) throw new Error(error.message)
+        void logAudit({
+          action: 'company.deleted',
+          targetType: 'company',
+          targetId: pending.id,
+          targetLabel: pending.name,
+          metadata: { cascaded_contacts: pending.contactCount },
+        })
         showToast(`Deleted ${pending.name}`)
       }
       setPending(null)

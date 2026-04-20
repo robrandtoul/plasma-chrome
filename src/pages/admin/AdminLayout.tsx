@@ -6,6 +6,7 @@ import { supabase } from '../../lib/supabase'
 const TABS: { to: string; label: string }[] = [
   { to: '/admin/users', label: 'Users' },
   { to: '/admin/pricing', label: 'Pricing' },
+  { to: '/admin/activity', label: 'Activity' },
 ]
 
 export default function AdminLayout() {

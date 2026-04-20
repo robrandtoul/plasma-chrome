@@ -2,6 +2,7 @@
 // Stamps profiles.deactivated_at and bans the auth row so sign-in fails.
 
 import { CORS_HEADERS, json, requireAdmin } from '../_shared/admin.ts'
+import { logAudit } from '../_shared/audit.ts'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
@@ -9,7 +10,7 @@ Deno.serve(async (req) => {
 
   const check = await requireAdmin(req)
   if (check instanceof Response) return check
-  const { admin, callerId } = check
+  const { admin, callerId, callerEmail, callerLabel } = check
 
   let body: { user_id?: string }
   try {
@@ -34,6 +35,24 @@ Deno.serve(async (req) => {
     ban_duration: '876000h',
   })
   if (banErr) return json({ error: `Failed to block sign-in: ${banErr.message}` }, 500)
+
+  // Snapshot the target for a readable audit entry.
+  const { data: targetProfile } = await admin
+    .from('profiles')
+    .select('full_name')
+    .eq('id', userId)
+    .single()
+  const { data: targetUser } = await admin.auth.admin.getUserById(userId)
+
+  await logAudit(admin, {
+    actorId: callerId,
+    actorEmail: callerEmail,
+    actorLabel: callerLabel,
+    action: 'user.deactivated',
+    targetType: 'user',
+    targetId: userId,
+    targetLabel: targetProfile?.full_name ?? targetUser?.user?.email ?? userId,
+  })
 
   return json({ ok: true })
 })
