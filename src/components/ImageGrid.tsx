@@ -3,7 +3,11 @@ import { downloadBlob } from '../lib/downloadFile'
 export interface GridImage {
   id: string
   signed_url: string
-  label: string
+  // Caption under each thumb. Optional because the DB no longer
+  // stores this — callers synthesise it (e.g. CustomerProofPage
+  // buildImageGroups rewrites it from side / filename per image,
+  // VersionDetailModal omits it and Caption reads as blank).
+  label?: string
   material_option?: string | null
   original_filename?: string | null
   associated_name?: string | null
@@ -39,7 +43,7 @@ export function ImageCard({
         alt={alt}
         className="w-full object-contain"
       />
-      <Caption label={image.label} filename={image.original_filename} signedUrl={image.signed_url} />
+      <Caption label={image.label ?? ''} filename={image.original_filename} signedUrl={image.signed_url} />
     </div>
   )
 }
@@ -103,7 +107,7 @@ export function ImageGrid({
           alt={`Proof version ${versionNumber}`}
           className="w-full object-contain"
         />
-        <Caption label={images[0].label} filename={images[0].original_filename} signedUrl={images[0].signed_url} />
+        <Caption label={images[0].label ?? ''} filename={images[0].original_filename} signedUrl={images[0].signed_url} />
       </div>
     )
   }
@@ -121,7 +125,7 @@ export function ImageGrid({
             alt={img.label || `Proof version ${versionNumber}`}
             className="w-full object-contain"
           />
-          <Caption label={img.label} filename={img.original_filename} signedUrl={img.signed_url} />
+          <Caption label={img.label ?? ''} filename={img.original_filename} signedUrl={img.signed_url} />
         </div>
       ))}
     </div>

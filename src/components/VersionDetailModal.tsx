@@ -27,7 +27,6 @@ interface ModalImage {
   id: string
   proof_version_id: string
   image_path: string
-  label: string
   sort_order: number
   signed_url: string
 }
@@ -86,7 +85,7 @@ export default function VersionDetailModal({
     setLoadingImages(true)
     const { data } = await supabase
       .from('proof_version_images')
-      .select('id, proof_version_id, image_path, label, sort_order')
+      .select('id, proof_version_id, image_path, sort_order')
       .eq('proof_version_id', version.id)
       .order('sort_order')
 

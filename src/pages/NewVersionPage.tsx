@@ -514,11 +514,6 @@ export default function NewVersionPage() {
       return {
         proof_version_id: versionData.id,
         image_path: uploadedPaths[i],
-        // Legacy NOT NULL column — no longer input by the
-        // designer (the Name + Side dropdowns supersede it).
-        // Empty string satisfies the constraint; customer-page
-        // caption rules ignore it in favour of side + filename.
-        label: '',
         sort_order: sortOrder,
         material_option: option,
         original_filename: entry.file.name,

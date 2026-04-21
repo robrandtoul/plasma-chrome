@@ -472,7 +472,7 @@ export default function EditVersionPage() {
       }
     }
 
-    // Update sort_order, label, and material_option on remaining existing images
+    // Update sort_order, material_option, associated_name, side on remaining existing images
     await Promise.all(
       optionKeys.flatMap(fk => {
         const optionValue = fk === '' ? null : fk
@@ -482,10 +482,6 @@ export default function EditVersionPage() {
             return supabase
               .from('proof_version_images')
               .update({
-                // `label` deliberately omitted — the designer no
-                // longer edits it. Any legacy value on the row is
-                // left untouched (customer-page caption rules
-                // ignore it in favour of side + filename).
                 sort_order: idx,
                 material_option: optionValue,
                 associated_name: img.associated_name,
@@ -508,9 +504,6 @@ export default function EditVersionPage() {
           return {
             proof_version_id: versionId!,
             image_path: path,
-            // Legacy NOT NULL column; empty string on new rows
-            // (customer page ignores it for captions).
-            label: '',
             sort_order: idx,
             material_option: optionValue,
             original_filename: img.file.name,

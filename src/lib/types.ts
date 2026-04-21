@@ -103,7 +103,6 @@ export interface ProofVersionImage {
   id: string
   proof_version_id: string
   image_path: string
-  label: string
   sort_order: number
   material_option: string | null
   original_filename: string | null
