@@ -70,7 +70,6 @@ export default function NewVersionPage() {
   const [variants, setVariants] = useState<Variant[]>([])
   const [selectedVariantIds, setSelectedVariantIds] = useState<string[]>([])
   const [currency, setCurrency] = useState<Currency | null>(null)
-  const [variantSnapshots, setVariantSnapshots] = useState<Record<string, Record<number, string>>>({})
   const [variantTiers, setVariantTiers] = useState<Record<string, PriceTierRow[]>>({})
   const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({})
   // Two separate ink states so each form path (free-text vs per-ink) keeps
@@ -161,7 +160,6 @@ export default function NewVersionPage() {
     setVariants([])
     setSelectedVariantIds([])
     setVariantTiers({})
-    setVariantSnapshots({})
     setAvailableOptions([])
     setSelectedOptions([])
     setActiveImageOption('')
@@ -211,7 +209,6 @@ export default function NewVersionPage() {
 
   useEffect(() => {
     setVariantTiers({})
-    setVariantSnapshots({})
     setExpandedVariants({})
     if (selectedVariantIds.length === 0 || currency === null) return
 
@@ -223,15 +220,11 @@ export default function NewVersionPage() {
       .then(({ data }) => {
         const rows = (data ?? []) as PriceTierRow[]
         const tiersMap: Record<string, PriceTierRow[]> = {}
-        const snapMap: Record<string, Record<number, string>> = {}
         rows.forEach((r) => {
           if (!tiersMap[r.material_variant_id]) tiersMap[r.material_variant_id] = []
           tiersMap[r.material_variant_id].push(r)
-          if (!snapMap[r.material_variant_id]) snapMap[r.material_variant_id] = {}
-          snapMap[r.material_variant_id][r.quantity] = String(r.total_price)
         })
         setVariantTiers(tiersMap)
-        setVariantSnapshots(snapMap)
       })
   }, [selectedVariantIds, currency])
 
@@ -410,13 +403,6 @@ export default function NewVersionPage() {
     )
   }
 
-  function updatePrice(variantId: string, qty: number, value: string) {
-    setVariantSnapshots((prev) => ({
-      ...prev,
-      [variantId]: { ...prev[variantId], [qty]: value },
-    }))
-  }
-
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError('')
@@ -480,14 +466,18 @@ export default function NewVersionPage() {
     const uploadedPaths = uploadResults.map((r) => r.path)
     const material = materials.find((m) => m.id === selectedMaterialId)!
 
+    // Freeze the live prices into the version's pricing_snapshot so
+    // the version has a stable record independent of any future
+    // changes made in Admin → Pricing. Read straight from
+    // variantTiers now that the form is read-only — the intermediate
+    // variantSnapshots state that used to track user edits is gone.
     const pricingSnapshot = {
       variants: selectedVariantIds.map((vid) => {
         const variant = variants.find((v) => v.id === vid)!
         const display = variant.variant_type === 'default' ? 'Default' : variant.display_name
         const prices: Record<string, number> = {}
-        Object.entries(variantSnapshots[vid] ?? {}).forEach(([qty, price]) => {
-          const parsed = parseFloat(price)
-          if (!isNaN(parsed)) prices[qty] = parsed
+        ;(variantTiers[vid] ?? []).forEach((t) => {
+          prices[t.quantity] = t.total_price
         })
         return { variant_id: vid, display, prices }
       }),
@@ -1001,87 +991,60 @@ export default function NewVersionPage() {
               value={changeNotes} onChange={(e) => setChangeNotes(e.target.value)} className={inputClass} />
           </section>
 
-          {/* Pricing — one section per selected variant. Hidden in custom-quote
-              mode and until a currency is picked. */}
+          {/* Pricing — one section per selected variant. Read-only
+              reference display of live prices pulled from price_tiers
+              for the chosen variant and currency. All edits happen
+              in Admin → Pricing; designers see the live values here
+              to confirm the customer-facing number, not to modify
+              it. Hidden in custom-quote mode and until a currency is
+              picked. */}
           {!isCustomQuote && selectedVariantIds.length > 0 && currency !== null && selectedVariantIds.map((vid) => {
             const variant = variants.find((v) => v.id === vid)
             const tiers = variantTiers[vid] ?? []
-            const snap = variantSnapshots[vid] ?? {}
             if (!variant) return null
 
             const material = materials.find((m) => m.id === selectedMaterialId)
             const featuredSet = new Set(material?.featured_quantities ?? DEFAULT_FEATURED_QUANTITIES)
-            const isOverridden = (qty: number) => {
-              const t = tiers.find((x) => x.quantity === qty)
-              if (!t) return false
-              const v = snap[qty]
-              if (v === undefined) return false
-              return parseFloat(v) !== t.total_price
-            }
-            const hiddenOverrides = tiers.filter((t) => !featuredSet.has(t.quantity) && isOverridden(t.quantity))
             const userExpanded = !!expandedVariants[vid]
-            const visibleTiers = tiers.filter((t) => {
-              if (featuredSet.has(t.quantity)) return true
-              if (isOverridden(t.quantity)) return true   // keep any user edits visible
-              return userExpanded
-            })
+            const visibleTiers = tiers.filter((t) => featuredSet.has(t.quantity) || userExpanded)
             const hiddenCount = tiers.length - visibleTiers.length
             const showToggle = hiddenCount > 0 || (userExpanded && tiers.length > featuredSet.size)
+            const variantLabel = variantType === 'default'
+              ? material_display_for(selectedMaterialId, materials)
+              : variant.display_name
 
             return (
               <section key={vid} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
                 <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
-                  Pricing — {variantType === 'default' ? material_display_for(selectedMaterialId, materials) : variant.display_name}
+                  Pricing — {variantLabel}
                 </h2>
                 <p className="mb-4 text-xs text-gray-400">
-                  {tiers.length > 0 ? 'Pre-filled from live pricing. Edit any value to override.' : 'No price tiers found for this variant and currency.'}
+                  {tiers.length > 0
+                    ? `Reference pricing for ${variantLabel} (${currency}).`
+                    : 'No price tiers found for this variant and currency.'}
                 </p>
                 {tiers.length > 0 && (
                   <>
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-gray-100">
-                          <th className="w-6 pb-2" />
                           <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Qty</th>
                           <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Total ({currency})</th>
                           <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Per card</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {visibleTiers.map((tier) => {
-                          const val = snap[tier.quantity] ?? ''
-                          const parsed = parseFloat(val)
-                          const overridden = isOverridden(tier.quantity)
-                          return (
-                            <tr key={tier.quantity} className="border-b border-gray-50 last:border-0">
-                              <td className="py-2 pr-1">
-                                {overridden && (
-                                  <span
-                                    className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500"
-                                    title="Edited — differs from the live price"
-                                    aria-label="Edited"
-                                  />
-                                )}
-                              </td>
-                              <td className="py-2 pr-4 font-medium text-gray-900">{tier.quantity.toLocaleString()}</td>
-                              <td className="py-2 pr-4">
-                                <input
-                                  type="number" step="0.01" min="0" value={val}
-                                  onChange={(e) => updatePrice(vid, tier.quantity, e.target.value)}
-                                  className={[
-                                    'w-28 rounded border px-2 py-1 text-sm focus:outline-none',
-                                    overridden
-                                      ? 'border-amber-300 focus:border-amber-500'
-                                      : 'border-gray-200 focus:border-gray-900',
-                                  ].join(' ')}
-                                />
-                              </td>
-                              <td className="py-2 text-xs text-gray-500">
-                                {!isNaN(parsed) && parsed > 0 ? formatPrice(parsed / tier.quantity, currency, 2) : '—'}
-                              </td>
-                            </tr>
-                          )
-                        })}
+                        {visibleTiers.map((tier) => (
+                          <tr key={tier.quantity} className="border-b border-gray-50 last:border-0">
+                            <td className="py-2 pr-4 font-medium text-gray-900">{tier.quantity.toLocaleString()}</td>
+                            <td className="py-2 pr-4 text-gray-900">
+                              {formatPrice(tier.total_price, currency, 2)}
+                            </td>
+                            <td className="py-2 text-xs text-gray-500">
+                              {tier.total_price > 0 ? formatPrice(tier.total_price / tier.quantity, currency, 2) : '—'}
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                     {showToggle && (
@@ -1095,7 +1058,6 @@ export default function NewVersionPage() {
                           : `Show all tiers${hiddenCount > 0 ? ` (${hiddenCount} more)` : ''}`}
                       </button>
                     )}
-                    {!userExpanded && hiddenOverrides.length === 0 && hiddenCount === 0 && null}
                   </>
                 )}
               </section>
