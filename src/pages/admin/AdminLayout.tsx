@@ -32,7 +32,7 @@ export default function AdminLayout() {
               to="/"
               className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
             >
-              ← Back to proofs
+              ← Back to projects
             </Link>
             <button
               onClick={handleSignOut}

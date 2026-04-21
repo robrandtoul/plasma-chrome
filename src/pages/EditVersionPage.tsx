@@ -525,7 +525,7 @@ export default function EditVersionPage() {
       <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6">
 
         <div className="mb-6">
-          <Link to={`/proofs/${proofId}`} className="text-sm text-gray-400 hover:text-gray-700">← Back to proof</Link>
+          <Link to={`/proofs/${proofId}`} className="text-sm text-gray-400 hover:text-gray-700">← Back to project</Link>
         </div>
 
         {/* Page heading + actions */}

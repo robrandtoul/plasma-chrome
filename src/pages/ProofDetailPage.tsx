@@ -102,7 +102,7 @@ export default function ProofDetailPage() {
         beforeValue: { status: proof.status },
         afterValue: { status: 'approved' },
       })
-      showToast('Proof marked as approved')
+      showToast('Project marked as approved')
       if (id) loadProof(id)
     }
   }
@@ -118,7 +118,7 @@ export default function ProofDetailPage() {
     setStatusWorking(false)
     setStatusDialog(null)
     if (!error) {
-      showToast('Proof reopened')
+      showToast('Project reopened')
       if (id) loadProof(id)
     }
   }
@@ -184,7 +184,7 @@ export default function ProofDetailPage() {
         beforeValue: { status: proof.status },
         afterValue: { status: 'abandoned' },
       })
-      showToast('Proof abandoned')
+      showToast('Project abandoned')
       if (id) loadProof(id)
     }
   }
@@ -228,7 +228,7 @@ export default function ProofDetailPage() {
 
         {/* Back */}
         <div className="mb-6">
-          <Link to="/" className="text-sm text-gray-400 hover:text-gray-700">← Back to proofs</Link>
+          <Link to="/" className="text-sm text-gray-400 hover:text-gray-700">← Back to projects</Link>
         </div>
 
         {/* Proof header */}
@@ -325,7 +325,7 @@ export default function ProofDetailPage() {
                   onClick={() => setStatusDialog('abandon')}
                   className="rounded-lg px-4 py-2 text-sm font-medium text-rose-500 ring-1 ring-rose-200 hover:bg-rose-50"
                 >
-                  Abandon proof
+                  Abandon project
                 </button>
               </>
             )}
@@ -456,13 +456,13 @@ export default function ProofDetailPage() {
         {/* Danger zone — permanent delete, kept subtle to avoid accidental clicks */}
         <div className="mt-12 flex flex-col gap-3 border-t border-gray-100 pt-6 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-gray-400">
-            Permanently remove this project and all its proofs. Different from abandon, this cannot be undone.
+            Permanently remove this project and all its proof versions. Different from abandon, this cannot be undone.
           </p>
           <button
             onClick={() => { setDeleteError(null); setStatusDialog('delete') }}
             className="shrink-0 self-start rounded-lg border border-rose-200 px-4 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 sm:self-auto"
           >
-            Delete all proofs
+            Delete project
           </button>
         </div>
       </div>
@@ -552,7 +552,7 @@ export default function ProofDetailPage() {
       {/* Approve confirm dialog */}
       {statusDialog === 'approve' && (
         <ConfirmDialog
-          message="Mark this project as approved? This locks the project — no more proofs can be added."
+          message="Mark this project as approved? This locks the project — no more proof versions can be added."
           confirmLabel="Mark as approved"
           confirmClass="bg-emerald-600 hover:bg-emerald-700 text-white"
           working={statusWorking}
@@ -564,8 +564,8 @@ export default function ProofDetailPage() {
       {/* Abandon confirm dialog */}
       {statusDialog === 'abandon' && (
         <ConfirmDialog
-          message="Abandon this project? This will lock the project. No new proofs can be added, and the customer-facing page will show a closed state. You can reopen the project later if needed."
-          confirmLabel="Abandon proof"
+          message="Abandon this project? This will lock the project. No new proof versions can be added, and the customer-facing page will show a closed state. You can reopen the project later if needed."
+          confirmLabel="Abandon project"
           confirmClass="bg-slate-700 hover:bg-slate-800 text-white"
           working={statusWorking}
           onConfirm={handleAbandon}
@@ -576,8 +576,8 @@ export default function ProofDetailPage() {
       {/* Delete confirm dialog */}
       {statusDialog === 'delete' && (
         <ConfirmDialog
-          message={`Permanently delete this project and all ${versions.length} proof${versions.length === 1 ? '' : 's'}? This cannot be undone.`}
-          confirmLabel="Delete all proofs"
+          message={`Permanently delete this project and all ${versions.length} proof version${versions.length === 1 ? '' : 's'}? This cannot be undone.`}
+          confirmLabel="Delete project"
           confirmClass="bg-rose-600 hover:bg-rose-700 text-white"
           working={statusWorking}
           errorMsg={deleteError}
@@ -591,8 +591,8 @@ export default function ProofDetailPage() {
         <ConfirmDialog
           message={
             isAbandoned
-              ? 'Reopen this project? This will reopen the project and allow new proofs to be added.'
-              : 'Reopen this project? It will go back to in progress and you\'ll be able to add new proofs.'
+              ? 'Reopen this project? This will reopen the project and allow new proof versions to be added.'
+              : 'Reopen this project? It will go back to in progress and you\'ll be able to add new proof versions.'
           }
           confirmLabel="Reopen"
           confirmClass="bg-gray-900 hover:bg-gray-700 text-white"

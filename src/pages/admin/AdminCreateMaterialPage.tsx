@@ -291,7 +291,7 @@ export default function AdminCreateMaterialPage() {
         {/* Multi-variant */}
         <Field
           label="Multi-variant"
-          help="When on, designers can pick multiple variant options per proof. Typically used for thickness materials."
+          help="When on, designers can pick multiple variant options per proof version. Typically used for thickness materials."
         >
           <Toggle value={multiVariant} onChange={setMultiVariant} />
         </Field>

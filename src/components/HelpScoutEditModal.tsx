@@ -264,7 +264,7 @@ export default function HelpScoutEditModal({
               <p className="mt-0.5 text-xs text-gray-500">
                 {contactEmail
                   ? `Looking up conversations for ${contactEmail}.`
-                  : 'No contact email on this proof — paste a URL or provide a reason manually.'}
+                  : 'No contact email on this project — paste a URL or provide a reason manually.'}
               </p>
             </div>
             <button

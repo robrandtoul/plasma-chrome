@@ -720,7 +720,7 @@ export default function NewProofPage() {
           <Link to="/" className="text-sm text-gray-400 hover:text-gray-700">← Back to proofs</Link>
         </div>
 
-        <h1 className="mb-8 text-2xl font-bold text-gray-900">New proof</h1>
+        <h1 className="mb-8 text-2xl font-bold text-gray-900">New project</h1>
 
         <form onSubmit={handleSubmit} className="space-y-6">
 
@@ -836,11 +836,10 @@ export default function NewProofPage() {
                   // Staged new company: name hasn't been persisted
                   // yet, so the designer can tweak it inline. The
                   // amber surround flags "editable here"; the
-                  // badge itself stays neutral grey now that it
-                  // reads "First proof" rather than "New" (see the
-                  // badge-language change — "New" was misleading
-                  // for long-standing customers we'd worked with
-                  // via email for years).
+                  // badge itself stays neutral grey and reads
+                  // "First project" — the first project in this
+                  // tool for a customer we may well have worked
+                  // with for years via email.
                   <div className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-1.5 ring-1 ring-amber-100">
                     <input
                       type="text"
@@ -851,7 +850,7 @@ export default function NewProofPage() {
                       aria-label="Company name"
                     />
                     <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
-                      First proof
+                      First project
                     </span>
                     <button
                       type="button"
@@ -1154,7 +1153,7 @@ export default function NewProofPage() {
             disabled={submitting}
             className="w-full rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
           >
-            {submitting ? 'Creating…' : 'Create proof'}
+            {submitting ? 'Creating…' : 'Create project'}
           </button>
         </form>
       </div>

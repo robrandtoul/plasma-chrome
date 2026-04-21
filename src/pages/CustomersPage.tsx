@@ -128,14 +128,14 @@ export default function CustomersPage() {
     <div className="min-h-screen bg-gray-50">
       <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
         <div className="mb-6">
-          <Link to="/" className="text-sm text-gray-400 hover:text-gray-700">← Back to proofs</Link>
+          <Link to="/" className="text-sm text-gray-400 hover:text-gray-700">← Back to projects</Link>
         </div>
 
         <div className="mb-8">
           <p className="text-sm font-medium uppercase tracking-widest text-gray-400">Plasma Design</p>
           <h1 className="mt-1 text-2xl font-bold text-gray-900">Customers</h1>
           <p className="mt-2 text-sm text-gray-500">
-            View and tidy up companies and contacts. You can only delete entries with no proofs attached.
+            View and tidy up companies and contacts. You can only delete entries with no projects attached.
           </p>
         </div>
 
@@ -260,11 +260,11 @@ function ContactRowUI({ contact, withTopBorder, onDelete }: {
 
 function CountBadge({ count }: { count: number }) {
   if (count === 0) {
-    return <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">No proofs</span>
+    return <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">No projects</span>
   }
   return (
     <span className="shrink-0 rounded-full bg-gray-900 px-2 py-0.5 text-xs font-medium text-white">
-      {count} proof{count === 1 ? '' : 's'}
+      {count} project{count === 1 ? '' : 's'}
     </span>
   )
 }

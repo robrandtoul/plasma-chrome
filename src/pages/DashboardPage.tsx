@@ -330,7 +330,7 @@ export default function DashboardPage() {
         <div className="mb-8 flex items-center justify-between">
           <div>
             <p className="text-sm font-medium uppercase tracking-widest text-gray-400">Plasma Design</p>
-            <h1 className="mt-1 text-2xl font-bold text-gray-900">Proofs</h1>
+            <h1 className="mt-1 text-2xl font-bold text-gray-900">Projects</h1>
           </div>
           <div className="flex items-center gap-3">
             {role === 'admin' && (
@@ -371,7 +371,7 @@ export default function DashboardPage() {
         ) : rawProofs.length === 0 ? (
         /* ── Truly empty ───────────────────────────────────────────────────── */
           <div className="rounded-2xl bg-white py-20 text-center shadow-sm ring-1 ring-gray-200">
-            <p className="text-gray-400">No proofs yet.</p>
+            <p className="text-gray-400">No projects yet.</p>
             <Link
               to="/proofs/new"
               className="mt-3 inline-block text-sm font-medium text-gray-900 underline"
@@ -463,7 +463,7 @@ export default function DashboardPage() {
             {/* ── Empty search ─────────────────────────────────────────────── */}
             {sections.length === 0 ? (
               <div className="rounded-2xl bg-white py-16 text-center shadow-sm ring-1 ring-gray-200">
-                <p className="text-gray-400">No proofs match "{search}"</p>
+                <p className="text-gray-400">No projects match "{search}"</p>
                 <button
                   onClick={() => setSearch('')}
                   className="mt-2 text-sm text-gray-500 underline underline-offset-2 hover:text-gray-900"
@@ -486,8 +486,8 @@ export default function DashboardPage() {
                       {section.companyKey !== '__individual__' && (
                         <Link
                           to={`/proofs/new?companyId=${section.companyKey}`}
-                          title={`New proof for ${section.companyName}`}
-                          aria-label={`New proof for ${section.companyName}`}
+                          title={`New project for ${section.companyName}`}
+                          aria-label={`New project for ${section.companyName}`}
                           className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-gray-300 transition-colors hover:bg-gray-100 hover:text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300"
                         >
                           <PlusIcon />
@@ -510,8 +510,8 @@ export default function DashboardPage() {
                             </span>
                             <Link
                               to={`/proofs/new?contactId=${cg.contactId}`}
-                              title={`New proof for ${cg.contactName}`}
-                              aria-label={`New proof for ${cg.contactName}`}
+                              title={`New project for ${cg.contactName}`}
+                              aria-label={`New project for ${cg.contactName}`}
                               className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-gray-300 opacity-0 transition-opacity hover:bg-gray-100 hover:text-gray-600 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300"
                             >
                               <PlusIcon />

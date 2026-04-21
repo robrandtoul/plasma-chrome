@@ -146,12 +146,12 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'contact.updated', label: 'Contact updated' },
     { code: 'contact.deleted', label: 'Contact deleted' },
   ]},
-  { name: 'Proofs', actions: [
-    { code: 'proof.created',                   label: 'Proof created' },
-    { code: 'version.added',                   label: 'Version added' },
-    { code: 'proof.approved',                  label: 'Proof approved' },
-    { code: 'proof.abandoned',                 label: 'Proof abandoned' },
-    { code: 'proof.deleted',                   label: 'Proof deleted' },
+  { name: 'Projects', actions: [
+    { code: 'proof.created',                   label: 'Project created' },
+    { code: 'version.added',                   label: 'Proof version added' },
+    { code: 'proof.approved',                  label: 'Project approved' },
+    { code: 'proof.abandoned',                 label: 'Project abandoned' },
+    { code: 'proof.deleted',                   label: 'Project deleted' },
     { code: 'proof.helpscout_link_set',        label: 'Help Scout link set' },
     { code: 'proof.helpscout_link_changed',    label: 'Help Scout link changed' },
     { code: 'proof.helpscout_override_set',    label: 'Help Scout override set' },
@@ -164,8 +164,8 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
 
 export const TARGET_TYPE_OPTIONS: ActionDef[] = [
   { code: 'user',          label: 'User' },
-  { code: 'proof',         label: 'Proof' },
-  { code: 'version',       label: 'Version' },
+  { code: 'proof',         label: 'Project' },
+  { code: 'version',       label: 'Proof version' },
   { code: 'price_tier',    label: 'Price tier' },
   { code: 'material',      label: 'Material surcharge' },
   { code: 'add_on_price',  label: 'Add-on price' },

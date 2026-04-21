@@ -501,7 +501,7 @@ export default function NewVersionPage() {
       action: 'version.added',
       targetType: 'version',
       targetId: versionData.id,
-      targetLabel: `${proofName || 'proof'} — ${material.display_name}`,
+      targetLabel: `${proofName || 'project'} — ${material.display_name}`,
       metadata: {
         proof_id: proofId,
         material_id: selectedMaterialId,
@@ -587,7 +587,7 @@ export default function NewVersionPage() {
       <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6">
 
         <div className="mb-6">
-          <Link to={`/proofs/${proofId}`} className="text-sm text-gray-400 hover:text-gray-700">← Back to proof</Link>
+          <Link to={`/proofs/${proofId}`} className="text-sm text-gray-400 hover:text-gray-700">← Back to project</Link>
         </div>
 
         {/* Page heading + actions */}
@@ -660,7 +660,7 @@ export default function NewVersionPage() {
               <div ref={variantRef} className="mb-4">
                 <label className="mb-2 block text-sm font-medium text-gray-700">
                   {variantLabel(variantType)}
-                  {isMultiVariant && <span className="ml-2 font-normal text-gray-400">— select all to expose on the proof</span>}
+                  {isMultiVariant && <span className="ml-2 font-normal text-gray-400">— select all to expose on the proof version</span>}
                 </label>
 
                 {isMultiVariant ? (

@@ -168,9 +168,9 @@ export default function VersionDetailModal({
   const isOnlyVersion = allVersions.length === 1
 
   const deleteConfirmText = isOnlyVersion
-    ? 'This is the only proof. To remove it, delete the whole project instead.'
+    ? 'This is the only proof version. To remove it, delete the whole project instead.'
     : version.is_current
-    ? `Delete v${version.version_number}? The most recent remaining proof will become current.`
+    ? `Delete v${version.version_number}? The most recent remaining proof version will become current.`
     : `Delete v${version.version_number}? This removes its images too.`
 
   return (
@@ -294,8 +294,8 @@ export default function VersionDetailModal({
               <div className="flex items-center justify-between gap-3">
                 <p className="text-xs text-gray-400">
                   {lockReason === 'abandoned'
-                    ? 'This proof is abandoned and locked. Reopen the proof to make changes.'
-                    : 'This proof is approved and locked. Reopen the proof to make changes.'}
+                    ? 'This project is abandoned and locked. Reopen the project to make changes.'
+                    : 'This project is approved and locked. Reopen the project to make changes.'}
                 </p>
                 <button
                   onClick={onClose}
@@ -322,7 +322,7 @@ export default function VersionDetailModal({
                         disabled={deleteState === 'working'}
                         className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
                       >
-                        Delete all proofs
+                        Delete project
                       </button>
                     )
                   ) : (
