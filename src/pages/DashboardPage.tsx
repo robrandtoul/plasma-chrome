@@ -329,7 +329,7 @@ export default function DashboardPage() {
         {/* Page header */}
         <div className="mb-8 flex items-center justify-between">
           <div>
-            <p className="text-sm font-medium uppercase tracking-widest text-gray-400">Plasma Design</p>
+            <p className="text-sm font-medium uppercase tracking-widest text-gray-400">PlasmaDesign</p>
             <h1 className="mt-1 text-2xl font-bold text-gray-900">Projects</h1>
           </div>
           <div className="flex items-center gap-3">

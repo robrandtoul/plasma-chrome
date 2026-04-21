@@ -132,7 +132,7 @@ export default function CustomersPage() {
         </div>
 
         <div className="mb-8">
-          <p className="text-sm font-medium uppercase tracking-widest text-gray-400">Plasma Design</p>
+          <p className="text-sm font-medium uppercase tracking-widest text-gray-400">PlasmaDesign</p>
           <h1 className="mt-1 text-2xl font-bold text-gray-900">Customers</h1>
           <p className="mt-2 text-sm text-gray-500">
             View and tidy up companies and contacts. You can only delete entries with no projects attached.
