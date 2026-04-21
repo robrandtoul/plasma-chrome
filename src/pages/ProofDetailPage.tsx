@@ -305,79 +305,97 @@ export default function ProofDetailPage() {
               )}
             </div>
           </div>
-          <div className="flex flex-col items-end gap-4">
+          {/* Action cluster — two right-aligned rows.
+              Row 1 (day-to-day workflow): Preview, Copy, Add version.
+              Add version keeps its filled-black primary style and
+              anchors the right edge of the row.
+              Row 2 (terminal state): Abandon, Mark as approved.
+              Mark as approved (positive) anchors the right edge;
+              Abandon is placed to its left so the destructive
+              control sits furthest from the primary Add version
+              directly above.
+              Locked variant (approved/abandoned): Add version is
+              hidden on row 1, and row 2 collapses to a lone Reopen
+              button in the same right-aligned slot. */}
+          <div className="flex flex-col items-end gap-2">
+            {/* Row 1 */}
             <div className="flex flex-wrap justify-end gap-2">
-            {/* Preview is gated on there being at least one proof
-                version — otherwise the customer page renders
-                near-blank. Disabled rendering keeps the affordance
-                discoverable and teaches the unlock. */}
-            <button
-              type="button"
-              onClick={() => setShowCustomerPreview(true)}
-              disabled={versions.length === 0}
-              title={versions.length === 0 ? 'Add a version to enable preview' : undefined}
-              className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400 disabled:ring-gray-100 disabled:hover:bg-transparent"
-            >
-              <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 3H3.5A1.5 1.5 0 002 4.5v8A1.5 1.5 0 003.5 14h8A1.5 1.5 0 0013 12.5V10M10 2h4m0 0v4m0-4L7 9" />
-              </svg>
-              Preview as customer
-            </button>
-            <button
-              onClick={copyCustomerUrl}
-              className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
-            >
-              {copied ? (
-                <>
-                  <svg className="h-4 w-4 text-emerald-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l3.5 3.5 6.5-7" />
-                  </svg>
-                  <span className="text-emerald-600">Link copied</span>
-                </>
-              ) : (
-                <>
-                  <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                    <rect x="5" y="5" width="8" height="8" rx="1.5" />
-                    <path strokeLinecap="round" d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" />
-                  </svg>
-                  Copy customer URL
-                </>
+              {/* Preview is gated on there being at least one proof
+                  version — otherwise the customer page renders
+                  near-blank. Disabled rendering keeps the affordance
+                  discoverable and teaches the unlock. */}
+              <button
+                type="button"
+                onClick={() => setShowCustomerPreview(true)}
+                disabled={versions.length === 0}
+                title={versions.length === 0 ? 'Add a version to enable preview' : undefined}
+                className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400 disabled:ring-gray-100 disabled:hover:bg-transparent"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 3H3.5A1.5 1.5 0 002 4.5v8A1.5 1.5 0 003.5 14h8A1.5 1.5 0 0013 12.5V10M10 2h4m0 0v4m0-4L7 9" />
+                </svg>
+                Preview as customer
+              </button>
+              <button
+                onClick={copyCustomerUrl}
+                className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
+              >
+                {copied ? (
+                  <>
+                    <svg className="h-4 w-4 text-emerald-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l3.5 3.5 6.5-7" />
+                    </svg>
+                    <span className="text-emerald-600">Link copied</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <rect x="5" y="5" width="8" height="8" rx="1.5" />
+                      <path strokeLinecap="round" d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" />
+                    </svg>
+                    Copy customer URL
+                  </>
+                )}
+              </button>
+              {!isLocked && (
+                <Link
+                  to={`/proofs/${proof.id}/versions/new`}
+                  className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+                >
+                  Add version
+                </Link>
               )}
-            </button>
-            {/* Hidden input for clipboard fallback */}
+            </div>
+
+            {/* Hidden input for clipboard fallback. Sits outside the
+                rows so it can't disturb the flex layout. */}
             <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
 
+            {/* Row 2 */}
             {isLocked ? (
-              <button
-                onClick={() => setStatusDialog('reopen')}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
-              >
-                Reopen
-              </button>
-            ) : (
-              <>
+              <div className="flex justify-end">
                 <button
-                  onClick={() => setStatusDialog('approve')}
-                  className="rounded-lg bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
+                  onClick={() => setStatusDialog('reopen')}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
                 >
-                  Mark as approved
+                  Reopen
                 </button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap justify-end gap-2">
                 <button
                   onClick={() => setStatusDialog('abandon')}
                   className="rounded-lg px-4 py-2 text-sm font-medium text-rose-500 ring-1 ring-rose-200 hover:bg-rose-50"
                 >
                   Abandon project
                 </button>
-              </>
-            )}
-            </div>
-            {!isLocked && (
-              <Link
-                to={`/proofs/${proof.id}/versions/new`}
-                className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
-              >
-                Add version
-              </Link>
+                <button
+                  onClick={() => setStatusDialog('approve')}
+                  className="rounded-lg bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
+                >
+                  Mark as approved
+                </button>
+              </div>
             )}
           </div>
         </div>
