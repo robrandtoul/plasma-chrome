@@ -4,14 +4,22 @@ import { commitPricingImport, previewPricingImport, type ImportPreview } from '.
 interface Props {
   onClose: () => void
   onCommitted: () => void
+  /** When set, rows for other materials become errors in the preview
+   *  and add-on CSVs are rejected. Populated by the per-material
+   *  Import button on AdminMaterialEditor; left null by the global
+   *  import at /admin/pricing. */
+  scope?: string | null
+  /** Human-readable version of scope for the modal subtitle. */
+  scopeLabel?: string | null
 }
 
-export default function AdminPricingImport({ onClose, onCommitted }: Props) {
+export default function AdminPricingImport({ onClose, onCommitted, scope, scopeLabel }: Props) {
   const [file, setFile] = useState<File | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [preview, setPreview] = useState<ImportPreview | null>(null)
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showCreates, setShowCreates] = useState(false)
   const [showChanges, setShowChanges] = useState(false)
   const [showUnchanged, setShowUnchanged] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -28,7 +36,7 @@ export default function AdminPricingImport({ onClose, onCommitted }: Props) {
     setPreview(null)
     setWorking(true)
     try {
-      const p = await previewPricingImport(f)
+      const p = await previewPricingImport(f, scope ?? null)
       setPreview(p)
     } catch (e) {
       setError((e as Error).message)
@@ -42,7 +50,7 @@ export default function AdminPricingImport({ onClose, onCommitted }: Props) {
     setWorking(true)
     setError(null)
     try {
-      const result = await commitPricingImport(file)
+      const result = await commitPricingImport(file, scope ?? null)
       if (result.committed) {
         onCommitted()
         onClose()
@@ -57,13 +65,20 @@ export default function AdminPricingImport({ onClose, onCommitted }: Props) {
     }
   }
 
+  const totalApplicable = (preview?.creates.length ?? 0) + (preview?.changes.length ?? 0)
+
   return (
     <>
       <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !working && onClose()} />
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
-          <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-            <h3 className="text-lg font-semibold text-gray-900">Import pricing</h3>
+          <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-4">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">Import pricing</h3>
+              {scopeLabel && (
+                <p className="mt-0.5 text-xs text-gray-500">Scoped to {scopeLabel}. Rows for other materials will be flagged as errors.</p>
+              )}
+            </div>
             <button
               onClick={onClose}
               disabled={working}
@@ -80,7 +95,7 @@ export default function AdminPricingImport({ onClose, onCommitted }: Props) {
             {!preview ? (
               <div>
                 <p className="text-sm text-gray-500">
-                  Drag a CSV or ZIP here, or click to pick one. Imports update existing prices only — new quantity tiers, variants or materials aren't added at this stage.
+                  Drag a CSV or ZIP here, or click to pick one. Imports update existing prices and create new quantity tiers. They never delete tiers. To remove a tier, use the pricing editor.
                 </p>
                 <div
                   onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
@@ -117,6 +132,8 @@ export default function AdminPricingImport({ onClose, onCommitted }: Props) {
               <PreviewView
                 preview={preview}
                 fileName={file?.name ?? ''}
+                showCreates={showCreates}
+                setShowCreates={setShowCreates}
                 showChanges={showChanges}
                 setShowChanges={setShowChanges}
                 showUnchanged={showUnchanged}
@@ -146,10 +163,12 @@ export default function AdminPricingImport({ onClose, onCommitted }: Props) {
                 </button>
                 <button
                   onClick={handleCommit}
-                  disabled={working || preview.errors.length > 0 || preview.changes.length === 0}
+                  disabled={working || preview.errors.length > 0 || totalApplicable === 0}
                   className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
                 >
-                  {working ? 'Applying…' : `Apply ${preview.changes.length} change${preview.changes.length === 1 ? '' : 's'}`}
+                  {working
+                    ? 'Applying…'
+                    : commitButtonLabel(preview.creates.length, preview.changes.length)}
                 </button>
               </div>
             </div>
@@ -163,6 +182,8 @@ export default function AdminPricingImport({ onClose, onCommitted }: Props) {
 function PreviewView({
   preview,
   fileName,
+  showCreates,
+  setShowCreates,
   showChanges,
   setShowChanges,
   showUnchanged,
@@ -171,6 +192,8 @@ function PreviewView({
 }: {
   preview: ImportPreview
   fileName: string
+  showCreates: boolean
+  setShowCreates: (v: boolean) => void
   showChanges: boolean
   setShowChanges: (v: boolean) => void
   showUnchanged: boolean
@@ -182,7 +205,8 @@ function PreviewView({
       <div>
         <p className="text-xs uppercase tracking-wider text-gray-400">{fileName}</p>
         <p className="mt-1 text-sm text-gray-700">
-          <strong>{preview.changes.length}</strong> price{preview.changes.length === 1 ? '' : 's'} will change,
+          <strong>{preview.creates.length}</strong> new tier{preview.creates.length === 1 ? '' : 's'},
+          {' '}<strong>{preview.changes.length}</strong> price{preview.changes.length === 1 ? '' : 's'} will change,
           {' '}<strong>{preview.unchanged.length}</strong> unchanged,
           {' '}<strong className={preview.errors.length > 0 ? 'text-rose-700' : ''}>{preview.errors.length}</strong> error{preview.errors.length === 1 ? '' : 's'}.
         </p>
@@ -200,6 +224,46 @@ function PreviewView({
               </li>
             ))}
           </ul>
+        </section>
+      )}
+
+      {preview.creates.length > 0 && (
+        <section>
+          <button
+            onClick={() => setShowCreates(!showCreates)}
+            className="flex items-center gap-2 text-sm font-semibold text-gray-900 hover:text-gray-700"
+          >
+            <span>{showCreates ? '▾' : '▸'}</span>
+            New tiers ({preview.creates.length})
+          </button>
+          {showCreates && (
+            <div className="mt-2 overflow-hidden rounded-lg ring-1 ring-gray-200">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50 text-left">
+                    <th className="px-3 py-2 font-semibold text-gray-500">Material</th>
+                    <th className="px-3 py-2 font-semibold text-gray-500">Variant</th>
+                    <th className="px-3 py-2 font-semibold text-gray-500">Qty</th>
+                    <th className="px-3 py-2 font-semibold text-gray-500">GBP</th>
+                    <th className="px-3 py-2 font-semibold text-gray-500">EUR</th>
+                    <th className="px-3 py-2 font-semibold text-gray-500">USD</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.creates.map((c, i) => (
+                    <tr key={i} className="border-b border-gray-50 last:border-0">
+                      <td className="px-3 py-1.5 text-gray-700">{c.material_slug}</td>
+                      <td className="px-3 py-1.5 text-gray-700">{c.variant_label}</td>
+                      <td className="px-3 py-1.5 tabular-nums text-gray-700">{c.quantity.toLocaleString()}</td>
+                      <td className="px-3 py-1.5 tabular-nums font-medium text-gray-900">£{c.gbp}</td>
+                      <td className="px-3 py-1.5 tabular-nums font-medium text-gray-900">€{c.eur}</td>
+                      <td className="px-3 py-1.5 tabular-nums font-medium text-gray-900">${c.usd}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       )}
 
@@ -255,4 +319,16 @@ function PreviewView({
       )}
     </div>
   )
+}
+
+// Apply-button label. One of three shapes based on which buckets have
+// entries — keeps the button compact when only one bucket is populated.
+function commitButtonLabel(creates: number, changes: number): string {
+  if (creates > 0 && changes > 0) {
+    return `Apply ${creates} new, ${changes} change${changes === 1 ? '' : 's'}`
+  }
+  if (creates > 0) {
+    return `Apply ${creates} new tier${creates === 1 ? '' : 's'}`
+  }
+  return `Apply ${changes} change${changes === 1 ? '' : 's'}`
 }

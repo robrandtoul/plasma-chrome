@@ -50,6 +50,18 @@ export interface ImportChange {
   newValue: string | number
 }
 
+// Phase 3b.3 adds a creates bucket. One entry covers all three currency
+// rows for a single (material, variant, quantity) so the preview UI can
+// render one readable row instead of three.
+export interface ImportCreate {
+  material_slug: string
+  variant_label: string
+  quantity: number
+  gbp: number
+  eur: number
+  usd: number
+}
+
 export interface ImportError {
   file: string
   row?: number
@@ -57,18 +69,20 @@ export interface ImportError {
 }
 
 export interface ImportPreview {
+  creates: ImportCreate[]
   changes: ImportChange[]
   unchanged: { description: string }[]
   errors: ImportError[]
   committed: boolean
 }
 
-async function postImport(file: File, commit: boolean): Promise<ImportPreview> {
+async function postImport(file: File, commit: boolean, scope?: string | null): Promise<ImportPreview> {
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) throw new Error('Not signed in')
   const form = new FormData()
   form.append('file', file)
   form.append('commit', commit ? 'true' : 'false')
+  if (scope) form.append('scope', scope)
   const url = `${SUPABASE_URL}/functions/v1/import-pricing`
   const resp = await fetch(url, {
     method: 'POST',
@@ -77,8 +91,10 @@ async function postImport(file: File, commit: boolean): Promise<ImportPreview> {
   })
   const data = await resp.json()
   if (!resp.ok && !data?.errors) throw new Error(data?.error ?? `Import failed (${resp.status})`)
+  // Belt and braces — older server versions don't emit creates; normalise.
+  if (!Array.isArray((data as any).creates)) (data as any).creates = []
   return data as ImportPreview
 }
 
-export const previewPricingImport = (file: File) => postImport(file, false)
-export const commitPricingImport = (file: File) => postImport(file, true)
+export const previewPricingImport = (file: File, scope?: string | null) => postImport(file, false, scope)
+export const commitPricingImport  = (file: File, scope?: string | null) => postImport(file, true,  scope)

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import PriceCell, { currencySymbol } from './PriceCell'
+import AdminPricingImport from './AdminPricingImport'
 import { downloadPricingExport } from '../../lib/pricingIO'
 import { logAudit } from '../../lib/audit'
 
@@ -58,6 +59,10 @@ export default function AdminMaterialEditor() {
   const [addNameDraft, setAddNameDraft] = useState('')
   const [variantInFlight, setVariantInFlight] = useState(false)
   const [variantError, setVariantError] = useState<string | null>(null)
+
+  // Import modal (Phase 3b.3). Lets the admin upload a material-scoped
+  // CSV that can create new tiers as well as update existing ones.
+  const [showImport, setShowImport] = useState(false)
 
   // Price tier add / remove state (Phase 3b.2). Scoped to the current
   // active variant — resets whenever the admin switches tabs.
@@ -524,13 +529,33 @@ export default function AdminMaterialEditor() {
             Changes save automatically. Customer-facing prices update immediately.
           </p>
         </div>
-        <button
-          onClick={() => downloadPricingExport(`material:${material.code}`, `pricing_${material.code}.csv`).catch(() => {})}
-          className="shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
-        >
-          Export this material
-        </button>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <button
+            onClick={() => downloadPricingExport(`material:${material.code}`, `pricing_${material.code}.csv`).catch(() => {})}
+            className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+          >
+            Export this material
+          </button>
+          <button
+            onClick={() => setShowImport(true)}
+            className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+          >
+            Import
+          </button>
+        </div>
       </div>
+
+      {showImport && code && (
+        <AdminPricingImport
+          scope={material.code}
+          scopeLabel={material.display_name}
+          onClose={() => setShowImport(false)}
+          onCommitted={() => {
+            // Reload prices so any newly-imported tiers surface immediately.
+            void load(code)
+          }}
+        />
+      )}
 
       {/* Surcharges */}
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">

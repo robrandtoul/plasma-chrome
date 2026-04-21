@@ -5,13 +5,19 @@
 // Request shape (multipart/form-data):
 //   file     — the uploaded .csv or .zip
 //   commit   — "true" to apply; anything else runs preview-only
+//   scope    — optional material slug. When present, price_tier and
+//              surcharge rows for other materials become errors, and
+//              add-on CSVs are rejected. Drives the per-material import
+//              button on AdminMaterialEditor.
 //
 // Response is always JSON:
-//   { changes: [...], unchanged: [...], errors: [...], committed: boolean }
+//   { creates: [...], changes: [...], unchanged: [...], errors: [...], committed: boolean }
 //
-// A change row has { id, kind, description, oldValue, newValue } so the
-// frontend can render a readable diff table and, on confirmation, POST
-// the payload to this function with commit=true.
+// A create entry groups the three currency rows for a single
+// (material, variant, quantity) into one preview row so the UI can
+// render it as one logical "new tier". The actual RPC payload expands
+// each create to three price_tier_created rows. A change entry stays
+// per-currency, matching the existing update granularity.
 
 import JSZip from 'npm:jszip@3.10.1'
 import { CORS_HEADERS, json, requireAdmin } from '../_shared/admin.ts'
@@ -21,6 +27,7 @@ import { logAudit } from '../_shared/audit.ts'
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type Currency = 'GBP' | 'EUR' | 'USD'
+const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
 
 interface Change {
   kind: 'price_tier' | 'surcharge' | 'add_on_price'
@@ -29,6 +36,23 @@ interface Change {
   oldValue: string | number | null
   newValue: string | number
   payload: Record<string, string | number>
+  // Per-row metadata kept on the server for audit emission (not sent to UI).
+  meta?: {
+    materialSlug: string
+    variantLabel: string
+    quantity: number
+    currency: Currency
+  }
+}
+
+interface Create {
+  material_slug: string
+  variant_label: string
+  material_variant_id: string
+  quantity: number
+  gbp: number
+  eur: number
+  usd: number
 }
 
 interface Unchanged {
@@ -60,6 +84,10 @@ Deno.serve(async (req) => {
 
   const file = form.get('file')
   const commitFlag = String(form.get('commit') ?? '').toLowerCase() === 'true'
+  const scopeRaw = form.get('scope')
+  const scope = typeof scopeRaw === 'string' && scopeRaw.trim() !== ''
+    ? scopeRaw.trim().toLowerCase()
+    : null
 
   if (!(file instanceof File)) {
     return json({ error: 'Missing file field' }, 400)
@@ -79,37 +107,115 @@ Deno.serve(async (req) => {
   // Build lookup maps for natural-key resolution.
   const lookups = await loadLookups(admin)
 
+  const creates: Create[] = []
   const changes: Change[] = []
   const unchanged: Unchanged[] = []
   const errors: ImportError[] = []
 
   for (const entry of csvEntries) {
     try {
-      await processCsv(entry.name, entry.text, lookups, changes, unchanged, errors)
+      await processCsv(entry.name, entry.text, lookups, scope, creates, changes, unchanged, errors)
     } catch (e) {
       errors.push({ file: entry.name, message: (e as Error).message })
     }
   }
 
   if (!commitFlag) {
-    return json({ changes, unchanged, errors, committed: false })
+    return json({ creates, changes, unchanged, errors, committed: false })
   }
 
   if (errors.length > 0) {
-    return json({ changes, unchanged, errors, committed: false, error: 'Refusing to commit while errors remain' }, 400)
+    return json({ creates, changes, unchanged, errors, committed: false, error: 'Refusing to commit while errors remain' }, 400)
   }
-  if (changes.length === 0) {
-    return json({ changes, unchanged, errors, committed: false, error: 'Nothing to change' }, 400)
+  if (creates.length === 0 && changes.length === 0) {
+    return json({ creates, changes, unchanged, errors, committed: false, error: 'Nothing to change' }, 400)
   }
 
-  const payload = changes.map((c) => ({ kind: c.kind, id: c.id, ...c.payload }))
+  // Build RPC payload. Creates expand to three rows per (variant, qty).
+  const payload: unknown[] = []
+  for (const c of creates) {
+    for (const cur of CURRENCIES) {
+      const total = cur === 'GBP' ? c.gbp : cur === 'EUR' ? c.eur : c.usd
+      const unit = Number((total / c.quantity).toFixed(4))
+      payload.push({
+        kind: 'price_tier_created',
+        material_variant_id: c.material_variant_id,
+        currency: cur,
+        quantity: c.quantity,
+        total_price: total,
+        unit_price: unit,
+      })
+    }
+  }
+  for (const ch of changes) {
+    payload.push({ kind: ch.kind, id: ch.id, ...ch.payload })
+  }
+
   // Call the RPC with the user's JWT so is_admin() inside the function
   // sees the correct auth.uid(). Service role has no user context.
   const { error: rpcErr } = await user.rpc('apply_pricing_updates', { updates: payload })
   if (rpcErr) {
-    return json({ changes, unchanged, errors: [{ file: '-', message: rpcErr.message }], committed: false }, 500)
+    return json({ creates, changes, unchanged, errors: [{ file: '-', message: rpcErr.message }], committed: false }, 500)
   }
 
+  // ── Per-row audit events ─────────────────────────────────────────────
+  //
+  // For updates, the id is already in the change payload. For creates,
+  // we have to look up the freshly-inserted rows by natural key because
+  // the RPC doesn't return them. One batch SELECT filtered to the
+  // relevant variants keeps it cheap, and if any lookup misses (e.g.
+  // another admin deleted the row between commit and audit) we still
+  // write the event with a null targetId.
+
+  const createdIdByKey = new Map<string, string>()
+  if (creates.length > 0) {
+    const variantIds = [...new Set(creates.map((c) => c.material_variant_id))]
+    const { data: createdRows } = await admin
+      .from('price_tiers')
+      .select('id, material_variant_id, currency, quantity')
+      .in('material_variant_id', variantIds)
+    for (const r of createdRows ?? []) {
+      createdIdByKey.set(`${r.material_variant_id}|${r.currency}|${r.quantity}`, r.id)
+    }
+  }
+
+  for (const c of creates) {
+    for (const cur of CURRENCIES) {
+      const total = cur === 'GBP' ? c.gbp : cur === 'EUR' ? c.eur : c.usd
+      const key = `${c.material_variant_id}|${cur}|${c.quantity}`
+      await logAudit(admin, {
+        actorId: callerId,
+        actorEmail: callerEmail,
+        actorLabel: callerLabel,
+        action: 'price_tier_created',
+        targetType: 'price_tier',
+        targetId: createdIdByKey.get(key) ?? null,
+        targetLabel: `${c.material_slug} — ${c.variant_label} — ${c.quantity} (${cur})`,
+        afterValue: { currency: cur, quantity: c.quantity, total_price: total },
+        metadata: { source: 'csv_import', file: file.name },
+      })
+    }
+  }
+
+  for (const ch of changes) {
+    if (ch.kind !== 'price_tier' || !ch.meta) continue // surcharge + add_on stay coarse
+    await logAudit(admin, {
+      actorId: callerId,
+      actorEmail: callerEmail,
+      actorLabel: callerLabel,
+      action: 'price_tier.updated',
+      targetType: 'price_tier',
+      targetId: ch.id,
+      targetLabel: `${ch.meta.materialSlug} — ${ch.meta.variantLabel} — ${ch.meta.quantity} (${ch.meta.currency})`,
+      beforeValue: { currency: ch.meta.currency, total_price: ch.oldValue },
+      afterValue: { currency: ch.meta.currency, total_price: ch.newValue },
+      metadata: { source: 'csv_import', file: file.name },
+    })
+  }
+
+  // Existing batch marker. Kept coarse so activity-log filters can
+  // surface the one-event-per-import view, and extended with
+  // rows_created so the aggregate totals are complete.
   await logAudit(admin, {
     actorId: callerId,
     actorEmail: callerEmail,
@@ -119,13 +225,15 @@ Deno.serve(async (req) => {
     targetLabel: file.name,
     metadata: {
       filename: file.name,
+      scope,
+      rows_created: creates.length * 3,
       rows_changed: changes.length,
       rows_unchanged: unchanged.length,
       errors: 0,
     },
   })
 
-  return json({ changes, unchanged, errors, committed: true })
+  return json({ creates, changes, unchanged, errors, committed: true })
 })
 
 // ── ZIP + file extraction ───────────────────────────────────────────────────
@@ -243,6 +351,8 @@ async function processCsv(
   fileName: string,
   text: string,
   lookups: Lookups,
+  scope: string | null,
+  creates: Create[],
   changes: Change[],
   unchanged: Unchanged[],
   errors: ImportError[],
@@ -255,18 +365,26 @@ async function processCsv(
   const header = rows[0].map((h) => h.trim().toLowerCase())
 
   if (sameHeaders(header, ['material_slug', 'variant_label', 'variant_type', 'quantity', 'gbp_total', 'eur_total', 'usd_total'])) {
-    processPriceTiers(fileName, rows, lookups, changes, unchanged, errors)
+    processPriceTiers(fileName, rows, lookups, scope, creates, changes, unchanged, errors)
     return
   }
   if (sameHeaders(header, ['material_slug', 'gbp_surcharge', 'eur_surcharge', 'usd_surcharge'])) {
-    processSurcharges(fileName, rows, lookups, changes, unchanged, errors)
+    processSurcharges(fileName, rows, lookups, scope, changes, unchanged, errors)
     return
   }
   if (sameHeaders(header, ['addon_slug', 'pricing_model', 'quantity', 'gbp_price', 'eur_price', 'usd_price'])) {
+    if (scope) {
+      errors.push({ file: fileName, message: `Add-on imports aren't available in scoped mode. Use the global import at /admin/pricing for add-ons.` })
+      return
+    }
     processAddOnPerTier(fileName, rows, lookups, changes, unchanged, errors)
     return
   }
   if (sameHeaders(header, ['addon_slug', 'pricing_model', 'gbp_price', 'eur_price', 'usd_price'])) {
+    if (scope) {
+      errors.push({ file: fileName, message: `Add-on imports aren't available in scoped mode. Use the global import at /admin/pricing for add-ons.` })
+      return
+    }
     processAddOnFlat(fileName, rows, lookups, changes, unchanged, errors)
     return
   }
@@ -283,10 +401,18 @@ function sameHeaders(got: string[], expected: string[]): boolean {
 
 // ── Price tiers ─────────────────────────────────────────────────────────────
 
+function parsePositiveNumber(raw: string): number | null {
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) return null
+  return n
+}
+
 function processPriceTiers(
   fileName: string,
   rows: string[][],
   lookups: Lookups,
+  scope: string | null,
+  creates: Create[],
   changes: Change[],
   unchanged: Unchanged[],
   errors: ImportError[],
@@ -300,6 +426,14 @@ function processPriceTiers(
       continue
     }
     const [slug, variantLabel, variantType, qtyStr, gbp, eur, usd] = r.map((c) => c.trim())
+
+    // Scope filter: in per-material mode, rows for other materials
+    // become errors rather than being silently ignored.
+    if (scope && slug.toLowerCase() !== scope) {
+      errors.push({ file: fileName, row: lineNo, message: `Row is for '${slug}' but this import is scoped to '${scope}'. Wrong material for this import.` })
+      continue
+    }
+
     const mat = lookups.materialsByCode.get(slug.toLowerCase())
     if (!mat) {
       errors.push({ file: fileName, row: lineNo, message: `Material '${slug}' not found.` })
@@ -329,40 +463,91 @@ function processPriceTiers(
       continue
     }
 
-    const currencies: Array<[Currency, string]> = [['GBP', gbp], ['EUR', eur], ['USD', usd]]
-    for (const [cur, raw] of currencies) {
+    // Per-currency existence check. If all three tuples are missing
+    // we're creating a brand-new tier; if all three exist we're on
+    // the update path; anything partial is malformed state the admin
+    // should resolve manually before importing.
+    const rawByCur: Record<Currency, string> = { GBP: gbp, EUR: eur, USD: usd }
+    const existingByCur: Partial<Record<Currency, { id: string; total_price: number }>> = {}
+    for (const cur of CURRENCIES) {
+      const hit = lookups.tierByKey.get(`${variant.id}|${cur}|${qty}`)
+      if (hit) existingByCur[cur] = hit
+    }
+    const existCount = Object.keys(existingByCur).length
+
+    if (existCount === 0) {
+      // Create path. Require all three currencies populated.
+      const parsed: Partial<Record<Currency, number>> = {}
+      let rowBad = false
+      for (const cur of CURRENCIES) {
+        const raw = rawByCur[cur]
+        if (raw === '') {
+          errors.push({ file: fileName, row: lineNo, message: `New tier requires GBP, EUR and USD. Missing ${cur.toLowerCase()}_total for ${slug}/${variantLabel} @ qty ${qty}.` })
+          rowBad = true
+          continue
+        }
+        const n = parsePositiveNumber(raw)
+        if (n === null) {
+          errors.push({ file: fileName, row: lineNo, message: `${cur.toLowerCase()}_total '${raw}' is not a non-negative number.` })
+          rowBad = true
+          continue
+        }
+        parsed[cur] = n
+      }
+      if (rowBad) continue
+      creates.push({
+        material_slug: mat.code,
+        variant_label: variant.display_name,
+        material_variant_id: variant.id,
+        quantity: qty,
+        gbp: parsed.GBP!,
+        eur: parsed.EUR!,
+        usd: parsed.USD!,
+      })
+      continue
+    }
+
+    if (existCount !== 3) {
+      // Partial tier state. Rare — seed data is always all-or-nothing —
+      // but catch it explicitly so we don't silently half-create.
+      const missing = CURRENCIES.filter((c) => !existingByCur[c]).join(', ')
+      errors.push({
+        file: fileName,
+        row: lineNo,
+        message: `Partial tier state for ${slug}/${variantLabel} @ qty ${qty}. Only ${Object.keys(existingByCur).join(', ')} exist; ${missing} missing. Fix via the pricing editor before importing.`,
+      })
+      continue
+    }
+
+    // Update path. All three tuples exist. Blank currency = no change
+    // for that cell (Phase 3b.3 behaviour — prior to this version the
+    // parser erroed on any blank; admins couldn't update one currency
+    // without restating the other two).
+    for (const cur of CURRENCIES) {
+      const raw = rawByCur[cur]
+      const tier = existingByCur[cur]!
       if (raw === '') {
-        errors.push({ file: fileName, row: lineNo, message: `${cur.toLowerCase()}_total is empty. All three currency columns must be filled.` })
+        unchanged.push({ description: `${slug} / ${variantLabel} / ${qty} / ${cur}: ${tier.total_price} (blank in CSV)` })
         continue
       }
-      const num = Number(raw)
-      if (!Number.isFinite(num) || num < 0) {
+      const n = parsePositiveNumber(raw)
+      if (n === null) {
         errors.push({ file: fileName, row: lineNo, message: `${cur.toLowerCase()}_total '${raw}' is not a non-negative number.` })
         continue
       }
-      const tierKey = `${variant.id}|${cur}|${qty}`
-      const tier = lookups.tierByKey.get(tierKey)
-      if (!tier) {
-        errors.push({
-          file: fileName,
-          row: lineNo,
-          message: `quantity ${qty} not found for variant '${variantLabel}' in ${cur}. Cannot add new tiers in this view.`,
-        })
+      if (n === tier.total_price) {
+        unchanged.push({ description: `${slug} / ${variantLabel} / ${qty} / ${cur}: ${tier.total_price}` })
         continue
       }
-      const oldTotal = tier.total_price
-      if (num === oldTotal) {
-        unchanged.push({ description: `${slug} / ${variantLabel} / ${qty} / ${cur}: ${oldTotal}` })
-        continue
-      }
-      const unit = Number((num / qty).toFixed(4))
+      const unit = Number((n / qty).toFixed(4))
       changes.push({
         kind: 'price_tier',
         id: tier.id,
         description: `${slug} / ${variantLabel} / ${qty} / ${cur}`,
-        oldValue: oldTotal,
-        newValue: num,
-        payload: { total_price: num, unit_price: unit },
+        oldValue: tier.total_price,
+        newValue: n,
+        payload: { total_price: n, unit_price: unit },
+        meta: { materialSlug: slug, variantLabel, quantity: qty, currency: cur },
       })
     }
   }
@@ -374,6 +559,7 @@ function processSurcharges(
   fileName: string,
   rows: string[][],
   lookups: Lookups,
+  scope: string | null,
   changes: Change[],
   unchanged: Unchanged[],
   errors: ImportError[],
@@ -387,13 +573,19 @@ function processSurcharges(
       continue
     }
     const [slug, gbp, eur, usd] = r.map((c) => c.trim())
+
+    if (scope && slug.toLowerCase() !== scope) {
+      errors.push({ file: fileName, row: lineNo, message: `Row is for '${slug}' but this import is scoped to '${scope}'. Wrong material for this import.` })
+      continue
+    }
+
     const mat = lookups.materialsByCode.get(slug.toLowerCase())
     if (!mat) {
       errors.push({ file: fileName, row: lineNo, message: `Material '${slug}' not found.` })
       continue
     }
     const parsed: Record<string, number | null> = {}
-    for (const [col, raw, currency] of [['gbp', gbp, 'GBP'], ['eur', eur, 'EUR'], ['usd', usd, 'USD']] as const) {
+    for (const [col, raw] of [['gbp', gbp], ['eur', eur], ['usd', usd]] as const) {
       if (raw === '') { parsed[col] = null; continue }
       const n = Number(raw)
       if (!Number.isFinite(n) || n < 0) {
@@ -402,8 +594,6 @@ function processSurcharges(
         continue
       }
       parsed[col] = n
-      // Silence unused-var warning
-      void currency
     }
     const current = { gbp: mat.split_name_surcharge_gbp, eur: mat.split_name_surcharge_eur, usd: mat.split_name_surcharge_usd }
     const same = (a: number | null, b: number | null) => (a == null ? b == null : a === b)
