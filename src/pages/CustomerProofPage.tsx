@@ -304,12 +304,14 @@ export default function CustomerProofPage() {
 
               // Column count for the named-group grid. Each string
               // is a literal so Tailwind's JIT picks them up.
+              // Mobile uses gap-8 to give the between-cell divider
+              // room to breathe; sm and up collapses to gap-6.
               const namedGridClass =
                 namedGroups.length === 1
-                  ? 'mx-auto grid w-full max-w-[880px] grid-cols-1 gap-6'
+                  ? 'mx-auto grid w-full max-w-[880px] grid-cols-1 gap-8 sm:gap-6'
                   : namedGroups.length === 2
-                    ? 'grid grid-cols-1 gap-6 sm:grid-cols-2'
-                    : 'grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3'
+                    ? 'grid grid-cols-1 gap-8 sm:grid-cols-2 sm:gap-6'
+                    : 'grid grid-cols-1 gap-8 sm:grid-cols-2 sm:gap-6 md:grid-cols-3'
 
               return (
                 <div className="mb-8 space-y-10">
@@ -329,7 +331,17 @@ export default function CustomerProofPage() {
                   {namedGroups.length > 0 && (
                     <div className={namedGridClass}>
                       {namedGroups.map((group) => (
-                        <section key={group.heading ?? ''}>
+                        <section
+                          key={group.heading ?? ''}
+                          // Mobile divider: a faint top border + top
+                          // padding between stacked cells, matching
+                          // the page's existing border-gray-100
+                          // chrome. first:* zeroes the first cell;
+                          // sm:* drops the rule entirely once the
+                          // grid is multi-column so rules can't cut
+                          // across columns.
+                          className="border-t border-gray-100 pt-8 first:border-t-0 first:pt-0 sm:border-t-0 sm:pt-0"
+                        >
                           <h3 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
                             {group.heading}
                           </h3>
