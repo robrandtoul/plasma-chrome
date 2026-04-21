@@ -219,7 +219,9 @@ export default function CustomerProofPage() {
 
         {/* Header */}
         <header className="mb-8">
-          <p className="text-sm font-medium uppercase tracking-widest text-gray-400">Proof for</p>
+          <p className="text-sm font-medium uppercase tracking-widest text-gray-400">
+            {(activeVersion?.names?.length ?? 0) >= 2 ? 'Proofs for' : 'Proof for'}
+          </p>
           <h1 className="mt-1 text-3xl font-bold text-gray-900">{proof.customer_name}</h1>
           {proof.company && (
             <p className="mt-1 text-lg text-gray-500">{proof.company}</p>
