@@ -14,6 +14,20 @@ const VARIANT_TYPE_OPTIONS: { value: VariantType; label: string; help?: string }
   { value: 'default',   label: 'None', help: 'Single variant. Typical for wood, acrylic, carbon fibre.' },
 ]
 
+// Values mirror the CHECK constraint on materials.category installed
+// in 000009_rebuild_pricing. Adding new categories would need a
+// migration and is out of scope for the create-material flow.
+type Category = 'metal' | 'plastic' | 'paper' | 'wood' | 'carbon_fibre' | 'acrylic'
+
+const CATEGORY_OPTIONS: { value: Category; label: string }[] = [
+  { value: 'metal',        label: 'Metal' },
+  { value: 'plastic',      label: 'Plastic' },
+  { value: 'paper',        label: 'Paper' },
+  { value: 'wood',         label: 'Wood' },
+  { value: 'carbon_fibre', label: 'Carbon fibre' },
+  { value: 'acrylic',      label: 'Acrylic' },
+]
+
 // Turn a name into a URL-safe slug: lowercase, spaces to hyphens, strip
 // anything outside [a-z0-9-], collapse repeats, trim leading/trailing
 // hyphens. Same rule the backend check constraint enforces later.
@@ -31,6 +45,7 @@ export default function AdminCreateMaterialPage() {
   const navigate = useNavigate()
 
   const [name, setName] = useState('')
+  const [category, setCategory] = useState<Category | ''>('')
   const [slug, setSlug] = useState('')
   const [slugTouched, setSlugTouched] = useState(false)
   const [variantType, setVariantType] = useState<VariantType>('thickness')
@@ -79,6 +94,11 @@ export default function AdminCreateMaterialPage() {
     const trimmedName = name.trim()
     if (!trimmedName) { setError('Name is required.'); return }
     if (trimmedName.length > 60) { setError('Name must be 60 characters or fewer.'); return }
+    if (!category) { setError('Category is required.'); return }
+    if (!CATEGORY_OPTIONS.some((o) => o.value === category)) {
+      setError('Invalid category.')
+      return
+    }
     if (!slug) { setError('Slug is required.'); return }
     if (!/^[a-z0-9-]+$/.test(slug)) { setError('Slug can only contain lowercase letters, digits and hyphens.'); return }
     if (sortOrder < 0) { setError('Sort order must be zero or greater.'); return }
@@ -115,10 +135,7 @@ export default function AdminCreateMaterialPage() {
     const insertRow = {
       code: slug,
       display_name: trimmedName,
-      // category has a legacy NOT NULL + CHECK constraint locking it to
-      // the six historical buckets. Default new materials to 'metal'
-      // until category itself is generalised (noted for phase 3b).
-      category: 'metal',
+      category,
       sort_order: sortOrder,
       is_active: true,
       is_published: false,
@@ -206,6 +223,24 @@ export default function AdminCreateMaterialPage() {
             className={inputClass}
             placeholder="e.g. Brushed Aluminium"
           />
+        </Field>
+
+        {/* Category */}
+        <Field
+          label="Category"
+          required
+          help="Groups this material in the designer's dropdown."
+        >
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value as Category)}
+            className={inputClass}
+          >
+            <option value="">Select a category</option>
+            {CATEGORY_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
         </Field>
 
         {/* Slug */}

@@ -72,7 +72,7 @@ export default function AdminSettingsPage() {
     // Admin list — show every active material, published or not.
     const { data } = await supabase
       .from('materials')
-      .select('id, code, display_name, description, icon_url, is_published')
+      .select('id, code, display_name, category, description, icon_url, is_published')
       .eq('is_active', true)
       .order('sort_order')
     setMaterials((data ?? []) as MaterialContent[])

@@ -9,10 +9,24 @@ export interface MaterialContent {
   id: string
   code: string
   display_name: string
+  category: Category
   description: string | null
   icon_url: string | null
   is_published: boolean
 }
+
+// Kept in sync with the CHECK constraint on materials.category installed
+// by 000009_rebuild_pricing.
+export type Category = 'metal' | 'plastic' | 'paper' | 'wood' | 'carbon_fibre' | 'acrylic'
+
+const CATEGORY_OPTIONS: { value: Category; label: string }[] = [
+  { value: 'metal',        label: 'Metal' },
+  { value: 'plastic',      label: 'Plastic' },
+  { value: 'paper',        label: 'Paper' },
+  { value: 'wood',         label: 'Wood' },
+  { value: 'carbon_fibre', label: 'Carbon fibre' },
+  { value: 'acrylic',      label: 'Acrylic' },
+]
 
 const ACCEPTED = ['image/png', 'image/jpeg', 'image/svg+xml']
 const MAX_SIZE = 2 * 1024 * 1024
@@ -39,6 +53,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
   onSaved: (updated: MaterialContent) => void
 }) {
   const [draftName, setDraftName] = useState(material.display_name)
+  const [draftCategory, setDraftCategory] = useState<Category>(material.category)
   const [draftDesc, setDraftDesc] = useState(material.description ?? '')
   const [currentIconUrl, setCurrentIconUrl] = useState(material.icon_url)
   const [isPublished, setIsPublished] = useState(material.is_published)
@@ -110,6 +125,39 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
       targetLabel: trimmed,
       beforeValue: { display_name: prev },
       afterValue: { display_name: trimmed },
+    })
+  }
+
+  async function saveCategory(next: Category) {
+    if (next === material.category) return
+    if (!CATEGORY_OPTIONS.some((o) => o.value === next)) {
+      setError('Invalid category.')
+      setDraftCategory(material.category)
+      return
+    }
+    setSaving(true)
+    setError(null)
+    const prev = material.category
+    const { error: err } = await supabase
+      .from('materials')
+      .update({ category: next })
+      .eq('id', material.id)
+    setSaving(false)
+    if (err) {
+      setError(`Failed to save category: ${err.message}`)
+      setDraftCategory(prev)
+      return
+    }
+    setSavedAt(Date.now())
+    material.category = next
+    onSaved({ ...material })
+    void logAudit({
+      action: 'material.category_updated',
+      targetType: 'material',
+      targetId: material.id,
+      targetLabel: material.display_name,
+      beforeValue: { category: prev },
+      afterValue: { category: next },
     })
   }
 
@@ -346,6 +394,29 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
               {nameError && (
                 <p className="mt-1.5 text-xs font-medium text-rose-500">{nameError}</p>
               )}
+            </section>
+
+            {/* Category */}
+            <section>
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                Category <span className="text-rose-500">*</span>
+              </label>
+              <select
+                value={draftCategory}
+                onChange={(e) => {
+                  const next = e.target.value as Category
+                  setDraftCategory(next)
+                  void saveCategory(next)
+                }}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              >
+                {CATEGORY_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <p className="mt-1.5 text-xs text-gray-500">
+                Groups this material in the designer's dropdown.
+              </p>
             </section>
 
             {/* Description */}
