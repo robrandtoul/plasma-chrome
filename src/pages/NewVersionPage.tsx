@@ -380,6 +380,30 @@ export default function NewVersionPage() {
 
   function handleDragEnd() { dragIndexRef.current = null }
 
+  // Chip removal reconciliation: when the designer drops a chip
+  // from the names list, any images currently associated with that
+  // name fall back to the "null = shared" convention. The update
+  // is purely in-state — the version hasn't been persisted yet, so
+  // the cleared association lands in the DB at Save time via the
+  // existing insert payload.
+  function handleNamesChange(next: string[]) {
+    const removed = names.filter((n) => !next.includes(n))
+    if (removed.length > 0) {
+      setImagesByOption((prev) => {
+        const out: Record<string, typeof prev[string]> = {}
+        for (const [key, list] of Object.entries(prev)) {
+          out[key] = list.map((img) =>
+            img.associated_name != null && removed.includes(img.associated_name)
+              ? { ...img, associated_name: null }
+              : img,
+          )
+        }
+        return out
+      })
+    }
+    setNames(next)
+  }
+
   function toggleVariant(variantId: string) {
     setSelectedVariantIds((prev) =>
       prev.includes(variantId) ? prev.filter((id) => id !== variantId) : [...prev, variantId]
@@ -828,7 +852,7 @@ export default function NewVersionPage() {
               </label>
               <NameChipInput
                 names={names}
-                onChange={setNames}
+                onChange={handleNamesChange}
                 placeholder="Who is this proof for? Press Enter after each name"
                 ariaLabel="Names on this order"
               />

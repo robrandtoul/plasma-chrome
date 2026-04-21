@@ -352,6 +352,31 @@ export default function EditVersionPage() {
     }))
   }
 
+  // Chip removal reconciliation. Any image whose associated_name
+  // matches a removed chip has its association cleared to null
+  // (= shared) so the customer page's grouped rendering doesn't
+  // hold a heading for a name that no longer exists. Pure state
+  // change; the DB update rides along with the normal Save path
+  // which already writes associated_name on both existing-update
+  // and new-insert branches.
+  function handleNamesChange(next: string[]) {
+    const removed = names.filter((n) => !next.includes(n))
+    if (removed.length > 0) {
+      setEditImagesByOption((prev) => {
+        const out: Record<string, EditImage[]> = {}
+        for (const [key, list] of Object.entries(prev)) {
+          out[key] = list.map((img) =>
+            img.associated_name != null && removed.includes(img.associated_name)
+              ? { ...img, associated_name: null }
+              : img,
+          )
+        }
+        return out
+      })
+    }
+    setNames(next)
+  }
+
   function handleDragStart(index: number) { dragIndexRef.current = index }
 
   function handleDragOver(e: React.DragEvent, index: number) {
@@ -690,7 +715,7 @@ export default function EditVersionPage() {
               </label>
               <NameChipInput
                 names={names}
-                onChange={setNames}
+                onChange={handleNamesChange}
                 placeholder="Who is this proof for? Press Enter after each name"
                 ariaLabel="Names on this order"
               />
