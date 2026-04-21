@@ -69,9 +69,13 @@ async function buildMaterialCsv(admin: any, materialCode: string): Promise<strin
 }
 
 async function buildSurchargesCsv(admin: any): Promise<string> {
+  // Archived materials drop out of the bulk surcharge sheet too —
+  // otherwise admins reconciling surcharges across the catalogue
+  // would see rows for materials they no longer sell.
   const { data: mats } = await admin.from('materials')
     .select('code, split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd')
     .eq('is_active', true)
+    .is('archived_at', null)
     .order('sort_order')
   const rows: (string | number)[][] = [SURCHARGE_HEADER]
   for (const m of (mats ?? [])) {
@@ -164,7 +168,12 @@ Deno.serve(async (req) => {
     }
 
     if (scope === 'all') {
-      const { data: materials } = await admin.from('materials').select('code').eq('is_active', true).order('sort_order')
+      // Archived materials are excluded from the global bundle. The
+      // per-material export below still honours an explicit scope
+      // request even if that material is archived — that's the only
+      // recovery path for a final-snapshot before binning pricing
+      // data.
+      const { data: materials } = await admin.from('materials').select('code').eq('is_active', true).is('archived_at', null).order('sort_order')
       const { data: addOns } = await admin.from('add_ons').select('code, pricing_model').eq('is_active', true).order('display_name')
 
       const zip = new JSZip()

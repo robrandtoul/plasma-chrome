@@ -112,7 +112,11 @@ export default function NewVersionPage() {
           setProofCompany(c.companies?.name ?? '')
         }
       })
-    supabase.from('materials').select('id, display_name, requires_ink_names, option_label, featured_quantities, multi_variant').eq('is_active', true).eq('is_published', true).order('sort_order')
+    // RLS already hides archived materials from non-admins (000065),
+    // but the explicit .is('archived_at', null) is kept as belt-and-
+    // braces so a future tweak to RLS can't silently leak them into
+    // the designer dropdown.
+    supabase.from('materials').select('id, display_name, requires_ink_names, option_label, featured_quantities, multi_variant').eq('is_active', true).eq('is_published', true).is('archived_at', null).order('sort_order')
       .then(({ data }) => setMaterials((data ?? []) as Material[]))
 
     // Pre-fill the pricing display + currency from admin-configured

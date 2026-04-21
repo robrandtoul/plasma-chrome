@@ -53,9 +53,12 @@ export default function AdminSettingsPage() {
   const [hsTesting, setHsTesting] = useState(false)
   const [hsTestResult, setHsTestResult] = useState<{ ok: boolean; message: string } | null>(null)
 
-  // Materials + selected material for the editor modal.
+  // Materials + selected material for the editor modal. Archived
+  // rows are hidden from the main list unless the admin flips the
+  // "Show archived" toggle.
   const [materials, setMaterials] = useState<MaterialContent[]>([])
   const [editingMaterial, setEditingMaterial] = useState<MaterialContent | null>(null)
+  const [showArchived, setShowArchived] = useState(false)
 
   useEffect(() => { load(); void loadMaterials() }, [])
 
@@ -69,10 +72,13 @@ export default function AdminSettingsPage() {
   }
 
   async function loadMaterials() {
-    // Admin list — show every active material, published or not.
+    // Admin list — loads all active materials including archived ones
+    // so the "Show archived" toggle can reveal them without a second
+    // round-trip. RLS lets admins see archived rows; designers
+    // wouldn't.
     const { data } = await supabase
       .from('materials')
-      .select('id, code, display_name, category, description, icon_url, is_published')
+      .select('id, code, display_name, category, description, icon_url, is_published, archived_at')
       .eq('is_active', true)
       .order('sort_order')
     setMaterials((data ?? []) as MaterialContent[])
@@ -328,7 +334,7 @@ export default function AdminSettingsPage() {
           <div>
             <h3 className="text-sm font-semibold text-gray-900">Materials</h3>
             <p className="mt-1 text-xs text-gray-500">
-              Per-material description and icon for the customer-facing "About [Material]" block. Unpublished materials stay hidden from designers until an admin publishes them.
+              Per-material description and icon for the customer-facing "About [Material]" block. Unpublished materials stay hidden from designers until an admin publishes them. Archived materials are hidden entirely.
             </p>
           </div>
           <Link
@@ -338,51 +344,67 @@ export default function AdminSettingsPage() {
             Add material
           </Link>
         </div>
-        <div className="mt-4 overflow-hidden rounded-lg ring-1 ring-gray-200">
-          {materials.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-gray-400">No materials.</p>
-          ) : (
-            materials.map((m, i) => (
-              <div
-                key={m.id}
-                className={['flex items-center gap-4 px-4 py-3', i > 0 ? 'border-t border-gray-100' : ''].join(' ')}
-              >
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded bg-gray-50 ring-1 ring-gray-200">
-                  {m.icon_url
-                    ? <img src={m.icon_url} alt="" className="max-h-full max-w-full object-contain" />
-                    : <svg viewBox="0 0 16 16" className="h-4 w-4 text-gray-300" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 12l3-4 3 3 3-5 3 4" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+
+        {(() => {
+          const active = materials.filter((m) => m.archived_at == null)
+          const archived = materials.filter((m) => m.archived_at != null)
+          return (
+            <>
+              {archived.length > 0 && (
+                <div className="mt-3 flex items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setShowArchived(!showArchived)}
+                    role="switch"
+                    aria-checked={showArchived}
+                    className={[
+                      'relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors',
+                      showArchived ? 'bg-gray-900' : 'bg-gray-200',
+                    ].join(' ')}
+                  >
+                    <span
+                      className={[
+                        'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+                        showArchived ? 'translate-x-[1.125rem] translate-y-0.5' : 'translate-x-0.5 translate-y-0.5',
+                      ].join(' ')}
+                    />
+                  </button>
+                  <label className="text-gray-500">
+                    Show archived ({archived.length})
+                  </label>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold text-gray-900">{m.display_name}</div>
-                  <div className="mt-1 flex flex-wrap gap-1.5">
-                    {m.is_published
-                      ? <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Published</span>
-                      : <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Unpublished</span>}
-                    {!m.description && (
-                      <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">
-                        Needs content
-                      </span>
-                    )}
+              )}
+
+              <div className="mt-4 overflow-hidden rounded-lg ring-1 ring-gray-200">
+                {active.length === 0 ? (
+                  <p className="px-4 py-6 text-sm text-gray-400">No active materials.</p>
+                ) : (
+                  active.map((m, i) => renderMaterialRow(
+                    m, i, setEditingMaterial, /* muted */ false,
+                  ))
+                )}
+              </div>
+
+              {showArchived && archived.length > 0 && (
+                <div className="mt-6">
+                  <div className="mb-2 flex items-center gap-2">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                      Archived
+                    </h4>
+                    <span className="text-xs text-gray-400">
+                      ({archived.length})
+                    </span>
+                  </div>
+                  <div className="overflow-hidden rounded-lg ring-1 ring-gray-200">
+                    {archived.map((m, i) => renderMaterialRow(
+                      m, i, setEditingMaterial, /* muted */ true,
+                    ))}
                   </div>
                 </div>
-                <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                  <button
-                    onClick={() => setEditingMaterial(m)}
-                    className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
-                  >
-                    Edit
-                  </button>
-                  <Link
-                    to={`/admin/pricing/materials/${m.code}`}
-                    className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-50"
-                  >
-                    Pricing &amp; variants
-                  </Link>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+              )}
+            </>
+          )
+        })()}
       </section>
 
       {editingMaterial && (
@@ -459,6 +481,74 @@ function humanFieldLabel(field: keyof Settings): string {
     default_pricing_display: 'Default pricing display',
     default_currency: 'Default currency',
   }[field]
+}
+
+// One row in the materials list. Pulled out so the active and
+// archived sections can share layout; `muted` greys the whole row +
+// replaces the Published/Unpublished pill with an Archived badge.
+function renderMaterialRow(
+  m: MaterialContent,
+  i: number,
+  openEditor: (m: MaterialContent) => void,
+  muted: boolean,
+): React.ReactNode {
+  return (
+    <div
+      key={m.id}
+      className={[
+        'flex items-center gap-4 px-4 py-3',
+        i > 0 ? 'border-t border-gray-100' : '',
+        muted ? 'opacity-70' : '',
+      ].join(' ')}
+    >
+      <div className={[
+        'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded bg-gray-50 ring-1 ring-gray-200',
+        muted ? 'grayscale' : '',
+      ].join(' ')}>
+        {m.icon_url
+          ? <img src={m.icon_url} alt="" className="max-h-full max-w-full object-contain" />
+          : <svg viewBox="0 0 16 16" className="h-4 w-4 text-gray-300" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 12l3-4 3 3 3-5 3 4" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className={[
+          'truncate text-sm font-semibold',
+          muted ? 'italic text-gray-500' : 'text-gray-900',
+        ].join(' ')}>
+          {m.display_name}
+        </div>
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {muted ? (
+            <span className="inline-block rounded-full bg-gray-200 px-2 py-0.5 text-xs font-semibold text-gray-700">
+              Archived
+            </span>
+          ) : m.is_published ? (
+            <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Published</span>
+          ) : (
+            <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Unpublished</span>
+          )}
+          {!m.description && !muted && (
+            <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">
+              Needs content
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="flex shrink-0 flex-wrap justify-end gap-2">
+        <button
+          onClick={() => openEditor(m)}
+          className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+        >
+          Edit
+        </button>
+        <Link
+          to={`/admin/pricing/materials/${m.code}`}
+          className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-50"
+        >
+          Pricing &amp; variants
+        </Link>
+      </div>
+    </div>
+  )
 }
 
 const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'

@@ -13,6 +13,8 @@ export interface MaterialContent {
   description: string | null
   icon_url: string | null
   is_published: boolean
+  /** Null means active. Timestamp means soft-archived. */
+  archived_at: string | null
 }
 
 // Kept in sync with the CHECK constraint on materials.category installed
@@ -65,6 +67,11 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
   const [publishInFlight, setPublishInFlight] = useState(false)
   const [publishConfirm, setPublishConfirm] = useState(false)
   const [publishError, setPublishError] = useState<string | null>(null)
+  const [archivedAt, setArchivedAt] = useState<string | null>(material.archived_at)
+  const [archiveInFlight, setArchiveInFlight] = useState(false)
+  const [archiveConfirm, setArchiveConfirm] = useState(false)
+  const [archiveError, setArchiveError] = useState<string | null>(null)
+  const [unarchiveNotice, setUnarchiveNotice] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -336,6 +343,86 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
     }
   }
 
+  // ── Archive / unarchive (Phase 4) ─────────────────────────────────────
+  //
+  // Archive auto-unpublishes in the same UPDATE so we can't leave the
+  // material archived-but-visible. Unarchive leaves is_published alone
+  // (admins must re-publish explicitly — see the Phase 4 spec).
+
+  function requestArchive() {
+    setArchiveError(null)
+    setArchiveConfirm(true)
+  }
+
+  async function applyArchive() {
+    const wasPublished = isPublished
+    setArchiveInFlight(true)
+    setArchiveError(null)
+    try {
+      const now = new Date().toISOString()
+      const { error: err } = await supabase
+        .from('materials')
+        .update({ archived_at: now, is_published: false })
+        .eq('id', material.id)
+      if (err) throw new Error(err.message)
+      // Optimistic state so onSaved propagates the new values even
+      // though we close the modal immediately after.
+      setArchivedAt(now)
+      setIsPublished(false)
+      material.archived_at = now
+      material.is_published = false
+      onSaved({ ...material })
+      void logAudit({
+        action: 'material_archived',
+        targetType: 'material',
+        targetId: material.id,
+        targetLabel: material.display_name,
+        beforeValue: { archived_at: null, is_published: wasPublished },
+        afterValue: { archived_at: now, is_published: false },
+        metadata: { was_published: wasPublished },
+      })
+      setArchiveConfirm(false)
+      // Archive is destructive enough that closing the modal feels
+      // right — the admin's attention should go back to the Settings
+      // list so they can confirm the row has moved.
+      onClose()
+    } catch (e) {
+      setArchiveError((e as Error).message)
+    } finally {
+      setArchiveInFlight(false)
+    }
+  }
+
+  async function applyUnarchive() {
+    setArchiveInFlight(true)
+    setArchiveError(null)
+    try {
+      const { error: err } = await supabase
+        .from('materials')
+        .update({ archived_at: null })
+        .eq('id', material.id)
+      if (err) throw new Error(err.message)
+      setArchivedAt(null)
+      material.archived_at = null
+      onSaved({ ...material })
+      setUnarchiveNotice(true)
+      window.setTimeout(() => setUnarchiveNotice(false), 5000)
+      void logAudit({
+        action: 'material_unarchived',
+        targetType: 'material',
+        targetId: material.id,
+        targetLabel: material.display_name,
+        beforeValue: { archived_at: material.archived_at ?? 'previous' },
+        afterValue: { archived_at: null },
+      })
+    } catch (e) {
+      setArchiveError((e as Error).message)
+    } finally {
+      setArchiveInFlight(false)
+    }
+  }
+
+  const isArchived = archivedAt != null
   const recentlySaved = savedAt != null && Date.now() - savedAt < 2000
 
   return (
@@ -492,7 +579,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
             </section>
 
             {/* Publish status */}
-            <section>
+            <section className={isArchived ? 'opacity-60' : ''}>
               <label className="mb-1.5 block text-sm font-medium text-gray-700">Publish status</label>
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-gray-50 px-4 py-3 ring-1 ring-gray-200">
                 <div className="flex items-center gap-3">
@@ -510,7 +597,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                 <button
                   type="button"
                   onClick={onPublishClick}
-                  disabled={publishInFlight || saving}
+                  disabled={publishInFlight || saving || isArchived}
                   className={[
                     'rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50',
                     isPublished
@@ -523,8 +610,59 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                     : isPublished ? 'Unpublish' : 'Publish'}
                 </button>
               </div>
+              {isArchived && (
+                <p className="mt-1.5 text-xs text-gray-500">Unarchive this material before publishing.</p>
+              )}
               {publishError && (
                 <p className="mt-1.5 text-xs text-rose-600">{publishError}</p>
+              )}
+            </section>
+
+            {/* Archive (Phase 4). Hard-stop destructive action with a
+                soft-confirm before commit. Unarchive is a straight
+                toggle — the admin still has to re-publish explicitly. */}
+            <section>
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">Archive</label>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-gray-50 px-4 py-3 ring-1 ring-gray-200">
+                <div className="flex items-center gap-3">
+                  {isArchived ? (
+                    <span className="inline-block rounded-full bg-gray-200 px-2.5 py-0.5 text-xs font-semibold text-gray-700">Archived</span>
+                  ) : (
+                    <span className="inline-block rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-semibold text-gray-600">Active</span>
+                  )}
+                  <p className="text-sm text-gray-600">
+                    {isArchived
+                      ? 'Hidden from the designer dropdown. Unarchive to restore.'
+                      : 'Use archive for materials you no longer sell.'}
+                  </p>
+                </div>
+                {isArchived ? (
+                  <button
+                    type="button"
+                    onClick={() => void applyUnarchive()}
+                    disabled={archiveInFlight || saving}
+                    className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+                  >
+                    {archiveInFlight ? 'Saving…' : 'Unarchive'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={requestArchive}
+                    disabled={archiveInFlight || saving}
+                    className="rounded-lg px-4 py-2 text-sm font-semibold text-amber-700 ring-1 ring-amber-200 hover:bg-amber-50 disabled:opacity-50"
+                  >
+                    Archive
+                  </button>
+                )}
+              </div>
+              {unarchiveNotice && (
+                <p className="mt-1.5 text-xs text-emerald-700">
+                  {material.display_name} unarchived. Republish from the Publish section when ready.
+                </p>
+              )}
+              {archiveError && (
+                <p className="mt-1.5 text-xs text-rose-600">{archiveError}</p>
               )}
             </section>
 
@@ -570,6 +708,38 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                 className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
               >
                 {publishInFlight ? 'Publishing…' : 'Publish anyway'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Soft-confirm modal for archive. Amber-toned rather than
+          outright red — archive is reversible, but still a deliberate
+          action worth explicit confirmation. */}
+      {archiveConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-gray-200">
+            <h4 className="text-base font-semibold text-gray-900">Archive {material.display_name}?</h4>
+            <p className="mt-2 text-sm text-gray-600">
+              This hides it from the designer dropdown and unpublishes it. You can unarchive later from the Archived section of Settings.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setArchiveConfirm(false)}
+                disabled={archiveInFlight}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void applyArchive()}
+                disabled={archiveInFlight}
+                className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:opacity-50"
+              >
+                {archiveInFlight ? 'Archiving…' : 'Archive'}
               </button>
             </div>
           </div>
