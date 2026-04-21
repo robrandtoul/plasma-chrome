@@ -10,6 +10,7 @@ import { DEFAULT_FEATURED_QUANTITIES } from '../lib/constants'
 import { PricingDisplayField, type PricingDisplayValue } from '../components/PricingDisplayField'
 import { CurrencyField } from '../components/CurrencyField'
 import { PageDropOverlay } from '../components/PageDropOverlay'
+import NameChipInput from '../components/NameChipInput'
 import type { Currency } from '../lib/types'
 
 interface Material {
@@ -79,6 +80,10 @@ export default function NewVersionPage() {
   // between the "requires per-ink names" set and everything else.
   const [inkNamesText, setInkNamesText] = useState('')
   const [inkNamesArray, setInkNamesArray] = useState<string[]>([])
+  // Split-name tooling recipients. Pre-filled from the project's
+  // most-recent prior version (if any) on mount — designer still
+  // edits freely. Empty list is valid and allowed at submit.
+  const [names, setNames] = useState<string[]>([])
   const [changeNotes, setChangeNotes] = useState('')
   const [pricingDisplay, setPricingDisplay] = useState<PricingDisplayValue | null>(null)
   const [availableOptions, setAvailableOptions] = useState<MaterialOption[]>([])
@@ -112,6 +117,22 @@ export default function NewVersionPage() {
           setProofCompany(c.companies?.name ?? '')
         }
       })
+
+    // Pre-fill the names chip list from the project's most-recent
+    // prior version, if any. Designer can still edit freely. Only
+    // runs on mount — later material / variant / currency changes
+    // don't touch names.
+    supabase.from('proof_versions')
+      .select('names')
+      .eq('proof_id', proofId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        const prev = (data as any)?.names
+        if (Array.isArray(prev) && prev.length > 0) setNames(prev as string[])
+      })
+
     // RLS already hides archived materials from non-admins (000065),
     // but the explicit .is('archived_at', null) is kept as belt-and-
     // braces so a future tweak to RLS can't silently leak them into
@@ -463,6 +484,11 @@ export default function NewVersionPage() {
         change_notes: changeNotes.trim() || null,
         material_options: selectedOptions,
         custom_quote: pricingDisplay === 'custom',
+        // Names array for split-name tooling. Empty is valid. The
+        // DB trigger (migration 000070) snapshots the per-currency
+        // surcharge from the material on INSERT, so no client-side
+        // amount calc.
+        names: names.map((n) => n.trim()).filter(Boolean),
       })
       .select('id')
       .single()
@@ -782,6 +808,22 @@ export default function NewVersionPage() {
                   onChange={(e) => setInkNamesText(e.target.value)} className={inputClass} />
               </div>
             )}
+
+            {/* Names on this order — chip input backs the
+                proof_versions.names array. Optional. The DB trigger
+                snapshots the per-currency split-name tooling
+                surcharge onto the version on save. */}
+            <div className="mt-5">
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                Names on this order <span className="font-normal text-gray-400">(optional)</span>
+              </label>
+              <NameChipInput
+                names={names}
+                onChange={setNames}
+                placeholder="Who is this proof for? Press Enter after each name"
+                ariaLabel="Names on this order"
+              />
+            </div>
 
           </section>
 

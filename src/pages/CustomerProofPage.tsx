@@ -310,6 +310,9 @@ export default function CustomerProofPage() {
                 {activeVersion.ink_names.length > 0 && (
                   <SpecItem label="Inks" value={activeVersion.ink_names.join('\n')} />
                 )}
+                {activeVersion.names.length > 0 && (
+                  <SpecItem label="Names" value={formatNamesList(activeVersion.names)} />
+                )}
               </dl>
             </div>
 
@@ -400,6 +403,37 @@ export default function CustomerProofPage() {
                     featuredQuantities={activeVersion.featured_quantities}
                     quantitySurcharges={quantitySurcharges}
                   />
+                  {/* Split-name tooling panel. Only renders when
+                      there's an extra-name surcharge to charge for.
+                      names.length === 1 doesn't trigger (no extras);
+                      surcharge null or 0 doesn't trigger (e.g.
+                      carbon CNC, some paper). */}
+                  {activeVersion.names.length >= 2 &&
+                   activeVersion.split_name_surcharge_snapshot != null &&
+                   activeVersion.split_name_surcharge_snapshot > 0 && (
+                    <div className="border-t border-gray-100 px-6 py-5">
+                      <div className="rounded-xl bg-amber-50 px-5 py-4 ring-1 ring-amber-200">
+                        <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+                          Split-name tooling
+                        </p>
+                        <p className="mt-2 text-sm text-gray-900">
+                          Add{' '}
+                          <span className="font-semibold">
+                            {formatPrice(
+                              (activeVersion.names.length - 1) * activeVersion.split_name_surcharge_snapshot,
+                              activeVersion.currency,
+                            )}
+                          </span>{' '}
+                          to any quantity above.
+                        </p>
+                        <p className="mt-1 text-xs text-gray-600">
+                          {activeVersion.names.length} names ×{' '}
+                          {formatPrice(activeVersion.split_name_surcharge_snapshot, activeVersion.currency)}{' '}
+                          tooling each beyond the first.
+                        </p>
+                      </div>
+                    </div>
+                  )}
                   <div className="border-t border-gray-100 px-6 py-3">
                     <p className="text-xs text-gray-400">
                       {activeVersion.currency === 'GBP' ? 'Prices include VAT. ' : ''}
@@ -438,6 +472,16 @@ function SpecItem({ label, value }: { label: string; value: string }) {
       <dd className="mt-1 whitespace-pre-line text-sm font-medium text-gray-900">{value}</dd>
     </div>
   )
+}
+
+// "Alice", "Alice and Bob", "Alice, Bob and Carol". Keeps the
+// reading natural; avoids a comma before "and" — two-name lists
+// don't want the Oxford comma either way.
+function formatNamesList(names: string[]): string {
+  if (names.length === 0) return ''
+  if (names.length === 1) return names[0]
+  if (names.length === 2) return `${names[0]} and ${names[1]}`
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
 
 function LoadingScreen() {

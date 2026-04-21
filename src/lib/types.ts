@@ -66,6 +66,16 @@ export interface PublicProofVersion {
   // it's a designer/audit field and stays off the customer-facing
   // view.
   superseded_at?: string | null
+  // ── Split-name tooling (migration 000070) ─────────────────────────────────
+  // Named recipients for this proof (e.g. directors on a metal
+  // split-name order). Captured per-version. Empty array = no
+  // named recipients.
+  names: string[]
+  // Per-extra-name tooling surcharge in this version's currency,
+  // snapshotted at insert/update time from the version's material.
+  // Null when the material has no configured surcharge for the
+  // chosen currency (carbon CNC, some paper).
+  split_name_surcharge_snapshot: number | null
 }
 
 export interface PublicMaterialOption {

@@ -9,6 +9,7 @@ import { PricingDisplay } from '../components/PricingDisplay'
 import { PricingDisplayField, type PricingDisplayValue } from '../components/PricingDisplayField'
 import { CurrencyField } from '../components/CurrencyField'
 import { PageDropOverlay } from '../components/PageDropOverlay'
+import NameChipInput from '../components/NameChipInput'
 import type { Currency, PricingSnapshot } from '../lib/types'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -56,6 +57,7 @@ export default function EditVersionPage() {
   const [requiresInkNames, setRequiresInkNames] = useState(false)
   const [optionLabelSingular, setOptionLabelSingular] = useState('Finish')
   const [currency, setCurrency] = useState<Currency>('GBP')
+  const [names, setNames] = useState<string[]>([])
   const [changeNotes, setChangeNotes] = useState('')
   const [pricingDisplay, setPricingDisplay] = useState<PricingDisplayValue | null>(null)
   const [pricingSnapshot, setPricingSnapshot] = useState<PricingSnapshot | null>(null)
@@ -90,7 +92,7 @@ export default function EditVersionPage() {
       supabase.from('proofs').select('contacts(full_name, companies(name))').eq('id', pid).single(),
       supabase
         .from('proof_versions')
-        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, materials(featured_quantities, requires_ink_names, option_label, multi_variant)')
+        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, names, materials(featured_quantities, requires_ink_names, option_label, multi_variant)')
         .eq('id', vid)
         .single(),
       supabase
@@ -125,6 +127,7 @@ export default function EditVersionPage() {
       setInkNamesText(rawInkNames.join(', '))
     }
     setCurrency(v.currency as Currency)
+    setNames(Array.isArray(v.names) ? (v.names as string[]) : [])
     setChangeNotes(v.change_notes ?? '')
     setPricingDisplay(v.custom_quote ? 'custom' : 'standard')
     setPricingSnapshot(v.pricing_snapshot as PricingSnapshot)
@@ -438,6 +441,10 @@ export default function EditVersionPage() {
         change_notes: changeNotes.trim() || null,
         material_options: selectedOptions,
         custom_quote: pricingDisplay === 'custom',
+        // The DB trigger recomputes split_name_surcharge_snapshot
+        // from the version's material + currency, so swapping
+        // material or currency here keeps the snapshot in sync.
+        names: names.map((n) => n.trim()).filter(Boolean),
       })
       .eq('id', versionId!)
 
@@ -656,6 +663,22 @@ export default function EditVersionPage() {
                 />
               </div>
             )}
+
+            {/* Names on this order — chip input backs
+                proof_versions.names. Trigger recomputes the
+                surcharge snapshot on save from the version's
+                current material + currency. */}
+            <div className="mb-4">
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                Names on this order <span className="font-normal text-gray-400">(optional)</span>
+              </label>
+              <NameChipInput
+                names={names}
+                onChange={setNames}
+                placeholder="Who is this proof for? Press Enter after each name"
+                ariaLabel="Names on this order"
+              />
+            </div>
 
             {!isCustomQuote && (
               <div>
