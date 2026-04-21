@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { logAudit } from '../lib/audit'
 import { parseHelpscoutUrl, MIN_OVERRIDE_REASON_LENGTH } from '../lib/helpscout'
+import { titleCase } from '../lib/titleCase'
 
 // ── Local types ───────────────────────────────────────────────────────────────
 
@@ -62,6 +63,11 @@ export default function NewProofPage() {
   // Prefill tokens — consumed once so later user edits don't re-apply them.
   const pendingContactPrefillRef = useRef<string | null>(prefillContactId)
   const pendingFocusContactRef   = useRef<boolean>(!!prefillCompanyId && !prefillContactId)
+  // Populated by the paste-from-Help-Scout flow when the customer
+  // isn't already in our DB. The contact-load effect consumes this
+  // once the loading pass finishes so the pre-filled name + email
+  // aren't wiped by the effect's reset.
+  const pendingPasteNewContactRef = useRef<{ name: string; email: string } | null>(null)
 
   // ── Proof fields ───────────────────────────────────────────────────────────
   const [helpscoutUrl, setHelpscoutUrl] = useState('')
@@ -84,6 +90,16 @@ export default function NewProofPage() {
   const [hsLookupReturnedZero, setHsLookupReturnedZero] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
   const [urlFormatError, setUrlFormatError] = useState<string | null>(null)
+
+  // ── Paste-from-Help-Scout flow (primary entry point) ───────────────────────
+  const [pasteInput, setPasteInput] = useState('')
+  const [pasteInFlight, setPasteInFlight] = useState(false)
+  const [pasteError, setPasteError] = useState<string | null>(null)
+  const [pasteSubject, setPasteSubject] = useState<string | null>(null)
+  // Manual-details disclosure. Collapsed by default; opens
+  // automatically on paste success so the designer reviews what
+  // got auto-filled.
+  const [manualOpen, setManualOpen] = useState(false)
 
   // Load all companies once on mount
   useEffect(() => {
@@ -166,6 +182,18 @@ export default function NewProofPage() {
           setContactSearch(match.full_name)
           return
         }
+      }
+
+      // Paste flow landed a new contact that isn't in the DB yet —
+      // consume the ref and pre-fill the add-contact form regardless
+      // of whether other contacts exist on this company.
+      if (pendingPasteNewContactRef.current) {
+        const { name, email } = pendingPasteNewContactRef.current
+        pendingPasteNewContactRef.current = null
+        setAddingContact(true)
+        setNewContactName(name)
+        setNewContactEmail(email)
+        return
       }
 
       if (contacts.length === 0) {
@@ -256,6 +284,137 @@ export default function NewProofPage() {
     clearHelpscoutLink()
     setHelpscoutUrl('')
     setHsLookupReturnedZero(true)
+  }
+
+  // ── Paste flow ─────────────────────────────────────────────────────────────
+
+  // Parse the pasted input into either a big-id or a short-number
+  // lookup. Short URL and long URL both have the big-id as the first
+  // path segment after /conversation/; bare numeric input with <= 8
+  // digits is treated as a short number; longer bare numeric is
+  // treated as a big id directly.
+  function parsePasteInput(raw: string): { conversationId?: string; conversationNumber?: string } | null {
+    const trimmed = raw.trim()
+    if (!trimmed) return null
+    const urlMatch = /^https:\/\/secure\.helpscout\.net\/conversation\/(\d+)/.exec(trimmed)
+    if (urlMatch) return { conversationId: urlMatch[1] }
+    if (/^\d+$/.test(trimmed)) {
+      // Heuristic: HS big-ids are ~10 digits, short numbers ~6.
+      // Treat <= 8 as short, otherwise big. Saves a round-trip when
+      // the designer pastes either shape.
+      if (trimmed.length <= 8) return { conversationNumber: trimmed }
+      return { conversationId: trimmed }
+    }
+    return null
+  }
+
+  async function handlePasteLookup() {
+    const parsed = parsePasteInput(pasteInput)
+    setPasteError(null)
+    if (!parsed) {
+      setPasteError('Paste a Help Scout conversation URL or the conversation number.')
+      return
+    }
+    setPasteInFlight(true)
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('lookup-helpscout-conversation', {
+        body: parsed,
+      })
+      if (fnError) throw new Error(fnError.message || 'Lookup failed')
+      if (!data || data.error) throw new Error(data?.error ?? 'Lookup failed')
+      if (!data.customer) {
+        setPasteError('Found the conversation but it has no primary customer attached. Fix that in Help Scout, or enter details manually below.')
+        setPasteInFlight(false)
+        return
+      }
+      await applyPasteResult(data)
+    } catch (e) {
+      setPasteError((e as Error).message)
+    } finally {
+      setPasteInFlight(false)
+    }
+  }
+
+  // Apply a successful paste lookup to the form state. Pre-fills:
+  //   * HS link (conversation id + canonical URL)
+  //   * Company (by case-insensitive name match; or "new" if unknown)
+  //   * Contact (by email match across all companies; or "adding new"
+  //     with pre-filled name + email)
+  async function applyPasteResult(result: {
+    id: number
+    number: number
+    url: string
+    subject: string | null
+    customer: { id: number; firstName: string; lastName: string; email: string; organization: string | null }
+  }) {
+    // HS state
+    setHelpscoutUrl(result.url)
+    setHsConversationId(String(result.id))
+    setHsLinkedSubject(result.subject ?? `Conversation #${result.number}`)
+    setHsLookupReturnedZero(false)
+    setOverrideReason('')
+    setUrlFormatError(null)
+    setPasteSubject(result.subject ?? null)
+
+    // Auto-expand the manual details disclosure so the designer can
+    // review what landed.
+    setManualOpen(true)
+
+    const email = result.customer.email.trim().toLowerCase()
+    const displayName = titleCase(`${result.customer.firstName} ${result.customer.lastName}`.trim())
+    const organization = result.customer.organization?.trim()
+
+    // Look up an existing contact by email, cross-company.
+    const { data: existingContact } = await supabase
+      .from('contacts')
+      .select('id, full_name, email, company_id, companies(id, name)')
+      .eq('email', email)
+      .maybeSingle()
+
+    if (existingContact) {
+      const company = (existingContact as any).companies as { id: string; name: string } | null
+      if (company) {
+        setSelectedCompany({ id: company.id, name: company.name })
+        setCompanySearch(company.name)
+        setIsIndividual(false)
+      } else {
+        setIsIndividual(true)
+        setSelectedCompany(null)
+      }
+      pendingContactPrefillRef.current = (existingContact as any).id
+      // The contact-load effect re-runs on the selectedCompany change
+      // and will apply the pendingContactPrefillRef once contacts
+      // arrive.
+      return
+    }
+
+    // No existing contact — stage a new one via the ref, then resolve
+    // the company so the contact-load effect fires with the right
+    // companyId.
+    pendingPasteNewContactRef.current = { name: displayName, email }
+
+    if (!organization) {
+      setIsIndividual(true)
+      setSelectedCompany(null)
+      return
+    }
+
+    const casedCompany = titleCase(organization)
+    const { data: existingCompany } = await supabase
+      .from('companies')
+      .select('id, name')
+      .ilike('name', organization)
+      .limit(1)
+      .maybeSingle()
+
+    if (existingCompany) {
+      setSelectedCompany({ id: (existingCompany as any).id, name: (existingCompany as any).name })
+      setCompanySearch((existingCompany as any).name)
+    } else {
+      setSelectedCompany({ id: null, name: casedCompany })
+      setCompanySearch(casedCompany)
+    }
+    setIsIndividual(false)
   }
 
   // Close dropdowns when clicking outside their containers
@@ -483,7 +642,13 @@ export default function NewProofPage() {
           metadata: {
             helpscout_conversation_id:  resolvedConvoId,
             helpscout_conversation_url: resolvedConvoUrl,
-            source: hsPickerMatches.length > 0 ? 'picker' : hsLookupEmail ? 'auto' : 'manual',
+            source: pasteSubject != null
+              ? 'paste'
+              : hsPickerMatches.length > 0
+                ? 'picker'
+                : hsLookupEmail
+                  ? 'auto'
+                  : 'manual',
           },
         })
       } else if (resolvedOverride) {
@@ -518,6 +683,63 @@ export default function NewProofPage() {
         <h1 className="mb-8 text-2xl font-bold text-gray-900">New proof</h1>
 
         <form onSubmit={handleSubmit} className="space-y-6">
+
+          {/* ── Paste from Help Scout (primary entry point) ───────────────── */}
+          <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+            <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
+              Start from Help Scout
+            </h2>
+            <p className="mb-3 text-xs text-gray-500">
+              Paste the conversation URL or number from Help Scout. We'll pull the customer and company across.
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input
+                type="text"
+                value={pasteInput}
+                onChange={(e) => { setPasteInput(e.target.value); setPasteError(null) }}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void handlePasteLookup() } }}
+                placeholder="https://secure.helpscout.net/conversation/… or 420859"
+                disabled={pasteInFlight}
+                className={inputClass + ' sm:flex-1'}
+              />
+              <button
+                type="button"
+                onClick={() => void handlePasteLookup()}
+                disabled={pasteInFlight || !pasteInput.trim()}
+                className="shrink-0 rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+              >
+                {pasteInFlight ? 'Looking up…' : 'Look up'}
+              </button>
+            </div>
+            {pasteError && (
+              <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{pasteError}</p>
+            )}
+            {pasteSubject && !pasteError && (
+              <p className="mt-2 text-xs text-emerald-700">
+                Found: <span className="font-medium">{pasteSubject}</span>. Review the details below.
+              </p>
+            )}
+          </section>
+
+          {/* Disclosure toggle — hidden when paste lands something, so
+              the designer lands straight on the review. Otherwise the
+              pickers below sit behind a small toggle. */}
+          {!manualOpen && (
+            <button
+              type="button"
+              onClick={() => setManualOpen(true)}
+              className="text-sm text-gray-500 underline hover:text-gray-900"
+            >
+              Or enter customer details manually
+            </button>
+          )}
+
+          {manualOpen && (
+            <>
+          {/* Review nudge above the name + company fields. */}
+          <p className="text-xs text-gray-500">
+            This is what the customer will see on their proof page.
+          </p>
 
           {/* ── Company ──────────────────────────────────────────────────── */}
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
@@ -722,6 +944,8 @@ export default function NewProofPage() {
                 </div>
               )}
             </section>
+          )}
+            </>
           )}
 
           {/* ── Internal fields ───────────────────────────────────────────── */}

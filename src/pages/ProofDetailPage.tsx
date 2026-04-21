@@ -40,6 +40,7 @@ export default function ProofDetailPage() {
   const [statusWorking, setStatusWorking] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [showHelpscoutEdit, setShowHelpscoutEdit] = useState(false)
+  const [showCustomerPreview, setShowCustomerPreview] = useState(false)
   const fallbackInputRef = useRef<HTMLInputElement>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -271,17 +272,16 @@ export default function ProofDetailPage() {
           </div>
           <div className="flex flex-col items-end gap-4">
             <div className="flex flex-wrap justify-end gap-2">
-            <a
-              href={`/p/${proof.id}`}
-              target="_blank"
-              rel="noopener noreferrer"
+            <button
+              type="button"
+              onClick={() => setShowCustomerPreview(true)}
               className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
             >
               <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 3H3.5A1.5 1.5 0 002 4.5v8A1.5 1.5 0 003.5 14h8A1.5 1.5 0 0013 12.5V10M10 2h4m0 0v4m0-4L7 9" />
               </svg>
-              Preview
-            </a>
+              Preview as customer
+            </button>
             <button
               onClick={copyCustomerUrl}
               className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
@@ -466,6 +466,51 @@ export default function ProofDetailPage() {
           </button>
         </div>
       </div>
+
+      {/* Customer preview modal. An iframe loading the real public
+          proof URL so the designer sees exactly what renders for the
+          customer, not a reproduction. Faster than a new tab
+          (no context switch) and still accurate. */}
+      {showCustomerPreview && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/60" onClick={() => setShowCustomerPreview(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
+              <div className="flex items-center justify-between border-b border-gray-100 px-6 py-3">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-sm font-semibold text-gray-900">Preview as customer</h3>
+                  <span className="text-xs text-gray-500">Exactly what the customer sees.</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={`/p/${proof.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
+                  >
+                    Open in new tab
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setShowCustomerPreview(false)}
+                    className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                    aria-label="Close"
+                  >
+                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <iframe
+                src={`/p/${proof.id}`}
+                title="Customer preview"
+                className="flex-1 border-0 bg-white"
+              />
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Change Help Scout conversation modal */}
       {showHelpscoutEdit && (
