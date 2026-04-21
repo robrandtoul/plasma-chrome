@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/auth'
 import VersionDetailModal, { type ModalVersion } from '../components/VersionDetailModal'
 import HelpScoutEditModal from '../components/HelpScoutEditModal'
 import { logAudit } from '../lib/audit'
@@ -37,6 +38,7 @@ function formatLongDate(iso: string): string {
 export default function ProofDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { role } = useAuth()
   const [proof, setProof] = useState<Proof | null>(null)
   const [versions, setVersions] = useState<ModalVersion[]>([])
   const [loading, setLoading] = useState(true)
@@ -525,18 +527,24 @@ export default function ProofDetailPage() {
           </div>
         )}
 
-        {/* Danger zone — permanent delete, kept subtle to avoid accidental clicks */}
-        <div className="mt-12 flex flex-col gap-3 border-t border-gray-100 pt-6 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-gray-400">
-            Permanently remove this project and all its proof versions. Different from abandon, this cannot be undone.
-          </p>
-          <button
-            onClick={() => { setDeleteError(null); setStatusDialog('delete') }}
-            className="shrink-0 self-start rounded-lg border border-rose-200 px-4 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 sm:self-auto"
-          >
-            Delete project
-          </button>
-        </div>
+        {/* Danger zone — permanent delete, kept subtle to avoid accidental
+            clicks. Admin-only to match the DB gate (migration 000074),
+            which restricts DELETE on proofs to is_admin(). A non-admin
+            clicking here would get an RLS error — hiding the control is
+            the clean frontend mirror of that. */}
+        {role === 'admin' && (
+          <div className="mt-12 flex flex-col gap-3 border-t border-gray-100 pt-6 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-gray-400">
+              Permanently remove this project and all its proof versions. Different from abandon, this cannot be undone.
+            </p>
+            <button
+              onClick={() => { setDeleteError(null); setStatusDialog('delete') }}
+              className="shrink-0 self-start rounded-lg border border-rose-200 px-4 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 sm:self-auto"
+            >
+              Delete project
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Customer preview modal. An iframe loading the real public
