@@ -717,7 +717,7 @@ export default function NewProofPage() {
       <div className="mx-auto max-w-xl px-4 py-10 sm:px-6">
 
         <div className="mb-6">
-          <Link to="/" className="text-sm text-gray-400 hover:text-gray-700">← Back to proofs</Link>
+          <Link to="/" className="text-sm text-gray-400 hover:text-gray-700">← Back to projects</Link>
         </div>
 
         <h1 className="mb-8 text-2xl font-bold text-gray-900">New project</h1>
