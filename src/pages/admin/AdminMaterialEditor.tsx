@@ -26,7 +26,9 @@ interface Variant {
   id: string
   code: string
   display_name: string
+  variant_type: 'thickness' | 'ink_count' | 'finish' | 'default'
   sort_order: number
+  is_active: boolean
 }
 
 interface Tier {
@@ -49,6 +51,14 @@ export default function AdminMaterialEditor() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
+  // Variant management state (Phase 3b.1). Kept local to this page.
+  const [editingVariantId, setEditingVariantId] = useState<string | null>(null)
+  const [editingNameDraft, setEditingNameDraft] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [addNameDraft, setAddNameDraft] = useState('')
+  const [variantInFlight, setVariantInFlight] = useState(false)
+  const [variantError, setVariantError] = useState<string | null>(null)
+
   useEffect(() => { if (code) load(code) }, [code])
 
   async function load(materialCode: string) {
@@ -57,16 +67,18 @@ export default function AdminMaterialEditor() {
     try {
       const { data: matData, error: matErr } = await supabase
         .from('materials')
-        .select('id, code, display_name, category, is_published, split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd')
+        .select('id, code, display_name, category, variant_type, is_published, split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd')
         .eq('code', materialCode)
         .single()
       if (matErr || !matData) throw matErr ?? new Error('Material not found')
 
+      // Pull active + inactive variants; the Variants section below the
+      // surcharge block needs to show deactivated rows for recovery, and
+      // the Price tiers tab strip filters active-only at render time.
       const [varResult, tierResult] = await Promise.all([
         supabase.from('material_variants')
-          .select('id, code, display_name, variant_type, sort_order')
+          .select('id, code, display_name, variant_type, sort_order, is_active')
           .eq('material_id', matData.id)
-          .eq('is_active', true)
           .order('sort_order'),
         supabase.from('price_tiers')
           .select('id, material_variant_id, currency, quantity, total_price, unit_price')
@@ -78,14 +90,13 @@ export default function AdminMaterialEditor() {
       if (tierResult.error) throw tierResult.error
 
       const variants = (varResult.data ?? []) as Variant[]
-      // Filter to the material's single axis — protects against stale rows
-      // with an unexpected variant_type.
-      const variantType = ((varResult.data?.[0] as any)?.variant_type ?? 'default') as Material['variant_type']
 
-      setMaterial({ ...matData, variant_type: variantType } as any)
+      setMaterial(matData as Material)
       setVariants(variants)
       setTiers((tierResult.data ?? []) as Tier[])
-      setActiveVariantId(variants[0]?.id ?? null)
+      // Tab strip should default to the first ACTIVE variant so we don't
+      // land the admin on a deactivated tab.
+      setActiveVariantId(variants.find((v) => v.is_active)?.id ?? null)
     } catch (e) {
       setLoadError((e as Error).message)
     } finally {
@@ -134,6 +145,171 @@ export default function AdminMaterialEditor() {
       targetLabel: `${material?.display_name ?? ''} ${variant?.display_name ?? ''} @ qty ${quantity}`,
       beforeValue: { currency: existing?.currency, total_price: prevTotal },
       afterValue: { currency: existing?.currency, total_price: nextTotal },
+    })
+  }
+
+  // ── Variant management helpers ────────────────────────────────────────
+
+  // Check whether a candidate display name already exists among this
+  // material's variants (case-insensitive). Excludes the variant being
+  // renamed so it can keep its own name unchanged.
+  function hasDuplicateDisplayName(candidate: string, excludeVariantId: string | null): boolean {
+    const lc = candidate.trim().toLowerCase()
+    return variants.some((v) =>
+      v.id !== excludeVariantId && v.display_name.trim().toLowerCase() === lc,
+    )
+  }
+
+  // Produce a unique (material_id, code) pair for the new variant.
+  // Slugifies display_name; falls back to variant-<uuid8> when the
+  // slug comes out empty (e.g. admin types "—" or "!!"). Suffixes
+  // -2, -3… on collision with existing variant codes.
+  function generateUniqueVariantCode(displayName: string, existing: string[]): string {
+    let base = displayName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-+|-+$/g, '')
+    if (!base) base = `variant-${crypto.randomUUID().slice(0, 8)}`
+    if (!existing.includes(base)) return base
+    let n = 2
+    while (existing.includes(`${base}-${n}`)) n++
+    return `${base}-${n}`
+  }
+
+  async function handleAddVariant() {
+    if (!material) return
+    setVariantError(null)
+    const trimmed = addNameDraft.trim()
+    if (!trimmed) { setVariantError('Name is required.'); return }
+    if (hasDuplicateDisplayName(trimmed, null)) {
+      setVariantError('A variant with this name already exists.')
+      return
+    }
+    setVariantInFlight(true)
+    try {
+      const code = generateUniqueVariantCode(trimmed, variants.map((v) => v.code))
+      const nextSortOrder = variants.reduce((m, v) => Math.max(m, v.sort_order), 0) + 10
+      const insertRow = {
+        material_id: material.id,
+        code,
+        display_name: trimmed,
+        variant_type: material.variant_type,
+        sort_order: nextSortOrder,
+        is_active: true,
+      }
+      const { data: created, error: err } = await supabase
+        .from('material_variants')
+        .insert(insertRow)
+        .select('id, code, display_name, variant_type, sort_order, is_active')
+        .single()
+      if (err || !created) throw new Error(err?.message ?? 'Unknown error')
+
+      const createdVariant = created as Variant
+      setVariants((prev) => [...prev, createdVariant])
+      // If this is the first active variant on the material, it also
+      // becomes the tab strip's default selection.
+      if (!activeVariantId) setActiveVariantId(createdVariant.id)
+      setAdding(false)
+      setAddNameDraft('')
+      void logAudit({
+        action: 'variant_created',
+        targetType: 'material_variant',
+        targetId: createdVariant.id,
+        targetLabel: `${material.display_name} — ${createdVariant.display_name}`,
+        metadata: insertRow,
+      })
+    } catch (e) {
+      setVariantError(`Failed to create variant: ${(e as Error).message}`)
+    } finally {
+      setVariantInFlight(false)
+    }
+  }
+
+  async function saveVariantName() {
+    if (!editingVariantId || !material) return
+    const current = variants.find((v) => v.id === editingVariantId)
+    if (!current) return
+    const trimmed = editingNameDraft.trim()
+    if (trimmed === current.display_name) {
+      setEditingVariantId(null)
+      return
+    }
+    if (!trimmed) { setVariantError('Name is required.'); return }
+    if (hasDuplicateDisplayName(trimmed, editingVariantId)) {
+      setVariantError('A variant with this name already exists.')
+      return
+    }
+    setVariantInFlight(true)
+    setVariantError(null)
+    const prev = current.display_name
+    // Optimistic update
+    setVariants((vs) => vs.map((v) =>
+      v.id === editingVariantId ? { ...v, display_name: trimmed } : v,
+    ))
+    const { error: err } = await supabase
+      .from('material_variants')
+      .update({ display_name: trimmed })
+      .eq('id', editingVariantId)
+    setVariantInFlight(false)
+    if (err) {
+      // Rollback
+      setVariants((vs) => vs.map((v) =>
+        v.id === editingVariantId ? { ...v, display_name: prev } : v,
+      ))
+      setVariantError(`Failed to rename: ${err.message}`)
+      return
+    }
+    setEditingVariantId(null)
+    void logAudit({
+      action: 'variant.display_name_updated',
+      targetType: 'material_variant',
+      targetId: editingVariantId,
+      targetLabel: `${material.display_name} — ${trimmed}`,
+      beforeValue: { display_name: prev },
+      afterValue: { display_name: trimmed },
+    })
+  }
+
+  async function toggleVariantActive(variantId: string) {
+    if (!material) return
+    const current = variants.find((v) => v.id === variantId)
+    if (!current) return
+    const next = !current.is_active
+    setVariantInFlight(true)
+    setVariantError(null)
+    // Optimistic update
+    setVariants((vs) => vs.map((v) =>
+      v.id === variantId ? { ...v, is_active: next } : v,
+    ))
+    const { error: err } = await supabase
+      .from('material_variants')
+      .update({ is_active: next })
+      .eq('id', variantId)
+    setVariantInFlight(false)
+    if (err) {
+      // Rollback
+      setVariants((vs) => vs.map((v) =>
+        v.id === variantId ? { ...v, is_active: !next } : v,
+      ))
+      setVariantError(`Failed to update variant: ${err.message}`)
+      return
+    }
+    // Keep the tab strip sensible: if the currently-selected tab was
+    // just deactivated, jump to another active variant (or null).
+    if (!next && activeVariantId === variantId) {
+      const remaining = variants.filter((v) => v.id !== variantId && v.is_active)
+      setActiveVariantId(remaining[0]?.id ?? null)
+    }
+    // If nothing was selected and we just reactivated, pick it up.
+    if (next && !activeVariantId) setActiveVariantId(variantId)
+    void logAudit({
+      action: next ? 'variant_activated' : 'variant_deactivated',
+      targetType: 'material_variant',
+      targetId: variantId,
+      targetLabel: `${material.display_name} — ${current.display_name}`,
+      beforeValue: { is_active: !next },
+      afterValue: { is_active: next },
     })
   }
 
@@ -220,41 +396,230 @@ export default function AdminMaterialEditor() {
         </div>
       </section>
 
-      {/* Variants / price grid */}
+      {/* Variants */}
       <section>
-        <h3 className="mb-3 text-sm font-semibold text-gray-900">Price tiers</h3>
-        {variants.length === 0 ? (
-          <p className="text-sm text-gray-400">No variants yet.</p>
-        ) : material.variant_type === 'default' ? (
-          <PriceGrid tiers={tiers.filter((t) => t.material_variant_id === variants[0].id)} onSave={saveTier} />
+        <div className="mb-3 flex items-center justify-between gap-4">
+          <h3 className="text-sm font-semibold text-gray-900">Variants</h3>
+          {material.variant_type !== 'default' && !adding && (
+            <button
+              type="button"
+              onClick={() => { setVariantError(null); setAdding(true) }}
+              disabled={variantInFlight}
+              className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+            >
+              Add variant
+            </button>
+          )}
+        </div>
+
+        {material.variant_type === 'default' ? (
+          // Default materials have a single implicit variant created by
+          // the admin create-material flow. No rename, no toggle, no add
+          // — variant management isn't meaningful here.
+          <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+            {variants[0] ? (
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-gray-900">{variants[0].display_name}</span>
+                <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
+                  Single variant
+                </span>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-400">No variant.</p>
+            )}
+            <p className="mt-2 text-xs text-gray-500">
+              This material has a single implicit variant. Variant management is only meaningful for materials with multiple options.
+            </p>
+          </div>
         ) : (
-          <>
-            {/* Variant tab strip */}
-            <div className="mb-4 flex flex-wrap gap-2">
-              {variants.map((v) => {
-                const isActive = activeVariantId === v.id
+          <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+            {variants.length === 0 && !adding ? (
+              <p className="px-4 py-6 text-sm text-gray-400">No variants yet. Click "Add variant" to create one.</p>
+            ) : (
+              variants.map((v, i) => {
+                const isEditing = editingVariantId === v.id
                 return (
-                  <button
+                  <div
                     key={v.id}
-                    onClick={() => setActiveVariantId(v.id)}
                     className={[
-                      'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
-                      isActive
-                        ? 'bg-gray-900 text-white'
-                        : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
+                      'flex items-center gap-3 px-4 py-3',
+                      i > 0 ? 'border-t border-gray-100' : '',
+                      v.is_active ? '' : 'opacity-60',
                     ].join(' ')}
                   >
-                    {v.display_name}
-                  </button>
+                    {/* Display name: inline-editable */}
+                    <div className="min-w-0 flex-1">
+                      {isEditing ? (
+                        <input
+                          autoFocus
+                          type="text"
+                          value={editingNameDraft}
+                          onChange={(e) => setEditingNameDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') { e.preventDefault(); void saveVariantName() }
+                            if (e.key === 'Escape') {
+                              setEditingVariantId(null); setVariantError(null)
+                            }
+                          }}
+                          onBlur={() => { void saveVariantName() }}
+                          disabled={variantInFlight}
+                          className="w-full rounded-lg border border-gray-300 px-2.5 py-1 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setVariantError(null)
+                            setEditingVariantId(v.id)
+                            setEditingNameDraft(v.display_name)
+                          }}
+                          className="block w-full truncate text-left text-sm font-medium text-gray-900 hover:text-gray-600"
+                          title="Click to rename"
+                        >
+                          {v.display_name}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Variant-type pill (read-only sanity check) */}
+                    <span className="inline-block shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
+                      {v.variant_type}
+                    </span>
+
+                    {/* Deactivated pill */}
+                    {!v.is_active && (
+                      <span className="inline-block shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                        Deactivated
+                      </span>
+                    )}
+
+                    {/* Active toggle */}
+                    <button
+                      type="button"
+                      onClick={() => void toggleVariantActive(v.id)}
+                      disabled={variantInFlight}
+                      role="switch"
+                      aria-checked={v.is_active}
+                      title={v.is_active ? 'Deactivate variant' : 'Activate variant'}
+                      className={[
+                        'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50',
+                        v.is_active ? 'bg-gray-900' : 'bg-gray-200',
+                      ].join(' ')}
+                    >
+                      <span
+                        className={[
+                          'inline-block h-5 w-5 transform rounded-full bg-white transition-transform',
+                          v.is_active ? 'translate-x-[1.375rem] translate-y-0.5' : 'translate-x-0.5 translate-y-0.5',
+                        ].join(' ')}
+                      />
+                    </button>
+                  </div>
                 )
-              })}
-            </div>
-            <PriceGrid
-              tiers={tiers.filter((t) => t.material_variant_id === activeVariantId)}
-              onSave={saveTier}
-            />
-          </>
+              })
+            )}
+
+            {/* Inline add row */}
+            {adding && (
+              <div className={[
+                'flex items-center gap-3 px-4 py-3',
+                variants.length > 0 ? 'border-t border-gray-100 bg-gray-50' : 'bg-gray-50',
+              ].join(' ')}>
+                <input
+                  autoFocus
+                  type="text"
+                  value={addNameDraft}
+                  onChange={(e) => setAddNameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); void handleAddVariant() }
+                    if (e.key === 'Escape') {
+                      setAdding(false); setAddNameDraft(''); setVariantError(null)
+                    }
+                  }}
+                  disabled={variantInFlight}
+                  placeholder={
+                    material.variant_type === 'thickness' ? 'e.g. 1mm' :
+                    material.variant_type === 'ink_count' ? 'e.g. 2 inks' :
+                    material.variant_type === 'finish' ? 'e.g. Brushed' :
+                    'Variant name'
+                  }
+                  className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2.5 py-1 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleAddVariant()}
+                  disabled={variantInFlight || !addNameDraft.trim()}
+                  className="shrink-0 rounded-lg bg-gray-900 px-3 py-1 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                >
+                  {variantInFlight ? 'Saving…' : 'Save'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdding(false); setAddNameDraft(''); setVariantError(null)
+                  }}
+                  disabled={variantInFlight}
+                  className="shrink-0 rounded-lg px-3 py-1 text-sm font-medium text-gray-500 hover:bg-white disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
         )}
+
+        {variantError && (
+          <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{variantError}</p>
+        )}
+      </section>
+
+      {/* Price grid */}
+      <section>
+        <h3 className="mb-3 text-sm font-semibold text-gray-900">Price tiers</h3>
+        {(() => {
+          const activeVariants = variants.filter((v) => v.is_active)
+          if (activeVariants.length === 0) {
+            return <p className="text-sm text-gray-400">No active variants yet.</p>
+          }
+          if (material.variant_type === 'default') {
+            // Default materials keep their single implicit variant as-is.
+            return (
+              <PriceGrid
+                tiers={tiers.filter((t) => t.material_variant_id === activeVariants[0].id)}
+                onSave={saveTier}
+              />
+            )
+          }
+          return (
+            <>
+              {/* Variant tab strip — active variants only. Deactivated
+                  variants never surface here, they're managed via the
+                  Variants section above. */}
+              <div className="mb-4 flex flex-wrap gap-2">
+                {activeVariants.map((v) => {
+                  const isActive = activeVariantId === v.id
+                  return (
+                    <button
+                      key={v.id}
+                      onClick={() => setActiveVariantId(v.id)}
+                      className={[
+                        'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                        isActive
+                          ? 'bg-gray-900 text-white'
+                          : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
+                      ].join(' ')}
+                    >
+                      {v.display_name}
+                    </button>
+                  )
+                })}
+              </div>
+              <PriceGrid
+                tiers={tiers.filter((t) => t.material_variant_id === activeVariantId)}
+                onSave={saveTier}
+              />
+            </>
+          )
+        })()}
       </section>
     </div>
   )
