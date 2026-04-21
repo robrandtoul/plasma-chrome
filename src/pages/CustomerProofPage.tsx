@@ -342,7 +342,16 @@ export default function CustomerProofPage() {
                           // across columns.
                           className="border-t border-gray-100 pt-8 first:border-t-0 first:pt-0 sm:border-t-0 sm:pt-0"
                         >
-                          <h3 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
+                          {/* Name heading: scaled up + darkened
+                              so each named section reads as a
+                              first-class block ("these are Alice's
+                              cards") rather than a quiet tag. Kept
+                              uppercase + tracking to stay visually
+                              consistent with other section labels
+                              on the page. Darker grey matches the
+                              page's main customer-name treatment
+                              at the top. */}
+                          <h3 className="mb-4 text-lg font-bold uppercase tracking-wide text-gray-900">
                             {group.heading}
                           </h3>
                           <div className="space-y-6">
