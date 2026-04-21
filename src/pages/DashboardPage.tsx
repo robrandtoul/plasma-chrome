@@ -492,6 +492,30 @@ export default function DashboardPage() {
 
         ) : (
           <>
+            {/* ── Legend ──────────────────────────────────────────────────────
+                Persistent caption explaining the two indicator sets used
+                throughout the list: the viewed-state dots (left edge of every
+                row) and the status pills. Renders the real ViewedDot and
+                StatusPill components rather than re-implementing the styling,
+                so the legend can never drift from the actual indicators. Only
+                appears when there's content to explain — hidden on the empty
+                state and during the initial load. */}
+            <div className="mb-8 space-y-1.5 text-xs text-gray-500">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+                <span className="font-medium text-gray-400">Customer view</span>
+                <span className="inline-flex items-center gap-1.5"><ViewedDot state="unviewed" />Not viewed</span>
+                <span className="inline-flex items-center gap-1.5"><ViewedDot state="viewed_current" />Current version viewed</span>
+                <span className="inline-flex items-center gap-1.5"><ViewedDot state="viewed_stale" />Older version viewed</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+                <span className="font-medium text-gray-400">Project status</span>
+                <StatusPill status="in_progress" />
+                <StatusPill status="approved" />
+                <StatusPill status="dormant" />
+                <StatusPill status="abandoned" />
+              </div>
+            </div>
+
             {/* ── Recent projects (your own) ───────────────────────────────── */}
             {recent.length > 0 && (
               <div className="mb-8">
