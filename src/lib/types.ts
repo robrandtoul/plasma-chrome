@@ -46,6 +46,16 @@ export interface PublicProofVersion {
   material_icon_url: string | null
   option_label: string | null
   custom_quote: boolean
+  // ── Option 2 approval fields (migration 000066) ──────────────────────────
+  // All four stay null during option 1 (read-only customer page). The
+  // public_proof_versions view will be extended to expose these at the
+  // same time the Approve action is wired up, which is why the types
+  // here are optional: existing customer queries won't see the keys at
+  // all until the view ships.
+  approved_at?: string | null
+  approved_by_name?: string | null
+  approved_from_ip?: string | null
+  approved_from_ua?: string | null
 }
 
 export interface PublicMaterialOption {
