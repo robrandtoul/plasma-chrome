@@ -443,7 +443,7 @@ export default function ProofDetailPage() {
             <table className="w-full table-fixed text-sm">
               <thead>
                 <tr className="border-b border-gray-100">
-                  <th className="w-24 truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Version</th>
+                  <th className="w-36 truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Version</th>
                   <th className="w-36 truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Material</th>
                   <th className="w-28 truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Currency</th>
                   <th className="truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Notes</th>
