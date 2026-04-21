@@ -81,17 +81,25 @@ export default function CustomerProofPage() {
       // definitely settled by now (2.5s post-mount) so there's no
       // risk of a stale search string, and keeping the check
       // inside the timer means the effect body is a single
-      // uninterrupted schedule→cleanup pair, which avoids the
-      // subtle path-mismatch behaviour that showed up after the
-      // earlier attempt at a body-level guard. logCustomerEvent
+      // uninterrupted schedule→cleanup pair. logCustomerEvent
       // still fires from loadProof — that's a general audit
       // ledger, distinct from the view-tracking table.
       if (new URLSearchParams(window.location.search).get('preview') === '1') return
       viewRecordedRef.current = true
-      void supabase.rpc('record_proof_view', {
+      // .then() is load-bearing, not cosmetic. supabase.rpc()
+      // returns a PostgrestBuilder, a custom thenable — it only
+      // dispatches the fetch when something calls .then(),
+      // awaits, or iterates. `void supabase.rpc(…)` drops the
+      // reference without triggering execution, so the RPC
+      // silently never runs. Attaching .then() is the minimal
+      // way to force the request; the body is only there to
+      // surface server-side errors to the console.
+      supabase.rpc('record_proof_view', {
         p_version_id: versionId,
         p_user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
         p_ip: null, // server reads from request headers
+      }).then(({ error }) => {
+        if (error) console.error('[proof-viewer] record_proof_view failed:', error)
       })
     }, 2500)
     return () => window.clearTimeout(t)
