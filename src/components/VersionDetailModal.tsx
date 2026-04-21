@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { PricingDisplay } from './PricingDisplay'
 import { ImageGrid } from './ImageGrid'
 import type { Currency, PricingSnapshot } from '../lib/types'
+import { DEFAULT_FEATURED_QUANTITIES } from '../lib/constants'
 
 export interface ModalVersion {
   id: string
@@ -30,7 +31,6 @@ interface ModalImage {
   signed_url: string
 }
 
-const DEFAULT_FEATURED = [100, 250, 500, 750, 1000]
 
 export default function VersionDetailModal({
   version,
@@ -164,7 +164,7 @@ export default function VersionDetailModal({
     onVersionUpdated(`v${version.version_number} deleted`)
   }
 
-  const featuredQuantities = version.materials?.featured_quantities ?? DEFAULT_FEATURED
+  const featuredQuantities = version.materials?.featured_quantities ?? DEFAULT_FEATURED_QUANTITIES
   const isOnlyVersion = allVersions.length === 1
 
   const deleteConfirmText = isOnlyVersion

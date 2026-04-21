@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { supabase } from '../lib/supabase'
 import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { pluralLabel } from '../lib/labels'
+import { DEFAULT_FEATURED_QUANTITIES } from '../lib/constants'
 import { PricingDisplay } from '../components/PricingDisplay'
 import { PricingDisplayField, type PricingDisplayValue } from '../components/PricingDisplayField'
 import { CurrencyField } from '../components/CurrencyField'
@@ -59,7 +60,7 @@ export default function EditVersionPage() {
   const [pricingDisplay, setPricingDisplay] = useState<PricingDisplayValue | null>(null)
   const [pricingSnapshot, setPricingSnapshot] = useState<PricingSnapshot | null>(null)
   const [shippingNote, setShippingNote] = useState('')
-  const [featuredQuantities, setFeaturedQuantities] = useState<number[]>([100, 250, 500, 750, 1000])
+  const [featuredQuantities, setFeaturedQuantities] = useState<number[]>(DEFAULT_FEATURED_QUANTITIES)
   const [availableOptions, setAvailableOptions] = useState<MaterialOption[]>([])
   const [selectedOptions, setSelectedOptions] = useState<string[]>([])
   const [editImagesByOption, setEditImagesByOption] = useState<Record<string, EditImage[]>>({ '': [] })
@@ -89,7 +90,7 @@ export default function EditVersionPage() {
       supabase.from('proofs').select('contacts(full_name, companies(name))').eq('id', pid).single(),
       supabase
         .from('proof_versions')
-        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, materials(featured_quantities, requires_ink_names, option_label)')
+        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, materials(featured_quantities, requires_ink_names, option_label, multi_variant)')
         .eq('id', vid)
         .single(),
       supabase
@@ -128,7 +129,7 @@ export default function EditVersionPage() {
     setPricingDisplay(v.custom_quote ? 'custom' : 'standard')
     setPricingSnapshot(v.pricing_snapshot as PricingSnapshot)
     setShippingNote(v.shipping_note)
-    setFeaturedQuantities(v.materials?.featured_quantities ?? [100, 250, 500, 750, 1000])
+    setFeaturedQuantities(v.materials?.featured_quantities ?? DEFAULT_FEATURED_QUANTITIES)
 
     const versionOptions = (v.material_options as string[]) ?? []
     const materialId = v.material_id as string

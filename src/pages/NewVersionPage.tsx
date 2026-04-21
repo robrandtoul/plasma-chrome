@@ -5,7 +5,8 @@ import { supabase } from '../lib/supabase'
 import { logAudit } from '../lib/audit'
 import { formatPrice } from '../lib/currency'
 import { useImageFileDrop } from '../lib/useImageFileDrop'
-import { pluralLabel } from '../lib/labels'
+import { pluralLabel, variantLabel } from '../lib/labels'
+import { DEFAULT_FEATURED_QUANTITIES } from '../lib/constants'
 import { PricingDisplayField, type PricingDisplayValue } from '../components/PricingDisplayField'
 import { CurrencyField } from '../components/CurrencyField'
 import { PageDropOverlay } from '../components/PageDropOverlay'
@@ -17,9 +18,8 @@ interface Material {
   requires_ink_names: boolean
   option_label: string | null
   featured_quantities: number[] | null
+  multi_variant: boolean
 }
-
-const DEFAULT_FEATURED = [100, 250, 500, 750, 1000]
 
 interface Variant {
   id: string
@@ -112,7 +112,7 @@ export default function NewVersionPage() {
           setProofCompany(c.companies?.name ?? '')
         }
       })
-    supabase.from('materials').select('id, display_name, requires_ink_names, option_label, featured_quantities').eq('is_active', true).order('sort_order')
+    supabase.from('materials').select('id, display_name, requires_ink_names, option_label, featured_quantities, multi_variant').eq('is_active', true).order('sort_order')
       .then(({ data }) => setMaterials((data ?? []) as Material[]))
 
     // Pre-fill the pricing display + currency from admin-configured
@@ -163,7 +163,8 @@ export default function NewVersionPage() {
 
       const v = (variantsResult.data ?? []) as Variant[]
       setVariants(v)
-      if (v[0]?.variant_type === 'thickness') {
+      const pickedMaterial = materials.find((m) => m.id === selectedMaterialId)
+      if (pickedMaterial?.multi_variant) {
         setSelectedVariantIds(v.map((x) => x.id))
       } else if (v.length === 1) {
         setSelectedVariantIds([v[0].id])
@@ -510,10 +511,10 @@ export default function NewVersionPage() {
   }
 
   const variantType = variants[0]?.variant_type
-  const isThickness = variantType === 'thickness'
   const isCustomQuote = pricingDisplay === 'custom'
 
   const selectedMaterial = materials.find(m => m.id === selectedMaterialId)
+  const isMultiVariant = selectedMaterial?.multi_variant ?? false
   const requiresInkNames = selectedMaterial?.requires_ink_names ?? false
 
   // Option dimension label — singular ("Finish"/"Species") for in-copy use,
@@ -655,10 +656,10 @@ export default function NewVersionPage() {
               <div ref={variantRef} className="mb-4">
                 <label className="mb-2 block text-sm font-medium text-gray-700">
                   {variantLabel(variantType)}
-                  {isThickness && <span className="ml-2 font-normal text-gray-400">— select all to expose on the proof</span>}
+                  {isMultiVariant && <span className="ml-2 font-normal text-gray-400">— select all to expose on the proof</span>}
                 </label>
 
-                {isThickness ? (
+                {isMultiVariant ? (
                   <div className={[
                     'flex flex-wrap gap-2 rounded-lg',
                     shouldHighlight('variant') ? 'p-2 ring-1 ring-rose-300' : '',
@@ -913,7 +914,7 @@ export default function NewVersionPage() {
             if (!variant) return null
 
             const material = materials.find((m) => m.id === selectedMaterialId)
-            const featuredSet = new Set(material?.featured_quantities ?? DEFAULT_FEATURED)
+            const featuredSet = new Set(material?.featured_quantities ?? DEFAULT_FEATURED_QUANTITIES)
             const isOverridden = (qty: number) => {
               const t = tiers.find((x) => x.quantity === qty)
               if (!t) return false
@@ -1037,12 +1038,3 @@ function material_display_for(id: string, materials: Material[]) {
 
 const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
 const selectClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white'
-
-function variantLabel(variantType?: string): string {
-  switch (variantType) {
-    case 'thickness': return 'Thickness'
-    case 'ink_count': return 'Ink count'
-    case 'finish': return 'Finish'
-    default: return 'Variant'
-  }
-}
