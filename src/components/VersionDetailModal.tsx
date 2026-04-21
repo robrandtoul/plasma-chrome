@@ -5,6 +5,7 @@ import { PricingDisplay } from './PricingDisplay'
 import { ImageGrid } from './ImageGrid'
 import type { Currency, PricingSnapshot } from '../lib/types'
 import { DEFAULT_FEATURED_QUANTITIES } from '../lib/constants'
+import { relativeTime } from '../lib/relativeTime'
 
 export interface ModalVersion {
   id: string
@@ -38,6 +39,7 @@ export default function VersionDetailModal({
   proofLocked,
   lockReason,
   allVersions,
+  viewHistory,
   onClose,
   onVersionUpdated,
   onDeleteProofRequested,
@@ -47,6 +49,7 @@ export default function VersionDetailModal({
   proofLocked: boolean
   lockReason: 'approved' | 'abandoned' | null
   allVersions: ModalVersion[]
+  viewHistory?: { viewed_at: string; user_agent: string | null }[]
   onClose: () => void
   onVersionUpdated: (message: string) => void
   onDeleteProofRequested?: () => void
@@ -217,6 +220,29 @@ export default function VersionDetailModal({
 
           {/* Scrollable body */}
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+
+            {/* Customer view history for this version. Hidden when
+                no real (non-bot) views have landed yet. Up to five
+                most recent rows; anything older lives in audit_log
+                + proof_version_views. */}
+            {viewHistory && viewHistory.length > 0 && (
+              <div className="rounded-2xl bg-white p-5 ring-1 ring-gray-200">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-gray-400">Customer views</p>
+                <ul className="space-y-1">
+                  {viewHistory.slice(0, 5).map((v, i) => (
+                    <li key={i} className="flex items-center justify-between gap-3 text-sm">
+                      <span className="truncate text-gray-700">{summariseUserAgent(v.user_agent)}</span>
+                      <span className="shrink-0 text-xs text-gray-400" title={new Date(v.viewed_at).toLocaleString('en-GB')}>
+                        {relativeTime(v.viewed_at)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {viewHistory.length > 5 && (
+                  <p className="mt-2 text-xs text-gray-400">+{viewHistory.length - 5} earlier view{viewHistory.length - 5 === 1 ? '' : 's'}</p>
+                )}
+              </div>
+            )}
 
             {/* Change notes */}
             {version.change_notes && (
@@ -389,4 +415,31 @@ export default function VersionDetailModal({
       )}
     </>
   )
+}
+
+// One-line summary of a user-agent string for the view history
+// panel. Proper UA parsing is a rabbit hole; this picks the
+// obvious browser + platform tokens and composes "Chrome on
+// iPhone" style output. Falls back to the truncated raw UA if
+// neither rule matches.
+function summariseUserAgent(ua: string | null): string {
+  if (!ua) return 'Unknown client'
+  const browser =
+    /Edg\//.test(ua) ? 'Edge'
+    : /Chrome\//.test(ua) ? 'Chrome'
+    : /Firefox\//.test(ua) ? 'Firefox'
+    : /Safari\//.test(ua) && !/Chrome\//.test(ua) ? 'Safari'
+    : null
+  const platform =
+    /iPhone/.test(ua) ? 'iPhone'
+    : /iPad/.test(ua) ? 'iPad'
+    : /Android/.test(ua) ? 'Android'
+    : /Mac OS X/.test(ua) ? 'Mac'
+    : /Windows/.test(ua) ? 'Windows'
+    : /Linux/.test(ua) ? 'Linux'
+    : null
+  if (browser && platform) return `${browser} on ${platform}`
+  if (browser) return browser
+  if (platform) return platform
+  return ua.length > 60 ? ua.slice(0, 57) + '…' : ua
 }

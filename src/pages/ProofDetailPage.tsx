@@ -4,6 +4,13 @@ import { supabase } from '../lib/supabase'
 import VersionDetailModal, { type ModalVersion } from '../components/VersionDetailModal'
 import HelpScoutEditModal from '../components/HelpScoutEditModal'
 import { logAudit } from '../lib/audit'
+import { relativeTime } from '../lib/relativeTime'
+import {
+  computeViewedState,
+  viewedStateDotClass,
+  viewedStateTitle,
+  type ViewedState,
+} from '../lib/viewedState'
 
 interface Proof {
   id: string
@@ -34,6 +41,9 @@ export default function ProofDetailPage() {
   const [versions, setVersions] = useState<ModalVersion[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedVersion, setSelectedVersion] = useState<ModalVersion | null>(null)
+  // Real (non-bot) view times per version id for the dot indicators
+  // and the VersionDetailModal history panel.
+  const [viewsByVersion, setViewsByVersion] = useState<Map<string, { viewed_at: string; user_agent: string | null }[]>>(new Map())
   const [toast, setToast] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | 'abandon' | 'delete' | null>(null)
@@ -67,9 +77,32 @@ export default function ProofDetailPage() {
       return
     }
 
+    const loadedVersions = (versionsResult.data ?? []) as unknown as ModalVersion[]
     setProof(proofResult.data as unknown as Proof)
-    setVersions((versionsResult.data ?? []) as unknown as ModalVersion[])
+    setVersions(loadedVersions)
     setLoading(false)
+
+    // Pull non-bot view rows for every version on this proof. Same
+    // query shape as the dashboard's map; kept separate so reload
+    // flows (e.g. after a status change) refresh view data too.
+    const versionIds = loadedVersions.map((v) => v.id)
+    if (versionIds.length > 0) {
+      const { data: viewRows } = await supabase
+        .from('proof_version_views')
+        .select('proof_version_id, viewed_at, user_agent')
+        .eq('is_bot', false)
+        .in('proof_version_id', versionIds)
+        .order('viewed_at', { ascending: false })
+      const map = new Map<string, { viewed_at: string; user_agent: string | null }[]>()
+      for (const r of (viewRows ?? []) as any[]) {
+        const list = map.get(r.proof_version_id) ?? []
+        list.push({ viewed_at: r.viewed_at, user_agent: r.user_agent })
+        map.set(r.proof_version_id, list)
+      }
+      setViewsByVersion(map)
+    } else {
+      setViewsByVersion(new Map())
+    }
   }
 
   function showToast(message: string) {
@@ -420,13 +453,45 @@ export default function ProofDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {versions.map((v) => (
+                {versions.map((v) => {
+                  const viewsForThis = viewsByVersion.get(v.id) ?? []
+                  const hasReal = viewsForThis.length > 0
+                  let rowState: ViewedState
+                  if (v.is_current) {
+                    // Current version: three-state based on whether
+                    // any real view exists anywhere on the project
+                    // and whether this specific version is viewed.
+                    const viewedSet = new Set<string>()
+                    for (const [id, list] of viewsByVersion) {
+                      if (list.length > 0) viewedSet.add(id)
+                    }
+                    rowState = computeViewedState({ currentVersionId: v.id, viewedVersionIds: viewedSet })
+                  } else {
+                    // Older version: two-state. Green when the
+                    // customer actually opened that specific
+                    // version, grey when not.
+                    rowState = hasReal ? 'viewed_current' : 'unviewed'
+                  }
+                  const latest = viewsForThis[0]?.viewed_at ?? null
+                  return (
                   <tr
                     key={v.id}
                     onClick={() => setSelectedVersion(v)}
                     className="cursor-pointer border-b border-gray-50 last:border-0 hover:bg-gray-50"
                   >
-                    <td className="truncate px-4 py-4 font-medium text-gray-900">v{v.version_number}</td>
+                    <td className="truncate px-4 py-4 font-medium text-gray-900">
+                      <span className="flex items-center gap-2">
+                        <span
+                          aria-label={viewedStateTitle(rowState)}
+                          title={v.is_current ? viewedStateTitle(rowState) : (hasReal ? 'Viewed' : 'Not viewed')}
+                          className={['inline-block h-2.5 w-2.5 shrink-0 rounded-full', viewedStateDotClass(rowState)].join(' ')}
+                        />
+                        <span>v{v.version_number}</span>
+                        {latest && (
+                          <span className="ml-1 text-xs font-normal text-gray-400">· {relativeTime(latest)}</span>
+                        )}
+                      </span>
+                    </td>
                     <td className="truncate px-4 py-4 text-gray-700" title={v.material_display}>{v.material_display}</td>
                     <td className="truncate px-4 py-4 text-gray-500">{v.currency}</td>
                     <td className="truncate px-4 py-4 text-gray-500" title={v.change_notes ?? undefined}>{v.change_notes ?? '—'}</td>
@@ -453,7 +518,8 @@ export default function ProofDetailPage() {
                       </svg>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -545,6 +611,7 @@ export default function ProofDetailPage() {
           proofLocked={isLocked}
           lockReason={isAbandoned ? 'abandoned' : isApproved ? 'approved' : null}
           allVersions={versions}
+          viewHistory={viewsByVersion.get(selectedVersion.id) ?? []}
           onClose={() => setSelectedVersion(null)}
           onVersionUpdated={handleVersionUpdated}
           onDeleteProofRequested={() => {

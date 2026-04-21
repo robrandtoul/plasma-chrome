@@ -25,6 +25,10 @@ export default function CustomerProofPage() {
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const tabStripRef = useRef<HTMLDivElement>(null)
+  // Guards the once-per-page-load proof_version_views insert. A
+  // ref survives React strict-mode's double-invoke of effects
+  // whereas state wouldn't.
+  const viewRecordedRef = useRef(false)
 
   useEffect(() => {
     if (!id) { setNotFound(true); return }
@@ -55,6 +59,29 @@ export default function CustomerProofPage() {
   useEffect(() => {
     if (!activeVersion) return
     setActiveOptionCode(activeVersion.material_options[0] ?? null)
+  }, [activeVersion?.id])
+
+  // Fire a one-shot proof_version_views insert ~2.5s after the
+  // initial version becomes available. The delay filters out
+  // transient page loads where the customer clicks through to
+  // another tab immediately, and by sitting behind a setTimeout
+  // we also stay clear of the bot scanners that don't execute JS
+  // at all. Server-side bot classification (known preview UAs)
+  // handles the ones that do. Ref guard prevents double-fire in
+  // React strict mode.
+  useEffect(() => {
+    if (!activeVersion || viewRecordedRef.current) return
+    const versionId = activeVersion.id
+    const t = window.setTimeout(() => {
+      viewRecordedRef.current = true
+      void supabase.rpc('record_proof_view', {
+        p_version_id: versionId,
+        p_user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+        p_ip: null, // server reads from request headers
+      })
+    }, 2500)
+    return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeVersion?.id])
 
   async function loadProof(proofId: string) {

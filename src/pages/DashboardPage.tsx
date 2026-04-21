@@ -2,6 +2,13 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
+import { relativeTime } from '../lib/relativeTime'
+import {
+  computeViewedState,
+  viewedStateDotClass,
+  viewedStateTitle,
+  type ViewedState,
+} from '../lib/viewedState'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -35,6 +42,8 @@ interface ProofItem {
   current_version: number | null
   material_display: string | null
   status: Status
+  viewedState: ViewedState
+  lastViewedAt: string | null
 }
 
 interface RecentProject {
@@ -44,6 +53,8 @@ interface RecentProject {
   materialDisplay: string
   status: Status
   lastWorkedAt: string
+  viewedState: ViewedState
+  lastViewedAt: string | null
 }
 
 interface ContactGroup {
@@ -61,7 +72,12 @@ interface CompanySection {
 
 // ── Section builder ───────────────────────────────────────────────────────────
 
-function buildSections(rawProofs: any[], sort: SortMode, showDormant: boolean): CompanySection[] {
+function buildSections(
+  rawProofs: any[],
+  sort: SortMode,
+  showDormant: boolean,
+  viewedByProofId: Map<string, { state: ViewedState; lastViewedAt: string | null }>,
+): CompanySection[] {
   const map = new Map<string, CompanySection>()
 
   for (const p of rawProofs) {
@@ -104,12 +120,15 @@ function buildSections(rawProofs: any[], sort: SortMode, showDormant: boolean): 
 
     const versions = (p.proof_versions ?? []) as any[]
     const current  = versions.find((v) => v.is_current)
+    const viewed = viewedByProofId.get(p.id) ?? { state: 'unviewed' as ViewedState, lastViewedAt: null }
     cg.proofs.push({
       id: p.id,
       lastActivityAt,
       current_version:  current?.version_number   ?? null,
       material_display: current?.material_display ?? null,
       status,
+      viewedState: viewed.state,
+      lastViewedAt: viewed.lastViewedAt,
     })
   }
 
@@ -171,12 +190,16 @@ const ROW_GRID = 'grid items-center gap-3 grid-cols-[minmax(0,1fr)_8rem_7rem_5.5
 
 // ── Recent projects ───────────────────────────────────────────────────────────
 
-function buildRecent(versions: any[]): RecentProject[] {
+function buildRecent(
+  versions: any[],
+  viewedByProofId: Map<string, { state: ViewedState; lastViewedAt: string | null }>,
+): RecentProject[] {
   const seen = new Set<string>()
   const out: RecentProject[] = []
   for (const v of versions) {
     if (seen.has(v.proof_id)) continue
     seen.add(v.proof_id)
+    const viewed = viewedByProofId.get(v.proof_id) ?? { state: 'unviewed' as ViewedState, lastViewedAt: null }
     out.push({
       proofId: v.proof_id,
       customerName: v.proofs?.contacts?.full_name ?? '',
@@ -186,6 +209,8 @@ function buildRecent(versions: any[]): RecentProject[] {
       // Show the project's last activity (any user), not this user's version
       // timestamp, so both views on the page agree on the date.
       lastWorkedAt: v.proofs?.last_activity_at ?? v.created_at,
+      viewedState: viewed.state,
+      lastViewedAt: viewed.lastViewedAt,
     })
     if (out.length >= 10) break
   }
@@ -203,6 +228,23 @@ function StatusPill({ status }: { status: Status }) {
     return <span className="w-fit shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">Dormant</span>
   }
   return <span className="w-fit shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">In progress</span>
+}
+
+// Small solid circle that communicates a project's viewed state at
+// a glance. Title fires on hover as a plain browser tooltip so
+// screen-readers + keyboard users still hit the same info without a
+// richer popover layer.
+function ViewedDot({ state }: { state: ViewedState }) {
+  return (
+    <span
+      aria-label={viewedStateTitle(state)}
+      title={viewedStateTitle(state)}
+      className={[
+        'inline-block h-2.5 w-2.5 shrink-0 rounded-full',
+        viewedStateDotClass(state),
+      ].join(' ')}
+    />
+  )
 }
 
 function PreviewLink({ proofId, hasVersions }: { proofId: string; hasVersions: boolean }) {
@@ -263,6 +305,7 @@ export default function DashboardPage() {
   const { role } = useAuth()
   const [rawProofs, setRawProofs]       = useState<any[]>([])
   const [recent, setRecent]             = useState<RecentProject[]>([])
+  const [viewedByProofId, setViewedByProofId] = useState<Map<string, { state: ViewedState; lastViewedAt: string | null }>>(new Map())
   const [loading, setLoading]           = useState(true)
   const [search, setSearch]             = useState('')
   const [sort, setSort]                 = useState<SortMode>(readSort)
@@ -279,7 +322,7 @@ export default function DashboardPage() {
       .select(
         'id, created_at, last_activity_at, status,' +
         'contacts(id, full_name, companies(id, name)),' +
-        'proof_versions(version_number, is_current, material_display)'
+        'proof_versions(id, version_number, is_current, material_display)'
       )
       .order('last_activity_at', { ascending: false, nullsFirst: false })
 
@@ -302,8 +345,60 @@ export default function DashboardPage() {
 
     const [{ data: proofs }, { data: versions }] = await Promise.all([proofsPromise, recentPromise])
 
+    // Load real (non-bot) views for every version we just pulled.
+    // One query, then aggregate per version in JS. Designers
+    // almost always have far fewer versions than the 1k row cap.
+    const proofsList = (proofs ?? []) as any[]
+    const allVersionIds: string[] = []
+    for (const p of proofsList) {
+      for (const v of (p.proof_versions ?? [])) {
+        if (v?.id) allVersionIds.push(v.id)
+      }
+    }
+
+    const viewsByVersionId = new Map<string, string>() // versionId → latest viewed_at
+    if (allVersionIds.length > 0) {
+      const { data: viewRows } = await supabase
+        .from('proof_version_views')
+        .select('proof_version_id, viewed_at')
+        .eq('is_bot', false)
+        .in('proof_version_id', allVersionIds)
+        .order('viewed_at', { ascending: false })
+      for (const r of (viewRows ?? []) as any[]) {
+        if (!viewsByVersionId.has(r.proof_version_id)) {
+          viewsByVersionId.set(r.proof_version_id, r.viewed_at)
+        }
+      }
+    }
+
+    // Precompute per-project state + latest view so both the grouped
+    // list and the Recent projects row can read from one source.
+    const viewedByProofId = new Map<string, { state: ViewedState; lastViewedAt: string | null }>()
+    for (const p of proofsList) {
+      const vs = (p.proof_versions ?? []) as any[]
+      const currentVersionId = vs.find((v) => v.is_current)?.id ?? null
+      const viewedSet = new Set<string>()
+      let latest: string | null = null
+      for (const v of vs) {
+        const at = viewsByVersionId.get(v.id)
+        if (at) {
+          viewedSet.add(v.id)
+          if (!latest || at > latest) latest = at
+        }
+      }
+      const state = computeViewedState({ currentVersionId, viewedVersionIds: viewedSet })
+      // Prefer the current version's own view time if it's been
+      // viewed; otherwise the latest view across all versions.
+      const currentViewedAt = currentVersionId ? viewsByVersionId.get(currentVersionId) ?? null : null
+      viewedByProofId.set(p.id, {
+        state,
+        lastViewedAt: state === 'viewed_current' ? currentViewedAt : latest,
+      })
+    }
+
     setRawProofs(proofs ?? [])
-    setRecent(buildRecent((versions ?? []) as any[]))
+    setViewedByProofId(viewedByProofId)
+    setRecent(buildRecent((versions ?? []) as any[], viewedByProofId))
     setLoading(false)
   }
 
@@ -335,7 +430,7 @@ export default function DashboardPage() {
 
   const dormantCount = filtered.filter((p: any) => p.status === 'dormant').length
 
-  const sections = buildSections(filtered, sort, showDormant)
+  const sections = buildSections(filtered, sort, showDormant, viewedByProofId)
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -414,11 +509,18 @@ export default function DashboardPage() {
                           i > 0 ? 'border-t border-gray-100' : '',
                         ].join(' ')}
                       >
-                        {/* Customer + company */}
+                        {/* Customer + company, plus viewed-state dot + "Viewed Xh ago" tail */}
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-medium text-gray-900">{r.customerName}</div>
-                          {r.companyName && (
-                            <div className="truncate text-xs text-gray-400">{r.companyName}</div>
+                          <div className="flex items-center gap-2">
+                            <ViewedDot state={r.viewedState} />
+                            <span className="truncate text-sm font-medium text-gray-900">{r.customerName}</span>
+                          </div>
+                          {(r.companyName || (r.viewedState !== 'unviewed' && r.lastViewedAt)) && (
+                            <div className="truncate text-xs text-gray-400">
+                              {r.companyName}
+                              {r.companyName && r.viewedState !== 'unviewed' && r.lastViewedAt ? ' · ' : ''}
+                              {r.viewedState !== 'unviewed' && r.lastViewedAt ? `Viewed ${relativeTime(r.lastViewedAt)}` : ''}
+                            </div>
                           )}
                         </div>
                         <span className="truncate text-sm text-gray-400">{r.materialDisplay}</span>
@@ -547,8 +649,14 @@ export default function DashboardPage() {
                                   proof.status === 'dormant' ? 'opacity-50' : '',
                                 ].join(' ')}
                               >
-                                <span className="truncate text-sm text-gray-400">
-                                  {proof.current_version != null ? `v${proof.current_version}` : '—'}
+                                <span className="flex items-center gap-1.5 truncate text-sm text-gray-400">
+                                  <ViewedDot state={proof.viewedState} />
+                                  <span className="truncate">
+                                    {proof.current_version != null ? `v${proof.current_version}` : '—'}
+                                    {proof.viewedState !== 'unviewed' && proof.lastViewedAt && (
+                                      <span className="ml-1 text-[11px]">· Viewed {relativeTime(proof.lastViewedAt)}</span>
+                                    )}
+                                  </span>
                                 </span>
                                 <span className="truncate text-sm text-gray-400">
                                   {proof.material_display ?? '—'}
