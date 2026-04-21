@@ -34,7 +34,7 @@ export default function App() {
           <Route path="/proofs/:id" element={<RequireAuth><ProofDetailPage /></RequireAuth>} />
           <Route path="/proofs/:id/versions/new" element={<RequireAuth><NewVersionPage /></RequireAuth>} />
           <Route path="/proofs/:id/versions/:versionId/edit" element={<RequireAuth><EditVersionPage /></RequireAuth>} />
-          <Route path="/customers" element={<RequireAuth><CustomersPage /></RequireAuth>} />
+          <Route path="/customers" element={<RequireAdmin><CustomersPage /></RequireAdmin>} />
 
           {/* Admin area — all paths under /admin go through the admin shell */}
           <Route path="/admin" element={<RequireAdmin><AdminLayout /></RequireAdmin>}>
