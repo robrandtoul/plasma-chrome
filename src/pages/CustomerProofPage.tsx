@@ -314,7 +314,11 @@ export default function CustomerProofPage() {
                     : 'grid grid-cols-1 gap-8 sm:grid-cols-2 sm:gap-6 md:grid-cols-3'
 
               return (
-                <div className="mb-8 space-y-10">
+                // mt-10 gives the first heading (Shared hero or a
+                // named-group section heading) clear air above the
+                // version tab row / option switcher that sits
+                // directly above in the flow.
+                <div className="mb-8 mt-10 space-y-10">
                   {sharedGroup && (
                     <div className="mx-auto w-full max-w-[880px] space-y-6">
                       {sharedGroup.images.map((img) => (
