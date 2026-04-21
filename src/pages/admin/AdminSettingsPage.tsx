@@ -365,12 +365,20 @@ export default function AdminSettingsPage() {
                     )}
                   </div>
                 </div>
-                <button
-                  onClick={() => setEditingMaterial(m)}
-                  className="shrink-0 rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
-                >
-                  Edit
-                </button>
+                <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                  <button
+                    onClick={() => setEditingMaterial(m)}
+                    className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+                  >
+                    Edit
+                  </button>
+                  <Link
+                    to={`/admin/pricing/materials/${m.code}`}
+                    className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-50"
+                  >
+                    Pricing &amp; variants
+                  </Link>
+                </div>
               </div>
             ))
           )}

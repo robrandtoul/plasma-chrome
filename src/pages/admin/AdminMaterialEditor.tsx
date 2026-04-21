@@ -622,11 +622,18 @@ export default function AdminMaterialEditor() {
             </p>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-            {variants.length === 0 && !adding ? (
-              <p className="px-4 py-6 text-sm text-gray-400">No variants yet. Click "Add variant" to create one.</p>
-            ) : (
-              variants.map((v, i) => {
+          <>
+            {/* Soft bootstrap copy shown until the admin has added
+                at least one variant. Matches the tone of the empty
+                price-tier state below. */}
+            {variants.length === 0 && !adding && (
+              <p className="mb-3 text-sm text-gray-500">
+                No variants yet. Add your first variant below to start building the price list. For materials with a single price list, name it "Default".
+              </p>
+            )}
+            {(variants.length > 0 || adding) && (
+              <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+                {variants.map((v, i) => {
                 const isEditing = editingVariantId === v.id
                 return (
                   <div
@@ -705,13 +712,13 @@ export default function AdminMaterialEditor() {
                     </button>
                   </div>
                 )
-              })
-            )}
+              })}
 
-            {/* Inline add row */}
+            {/* Inline add row — stacks below sm so the Save/Cancel pair
+                doesn't get clipped off the right on phone widths. */}
             {adding && (
               <div className={[
-                'flex items-center gap-3 px-4 py-3',
+                'flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center',
                 variants.length > 0 ? 'border-t border-gray-100 bg-gray-50' : 'bg-gray-50',
               ].join(' ')}>
                 <input
@@ -734,27 +741,31 @@ export default function AdminMaterialEditor() {
                   }
                   className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2.5 py-1 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
                 />
-                <button
-                  type="button"
-                  onClick={() => void handleAddVariant()}
-                  disabled={variantInFlight || !addNameDraft.trim()}
-                  className="shrink-0 rounded-lg bg-gray-900 px-3 py-1 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-                >
-                  {variantInFlight ? 'Saving…' : 'Save'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAdding(false); setAddNameDraft(''); setVariantError(null)
-                  }}
-                  disabled={variantInFlight}
-                  className="shrink-0 rounded-lg px-3 py-1 text-sm font-medium text-gray-500 hover:bg-white disabled:opacity-50"
-                >
-                  Cancel
-                </button>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleAddVariant()}
+                    disabled={variantInFlight || !addNameDraft.trim()}
+                    className="shrink-0 rounded-lg bg-gray-900 px-3 py-1 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                  >
+                    {variantInFlight ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdding(false); setAddNameDraft(''); setVariantError(null)
+                    }}
+                    disabled={variantInFlight}
+                    className="shrink-0 rounded-lg px-3 py-1 text-sm font-medium text-gray-500 hover:bg-white disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             )}
-          </div>
+              </div>
+            )}
+          </>
         )}
 
         {variantError && (
@@ -809,7 +820,7 @@ export default function AdminMaterialEditor() {
                 /* Bootstrap state: no tiers yet, show the add form open
                    with a soft lead-in so the next step is obvious. */
                 <div className="space-y-3">
-                  <p className="text-sm text-gray-500">No price tiers yet. Add the first one below.</p>
+                  <p className="text-sm text-gray-500">No prices yet. Add your first quantity tier below.</p>
                   <AddTierForm
                     qty={tierQtyDraft}
                     gbp={tierGbpDraft}
@@ -927,6 +938,7 @@ function AddTierForm({
   const canSave = qty.trim() !== '' && gbp.trim() !== '' && eur.trim() !== '' && usd.trim() !== ''
   return (
     <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-200">
+      {/* Fields row: wraps on narrow, stays one line on wide. */}
       <div className="flex flex-wrap items-end gap-3">
         <div>
           <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-gray-400">Quantity</label>
@@ -944,26 +956,28 @@ function AddTierForm({
         <CurrencyTotalField label="GBP (inc VAT)" symbol="£" value={gbp} onChange={onGbp} disabled={inFlight} />
         <CurrencyTotalField label="EUR (ex VAT)"  symbol="€" value={eur} onChange={onEur} disabled={inFlight} />
         <CurrencyTotalField label="USD (ex VAT)"  symbol="$" value={usd} onChange={onUsd} disabled={inFlight} />
-        <div className="ml-auto flex items-center gap-2">
-          {onCancel && (
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={inFlight}
-              className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-white disabled:opacity-50"
-            >
-              Cancel
-            </button>
-          )}
+      </div>
+      {/* Actions row: always on its own line, right-aligned, so the
+          buttons never drift away from the fields on narrow widths. */}
+      <div className="mt-3 flex justify-end gap-2">
+        {onCancel && (
           <button
             type="button"
-            onClick={onSave}
-            disabled={inFlight || !canSave}
-            className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+            onClick={onCancel}
+            disabled={inFlight}
+            className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-white disabled:opacity-50"
           >
-            {inFlight ? 'Saving…' : 'Save tier'}
+            Cancel
           </button>
-        </div>
+        )}
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={inFlight || !canSave}
+          className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+        >
+          {inFlight ? 'Saving…' : 'Save tier'}
+        </button>
       </div>
     </div>
   )
