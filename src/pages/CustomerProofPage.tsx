@@ -81,7 +81,7 @@ export default function CustomerProofPage() {
     })
     if (!activeVersion || viewRecordedRef.current) return
     const versionId = activeVersion.id
-    const t = window.setTimeout(() => {
+    const t = window.setTimeout(async () => {
       console.log('[view-tracking] timer fired', {
         activeVersion,
         refCurrent: viewRecordedRef.current,
@@ -89,13 +89,16 @@ export default function CustomerProofPage() {
       if (viewRecordedRef.current) return
       viewRecordedRef.current = true
       console.log('[view-tracking] past guard, about to call RPC', { versionId })
-      supabase.rpc('record_proof_view', {
-        p_version_id: versionId,
-        p_user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
-        p_ip: null, // server reads from request headers
-      })
-        .then((result) => console.log('[view-tracking] RPC result', result))
-        .catch((err) => console.error('[view-tracking] RPC error', err))
+      try {
+        const result = await supabase.rpc('record_proof_view', {
+          p_version_id: versionId,
+          p_user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+          p_ip: null, // server reads from request headers
+        })
+        console.log('[view-tracking] RPC result', result)
+      } catch (err) {
+        console.error('[view-tracking] RPC error', err)
+      }
     }, 2500)
     return () => window.clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
