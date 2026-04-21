@@ -553,32 +553,16 @@ export default function ProofDetailPage() {
                   <h3 className="text-sm font-semibold text-gray-900">Preview as customer</h3>
                   <span className="text-xs text-gray-500">Exactly what the customer sees.</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  {/* ?preview=1 suppresses the view-tracking RPC
-                      on CustomerProofPage so designer previews
-                      don't pollute proof_version_views. Copy
-                      customer URL button stays unchanged — that
-                      link is for real customers and should be
-                      tracked. */}
-                  <a
-                    href={`/p/${proof.id}?preview=1`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
-                  >
-                    Open in new tab
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() => setShowCustomerPreview(false)}
-                    className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-                    aria-label="Close"
-                  >
-                    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                      <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-                    </svg>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowCustomerPreview(false)}
+                  className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                  aria-label="Close"
+                >
+                  <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                  </svg>
+                </button>
               </div>
               <iframe
                 src={`/p/${proof.id}?preview=1`}
