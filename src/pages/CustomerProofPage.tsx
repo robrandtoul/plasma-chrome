@@ -290,13 +290,25 @@ export default function CustomerProofPage() {
               </div>
             )}
 
-            {/* Proof images */}
-            <div className="mb-8">
-              <ImageGrid
-                images={displayImages}
-                versionNumber={activeVersion.version_number}
-                onImageClick={setLightboxSrc}
-              />
+            {/* Proof images — grouped by recipient name. Shared
+                section renders first if it sits alongside named
+                groups; otherwise the shared images render without
+                a heading (matching the pre-grouping customer view). */}
+            <div className="mb-8 space-y-6">
+              {buildImageGroups(displayImages).map((group, i) => (
+                <div key={`grp-${i}-${group.heading ?? 'shared-bare'}`}>
+                  {group.heading && (
+                    <h3 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
+                      {group.heading}
+                    </h3>
+                  )}
+                  <ImageGrid
+                    images={group.images}
+                    versionNumber={activeVersion.version_number}
+                    onImageClick={setLightboxSrc}
+                  />
+                </div>
+              ))}
             </div>
 
             {/* Spec summary */}
@@ -482,6 +494,73 @@ function formatNamesList(names: string[]): string {
   if (names.length === 1) return names[0]
   if (names.length === 2) return `${names[0]} and ${names[1]}`
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+}
+
+// Turn a flat image list into grouped-by-recipient sections for
+// the customer proof page. See the Phase on split-name imagery
+// for the shape rules:
+//
+//   * Shared (null-name) group renders first, with a "Shared"
+//     heading only if there's at least one named group alongside.
+//     If the entire list is shared, no heading (keeps the legacy
+//     layout).
+//   * Named groups render in first-appearance order from the image
+//     list (which follows sort_order).
+//   * Within each group, images sort front → back → unlabelled.
+//   * Caption for each image:
+//       side present    → "Front" or "Back"
+//       side null, ≥ 2 images in group → original filename stem
+//       side null, 1 image in group    → blank (no label row)
+//
+// The ImageGrid component reads each image's `label` field for the
+// caption, so the caption rule is applied by rewriting `label`
+// before the group is handed off.
+function buildImageGroups(images: GridImage[]): { heading: string | null; images: GridImage[] }[] {
+  const shared: GridImage[] = []
+  const namedOrder: string[] = []
+  const namedByKey = new Map<string, GridImage[]>()
+
+  for (const img of images) {
+    const name = img.associated_name ?? null
+    if (name == null) {
+      shared.push(img)
+      continue
+    }
+    if (!namedByKey.has(name)) {
+      namedByKey.set(name, [])
+      namedOrder.push(name)
+    }
+    namedByKey.get(name)!.push(img)
+  }
+
+  const sideWeight = (s: GridImage['side']): number =>
+    s === 'front' ? 0 : s === 'back' ? 1 : 2
+  const sideSort = (a: GridImage, b: GridImage) => sideWeight(a.side) - sideWeight(b.side)
+  shared.sort(sideSort)
+  for (const arr of namedByKey.values()) arr.sort(sideSort)
+
+  const applyCaptions = (group: GridImage[]): GridImage[] => {
+    const single = group.length === 1
+    return group.map((img) => {
+      let label = ''
+      if (img.side === 'front') label = 'Front'
+      else if (img.side === 'back') label = 'Back'
+      else if (!single && img.original_filename) {
+        label = img.original_filename.replace(/\.[^.]*$/, '')
+      }
+      return { ...img, label }
+    })
+  }
+
+  const hasNamed = namedOrder.length > 0
+  const groups: { heading: string | null; images: GridImage[] }[] = []
+  if (shared.length > 0) {
+    groups.push({ heading: hasNamed ? 'Shared' : null, images: applyCaptions(shared) })
+  }
+  for (const name of namedOrder) {
+    groups.push({ heading: name, images: applyCaptions(namedByKey.get(name)!) })
+  }
+  return groups
 }
 
 function LoadingScreen() {

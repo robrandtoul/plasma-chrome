@@ -11,6 +11,7 @@ import { PricingDisplayField, type PricingDisplayValue } from '../components/Pri
 import { CurrencyField } from '../components/CurrencyField'
 import { PageDropOverlay } from '../components/PageDropOverlay'
 import NameChipInput from '../components/NameChipInput'
+import { matchImageToName } from '../lib/matchImageToName'
 import type { Currency } from '../lib/types'
 
 interface Material {
@@ -49,6 +50,10 @@ interface ImageEntry {
   file: File
   preview: string
   label: string
+  // Pre-populated from matchImageToName when the file is added.
+  // Designer can override via the per-image dropdowns before save.
+  associated_name: string | null
+  side: 'front' | 'back' | null
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -321,12 +326,17 @@ export default function NewVersionPage() {
         ...prev,
         [activeKey]: [
           ...cur,
-          ...toAdd.map((file, i) => ({
-            localId: uuidv4(),
-            file,
-            preview: URL.createObjectURL(file),
-            label: defaultLabel(currentCount + i),
-          })),
+          ...toAdd.map((file, i) => {
+            const match = matchImageToName(file.name, names)
+            return {
+              localId: uuidv4(),
+              file,
+              preview: URL.createObjectURL(file),
+              label: defaultLabel(currentCount + i),
+              associated_name: match.associatedName,
+              side: match.side,
+            }
+          }),
         ],
       }
     })
@@ -352,6 +362,20 @@ export default function NewVersionPage() {
     setImagesByOption(prev => ({
       ...prev,
       [activeKey]: (prev[activeKey] ?? []).map(e => e.localId === localId ? { ...e, label } : e),
+    }))
+  }
+
+  function updateAssociatedName(localId: string, associated_name: string | null) {
+    setImagesByOption(prev => ({
+      ...prev,
+      [activeKey]: (prev[activeKey] ?? []).map(e => e.localId === localId ? { ...e, associated_name } : e),
+    }))
+  }
+
+  function updateSide(localId: string, side: 'front' | 'back' | null) {
+    setImagesByOption(prev => ({
+      ...prev,
+      [activeKey]: (prev[activeKey] ?? []).map(e => e.localId === localId ? { ...e, side } : e),
     }))
   }
 
@@ -510,6 +534,8 @@ export default function NewVersionPage() {
         sort_order: sortOrder,
         material_option: option,
         original_filename: entry.file.name,
+        associated_name: entry.associated_name,
+        side: entry.side,
       }
     })
 
@@ -887,6 +913,30 @@ export default function NewVersionPage() {
                       className="w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-gray-900 focus:outline-none"
                       placeholder="Label"
                     />
+                    {/* Per-image recipient + side. Pre-populated from
+                        the filename via matchImageToName when the
+                        file was added; designer can override. Shared
+                        (null) + chip values fill the Name dropdown.
+                        Side dropdown covers Front / Back / none. */}
+                    <select
+                      value={entry.associated_name ?? ''}
+                      onChange={(e) => updateAssociatedName(entry.localId, e.target.value || null)}
+                      className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-gray-900 focus:outline-none"
+                      aria-label="Associated name"
+                    >
+                      <option value="">Shared</option>
+                      {names.map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <select
+                      value={entry.side ?? ''}
+                      onChange={(e) => updateSide(entry.localId, (e.target.value || null) as 'front' | 'back' | null)}
+                      className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-gray-900 focus:outline-none"
+                      aria-label="Side"
+                    >
+                      <option value="">—</option>
+                      <option value="front">Front</option>
+                      <option value="back">Back</option>
+                    </select>
                     <p
                       className="mt-1 truncate text-[11px] text-gray-400"
                       title={entry.file.name}

@@ -6,6 +6,8 @@ export interface GridImage {
   label: string
   material_option?: string | null
   original_filename?: string | null
+  associated_name?: string | null
+  side?: 'front' | 'back' | null
 }
 
 async function downloadImage(url: string, filename: string) {

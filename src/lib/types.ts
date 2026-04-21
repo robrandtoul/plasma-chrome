@@ -107,6 +107,11 @@ export interface ProofVersionImage {
   sort_order: number
   material_option: string | null
   original_filename: string | null
+  // ── Name + side association (migration 000071) ───────────────────────────
+  // associated_name: null = shared across all names for this version.
+  // side: null = not labelled / not applicable.
+  associated_name: string | null
+  side: 'front' | 'back' | null
   // Resolved client-side — not a DB column.
   signed_url?: string
 }
