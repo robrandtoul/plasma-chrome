@@ -41,11 +41,15 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
   const [draftName, setDraftName] = useState(material.display_name)
   const [draftDesc, setDraftDesc] = useState(material.description ?? '')
   const [currentIconUrl, setCurrentIconUrl] = useState(material.icon_url)
+  const [isPublished, setIsPublished] = useState(material.is_published)
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [nameError, setNameError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  const [publishInFlight, setPublishInFlight] = useState(false)
+  const [publishConfirm, setPublishConfirm] = useState(false)
+  const [publishError, setPublishError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -219,6 +223,71 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
     })
   }
 
+  // ── Publish / unpublish ───────────────────────────────────────────────
+  //
+  // Unpublish is always immediate. Publish runs two cheap COUNT queries
+  // first — if the material has no active variants or no price tiers,
+  // show a soft "Publish anyway?" confirm so the admin can back out.
+  async function onPublishClick() {
+    setPublishError(null)
+    if (isPublished) { void applyPublishChange(false); return }
+
+    setPublishInFlight(true)
+    try {
+      const [variantsCount, tiersCount] = await Promise.all([
+        supabase
+          .from('material_variants')
+          .select('id', { count: 'exact', head: true })
+          .eq('material_id', material.id)
+          .eq('is_active', true),
+        supabase
+          .from('price_tiers')
+          .select('id, material_variants!inner(material_id)', { count: 'exact', head: true })
+          .eq('material_variants.material_id', material.id),
+      ])
+      const variantN = variantsCount.count ?? 0
+      const tierN = tiersCount.count ?? 0
+      if (variantN === 0 || tierN === 0) {
+        setPublishConfirm(true)
+        setPublishInFlight(false)
+        return
+      }
+      await applyPublishChange(true)
+    } catch (e) {
+      setPublishError((e as Error).message)
+      setPublishInFlight(false)
+    }
+  }
+
+  async function applyPublishChange(next: boolean) {
+    setPublishInFlight(true)
+    setPublishError(null)
+    try {
+      const { error: err } = await supabase
+        .from('materials')
+        .update({ is_published: next })
+        .eq('id', material.id)
+      if (err) throw new Error(err.message)
+      setIsPublished(next)
+      material.is_published = next
+      onSaved({ ...material })
+      setSavedAt(Date.now())
+      setPublishConfirm(false)
+      void logAudit({
+        action: next ? 'material_published' : 'material_unpublished',
+        targetType: 'material',
+        targetId: material.id,
+        targetLabel: material.display_name,
+        beforeValue: { is_published: !next },
+        afterValue: { is_published: next },
+      })
+    } catch (e) {
+      setPublishError((e as Error).message)
+    } finally {
+      setPublishInFlight(false)
+    }
+  }
+
   const recentlySaved = savedAt != null && Date.now() - savedAt < 2000
 
   return (
@@ -351,6 +420,43 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
               </p>
             </section>
 
+            {/* Publish status */}
+            <section>
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">Publish status</label>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-gray-50 px-4 py-3 ring-1 ring-gray-200">
+                <div className="flex items-center gap-3">
+                  {isPublished ? (
+                    <span className="inline-block rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">Published</span>
+                  ) : (
+                    <span className="inline-block rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">Unpublished</span>
+                  )}
+                  <p className="text-sm text-gray-600">
+                    {isPublished
+                      ? 'This material is live.'
+                      : 'This material is not visible to designers yet.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onPublishClick}
+                  disabled={publishInFlight || saving}
+                  className={[
+                    'rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50',
+                    isPublished
+                      ? 'text-gray-600 ring-1 ring-gray-200 hover:bg-white'
+                      : 'bg-gray-900 text-white hover:bg-gray-700',
+                  ].join(' ')}
+                >
+                  {publishInFlight
+                    ? 'Saving…'
+                    : isPublished ? 'Unpublish' : 'Publish'}
+                </button>
+              </div>
+              {publishError && (
+                <p className="mt-1.5 text-xs text-rose-600">{publishError}</p>
+              )}
+            </section>
+
             {error && (
               <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>
             )}
@@ -367,6 +473,37 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
           </div>
         </div>
       </div>
+
+      {/* Soft-confirm modal for publishing a material with nothing in it.
+          Higher z-index so it stacks above the content modal. */}
+      {publishConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-gray-200">
+            <h4 className="text-base font-semibold text-gray-900">Publish anyway?</h4>
+            <p className="mt-2 text-sm text-gray-600">
+              This material has no variants or prices. Designers will see it but won't be able to add versions with it. Publish anyway?
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPublishConfirm(false)}
+                disabled={publishInFlight}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void applyPublishChange(true)}
+                disabled={publishInFlight}
+                className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+              >
+                {publishInFlight ? 'Publishing…' : 'Publish anyway'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
