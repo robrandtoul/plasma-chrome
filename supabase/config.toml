@@ -381,6 +381,12 @@ deno_version = 2
 [functions.match-helpscout-conversation]
 verify_jwt = false
 
+# Same shape as match-helpscout-conversation: the handler does its own
+# supabase.auth.getUser() check, so the platform-level JWT check is
+# off to match the sibling function's proven pattern.
+[functions.lookup-helpscout-conversation]
+verify_jwt = false
+
 # Admin user-management functions: each checks is_admin() itself before
 # doing anything, so the platform-level JWT check is off for the same
 # reason (stale JWTs would otherwise hit 401 before our checks run).

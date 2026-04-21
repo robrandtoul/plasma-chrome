@@ -320,8 +320,33 @@ export default function NewProofPage() {
       const { data, error: fnError } = await supabase.functions.invoke('lookup-helpscout-conversation', {
         body: parsed,
       })
-      if (fnError) throw new Error(fnError.message || 'Lookup failed')
-      if (!data || data.error) throw new Error(data?.error ?? 'Lookup failed')
+      if (fnError) {
+        // FunctionsHttpError wraps a Response on `.context` that
+        // carries the function's own JSON error body (e.g. "No Help
+        // Scout conversation found with number 420859."). Read it
+        // so the designer sees something actionable rather than the
+        // stock "Edge Function returned a non-2xx status code".
+        let friendly = 'Help Scout lookup failed, please try again or enter details manually.'
+        try {
+          const ctx = (fnError as { context?: unknown }).context
+          if (ctx instanceof Response) {
+            const body = await ctx.clone().json()
+            if (body && typeof body.error === 'string' && body.error.trim()) {
+              friendly = body.error
+            }
+          }
+        } catch {
+          // fall through to the friendly default
+        }
+        setPasteError(friendly)
+        setPasteInFlight(false)
+        return
+      }
+      if (!data || data.error) {
+        setPasteError(data?.error ?? 'Help Scout lookup failed, please try again or enter details manually.')
+        setPasteInFlight(false)
+        return
+      }
       if (!data.customer) {
         setPasteError('Found the conversation but it has no primary customer attached. Fix that in Help Scout, or enter details manually below.')
         setPasteInFlight(false)
@@ -329,7 +354,7 @@ export default function NewProofPage() {
       }
       await applyPasteResult(data)
     } catch (e) {
-      setPasteError((e as Error).message)
+      setPasteError((e as Error).message || 'Help Scout lookup failed, please try again or enter details manually.')
     } finally {
       setPasteInFlight(false)
     }
