@@ -1,3 +1,5 @@
+import { downloadBlob } from '../lib/downloadFile'
+
 export interface GridImage {
   id: string
   signed_url: string
@@ -9,14 +11,7 @@ export interface GridImage {
 async function downloadImage(url: string, filename: string) {
   const resp = await fetch(url)
   const blob = await resp.blob()
-  const blobUrl = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = blobUrl
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(blobUrl)
+  downloadBlob(blob, filename)
 }
 
 function Caption({ label, filename, signedUrl }: { label: string; filename?: string | null; signedUrl: string }) {

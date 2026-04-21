@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
+import { downloadBlob } from '../../lib/downloadFile'
 import AuditEntryModal, { type AuditEntry } from './AuditEntryModal'
 import {
   ACTION_GROUPS,
@@ -212,14 +213,7 @@ export default function AdminActivityPage() {
       const blob = await resp.blob()
       const filenameHeader = resp.headers.get('Content-Disposition') ?? ''
       const filename = filenameHeader.match(/filename="([^"]+)"/)?.[1] ?? 'audit_log.csv'
-      const blobUrl = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = blobUrl
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(blobUrl)
+      downloadBlob(blob, filename)
     } catch (e) {
       setExportError((e as Error).message)
     } finally {

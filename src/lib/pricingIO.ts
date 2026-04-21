@@ -5,6 +5,7 @@
 // invoke() is fine.
 
 import { supabase } from './supabase'
+import { downloadBlob } from './downloadFile'
 
 const SUPABASE_URL: string = import.meta.env.VITE_SUPABASE_URL
 
@@ -30,14 +31,7 @@ export async function downloadPricingExport(scope: string, fallbackFilename: str
   }
   const blob = await resp.blob()
   const filename = filenameFromContentDisposition(resp.headers.get('Content-Disposition')) ?? fallbackFilename
-  const blobUrl = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = blobUrl
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(blobUrl)
+  downloadBlob(blob, filename)
 }
 
 // ── Import ──────────────────────────────────────────────────────────────────
