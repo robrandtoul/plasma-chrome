@@ -70,15 +70,32 @@ export default function CustomerProofPage() {
   // handles the ones that do. Ref guard prevents double-fire in
   // React strict mode.
   useEffect(() => {
+    // TEMP DIAGNOSTIC: Rob is not seeing a record_proof_view
+    // network request despite this effect being in place. These
+    // console.logs trace execution from effect entry through
+    // timer fire through RPC call. Remove once the cause is
+    // identified.
+    console.log('[view-tracking] effect ran', {
+      activeVersion,
+      refCurrent: viewRecordedRef.current,
+    })
     if (!activeVersion || viewRecordedRef.current) return
     const versionId = activeVersion.id
     const t = window.setTimeout(() => {
+      console.log('[view-tracking] timer fired', {
+        activeVersion,
+        refCurrent: viewRecordedRef.current,
+      })
+      if (viewRecordedRef.current) return
       viewRecordedRef.current = true
-      void supabase.rpc('record_proof_view', {
+      console.log('[view-tracking] past guard, about to call RPC', { versionId })
+      supabase.rpc('record_proof_view', {
         p_version_id: versionId,
         p_user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
         p_ip: null, // server reads from request headers
       })
+        .then((result) => console.log('[view-tracking] RPC result', result))
+        .catch((err) => console.error('[view-tracking] RPC error', err))
     }, 2500)
     return () => window.clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
