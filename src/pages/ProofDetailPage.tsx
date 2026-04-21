@@ -554,8 +554,14 @@ export default function ProofDetailPage() {
                   <span className="text-xs text-gray-500">Exactly what the customer sees.</span>
                 </div>
                 <div className="flex items-center gap-2">
+                  {/* ?preview=1 suppresses the view-tracking RPC
+                      on CustomerProofPage so designer previews
+                      don't pollute proof_version_views. Copy
+                      customer URL button stays unchanged — that
+                      link is for real customers and should be
+                      tracked. */}
                   <a
-                    href={`/p/${proof.id}`}
+                    href={`/p/${proof.id}?preview=1`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
@@ -575,7 +581,7 @@ export default function ProofDetailPage() {
                 </div>
               </div>
               <iframe
-                src={`/p/${proof.id}`}
+                src={`/p/${proof.id}?preview=1`}
                 title="Customer preview"
                 className="flex-1 border-0 bg-white"
               />

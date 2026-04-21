@@ -71,6 +71,16 @@ export default function CustomerProofPage() {
   // React strict mode.
   useEffect(() => {
     if (!activeVersion || viewRecordedRef.current) return
+    // Designer-preview bypass: the "Preview as customer" button on
+    // the admin proof detail page opens this URL with ?preview=1
+    // so the RPC doesn't pollute proof_version_views with designer
+    // hits that would make the dashboard dot read as "viewed
+    // current version" when the real customer hasn't opened the
+    // link yet. logCustomerEvent below still fires — that's a
+    // general audit ledger, distinct from the view-tracking table.
+    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('preview') === '1') {
+      return
+    }
     const versionId = activeVersion.id
     const t = window.setTimeout(() => {
       if (viewRecordedRef.current) return
