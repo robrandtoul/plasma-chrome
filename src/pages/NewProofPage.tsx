@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { logAudit } from '../lib/audit'
+import { parseHelpscoutUrl, MIN_OVERRIDE_REASON_LENGTH } from '../lib/helpscout'
 
 // ── Local types ───────────────────────────────────────────────────────────────
 
@@ -76,6 +77,13 @@ export default function NewProofPage() {
   const [hsPickerMatches, setHsPickerMatches] = useState<HelpScoutMatch[]>([])
   const [hsLookupError, setHsLookupError] = useState<string | null>(null)
   const [hsLookupInFlight, setHsLookupInFlight] = useState(false)
+  // Shown when a lookup came back with zero matches, or the designer
+  // clicked the "these aren't right" escape hatch on the multi-match
+  // picker. Populated reason becomes helpscout_override_reason on the
+  // proof row when a link isn't available.
+  const [hsLookupReturnedZero, setHsLookupReturnedZero] = useState(false)
+  const [overrideReason, setOverrideReason] = useState('')
+  const [urlFormatError, setUrlFormatError] = useState<string | null>(null)
 
   // Load all companies once on mount
   useEffect(() => {
@@ -202,15 +210,18 @@ export default function NewProofPage() {
       if (fnError) throw new Error(fnError.message || 'Help Scout lookup failed')
       const matches: HelpScoutMatch[] = (data?.matches ?? []) as HelpScoutMatch[]
       if (matches.length === 0) {
-        // Only wipe the URL input if it came from a prior auto-link; preserve
-        // anything the designer typed manually.
+        // Previously silently cleared. New rule: surface the override
+        // panel so the designer has to justify the missing link.
         if (hsConversationId) setHelpscoutUrl('')
         clearHelpscoutLink()
+        setHsLookupReturnedZero(true)
       } else if (matches.length === 1) {
         applyHelpscoutMatch(matches[0])
       } else {
         setHsPickerMatches(matches)
         setHsPickerOpen(true)
+        setHsLookupReturnedZero(false)
+        setOverrideReason('')
       }
     } catch (err) {
       setHsLookupError((err as Error).message)
@@ -225,6 +236,9 @@ export default function NewProofPage() {
     setHelpscoutUrl(m.url)
     setHsPickerOpen(false)
     setHsPickerMatches([])
+    setHsLookupReturnedZero(false)
+    setOverrideReason('')
+    setUrlFormatError(null)
   }
 
   function clearHelpscoutLink() {
@@ -233,6 +247,15 @@ export default function NewProofPage() {
     // Don't wipe helpscoutUrl — it may contain a manually-pasted value.
     setHsPickerOpen(false)
     setHsPickerMatches([])
+  }
+
+  // Designer picked the "these aren't right" escape hatch on the
+  // multi-match picker. Drop the picker, clear any link state, and
+  // reveal the override panel.
+  function useOverrideInsteadOfPicker() {
+    clearHelpscoutLink()
+    setHelpscoutUrl('')
+    setHsLookupReturnedZero(true)
   }
 
   // Close dropdowns when clicking outside their containers
@@ -348,6 +371,21 @@ export default function NewProofPage() {
       }
     }
 
+    // Help Scout: require either a valid conversation URL or a
+    // sufficiently-long override reason. Mirrors the DB check
+    // constraint, with URL format validation on top.
+    const typedUrl = helpscoutUrl.trim()
+    const parsedUrl = typedUrl ? parseHelpscoutUrl(typedUrl) : null
+    const reason = overrideReason.trim()
+    if (typedUrl && !parsedUrl) {
+      setError('The Help Scout URL is invalid. Expected https://secure.helpscout.net/conversation/<id>.')
+      return
+    }
+    if (!parsedUrl && reason.length < MIN_OVERRIDE_REASON_LENGTH) {
+      setError(`Pick a Help Scout conversation, or provide an override reason of at least ${MIN_OVERRIDE_REASON_LENGTH} characters.`)
+      return
+    }
+
     setSubmitting(true)
     try {
       // 1. Create company if it's new
@@ -407,19 +445,23 @@ export default function NewProofPage() {
         })
       }
 
-      // 3. Create proof
-      const trimmedUrl = helpscoutUrl.trim() || null
+      // 3. Create proof. Insert either a link (conversation_id + URL
+      // mirrored to the legacy thread_url column) or an override
+      // reason — never both, never neither (DB check constraint
+      // enforces the latter).
+      const resolvedConvoId = parsedUrl?.id ?? null
+      const resolvedConvoUrl = parsedUrl?.url ?? null
+      const resolvedOverride = resolvedConvoId ? null : reason
       const { data, error } = await supabase
         .from('proofs')
         .insert({
           contact_id: contactId,
-          // Mirror the resolved URL into the legacy column so the detail
-          // page's existing display works without conditional logic.
-          helpscout_thread_url: trimmedUrl,
-          helpscout_conversation_id: hsConversationId,
-          helpscout_conversation_url: hsConversationId ? trimmedUrl : null,
-          internal_notes: internalNotes.trim() || null,
-          created_by: session!.user.id,
+          helpscout_thread_url:        resolvedConvoUrl,
+          helpscout_conversation_id:   resolvedConvoId,
+          helpscout_conversation_url:  resolvedConvoUrl,
+          helpscout_override_reason:   resolvedOverride,
+          internal_notes:              internalNotes.trim() || null,
+          created_by:                  session!.user.id,
         })
         .select('id')
         .single()
@@ -432,16 +474,27 @@ export default function NewProofPage() {
         targetLabel: selectedContact?.full_name ?? newContactName.trim(),
         metadata: { contact_id: contactId, company_id: companyId },
       })
-      if (hsConversationId) {
+      if (resolvedConvoId) {
         void logAudit({
-          action: 'proof.helpscout_linked',
+          action: 'proof.helpscout_link_set',
           targetType: 'proof',
           targetId: data.id,
           targetLabel: selectedContact?.full_name ?? newContactName.trim(),
           metadata: {
-            helpscout_conversation_id: hsConversationId,
-            helpscout_conversation_url: trimmedUrl,
-            source: hsPickerMatches.length > 0 ? 'picker' : 'auto',
+            helpscout_conversation_id:  resolvedConvoId,
+            helpscout_conversation_url: resolvedConvoUrl,
+            source: hsPickerMatches.length > 0 ? 'picker' : hsLookupEmail ? 'auto' : 'manual',
+          },
+        })
+      } else if (resolvedOverride) {
+        void logAudit({
+          action: 'proof.helpscout_override_set',
+          targetType: 'proof',
+          targetId: data.id,
+          targetLabel: selectedContact?.full_name ?? newContactName.trim(),
+          metadata: {
+            reason: resolvedOverride,
+            lookup_email: hsLookupEmail,
           },
         })
       }
@@ -677,24 +730,49 @@ export default function NewProofPage() {
 
             <div className="mb-4">
               <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                Help Scout thread URL{' '}
-                <span className="font-normal text-gray-400">(recommended)</span>
+                Help Scout conversation URL{' '}
+                <span className="text-red-500">*</span>
               </label>
               <input
                 type="url"
                 value={helpscoutUrl}
                 onChange={(e) => {
-                  setHelpscoutUrl(e.target.value)
-                  // Any manual edit clears the API-linked state.
-                  if (hsConversationId) clearHelpscoutLink()
+                  const v = e.target.value
+                  setHelpscoutUrl(v)
+                  setUrlFormatError(null)
+                  // Manual edit: re-derive the linked state from the
+                  // typed value. Valid URL → populate conversation_id
+                  // so the submit path treats it as a first-class
+                  // link. Invalid or empty → drop any prior link.
+                  const parsed = parseHelpscoutUrl(v)
+                  if (parsed) {
+                    setHsConversationId(parsed.id)
+                    // Use the looked-up subject if we happen to have
+                    // one for the same id, otherwise fall back to a
+                    // generic label.
+                    if (!hsLinkedSubject || hsConversationId !== parsed.id) {
+                      setHsLinkedSubject(`Conversation #${parsed.id}`)
+                    }
+                    setHsLookupReturnedZero(false)
+                  } else if (v.trim() === '') {
+                    clearHelpscoutLink()
+                  } else {
+                    clearHelpscoutLink()
+                  }
                 }}
-                placeholder="https://secure.helpscout.net/…"
+                onBlur={(e) => {
+                  const v = e.target.value.trim()
+                  if (v && !parseHelpscoutUrl(v)) {
+                    setUrlFormatError('Must be a Help Scout conversation URL like https://secure.helpscout.net/conversation/12345.')
+                  }
+                }}
+                placeholder="https://secure.helpscout.net/conversation/…"
                 className={inputClass}
               />
               {hsLookupInFlight && (
                 <p className="mt-1.5 text-xs text-gray-400">Checking Help Scout…</p>
               )}
-              {!hsLookupInFlight && hsLinkedSubject && (
+              {!hsLookupInFlight && hsLinkedSubject && hsConversationId && (
                 <p className="mt-1.5 text-xs text-emerald-600">
                   Linked to Help Scout thread: <span className="font-medium">{hsLinkedSubject}</span>
                 </p>
@@ -708,12 +786,48 @@ export default function NewProofPage() {
                   Multiple Help Scout threads found — choose one
                 </button>
               )}
+              {urlFormatError && (
+                <p className="mt-1.5 text-xs text-red-600">{urlFormatError}</p>
+              )}
               {hsLookupError && (
                 <p className="mt-1.5 text-xs text-gray-400">
-                  Couldn't check Help Scout — {hsLookupError}. Paste a URL manually if needed.
+                  Couldn't check Help Scout — {hsLookupError}. Paste a URL manually or provide an override reason.
                 </p>
               )}
             </div>
+
+            {/* Override reason panel. Shown when a lookup came back
+                with zero matches or the designer clicked "these aren't
+                right" on the picker. Must be at least
+                MIN_OVERRIDE_REASON_LENGTH chars to submit. */}
+            {hsLookupReturnedZero && !hsConversationId && (
+              <div className="mb-4 rounded-lg bg-amber-50 p-4 ring-1 ring-amber-100">
+                <p className="text-sm font-medium text-amber-900">
+                  No Help Scout conversation linked
+                </p>
+                <p className="mt-1 text-xs text-amber-800">
+                  {hsLookupEmail
+                    ? `No matches found for ${hsLookupEmail}.`
+                    : ''}{' '}
+                  Paste a conversation URL above, or provide a reason to continue without one.
+                </p>
+                <label className="mt-3 block text-xs font-medium text-amber-900">
+                  Why is this proof not linked to a Help Scout conversation? <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  placeholder={`At least ${MIN_OVERRIDE_REASON_LENGTH} characters.`}
+                  className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+                <p className="mt-1 text-xs text-amber-700">
+                  {overrideReason.trim().length < MIN_OVERRIDE_REASON_LENGTH
+                    ? `${overrideReason.trim().length} / ${MIN_OVERRIDE_REASON_LENGTH} characters`
+                    : 'OK'}
+                </p>
+              </div>
+            )}
 
             <div>
               <label className="mb-1.5 block text-sm font-medium text-gray-700">
@@ -747,9 +861,13 @@ export default function NewProofPage() {
         <HelpScoutPicker
           matches={hsPickerMatches}
           onPick={(m) => applyHelpscoutMatch(m)}
-          onSkip={() => {
-            clearHelpscoutLink()
+          onOverride={() => {
+            // Close picker and reveal the override-reason panel.
+            // Designer must type a reason to continue; there's no
+            // silent-skip path any more.
+            setHsPickerOpen(false)
             setHsPickerMatches([])
+            useOverrideInsteadOfPicker()
           }}
           onClose={() => setHsPickerOpen(false)}
         />
@@ -761,12 +879,12 @@ export default function NewProofPage() {
 function HelpScoutPicker({
   matches,
   onPick,
-  onSkip,
+  onOverride,
   onClose,
 }: {
   matches: HelpScoutMatch[]
   onPick: (m: HelpScoutMatch) => void
-  onSkip: () => void
+  onOverride: () => void
   onClose: () => void
 }) {
   const firstRef = useRef<HTMLButtonElement>(null)
@@ -815,10 +933,10 @@ function HelpScoutPicker({
           <div className="mt-4 flex items-center justify-between">
             <button
               type="button"
-              onClick={onSkip}
+              onClick={onOverride}
               className="text-xs text-gray-500 underline hover:text-gray-900"
             >
-              None of these / link manually later
+              These aren't right — I'll provide a reason
             </button>
             <button
               type="button"

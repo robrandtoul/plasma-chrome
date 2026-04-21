@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import VersionDetailModal, { type ModalVersion } from '../components/VersionDetailModal'
+import HelpScoutEditModal from '../components/HelpScoutEditModal'
 import { logAudit } from '../lib/audit'
 
 interface Proof {
@@ -10,6 +11,9 @@ interface Proof {
   approved_at: string | null
   abandoned_at: string | null
   helpscout_thread_url: string | null
+  helpscout_conversation_id: string | null
+  helpscout_conversation_url: string | null
+  helpscout_override_reason: string | null
   internal_notes: string | null
   created_at: string
   contacts: {
@@ -35,6 +39,7 @@ export default function ProofDetailPage() {
   const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | 'abandon' | 'delete' | null>(null)
   const [statusWorking, setStatusWorking] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [showHelpscoutEdit, setShowHelpscoutEdit] = useState(false)
   const fallbackInputRef = useRef<HTMLInputElement>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -46,7 +51,7 @@ export default function ProofDetailPage() {
     const [proofResult, versionsResult] = await Promise.all([
       supabase
         .from('proofs')
-        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, internal_notes, created_at, contacts(full_name, email, companies(name))')
+        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, contacts(full_name, email, companies(name))')
         .eq('id', proofId)
         .single(),
       supabase
@@ -336,24 +341,50 @@ export default function ProofDetailPage() {
           </div>
         </div>
 
-        {/* Internal metadata */}
-        {(proof.helpscout_thread_url || proof.internal_notes) && (
-          <div className="mb-8 rounded-2xl bg-amber-50 p-5 ring-1 ring-amber-100">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-amber-600">Internal</p>
-            {proof.helpscout_thread_url && (
-              <p className="mb-1 text-sm">
+        {/* Internal metadata. Always rendered so the Change Help
+            Scout button is always reachable — even proofs with
+            nothing recorded can have their link set from here. */}
+        <div className="mb-8 rounded-2xl bg-amber-50 p-5 ring-1 ring-amber-100">
+          <div className="flex items-start justify-between gap-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-amber-600">Internal</p>
+            <button
+              type="button"
+              onClick={() => setShowHelpscoutEdit(true)}
+              className="shrink-0 text-xs text-amber-700 underline hover:text-amber-900"
+            >
+              Change Help Scout conversation
+            </button>
+          </div>
+          <div className="mt-2 space-y-1 text-sm">
+            {proof.helpscout_conversation_url ? (
+              <p>
                 <span className="text-gray-500">Help Scout: </span>
+                <a href={proof.helpscout_conversation_url} target="_blank" rel="noopener noreferrer"
+                  className="text-amber-800 underline">
+                  {proof.helpscout_conversation_url}
+                </a>
+              </p>
+            ) : proof.helpscout_override_reason ? (
+              <p className="text-amber-900">
+                <span className="text-gray-500">Help Scout override: </span>
+                <span className="italic">{proof.helpscout_override_reason}</span>
+              </p>
+            ) : proof.helpscout_thread_url ? (
+              <p>
+                <span className="text-gray-500">Help Scout (legacy): </span>
                 <a href={proof.helpscout_thread_url} target="_blank" rel="noopener noreferrer"
                   className="text-amber-800 underline">
                   {proof.helpscout_thread_url}
                 </a>
               </p>
+            ) : (
+              <p className="italic text-gray-500">No Help Scout conversation linked.</p>
             )}
             {proof.internal_notes && (
-              <p className="text-sm text-amber-900">{proof.internal_notes}</p>
+              <p className="text-amber-900">{proof.internal_notes}</p>
             )}
           </div>
-        )}
+        </div>
 
         {/* Versions */}
         <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Versions</h2>
@@ -435,6 +466,25 @@ export default function ProofDetailPage() {
           </button>
         </div>
       </div>
+
+      {/* Change Help Scout conversation modal */}
+      {showHelpscoutEdit && (
+        <HelpScoutEditModal
+          proofId={proof.id}
+          proofLabel={proof.contacts?.full_name ?? proof.id}
+          contactEmail={proof.contacts?.email ?? null}
+          current={{
+            conversationId: proof.helpscout_conversation_id,
+            conversationUrl: proof.helpscout_conversation_url,
+            overrideReason: proof.helpscout_override_reason,
+          }}
+          onSaved={() => {
+            if (id) loadProof(id)
+            showToast('Help Scout link updated.')
+          }}
+          onClose={() => setShowHelpscoutEdit(false)}
+        />
+      )}
 
       {/* Version detail modal */}
       {selectedVersion && (
