@@ -205,8 +205,9 @@ function buildRecent(
       companyName: v.proofs?.contacts?.companies?.name ?? null,
       materialDisplay: v.material_display ?? '—',
       status: (v.proofs?.status ?? 'in_progress') as ProofStatus,
-      // Show the project's last activity (any user), not this user's version
-      // timestamp, so both views on the page agree on the date.
+      // Show the project's last activity (any user), not the version's
+      // own creation timestamp, so both views on the page agree on the
+      // date.
       lastWorkedAt: v.proofs?.last_activity_at ?? v.created_at,
       viewedState: viewed.state,
       lastViewedAt: viewed.lastViewedAt,
@@ -313,9 +314,6 @@ export default function DashboardPage() {
   useEffect(() => { loadProofs() }, [])
 
   async function loadProofs() {
-    const userResult = await supabase.auth.getUser()
-    const userId = userResult.data.user?.id ?? null
-
     const proofsPromise = supabase
       .from('proofs')
       .select(
@@ -325,22 +323,22 @@ export default function DashboardPage() {
       )
       .order('last_activity_at', { ascending: false, nullsFirst: false })
 
-    // Recent projects this designer has worked on. We pull the latest
-    // versions they created, then dedupe by proof_id client-side so each
-    // project appears once. Fetching 50 rows is overkill for showing 10
-    // projects but keeps the query simple. The displayed date comes from
-    // proofs.last_activity_at so the two views on this page agree.
-    const recentPromise = userId
-      ? supabase
-          .from('proof_versions')
-          .select(
-            'proof_id, created_at, material_display,' +
-            'proofs!inner(status, last_activity_at, contacts(full_name, companies(name)))'
-          )
-          .eq('created_by', userId)
-          .order('created_at', { ascending: false })
-          .limit(50)
-      : Promise.resolve({ data: [] as any[] })
+    // Recent projects across the whole team. Designers share a Help
+    // Scout inbox and collaborate on projects (one ships v1, another
+    // ships v2), so a per-designer feed would hide half the work.
+    // We pull the 50 latest versions by anyone, then dedupe by
+    // proof_id client-side so each project appears once, capped at
+    // 10 rows. The displayed date comes from proofs.last_activity_at
+    // (not the version's own timestamp) so both sections on this
+    // page agree on the date.
+    const recentPromise = supabase
+      .from('proof_versions')
+      .select(
+        'proof_id, created_at, material_display,' +
+        'proofs!inner(status, last_activity_at, contacts(full_name, companies(name)))'
+      )
+      .order('created_at', { ascending: false })
+      .limit(50)
 
     const [{ data: proofs }, { data: versions }] = await Promise.all([proofsPromise, recentPromise])
 
@@ -500,7 +498,7 @@ export default function DashboardPage() {
               <span className="inline-flex items-center gap-1.5"><ViewedDot state="viewed_stale" />Older version viewed</span>
             </div>
 
-            {/* ── Recent projects (your own) ───────────────────────────────── */}
+            {/* ── Recent projects (team-wide) ──────────────────────────────── */}
             {recent.length > 0 && (
               <div className="mb-8">
                 <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-500">Recent projects</h2>
