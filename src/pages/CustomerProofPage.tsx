@@ -71,19 +71,22 @@ export default function CustomerProofPage() {
   // React strict mode.
   useEffect(() => {
     if (!activeVersion || viewRecordedRef.current) return
-    // Designer-preview bypass: the "Preview as customer" button on
-    // the admin proof detail page opens this URL with ?preview=1
-    // so the RPC doesn't pollute proof_version_views with designer
-    // hits that would make the dashboard dot read as "viewed
-    // current version" when the real customer hasn't opened the
-    // link yet. logCustomerEvent below still fires — that's a
-    // general audit ledger, distinct from the view-tracking table.
-    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('preview') === '1') {
-      return
-    }
     const versionId = activeVersion.id
     const t = window.setTimeout(() => {
       if (viewRecordedRef.current) return
+      // Designer-preview bypass: the admin "Preview as customer"
+      // button opens /p/:id?preview=1 so the RPC doesn't pollute
+      // proof_version_views with designer hits. Read the flag at
+      // fire time rather than at effect setup — the URL has
+      // definitely settled by now (2.5s post-mount) so there's no
+      // risk of a stale search string, and keeping the check
+      // inside the timer means the effect body is a single
+      // uninterrupted schedule→cleanup pair, which avoids the
+      // subtle path-mismatch behaviour that showed up after the
+      // earlier attempt at a body-level guard. logCustomerEvent
+      // still fires from loadProof — that's a general audit
+      // ledger, distinct from the view-tracking table.
+      if (new URLSearchParams(window.location.search).get('preview') === '1') return
       viewRecordedRef.current = true
       void supabase.rpc('record_proof_view', {
         p_version_id: versionId,
