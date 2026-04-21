@@ -56,6 +56,16 @@ export interface PublicProofVersion {
   approved_by_name?: string | null
   approved_from_ip?: string | null
   approved_from_ua?: string | null
+  // ── Supersession (migration 000068) ───────────────────────────────────────
+  // Null while this version is chronologically-latest for its proof.
+  // Stamped to the next version's created_at when a newer sibling
+  // lands. Phase 2's customer page will render a "newer version
+  // available" banner when this field is populated.
+  //
+  // approved_while_superseded is deliberately NOT exposed here —
+  // it's a designer/audit field and stays off the customer-facing
+  // view.
+  superseded_at?: string | null
 }
 
 export interface PublicMaterialOption {
