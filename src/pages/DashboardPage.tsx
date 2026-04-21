@@ -205,7 +205,22 @@ function StatusPill({ status }: { status: Status }) {
   return <span className="w-fit shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">In progress</span>
 }
 
-function PreviewLink({ proofId }: { proofId: string }) {
+function PreviewLink({ proofId, hasVersions }: { proofId: string; hasVersions: boolean }) {
+  if (!hasVersions) {
+    // Disabled rendering: keep the button visible so the affordance
+    // is discoverable, but strip the link so it can't open the
+    // near-blank customer page. Tooltip teaches the unlock.
+    return (
+      <span
+        onClick={(e) => e.stopPropagation()}
+        title="Add a version to enable preview"
+        aria-disabled="true"
+        className="w-fit shrink-0 cursor-not-allowed rounded-lg px-3 py-1.5 text-xs font-medium text-gray-400 ring-1 ring-gray-100"
+      >
+        Preview
+      </span>
+    )
+  }
   return (
     <a
       href={`/p/${proofId}`}
@@ -409,7 +424,8 @@ export default function DashboardPage() {
                         <span className="truncate text-sm text-gray-400">{r.materialDisplay}</span>
                         <StatusPill status={r.status} />
                         <span className="text-sm text-gray-400">{formatRelative(r.lastWorkedAt)}</span>
-                        <PreviewLink proofId={r.proofId} />
+                        {/* Recent list is built from proof_versions, so every row here has at least one version. */}
+                        <PreviewLink proofId={r.proofId} hasVersions />
                         {locked
                           ? <span />
                           : <AddVersionLink proofId={r.proofId} />}
@@ -539,7 +555,7 @@ export default function DashboardPage() {
                                 </span>
                                 <StatusPill status={proof.status} />
                                 <span className="text-sm text-gray-400">{formatRelative(proof.lastActivityAt)}</span>
-                                <PreviewLink proofId={proof.id} />
+                                <PreviewLink proofId={proof.id} hasVersions={proof.current_version != null} />
                                 {canAddVersion
                                   ? <AddVersionLink proofId={proof.id} />
                                   : <span />}

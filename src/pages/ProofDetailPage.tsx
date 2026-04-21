@@ -272,10 +272,16 @@ export default function ProofDetailPage() {
           </div>
           <div className="flex flex-col items-end gap-4">
             <div className="flex flex-wrap justify-end gap-2">
+            {/* Preview is gated on there being at least one proof
+                version — otherwise the customer page renders
+                near-blank. Disabled rendering keeps the affordance
+                discoverable and teaches the unlock. */}
             <button
               type="button"
               onClick={() => setShowCustomerPreview(true)}
-              className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
+              disabled={versions.length === 0}
+              title={versions.length === 0 ? 'Add a version to enable preview' : undefined}
+              className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400 disabled:ring-gray-100 disabled:hover:bg-transparent"
             >
               <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 3H3.5A1.5 1.5 0 002 4.5v8A1.5 1.5 0 003.5 14h8A1.5 1.5 0 0013 12.5V10M10 2h4m0 0v4m0-4L7 9" />
