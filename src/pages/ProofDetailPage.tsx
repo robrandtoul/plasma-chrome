@@ -5,7 +5,7 @@ import { useAuth } from '../lib/auth'
 import VersionDetailModal, { type ModalVersion } from '../components/VersionDetailModal'
 import HelpScoutEditModal from '../components/HelpScoutEditModal'
 import { logAudit } from '../lib/audit'
-import { relativeTime } from '../lib/relativeTime'
+import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -508,7 +508,7 @@ export default function ProofDetailPage() {
                         />
                         <span>v{v.version_number}</span>
                         {latest && (
-                          <span className="ml-1 text-xs font-normal text-gray-400">· {relativeTime(latest)}</span>
+                          <span className="ml-1 text-xs font-normal text-gray-400" title={formatAbsoluteDateTime(latest)}>· {relativeTime(latest)}</span>
                         )}
                       </span>
                     </td>

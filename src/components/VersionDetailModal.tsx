@@ -5,7 +5,7 @@ import { PricingDisplay } from './PricingDisplay'
 import { ImageGrid } from './ImageGrid'
 import type { Currency, PricingSnapshot } from '../lib/types'
 import { DEFAULT_FEATURED_QUANTITIES } from '../lib/constants'
-import { relativeTime } from '../lib/relativeTime'
+import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 
 export interface ModalVersion {
   id: string
@@ -231,7 +231,7 @@ export default function VersionDetailModal({
                   {viewHistory.slice(0, 5).map((v, i) => (
                     <li key={i} className="flex items-center justify-between gap-3 text-sm">
                       <span className="truncate text-gray-700">{summariseUserAgent(v.user_agent)}</span>
-                      <span className="shrink-0 text-xs text-gray-400" title={new Date(v.viewed_at).toLocaleString('en-GB')}>
+                      <span className="shrink-0 text-xs text-gray-400" title={formatAbsoluteDateTime(v.viewed_at)}>
                         {relativeTime(v.viewed_at)}
                       </span>
                     </li>

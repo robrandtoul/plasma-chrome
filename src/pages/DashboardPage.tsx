@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import type { ProofStatus } from '../lib/types'
-import { relativeTime } from '../lib/relativeTime'
+import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -525,7 +525,11 @@ export default function DashboardPage() {
                             <div className="truncate text-xs text-gray-400">
                               {r.companyName}
                               {r.companyName && r.viewedState !== 'unviewed' && r.lastViewedAt ? ' · ' : ''}
-                              {r.viewedState !== 'unviewed' && r.lastViewedAt ? `Viewed ${relativeTime(r.lastViewedAt)}` : ''}
+                              {r.viewedState !== 'unviewed' && r.lastViewedAt && (
+                                <span title={formatAbsoluteDateTime(r.lastViewedAt)}>
+                                  Viewed {relativeTime(r.lastViewedAt)}
+                                </span>
+                              )}
                             </div>
                           )}
                         </div>
@@ -660,7 +664,7 @@ export default function DashboardPage() {
                                   <span className="truncate">
                                     {proof.current_version != null ? `v${proof.current_version}` : '—'}
                                     {proof.viewedState !== 'unviewed' && proof.lastViewedAt && (
-                                      <span className="ml-1 text-[11px]">· Viewed {relativeTime(proof.lastViewedAt)}</span>
+                                      <span className="ml-1 text-[11px]" title={formatAbsoluteDateTime(proof.lastViewedAt)}>· Viewed {relativeTime(proof.lastViewedAt)}</span>
                                     )}
                                   </span>
                                 </span>
