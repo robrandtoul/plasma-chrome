@@ -16,8 +16,8 @@ import type { Currency, PricingSnapshot } from '../lib/types'
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type EditImage =
-  | { kind: 'existing'; id: string; image_path: string; label: string; preview: string; material_option: string | null; original_filename: string | null; associated_name: string | null; side: 'front' | 'back' | null }
-  | { kind: 'new';      localId: string; file: File; preview: string; label: string; associated_name: string | null; side: 'front' | 'back' | null }
+  | { kind: 'existing'; id: string; image_path: string; preview: string; material_option: string | null; original_filename: string | null; associated_name: string | null; side: 'front' | 'back' | null }
+  | { kind: 'new';      localId: string; file: File; preview: string; associated_name: string | null; side: 'front' | 'back' | null }
 
 interface MaterialOption {
   id: string
@@ -32,12 +32,6 @@ interface MaterialOption {
 const MAX_FILE_SIZE = 10 * 1024 * 1024
 const ACCEPTED_TYPES = ['image/jpeg']
 const MAX_IMAGES = 12
-
-function defaultLabel(index: number): string {
-  if (index === 0) return 'Front'
-  if (index === 1) return 'Back'
-  return `Image ${index + 1}`
-}
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
@@ -98,7 +92,7 @@ export default function EditVersionPage() {
         .single(),
       supabase
         .from('proof_version_images')
-        .select('id, image_path, label, sort_order, material_option, original_filename, associated_name, side')
+        .select('id, image_path, sort_order, material_option, original_filename, associated_name, side')
         .eq('proof_version_id', vid)
         .order('sort_order'),
     ])
@@ -149,7 +143,7 @@ export default function EditVersionPage() {
     setSelectedOptions(versionOptions)
     setActiveImageOption(versionOptions[0] ?? '')
 
-    const rawImages = (imagesResult.data ?? []) as { id: string; image_path: string; label: string; sort_order: number; material_option: string | null; original_filename: string | null; associated_name: string | null; side: 'front' | 'back' | null }[]
+    const rawImages = (imagesResult.data ?? []) as { id: string; image_path: string; sort_order: number; material_option: string | null; original_filename: string | null; associated_name: string | null; side: 'front' | 'back' | null }[]
     const ids = new Set(rawImages.map((img) => img.id))
     setOriginalImageIds(ids)
 
@@ -162,7 +156,6 @@ export default function EditVersionPage() {
           kind: 'existing' as const,
           id: img.id,
           image_path: img.image_path,
-          label: img.label,
           material_option: img.material_option,
           original_filename: img.original_filename,
           associated_name: img.associated_name,
@@ -297,19 +290,17 @@ export default function EditVersionPage() {
 
     setEditImagesByOption(prev => {
       const cur = prev[activeKey] ?? []
-      const currentCount = cur.length
       return {
         ...prev,
         [activeKey]: [
           ...cur,
-          ...toAdd.map((file, i) => {
+          ...toAdd.map((file) => {
             const match = matchImageToName(file.name, names)
             return {
               kind: 'new' as const,
               localId: uuidv4(),
               file,
               preview: URL.createObjectURL(file),
-              label: defaultLabel(currentCount + i),
               associated_name: match.associatedName,
               side: match.side,
             }
@@ -335,17 +326,6 @@ export default function EditVersionPage() {
           if (img.localId === key) { URL.revokeObjectURL(img.preview); return false }
         }
         return true
-      }),
-    }))
-  }
-
-  function updateLabel(key: string, label: string) {
-    setEditImagesByOption(prev => ({
-      ...prev,
-      [activeKey]: (prev[activeKey] ?? []).map(img => {
-        if (img.kind === 'existing' && img.id === key) return { ...img, label }
-        if (img.kind === 'new' && img.localId === key) return { ...img, label }
-        return img
       }),
     }))
   }
@@ -502,7 +482,10 @@ export default function EditVersionPage() {
             return supabase
               .from('proof_version_images')
               .update({
-                label: img.label,
+                // `label` deliberately omitted — the designer no
+                // longer edits it. Any legacy value on the row is
+                // left untouched (customer-page caption rules
+                // ignore it in favour of side + filename).
                 sort_order: idx,
                 material_option: optionValue,
                 associated_name: img.associated_name,
@@ -525,7 +508,9 @@ export default function EditVersionPage() {
           return {
             proof_version_id: versionId!,
             image_path: path,
-            label: img.label,
+            // Legacy NOT NULL column; empty string on new rows
+            // (customer page ignores it for captions).
+            label: '',
             sort_order: idx,
             material_option: optionValue,
             original_filename: img.file.name,
@@ -783,15 +768,8 @@ export default function EditVersionPage() {
                     >
                       <img
                         src={entry.preview}
-                        alt={entry.label}
+                        alt={filename ?? ''}
                         className="mb-2 aspect-square w-full rounded-lg object-contain"
-                      />
-                      <input
-                        type="text"
-                        value={entry.label}
-                        onChange={(e) => updateLabel(key, e.target.value)}
-                        className="w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-gray-900 focus:outline-none"
-                        placeholder="Label"
                       />
                       {/* Per-image recipient + side. Designer can
                           correct after the fact on existing images

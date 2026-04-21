@@ -49,7 +49,6 @@ interface ImageEntry {
   localId: string
   file: File
   preview: string
-  label: string
   // Pre-populated from matchImageToName when the file is added.
   // Designer can override via the per-image dropdowns before save.
   associated_name: string | null
@@ -59,12 +58,6 @@ interface ImageEntry {
 const MAX_FILE_SIZE = 10 * 1024 * 1024
 const ACCEPTED_TYPES = ['image/jpeg']
 const MAX_IMAGES = 12
-
-function defaultLabel(index: number): string {
-  if (index === 0) return 'Front'
-  if (index === 1) return 'Back'
-  return `Image ${index + 1}`
-}
 
 export default function NewVersionPage() {
   const { id: proofId } = useParams<{ id: string }>()
@@ -321,18 +314,16 @@ export default function NewVersionPage() {
 
     setImagesByOption(prev => {
       const cur = prev[activeKey] ?? []
-      const currentCount = cur.length
       return {
         ...prev,
         [activeKey]: [
           ...cur,
-          ...toAdd.map((file, i) => {
+          ...toAdd.map((file) => {
             const match = matchImageToName(file.name, names)
             return {
               localId: uuidv4(),
               file,
               preview: URL.createObjectURL(file),
-              label: defaultLabel(currentCount + i),
               associated_name: match.associatedName,
               side: match.side,
             }
@@ -356,13 +347,6 @@ export default function NewVersionPage() {
       if (removed) URL.revokeObjectURL(removed.preview)
       return { ...prev, [activeKey]: cur.filter((e) => e.localId !== localId) }
     })
-  }
-
-  function updateLabel(localId: string, label: string) {
-    setImagesByOption(prev => ({
-      ...prev,
-      [activeKey]: (prev[activeKey] ?? []).map(e => e.localId === localId ? { ...e, label } : e),
-    }))
   }
 
   function updateAssociatedName(localId: string, associated_name: string | null) {
@@ -530,7 +514,11 @@ export default function NewVersionPage() {
       return {
         proof_version_id: versionData.id,
         image_path: uploadedPaths[i],
-        label: entry.label,
+        // Legacy NOT NULL column — no longer input by the
+        // designer (the Name + Side dropdowns supersede it).
+        // Empty string satisfies the constraint; customer-page
+        // caption rules ignore it in favour of side + filename.
+        label: '',
         sort_order: sortOrder,
         material_option: option,
         original_filename: entry.file.name,
@@ -903,15 +891,8 @@ export default function NewVersionPage() {
                   >
                     <img
                       src={entry.preview}
-                      alt={entry.label}
+                      alt={entry.file.name}
                       className="mb-2 aspect-square w-full rounded-lg object-contain"
-                    />
-                    <input
-                      type="text"
-                      value={entry.label}
-                      onChange={(e) => updateLabel(entry.localId, e.target.value)}
-                      className="w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-gray-900 focus:outline-none"
-                      placeholder="Label"
                     />
                     {/* Per-image recipient + side. Pre-populated from
                         the filename via matchImageToName when the
