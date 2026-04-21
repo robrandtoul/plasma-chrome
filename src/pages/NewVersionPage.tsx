@@ -112,7 +112,7 @@ export default function NewVersionPage() {
           setProofCompany(c.companies?.name ?? '')
         }
       })
-    supabase.from('materials').select('id, display_name, requires_ink_names, option_label, featured_quantities, multi_variant').eq('is_active', true).order('sort_order')
+    supabase.from('materials').select('id, display_name, requires_ink_names, option_label, featured_quantities, multi_variant').eq('is_active', true).eq('is_published', true).order('sort_order')
       .then(({ data }) => setMaterials((data ?? []) as Material[]))
 
     // Pre-fill the pricing display + currency from admin-configured

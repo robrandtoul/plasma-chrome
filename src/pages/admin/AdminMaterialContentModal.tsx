@@ -11,6 +11,7 @@ export interface MaterialContent {
   display_name: string
   description: string | null
   icon_url: string | null
+  is_published: boolean
 }
 
 const ACCEPTED = ['image/png', 'image/jpeg', 'image/svg+xml']

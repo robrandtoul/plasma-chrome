@@ -16,6 +16,7 @@ interface Material {
   display_name: string
   category: string
   variant_type: 'thickness' | 'ink_count' | 'finish' | 'default'
+  is_published: boolean
   split_name_surcharge_gbp: number | null
   split_name_surcharge_eur: number | null
   split_name_surcharge_usd: number | null
@@ -47,6 +48,9 @@ export default function AdminMaterialEditor() {
   const [activeVariantId, setActiveVariantId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [publishInFlight, setPublishInFlight] = useState(false)
+  const [publishConfirm, setPublishConfirm] = useState(false)
+  const [publishError, setPublishError] = useState<string | null>(null)
 
   useEffect(() => { if (code) load(code) }, [code])
 
@@ -56,7 +60,7 @@ export default function AdminMaterialEditor() {
     try {
       const { data: matData, error: matErr } = await supabase
         .from('materials')
-        .select('id, code, display_name, category, split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd')
+        .select('id, code, display_name, category, is_published, split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd')
         .eq('code', materialCode)
         .single()
       if (matErr || !matData) throw matErr ?? new Error('Material not found')
@@ -136,6 +140,50 @@ export default function AdminMaterialEditor() {
     })
   }
 
+  // When publishing, soft-warn if the material has nothing to show.
+  // Default-type materials always have one auto-created placeholder
+  // variant so the zero-variant arm fires for the other variant types.
+  function requestPublishChange(next: boolean) {
+    setPublishError(null)
+    if (!material) return
+    if (next && (variants.length === 0 || tiers.length === 0)) {
+      setPublishConfirm(true)
+      return
+    }
+    void applyPublishChange(next)
+  }
+
+  async function applyPublishChange(next: boolean) {
+    if (!material) return
+    setPublishInFlight(true)
+    setPublishError(null)
+    try {
+      const { error } = await supabase
+        .from('materials')
+        .update({ is_published: next })
+        .eq('id', material.id)
+      if (error) throw new Error(error.message)
+      setMaterial((prev) => prev ? ({ ...prev, is_published: next }) : prev)
+      void logAudit({
+        action: next ? 'material_published' : 'material_unpublished',
+        targetType: 'material',
+        targetId: material.id,
+        targetLabel: material.display_name,
+        beforeValue: { is_published: !next },
+        afterValue: { is_published: next },
+        metadata: {
+          active_variant_count: variants.length,
+          price_tier_count: tiers.length,
+        },
+      })
+      setPublishConfirm(false)
+    } catch (e) {
+      setPublishError((e as Error).message)
+    } finally {
+      setPublishInFlight(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex justify-center py-20">
@@ -169,6 +217,45 @@ export default function AdminMaterialEditor() {
           Export this material
         </button>
       </div>
+
+      {/* Publish status */}
+      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Publish status</h3>
+            <p className="mt-1 text-sm text-gray-500">
+              {material.is_published
+                ? 'This material is live. Designers can pick it when adding a version.'
+                : 'This material is not visible to designers yet.'}
+            </p>
+            {publishError && (
+              <p className="mt-2 text-xs text-rose-600">{publishError}</p>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            {material.is_published ? (
+              <span className="inline-block rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">Published</span>
+            ) : (
+              <span className="inline-block rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">Unpublished</span>
+            )}
+            <button
+              type="button"
+              onClick={() => requestPublishChange(!material.is_published)}
+              disabled={publishInFlight}
+              className={[
+                'rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50',
+                material.is_published
+                  ? 'text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50'
+                  : 'bg-gray-900 text-white hover:bg-gray-700',
+              ].join(' ')}
+            >
+              {publishInFlight
+                ? 'Saving…'
+                : material.is_published ? 'Unpublish' : 'Publish'}
+            </button>
+          </div>
+        </div>
+      </section>
 
       {/* Surcharges */}
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
@@ -235,6 +322,39 @@ export default function AdminMaterialEditor() {
           </>
         )}
       </section>
+
+      {/* Publish confirmation modal — only shown when publishing empty */}
+      {publishConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-gray-200">
+            <h4 className="text-base font-semibold text-gray-900">Publish anyway?</h4>
+            <p className="mt-2 text-sm text-gray-600">
+              {variants.length === 0
+                ? 'This material has no active variants yet.'
+                : 'This material has no price tiers yet.'}
+              {' '}Designers will see it in the dropdown but won't be able to show a full price grid.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPublishConfirm(false)}
+                disabled={publishInFlight}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void applyPublishChange(true)}
+                disabled={publishInFlight}
+                className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+              >
+                {publishInFlight ? 'Publishing…' : 'Publish anyway'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

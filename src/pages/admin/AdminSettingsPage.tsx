@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
 import { invalidatePublicSettings } from '../../lib/publicSettings'
@@ -68,9 +69,10 @@ export default function AdminSettingsPage() {
   }
 
   async function loadMaterials() {
+    // Admin list — show every active material, published or not.
     const { data } = await supabase
       .from('materials')
-      .select('id, code, display_name, description, icon_url')
+      .select('id, code, display_name, description, icon_url, is_published')
       .eq('is_active', true)
       .order('sort_order')
     setMaterials((data ?? []) as MaterialContent[])
@@ -322,11 +324,21 @@ export default function AdminSettingsPage() {
 
       {/* ── Materials ──────────────────────────────────────────── */}
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-        <h3 className="mb-1 text-sm font-semibold text-gray-900">Materials</h3>
-        <p className="mb-4 text-xs text-gray-500">
-          Per-material description and icon for the customer-facing "About [Material]" block.
-        </p>
-        <div className="overflow-hidden rounded-lg ring-1 ring-gray-200">
+        <div className="mb-1 flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Materials</h3>
+            <p className="mt-1 text-xs text-gray-500">
+              Per-material description and icon for the customer-facing "About [Material]" block. Unpublished materials stay hidden from designers until an admin publishes them.
+            </p>
+          </div>
+          <Link
+            to="/admin/materials/new"
+            className="shrink-0 rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+          >
+            Add material
+          </Link>
+        </div>
+        <div className="mt-4 overflow-hidden rounded-lg ring-1 ring-gray-200">
           {materials.length === 0 ? (
             <p className="px-4 py-6 text-sm text-gray-400">No materials.</p>
           ) : (
@@ -342,11 +354,16 @@ export default function AdminSettingsPage() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold text-gray-900">{m.display_name}</div>
-                  {!m.description && (
-                    <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                      Needs content
-                    </span>
-                  )}
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {m.is_published
+                      ? <span className="inline-block rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Published</span>
+                      : <span className="inline-block rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Unpublished</span>}
+                    {!m.description && (
+                      <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">
+                        Needs content
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <button
                   onClick={() => setEditingMaterial(m)}
