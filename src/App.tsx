@@ -34,12 +34,18 @@ export default function App() {
           <Route path="/proofs/:id" element={<RequireAuth><ProofDetailPage /></RequireAuth>} />
           <Route path="/proofs/:id/versions/new" element={<RequireAuth><NewVersionPage /></RequireAuth>} />
           <Route path="/proofs/:id/versions/:versionId/edit" element={<RequireAuth><EditVersionPage /></RequireAuth>} />
-          <Route path="/customers" element={<RequireAdmin><CustomersPage /></RequireAdmin>} />
+          {/* Legacy redirect: Customers moved into the Admin shell as a
+              tab. Bookmarks and old in-flight links land here and bounce
+              to the new home. The destination is itself RequireAdmin-
+              gated via the /admin parent route, so non-admins still get
+              the usual / redirect — the extra hop is invisible. */}
+          <Route path="/customers" element={<Navigate to="/admin/customers" replace />} />
 
           {/* Admin area — all paths under /admin go through the admin shell */}
           <Route path="/admin" element={<RequireAdmin><AdminLayout /></RequireAdmin>}>
             <Route index element={<Navigate to="users" replace />} />
             <Route path="users" element={<AdminUsersPage />} />
+            <Route path="customers" element={<CustomersPage />} />
             <Route path="pricing" element={<AdminPricingPage />} />
             <Route path="materials/new" element={<AdminCreateMaterialPage />} />
             <Route path="pricing/materials/:code" element={<AdminMaterialEditor />} />

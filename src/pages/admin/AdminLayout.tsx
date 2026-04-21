@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 // picks up routing-aware styling. Add more entries here to extend the shell.
 const TABS: { to: string; label: string }[] = [
   { to: '/admin/users', label: 'Users' },
+  { to: '/admin/customers', label: 'Customers' },
   { to: '/admin/pricing', label: 'Pricing' },
   { to: '/admin/activity', label: 'Activity' },
   { to: '/admin/settings', label: 'Settings' },

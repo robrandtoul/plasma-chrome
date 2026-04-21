@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { logAudit } from '../lib/audit'
 
@@ -125,19 +124,19 @@ export default function CustomersPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
-        <div className="mb-6">
-          <Link to="/" className="text-sm text-gray-400 hover:text-gray-700">← Back to projects</Link>
-        </div>
-
-        <div className="mb-8">
-          <p className="text-sm font-medium uppercase tracking-widest text-gray-400">PlasmaDesign</p>
-          <h1 className="mt-1 text-2xl font-bold text-gray-900">Customers</h1>
-          <p className="mt-2 text-sm text-gray-500">
-            View and tidy up companies and contacts. You can only delete entries with no projects attached.
-          </p>
-        </div>
+    // Rendered as an Outlet child of AdminLayout (see App.tsx: the
+    // route is /admin/customers). AdminLayout owns the page chrome —
+    // the PlasmaDesign strip, the Admin heading, the tab nav, the
+    // max-w-5xl content wrapper, the gray background. This component
+    // returns just the page body, matching the shape of
+    // AdminUsersPage / AdminPricingPage / AdminSettingsPage.
+    <div>
+      <div className="mb-6">
+        <h2 className="text-xl font-bold text-gray-900">Customers</h2>
+        <p className="mt-1 text-sm text-gray-500">
+          View and tidy up companies and contacts. You can only delete entries with no projects attached.
+        </p>
+      </div>
 
         {loading ? (
           <div className="flex justify-center py-20">
@@ -208,7 +207,6 @@ export default function CustomersPage() {
             )}
           </div>
         )}
-      </div>
 
       {pending && (
         <ConfirmDialog
