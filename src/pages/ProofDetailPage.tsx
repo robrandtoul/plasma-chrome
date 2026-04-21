@@ -317,7 +317,7 @@ export default function ProofDetailPage() {
               Locked variant (approved/abandoned): Add version is
               hidden on row 1, and row 2 collapses to a lone Reopen
               button in the same right-aligned slot. */}
-          <div className="flex flex-col items-end gap-2">
+          <div className="flex flex-col items-end gap-4">
             {/* Row 1 */}
             <div className="flex flex-wrap justify-end gap-2">
               {/* Preview is gated on there being at least one proof
