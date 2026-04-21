@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
+import type { ProofStatus } from '../lib/types'
 import { relativeTime } from '../lib/relativeTime'
 import {
   computeViewedState,
@@ -34,14 +35,12 @@ function readShowDormant(): boolean {
   }
 }
 
-type Status = 'in_progress' | 'approved' | 'dormant' | 'abandoned'
-
 interface ProofItem {
   id: string
   lastActivityAt: string
   current_version: number | null
   material_display: string | null
-  status: Status
+  status: ProofStatus
   viewedState: ViewedState
   lastViewedAt: string | null
 }
@@ -51,7 +50,7 @@ interface RecentProject {
   customerName: string
   companyName: string | null
   materialDisplay: string
-  status: Status
+  status: ProofStatus
   lastWorkedAt: string
   viewedState: ViewedState
   lastViewedAt: string | null
@@ -205,7 +204,7 @@ function buildRecent(
       customerName: v.proofs?.contacts?.full_name ?? '',
       companyName: v.proofs?.contacts?.companies?.name ?? null,
       materialDisplay: v.material_display ?? '—',
-      status: (v.proofs?.status ?? 'in_progress') as Status,
+      status: (v.proofs?.status ?? 'in_progress') as ProofStatus,
       // Show the project's last activity (any user), not this user's version
       // timestamp, so both views on the page agree on the date.
       lastWorkedAt: v.proofs?.last_activity_at ?? v.created_at,
@@ -217,7 +216,7 @@ function buildRecent(
   return out
 }
 
-function StatusPill({ status }: { status: Status }) {
+function StatusPill({ status }: { status: ProofStatus }) {
   if (status === 'approved') {
     return <span className="w-fit shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Approved</span>
   }
