@@ -16,6 +16,34 @@ async function downloadImage(url: string, filename: string) {
   downloadBlob(blob, filename)
 }
 
+// Single-image card with click-to-zoom + caption. Exported so the
+// customer proof page can render its own layout (hero block for
+// Shared imagery, per-name grid cells for named groups) without
+// reusing ImageGrid's built-in 1-vs-many layout rules.
+export function ImageCard({
+  image,
+  alt,
+  onClick,
+}: {
+  image: GridImage
+  alt: string
+  onClick: (src: string) => void
+}) {
+  return (
+    <div
+      className="cursor-zoom-in overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200"
+      onClick={() => onClick(image.signed_url)}
+    >
+      <img
+        src={image.signed_url}
+        alt={alt}
+        className="w-full object-contain"
+      />
+      <Caption label={image.label} filename={image.original_filename} signedUrl={image.signed_url} />
+    </div>
+  )
+}
+
 function Caption({ label, filename, signedUrl }: { label: string; filename?: string | null; signedUrl: string }) {
   if (!label && !filename) return null
   return (

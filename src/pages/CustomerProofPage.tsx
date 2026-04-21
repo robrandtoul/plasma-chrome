@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge } from '../lib/types'
 import { formatPrice } from '../lib/currency'
 import { PricingDisplay } from '../components/PricingDisplay'
-import { ImageGrid, type GridImage } from '../components/ImageGrid'
+import { ImageCard, type GridImage } from '../components/ImageGrid'
 import { logCustomerEvent } from '../lib/audit'
 import { getPublicSettings, type PublicSettings } from '../lib/publicSettings'
 
@@ -290,26 +290,66 @@ export default function CustomerProofPage() {
               </div>
             )}
 
-            {/* Proof images — grouped by recipient name. Shared
-                section renders first if it sits alongside named
-                groups; otherwise the shared images render without
-                a heading (matching the pre-grouping customer view). */}
-            <div className="mb-8 space-y-6">
-              {buildImageGroups(displayImages).map((group, i) => (
-                <div key={`grp-${i}-${group.heading ?? 'shared-bare'}`}>
-                  {group.heading && (
-                    <h3 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
-                      {group.heading}
-                    </h3>
+            {/* Proof images — hierarchical layout.
+                Shared group (if any) renders as a centred hero
+                stack capped at 880px, reading as "the reference".
+                Named groups then render below as a responsive
+                grid — 1 / 2 / 3 columns depending on how many
+                groups there are. */}
+            {(() => {
+              const groups = buildImageGroups(displayImages)
+              const sharedGroup = groups.find((g) => g.kind === 'shared') ?? null
+              const namedGroups = groups.filter((g) => g.kind === 'named')
+              if (!sharedGroup && namedGroups.length === 0) return null
+
+              // Column count for the named-group grid. Each string
+              // is a literal so Tailwind's JIT picks them up.
+              const namedGridClass =
+                namedGroups.length === 1
+                  ? 'mx-auto grid w-full max-w-[880px] grid-cols-1 gap-6'
+                  : namedGroups.length === 2
+                    ? 'grid grid-cols-1 gap-6 sm:grid-cols-2'
+                    : 'grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3'
+
+              return (
+                <div className="mb-8 space-y-10">
+                  {sharedGroup && (
+                    <div className="mx-auto w-full max-w-[880px] space-y-6">
+                      {sharedGroup.images.map((img) => (
+                        <ImageCard
+                          key={img.id}
+                          image={img}
+                          alt={`Proof version ${activeVersion.version_number}`}
+                          onClick={setLightboxSrc}
+                        />
+                      ))}
+                    </div>
                   )}
-                  <ImageGrid
-                    images={group.images}
-                    versionNumber={activeVersion.version_number}
-                    onImageClick={setLightboxSrc}
-                  />
+
+                  {namedGroups.length > 0 && (
+                    <div className={namedGridClass}>
+                      {namedGroups.map((group) => (
+                        <section key={group.heading ?? ''}>
+                          <h3 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
+                            {group.heading}
+                          </h3>
+                          <div className="space-y-6">
+                            {group.images.map((img) => (
+                              <ImageCard
+                                key={img.id}
+                                image={img}
+                                alt={`${group.heading} — proof version ${activeVersion.version_number}`}
+                                onClick={setLightboxSrc}
+                              />
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ))}
-            </div>
+              )
+            })()}
 
             {/* Spec summary */}
             <div className="mb-8 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
@@ -497,25 +537,34 @@ function formatNamesList(names: string[]): string {
 }
 
 // Turn a flat image list into grouped-by-recipient sections for
-// the customer proof page. See the Phase on split-name imagery
-// for the shape rules:
+// the customer proof page. Returned groups carry a `kind`
+// discriminator so the page layout can route shared vs named
+// groups into different containers (hero block vs responsive
+// grid) without inferring from heading strings.
 //
-//   * Shared (null-name) group renders first, with a "Shared"
-//     heading only if there's at least one named group alongside.
-//     If the entire list is shared, no heading (keeps the legacy
-//     layout).
-//   * Named groups render in first-appearance order from the image
-//     list (which follows sort_order).
+//   * Shared (null-name) group gets kind: 'shared'. Heading is
+//     "Shared" when it sits alongside named groups, null when it
+//     stands alone (keeps the legacy single-block layout for
+//     versions with no per-name imagery).
+//   * Named groups get kind: 'named' with the chip name as heading.
+//     Ordered by first appearance in the image list (which follows
+//     sort_order).
 //   * Within each group, images sort front → back → unlabelled.
-//   * Caption for each image:
+//   * Caption rule per image:
 //       side present    → "Front" or "Back"
 //       side null, ≥ 2 images in group → original filename stem
 //       side null, 1 image in group    → blank (no label row)
 //
-// The ImageGrid component reads each image's `label` field for the
-// caption, so the caption rule is applied by rewriting `label`
+// The ImageCard / Caption components read each image's `label`
+// field, so the caption rule is applied by rewriting `label`
 // before the group is handed off.
-function buildImageGroups(images: GridImage[]): { heading: string | null; images: GridImage[] }[] {
+interface ImageGroup {
+  kind: 'shared' | 'named'
+  heading: string | null
+  images: GridImage[]
+}
+
+function buildImageGroups(images: GridImage[]): ImageGroup[] {
   const shared: GridImage[] = []
   const namedOrder: string[] = []
   const namedByKey = new Map<string, GridImage[]>()
@@ -553,12 +602,16 @@ function buildImageGroups(images: GridImage[]): { heading: string | null; images
   }
 
   const hasNamed = namedOrder.length > 0
-  const groups: { heading: string | null; images: GridImage[] }[] = []
+  const groups: ImageGroup[] = []
   if (shared.length > 0) {
-    groups.push({ heading: hasNamed ? 'Shared' : null, images: applyCaptions(shared) })
+    groups.push({
+      kind: 'shared',
+      heading: hasNamed ? 'Shared' : null,
+      images: applyCaptions(shared),
+    })
   }
   for (const name of namedOrder) {
-    groups.push({ heading: name, images: applyCaptions(namedByKey.get(name)!) })
+    groups.push({ kind: 'named', heading: name, images: applyCaptions(namedByKey.get(name)!) })
   }
   return groups
 }
