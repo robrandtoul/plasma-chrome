@@ -114,7 +114,9 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'user.role_changed', label: 'User role changed' },
   ]},
   { name: 'Pricing', actions: [
+    { code: 'price_tier_created',         label: 'Price tier created' },
     { code: 'price_tier.updated',         label: 'Price tier updated' },
+    { code: 'price_tier_deleted',         label: 'Price tier deleted' },
     { code: 'material_surcharge.updated', label: 'Material surcharge updated' },
     { code: 'addon_price.updated',        label: 'Add-on price updated' },
     { code: 'addon_prices.seeded',        label: 'Add-on prices seeded' },

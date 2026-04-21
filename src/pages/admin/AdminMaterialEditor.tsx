@@ -59,7 +59,30 @@ export default function AdminMaterialEditor() {
   const [variantInFlight, setVariantInFlight] = useState(false)
   const [variantError, setVariantError] = useState<string | null>(null)
 
+  // Price tier add / remove state (Phase 3b.2). Scoped to the current
+  // active variant — resets whenever the admin switches tabs.
+  const [tierAddOpen, setTierAddOpen] = useState(false)
+  const [tierQtyDraft, setTierQtyDraft] = useState('')
+  const [tierGbpDraft, setTierGbpDraft] = useState('')
+  const [tierEurDraft, setTierEurDraft] = useState('')
+  const [tierUsdDraft, setTierUsdDraft] = useState('')
+  const [tierInFlight, setTierInFlight] = useState(false)
+  const [tierError, setTierError] = useState<string | null>(null)
+  const [removeConfirmQty, setRemoveConfirmQty] = useState<number | null>(null)
+
   useEffect(() => { if (code) load(code) }, [code])
+
+  // Reset the tier add form whenever the admin switches variant tabs,
+  // so drafts from one variant don't leak into another.
+  useEffect(() => {
+    setTierAddOpen(false)
+    setTierQtyDraft('')
+    setTierGbpDraft('')
+    setTierEurDraft('')
+    setTierUsdDraft('')
+    setTierError(null)
+    setRemoveConfirmQty(null)
+  }, [activeVariantId])
 
   async function load(materialCode: string) {
     setLoading(true)
@@ -311,6 +334,148 @@ export default function AdminMaterialEditor() {
       beforeValue: { is_active: !next },
       afterValue: { is_active: next },
     })
+  }
+
+  // ── Price tier add / remove (Phase 3b.2) ──────────────────────────────
+
+  // Parse a decimal price string into a non-negative number, or return
+  // null if it doesn't pass. Zero is allowed.
+  function parseNonNegative(input: string): number | null {
+    const trimmed = input.trim()
+    if (trimmed === '') return null
+    const n = Number(trimmed)
+    if (!Number.isFinite(n) || n < 0) return null
+    return Number(n.toFixed(2))
+  }
+
+  // Close the add form and wipe its drafts. Shared by Save/Cancel/tab
+  // switch so callers never leave stale state.
+  function resetTierAddForm() {
+    setTierAddOpen(false)
+    setTierQtyDraft('')
+    setTierGbpDraft('')
+    setTierEurDraft('')
+    setTierUsdDraft('')
+    setTierError(null)
+  }
+
+  async function handleAddTier() {
+    if (!material) return
+    const variantId = activeVariantId ?? variants.find((v) => v.is_active)?.id
+    if (!variantId) { setTierError('No active variant selected.'); return }
+    const variant = variants.find((v) => v.id === variantId)
+    if (!variant) { setTierError('Variant not found.'); return }
+
+    setTierError(null)
+
+    // Quantity: required, positive integer, unique on this variant.
+    const qty = parseInt(tierQtyDraft.trim(), 10)
+    if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(Number(tierQtyDraft.trim()))) {
+      setTierError('Quantity must be a positive whole number.')
+      return
+    }
+    const existingQtys = new Set(
+      tiers
+        .filter((t) => t.material_variant_id === variantId)
+        .map((t) => t.quantity),
+    )
+    if (existingQtys.has(qty)) {
+      setTierError(`A tier for ${qty.toLocaleString()} units already exists. Edit the existing row or remove it first.`)
+      return
+    }
+
+    // All three prices required, zero allowed.
+    const gbp = parseNonNegative(tierGbpDraft)
+    const eur = parseNonNegative(tierEurDraft)
+    const usd = parseNonNegative(tierUsdDraft)
+    if (gbp === null || eur === null || usd === null) {
+      setTierError('All three prices are required. Use 0 for "no charge" rather than leaving a field blank.')
+      return
+    }
+
+    setTierInFlight(true)
+    try {
+      // Single batch INSERT → one SQL statement → atomic. Either all
+      // three rows land or none do.
+      const rows = (['GBP', 'EUR', 'USD'] as Currency[]).map((currency) => {
+        const total = currency === 'GBP' ? gbp : currency === 'EUR' ? eur : usd
+        const unit = Number((total / qty).toFixed(4))
+        return {
+          material_variant_id: variantId,
+          currency,
+          quantity: qty,
+          total_price: total,
+          unit_price: unit,
+        }
+      })
+      const { data: created, error: err } = await supabase
+        .from('price_tiers')
+        .insert(rows)
+        .select('id, material_variant_id, currency, quantity, total_price, unit_price')
+      if (err || !created) throw new Error(err?.message ?? 'Unknown error')
+
+      setTiers((prev) => [...prev, ...(created as Tier[])])
+
+      // One audit event per DB row. Mirrors price_tier.updated granularity.
+      for (const row of created as Tier[]) {
+        void logAudit({
+          action: 'price_tier_created',
+          targetType: 'price_tier',
+          targetId: row.id,
+          targetLabel: `${material.display_name} ${variant.display_name} @ qty ${qty}`,
+          afterValue: { currency: row.currency, total_price: row.total_price, quantity: qty },
+        })
+      }
+      resetTierAddForm()
+    } catch (e) {
+      setTierError(`Failed to add tier: ${(e as Error).message}`)
+    } finally {
+      setTierInFlight(false)
+    }
+  }
+
+  async function handleDeleteTier(qty: number) {
+    if (!material) return
+    const variantId = activeVariantId ?? variants.find((v) => v.is_active)?.id
+    if (!variantId) return
+    const variant = variants.find((v) => v.id === variantId)
+    if (!variant) return
+    const doomed = tiers.filter(
+      (t) => t.material_variant_id === variantId && t.quantity === qty,
+    )
+    if (doomed.length === 0) return
+
+    setTierInFlight(true)
+    setTierError(null)
+    try {
+      // Single DELETE filtered by (variant, quantity) removes all three
+      // currency rows atomically.
+      const { error: err } = await supabase
+        .from('price_tiers')
+        .delete()
+        .eq('material_variant_id', variantId)
+        .eq('quantity', qty)
+      if (err) throw new Error(err.message)
+
+      setTiers((prev) => prev.filter(
+        (t) => !(t.material_variant_id === variantId && t.quantity === qty),
+      ))
+
+      for (const row of doomed) {
+        void logAudit({
+          action: 'price_tier_deleted',
+          targetType: 'price_tier',
+          targetId: row.id,
+          targetLabel: `${material.display_name} ${variant.display_name} @ qty ${qty}`,
+          beforeValue: { currency: row.currency, total_price: row.total_price, quantity: qty },
+        })
+      }
+      setRemoveConfirmQty(null)
+    } catch (e) {
+      setTierError(`Failed to remove tier: ${(e as Error).message}`)
+    } finally {
+      setTierInFlight(false)
+    }
   }
 
   if (loading) {
@@ -580,56 +745,239 @@ export default function AdminMaterialEditor() {
           if (activeVariants.length === 0) {
             return <p className="text-sm text-gray-400">No active variants yet.</p>
           }
-          if (material.variant_type === 'default') {
-            // Default materials keep their single implicit variant as-is.
-            return (
-              <PriceGrid
-                tiers={tiers.filter((t) => t.material_variant_id === activeVariants[0].id)}
-                onSave={saveTier}
-              />
-            )
-          }
+          // Default materials keep their single implicit variant as-is;
+          // multi-variant materials render a tab strip above the grid.
+          const renderedVariantId = material.variant_type === 'default'
+            ? activeVariants[0].id
+            : activeVariantId
+          const tiersForVariant = tiers.filter((t) => t.material_variant_id === renderedVariantId)
+          const isEmpty = tiersForVariant.length === 0
+
           return (
             <>
-              {/* Variant tab strip — active variants only. Deactivated
-                  variants never surface here, they're managed via the
-                  Variants section above. */}
-              <div className="mb-4 flex flex-wrap gap-2">
-                {activeVariants.map((v) => {
-                  const isActive = activeVariantId === v.id
-                  return (
-                    <button
-                      key={v.id}
-                      onClick={() => setActiveVariantId(v.id)}
-                      className={[
-                        'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
-                        isActive
-                          ? 'bg-gray-900 text-white'
-                          : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
-                      ].join(' ')}
-                    >
-                      {v.display_name}
-                    </button>
-                  )
-                })}
-              </div>
-              <PriceGrid
-                tiers={tiers.filter((t) => t.material_variant_id === activeVariantId)}
-                onSave={saveTier}
-              />
+              {material.variant_type !== 'default' && (
+                /* Variant tab strip — active variants only. Deactivated
+                   variants never surface here, they're managed via the
+                   Variants section above. */
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {activeVariants.map((v) => {
+                    const isActive = activeVariantId === v.id
+                    return (
+                      <button
+                        key={v.id}
+                        onClick={() => setActiveVariantId(v.id)}
+                        className={[
+                          'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                          isActive
+                            ? 'bg-gray-900 text-white'
+                            : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
+                        ].join(' ')}
+                      >
+                        {v.display_name}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+
+              {isEmpty ? (
+                /* Bootstrap state: no tiers yet, show the add form open
+                   with a soft lead-in so the next step is obvious. */
+                <div className="space-y-3">
+                  <p className="text-sm text-gray-500">No price tiers yet. Add the first one below.</p>
+                  <AddTierForm
+                    qty={tierQtyDraft}
+                    gbp={tierGbpDraft}
+                    eur={tierEurDraft}
+                    usd={tierUsdDraft}
+                    onQty={setTierQtyDraft}
+                    onGbp={setTierGbpDraft}
+                    onEur={setTierEurDraft}
+                    onUsd={setTierUsdDraft}
+                    onSave={() => void handleAddTier()}
+                    inFlight={tierInFlight}
+                  />
+                </div>
+              ) : (
+                <>
+                  <PriceGrid
+                    tiers={tiersForVariant}
+                    onSave={saveTier}
+                    onRemoveQty={(qty) => { setTierError(null); setRemoveConfirmQty(qty) }}
+                  />
+                  <div className="mt-4">
+                    {tierAddOpen ? (
+                      <AddTierForm
+                        qty={tierQtyDraft}
+                        gbp={tierGbpDraft}
+                        eur={tierEurDraft}
+                        usd={tierUsdDraft}
+                        onQty={setTierQtyDraft}
+                        onGbp={setTierGbpDraft}
+                        onEur={setTierEurDraft}
+                        onUsd={setTierUsdDraft}
+                        onSave={() => void handleAddTier()}
+                        onCancel={resetTierAddForm}
+                        inFlight={tierInFlight}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setTierError(null); setTierAddOpen(true) }}
+                        className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+                      >
+                        Add tier
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {tierError && (
+                <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{tierError}</p>
+              )}
             </>
           )
         })()}
       </section>
+
+      {/* Soft-confirm for removing a tier. Destructive button is rose
+          so the admin can't click through absent-mindedly. */}
+      {removeConfirmQty != null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-gray-200">
+            <h4 className="text-base font-semibold text-gray-900">Remove this tier?</h4>
+            <p className="mt-2 text-sm text-gray-600">
+              Remove the price tier for {removeConfirmQty.toLocaleString()} units? This removes the GBP, EUR and USD prices for this quantity and cannot be undone.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRemoveConfirmQty(null)}
+                disabled={tierInFlight}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => { if (removeConfirmQty != null) void handleDeleteTier(removeConfirmQty) }}
+                disabled={tierInFlight}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
+              >
+                {tierInFlight ? 'Removing…' : 'Remove tier'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Add-tier form ────────────────────────────────────────────────────────────
+//
+// Inline row with four inputs (quantity + three currency totals) plus
+// Save/Cancel. Extracted so the bootstrap and normal paths share markup.
+// Parent owns validation and errors.
+
+function AddTierForm({
+  qty, gbp, eur, usd,
+  onQty, onGbp, onEur, onUsd,
+  onSave, onCancel, inFlight,
+}: {
+  qty: string
+  gbp: string
+  eur: string
+  usd: string
+  onQty: (v: string) => void
+  onGbp: (v: string) => void
+  onEur: (v: string) => void
+  onUsd: (v: string) => void
+  onSave: () => void
+  /** Omit to hide Cancel (used in the bootstrap-empty path). */
+  onCancel?: () => void
+  inFlight: boolean
+}) {
+  const canSave = qty.trim() !== '' && gbp.trim() !== '' && eur.trim() !== '' && usd.trim() !== ''
+  return (
+    <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-200">
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-gray-400">Quantity</label>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={qty}
+            onChange={(e) => onQty(e.target.value)}
+            disabled={inFlight}
+            className="w-28 rounded border border-gray-200 px-2 py-1 text-sm tabular-nums focus:border-gray-900 focus:outline-none"
+            placeholder="e.g. 500"
+          />
+        </div>
+        <CurrencyTotalField label="GBP (inc VAT)" symbol="£" value={gbp} onChange={onGbp} disabled={inFlight} />
+        <CurrencyTotalField label="EUR (ex VAT)"  symbol="€" value={eur} onChange={onEur} disabled={inFlight} />
+        <CurrencyTotalField label="USD (ex VAT)"  symbol="$" value={usd} onChange={onUsd} disabled={inFlight} />
+        <div className="ml-auto flex items-center gap-2">
+          {onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={inFlight}
+              className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-white disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={inFlight || !canSave}
+            className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+          >
+            {inFlight ? 'Saving…' : 'Save tier'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CurrencyTotalField({ label, symbol, value, onChange, disabled }: {
+  label: string
+  symbol: string
+  value: string
+  onChange: (v: string) => void
+  disabled: boolean
+}) {
+  return (
+    <div>
+      <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</label>
+      <div className="relative">
+        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">{symbol}</span>
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          className="w-28 rounded border border-gray-200 px-2 py-1 pl-5 text-sm tabular-nums focus:border-gray-900 focus:outline-none"
+          placeholder="0.00"
+        />
+      </div>
     </div>
   )
 }
 
 // ── Price grid ───────────────────────────────────────────────────────────────
 
-function PriceGrid({ tiers, onSave }: {
+function PriceGrid({ tiers, onSave, onRemoveQty }: {
   tiers: Tier[]
   onSave: (tierId: string, quantity: number, nextTotal: number) => Promise<void>
+  /** Optional per-row remove handler. Omit to hide the Remove column. */
+  onRemoveQty?: (quantity: number) => void
 }) {
   // Group by quantity so every row has all three currencies side-by-side.
   const byQty = useMemo(() => {
@@ -642,9 +990,9 @@ function PriceGrid({ tiers, onSave }: {
     return [...map.entries()].sort((a, b) => a[0] - b[0])
   }, [tiers])
 
-  if (byQty.length === 0) {
-    return <p className="text-sm text-gray-400">No price tiers set for this variant yet.</p>
-  }
+  // Empty state is handled by the parent so it can decide whether to
+  // render bootstrap copy + an open add form instead of nothing.
+  if (byQty.length === 0) return null
 
   return (
     <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
@@ -657,6 +1005,9 @@ function PriceGrid({ tiers, onSave }: {
                 {c} {c === 'GBP' ? '(inc VAT)' : '(ex VAT)'}
               </th>
             ))}
+            {onRemoveQty && (
+              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400"></th>
+            )}
           </tr>
           <tr className="border-b border-gray-100">
             <th className="px-4 pb-2 text-left text-[11px] font-medium uppercase tracking-wider text-gray-300" />
@@ -664,6 +1015,7 @@ function PriceGrid({ tiers, onSave }: {
               <th key={`${c}-total`} className="px-4 pb-2 text-left text-[11px] font-medium uppercase tracking-wider text-gray-400">Total</th>,
               <th key={`${c}-unit`} className="px-4 pb-2 text-left text-[11px] font-medium uppercase tracking-wider text-gray-400">Unit</th>,
             ]))}
+            {onRemoveQty && <th className="px-4 pb-2" />}
           </tr>
         </thead>
         <tbody>
@@ -691,6 +1043,18 @@ function PriceGrid({ tiers, onSave }: {
                   </td>,
                 ]
               })}
+              {onRemoveQty && (
+                <td className="px-4 py-2 text-right">
+                  <button
+                    type="button"
+                    onClick={() => onRemoveQty(qty)}
+                    title={`Remove tier for ${qty.toLocaleString()} units`}
+                    className="rounded px-2 py-0.5 text-xs font-medium text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+                  >
+                    Remove
+                  </button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
