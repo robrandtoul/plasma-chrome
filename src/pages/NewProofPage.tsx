@@ -100,6 +100,11 @@ export default function NewProofPage() {
   // automatically on paste success so the designer reviews what
   // got auto-filled.
   const [manualOpen, setManualOpen] = useState(false)
+  // Help Scout customer.createdAt (ISO) from the most recent paste
+  // lookup. Drives the "Customer since YYYY" subtitle under the
+  // staged company. Cleared whenever the company / contact is
+  // reset so the subtitle can't outlive the paste result.
+  const [customerCreatedAt, setCustomerCreatedAt] = useState<string | null>(null)
 
   // Load all companies once on mount
   useEffect(() => {
@@ -370,7 +375,7 @@ export default function NewProofPage() {
     number: number
     url: string
     subject: string | null
-    customer: { id: number; firstName: string; lastName: string; email: string; organization: string | null }
+    customer: { id: number; firstName: string; lastName: string; email: string; organization: string | null; createdAt: string | null }
   }) {
     // HS state
     setHelpscoutUrl(result.url)
@@ -380,6 +385,7 @@ export default function NewProofPage() {
     setOverrideReason('')
     setUrlFormatError(null)
     setPasteSubject(result.subject ?? null)
+    setCustomerCreatedAt(result.customer.createdAt)
 
     // Auto-expand the manual details disclosure so the designer can
     // review what landed.
@@ -482,6 +488,9 @@ export default function NewProofPage() {
     setSelectedCompany({ id: c.id, name: c.name })
     setCompanySearch(c.name)
     setCompanyOpen(false)
+    // Manual pick breaks association with any pasted HS customer,
+    // so the "Customer since" subtitle no longer applies.
+    setCustomerCreatedAt(null)
   }
 
   function addNewCompany() {
@@ -495,6 +504,7 @@ export default function NewProofPage() {
     setSelectedCompany(null)
     setCompanySearch('')
     setIsIndividual(false)
+    setCustomerCreatedAt(null)
   }
 
   function handleIndividualToggle(checked: boolean) {
@@ -503,6 +513,7 @@ export default function NewProofPage() {
       setSelectedCompany(null)
       setCompanySearch('')
       setCompanyOpen(false)
+      setCustomerCreatedAt(null)
     }
   }
 
@@ -820,52 +831,61 @@ export default function NewProofPage() {
             )}
 
             {!isIndividual && selectedCompany && (
-              selectedCompany.id === null ? (
-                // Staged new company: the name hasn't been persisted
-                // yet, so the designer can tweak it inline before
-                // submit. This is where titleCase output arrives
-                // from the paste flow, and where it gets cleaned up
-                // for the customer-facing proof page. No "Change"
-                // button here — clearing the field to restart is
-                // done via the picker-swap action in the row below,
-                // not via this direct edit.
-                <div className="mb-3 flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-1.5 ring-1 ring-amber-100">
-                  <input
-                    type="text"
-                    value={selectedCompany.name}
-                    onChange={(e) => setSelectedCompany({ id: null, name: e.target.value })}
-                    placeholder="Company name"
-                    className="min-w-0 flex-1 rounded border border-amber-200 bg-white px-2 py-1 text-sm font-medium text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    aria-label="Company name"
-                  />
-                  <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-                    New
-                  </span>
-                  <button
-                    type="button"
-                    onClick={clearCompany}
-                    className="shrink-0 text-xs text-gray-500 underline hover:text-gray-900"
-                  >
-                    Change
-                  </button>
-                </div>
-              ) : (
-                // Matched existing company: read-only. Editing the
-                // name here would rename it for every other proof
-                // that references it, which isn't what the designer
-                // intends from the new-proof form. "Change" swaps
-                // to a different company (or stages a new one).
-                <div className="mb-3 flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2.5">
-                  <span className="text-sm font-medium text-gray-900">{selectedCompany.name}</span>
-                  <button
-                    type="button"
-                    onClick={clearCompany}
-                    className="ml-3 shrink-0 text-xs text-gray-400 underline hover:text-gray-700"
-                  >
-                    Change
-                  </button>
-                </div>
-              )
+              <div className="mb-3 space-y-1">
+                {selectedCompany.id === null ? (
+                  // Staged new company: name hasn't been persisted
+                  // yet, so the designer can tweak it inline. The
+                  // amber surround flags "editable here"; the
+                  // badge itself stays neutral grey now that it
+                  // reads "First proof" rather than "New" (see the
+                  // badge-language change — "New" was misleading
+                  // for long-standing customers we'd worked with
+                  // via email for years).
+                  <div className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-1.5 ring-1 ring-amber-100">
+                    <input
+                      type="text"
+                      value={selectedCompany.name}
+                      onChange={(e) => setSelectedCompany({ id: null, name: e.target.value })}
+                      placeholder="Company name"
+                      className="min-w-0 flex-1 rounded border border-amber-200 bg-white px-2 py-1 text-sm font-medium text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      aria-label="Company name"
+                    />
+                    <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
+                      First proof
+                    </span>
+                    <button
+                      type="button"
+                      onClick={clearCompany}
+                      className="shrink-0 text-xs text-gray-500 underline hover:text-gray-900"
+                    >
+                      Change
+                    </button>
+                  </div>
+                ) : (
+                  // Matched existing company: read-only. Editing
+                  // the name here would rename it for every other
+                  // proof that references it.
+                  <div className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2.5">
+                    <span className="text-sm font-medium text-gray-900">{selectedCompany.name}</span>
+                    <button
+                      type="button"
+                      onClick={clearCompany}
+                      className="ml-3 shrink-0 text-xs text-gray-400 underline hover:text-gray-700"
+                    >
+                      Change
+                    </button>
+                  </div>
+                )}
+                {/* HS customer createdAt subtitle. Muted grey, sits
+                    below the pill, hidden when createdAt is missing
+                    or unparseable. */}
+                {(() => {
+                  const year = parseCustomerSinceYear(customerCreatedAt)
+                  return year ? (
+                    <p className="text-xs text-gray-500">Customer since {year}</p>
+                  ) : null
+                })()}
+              </div>
             )}
 
             <label className="flex cursor-pointer items-center gap-2">
@@ -1236,3 +1256,14 @@ function HelpScoutPicker({
 
 const inputClass =
   'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+
+// Pull a four-digit year out of a Help Scout createdAt timestamp.
+// Returns null for missing input, unparseable strings, or nonsense
+// years (< 1900) so the "Customer since" subtitle hides silently
+// rather than rendering "Customer since NaN".
+function parseCustomerSinceYear(createdAt: string | null): number | null {
+  if (!createdAt) return null
+  const d = new Date(createdAt)
+  const y = d.getFullYear()
+  return Number.isFinite(y) && y >= 1900 ? y : null
+}

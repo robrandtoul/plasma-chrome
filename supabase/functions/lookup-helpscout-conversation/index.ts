@@ -109,6 +109,7 @@ interface HsCustomer {
   firstName?: string | null
   lastName?: string | null
   organization?: string | null
+  createdAt?: string | null
   emails?: Array<{ value: string; type?: string }>
 }
 
@@ -202,6 +203,11 @@ Deno.serve(async (req) => {
         lastName:  customer?.lastName  ?? conversation.primaryCustomer.last  ?? '',
         email:     customer?.emails?.[0]?.value ?? conversation.primaryCustomer.email ?? '',
         organization: customer?.organization ?? null,
+        // ISO timestamp from Help Scout's customer resource. Used by
+        // the new-proof form to render a "Customer since YYYY"
+        // subtitle under the staged company. Null when HS returns
+        // no createdAt (rare but possible on legacy records).
+        createdAt: customer?.createdAt ?? null,
       } : null,
     })
   } catch (err) {
