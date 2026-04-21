@@ -542,6 +542,10 @@ export default function NewProofPage() {
       setError('Please select or add a company, or tick "No company".')
       return
     }
+    if (!isIndividual && selectedCompany && selectedCompany.id === null && !selectedCompany.name.trim()) {
+      setError('Company name is required.')
+      return
+    }
     if (!selectedContact && !addingContact) {
       setError('Please select or add a contact.')
       return
@@ -816,23 +820,52 @@ export default function NewProofPage() {
             )}
 
             {!isIndividual && selectedCompany && (
-              <div className="mb-3 flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2.5">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-gray-900">{selectedCompany.name}</span>
-                  {selectedCompany.id === null && (
-                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-                      New
-                    </span>
-                  )}
+              selectedCompany.id === null ? (
+                // Staged new company: the name hasn't been persisted
+                // yet, so the designer can tweak it inline before
+                // submit. This is where titleCase output arrives
+                // from the paste flow, and where it gets cleaned up
+                // for the customer-facing proof page. No "Change"
+                // button here — clearing the field to restart is
+                // done via the picker-swap action in the row below,
+                // not via this direct edit.
+                <div className="mb-3 flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-1.5 ring-1 ring-amber-100">
+                  <input
+                    type="text"
+                    value={selectedCompany.name}
+                    onChange={(e) => setSelectedCompany({ id: null, name: e.target.value })}
+                    placeholder="Company name"
+                    className="min-w-0 flex-1 rounded border border-amber-200 bg-white px-2 py-1 text-sm font-medium text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    aria-label="Company name"
+                  />
+                  <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                    New
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearCompany}
+                    className="shrink-0 text-xs text-gray-500 underline hover:text-gray-900"
+                  >
+                    Change
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={clearCompany}
-                  className="ml-3 shrink-0 text-xs text-gray-400 underline hover:text-gray-700"
-                >
-                  Change
-                </button>
-              </div>
+              ) : (
+                // Matched existing company: read-only. Editing the
+                // name here would rename it for every other proof
+                // that references it, which isn't what the designer
+                // intends from the new-proof form. "Change" swaps
+                // to a different company (or stages a new one).
+                <div className="mb-3 flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2.5">
+                  <span className="text-sm font-medium text-gray-900">{selectedCompany.name}</span>
+                  <button
+                    type="button"
+                    onClick={clearCompany}
+                    className="ml-3 shrink-0 text-xs text-gray-400 underline hover:text-gray-700"
+                  >
+                    Change
+                  </button>
+                </div>
+              )
             )}
 
             <label className="flex cursor-pointer items-center gap-2">
