@@ -1461,87 +1461,87 @@ export default function NewVersionPage() {
               )}
 
               {(() => {
-                // Figure out which option code's carry to show in
-                // this tab. Empty string for no-option materials
-                // (the legacy "tab" key used by imagesByOption).
+                // Active option tab's code. Empty string for
+                // no-option materials (legacy key used by
+                // imagesByOption).
                 const activeCode = optionMode ? activeImageOption : ''
 
-                // A slot is a (option, nameKey) coordinate. nameKey
-                // is SHARED_APPROVAL_KEY for shared or a recipient
-                // name. We render one section per active slot where
-                // v1 has at least one image, ordered as Shared
-                // first then names in v2.names[] order. v2 names
-                // that weren't in v1 won't have a carry section
-                // (nothing to carry); v1 names dropped from v2
-                // aren't shown either.
+                // Filter v1 images to the active option, and drop
+                // per-name images for names v2 has removed from
+                // its names[] (nothing to carry into). Shared is
+                // always included when v1 has shared images.
                 const commonNames = names.filter((n) => v1Carry.names.includes(n))
-                const slotKeys: string[] = [SHARED_APPROVAL_KEY, ...commonNames]
-
-                const slotSections = slotKeys.flatMap((nameKey) => {
-                  const assocFilter = nameKey === SHARED_APPROVAL_KEY ? null : nameKey
-                  const imagesInSlot = v1Carry.images.filter(
-                    (img) =>
-                      (img.material_option ?? '') === activeCode &&
-                      img.associated_name === assocFilter,
-                  )
-                  if (imagesInSlot.length === 0) return []
-                  const approval = v1Carry.approvalsByName[nameKey]
-                  const anyKeptWithoutReplacement = imagesInSlot.some(
-                    (img) => (keepByV1RowId[img.v1RowId] ?? true) && !replacementByV1RowId[img.v1RowId],
-                  )
-                  const showChangesWarning =
-                    approval?.state === 'changes_requested' && anyKeptWithoutReplacement
-                  const headerLabel = nameKey === SHARED_APPROVAL_KEY ? 'Shared' : nameKey
-
-                  return [
-                    <div key={nameKey} className="mb-4 last:mb-0">
-                      <div className="mb-2 flex items-center gap-2">
-                        <h3 className="text-sm font-semibold text-gray-800">{headerLabel}</h3>
-                        {approval?.state === 'approved' && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
-                            v{v1Carry.versionNumber} approved
-                          </span>
-                        )}
-                        {approval?.state === 'changes_requested' && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
-                            v{v1Carry.versionNumber} changes requested
-                          </span>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                        {imagesInSlot.map((img) => {
-                          const keep = keepByV1RowId[img.v1RowId] ?? true
-                          const replacement = replacementByV1RowId[img.v1RowId]
-                          return (
-                            <CarryCard
-                              key={img.v1RowId}
-                              img={img}
-                              keep={keep}
-                              replacement={replacement}
-                              onKeepChange={(v) => handleKeepToggle(img.v1RowId, v)}
-                              onReplacementUpload={(file) => handleReplacementUpload(img.v1RowId, file)}
-                              onReplacementClear={() => handleReplacementClear(img.v1RowId)}
-                            />
-                          )
-                        })}
-                      </div>
-                      {showChangesWarning && (
-                        <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
-                          {headerLabel} was marked changes requested on v{v1Carry.versionNumber}. Keep will carry the image but the slot will be unapproved on v2. Upload a replacement to address the request.
-                        </p>
-                      )}
-                    </div>,
-                  ]
+                const commonNamesSet = new Set(commonNames)
+                const imagesInTab = v1Carry.images.filter((img) => {
+                  if ((img.material_option ?? '') !== activeCode) return false
+                  if (img.associated_name == null) return true
+                  return commonNamesSet.has(img.associated_name)
                 })
 
-                if (slotSections.length === 0) {
+                // Sort order (bucket priority → Shared-first
+                // within bucket → names[] order → stable original
+                // order). Bucket 0 = changes_requested (hottest,
+                // surfaces first), 1 = null/no-state, 2 = approved.
+                // Stable sort via originalIdx tertiary key keeps a
+                // name's multiple v1 images adjacent in their
+                // original relative order.
+                const sortedImages = imagesInTab
+                  .map((img, originalIdx) => {
+                    const nameKey = img.associated_name ?? SHARED_APPROVAL_KEY
+                    const approval = v1Carry.approvalsByName[nameKey]
+                    const stateBucket: 0 | 1 | 2 =
+                      approval?.state === 'changes_requested'
+                        ? 0
+                        : approval == null
+                          ? 1
+                          : 2
+                    const isShared: 0 | 1 = img.associated_name == null ? 0 : 1
+                    const nameOrder =
+                      img.associated_name == null
+                        ? -1
+                        : v1Carry.names.indexOf(img.associated_name)
+                    return { img, originalIdx, stateBucket, isShared, nameOrder }
+                  })
+                  .sort((a, b) => {
+                    if (a.stateBucket !== b.stateBucket) return a.stateBucket - b.stateBucket
+                    if (a.isShared !== b.isShared) return a.isShared - b.isShared
+                    if (a.nameOrder !== b.nameOrder) return a.nameOrder - b.nameOrder
+                    return a.originalIdx - b.originalIdx
+                  })
+                  .map((x) => x.img)
+
+                if (sortedImages.length === 0) {
                   return (
                     <p className="text-sm text-gray-500">
                       v{v1Carry.versionNumber} has no images for this {optionMode ? 'option tab' : 'version'}.
                     </p>
                   )
                 }
-                return <div>{slotSections}</div>
+
+                return (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {sortedImages.map((img) => {
+                      const nameKey = img.associated_name ?? SHARED_APPROVAL_KEY
+                      const approval = v1Carry.approvalsByName[nameKey]
+                      const keep = keepByV1RowId[img.v1RowId] ?? true
+                      const replacement = replacementByV1RowId[img.v1RowId]
+                      return (
+                        <CarryCard
+                          key={img.v1RowId}
+                          img={img}
+                          nameLabel={img.associated_name}
+                          approval={approval}
+                          v1VersionNumber={v1Carry.versionNumber}
+                          keep={keep}
+                          replacement={replacement}
+                          onKeepChange={(v) => handleKeepToggle(img.v1RowId, v)}
+                          onReplacementUpload={(file) => handleReplacementUpload(img.v1RowId, file)}
+                          onReplacementClear={() => handleReplacementClear(img.v1RowId)}
+                        />
+                      )
+                    })}
+                  </div>
+                )
               })()}
 
               {/* Notice if v1 had images on option codes v2 doesn't
@@ -1830,6 +1830,9 @@ const selectClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm 
 // that slot rather than a new card.
 function CarryCard({
   img,
+  nameLabel,
+  approval,
+  v1VersionNumber,
   keep,
   replacement,
   onKeepChange,
@@ -1837,6 +1840,13 @@ function CarryCard({
   onReplacementClear,
 }: {
   img: V1Image
+  // null => Shared; otherwise the recipient name.
+  nameLabel: string | null
+  // v1's approval for this card's slot. Drives the inline pill
+  // above the thumbnail (green for approved, amber for
+  // changes_requested, none when null).
+  approval: ProofNameApproval | undefined
+  v1VersionNumber: number
   keep: boolean
   replacement: { file: File; preview: string } | undefined
   onKeepChange: (v: boolean) => void
@@ -1871,6 +1881,41 @@ function CarryCard({
           : 'bg-gray-50 ring-1 ring-gray-200',
       ].join(' ')}
     >
+      {/* Label row — sits above the thumbnail. Shared cards get
+          a muted pill; named cards show the name as plain text.
+          The v1 approval state pill sits inline to the right of
+          the label when the slot has an approval. Drives the
+          flattened layout: each card self-identifies, so the
+          per-name <h3> headings above grids aren't needed. */}
+      <div
+        className={[
+          'mb-2 flex items-center gap-2 transition-opacity',
+          showGhosted ? 'opacity-40' : '',
+        ].join(' ')}
+      >
+        {nameLabel == null ? (
+          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+            Shared
+          </span>
+        ) : (
+          <span
+            className="truncate text-sm font-medium text-gray-700"
+            title={nameLabel}
+          >
+            {nameLabel}
+          </span>
+        )}
+        {approval?.state === 'approved' && (
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
+            v{v1VersionNumber} approved
+          </span>
+        )}
+        {approval?.state === 'changes_requested' && (
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
+            v{v1VersionNumber} changes requested
+          </span>
+        )}
+      </div>
       <img
         src={img.preview}
         alt={displayLabel}
