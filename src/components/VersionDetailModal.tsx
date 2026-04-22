@@ -184,6 +184,26 @@ export default function VersionDetailModal({
     await loadApprovals()
   }
 
+  // Delete the approval row for a given name, returning the UI to
+  // the Pending state. No confirmation dialog — the action is
+  // reversible by clicking Mark as approved / Record change request
+  // again. Surfaces any error (notably: non-admins hit the admin-only
+  // DELETE policy from migration 000076 and will see a "Failed to
+  // clear" message rather than a silent no-op).
+  async function clearApproval(name: string) {
+    const { error: err } = await supabase
+      .from('proof_name_approvals')
+      .delete()
+      .eq('proof_version_id', version.id)
+      .eq('name', name)
+    if (err) {
+      setError(`Failed to clear approval: ${err.message}`)
+      return
+    }
+    setError(null)
+    await loadApprovals()
+  }
+
   async function handleSetCurrent() {
     setSettingCurrent(true)
     setError(null)
@@ -430,16 +450,32 @@ export default function VersionDetailModal({
                                 </button>
                               </div>
                             ) : (
-                              <button
-                                type="button"
-                                onClick={() => setDialog({
-                                  mode: approval.state === 'approved' ? 'approve' : 'changes',
-                                  name,
-                                })}
-                                className="text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
-                              >
-                                Edit
-                              </button>
+                              <div className="flex items-center gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() => setDialog({
+                                    mode: approval.state === 'approved' ? 'approve' : 'changes',
+                                    name,
+                                  })}
+                                  className="text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+                                >
+                                  Edit
+                                </button>
+                                {/* Clear returns the group to Pending
+                                    by deleting the row. Muted gray-400
+                                    so Edit reads as the primary amend
+                                    path and Clear as the secondary
+                                    reset. No confirm dialog — safely
+                                    reversible via the action buttons
+                                    that reappear in the Pending state. */}
+                                <button
+                                  type="button"
+                                  onClick={() => clearApproval(name)}
+                                  className="text-xs font-medium text-gray-400 underline-offset-2 hover:text-gray-700 hover:underline"
+                                >
+                                  Clear
+                                </button>
+                              </div>
                             )}
                           </div>
                         )}
