@@ -172,7 +172,7 @@ export default function NewVersionPage() {
       // default).
       const inheritPromise = supabase
         .from('proof_versions')
-        .select('version_number, currency, material_id, pricing_snapshot, names')
+        .select('version_number, currency, material_id, pricing_snapshot, names, ink_names')
         .eq('proof_id', proofId!)
         .eq('is_current', true)
         .maybeSingle()
@@ -188,6 +188,7 @@ export default function NewVersionPage() {
         material_id: string
         pricing_snapshot: { variants?: { variant_id?: string }[] } | null
         names: string[] | null
+        ink_names: string[] | null
       } | null
 
       if (inherited) {
@@ -240,6 +241,31 @@ export default function NewVersionPage() {
         if (variantIds.length > 0) {
           inheritedVariantIdsRef.current = variantIds
           setInheritedVariants(true)
+        }
+
+        // Ink names — inherited ink_names is a plain text[] on the
+        // DB. Which form-state slot we write to depends on the
+        // inherited material's requires_ink_names flag: true =>
+        // positional (inkNamesArray, one per ink slot on the
+        // variant); false => free-form comma-separated
+        // (inkNamesText). materialsList has the inherited material
+        // by now (either native or prepended as archived), so the
+        // lookup is safe. No explicit truncate/pad — the render
+        // loop reads by index up to the current variant's ink_count,
+        // and save-time slice(0, inkCount) drops anything beyond.
+        // Extra entries persist in state so toggling variant up and
+        // down within a material doesn't lose designer data.
+        const inheritedMaterial = materialsList.find((m) => m.id === inherited.material_id)
+        if (
+          inheritedMaterial &&
+          Array.isArray(inherited.ink_names) &&
+          inherited.ink_names.length > 0
+        ) {
+          if (inheritedMaterial.requires_ink_names) {
+            setInkNamesArray(inherited.ink_names)
+          } else {
+            setInkNamesText(inherited.ink_names.join(', '))
+          }
         }
       } else {
         // v1 — no inheritance, just hydrate the picker with the
