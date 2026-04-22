@@ -134,21 +134,27 @@ export default function NewVersionPage() {
   // most-recent prior version (if any) on mount — designer still
   // edits freely. Empty list is valid and allowed at submit.
   const [names, setNames] = useState<string[]>([])
-  // ── Shape controls (sidedness + per-side shared toggles) ─────────────────
+  // ── Shape controls (sidedness + shared toggle) ───────────────────────────
   // Drive the slot universe along with names[] and the material's
-  // options. Defaults on v1 creation match the classic Plasma
-  // shape (two-sided business card, shared-front design, per-
-  // person backs). On v2+ creation, the mount effect derives these
-  // from v(N-1)'s images: sidedness from whether any image has
-  // side='back', sharedFront / sharedBack from whether any image
-  // has associated_name=null on the matching side.
+  // options. Shared is only meaningful for two-sided projects:
+  // when ON, one side is a single design shared across every card
+  // (that side is internally always 'front' by convention — not
+  // surfaced in UI) and the other is personalised per name. When
+  // OFF, every card has its own design on every side. One-sided
+  // projects are always per-name, no shared option.
   //
-  // Flipping any of these can invalidate approvals if v(N-1) had
+  // v1 defaults: two-sided, shared OFF. On v2+ creation, the mount
+  // effect derives sidedness + shared from v(N-1)'s images:
+  //   sidedness = exists image with side='back' ? 'two-sided' : 'one-sided'
+  //   shared    = sidedness === 'two-sided'
+  //               && exists image with associated_name IS NULL
+  //                  AND side='front'
+  //
+  // Flipping either control can invalidate approvals if v(N-1) had
   // approved images whose slots vanish in the new shape. Handlers
   // below compute the impact and fire a confirm before applying.
   const [sidedness, setSidedness] = useState<'one-sided' | 'two-sided'>('two-sided')
-  const [sharedFront, setSharedFront] = useState(true)
-  const [sharedBack, setSharedBack] = useState(false)
+  const [shared, setShared] = useState(false)
   const [changeNotes, setChangeNotes] = useState('')
   const [pricingDisplay, setPricingDisplay] = useState<PricingDisplayValue | null>(null)
   const [availableOptions, setAvailableOptions] = useState<MaterialOption[]>([])
@@ -186,6 +192,7 @@ export default function NewVersionPage() {
   const variantRef          = useRef<HTMLDivElement>(null)
   const currencyRef         = useRef<HTMLDivElement>(null)
   const inkNamesRef         = useRef<HTMLDivElement>(null)
+  const namesRef            = useRef<HTMLDivElement>(null)
   const toastTimerRef       = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -402,27 +409,26 @@ export default function NewVersionPage() {
         })
         setKeepByV1RowId(keepDefaults)
 
-        // Shape inheritance — derived from v(N-1)'s images.
-        // Null side is treated as 'front' for back-compat with
-        // pre-migration-000085 data. With validation enforcing
-        // "every slot has at least one image", derivation
-        // reliably reconstructs the v(N-1) shape.
+        // Shape inheritance — derived from v(N-1)'s images. Null
+        // side normalises to 'front' for back-compat with pre-
+        // migration-000085 data. With validation enforcing "every
+        // slot has at least one image", derivation reliably
+        // reconstructs the v(N-1) shape.
         //
-        //   sidedness    — any image has side='back' → two-sided
-        //   sharedFront  — any image has associated_name=null on front
-        //   sharedBack   — any image has associated_name=null on back
+        //   sidedness — any image has side='back' → two-sided
+        //   shared    — two-sided AND any image has
+        //               associated_name IS NULL AND side='front'
+        //               (shared side is always 'front' by
+        //               convention — see state declaration above)
         if (imagesWithUrls.length > 0) {
           const sideOf = (img: V1Image) => img.side ?? 'front'
           const hasBack = imagesWithUrls.some((i) => sideOf(i) === 'back')
+          const nextSidedness: 'one-sided' | 'two-sided' = hasBack ? 'two-sided' : 'one-sided'
           const hasSharedFront = imagesWithUrls.some(
             (i) => i.associated_name == null && sideOf(i) === 'front',
           )
-          const hasSharedBack = imagesWithUrls.some(
-            (i) => i.associated_name == null && sideOf(i) === 'back',
-          )
-          setSidedness(hasBack ? 'two-sided' : 'one-sided')
-          setSharedFront(hasSharedFront)
-          setSharedBack(hasSharedBack)
+          setSidedness(nextSidedness)
+          setShared(nextSidedness === 'two-sided' && hasSharedFront)
         }
       }
 
@@ -890,28 +896,45 @@ export default function NewVersionPage() {
 
   function handleSidednessChange(next: 'one-sided' | 'two-sided') {
     if (next === sidedness) return
-    // Two-sided → one-sided drops every back-side v1 image.
-    // One-sided → two-sided is additive (no v1 back images to
-    // lose, since v(N-1) was one-sided by definition).
-    const vanishing =
-      v1Carry && next === 'one-sided'
-        ? v1Carry.images.filter((i) => (i.side ?? 'front') === 'back')
+    // Two-sided → one-sided: drops every back-side v1 image.
+    // Additionally, if shared was ON, it flips to OFF (Shared only
+    // exists on two-sided) which orphans every shared-front v1
+    // image too. Collect both sets into one vanishing list so the
+    // approval-invalidation confirm covers them together.
+    //
+    // One-sided → two-sided: additive (no v1 back images to lose
+    // since v(N-1) was one-sided by definition). Shared stays OFF
+    // on the flip — designer opts in explicitly.
+    const vanishing: V1Image[] = v1Carry
+      ? next === 'one-sided'
+        ? v1Carry.images.filter((i) => {
+            const side = i.side ?? 'front'
+            if (side === 'back') return true
+            // Front-side shared v1 images also vanish when shared
+            // resets to false below.
+            return shared && i.associated_name == null
+          })
         : []
+      : []
     if (!confirmShapeFlip(vanishing)) return
     cleanupReplacementsFor(vanishing)
     setSidedness(next)
-    // sharedBack always resets on flip — spec explicitly says
-    // don't remember prior value when flipping one→two, and on
-    // two→one the toggle is hidden anyway, so we normalise to
-    // false in both directions to keep state clean.
-    setSharedBack(false)
+    // Shared resets on every flip: going two→one it's no longer
+    // meaningful, and going one→two we don't remember a prior
+    // value (Shared default is OFF on v1; v2+ inheritance has
+    // already run at mount). Keeps the state model clean.
+    setShared(false)
   }
 
-  function handleSharedFrontChange(next: boolean) {
-    if (next === sharedFront) return
-    // ON→OFF: shared-front v1 images vanish (replaced by per-name
-    // front slots). OFF→ON: per-name front v1 images vanish
-    // (replaced by a shared-front slot).
+  function handleSharedChange(next: boolean) {
+    if (next === shared) return
+    // Shared only renders on two-sided, so this handler is
+    // unreachable on one-sided. Front-only semantics:
+    //   ON→OFF: shared-front v1 images vanish (replaced by
+    //           per-name front slots).
+    //   OFF→ON: per-name front v1 images vanish (replaced by a
+    //           single shared-front slot).
+    // Back-side v1 images are unaffected either way.
     const vanishing = v1Carry
       ? v1Carry.images.filter((i) => {
           if ((i.side ?? 'front') !== 'front') return false
@@ -920,20 +943,7 @@ export default function NewVersionPage() {
       : []
     if (!confirmShapeFlip(vanishing)) return
     cleanupReplacementsFor(vanishing)
-    setSharedFront(next)
-  }
-
-  function handleSharedBackChange(next: boolean) {
-    if (next === sharedBack) return
-    const vanishing = v1Carry
-      ? v1Carry.images.filter((i) => {
-          if ((i.side ?? 'front') !== 'back') return false
-          return next ? i.associated_name != null : i.associated_name == null
-        })
-      : []
-    if (!confirmShapeFlip(vanishing)) return
-    cleanupReplacementsFor(vanishing)
-    setSharedBack(next)
+    setShared(next)
   }
 
   function toggleVariant(variantId: string) {
@@ -963,6 +973,7 @@ export default function NewVersionPage() {
         { key: 'variant',        ref: variantRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'currency',       ref: currencyRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'inkNames',       ref: inkNamesRef as unknown as React.RefObject<HTMLElement | null> },
+        { key: 'names',          ref: namesRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'images',         ref: imageSectionRef },
       ]
       const first = order.find(o => !validations[o.key])
@@ -1003,10 +1014,12 @@ export default function NewVersionPage() {
     //
     // v2 slot universe by (side, identity):
     //   * side='back' only valid when sidedness='two-sided'
-    //   * For each valid side, either the Shared slot (assocName=null)
-    //     exists (if that side's sharedXxx toggle is on) OR the
-    //     per-name slots exist (assocName in names[]), never both.
-    // Null-side v1 rows are normalised to 'front' for back-compat.
+    //   * On two-sided + shared=true, the front side collapses to
+    //     a single Shared slot (assocName=null); the back side
+    //     stays per-name.
+    //   * Otherwise every valid side is per-name (assocName in
+    //     names[]), no Shared slot.
+    // Null-side v1 rows normalise to 'front' for back-compat.
     const v2Names = new Set(names)
     const slotStillValid = (
       assocName: string | null,
@@ -1014,9 +1027,9 @@ export default function NewVersionPage() {
     ): boolean => {
       const normalizedSide: 'front' | 'back' = side ?? 'front'
       if (normalizedSide === 'back' && sidedness === 'one-sided') return false
-      const isSharedForSide =
-        normalizedSide === 'front' ? sharedFront : sharedBack
-      if (isSharedForSide) return assocName == null
+      const isSharedSlotForSide =
+        sidedness === 'two-sided' && shared && normalizedSide === 'front'
+      if (isSharedSlotForSide) return assocName == null
       return assocName != null && v2Names.has(assocName)
     }
 
@@ -1381,8 +1394,9 @@ export default function NewVersionPage() {
   // across the project, shared across every option tab. Mirrors the
   // render-time slot universe in the image section so validation
   // agrees with what the designer can see. Empty list = no slots
-  // at all (one-sided + !sharedFront + names=[]); caught by
-  // hasAnySlot below.
+  // at all (names=[] + no shared slot); caught by hasAnySlot below,
+  // though the names-is-required validation makes that hard to
+  // reach in practice.
   const sidesForValidation: ('front' | 'back')[] =
     sidedness === 'two-sided' ? ['front', 'back'] : ['front']
   const slotTuplesForValidation: {
@@ -1390,9 +1404,9 @@ export default function NewVersionPage() {
     side: 'front' | 'back'
   }[] = []
   for (const side of sidesForValidation) {
-    const isSharedForSide =
-      (side === 'front' && sharedFront) || (side === 'back' && sharedBack)
-    if (isSharedForSide) {
+    const isSharedSlotForSide =
+      sidedness === 'two-sided' && shared && side === 'front'
+    if (isSharedSlotForSide) {
       slotTuplesForValidation.push({ identity: null, side })
     } else {
       for (const name of names) slotTuplesForValidation.push({ identity: name, side })
@@ -1434,6 +1448,14 @@ export default function NewVersionPage() {
       ),
     )
 
+  // Names became required when the Shared control was simplified
+  // to one toggle — every project now has at least one per-name
+  // dimension (one-sided: all sides per-name; two-sided + shared:
+  // back is per-name; two-sided + !shared: both sides per-name).
+  // Empty names[] therefore means no slots exist. The chip input
+  // trims internally, so we count non-blank trimmed entries.
+  const namesValid = names.some((n) => n.trim().length > 0)
+
   const validations = {
     images:         everySlotHasImage,
     pricingDisplay: pricingDisplay !== null,
@@ -1441,16 +1463,18 @@ export default function NewVersionPage() {
     variant:        !variantRequired || selectedVariantIds.length > 0,
     currency:       isCustomQuote || currency !== null,
     inkNames:       !requiresInkNames || (inkCount > 0 && inkNameValidities.every(Boolean)),
+    names:          namesValid,
   } as const
   const isValid = Object.values(validations).every(Boolean)
   const shouldHighlight = (k: keyof typeof validations) => submitAttempted && !validations[k]
 
   // Specific images message. Priority: no-slot universe first
-  // (can't save an empty shape), then the first empty (option,
-  // identity, side) tuple so the designer knows exactly where to
-  // upload.
+  // (can't save an empty shape — unreachable once names becomes
+  // required, kept as belt-and-braces), then the first empty
+  // (option, identity, side) tuple so the designer knows exactly
+  // where to upload.
   const imagesHint = !hasAnySlot
-    ? 'Add at least one name, or turn on a shared design toggle.'
+    ? 'Add at least one name.'
     : (() => {
         for (const fk of imagesFinishKeys) {
           for (const slot of slotTuplesForValidation) {
@@ -1762,33 +1786,27 @@ export default function NewVersionPage() {
             )}
 
             {/* ── LAYOUT ─────────────────────────────────────────
-                Names + sidedness + per-side shared toggles.
-                Everything that describes how the design is split
-                across people and sides. Order is names →
-                sidedness → shared front → shared back: names is
-                the primary axis; sidedness gates whether shared-
-                back renders at all; shared toggles depend on the
-                axes above. Shared-back stays conditional on
-                sidedness === 'two-sided'. */}
+                Names + sidedness + shared. Everything that
+                describes how the design is split across people
+                and sides. Order is names → sidedness → shared:
+                names is the primary axis and is required;
+                sidedness gates whether Shared renders at all;
+                Shared only applies to two-sided projects (one
+                side shared, the other per-name — by internal
+                convention the shared side is always 'front'). */}
             <h3 className="mt-8 mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Layout</h3>
 
             {/* Names on this order — chip input backs the
-                proof_versions.names array. The DB trigger snapshots
-                the per-currency split-name tooling surcharge onto
-                the version on save.
-
-                "(optional)" suffix is conditional: when neither
-                shared toggle is on, every slot is per-name, so at
-                least one name is required and "(optional)" would
-                be misleading. The validation hint handles the
-                required-but-empty case; the label just drops the
-                misleading suffix. */}
-            <div>
+                proof_versions.names array. Required: with the
+                simplified shape model every project has at least
+                one per-name dimension (one-sided: all sides;
+                two-sided + shared: back; two-sided + !shared:
+                both). The DB trigger snapshots the per-currency
+                split-name tooling surcharge onto the version on
+                save. */}
+            <div ref={namesRef}>
               <label className="mb-1.5 block text-sm font-medium text-gray-700">
                 Names on this order
-                {(sharedFront || sharedBack) && (
-                  <span className="font-normal text-gray-400"> (optional)</span>
-                )}
               </label>
               <NameChipInput
                 names={names}
@@ -1796,18 +1814,21 @@ export default function NewVersionPage() {
                 placeholder="Who is this proof for? Press Enter after each name"
                 ariaLabel="Names on this order"
               />
+              {shouldHighlight('names') && (
+                <p className="mt-1.5 text-xs font-medium text-rose-500">
+                  Add at least one name.
+                </p>
+              )}
             </div>
 
-            {/* Shape controls — sidedness + per-side shared
-                toggles. Together with names[] and the material's
-                options, these drive the slot universe in the
-                image section below. v1 defaults match the classic
-                Plasma shape (two-sided, shared-front design,
-                per-person backs). v2+ inherits from v(N-1)'s
-                images. Flipping any of these can invalidate v1
-                approvals if approved images would become
-                unreachable — the handlers below surface a confirm
-                first. */}
+            {/* Shape controls — sidedness + shared. Together with
+                names[] and the material's options, these drive
+                the slot universe in the image section below. v1
+                defaults: two-sided, Shared OFF. v2+ inherits from
+                v(N-1)'s images. Flipping either control can
+                invalidate v1 approvals if approved images would
+                become unreachable — the handlers above surface a
+                confirm first. */}
             <div className="mt-5 space-y-3">
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-gray-700">
@@ -1841,66 +1862,39 @@ export default function NewVersionPage() {
                 </fieldset>
               </div>
 
-              {/* Shared-toggle sub-text always describes what the
-                  toggle does when ON. The OFF state implicitly
-                  means the opposite ("a separate design per name"),
-                  which was the previous sub-text for OFF —
-                  describing opposite states from the label/toggle
-                  confused designers during sit-and-test. */}
-              <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3">
-                <div>
-                  <div className="text-sm font-medium text-gray-700">
-                    Shared front
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    One front design used for every card.
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleSharedFrontChange(!sharedFront)}
-                  role="switch"
-                  aria-checked={sharedFront}
-                  aria-label="Shared front design"
-                  className={[
-                    'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors',
-                    sharedFront ? 'bg-gray-900' : 'bg-gray-200',
-                  ].join(' ')}
-                >
-                  <span
-                    className={[
-                      'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-white transition-transform',
-                      sharedFront ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
-                    ].join(' ')}
-                  />
-                </button>
-              </div>
-
+              {/* Shared only renders on two-sided projects.
+                  One-sided is always fully per-name so there's
+                  nothing meaningful for Shared to toggle —
+                  removing from the DOM rather than disabling
+                  keeps the form visually simpler. Sub-text
+                  describes the effect rather than a state, since
+                  "shared" on its own is ambiguous about which
+                  side gets shared. */}
               {sidedness === 'two-sided' && (
                 <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3">
                   <div>
                     <div className="text-sm font-medium text-gray-700">
-                      Shared back
+                      Shared
                     </div>
                     <div className="text-xs text-gray-500">
-                      One back design used for every card.
+                      One side shared across all cards, the other personalised per name.
                     </div>
                   </div>
                   <button
                     type="button"
-                    onClick={() => handleSharedBackChange(!sharedBack)}
+                    onClick={() => handleSharedChange(!shared)}
                     role="switch"
-                    aria-checked={sharedBack}
-                    aria-label="Shared back design"
+                    aria-checked={shared}
+                    aria-label="Shared design"
                     className={[
                       'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors',
-                      sharedBack ? 'bg-gray-900' : 'bg-gray-200',
+                      shared ? 'bg-gray-900' : 'bg-gray-200',
                     ].join(' ')}
                   >
                     <span
                       className={[
                         'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-white transition-transform',
-                        sharedBack ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
+                        shared ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
                       ].join(' ')}
                     />
                   </button>
@@ -1972,19 +1966,21 @@ export default function NewVersionPage() {
               const activeCode = optionMode ? activeImageOption : ''
 
               // Slot universe: (identity, side) tuples derived
-              // from sidedness + per-side shared toggles + names.
-              // Identity is SHARED_APPROVAL_KEY for shared-side
-              // slots, else a recipient name. Post-migration-000085
-              // v1 images always have side non-null; pre-migration
-              // nulls are treated as 'front' for back-compat.
+              // from sidedness + shared + names. Identity is
+              // SHARED_APPROVAL_KEY for the (always-front) shared
+              // slot, else a recipient name. Shared side is fixed
+              // to 'front' by internal convention (see state
+              // declaration). Post-migration-000085 v1 images
+              // always have side non-null; pre-migration nulls are
+              // treated as 'front' for back-compat.
               const sides: ('front' | 'back')[] =
                 sidedness === 'two-sided' ? ['front', 'back'] : ['front']
               type SlotTuple = { identity: string; side: 'front' | 'back' }
               const slotTuples: SlotTuple[] = []
               for (const side of sides) {
-                const isSharedForSide =
-                  (side === 'front' && sharedFront) || (side === 'back' && sharedBack)
-                if (isSharedForSide) {
+                const isSharedSlotForSide =
+                  sidedness === 'two-sided' && shared && side === 'front'
+                if (isSharedSlotForSide) {
                   slotTuples.push({ identity: SHARED_APPROVAL_KEY, side })
                 } else {
                   for (const name of names) slotTuples.push({ identity: name, side })
@@ -1997,8 +1993,8 @@ export default function NewVersionPage() {
               // iff its (identity, side) coordinate matches. v1
               // images whose name was dropped from v2.names[] —
               // or whose (identity, side) combo isn't in the new
-              // universe (e.g. removed Alice-back after the
-              // sharedBack toggle flipped) — silently don't render.
+              // universe (e.g. Alice-back after flipping to
+              // one-sided) — silently don't render.
               const validSlots = new Set(slotTuples.map((s) => slotKey(s.identity, s.side)))
               const carryCellsBySlot: Record<string, V1Image[]> = {}
               if (v1Carry) {
