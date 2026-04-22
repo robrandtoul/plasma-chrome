@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { PricingDisplay } from './PricingDisplay'
 import { ImageGrid } from './ImageGrid'
-import type { Currency, PricingSnapshot } from '../lib/types'
+import type { Currency, PricingSnapshot, ProofNameApproval } from '../lib/types'
 import { DEFAULT_FEATURED_QUANTITIES } from '../lib/constants'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 
@@ -20,6 +20,11 @@ export interface ModalVersion {
   pricing_snapshot: PricingSnapshot
   shipping_note: string
   custom_quote: boolean
+  // Recipient names for this version (migration 000070). Drives the
+  // per-name approval grouping below. Empty array = single-subject
+  // project, approval section collapses to just the shared image
+  // group with no per-name controls.
+  names: string[]
   materials: { featured_quantities: number[] } | null
 }
 
@@ -29,6 +34,9 @@ interface ModalImage {
   image_path: string
   sort_order: number
   signed_url: string
+  // Added for the name-grouped rendering introduced alongside the
+  // approval section. Null = shared image (applies to every name).
+  associated_name: string | null
 }
 
 
@@ -39,6 +47,7 @@ export default function VersionDetailModal({
   lockReason,
   allVersions,
   viewHistory,
+  contactFullName,
   onClose,
   onVersionUpdated,
   onDeleteProofRequested,
@@ -49,6 +58,10 @@ export default function VersionDetailModal({
   lockReason: 'approved' | 'abandoned' | null
   allVersions: ModalVersion[]
   viewHistory?: { viewed_at: string; user_agent: string | null }[]
+  // Project contact's full name, prefilled into the approve /
+  // request-changes dialogs as the actor_name default. Optional so
+  // the modal still renders if the parent hasn't plumbed it.
+  contactFullName?: string
   onClose: () => void
   onVersionUpdated: (message: string) => void
   onDeleteProofRequested?: () => void
@@ -60,9 +73,21 @@ export default function VersionDetailModal({
   const [deleteState, setDeleteState] = useState<'idle' | 'confirm' | 'working'>('idle')
   const [settingCurrent, setSettingCurrent] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Per-name approval state. Keyed by the recipient name string —
+  // matches proof_name_approvals.name which is plain text, not FK.
+  // Absence of a key = no row yet = "Pending" in the UI.
+  const [approvals, setApprovals] = useState<Record<string, ProofNameApproval>>({})
+  // Dialog state for approve / request-changes flows. `name` drives
+  // which recipient the dialog applies to; `mode` picks the form
+  // shape.
+  const [dialog, setDialog] = useState<
+    | { mode: 'approve' | 'changes'; name: string }
+    | null
+  >(null)
 
   useEffect(() => {
     loadImages()
+    loadApprovals()
   }, [version.id])
 
   useEffect(() => {
@@ -85,7 +110,7 @@ export default function VersionDetailModal({
     setLoadingImages(true)
     const { data } = await supabase
       .from('proof_version_images')
-      .select('id, proof_version_id, image_path, sort_order')
+      .select('id, proof_version_id, image_path, sort_order, associated_name')
       .eq('proof_version_id', version.id)
       .order('sort_order')
 
@@ -105,6 +130,58 @@ export default function VersionDetailModal({
     )
     setImages(withUrls as ModalImage[])
     setLoadingImages(false)
+  }
+
+  // Load every approval row for this version into a name → row
+  // lookup. Called on mount and after every successful upsert so
+  // the UI reflects the latest state without optimistic updates.
+  async function loadApprovals() {
+    const { data } = await supabase
+      .from('proof_name_approvals')
+      .select('*')
+      .eq('proof_version_id', version.id)
+
+    const map: Record<string, ProofNameApproval> = {}
+    for (const row of (data ?? []) as ProofNameApproval[]) {
+      map[row.name] = row
+    }
+    setApprovals(map)
+  }
+
+  // Upsert a single approval row for (version, name). Unique
+  // constraint on (proof_version_id, name) handles the conflict
+  // target. actor_ip / actor_ua stay null — designer records are
+  // keyboard-driven, no telemetry needed. change_request is
+  // explicitly cleared on approval so the record doesn't carry a
+  // stale "what needs to change" note from a prior state.
+  async function upsertApproval(args: {
+    name: string
+    state: 'approved' | 'changes_requested'
+    actorName: string
+    changeRequest: string | null
+  }) {
+    const { error: err } = await supabase
+      .from('proof_name_approvals')
+      .upsert(
+        {
+          proof_version_id: version.id,
+          name: args.name,
+          state: args.state,
+          change_request: args.state === 'approved' ? null : args.changeRequest,
+          actor_name: args.actorName,
+          actor_ip: null,
+          actor_ua: null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'proof_version_id,name' },
+      )
+    if (err) {
+      setError(`Failed to save approval: ${err.message}`)
+      return
+    }
+    setError(null)
+    setDialog(null)
+    await loadApprovals()
   }
 
   async function handleSetCurrent() {
@@ -274,19 +351,113 @@ export default function VersionDetailModal({
               </dl>
             </div>
 
-            {/* Images */}
+            {/* Images + per-name approvals.
+                When the version has no names[] (single-subject
+                project), we fall back to one flat image grid, same
+                as before the approvals section existed. When names
+                are present, we render a Shared group first
+                (associated_name IS NULL images — apply to every
+                recipient) then one group per name with its own
+                approval header and action row. */}
             <div>
               <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">Images</p>
               {loadingImages ? (
                 <div className="flex h-32 items-center justify-center rounded-2xl bg-white ring-1 ring-gray-200">
                   <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
                 </div>
-              ) : (
+              ) : version.names.length === 0 ? (
                 <ImageGrid
                   images={images}
                   versionNumber={version.version_number}
                   onImageClick={setLightboxSrc}
                 />
+              ) : (
+                <div className="space-y-6">
+                  {/* Shared group — images without an associated_name
+                      apply to every recipient. No approval header
+                      here; approval is recorded per named recipient. */}
+                  {(() => {
+                    const shared = images.filter((img) => img.associated_name == null)
+                    if (shared.length === 0) return null
+                    return (
+                      <div>
+                        <p className="mb-2 text-xs font-medium uppercase tracking-wider text-gray-500">Shared</p>
+                        <ImageGrid
+                          images={shared}
+                          versionNumber={version.version_number}
+                          onImageClick={setLightboxSrc}
+                        />
+                      </div>
+                    )
+                  })()}
+
+                  {/* One section per named recipient. Ordering
+                      follows the names[] snapshot so designer and
+                      customer views agree. */}
+                  {version.names.map((name) => {
+                    const nameImages = images.filter((img) => img.associated_name === name)
+                    const approval = approvals[name]
+                    return (
+                      <div key={name} className="rounded-2xl ring-1 ring-gray-200 bg-white p-4">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-gray-900">{name}</p>
+                        </div>
+
+                        {/* State header */}
+                        <ApprovalStateHeader approval={approval} />
+
+                        {/* Action row — pending gives two buttons,
+                            any set state gives an Edit link that
+                            re-opens the matching dialog. Suppressed
+                            when the whole project is locked. */}
+                        {!proofLocked && (
+                          <div className="mb-3">
+                            {!approval ? (
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setDialog({ mode: 'approve', name })}
+                                  className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
+                                >
+                                  Mark as approved
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDialog({ mode: 'changes', name })}
+                                  className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200 hover:bg-amber-100"
+                                >
+                                  Record change request
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setDialog({
+                                  mode: approval.state === 'approved' ? 'approve' : 'changes',
+                                  name,
+                                })}
+                                className="text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+                              >
+                                Edit
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Images for this recipient */}
+                        {nameImages.length > 0 ? (
+                          <ImageGrid
+                            images={nameImages}
+                            versionNumber={version.version_number}
+                            onImageClick={setLightboxSrc}
+                          />
+                        ) : (
+                          <p className="text-xs text-gray-400">No images associated with this name.</p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
               )}
             </div>
 
@@ -412,7 +583,206 @@ export default function VersionDetailModal({
           />
         </div>
       )}
+
+      {/* Approval dialogs — rendered on top of the modal (z-[70] so
+          they also sit above the lightbox at z-[60], though the two
+          never open simultaneously). */}
+      {dialog?.mode === 'approve' && (
+        <ApproveDialog
+          name={dialog.name}
+          prefillActor={contactFullName ?? ''}
+          existing={approvals[dialog.name]}
+          onConfirm={(actorName) =>
+            upsertApproval({
+              name: dialog.name,
+              state: 'approved',
+              actorName,
+              changeRequest: null,
+            })
+          }
+          onCancel={() => setDialog(null)}
+        />
+      )}
+      {dialog?.mode === 'changes' && (
+        <RequestChangesDialog
+          name={dialog.name}
+          prefillActor={contactFullName ?? ''}
+          existing={approvals[dialog.name]}
+          onSubmit={(actorName, changeRequest) =>
+            upsertApproval({
+              name: dialog.name,
+              state: 'changes_requested',
+              actorName,
+              changeRequest,
+            })
+          }
+          onCancel={() => setDialog(null)}
+        />
+      )}
     </>
+  )
+}
+
+// Per-name approval state header. Three states:
+//   no row       → muted "Pending" pill
+//   approved     → emerald "Approved DD/MM/YYYY by actor" pill
+//   changes_req  → amber "Changes requested DD/MM/YYYY by actor"
+//                  with an optional second line for the comment
+// Kept colocated with VersionDetailModal because it's the only
+// surface using it and extracting to its own file would just add
+// a context-switching tax.
+function ApprovalStateHeader({ approval }: { approval: ProofNameApproval | undefined }) {
+  if (!approval) {
+    return (
+      <div className="mb-3 rounded-lg bg-gray-50 px-3 py-2 text-xs font-medium text-gray-500 ring-1 ring-gray-200">
+        Pending
+      </div>
+    )
+  }
+  const when = new Date(approval.updated_at).toLocaleDateString('en-GB')
+  if (approval.state === 'approved') {
+    return (
+      <div className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 ring-1 ring-emerald-200">
+        Approved {when} by {approval.actor_name}
+      </div>
+    )
+  }
+  // changes_requested
+  return (
+    <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 ring-1 ring-amber-200">
+      <p className="text-xs font-medium text-amber-800">
+        Changes requested {when} by {approval.actor_name}
+      </p>
+      {approval.change_request && (
+        <p className="mt-1 text-xs text-amber-700/80">{approval.change_request}</p>
+      )}
+    </div>
+  )
+}
+
+// Approve dialog. Single text input for actor name, prefilled with
+// the project contact's full name if known. No IP/UA capture here —
+// it's a designer-side record, telemetry is noise.
+function ApproveDialog({
+  name,
+  prefillActor,
+  existing,
+  onConfirm,
+  onCancel,
+}: {
+  name: string
+  prefillActor: string
+  existing: ProofNameApproval | undefined
+  onConfirm: (actorName: string) => void
+  onCancel: () => void
+}) {
+  const [actor, setActor] = useState(
+    existing?.state === 'approved' ? existing.actor_name : prefillActor,
+  )
+  const trimmed = actor.trim()
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-base font-semibold text-gray-900">Approve for {name}</h3>
+        <label className="mt-4 block">
+          <span className="block text-xs font-medium uppercase tracking-wider text-gray-500">Approved by</span>
+          <input
+            type="text"
+            value={actor}
+            onChange={(e) => setActor(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none"
+            autoFocus
+          />
+        </label>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onConfirm(trimmed)}
+            disabled={trimmed.length === 0}
+            className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Request changes dialog. Textarea for the change note (optional)
+// plus actor name input. Empty textarea stores null, not an empty
+// string, so query-side `where change_request is not null` reads
+// as "had a written note" rather than "had some kind of note".
+function RequestChangesDialog({
+  name,
+  prefillActor,
+  existing,
+  onSubmit,
+  onCancel,
+}: {
+  name: string
+  prefillActor: string
+  existing: ProofNameApproval | undefined
+  onSubmit: (actorName: string, changeRequest: string | null) => void
+  onCancel: () => void
+}) {
+  const [actor, setActor] = useState(
+    existing?.state === 'changes_requested' ? existing.actor_name : prefillActor,
+  )
+  const [note, setNote] = useState(
+    existing?.state === 'changes_requested' ? existing.change_request ?? '' : '',
+  )
+  const trimmedActor = actor.trim()
+  const trimmedNote = note.trim()
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-base font-semibold text-gray-900">Record change request for {name}</h3>
+        <label className="mt-4 block">
+          <span className="block text-xs font-medium uppercase tracking-wider text-gray-500">What needs to change?</span>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={4}
+            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none"
+            autoFocus
+          />
+        </label>
+        <label className="mt-4 block">
+          <span className="block text-xs font-medium uppercase tracking-wider text-gray-500">Reported by</span>
+          <input
+            type="text"
+            value={actor}
+            onChange={(e) => setActor(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none"
+          />
+        </label>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onSubmit(trimmedActor, trimmedNote === '' ? null : trimmedNote)}
+            disabled={trimmedActor.length === 0}
+            className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+          >
+            Submit
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 

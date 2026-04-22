@@ -69,7 +69,7 @@ export default function ProofDetailPage() {
         .single(),
       supabase
         .from('proof_versions')
-        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, change_notes, pricing_snapshot, shipping_note, custom_quote, materials(featured_quantities)')
+        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, change_notes, pricing_snapshot, shipping_note, custom_quote, names, materials(featured_quantities)')
         .eq('proof_id', proofId)
         .order('version_number', { ascending: false }),
     ])
@@ -628,6 +628,7 @@ export default function ProofDetailPage() {
           lockReason={isAbandoned ? 'abandoned' : isApproved ? 'approved' : null}
           allVersions={versions}
           viewHistory={viewsByVersion.get(selectedVersion.id) ?? []}
+          contactFullName={proof.contacts.full_name}
           onClose={() => setSelectedVersion(null)}
           onVersionUpdated={handleVersionUpdated}
           onDeleteProofRequested={() => {
