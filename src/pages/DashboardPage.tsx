@@ -10,6 +10,7 @@ import {
   viewedStateTitle,
   type ViewedState,
 } from '../lib/viewedState'
+import { designerPreviewPath } from '../lib/customerProofUrl'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -273,7 +274,12 @@ function PreviewLink({ proofId, hasVersions }: { proofId: string; hasVersions: b
   }
   return (
     <a
-      href={`/p/${proofId}`}
+      // Designer preview — suppresses the record_proof_view RPC
+      // on the customer page so dashboard clicks don't pollute
+      // the viewed indicator. Same flag as ProofDetailPage's
+      // "Preview as customer" iframe; both go through the shared
+      // helper so the mechanism stays in one place.
+      href={designerPreviewPath(proofId)}
       target="_blank"
       rel="noopener noreferrer"
       onClick={(e) => e.stopPropagation()}

@@ -11,6 +11,7 @@ import type { ProofNameApproval } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
+import { customerProofPath, designerPreviewPath } from '../lib/customerProofUrl'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -627,7 +628,7 @@ export default function ProofDetailPage() {
   }
 
   async function copyCustomerUrl() {
-    const url = `${window.location.origin}/p/${proof!.id}`
+    const url = `${window.location.origin}${customerProofPath(proof!.id)}`
     try {
       await navigator.clipboard.writeText(url)
     } catch {
@@ -1212,7 +1213,7 @@ export default function ProofDetailPage() {
                 </button>
               </div>
               <iframe
-                src={`/p/${proof.id}?preview=1`}
+                src={designerPreviewPath(proof.id)}
                 title="Customer preview"
                 className="flex-1 border-0 bg-white"
               />
