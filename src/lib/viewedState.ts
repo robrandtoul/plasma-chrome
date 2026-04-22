@@ -27,14 +27,17 @@ export function computeViewedState({
 
 // Small presentation helpers kept alongside so both the dashboard
 // and the proof detail page use exactly the same colour + title
-// palette. Colour matches Rob's spec: zinc-300 / amber-500 /
-// emerald-500.
+// palette. Viewed-current was emerald-500 until the Names roll-up
+// started using green dots for approval state; swapped to cyan-500
+// here to avoid the colour collision. Green is now reserved for
+// approval; cyan for "customer viewed the current version".
+// Palette: zinc-300 / amber-500 / cyan-500.
 
 export function viewedStateDotClass(state: ViewedState): string {
   switch (state) {
     case 'unviewed':       return 'bg-zinc-300'
     case 'viewed_stale':   return 'bg-amber-500'
-    case 'viewed_current': return 'bg-emerald-500'
+    case 'viewed_current': return 'bg-cyan-500'
   }
 }
 
