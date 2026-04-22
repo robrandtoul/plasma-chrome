@@ -758,6 +758,10 @@ export default function NewVersionPage() {
   function handleNamesChange(next: string[]) {
     const removed = names.filter((n) => !next.includes(n))
     if (removed.length > 0) {
+      // Fresh images: re-stamp associated_name to null (shared)
+      // for any image whose name was just removed. UI and save
+      // path both read associated_name, so this reassigns them
+      // cleanly to the Shared slot.
       setImagesByOption((prev) => {
         const out: Record<string, typeof prev[string]> = {}
         for (const [key, list] of Object.entries(prev)) {
@@ -769,6 +773,36 @@ export default function NewVersionPage() {
         }
         return out
       })
+
+      // Carry-forward cleanup: clear any queued replacement for
+      // v1 images whose name was just removed. The carry card
+      // stops rendering when its name leaves names[], so a
+      // queued replacement would become zombie state — hidden
+      // UI, still holding an ObjectURL and about to leak into
+      // the save path via replacementEntries. Revoke the preview
+      // URL and drop the entry. Keep toggle state (keepByV1RowId)
+      // is left alone so re-adding the name restores the carry
+      // cleanly. Save-path filter below is the belt-and-braces
+      // guard against any carry rows that still slip through.
+      if (v1Carry) {
+        const removedSet = new Set(removed)
+        const orphanedV1RowIds = v1Carry.images
+          .filter((img) => img.associated_name != null && removedSet.has(img.associated_name))
+          .map((img) => img.v1RowId)
+        if (orphanedV1RowIds.length > 0) {
+          setReplacementByV1RowId((prev) => {
+            const out: typeof prev = {}
+            for (const [k, v] of Object.entries(prev)) {
+              if (orphanedV1RowIds.includes(k)) {
+                URL.revokeObjectURL(v.preview)
+                continue
+              }
+              out[k] = v
+            }
+            return out
+          })
+        }
+      }
     }
     setNames(next)
   }
@@ -829,15 +863,29 @@ export default function NewVersionPage() {
     // v1 — no upload needed. Replacement rows get their own upload
     // path. Fresh rows (allEntries above) get their own upload
     // paths too.
+    //
+    // Belt-and-braces guard: skip rows whose associated_name is no
+    // longer in v2's names[] (and isn't null/Shared). UI already
+    // hides carry cells for removed names, and handleNamesChange
+    // purges replacement state, but this filter catches any edge
+    // where state wasn't cleaned (e.g. rapid add-then-remove, or
+    // any future code path that might leave stale keep/replacement
+    // entries behind).
+    const v2Names = new Set(names)
+    const slotStillValid = (assocName: string | null) =>
+      assocName == null || v2Names.has(assocName)
+
     const carriedV1Rows = v1Carry
       ? v1Carry.images.filter(
           (img) =>
-            (keepByV1RowId[img.v1RowId] ?? true) && !replacementByV1RowId[img.v1RowId],
+            (keepByV1RowId[img.v1RowId] ?? true) &&
+            !replacementByV1RowId[img.v1RowId] &&
+            slotStillValid(img.associated_name),
         )
       : []
     const replacementEntries = v1Carry
       ? v1Carry.images
-          .filter((img) => !!replacementByV1RowId[img.v1RowId])
+          .filter((img) => !!replacementByV1RowId[img.v1RowId] && slotStillValid(img.associated_name))
           .map((img) => ({ v1Img: img, file: replacementByV1RowId[img.v1RowId]!.file }))
       : []
 

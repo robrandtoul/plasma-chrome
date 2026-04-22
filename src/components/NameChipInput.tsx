@@ -41,7 +41,16 @@ export default function NameChipInput({
   function commitBuffer() {
     const trimmed = buffer.trim()
     if (!trimmed) return
-    onChange([...names, titleCase(trimmed)])
+    const cased = titleCase(trimmed)
+    // Case-insensitive dedupe. If the designer retypes an existing
+    // name (whatever casing), silently drop the add and clear the
+    // buffer — no error flash, feels like "already there." Matches
+    // the titleCase commit convention so "otto" after "Otto" is
+    // still considered a dup.
+    const exists = names.some((n) => n.toLowerCase() === cased.toLowerCase())
+    if (!exists) {
+      onChange([...names, cased])
+    }
     setBuffer('')
   }
 
@@ -75,14 +84,24 @@ export default function NameChipInput({
       // Clearing a chip via edit removes it.
       removeAt(editingIndex)
     } else {
-      const next = [...names]
-      // Respect the designer's explicit casing on edit — only apply
-      // titleCase when the commit is identical to the original
-      // (e.g. they clicked in and pressed Enter without changing
-      // anything) so a deliberate "PhD" or "MacLeod" doesn't get
-      // squashed.
-      next[editingIndex] = trimmed === names[editingIndex] ? names[editingIndex] : trimmed
-      onChange(next)
+      // Case-insensitive dedupe against other chips (excluding
+      // the one being edited). If the edited value collides with
+      // another chip, drop the duplicate by removing this chip —
+      // the target already exists.
+      const idx = editingIndex
+      const collides = names.some((n, i) => i !== idx && n.toLowerCase() === trimmed.toLowerCase())
+      if (collides) {
+        removeAt(idx)
+      } else {
+        const next = [...names]
+        // Respect the designer's explicit casing on edit — only
+        // apply titleCase when the commit is identical to the
+        // original (e.g. they clicked in and pressed Enter
+        // without changing anything) so a deliberate "PhD" or
+        // "MacLeod" doesn't get squashed.
+        next[idx] = trimmed === names[idx] ? names[idx] : trimmed
+        onChange(next)
+      }
     }
     setEditingIndex(null)
     setEditingDraft('')
