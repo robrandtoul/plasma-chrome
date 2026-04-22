@@ -1527,6 +1527,43 @@ export default function NewVersionPage() {
     inheritedVariantIdsRef.current = null
   }
 
+  // Cancel + Save pair, defined once and rendered twice (top of
+  // the page beside the heading, and again at the bottom of the
+  // form below the image grid). Both renders emit the same JSX,
+  // so disabled state, label swaps, a11y hints, and any future
+  // chrome stay in lockstep. The submit button carries
+  // form="new-version-form" so placement outside the <form>
+  // element (top row) is as functional as placement inside
+  // (bottom row).
+  const actionRow = (
+    <div className="flex items-center gap-3">
+      <Link
+        to={`/proofs/${proofId}`}
+        className="text-sm font-medium text-gray-500 hover:text-gray-700"
+      >
+        Cancel
+      </Link>
+      <button
+        type="submit"
+        form="new-version-form"
+        disabled={submitting || !isValid}
+        title={!isValid ? missingFieldsHint(validations) : undefined}
+        aria-label={
+          !isValid
+            ? `Save version, ${missingFieldsHint(validations)}`
+            : undefined
+        }
+        className={[
+          'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
+          isValid ? 'bg-gray-900 hover:bg-gray-700' : 'bg-gray-900/60',
+          'disabled:cursor-not-allowed disabled:opacity-50',
+        ].join(' ')}
+      >
+        {submitting ? 'Uploading and saving…' : 'Save version'}
+      </button>
+    </div>
+  )
+
   return (
     <div className="min-h-screen bg-gray-50">
       {validationToast && (
@@ -1543,39 +1580,21 @@ export default function NewVersionPage() {
           <Link to={`/proofs/${proofId}`} className="text-sm text-gray-400 hover:text-gray-700">← Back to project</Link>
         </div>
 
-        {/* Page heading + actions */}
+        {/* Page heading + top actions. The Cancel + Save pair is
+            defined once as `actionRow` below the heading row and
+            rendered twice (here and at the bottom of the form) so
+            any future chrome — saving spinner, progress pill, etc
+            — only has to be added in one place. Both instances
+            point at the same form via the submit button's `form=`
+            attribute, so placement inside or outside the form
+            element doesn't change behaviour. */}
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Add version</h1>
             {proofName && <p className="mt-1 text-gray-500">{proofName}</p>}
             {proofCompany && <p className="text-sm text-gray-400">{proofCompany}</p>}
           </div>
-          <div className="flex items-center gap-3">
-            <Link
-              to={`/proofs/${proofId}`}
-              className="text-sm font-medium text-gray-500 hover:text-gray-700"
-            >
-              Cancel
-            </Link>
-            <button
-              type="submit"
-              form="new-version-form"
-              disabled={submitting || !isValid}
-              title={!isValid ? missingFieldsHint(validations) : undefined}
-              aria-label={
-                !isValid
-                  ? `Save version, ${missingFieldsHint(validations)}`
-                  : undefined
-              }
-              className={[
-                'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
-                isValid ? 'bg-gray-900 hover:bg-gray-700' : 'bg-gray-900/60',
-                'disabled:cursor-not-allowed disabled:opacity-50',
-              ].join(' ')}
-            >
-              {submitting ? 'Uploading and saving…' : 'Save version'}
-            </button>
-          </div>
+          {actionRow}
         </div>
 
         <form id="new-version-form" onSubmit={handleSubmit} className="space-y-6">
@@ -2231,6 +2250,18 @@ export default function NewVersionPage() {
               <p className="mt-2 text-xs font-medium text-rose-500">{imagesHint}</p>
             )}
           </section>
+
+          {/* Bottom-of-form mirror of the top action row. Same
+              Cancel + Save pair, same form="new-version-form"
+              wiring, so clicking Save here routes through the
+              same handleSubmit → validation → scroll-to-first-
+              invalid path as the top button. Right-aligned to
+              match the top row's visual position within the
+              content column. Not sticky — the form needs the
+              vertical space for the image grid. */}
+          <div className="flex justify-end">
+            {actionRow}
+          </div>
 
           {/* Change notes */}
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
