@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { PricingDisplay } from './PricingDisplay'
 import { ImageGrid } from './ImageGrid'
 import type { Currency, PricingSnapshot, ProofNameApproval } from '../lib/types'
+import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { DEFAULT_FEATURED_QUANTITIES } from '../lib/constants'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 
@@ -429,106 +430,61 @@ export default function VersionDetailModal({
                 />
               ) : (
                 <div className="space-y-6">
+                  {/* One section per named recipient. Ordering
+                      follows the names[] snapshot so designer and
+                      customer views agree. Rendered before Shared
+                      so the most specific approvals read first and
+                      the cross-cutting Shared section sits at the
+                      bottom as the distinct entity it is. */}
+                  {version.names.map((name) => {
+                    const nameImages = images.filter((img) => img.associated_name === name)
+                    const approval = approvals[name]
+                    return (
+                      <ApprovalGroup
+                        key={name}
+                        heading={name}
+                        approval={approval}
+                        approvalKey={name}
+                        images={nameImages}
+                        proofLocked={proofLocked}
+                        versionNumber={version.version_number}
+                        onOpenApprove={() => setDialog({ mode: 'approve', name })}
+                        onOpenChanges={() => setDialog({ mode: 'changes', name })}
+                        onClear={() => clearApproval(name)}
+                        onImageClick={setLightboxSrc}
+                        emptyHint="No images associated with this name."
+                      />
+                    )
+                  })}
+
                   {/* Shared group — images without an associated_name
-                      apply to every recipient. No approval header
-                      here; approval is recorded per named recipient. */}
+                      apply to every recipient. Has its own approval
+                      controls via the SHARED_APPROVAL_KEY sentinel
+                      on proof_name_approvals. A light divider above
+                      the heading separates Shared from the per-name
+                      sections above, since it's a cross-cutting
+                      entity rather than another name. */}
                   {(() => {
                     const shared = images.filter((img) => img.associated_name == null)
                     if (shared.length === 0) return null
+                    const approval = approvals[SHARED_APPROVAL_KEY]
                     return (
-                      <div>
-                        <p className="mb-2 text-xs font-medium uppercase tracking-wider text-gray-500">Shared</p>
-                        <ImageGrid
+                      <div className="border-t border-gray-200 pt-6">
+                        <ApprovalGroup
+                          heading="Shared"
+                          approval={approval}
+                          approvalKey={SHARED_APPROVAL_KEY}
                           images={shared}
+                          proofLocked={proofLocked}
                           versionNumber={version.version_number}
+                          onOpenApprove={() => setDialog({ mode: 'approve', name: SHARED_APPROVAL_KEY })}
+                          onOpenChanges={() => setDialog({ mode: 'changes', name: SHARED_APPROVAL_KEY })}
+                          onClear={() => clearApproval(SHARED_APPROVAL_KEY)}
                           onImageClick={setLightboxSrc}
                         />
                       </div>
                     )
                   })()}
-
-                  {/* One section per named recipient. Ordering
-                      follows the names[] snapshot so designer and
-                      customer views agree. */}
-                  {version.names.map((name) => {
-                    const nameImages = images.filter((img) => img.associated_name === name)
-                    const approval = approvals[name]
-                    return (
-                      <div key={name} className="rounded-2xl ring-1 ring-gray-200 bg-white p-4">
-                        <div className="mb-3 flex items-center justify-between gap-3">
-                          <p className="text-sm font-semibold text-gray-900">{name}</p>
-                        </div>
-
-                        {/* State header */}
-                        <ApprovalStateHeader approval={approval} />
-
-                        {/* Action row — pending gives two buttons,
-                            any set state gives an Edit link that
-                            re-opens the matching dialog. Suppressed
-                            when the whole project is locked. */}
-                        {!proofLocked && (
-                          <div className="mb-3">
-                            {!approval ? (
-                              <div className="flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setDialog({ mode: 'approve', name })}
-                                  className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
-                                >
-                                  Mark as approved
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setDialog({ mode: 'changes', name })}
-                                  className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200 hover:bg-amber-100"
-                                >
-                                  Record change request
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-3">
-                                <button
-                                  type="button"
-                                  onClick={() => setDialog({
-                                    mode: approval.state === 'approved' ? 'approve' : 'changes',
-                                    name,
-                                  })}
-                                  className="text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
-                                >
-                                  Edit
-                                </button>
-                                {/* Clear returns the group to Pending
-                                    by deleting the row. Muted gray-400
-                                    so Edit reads as the primary amend
-                                    path and Clear as the secondary
-                                    reset. No confirm dialog — safely
-                                    reversible via the action buttons
-                                    that reappear in the Pending state. */}
-                                <button
-                                  type="button"
-                                  onClick={() => clearApproval(name)}
-                                  className="text-xs font-medium text-gray-400 underline-offset-2 hover:text-gray-700 hover:underline"
-                                >
-                                  Clear
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Images for this recipient */}
-                        {nameImages.length > 0 ? (
-                          <ImageGrid
-                            images={nameImages}
-                            versionNumber={version.version_number}
-                            onImageClick={setLightboxSrc}
-                          />
-                        ) : (
-                          <p className="text-xs text-gray-400">No images associated with this name.</p>
-                        )}
-                      </div>
-                    )
-                  })}
                 </div>
               )}
             </div>
@@ -703,6 +659,97 @@ export default function VersionDetailModal({
 // Kept colocated with VersionDetailModal because it's the only
 // surface using it and extracting to its own file would just add
 // a context-switching tax.
+// One approval-group card: heading, state header, action row,
+// image grid. Used for both per-name recipient groups and the
+// Shared section. Keeps every path (Approve, Record change request,
+// Edit, Clear) in one place so the two surfaces can't drift. The
+// `approvalKey` is stored separately from the display `heading`
+// because Shared uses the sentinel internally but renders as
+// "Shared" to the user.
+function ApprovalGroup({
+  heading,
+  approval,
+  approvalKey,
+  images,
+  proofLocked,
+  versionNumber,
+  onOpenApprove,
+  onOpenChanges,
+  onClear,
+  onImageClick,
+  emptyHint,
+}: {
+  heading: string
+  approval: ProofNameApproval | undefined
+  approvalKey: string
+  images: ModalImage[]
+  proofLocked: boolean
+  versionNumber: number
+  onOpenApprove: () => void
+  onOpenChanges: () => void
+  onClear: () => void
+  onImageClick: (src: string) => void
+  emptyHint?: string
+}) {
+  // approvalKey is part of the type signature for clarity — each
+  // handler closes over it at the call site. Referencing it here
+  // in a no-op keeps TS from flagging it as unused and documents
+  // that the group knows which sentinel/name it represents.
+  void approvalKey
+  return (
+    <div className="rounded-2xl ring-1 ring-gray-200 bg-white p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-gray-900">{heading}</p>
+      </div>
+      <ApprovalStateHeader approval={approval} />
+      {!proofLocked && (
+        <div className="mb-3">
+          {!approval ? (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={onOpenApprove}
+                className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
+              >
+                Mark as approved
+              </button>
+              <button
+                type="button"
+                onClick={onOpenChanges}
+                className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200 hover:bg-amber-100"
+              >
+                Record change request
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={approval.state === 'approved' ? onOpenApprove : onOpenChanges}
+                className="text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={onClear}
+                className="text-xs font-medium text-gray-400 underline-offset-2 hover:text-gray-700 hover:underline"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {images.length > 0 ? (
+        <ImageGrid images={images} versionNumber={versionNumber} onImageClick={onImageClick} />
+      ) : (
+        <p className="text-xs text-gray-400">{emptyHint ?? 'No images.'}</p>
+      )}
+    </div>
+  )
+}
+
 function ApprovalStateHeader({ approval }: { approval: ProofNameApproval | undefined }) {
   if (!approval) {
     return (
@@ -755,7 +802,7 @@ function ApproveDialog({
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-base font-semibold text-gray-900">Approve for {name}</h3>
+        <h3 className="text-base font-semibold text-gray-900">Approve for {name === SHARED_APPROVAL_KEY ? 'Shared' : name}</h3>
         <label className="mt-4 block">
           <span className="block text-xs font-medium uppercase tracking-wider text-gray-500">Approved by</span>
           <input
@@ -816,7 +863,7 @@ function RequestChangesDialog({
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-base font-semibold text-gray-900">Record change request for {name}</h3>
+        <h3 className="text-base font-semibold text-gray-900">Record change request for {name === SHARED_APPROVAL_KEY ? 'Shared' : name}</h3>
         <label className="mt-4 block">
           <span className="block text-xs font-medium uppercase tracking-wider text-gray-500">What needs to change?</span>
           <textarea

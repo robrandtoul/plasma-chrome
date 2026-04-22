@@ -89,10 +89,20 @@ export interface SiteSettings {
   global_disclaimer: string | null
 }
 
+// Sentinel value stored in proof_name_approvals.name when the row
+// represents approval of the Shared images section rather than a
+// named recipient. Reserved — must never appear as a real recipient
+// name. UI renders it as "Shared", never as the raw string. Using a
+// sentinel rather than a separate column avoids a schema change and
+// keeps the (proof_version_id, name) unique constraint working as-is
+// for both per-name and shared rows.
+export const SHARED_APPROVAL_KEY = '__shared__'
+
 // Per-recipient approval record. One row per (proof_version, name) pair
 // in proof_name_approvals (migration 000076). name is plain text,
 // matches one of the strings in the parent version's names[] snapshot
-// but isn't FK'd — historical approvals outlive any post-hoc chip-list
+// OR the SHARED_APPROVAL_KEY sentinel for the Shared images section.
+// Not FK'd — historical approvals outlive any post-hoc chip-list
 // edits. actor_ip / actor_ua / change_request are nullable for the
 // same reasons the DB columns are.
 export type ProofNameApproval = {

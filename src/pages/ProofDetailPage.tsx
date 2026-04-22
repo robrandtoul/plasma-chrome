@@ -7,6 +7,7 @@ import HelpScoutEditModal from '../components/HelpScoutEditModal'
 import { logAudit } from '../lib/audit'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import type { ProofNameApproval } from '../lib/types'
+import { SHARED_APPROVAL_KEY } from '../lib/types'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -53,6 +54,13 @@ export default function ProofDetailPage() {
   // after any approval-writing action (Mark as approved shortcut,
   // modal approve/changes/clear).
   const [approvals, setApprovals] = useState<ProofNameApproval[]>([])
+  // Set of version IDs that have at least one shared image
+  // (proof_version_images.associated_name IS NULL). Populated
+  // alongside approvals in loadProof. Drives whether the Names
+  // roll-up renders its "Shared" row for the current version —
+  // kept as a derived index rather than denormalised onto
+  // proof_versions so the truth stays in the images table.
+  const [versionsWithShared, setVersionsWithShared] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | 'abandon' | 'delete' | null>(null)
@@ -127,6 +135,25 @@ export default function ProofDetailPage() {
     } else {
       setApprovals([])
     }
+
+    // Mark which versions have at least one shared image (rows with
+    // associated_name IS NULL). One cheap select of just the
+    // version IDs — client-side dedupes into a Set for O(1) lookup
+    // when the Names roll-up asks whether to render its Shared row.
+    if (versionIds.length > 0) {
+      const { data: sharedRows } = await supabase
+        .from('proof_version_images')
+        .select('proof_version_id')
+        .in('proof_version_id', versionIds)
+        .is('associated_name', null)
+      const set = new Set<string>()
+      for (const r of (sharedRows ?? []) as { proof_version_id: string }[]) {
+        set.add(r.proof_version_id)
+      }
+      setVersionsWithShared(set)
+    } else {
+      setVersionsWithShared(new Set())
+    }
   }
 
   function showToast(message: string) {
@@ -145,33 +172,53 @@ export default function ProofDetailPage() {
     if (!proof) return
     setStatusWorking(true)
 
-    // Step 1: if the current version has named recipients, upsert
-    // an approval row for each one in a single round-trip. Conflict
+    // Step 1: for the current version, upsert an approval row for
+    // each named recipient plus (if the version has shared images)
+    // one row under the SHARED_APPROVAL_KEY sentinel. Conflict
     // target (proof_version_id, name) means any existing
-    // changes_requested row for that name on the current version
-    // gets overwritten to approved. Single-subject projects (no
-    // names) skip this step — nothing to record per-name.
+    // changes_requested rows get overwritten to approved. Runs in a
+    // single round-trip. Skipped entirely when the current version
+    // has neither names nor shared images (pure single-subject with
+    // only per-name images, or a version with no images at all —
+    // nothing to record).
+    //
+    // Shared-presence for the current version is checked via a
+    // fresh SELECT rather than versionsWithShared from state, so a
+    // mid-session image edit doesn't lead to a stale upsert set.
     const currentVersion = versions.find((v) => v.is_current)
-    if (currentVersion && currentVersion.names.length > 0) {
+    if (currentVersion) {
+      const { data: sharedRows } = await supabase
+        .from('proof_version_images')
+        .select('id')
+        .eq('proof_version_id', currentVersion.id)
+        .is('associated_name', null)
+        .limit(1)
+      const hasShared = (sharedRows?.length ?? 0) > 0
+
       const now = new Date().toISOString()
-      const rows = currentVersion.names.map((name) => ({
-        proof_version_id: currentVersion.id,
-        name,
-        state: 'approved' as const,
-        change_request: null,
-        actor_name: proof.contacts.full_name,
-        actor_ip: null,
-        actor_ua: null,
-        updated_at: now,
-      }))
-      const { error: approvalErr } = await supabase
-        .from('proof_name_approvals')
-        .upsert(rows, { onConflict: 'proof_version_id,name' })
-      if (approvalErr) {
-        setStatusWorking(false)
-        setStatusDialog(null)
-        showToast(`Failed to record per-name approvals: ${approvalErr.message}`)
-        return
+      const keys: string[] = [...currentVersion.names]
+      if (hasShared) keys.push(SHARED_APPROVAL_KEY)
+
+      if (keys.length > 0) {
+        const rows = keys.map((name) => ({
+          proof_version_id: currentVersion.id,
+          name,
+          state: 'approved' as const,
+          change_request: null,
+          actor_name: proof.contacts.full_name,
+          actor_ip: null,
+          actor_ua: null,
+          updated_at: now,
+        }))
+        const { error: approvalErr } = await supabase
+          .from('proof_name_approvals')
+          .upsert(rows, { onConflict: 'proof_version_id,name' })
+        if (approvalErr) {
+          setStatusWorking(false)
+          setStatusDialog(null)
+          showToast(`Failed to record per-name approvals: ${approvalErr.message}`)
+          return
+        }
       }
     }
 
@@ -503,17 +550,21 @@ export default function ProofDetailPage() {
         </div>
 
         {/* Names roll-up — aggregate per-name approval state across
-            the project's version history. Only renders when the
-            current version has at least one named recipient;
-            single-subject projects have nothing to roll up. Scope is
-            the current version's names[] (past-version-only names
-            that have since been dropped aren't shown). Per-name
-            state is the latest approval row across ALL versions of
-            this project, so a name approved in v2 still reads as
-            approved here even if v3 (current) has no entry yet. */}
+            the project's version history, plus a Shared row when the
+            current version has shared images. Renders if either
+            there's at least one named recipient OR there are shared
+            images to approve; fully-empty current versions skip it.
+            Scope is the current version's names[] (past-version-only
+            names that have since been dropped aren't shown) plus the
+            sentinel key for Shared. Per-entry state is the latest
+            approval row across ALL versions of this project, so a
+            name approved in v2 still reads as approved here even if
+            v3 (current) has no entry yet. */}
         {(() => {
           const currentVersion = versions.find((v) => v.is_current)
-          if (!currentVersion || currentVersion.names.length === 0) return null
+          if (!currentVersion) return null
+          const hasShared = versionsWithShared.has(currentVersion.id)
+          if (currentVersion.names.length === 0 && !hasShared) return null
 
           // Build a version-id → version-number map so the "in vN"
           // tail on each state line can reference the version the
@@ -522,34 +573,59 @@ export default function ProofDetailPage() {
           const versionNumberById = new Map<string, number>()
           for (const v of versions) versionNumberById.set(v.id, v.version_number)
 
-          // For each name in the current version, find the latest
-          // approval row across the whole project. Reduction is O(n)
-          // per name over the flat approvals array, which is small
-          // (one row per recipient per version).
-          const rollup = currentVersion.names.map((name) => {
-            const forThisName = approvals.filter((a) => a.name === name)
-            if (forThisName.length === 0) return { name, approval: null as ProofNameApproval | null }
-            const latest = forThisName.reduce((best, a) =>
-              new Date(a.updated_at).getTime() > new Date(best.updated_at).getTime() ? a : best,
-            )
-            return { name, approval: latest }
-          })
+          // For each approval key (names + optional Shared sentinel),
+          // find the latest approval row across the whole project.
+          // Reduction is O(n) per key over the flat approvals array,
+          // which is small (one row per recipient per version).
+          // `heading` is the display label; `key` is the sentinel or
+          // name used to match approval rows. Shared goes last per
+          // spec — a visual divider at render time sets it apart
+          // from the per-name rows above.
+          const rollupEntries: { key: string; heading: string; approval: ProofNameApproval | null }[] =
+            currentVersion.names.map((name) => {
+              const forThisName = approvals.filter((a) => a.name === name)
+              const approval = forThisName.length === 0
+                ? null
+                : forThisName.reduce((best, a) =>
+                    new Date(a.updated_at).getTime() > new Date(best.updated_at).getTime() ? a : best,
+                  )
+              return { key: name, heading: name, approval }
+            })
+          if (hasShared) {
+            const forShared = approvals.filter((a) => a.name === SHARED_APPROVAL_KEY)
+            const approval = forShared.length === 0
+              ? null
+              : forShared.reduce((best, a) =>
+                  new Date(a.updated_at).getTime() > new Date(best.updated_at).getTime() ? a : best,
+                )
+            rollupEntries.push({ key: SHARED_APPROVAL_KEY, heading: 'Shared', approval })
+          }
 
           return (
             <section className="mb-8">
               <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Names</h2>
               <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-                {rollup.map(({ name, approval }, i) => {
+                {rollupEntries.map(({ key, heading, approval }, i) => {
                   const when = approval ? new Date(approval.updated_at).toLocaleDateString('en-GB') : null
                   const vNum = approval ? versionNumberById.get(approval.proof_version_id) : null
                   const vRef = vNum != null ? `v${vNum}` : '—'
+                  const isSharedRow = key === SHARED_APPROVAL_KEY
+                  // Row separator: a stronger border above Shared
+                  // than between name rows, mirroring the modal's
+                  // visual distinction between per-name cards and
+                  // the Shared block.
+                  const separator = i === 0
+                    ? ''
+                    : isSharedRow
+                    ? 'border-t border-gray-200'
+                    : 'border-t border-gray-100'
                   return (
                     <div
-                      key={name}
-                      className={['px-5 py-3', i > 0 ? 'border-t border-gray-100' : ''].join(' ')}
+                      key={key}
+                      className={['px-5 py-3', separator].join(' ')}
                     >
                       <div className="flex flex-wrap items-center justify-between gap-3">
-                        <p className="text-sm font-semibold text-gray-900">{name}</p>
+                        <p className="text-sm font-semibold text-gray-900">{heading}</p>
                         {!approval && (
                           <span className="text-xs font-medium text-gray-500">Pending</span>
                         )}
