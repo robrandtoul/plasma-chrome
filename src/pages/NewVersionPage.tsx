@@ -1518,29 +1518,89 @@ export default function NewVersionPage() {
                   )
                 }
 
+                // Split the already-sorted list into Open (needs
+                // attention: changes_requested or unreviewed) vs
+                // Approved (settled). The sort is stable and
+                // buckets are contiguous (0 = changes_requested,
+                // 1 = null, 2 = approved per stateBucket above),
+                // so filtering preserves per-section order exactly
+                // — no re-sort needed.
+                const openImages = sortedImages.filter((img) => {
+                  const a = v1Carry.approvalsByName[img.associated_name ?? SHARED_APPROVAL_KEY]
+                  return a == null || a.state === 'changes_requested'
+                })
+                const approvedImages = sortedImages.filter((img) => {
+                  const a = v1Carry.approvalsByName[img.associated_name ?? SHARED_APPROVAL_KEY]
+                  return a?.state === 'approved'
+                })
+
+                // Headings earn their keep only when both sections
+                // populate. One-sided populations collapse to a
+                // single unlabelled grid — Open-only during a
+                // first-review cycle, Approved-only once the
+                // customer has signed off on everything.
+                const showHeadings = openImages.length > 0 && approvedImages.length > 0
+
+                // Capture the narrowed v1Carry for the inner
+                // renderCard closure — TS's null-narrowing from
+                // the outer `{v1Carry && (...)}` guard doesn't
+                // propagate into nested function scopes.
+                const carry = v1Carry
+                function renderCard(img: V1Image) {
+                  const nameKey = img.associated_name ?? SHARED_APPROVAL_KEY
+                  const approval = carry.approvalsByName[nameKey]
+                  const keep = keepByV1RowId[img.v1RowId] ?? true
+                  const replacement = replacementByV1RowId[img.v1RowId]
+                  return (
+                    <CarryCard
+                      key={img.v1RowId}
+                      img={img}
+                      nameLabel={img.associated_name}
+                      approval={approval}
+                      v1VersionNumber={carry.versionNumber}
+                      keep={keep}
+                      replacement={replacement}
+                      onKeepChange={(v) => handleKeepToggle(img.v1RowId, v)}
+                      onReplacementUpload={(file) => handleReplacementUpload(img.v1RowId, file)}
+                      onReplacementClear={() => handleReplacementClear(img.v1RowId)}
+                    />
+                  )
+                }
+
+                if (!showHeadings) {
+                  // Single grid, no subsection label. Covers both
+                  // the all-approved and the not-yet-reviewed
+                  // cases (and any single-bucket configuration).
+                  return (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      {sortedImages.map(renderCard)}
+                    </div>
+                  )
+                }
+
                 return (
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    {sortedImages.map((img) => {
-                      const nameKey = img.associated_name ?? SHARED_APPROVAL_KEY
-                      const approval = v1Carry.approvalsByName[nameKey]
-                      const keep = keepByV1RowId[img.v1RowId] ?? true
-                      const replacement = replacementByV1RowId[img.v1RowId]
-                      return (
-                        <CarryCard
-                          key={img.v1RowId}
-                          img={img}
-                          nameLabel={img.associated_name}
-                          approval={approval}
-                          v1VersionNumber={v1Carry.versionNumber}
-                          keep={keep}
-                          replacement={replacement}
-                          onKeepChange={(v) => handleKeepToggle(img.v1RowId, v)}
-                          onReplacementUpload={(file) => handleReplacementUpload(img.v1RowId, file)}
-                          onReplacementClear={() => handleReplacementClear(img.v1RowId)}
-                        />
-                      )
-                    })}
-                  </div>
+                  <>
+                    {/* Open — unreviewed + changes_requested. Top
+                        margin matches the section helper copy
+                        above so the first heading doesn't double
+                        up on vertical space. */}
+                    <p className="mb-3 mt-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+                      Open
+                    </p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      {openImages.map(renderCard)}
+                    </div>
+                    {/* Approved — wider top margin for visual
+                        separation between the two populated
+                        sections. Headings alone distinguish them
+                        without a horizontal rule. */}
+                    <p className="mb-3 mt-8 text-xs font-medium uppercase tracking-wide text-gray-500">
+                      Approved
+                    </p>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      {approvedImages.map(renderCard)}
+                    </div>
+                  </>
                 )
               })()}
 
