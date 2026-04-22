@@ -46,16 +46,6 @@ export interface PublicProofVersion {
   material_icon_url: string | null
   option_label: string | null
   custom_quote: boolean
-  // ── Option 2 approval fields (migration 000066) ──────────────────────────
-  // All four stay null during option 1 (read-only customer page). The
-  // public_proof_versions view will be extended to expose these at the
-  // same time the Approve action is wired up, which is why the types
-  // here are optional: existing customer queries won't see the keys at
-  // all until the view ships.
-  approved_at?: string | null
-  approved_by_name?: string | null
-  approved_from_ip?: string | null
-  approved_from_ua?: string | null
   // ── Supersession (migration 000068) ───────────────────────────────────────
   // Null while this version is chronologically-latest for its proof.
   // Stamped to the next version's created_at when a newer sibling
@@ -97,6 +87,25 @@ export interface PublicMaterialOptionSurcharge {
 
 export interface SiteSettings {
   global_disclaimer: string | null
+}
+
+// Per-recipient approval record. One row per (proof_version, name) pair
+// in proof_name_approvals (migration 000076). name is plain text,
+// matches one of the strings in the parent version's names[] snapshot
+// but isn't FK'd — historical approvals outlive any post-hoc chip-list
+// edits. actor_ip / actor_ua / change_request are nullable for the
+// same reasons the DB columns are.
+export type ProofNameApproval = {
+  id: string
+  proof_version_id: string
+  name: string
+  state: 'approved' | 'changes_requested'
+  change_request: string | null
+  actor_name: string
+  actor_ip: string | null
+  actor_ua: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface ProofVersionImage {
