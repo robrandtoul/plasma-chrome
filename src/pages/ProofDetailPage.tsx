@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
+import JSZip from 'jszip'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import VersionDetailModal, { type ModalVersion } from '../components/VersionDetailModal'
@@ -9,6 +10,7 @@ import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import type { ProofNameApproval } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
+import { downloadBlob } from '../lib/downloadFile'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -36,6 +38,30 @@ interface Proof {
 
 function formatLongDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+}
+
+// One row in the Approved artwork table. Assembled from the cross-
+// product of proof_name_approvals (where state='approved') and
+// proof_version_images (joined on proof_version_id + associated_name,
+// treating SHARED_APPROVAL_KEY as associated_name IS NULL). Each
+// row is exactly one image file destined for the production ZIP.
+interface ApprovedImageRow {
+  imageId: string
+  imagePath: string
+  // Nullable on pre-migration-000021 rows. Rendered as '— (no
+  // filename)' in the UI and falls back to a synthetic leaf name
+  // inside the ZIP so the bundle still opens; designer can see
+  // from the UI that the filename wasn't captured at upload time.
+  originalFilename: string | null
+  // Null side treated as 'front' per migration-000085 back-compat.
+  // Stored non-null post-migration.
+  side: 'front' | 'back' | null
+  // Null associated_name is the Shared slot; stored as null to
+  // match the DB. Rendered as 'Shared' and zipped into the Shared/
+  // directory.
+  associatedName: string | null
+  versionNumber: number
+  versionId: string
 }
 
 export default function ProofDetailPage() {
@@ -69,6 +95,15 @@ export default function ProofDetailPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [showHelpscoutEdit, setShowHelpscoutEdit] = useState(false)
   const [showCustomerPreview, setShowCustomerPreview] = useState(false)
+  // Approved artwork table data. Null = not loaded yet (project may
+  // not be approved, or the fetch hasn't run); [] = approved but no
+  // matching images (approval row with every slot's images deleted
+  // since — theoretically possible, UI shows an empty-state line).
+  const [approvedImages, setApprovedImages] = useState<ApprovedImageRow[] | null>(null)
+  // Download-button state machine. 'idle' → 'preparing' during
+  // fetch+zip; any fetch failure flips to 'idle' and surfaces the
+  // toast via showToast (no partial ZIP ever ships).
+  const [zipPreparing, setZipPreparing] = useState(false)
   const fallbackInputRef = useRef<HTMLInputElement>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -159,14 +194,89 @@ export default function ProofDetailPage() {
     // all versions) happens at render time from the flat array — the
     // data volume is small (one row per recipient per version, which
     // for a typical split-name project is single digits).
+    let approvalRowsLoaded: ProofNameApproval[] = []
     if (versionIds.length > 0) {
       const { data: approvalRows } = await supabase
         .from('proof_name_approvals')
         .select('*')
         .in('proof_version_id', versionIds)
-      setApprovals((approvalRows ?? []) as ProofNameApproval[])
+      approvalRowsLoaded = (approvalRows ?? []) as ProofNameApproval[]
+      setApprovals(approvalRowsLoaded)
     } else {
       setApprovals([])
+    }
+
+    // Approved-artwork join. Only bothers with the fetch when the
+    // project's roll-up status is 'approved' — same gate as the
+    // "Approved on …" header badge. The table + ZIP section above
+    // Delete renders only in that case, so loading it eagerly for
+    // every project would waste a round-trip.
+    //
+    // Shape of the join: for each approval row with state='approved',
+    // pick proof_version_images rows matching (proof_version_id,
+    // associated_name), treating SHARED_APPROVAL_KEY as
+    // associated_name IS NULL. Cross-version splits (Alice approved
+    // in v2, Bob in v3) fall out for free — we scope the image
+    // query to all of the project's version IDs and filter client-
+    // side by the approval tuples.
+    if (proofResult.data.status === 'approved' && versionIds.length > 0) {
+      const approvedApprovals = approvalRowsLoaded.filter(
+        (a) => a.state === 'approved',
+      )
+      if (approvedApprovals.length === 0) {
+        // Approved status with no per-name approvals shouldn't
+        // happen under the current approve-shortcut flow (it
+        // always writes approvals first), but if it ever did
+        // (legacy data, direct DB edit), show an empty table
+        // rather than crash.
+        setApprovedImages([])
+      } else {
+        const { data: imageRows } = await supabase
+          .from('proof_version_images')
+          .select('id, image_path, original_filename, associated_name, side, proof_version_id')
+          .in('proof_version_id', versionIds)
+
+        const approvalTuples = new Set(
+          approvedApprovals.map(
+            (a) =>
+              `${a.proof_version_id}|${a.name === SHARED_APPROVAL_KEY ? '__null__' : a.name}`,
+          ),
+        )
+        const versionNumberById = new Map<string, number>()
+        for (const v of loadedVersions) versionNumberById.set(v.id, v.version_number)
+
+        // Dedupe by image id as a belt-and-braces guard — a shared
+        // image shouldn't appear under two approvals (Shared has
+        // its own approval row), but defensive dedupe costs
+        // nothing.
+        const seen = new Set<string>()
+        const rows: ApprovedImageRow[] = []
+        for (const r of (imageRows ?? []) as {
+          id: string
+          image_path: string
+          original_filename: string | null
+          associated_name: string | null
+          side: 'front' | 'back' | null
+          proof_version_id: string
+        }[]) {
+          const key = `${r.proof_version_id}|${r.associated_name ?? '__null__'}`
+          if (!approvalTuples.has(key)) continue
+          if (seen.has(r.id)) continue
+          seen.add(r.id)
+          rows.push({
+            imageId: r.id,
+            imagePath: r.image_path,
+            originalFilename: r.original_filename,
+            side: r.side,
+            associatedName: r.associated_name,
+            versionId: r.proof_version_id,
+            versionNumber: versionNumberById.get(r.proof_version_id) ?? 0,
+          })
+        }
+        setApprovedImages(rows)
+      }
+    } else {
+      setApprovedImages(null)
     }
 
     // Mark which versions have at least one shared image (rows with
@@ -358,6 +468,153 @@ export default function ProofDetailPage() {
       })
       showToast('Project abandoned')
       if (id) loadProof(id)
+    }
+  }
+
+  // Fetch every approved image, assemble a ZIP with a manifest, and
+  // trigger a download. Intended for production handoff — filenames
+  // in the ZIP match the source Illustrator files by name, so
+  // originalFilename is used verbatim as the leaf and never
+  // rewritten. Front/back distinction lives only in the manifest.
+  //
+  // Concurrency cap: 4 parallel signed-URL fetches. Smaller ZIPs
+  // finish quickly; large multi-recipient projects don't thrash
+  // the connection. Any fetch failure aborts the whole operation
+  // — a partial ZIP to production would be worse than a retry.
+  async function handleDownloadZip() {
+    if (!proof || !approvedImages || approvedImages.length === 0) return
+    if (zipPreparing) return
+    setZipPreparing(true)
+
+    const projectName = proof.contacts.full_name
+    const customerName = proof.contacts.companies?.name ?? '—'
+
+    // Fetch helper: signed URL → blob. Short expiry matches the
+    // rest of the app; the ZIP build finishes well inside the 60s
+    // window.
+    const fetchBlob = async (imagePath: string): Promise<Blob> => {
+      const { data: signed, error } = await supabase.storage
+        .from('proof-images')
+        .createSignedUrl(imagePath, 60)
+      if (error || !signed?.signedUrl) {
+        throw new Error(`Couldn't sign URL for ${imagePath}: ${error?.message ?? 'no URL'}`)
+      }
+      const resp = await fetch(signed.signedUrl)
+      if (!resp.ok) {
+        throw new Error(`Download failed for ${imagePath}: HTTP ${resp.status}`)
+      }
+      return await resp.blob()
+    }
+
+    // Bounded-concurrency map. Keeps 4 fetches in-flight at once;
+    // pulls the next job from the queue as each resolves. Simpler
+    // than pulling in p-limit for a one-off.
+    const MAX_PARALLEL = 4
+    async function runQueued<T, R>(
+      items: T[],
+      fn: (item: T) => Promise<R>,
+    ): Promise<R[]> {
+      const results: R[] = new Array(items.length)
+      let cursor = 0
+      const worker = async () => {
+        while (cursor < items.length) {
+          const idx = cursor++
+          results[idx] = await fn(items[idx])
+        }
+      }
+      const workers = Array.from(
+        { length: Math.min(MAX_PARALLEL, items.length) },
+        () => worker(),
+      )
+      await Promise.all(workers)
+      return results
+    }
+
+    try {
+      // Build the in-UI sort order so the ZIP (and the file order
+      // JSZip embeds) reads consistently with what the designer
+      // saw on the page. sortedApprovedImages is computed below
+      // in the render scope — recompute the same sort here since
+      // we can't read render-scope values from this handler.
+      const currentVersion = versions.find((v) => v.is_current)
+      const nameOrder = new Map<string, number>()
+      currentVersion?.names.forEach((n, i) => nameOrder.set(n, i))
+      const sorted = [...approvedImages].sort((a, b) => {
+        // Shared (null name) first
+        const aShared = a.associatedName == null ? 0 : 1
+        const bShared = b.associatedName == null ? 0 : 1
+        if (aShared !== bShared) return aShared - bShared
+        // Then by position in current version's names[]; names
+        // that aren't on the current version (cross-version
+        // approval edge case) fall to the bottom, stable.
+        const aPos = a.associatedName == null ? -1 : nameOrder.get(a.associatedName) ?? Infinity
+        const bPos = b.associatedName == null ? -1 : nameOrder.get(b.associatedName) ?? Infinity
+        if (aPos !== bPos) return aPos - bPos
+        // Front before back within a name. Null side normalises
+        // to 'front' for back-compat sort stability.
+        const aSide = (a.side ?? 'front') === 'front' ? 0 : 1
+        const bSide = (b.side ?? 'front') === 'front' ? 0 : 1
+        if (aSide !== bSide) return aSide - bSide
+        return a.imageId < b.imageId ? -1 : 1
+      })
+
+      const blobs = await runQueued(sorted, (row) => fetchBlob(row.imagePath))
+
+      const zip = new JSZip()
+
+      // One folder per identity: Shared/ or {name}/. Filename is
+      // the original, never rewritten. Null original_filename
+      // falls back to a synthetic {id-short}.jpg leaf so the ZIP
+      // still extracts — designer will have seen the missing
+      // filename in the table.
+      for (let i = 0; i < sorted.length; i++) {
+        const row = sorted[i]
+        const folder = row.associatedName == null ? 'Shared' : row.associatedName
+        const leaf =
+          row.originalFilename ?? `unnamed-${row.imageId.slice(0, 8)}.jpg`
+        zip.file(`${folder}/${leaf}`, blobs[i])
+      }
+
+      // Manifest: plain-text header block + tab-separated table.
+      // UTF-8 (JSZip default). Production uses this to cross-check
+      // filename → recipient/side mapping without opening each
+      // subfolder.
+      const approvedDate = proof.approved_at
+        ? formatLongDate(proof.approved_at)
+        : '—'
+      const currentMaterial = currentVersion?.material_display ?? '—'
+      const isOneSided = !approvedImages.some((r) => r.side === 'back')
+
+      const header =
+        `Project: ${projectName}\n` +
+        `Customer: ${customerName}\n` +
+        `Approved: ${approvedDate}\n` +
+        `Material: ${currentMaterial}\n\n`
+
+      const columns = isOneSided
+        ? ['Name', 'Version', 'Filename']
+        : ['Name', 'Side', 'Version', 'Filename']
+      const manifestLines: string[] = [columns.join('\t')]
+      for (const row of sorted) {
+        const nameCol = row.associatedName ?? 'Shared'
+        const sideCol = (row.side ?? 'front') === 'front' ? 'Front' : 'Back'
+        const versionCol = `v${row.versionNumber}`
+        const fileCol = row.originalFilename ?? `unnamed-${row.imageId.slice(0, 8)}.jpg`
+        manifestLines.push(
+          isOneSided
+            ? [nameCol, versionCol, fileCol].join('\t')
+            : [nameCol, sideCol, versionCol, fileCol].join('\t'),
+        )
+      }
+      zip.file('manifest.txt', header + manifestLines.join('\n') + '\n')
+
+      const zipBlob = await zip.generateAsync({ type: 'blob' })
+      downloadBlob(zipBlob, `${projectName} - Approved Artwork.zip`)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      showToast(`ZIP download failed: ${message}`)
+    } finally {
+      setZipPreparing(false)
     }
   }
 
@@ -811,6 +1068,103 @@ export default function ProofDetailPage() {
             </table>
           </div>
         )}
+
+        {/* Approved artwork — production handoff bundle. Gated on
+            the same isApproved flag that powers the header badge;
+            renders between Versions and Delete so it sits in the
+            natural "what next" flow after approval. Table mirrors
+            the CustomerProofPage side-suppression rule (no Back
+            images anywhere = one-sided project = drop the Side
+            column) to avoid empty dashes. ZIP click regenerates
+            from current state each time, no caching. */}
+        {isApproved && approvedImages && (() => {
+          const rows = approvedImages
+          const currentVersion = versions.find((v) => v.is_current)
+          const nameOrder = new Map<string, number>()
+          currentVersion?.names.forEach((n, i) => nameOrder.set(n, i))
+          const isOneSided = !rows.some((r) => r.side === 'back')
+          const sorted = [...rows].sort((a, b) => {
+            const aShared = a.associatedName == null ? 0 : 1
+            const bShared = b.associatedName == null ? 0 : 1
+            if (aShared !== bShared) return aShared - bShared
+            const aPos = a.associatedName == null ? -1 : nameOrder.get(a.associatedName) ?? Infinity
+            const bPos = b.associatedName == null ? -1 : nameOrder.get(b.associatedName) ?? Infinity
+            if (aPos !== bPos) return aPos - bPos
+            const aSide = (a.side ?? 'front') === 'front' ? 0 : 1
+            const bSide = (b.side ?? 'front') === 'front' ? 0 : 1
+            if (aSide !== bSide) return aSide - bSide
+            return a.imageId < b.imageId ? -1 : 1
+          })
+          return (
+            <section className="mt-12">
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-widest text-gray-400">Approved artwork</h2>
+              <p className="mb-4 text-xs text-gray-500">
+                These filenames match the source Illustrator files — do not rename.
+              </p>
+              {sorted.length === 0 ? (
+                <div className="rounded-2xl bg-white py-10 text-center shadow-sm ring-1 ring-gray-200">
+                  <p className="text-sm text-gray-400">No approved images found.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-100">
+                          <th className="w-36 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Name</th>
+                          {!isOneSided && (
+                            <th className="w-24 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Side</th>
+                          )}
+                          <th className="w-24 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Version</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Filename</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sorted.map((row) => {
+                          const nameCol = row.associatedName ?? 'Shared'
+                          const sideCol = (row.side ?? 'front') === 'front' ? 'Front' : 'Back'
+                          const fileLabel = row.originalFilename ?? (
+                            <span className="italic text-gray-400">— (no filename captured)</span>
+                          )
+                          return (
+                            <tr key={row.imageId} className="border-b border-gray-50 last:border-0">
+                              <td className="px-4 py-3 font-medium text-gray-900">{nameCol}</td>
+                              {!isOneSided && (
+                                <td className="px-4 py-3 text-gray-500">{sideCol}</td>
+                              )}
+                              <td className="px-4 py-3 text-gray-500">v{row.versionNumber}</td>
+                              <td className="px-4 py-3 text-gray-700">{fileLabel}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="mt-4">
+                    <button
+                      type="button"
+                      onClick={handleDownloadZip}
+                      disabled={zipPreparing}
+                      className={[
+                        'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
+                        zipPreparing ? 'bg-gray-900/60' : 'bg-gray-900 hover:bg-gray-700',
+                        'disabled:cursor-not-allowed disabled:opacity-60',
+                      ].join(' ')}
+                    >
+                      {zipPreparing && (
+                        <span
+                          aria-hidden="true"
+                          className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                        />
+                      )}
+                      {zipPreparing ? 'Preparing ZIP…' : 'Download all as ZIP'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </section>
+          )
+        })()}
 
         {/* Danger zone — permanent delete, kept subtle to avoid accidental
             clicks. Admin-only to match the DB gate (migration 000074),
