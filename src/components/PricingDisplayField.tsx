@@ -5,11 +5,23 @@ export function PricingDisplayField({
   onChange,
   invalid = false,
   forwardRef,
+  standardDisabled = false,
+  disabledReason,
 }: {
   value: PricingDisplayValue | null
   onChange: (value: PricingDisplayValue) => void
   invalid?: boolean
   forwardRef?: React.RefObject<HTMLElement | null>
+  // Disable the "Standard pricing" option. Used on EditVersionPage
+  // when the loaded version's pricing_snapshot carries no per-tier
+  // prices — selecting Standard would produce a version marked as
+  // standard-priced but with an empty grid on the customer page,
+  // which is broken output. Disabling the option at the source
+  // removes the footgun without needing a save-time guard.
+  standardDisabled?: boolean
+  // Explanatory helper rendered below the fieldset when the
+  // Standard option is disabled, so the designer understands why.
+  disabledReason?: string
 }) {
   return (
     <section
@@ -28,6 +40,7 @@ export function PricingDisplayField({
           value="standard"
           checked={value === 'standard'}
           onChange={() => onChange('standard')}
+          disabled={standardDisabled}
         />
         <OptionCard
           label="Custom quote"
@@ -37,6 +50,9 @@ export function PricingDisplayField({
           onChange={() => onChange('custom')}
         />
       </fieldset>
+      {standardDisabled && disabledReason && (
+        <p className="mt-3 text-xs text-gray-500">{disabledReason}</p>
+      )}
       {invalid && <p className="mt-3 text-xs font-medium text-rose-500">Required</p>}
     </section>
   )
@@ -48,21 +64,25 @@ function OptionCard({
   value,
   checked,
   onChange,
+  disabled = false,
 }: {
   label: string
   description: string
   value: string
   checked: boolean
   onChange: () => void
+  disabled?: boolean
 }) {
   return (
     <label
       className={[
-        'relative flex cursor-pointer flex-col rounded-xl border-2 p-4 transition-colors',
-        'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
-        checked
+        'relative flex flex-col rounded-xl border-2 p-4 transition-colors',
+        disabled
+          ? 'cursor-not-allowed border-gray-200 bg-gray-50/50 opacity-60'
+          : 'cursor-pointer focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
+        !disabled && (checked
           ? 'border-gray-900 bg-gray-50'
-          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50',
+          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'),
       ].join(' ')}
     >
       <input
@@ -71,6 +91,7 @@ function OptionCard({
         value={value}
         checked={checked}
         onChange={onChange}
+        disabled={disabled}
         className="sr-only"
       />
       <div className="flex items-start justify-between gap-3">

@@ -196,6 +196,28 @@ export default function EditVersionPage() {
   const currentImages = editImagesByOption[activeKey] ?? []
   const isCustomQuote = pricingDisplay === 'custom'
 
+  // The saved snapshot carries no per-tier prices when every variant's
+  // prices map is empty (the shape a 5+ ink version has, and what any
+  // historical custom-quote version produces). In that case the
+  // designer MUST NOT be allowed to flip the Pricing display radio
+  // from Custom back to Standard — saving would produce a version
+  // marked as standard-priced with an empty grid on the customer
+  // page. Since EditVersionPage doesn't allow variant changes, the
+  // radio toggle is the only path to that bad state, so gating the
+  // radio at the source is sufficient without a save-time guard.
+  //
+  // Defensive default: treat a missing / malformed pricing_snapshot
+  // as "no prices available" and disable.
+  const snapshotHasNoPrices = (() => {
+    if (!pricingSnapshot || !Array.isArray(pricingSnapshot.variants) || pricingSnapshot.variants.length === 0) {
+      return true
+    }
+    return pricingSnapshot.variants.every((v) => {
+      const prices = v?.prices ?? {}
+      return Object.keys(prices).length === 0
+    })
+  })()
+
   // Edit doesn't allow variant changes, so ink-field count defaults to what
   // was saved (min 1 so a version somehow created with no names can be fixed).
   const editInkCount = requiresInkNames ? Math.max(inkNamesArray.length, 1) : 0
@@ -612,8 +634,17 @@ export default function EditVersionPage() {
 
         <form id="edit-version-form" onSubmit={handleSubmit} className="space-y-6">
 
-          {/* Pricing display — required choice between standard grid and custom quote */}
-          <PricingDisplayField value={pricingDisplay} onChange={setPricingDisplay} />
+          {/* Pricing display — required choice between standard grid and custom quote.
+              Standard is disabled when the saved snapshot carries no
+              per-tier prices (5+ ink versions, historical custom
+              quotes) so the designer can't flip the version into a
+              standard-priced state that has no grid to show. */}
+          <PricingDisplayField
+            value={pricingDisplay}
+            onChange={setPricingDisplay}
+            standardDisabled={snapshotHasNoPrices}
+            disabledReason="No standard pricing available for this version. Saved as a custom quote."
+          />
 
           {/* Specification */}
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
