@@ -4,12 +4,10 @@ import { v4 as uuidv4 } from 'uuid'
 import { supabase } from '../lib/supabase'
 import { logAudit } from '../lib/audit'
 import { formatPrice } from '../lib/currency'
-import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { pluralLabel, variantLabel } from '../lib/labels'
 import { DEFAULT_FEATURED_QUANTITIES } from '../lib/constants'
 import { PricingDisplayField, type PricingDisplayValue } from '../components/PricingDisplayField'
 import { CurrencyField } from '../components/CurrencyField'
-import { PageDropOverlay } from '../components/PageDropOverlay'
 import NameChipInput from '../components/NameChipInput'
 import { matchImageToName } from '../lib/matchImageToName'
 import type { Currency, ProofNameApproval } from '../lib/types'
@@ -163,7 +161,6 @@ export default function NewVersionPage() {
   const [validationToast, setValidationToast] = useState('')
 
   const fileRef             = useRef<HTMLInputElement>(null)
-  const dragIndexRef        = useRef<number | null>(null)
   const imageSectionRef     = useRef<HTMLElement | null>(null)
   const pricingDisplayRef   = useRef<HTMLElement | null>(null)
   const materialRef         = useRef<HTMLSelectElement>(null)
@@ -651,47 +648,106 @@ export default function NewVersionPage() {
     if (fileRef.current) fileRef.current.value = ''
   }
 
-  const { isZoneDragOver, isPageDragOver, zoneProps } = useImageFileDrop({ onFiles: addFiles })
+  // Per-slot file addition. Called when the designer drops or
+  // clicks-to-upload on an EmptySlot or a FreshImageCard: the
+  // associated_name is implied by the slot, so no per-image
+  // dropdown is needed. Validates file type + size, respects the
+  // per-option MAX_IMAGES cap (counted against fresh entries
+  // only — carried images don't consume slots because they
+  // already exist in v1's storage). First-file-wins for drops
+  // isn't enforced here; this accepts all valid files and the
+  // caller's caller decides whether to pass 1 or N.
+  function addFilesToSlot(optionCode: string, associated_name: string | null, files: File[]) {
+    setFileError('')
+    setFileNote('')
+    if (files.length === 0) return
+
+    const okByType = files.filter((f) => ACCEPTED_TYPES.includes(f.type))
+    const rejectedByType = files.length - okByType.length
+    if (okByType.length === 0) {
+      setFileError('Only image files can be added.')
+      return
+    }
+
+    const okBySize = okByType.filter((f) => f.size <= MAX_FILE_SIZE)
+    const rejectedBySize = okByType.length - okBySize.length
+    if (okBySize.length === 0) {
+      setFileError('Each image must be 10 MB or smaller.')
+      return
+    }
+
+    const freshInOption = (imagesByOption[optionCode] ?? []).length
+    const remaining = MAX_IMAGES - freshInOption
+    if (remaining <= 0) {
+      setFileNote(`Can't add more, ${MAX_IMAGES}-image limit reached for this tab.`)
+      return
+    }
+
+    const toAdd = okBySize.slice(0, remaining)
+    const rejectedByLimit = okBySize.length - toAdd.length
+
+    const notes: string[] = []
+    if (rejectedByLimit > 0) notes.push(`Added ${toAdd.length}. ${rejectedByLimit} skipped (${MAX_IMAGES}-image limit reached).`)
+    if (rejectedByType > 0 || rejectedBySize > 0) {
+      const reasons: string[] = []
+      if (rejectedByType > 0) reasons.push(`${rejectedByType} non-image`)
+      if (rejectedBySize > 0) reasons.push(`${rejectedBySize} over 10 MB`)
+      notes.push(`Ignored: ${reasons.join(', ')}.`)
+    }
+    if (notes.length > 0) setFileNote(notes.join(' '))
+
+    setImagesByOption((prev) => ({
+      ...prev,
+      [optionCode]: [
+        ...(prev[optionCode] ?? []),
+        ...toAdd.map((file) => ({
+          localId: uuidv4(),
+          file,
+          preview: URL.createObjectURL(file),
+          associated_name,
+          side: null as 'front' | 'back' | null,
+        })),
+      ],
+    }))
+  }
+
+  // Replacement-on-drop for carry cards. First file wins; the
+  // rest are discarded (replacements are 1:1 by definition).
+  // Supersedes any previously-queued replacement for that row by
+  // revoking the old object URL first.
+  function handleReplacementDrop(v1RowId: string, files: File[]) {
+    if (files.length === 0) return
+    const first = files[0]
+    if (!ACCEPTED_TYPES.includes(first.type)) {
+      setFileError('Replacement must be an image file.')
+      return
+    }
+    if (first.size > MAX_FILE_SIZE) {
+      setFileError('Replacement must be 10 MB or smaller.')
+      return
+    }
+    const existing = replacementByV1RowId[v1RowId]
+    if (existing) URL.revokeObjectURL(existing.preview)
+    handleReplacementUpload(v1RowId, first)
+  }
 
   function removeImage(localId: string) {
-    setImagesByOption(prev => {
-      const cur = prev[activeKey] ?? []
-      const removed = cur.find((e) => e.localId === localId)
-      if (removed) URL.revokeObjectURL(removed.preview)
-      return { ...prev, [activeKey]: cur.filter((e) => e.localId !== localId) }
+    // removeImage operates on whichever option tab the entry
+    // lives in — each ImageEntry was stamped with a specific
+    // option at drop time. Walk all option keys to locate it;
+    // tiny scan compared to the old active-tab-only approach,
+    // but correct under the per-slot layout where multiple tabs
+    // may hold entries.
+    setImagesByOption((prev) => {
+      const out: Record<string, ImageEntry[]> = {}
+      for (const [key, list] of Object.entries(prev)) {
+        const removed = list.find((e) => e.localId === localId)
+        if (removed) URL.revokeObjectURL(removed.preview)
+        out[key] = list.filter((e) => e.localId !== localId)
+      }
+      return out
     })
   }
-
-  function updateAssociatedName(localId: string, associated_name: string | null) {
-    setImagesByOption(prev => ({
-      ...prev,
-      [activeKey]: (prev[activeKey] ?? []).map(e => e.localId === localId ? { ...e, associated_name } : e),
-    }))
-  }
-
-  function updateSide(localId: string, side: 'front' | 'back' | null) {
-    setImagesByOption(prev => ({
-      ...prev,
-      [activeKey]: (prev[activeKey] ?? []).map(e => e.localId === localId ? { ...e, side } : e),
-    }))
-  }
-
-  function handleDragStart(index: number) { dragIndexRef.current = index }
-
-  function handleDragOver(e: React.DragEvent, index: number) {
-    e.preventDefault()
-    const from = dragIndexRef.current
-    if (from === null || from === index) return
-    setImagesByOption(prev => {
-      const cur = [...(prev[activeKey] ?? [])]
-      const [item] = cur.splice(from, 1)
-      cur.splice(index, 0, item)
-      return { ...prev, [activeKey]: cur }
-    })
-    dragIndexRef.current = index
-  }
-
-  function handleDragEnd() { dragIndexRef.current = null }
 
   // Chip removal reconciliation: when the designer drops a chip
   // from the names list, any images currently associated with that
@@ -1102,8 +1158,25 @@ export default function NewVersionPage() {
   // All "requires a value before save succeeds" checks, derived from state.
   // Flipping any failing field to valid clears its error highlight live.
   const imagesFinishKeys = optionMode ? selectedOptions : ['']
+
+  // Per-option image count: kept carries + queued replacements +
+  // fresh uploads. Carried rows with keep=false and no replacement
+  // drop on save, so they don't count. Replacements count even
+  // when keep=false (the replacement IS the saved row).
+  function savedImagesInOption(optionCode: string): number {
+    const fresh = (imagesByOption[optionCode] ?? []).length
+    if (!v1Carry) return fresh
+    const carryKeptOrReplaced = v1Carry.images.filter((img) => {
+      if ((img.material_option ?? '') !== optionCode) return false
+      const hasRep = !!replacementByV1RowId[img.v1RowId]
+      const keep = keepByV1RowId[img.v1RowId] ?? true
+      return hasRep || keep
+    }).length
+    return fresh + carryKeptOrReplaced
+  }
+
   const validations = {
-    images:         imagesFinishKeys.every(fk => (imagesByOption[fk] ?? []).length > 0),
+    images:         imagesFinishKeys.every(fk => savedImagesInOption(fk) > 0),
     pricingDisplay: pricingDisplay !== null,
     material:       !!selectedMaterialId,
     variant:        !variantRequired || selectedVariantIds.length > 0,
@@ -1115,7 +1188,7 @@ export default function NewVersionPage() {
 
   // Specific images message so the designer knows which finish tab needs attention.
   const invalidOptionKey = !validations.images
-    ? imagesFinishKeys.find(fk => (imagesByOption[fk] ?? []).length === 0)
+    ? imagesFinishKeys.find(fk => savedImagesInOption(fk) === 0)
     : undefined
   const imagesHint = invalidOptionKey !== undefined && invalidOptionKey !== ''
     ? `At least one image required for ${availableOptions.find(f => f.code === invalidOptionKey)?.display_name ?? invalidOptionKey}.`
@@ -1151,7 +1224,6 @@ export default function NewVersionPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <PageDropOverlay visible={isPageDragOver} />
       {validationToast && (
         <div
           role="status"
@@ -1411,228 +1483,29 @@ export default function NewVersionPage() {
 
           </section>
 
-          {/* Shape B carry-forward from v1.
-              Only renders when the project has an is_current prior
-              version to carry from. Within each option tab, shows
-              a Shared group and one group per name that exists in
-              both v1's names[] and the current form's names[].
-              Each group lists v1's images as ghosted cards with a
-              Keep toggle (default on) and a Replace upload slot.
-              Fresh uploads for v2 continue to go through the
-              existing image section below via the associated_name
-              dropdown — per-(option, name) drop zones here are
-              deliberately scoped to a follow-up pass.
-              Approval carry-forward is computed at save time; see
-              the save handler. */}
-          {v1Carry && (
-            <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-              <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
-                Carry forward from v{v1Carry.versionNumber}
-              </h2>
-              <p className="mb-4 text-xs text-gray-500">
-                Keep toggles on by default. Upload a replacement to swap an image out, that slot won't carry its approval.
-              </p>
-
-              {/* Option tabs for carry — reuses activeImageOption
-                  from the fresh-image section below so both stay
-                  in sync. Hidden when the material has no options. */}
-              {optionMode && selectedOptions.length > 0 && (
-                <div className="mb-4 flex gap-0 border-b border-gray-100">
-                  {selectedOptions.map((fCode) => {
-                    const f = availableOptions.find((x) => x.code === fCode)
-                    const isActive = activeImageOption === fCode
-                    return (
-                      <button
-                        key={fCode}
-                        type="button"
-                        onClick={() => setActiveImageOption(fCode)}
-                        className={[
-                          '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
-                          isActive
-                            ? 'border-gray-900 text-gray-900'
-                            : 'border-transparent text-gray-400 hover:text-gray-700',
-                        ].join(' ')}
-                      >
-                        {f?.display_name ?? fCode}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-
-              {(() => {
-                // Active option tab's code. Empty string for
-                // no-option materials (legacy key used by
-                // imagesByOption).
-                const activeCode = optionMode ? activeImageOption : ''
-
-                // Filter v1 images to the active option, and drop
-                // per-name images for names v2 has removed from
-                // its names[] (nothing to carry into). Shared is
-                // always included when v1 has shared images.
-                const commonNames = names.filter((n) => v1Carry.names.includes(n))
-                const commonNamesSet = new Set(commonNames)
-                const imagesInTab = v1Carry.images.filter((img) => {
-                  if ((img.material_option ?? '') !== activeCode) return false
-                  if (img.associated_name == null) return true
-                  return commonNamesSet.has(img.associated_name)
-                })
-
-                // Sort order (bucket priority → Shared-first
-                // within bucket → names[] order → stable original
-                // order). Bucket 0 = changes_requested (hottest,
-                // surfaces first), 1 = null/no-state, 2 = approved.
-                // Stable sort via originalIdx tertiary key keeps a
-                // name's multiple v1 images adjacent in their
-                // original relative order.
-                const sortedImages = imagesInTab
-                  .map((img, originalIdx) => {
-                    const nameKey = img.associated_name ?? SHARED_APPROVAL_KEY
-                    const approval = v1Carry.approvalsByName[nameKey]
-                    const stateBucket: 0 | 1 | 2 =
-                      approval?.state === 'changes_requested'
-                        ? 0
-                        : approval == null
-                          ? 1
-                          : 2
-                    const isShared: 0 | 1 = img.associated_name == null ? 0 : 1
-                    const nameOrder =
-                      img.associated_name == null
-                        ? -1
-                        : v1Carry.names.indexOf(img.associated_name)
-                    return { img, originalIdx, stateBucket, isShared, nameOrder }
-                  })
-                  .sort((a, b) => {
-                    if (a.stateBucket !== b.stateBucket) return a.stateBucket - b.stateBucket
-                    if (a.isShared !== b.isShared) return a.isShared - b.isShared
-                    if (a.nameOrder !== b.nameOrder) return a.nameOrder - b.nameOrder
-                    return a.originalIdx - b.originalIdx
-                  })
-                  .map((x) => x.img)
-
-                if (sortedImages.length === 0) {
-                  return (
-                    <p className="text-sm text-gray-500">
-                      v{v1Carry.versionNumber} has no images for this {optionMode ? 'option tab' : 'version'}.
-                    </p>
-                  )
-                }
-
-                // Split the already-sorted list into Open (needs
-                // attention: changes_requested or unreviewed) vs
-                // Approved (settled). The sort is stable and
-                // buckets are contiguous (0 = changes_requested,
-                // 1 = null, 2 = approved per stateBucket above),
-                // so filtering preserves per-section order exactly
-                // — no re-sort needed.
-                const openImages = sortedImages.filter((img) => {
-                  const a = v1Carry.approvalsByName[img.associated_name ?? SHARED_APPROVAL_KEY]
-                  return a == null || a.state === 'changes_requested'
-                })
-                const approvedImages = sortedImages.filter((img) => {
-                  const a = v1Carry.approvalsByName[img.associated_name ?? SHARED_APPROVAL_KEY]
-                  return a?.state === 'approved'
-                })
-
-                // Headings earn their keep only when both sections
-                // populate. One-sided populations collapse to a
-                // single unlabelled grid — Open-only during a
-                // first-review cycle, Approved-only once the
-                // customer has signed off on everything.
-                const showHeadings = openImages.length > 0 && approvedImages.length > 0
-
-                // Capture the narrowed v1Carry for the inner
-                // renderCard closure — TS's null-narrowing from
-                // the outer `{v1Carry && (...)}` guard doesn't
-                // propagate into nested function scopes.
-                const carry = v1Carry
-                function renderCard(img: V1Image) {
-                  const nameKey = img.associated_name ?? SHARED_APPROVAL_KEY
-                  const approval = carry.approvalsByName[nameKey]
-                  const keep = keepByV1RowId[img.v1RowId] ?? true
-                  const replacement = replacementByV1RowId[img.v1RowId]
-                  return (
-                    <CarryCard
-                      key={img.v1RowId}
-                      img={img}
-                      nameLabel={img.associated_name}
-                      approval={approval}
-                      v1VersionNumber={carry.versionNumber}
-                      keep={keep}
-                      replacement={replacement}
-                      onKeepChange={(v) => handleKeepToggle(img.v1RowId, v)}
-                      onReplacementUpload={(file) => handleReplacementUpload(img.v1RowId, file)}
-                      onReplacementClear={() => handleReplacementClear(img.v1RowId)}
-                    />
-                  )
-                }
-
-                if (!showHeadings) {
-                  // Single grid, no subsection label. Covers both
-                  // the all-approved and the not-yet-reviewed
-                  // cases (and any single-bucket configuration).
-                  return (
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                      {sortedImages.map(renderCard)}
-                    </div>
-                  )
-                }
-
-                return (
-                  <>
-                    {/* Open — unreviewed + changes_requested. Top
-                        margin matches the section helper copy
-                        above so the first heading doesn't double
-                        up on vertical space. */}
-                    <p className="mb-3 mt-2 text-xs font-medium uppercase tracking-wide text-gray-500">
-                      Open
-                    </p>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                      {openImages.map(renderCard)}
-                    </div>
-                    {/* Approved — wider top margin for visual
-                        separation between the two populated
-                        sections. Headings alone distinguish them
-                        without a horizontal rule. */}
-                    <p className="mb-3 mt-8 text-xs font-medium uppercase tracking-wide text-gray-500">
-                      Previously approved
-                    </p>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                      {approvedImages.map(renderCard)}
-                    </div>
-                  </>
-                )
-              })()}
-
-              {/* Notice if v1 had images on option codes v2 doesn't
-                  offer — those carry options simply won't appear in
-                  any tab and their images are silently dropped. */}
-              {(() => {
-                if (!optionMode) return null
-                const v1OptionCodes = new Set(
-                  v1Carry.images.map((i) => i.material_option).filter((c): c is string => c != null),
-                )
-                const dropped = v1Carry.materialOptions.filter(
-                  (c) => v1OptionCodes.has(c) && !selectedOptions.includes(c),
-                )
-                if (dropped.length === 0) return null
-                return (
-                  <p className="mt-4 border-t border-gray-100 pt-4 text-xs text-gray-500">
-                    v{v1Carry.versionNumber} had images on {dropped.join(', ')}, these won't carry since v2 doesn't offer {dropped.length === 1 ? 'that option' : 'those options'}.
-                  </p>
-                )
-              })()}
-            </section>
-          )}
-
-          {/* Image upload */}
+          {/* Unified image section.
+              Per-(option, name) drop targets and empty slots unify
+              carry, replacement, and fresh upload into one grid.
+              Replaces the former split of a Shape B carry card
+              grid above a flat uploader below: cards and empty
+              slots co-exist in the flat grid, sorted by the 5-way
+              bucket below. Drop a file on a carry card to queue a
+              replacement; drop or click on an empty slot to
+              upload fresh into that slot's (option, name)
+              coordinate. */}
           <section ref={imageSectionRef} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
-              {v1Carry ? 'Fresh or replacement images' : 'Proof images'}
-              {currentImages.length > 0 && (
-                <span className="ml-2 font-normal normal-case text-gray-400">, drag to reorder</span>
-              )}
+            <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
+              {v1Carry ? `Proof images, carrying from v${v1Carry.versionNumber}` : 'Proof images'}
             </h2>
+            {v1Carry ? (
+              <p className="mb-4 text-xs text-gray-500">
+                Keep toggles on by default. Drop an image on any card to swap it out, that slot won't carry its approval.
+              </p>
+            ) : (
+              <p className="mb-4 text-xs text-gray-500">
+                Drop images on empty slots, click to browse. JPEG up to 10 MB each.
+              </p>
+            )}
 
             {/* Option tabs */}
             {optionMode && selectedOptions.length > 0 && (
@@ -1662,95 +1535,233 @@ export default function NewVersionPage() {
               </div>
             )}
 
-            {currentImages.length > 0 && (
-              <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {currentImages.map((entry, index) => (
-                  <div
-                    key={entry.localId}
-                    draggable
-                    onDragStart={() => handleDragStart(index)}
-                    onDragOver={(e) => handleDragOver(e, index)}
-                    onDragEnd={handleDragEnd}
-                    className="group relative cursor-grab rounded-xl border border-gray-200 bg-gray-50 p-2 active:cursor-grabbing"
-                  >
-                    <img
-                      src={entry.preview}
-                      alt={entry.file.name}
-                      className="mb-2 aspect-square w-full rounded-lg object-contain"
-                    />
-                    {/* Per-image recipient + side. Pre-populated from
-                        the filename via matchImageToName when the
-                        file was added; designer can override. Shared
-                        (null) + chip values fill the Name dropdown.
-                        Side dropdown covers Front / Back / none. */}
-                    <select
-                      value={entry.associated_name ?? ''}
-                      onChange={(e) => updateAssociatedName(entry.localId, e.target.value || null)}
-                      className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-gray-900 focus:outline-none"
-                      aria-label="Associated name"
-                    >
-                      <option value="">Shared</option>
-                      {names.map((n) => <option key={n} value={n}>{n}</option>)}
-                    </select>
-                    <select
-                      value={entry.side ?? ''}
-                      onChange={(e) => updateSide(entry.localId, (e.target.value || null) as 'front' | 'back' | null)}
-                      className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-gray-900 focus:outline-none"
-                      aria-label="Side"
-                    >
-                      <option value="">—</option>
-                      <option value="front">Front</option>
-                      <option value="back">Back</option>
-                    </select>
-                    <p
-                      className="mt-1 truncate text-[11px] text-gray-400"
-                      title={entry.file.name}
-                    >
-                      {entry.file.name}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => removeImage(entry.localId)}
-                      className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-gray-800 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+            {(() => {
+              // Unified per-slot grid. Assembles cells from three
+              // sources: carry cards (v1 images for this tab),
+              // fresh-image cards (user-uploaded for this tab),
+              // and empty drop zones (slots with no content yet).
+              // Sort order surfaces actionable buckets first and
+              // settled carries last.
+              const activeCode = optionMode ? activeImageOption : ''
 
-            {currentImages.length < MAX_IMAGES && (
-              <>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="image/jpeg"
-                  multiple
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => fileRef.current?.click()}
-                  {...zoneProps}
-                  className={[
-                    'flex w-full items-center justify-center rounded-xl border-2 py-8 text-sm transition-colors',
-                    isZoneDragOver
-                      ? 'border-solid border-gray-900 bg-gray-50 text-gray-900'
-                      : shouldHighlight('images')
-                        ? 'border-dashed border-rose-300 text-rose-500 hover:border-rose-400 hover:text-rose-600'
-                        : 'border-dashed border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600',
-                  ].join(' ')}
-                >
-                  {isZoneDragOver
-                    ? 'Drop to add images'
-                    : currentImages.length === 0
-                      ? 'Click or drop to upload JPEG (max 10 MB each)'
-                      : `Add more images (${currentImages.length} / ${MAX_IMAGES})`}
-                </button>
-              </>
-            )}
+              // Slot universe for this tab: Shared-sentinel + each
+              // name in v2's names[]. Carry v1 images for names
+              // common with v2.names[]; drop v1 images for
+              // v2-removed names (nothing to carry into).
+              type SlotKey = string   // name, or SHARED_APPROVAL_KEY
+              const slotKeys: SlotKey[] = [SHARED_APPROVAL_KEY, ...names]
+
+              // Carry cells per slot key, in v1 order.
+              const carryCellsBySlot: Record<string, typeof v1Carry extends null ? never : V1Image[]> = {}
+              if (v1Carry) {
+                for (const img of v1Carry.images) {
+                  if ((img.material_option ?? '') !== activeCode) continue
+                  const key = img.associated_name ?? SHARED_APPROVAL_KEY
+                  // Drop cards for names no longer in v2.names[];
+                  // shared always carries through.
+                  if (key !== SHARED_APPROVAL_KEY && !names.includes(key)) continue
+                  ;(carryCellsBySlot[key] ??= []).push(img)
+                }
+              }
+
+              // Fresh cells per slot key, in upload order. Reads
+              // from imagesByOption directly (still the canonical
+              // state); derived filter by associated_name per slot.
+              const freshCellsBySlot: Record<string, ImageEntry[]> = {}
+              for (const entry of (imagesByOption[activeCode] ?? [])) {
+                const key = entry.associated_name ?? SHARED_APPROVAL_KEY
+                ;(freshCellsBySlot[key] ??= []).push(entry)
+              }
+
+              // Build an intermediate per-cell representation.
+              // Each cell becomes its own sort entry with a five-
+              // way bucket (see spec), then we sort the flat list.
+              type Cell =
+                | { kind: 'carry'; img: V1Image; slotKey: string }
+                | { kind: 'fresh'; entry: ImageEntry; slotKey: string }
+                | { kind: 'empty'; slotKey: string }
+
+              const cells: Cell[] = []
+              for (const slotKey of slotKeys) {
+                const carries = carryCellsBySlot[slotKey] ?? []
+                const freshes = freshCellsBySlot[slotKey] ?? []
+                for (const img of carries) cells.push({ kind: 'carry', img, slotKey })
+                for (const entry of freshes) cells.push({ kind: 'fresh', entry, slotKey })
+                // An empty slot is rendered only when there are no
+                // cards at all for that slot. Keeps the grid
+                // predictable: one drop target per slot, gone once
+                // the slot has content.
+                if (carries.length === 0 && freshes.length === 0) {
+                  cells.push({ kind: 'empty', slotKey })
+                }
+              }
+
+              // Five-way state bucket for sort:
+              //   0: carry with v1 state = changes_requested (hottest)
+              //   1: carry with v1 state = null (unreviewed)
+              //   2: empty slot (nothing to carry, waiting)
+              //   3: fresh-image card (user added)
+              //   4: carry with v1 state = approved (settled → Previously approved section)
+              function stateBucketFor(cell: Cell): 0 | 1 | 2 | 3 | 4 {
+                if (cell.kind === 'empty') return 2
+                if (cell.kind === 'fresh') return 3
+                const nameKey = cell.img.associated_name ?? SHARED_APPROVAL_KEY
+                const approval = v1Carry?.approvalsByName[nameKey]
+                if (approval?.state === 'changes_requested') return 0
+                if (approval == null) return 1
+                return 4
+              }
+
+              const nameOrderFor = (slotKey: string) =>
+                slotKey === SHARED_APPROVAL_KEY ? -1 : names.indexOf(slotKey)
+
+              const sortedCells = cells
+                .map((cell, originalIdx) => ({
+                  cell,
+                  originalIdx,
+                  bucket: stateBucketFor(cell),
+                  isShared: (cell.slotKey === SHARED_APPROVAL_KEY ? 0 : 1) as 0 | 1,
+                  nameOrder: nameOrderFor(cell.slotKey),
+                }))
+                .sort((a, b) => {
+                  if (a.bucket !== b.bucket) return a.bucket - b.bucket
+                  if (a.isShared !== b.isShared) return a.isShared - b.isShared
+                  if (a.nameOrder !== b.nameOrder) return a.nameOrder - b.nameOrder
+                  return a.originalIdx - b.originalIdx
+                })
+                .map((x) => x.cell)
+
+              // Open section = buckets 0, 1, 2, 3.
+              // Previously approved section = bucket 4.
+              const openCells = sortedCells.filter((c) => {
+                const b = stateBucketFor(c)
+                return b === 0 || b === 1 || b === 2 || b === 3
+              })
+              const approvedCells = sortedCells.filter((c) => stateBucketFor(c) === 4)
+              const showHeadings = openCells.length > 0 && approvedCells.length > 0
+
+              // First-cell-in-slot label rule: within each
+              // section's cell sequence, the name label renders on
+              // the first cell encountered per slot and hides on
+              // subsequent cells for the same slot. Keeps repeat
+              // cells tidy (shared + 3 images in one slot feels
+              // calmer without the name repeating 3 times).
+              function computeLabelVisibility(cellList: Cell[]): boolean[] {
+                const seen = new Set<string>()
+                return cellList.map((c) => {
+                  if (seen.has(c.slotKey)) return false
+                  seen.add(c.slotKey)
+                  return true
+                })
+              }
+
+              function renderCell(cell: Cell, showLabel: boolean) {
+                if (cell.kind === 'carry') {
+                  const nameKey = cell.img.associated_name ?? SHARED_APPROVAL_KEY
+                  const approval = v1Carry?.approvalsByName[nameKey]
+                  const keep = keepByV1RowId[cell.img.v1RowId] ?? true
+                  const replacement = replacementByV1RowId[cell.img.v1RowId]
+                  return (
+                    <CarryCard
+                      key={`carry-${cell.img.v1RowId}`}
+                      img={cell.img}
+                      nameLabel={showLabel ? cell.img.associated_name : undefined}
+                      approval={approval}
+                      v1VersionNumber={v1Carry?.versionNumber ?? 0}
+                      keep={keep}
+                      replacement={replacement}
+                      onKeepChange={(v) => handleKeepToggle(cell.img.v1RowId, v)}
+                      onReplacementUpload={(file) => handleReplacementUpload(cell.img.v1RowId, file)}
+                      onReplacementClear={() => handleReplacementClear(cell.img.v1RowId)}
+                      onReplacementDrop={(files) => handleReplacementDrop(cell.img.v1RowId, files)}
+                    />
+                  )
+                }
+                if (cell.kind === 'fresh') {
+                  const slotName = cell.slotKey === SHARED_APPROVAL_KEY ? null : cell.slotKey
+                  return (
+                    <FreshImageCard
+                      key={`fresh-${cell.entry.localId}`}
+                      entry={cell.entry}
+                      nameLabel={showLabel ? slotName : undefined}
+                      onRemove={() => removeImage(cell.entry.localId)}
+                    />
+                  )
+                }
+                // empty
+                const slotName = cell.slotKey === SHARED_APPROVAL_KEY ? null : cell.slotKey
+                return (
+                  <EmptySlot
+                    key={`empty-${cell.slotKey}-${activeCode}`}
+                    nameLabel={showLabel ? slotName : undefined}
+                    onFiles={(files) => addFilesToSlot(activeCode, slotName, files)}
+                  />
+                )
+              }
+
+              if (sortedCells.length === 0) {
+                return null
+              }
+
+              if (!showHeadings) {
+                const labels = computeLabelVisibility(sortedCells)
+                return (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {sortedCells.map((cell, i) => renderCell(cell, labels[i]))}
+                  </div>
+                )
+              }
+
+              const openLabels = computeLabelVisibility(openCells)
+              const approvedLabels = computeLabelVisibility(approvedCells)
+              return (
+                <>
+                  <p className="mb-3 mt-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+                    Open
+                  </p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {openCells.map((cell, i) => renderCell(cell, openLabels[i]))}
+                  </div>
+                  <p className="mb-3 mt-8 text-xs font-medium uppercase tracking-wide text-gray-500">
+                    Previously approved
+                  </p>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {approvedCells.map((cell, i) => renderCell(cell, approvedLabels[i]))}
+                  </div>
+                </>
+              )
+            })()}
+
+            {/* Notice if v1 had images on option codes v2 doesn't
+                offer, those carry options simply won't appear in
+                any tab and their images are silently dropped. */}
+            {v1Carry && optionMode && (() => {
+              const v1OptionCodes = new Set(
+                v1Carry.images.map((i) => i.material_option).filter((c): c is string => c != null),
+              )
+              const dropped = v1Carry.materialOptions.filter(
+                (c) => v1OptionCodes.has(c) && !selectedOptions.includes(c),
+              )
+              if (dropped.length === 0) return null
+              return (
+                <p className="mt-4 border-t border-gray-100 pt-4 text-xs text-gray-500">
+                  v{v1Carry.versionNumber} had images on {dropped.join(', ')}, these won't carry since v2 doesn't offer {dropped.length === 1 ? 'that option' : 'those options'}.
+                </p>
+              )
+            })()}
+
+            {/* Hidden input used by the EmptySlot click-to-upload
+                flow — kept at the section level since EmptySlots
+                are recreated on every render and shouldn't each
+                carry their own input node. */}
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/jpeg"
+              multiple
+              onChange={handleFileChange}
+              className="hidden"
+            />
 
             {fileError && <p className="mt-2 text-sm text-red-600">{fileError}</p>}
             {fileNote && <p className="mt-2 text-sm text-gray-500">{fileNote}</p>}
@@ -1898,13 +1909,15 @@ function CarryCard({
   onKeepChange,
   onReplacementUpload,
   onReplacementClear,
+  onReplacementDrop,
 }: {
   img: V1Image
-  // null => Shared; otherwise the recipient name.
-  nameLabel: string | null
+  // null => Shared; string => named recipient; undefined =>
+  // hide the label row entirely (first-cell-in-slot rule).
+  nameLabel: string | null | undefined
   // v1's approval for this card's slot. Drives the inline pill
-  // above the thumbnail (green for approved, amber for
-  // changes_requested, none when null).
+  // above the thumbnail (amber for changes_requested; emerald
+  // signal is on the card chrome itself).
   approval: ProofNameApproval | undefined
   v1VersionNumber: number
   keep: boolean
@@ -1912,10 +1925,14 @@ function CarryCard({
   onKeepChange: (v: boolean) => void
   onReplacementUpload: (file: File) => void
   onReplacementClear: () => void
+  // Drop-target receiver — first file wins, bypasses the hidden
+  // file input. Same end state as the Replace button path.
+  onReplacementDrop: (files: File[]) => void
 }) {
   const hasReplacement = !!replacement
   const showGhosted = !keep && !hasReplacement
   const displayLabel = img.original_filename ?? 'v1 image'
+  const [dragOver, setDragOver] = useState(false)
 
   function handleReplaceInput(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -1940,8 +1957,25 @@ function CarryCard({
   // Emerald only shows at rest. Amber replacement-state overrides
   // it, keeping the "action committed" signal consistent with how
   // the Open section already uses amber on changes_requested pills.
+  function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault()
+      setDragOver(true)
+    }
+  }
+  function handleDragLeave() { setDragOver(false) }
+  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    if (!e.dataTransfer.types.includes('Files')) return
+    e.preventDefault()
+    setDragOver(false)
+    onReplacementDrop(Array.from(e.dataTransfer.files))
+  }
+
   return (
     <div
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       className={[
         'rounded-xl p-2.5 transition-all',
         hasReplacement
@@ -1949,6 +1983,7 @@ function CarryCard({
           : approval?.state === 'approved'
             ? 'bg-emerald-50 ring-1 ring-emerald-200'
             : 'bg-gray-50 ring-1 ring-gray-200',
+        dragOver ? 'ring-2 ring-indigo-400 ring-offset-1' : '',
       ].join(' ')}
     >
       {/* Label row — sits above the thumbnail. Shared cards get
@@ -1957,36 +1992,40 @@ function CarryCard({
           amber cards; the previous "approved" pill is gone since
           the emerald card chrome carries that signal now, and
           dropping it frees horizontal room before the name label
-          truncates. */}
-      <div
-        className={[
-          'mb-2 flex items-center gap-2 transition-opacity',
-          showGhosted ? 'opacity-40' : '',
-        ].join(' ')}
-      >
-        {nameLabel == null ? (
-          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
-            Shared
-          </span>
-        ) : (
-          <span
-            className="truncate text-sm font-medium text-gray-700"
-            title={nameLabel}
-          >
-            {nameLabel}
-          </span>
-        )}
-        {approval?.state === 'changes_requested' && (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
-            v{v1VersionNumber} changes requested
-          </span>
-        )}
-      </div>
+          truncates.
+          nameLabel === undefined hides the entire row for repeat
+          cells in the same slot (first-cell-in-slot label rule). */}
+      {nameLabel !== undefined && (
+        <div
+          className={[
+            'mb-2 flex items-center gap-2 transition-opacity',
+            showGhosted ? 'opacity-40' : '',
+          ].join(' ')}
+        >
+          {nameLabel == null ? (
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+              Shared
+            </span>
+          ) : (
+            <span
+              className="truncate text-sm font-medium text-gray-700"
+              title={nameLabel}
+            >
+              {nameLabel}
+            </span>
+          )}
+          {approval?.state === 'changes_requested' && (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
+              v{v1VersionNumber} changes requested
+            </span>
+          )}
+        </div>
+      )}
       <img
         src={img.preview}
         alt={displayLabel}
         className={[
-          'h-24 w-full rounded-lg object-cover transition-opacity',
+          'h-32 w-full rounded-lg object-cover transition-opacity',
           showGhosted ? 'opacity-40' : '',
         ].join(' ')}
       />
@@ -2055,6 +2094,144 @@ function CarryCard({
           </label>
         )}
       </div>
+    </div>
+  )
+}
+
+// Fresh-image card — a user-uploaded file with no v1 parent. Lives
+// in the same grid as CarryCards / EmptySlots. Doesn't carry a
+// Keep toggle (nothing to carry), no approval pill (nothing to
+// carry an approval from). associated_name is implicit from the
+// slot the file was dropped into and is stored on the underlying
+// ImageEntry in imagesByOption.
+function FreshImageCard({
+  entry,
+  nameLabel,
+  onRemove,
+}: {
+  entry: ImageEntry
+  nameLabel: string | null | undefined
+  onRemove: () => void
+}) {
+  return (
+    <div className="rounded-xl bg-gray-50 p-2.5 ring-1 ring-gray-200 transition-all">
+      {nameLabel !== undefined && (
+        <div className="mb-2 flex items-center gap-2">
+          {nameLabel == null ? (
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+              Shared
+            </span>
+          ) : (
+            <span
+              className="truncate text-sm font-medium text-gray-700"
+              title={nameLabel}
+            >
+              {nameLabel}
+            </span>
+          )}
+        </div>
+      )}
+      <img
+        src={entry.preview}
+        alt={entry.file.name}
+        className="h-32 w-full rounded-lg object-cover"
+      />
+      <p className="mt-2 truncate text-xs text-gray-400" title={entry.file.name}>
+        {entry.file.name}
+      </p>
+      <div className="mt-2.5 flex items-center justify-end">
+        <button
+          type="button"
+          onClick={onRemove}
+          className="text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+        >
+          Remove
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// Empty drop zone — same footprint as a CarryCard, dashed muted
+// border, click or drop to upload into this slot's coordinate.
+// associated_name gets stamped on the uploaded ImageEntry from
+// the slot, so no per-image dropdown is needed anywhere else.
+// Multi-file drops are accepted; the slot's cell turns into one
+// or more FreshImageCards in the same slot grouping, stacked by
+// the main grid's sort.
+function EmptySlot({
+  nameLabel,
+  onFiles,
+}: {
+  nameLabel: string | null | undefined
+  onFiles: (files: File[]) => void
+}) {
+  const [dragOver, setDragOver] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault()
+      setDragOver(true)
+    }
+  }
+  function handleDragLeave() { setDragOver(false) }
+  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    if (!e.dataTransfer.types.includes('Files')) return
+    e.preventDefault()
+    setDragOver(false)
+    onFiles(Array.from(e.dataTransfer.files))
+  }
+  function handleInputChange(e: ChangeEvent<HTMLInputElement>) {
+    onFiles(Array.from(e.target.files ?? []))
+    if (inputRef.current) inputRef.current.value = ''
+  }
+
+  return (
+    <div
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      onClick={() => inputRef.current?.click()}
+      className={[
+        'flex cursor-pointer flex-col rounded-xl border-2 border-dashed p-2.5 transition-all',
+        dragOver
+          ? 'border-indigo-400 bg-indigo-50 ring-2 ring-indigo-400 ring-offset-1'
+          : 'border-gray-200 bg-gray-50/50 hover:border-gray-300 hover:bg-gray-50',
+      ].join(' ')}
+    >
+      {nameLabel !== undefined && (
+        <div className="mb-2 flex items-center gap-2">
+          {nameLabel == null ? (
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+              Shared
+            </span>
+          ) : (
+            <span
+              className="truncate text-sm font-medium text-gray-700"
+              title={nameLabel}
+            >
+              {nameLabel}
+            </span>
+          )}
+        </div>
+      )}
+      <div
+        className={[
+          'flex h-32 w-full items-center justify-center rounded-lg text-center text-xs',
+          dragOver ? 'text-indigo-700' : 'text-gray-400',
+        ].join(' ')}
+      >
+        {dragOver ? 'Drop to add' : 'Drop image here or click to upload'}
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={ACCEPTED_TYPES.join(',')}
+        multiple
+        onChange={handleInputChange}
+        className="sr-only"
+      />
     </div>
   )
 }
