@@ -1595,7 +1595,7 @@ export default function NewVersionPage() {
                         sections. Headings alone distinguish them
                         without a horizontal rule. */}
                     <p className="mb-3 mt-8 text-xs font-medium uppercase tracking-wide text-gray-500">
-                      Approved
+                      Previously approved
                     </p>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                       {approvedImages.map(renderCard)}
@@ -1791,7 +1791,7 @@ export default function NewVersionPage() {
             return (
               <section key={vid} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
                 <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
-                  Pricing — {variantLabel}
+                  Pricing: {variantLabel}
                 </h2>
                 <p className="mb-4 text-xs text-gray-400">
                   {tiers.length > 0
