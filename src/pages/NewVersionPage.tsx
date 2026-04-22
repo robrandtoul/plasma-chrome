@@ -606,7 +606,7 @@ export default function NewVersionPage() {
     // 10-images-per-finish cap
     const remaining = MAX_IMAGES - currentImages.length
     if (remaining <= 0) {
-      setFileNote(`Can't add more — ${MAX_IMAGES}-image limit reached.`)
+      setFileNote(`Can't add more, ${MAX_IMAGES}-image limit reached.`)
       return
     }
 
@@ -1180,7 +1180,7 @@ export default function NewVersionPage() {
               title={!isValid ? missingFieldsHint(validations) : undefined}
               aria-label={
                 !isValid
-                  ? `Save version — ${missingFieldsHint(validations)}`
+                  ? `Save version, ${missingFieldsHint(validations)}`
                   : undefined
               }
               className={[
@@ -1237,7 +1237,7 @@ export default function NewVersionPage() {
               <div ref={variantRef} className="mb-4">
                 <label className="mb-2 block text-sm font-medium text-gray-700">
                   {variantLabel(variantType)}
-                  {isMultiVariant && <span className="ml-2 font-normal text-gray-400">— select all to expose on the proof version</span>}
+                  {isMultiVariant && <span className="ml-2 font-normal text-gray-400">, select all to expose on the proof version</span>}
                 </label>
 
                 {isMultiVariant ? (
@@ -1288,7 +1288,7 @@ export default function NewVersionPage() {
                     doesn't see a redundant notice. */}
                 {autoCustomQuote && (
                   <p className="mt-1.5 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
-                    This ink count has no standard pricing — saving as a custom quote. Price and quantity will be agreed separately.
+                    This ink count has no standard pricing, saving as a custom quote. Price and quantity will be agreed separately.
                   </p>
                 )}
               </div>
@@ -1423,7 +1423,7 @@ export default function NewVersionPage() {
                 Carry forward from v{v1Carry.versionNumber}
               </h2>
               <p className="mb-4 text-xs text-gray-500">
-                Keep toggles on by default. Upload a replacement to swap an image out — that slot won't carry its approval.
+                Keep toggles on by default. Upload a replacement to swap an image out, that slot won't carry its approval.
               </p>
 
               {/* Option tabs for carry — reuses activeImageOption
@@ -1487,7 +1487,7 @@ export default function NewVersionPage() {
                   const headerLabel = nameKey === SHARED_APPROVAL_KEY ? 'Shared' : nameKey
 
                   return [
-                    <div key={nameKey} className="mb-6 last:mb-0">
+                    <div key={nameKey} className="mb-4 last:mb-0">
                       <div className="mb-2 flex items-center gap-2">
                         <h3 className="text-sm font-semibold text-gray-800">{headerLabel}</h3>
                         {approval?.state === 'approved' && (
@@ -1501,7 +1501,7 @@ export default function NewVersionPage() {
                           </span>
                         )}
                       </div>
-                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                         {imagesInSlot.map((img) => {
                           const keep = keepByV1RowId[img.v1RowId] ?? true
                           const replacement = replacementByV1RowId[img.v1RowId]
@@ -1551,7 +1551,7 @@ export default function NewVersionPage() {
                 if (dropped.length === 0) return null
                 return (
                   <p className="mt-4 border-t border-gray-100 pt-4 text-xs text-gray-500">
-                    v{v1Carry.versionNumber} had images on {dropped.join(', ')} — these won't carry since v2 doesn't offer {dropped.length === 1 ? 'that option' : 'those options'}.
+                    v{v1Carry.versionNumber} had images on {dropped.join(', ')}, these won't carry since v2 doesn't offer {dropped.length === 1 ? 'that option' : 'those options'}.
                   </p>
                 )
               })()}
@@ -1563,7 +1563,7 @@ export default function NewVersionPage() {
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
               {v1Carry ? 'Fresh or replacement images' : 'Proof images'}
               {currentImages.length > 0 && (
-                <span className="ml-2 font-normal normal-case text-gray-400">— drag to reorder</span>
+                <span className="ml-2 font-normal normal-case text-gray-400">, drag to reorder</span>
               )}
             </h2>
 
@@ -1805,11 +1805,22 @@ function material_display_for(id: string, materials: Material[]) {
 const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
 const selectClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white'
 
-// One carry-forward card — one v1 image, with Keep toggle and
-// Replace upload slot. Ghosted when Keep is off (the image won't
-// carry). When a replacement is queued, the card's thumbnail
-// swaps to the replacement preview and Keep is visually off
-// regardless of the toggle state (replacement wins).
+// One carry-forward card, one v1 image. Three visual states:
+//
+//   * Keep on, no replacement: normal, full opacity, toggle on.
+//   * Keep off, no replacement: de-emphasised (faded thumb,
+//     muted controls) so the designer sees at a glance what
+//     will NOT carry.
+//   * Replacement queued (regardless of the toggle state): amber
+//     ring + "Replacing with: <filename>" caption below the
+//     original thumb. Keep toggle is forced visually off and
+//     disabled; Undo re-enables the toggle path.
+//
+// Thumb stays as the v1 preview in all three states — the
+// replacement's filename shows as a caption. That keeps the
+// card's identity tied to the v1 image it's reviewing, with the
+// replacement treated as metadata about what's happening to
+// that slot rather than a new card.
 function CarryCard({
   img,
   keep,
@@ -1827,8 +1838,7 @@ function CarryCard({
 }) {
   const hasReplacement = !!replacement
   const showGhosted = !keep && !hasReplacement
-  const displayPreview = hasReplacement ? replacement!.preview : img.preview
-  const displayLabel = hasReplacement ? replacement!.file.name : (img.original_filename ?? 'v1 image')
+  const displayLabel = img.original_filename ?? 'v1 image'
 
   function handleReplaceInput(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -1841,40 +1851,82 @@ function CarryCard({
     e.target.value = ''
   }
 
+  // Toggle on = effectively Keep=true AND no replacement. Replacement
+  // overrides the toggle visually + functionally.
+  const effectiveKeepOn = keep && !hasReplacement
+
   return (
     <div
       className={[
-        'relative rounded-xl border border-gray-200 bg-gray-50 p-2 transition-opacity',
-        showGhosted ? 'opacity-40' : '',
+        'rounded-xl p-2.5 transition-all',
+        hasReplacement
+          ? 'bg-amber-50 ring-1 ring-amber-200'
+          : 'bg-gray-50 ring-1 ring-gray-200',
       ].join(' ')}
     >
-      <img src={displayPreview} alt={displayLabel} className="h-32 w-full rounded-lg object-cover" />
-      <p className="mt-2 truncate text-xs text-gray-500" title={displayLabel}>
+      <img
+        src={img.preview}
+        alt={displayLabel}
+        className={[
+          'h-24 w-full rounded-lg object-cover transition-opacity',
+          showGhosted ? 'opacity-40' : '',
+        ].join(' ')}
+      />
+      <p
+        className={[
+          'mt-2 truncate text-xs font-normal',
+          hasReplacement ? 'text-gray-500' : 'text-gray-400',
+        ].join(' ')}
+        title={displayLabel}
+      >
         {displayLabel}
       </p>
-      {hasReplacement ? (
-        <div className="mt-2 flex items-center justify-between">
-          <span className="text-xs font-medium text-gray-700">Replacing</span>
+      {hasReplacement && (
+        <p
+          className="mt-1 truncate text-xs text-amber-800"
+          title={replacement!.file.name}
+        >
+          Replacing with: {replacement!.file.name}
+        </p>
+      )}
+      <div className="mt-2.5 flex items-center justify-between gap-2">
+        {/* Keep toggle (switch). Disabled while a replacement is
+            queued, since the toggle is irrelevant until Undo. */}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={effectiveKeepOn}
+          aria-label="Keep"
+          disabled={hasReplacement}
+          onClick={() => onKeepChange(!keep)}
+          className={[
+            'relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors',
+            effectiveKeepOn ? 'bg-gray-900' : 'bg-gray-300',
+            hasReplacement ? 'cursor-not-allowed opacity-40' : 'cursor-pointer',
+          ].join(' ')}
+        >
+          <span
+            className={[
+              'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+              effectiveKeepOn ? 'translate-x-[1.125rem] translate-y-0.5' : 'translate-x-0.5 translate-y-0.5',
+            ].join(' ')}
+          />
+        </button>
+        {hasReplacement ? (
           <button
             type="button"
             onClick={onReplacementClear}
-            className="text-xs font-medium text-gray-400 underline-offset-2 hover:text-gray-700 hover:underline"
+            className="shrink-0 text-xs font-medium text-amber-800 underline-offset-2 hover:text-amber-900 hover:underline"
           >
             Undo
           </button>
-        </div>
-      ) : (
-        <div className="mt-2 flex items-center justify-between">
-          <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
-            <input
-              type="checkbox"
-              checked={keep}
-              onChange={(e) => onKeepChange(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-gray-300"
-            />
-            Keep
-          </label>
-          <label className="cursor-pointer text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline">
+        ) : (
+          <label
+            className={[
+              'shrink-0 cursor-pointer text-xs font-medium underline-offset-2 hover:underline',
+              showGhosted ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-900',
+            ].join(' ')}
+          >
             Replace
             <input
               type="file"
@@ -1883,8 +1935,8 @@ function CarryCard({
               className="sr-only"
             />
           </label>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   )
 }
