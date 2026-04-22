@@ -6,6 +6,7 @@ import VersionDetailModal, { type ModalVersion } from '../components/VersionDeta
 import HelpScoutEditModal from '../components/HelpScoutEditModal'
 import { logAudit } from '../lib/audit'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
+import type { ProofNameApproval } from '../lib/types'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -46,6 +47,12 @@ export default function ProofDetailPage() {
   // Real (non-bot) view times per version id for the dot indicators
   // and the VersionDetailModal history panel.
   const [viewsByVersion, setViewsByVersion] = useState<Map<string, { viewed_at: string; user_agent: string | null }[]>>(new Map())
+  // All proof_name_approvals rows across every version of this
+  // project, loaded alongside the main data. Drives the Names
+  // roll-up section further down the page. Re-fetched by loadProof()
+  // after any approval-writing action (Mark as approved shortcut,
+  // modal approve/changes/clear).
+  const [approvals, setApprovals] = useState<ProofNameApproval[]>([])
   const [toast, setToast] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | 'abandon' | 'delete' | null>(null)
@@ -105,6 +112,21 @@ export default function ProofDetailPage() {
     } else {
       setViewsByVersion(new Map())
     }
+
+    // Pull every approval row for this project's versions in one
+    // round-trip. Client-side reduction (latest row per name across
+    // all versions) happens at render time from the flat array — the
+    // data volume is small (one row per recipient per version, which
+    // for a typical split-name project is single digits).
+    if (versionIds.length > 0) {
+      const { data: approvalRows } = await supabase
+        .from('proof_name_approvals')
+        .select('*')
+        .in('proof_version_id', versionIds)
+      setApprovals((approvalRows ?? []) as ProofNameApproval[])
+    } else {
+      setApprovals([])
+    }
   }
 
   function showToast(message: string) {
@@ -122,6 +144,41 @@ export default function ProofDetailPage() {
   async function handleApprove() {
     if (!proof) return
     setStatusWorking(true)
+
+    // Step 1: if the current version has named recipients, upsert
+    // an approval row for each one in a single round-trip. Conflict
+    // target (proof_version_id, name) means any existing
+    // changes_requested row for that name on the current version
+    // gets overwritten to approved. Single-subject projects (no
+    // names) skip this step — nothing to record per-name.
+    const currentVersion = versions.find((v) => v.is_current)
+    if (currentVersion && currentVersion.names.length > 0) {
+      const now = new Date().toISOString()
+      const rows = currentVersion.names.map((name) => ({
+        proof_version_id: currentVersion.id,
+        name,
+        state: 'approved' as const,
+        change_request: null,
+        actor_name: proof.contacts.full_name,
+        actor_ip: null,
+        actor_ua: null,
+        updated_at: now,
+      }))
+      const { error: approvalErr } = await supabase
+        .from('proof_name_approvals')
+        .upsert(rows, { onConflict: 'proof_version_id,name' })
+      if (approvalErr) {
+        setStatusWorking(false)
+        setStatusDialog(null)
+        showToast(`Failed to record per-name approvals: ${approvalErr.message}`)
+        return
+      }
+    }
+
+    // Step 2: flip project status to approved and stamp approved_at.
+    // Kept identical to the pre-per-name-approval behaviour so
+    // nothing downstream (status pill, customer page banner, etc.)
+    // has to change.
     const { error } = await supabase
       .from('proofs')
       .update({ status: 'approved', approved_at: new Date().toISOString() })
@@ -444,6 +501,81 @@ export default function ProofDetailPage() {
             )}
           </div>
         </div>
+
+        {/* Names roll-up — aggregate per-name approval state across
+            the project's version history. Only renders when the
+            current version has at least one named recipient;
+            single-subject projects have nothing to roll up. Scope is
+            the current version's names[] (past-version-only names
+            that have since been dropped aren't shown). Per-name
+            state is the latest approval row across ALL versions of
+            this project, so a name approved in v2 still reads as
+            approved here even if v3 (current) has no entry yet. */}
+        {(() => {
+          const currentVersion = versions.find((v) => v.is_current)
+          if (!currentVersion || currentVersion.names.length === 0) return null
+
+          // Build a version-id → version-number map so the "in vN"
+          // tail on each state line can reference the version the
+          // approval was recorded against. Reads straight from the
+          // already-loaded versions state, no extra query.
+          const versionNumberById = new Map<string, number>()
+          for (const v of versions) versionNumberById.set(v.id, v.version_number)
+
+          // For each name in the current version, find the latest
+          // approval row across the whole project. Reduction is O(n)
+          // per name over the flat approvals array, which is small
+          // (one row per recipient per version).
+          const rollup = currentVersion.names.map((name) => {
+            const forThisName = approvals.filter((a) => a.name === name)
+            if (forThisName.length === 0) return { name, approval: null as ProofNameApproval | null }
+            const latest = forThisName.reduce((best, a) =>
+              new Date(a.updated_at).getTime() > new Date(best.updated_at).getTime() ? a : best,
+            )
+            return { name, approval: latest }
+          })
+
+          return (
+            <section className="mb-8">
+              <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Names</h2>
+              <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+                {rollup.map(({ name, approval }, i) => {
+                  const when = approval ? new Date(approval.updated_at).toLocaleDateString('en-GB') : null
+                  const vNum = approval ? versionNumberById.get(approval.proof_version_id) : null
+                  const vRef = vNum != null ? `v${vNum}` : '—'
+                  return (
+                    <div
+                      key={name}
+                      className={['px-5 py-3', i > 0 ? 'border-t border-gray-100' : ''].join(' ')}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-gray-900">{name}</p>
+                        {!approval && (
+                          <span className="text-xs font-medium text-gray-500">Pending</span>
+                        )}
+                        {approval?.state === 'approved' && (
+                          <span className="inline-flex items-center gap-2 text-xs font-medium text-emerald-800">
+                            <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
+                            Approved in {vRef}, {when} by {approval.actor_name}
+                          </span>
+                        )}
+                        {approval?.state === 'changes_requested' && (
+                          <span className="inline-flex items-center gap-2 text-xs font-medium text-amber-800">
+                            <span className="inline-block h-2 w-2 rounded-full bg-amber-500" aria-hidden="true" />
+                            Changes requested in {vRef}, {when} by {approval.actor_name}
+                          </span>
+                        )}
+                      </div>
+                      {approval?.state === 'changes_requested' && approval.change_request && (
+                        <p className="mt-1 text-xs text-gray-500">{approval.change_request}</p>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          )
+        })()}
 
         {/* Versions */}
         <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Versions</h2>
