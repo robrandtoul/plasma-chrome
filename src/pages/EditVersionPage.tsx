@@ -586,6 +586,45 @@ export default function EditVersionPage() {
     )
   }
 
+  // Cancel + Save pair, defined once and rendered twice (top of
+  // the page beside the heading, and again at the bottom of the
+  // form below the image-editing section). Both renders emit
+  // identical JSX, so disabled state, aria-label swaps, and any
+  // future chrome stay in lockstep. The submit button carries
+  // form="edit-version-form" so placement outside the <form>
+  // element (top row) is as functional as placement inside
+  // (bottom row). Mirrors the 66a721a pattern on
+  // NewVersionPage — same rationale: the form ends in a dense
+  // image-editing grid and the designer shouldn't have to
+  // scroll back up to commit.
+  const actionRow = (
+    <div className="flex items-center gap-3">
+      <Link
+        to={`/proofs/${proofId}`}
+        className="text-sm font-medium text-gray-500 hover:text-gray-700"
+      >
+        Cancel
+      </Link>
+      <button
+        type="submit"
+        form="edit-version-form"
+        disabled={submitting}
+        aria-label={
+          submitAttempted && !isValid
+            ? 'Save version — some required fields are incomplete'
+            : undefined
+        }
+        className={[
+          'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
+          isValid ? 'bg-gray-900 hover:bg-gray-700' : 'bg-gray-900/60 hover:bg-gray-900/75',
+          'disabled:cursor-not-allowed disabled:opacity-50',
+        ].join(' ')}
+      >
+        {submitting ? 'Saving…' : 'Save version'}
+      </button>
+    </div>
+  )
+
   return (
     <div className="min-h-screen bg-gray-50">
       <PageDropOverlay visible={isPageDragOver} />
@@ -603,38 +642,17 @@ export default function EditVersionPage() {
           <Link to={`/proofs/${proofId}`} className="text-sm text-gray-400 hover:text-gray-700">← Back to project</Link>
         </div>
 
-        {/* Page heading + actions */}
+        {/* Page heading + top actions. Cancel + Save pair is
+            defined as `actionRow` above the render and emitted
+            twice — here next to the heading, and again below
+            the image-editing section at the bottom of the form. */}
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Edit v{versionNumber}</h1>
             {proofName && <p className="mt-1 text-gray-500">{proofName}</p>}
             {proofCompany && <p className="text-sm text-gray-400">{proofCompany}</p>}
           </div>
-          <div className="flex items-center gap-3">
-            <Link
-              to={`/proofs/${proofId}`}
-              className="text-sm font-medium text-gray-500 hover:text-gray-700"
-            >
-              Cancel
-            </Link>
-            <button
-              type="submit"
-              form="edit-version-form"
-              disabled={submitting}
-              aria-label={
-                submitAttempted && !isValid
-                  ? 'Save version — some required fields are incomplete'
-                  : undefined
-              }
-              className={[
-                'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
-                isValid ? 'bg-gray-900 hover:bg-gray-700' : 'bg-gray-900/60 hover:bg-gray-900/75',
-                'disabled:cursor-not-allowed disabled:opacity-50',
-              ].join(' ')}
-            >
-              {submitting ? 'Saving…' : 'Save version'}
-            </button>
-          </div>
+          {actionRow}
         </div>
 
         <form id="edit-version-form" onSubmit={handleSubmit} className="space-y-6">
@@ -903,6 +921,18 @@ export default function EditVersionPage() {
               <p className="mt-2 text-xs font-medium text-rose-500">{imagesHint}</p>
             )}
           </section>
+
+          {/* Bottom-of-form mirror of the top action row. Same
+              Cancel + Save pair, same form="edit-version-form"
+              wiring, so clicking Save here routes through the
+              same handleSubmit → validation path as the top
+              button. Right-aligned to match the top row's
+              visual position within the content column. Not
+              sticky — the image-editing section above needs the
+              vertical space. */}
+          <div className="flex justify-end">
+            {actionRow}
+          </div>
 
           {/* Change notes */}
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
