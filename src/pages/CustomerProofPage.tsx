@@ -740,13 +740,13 @@ export default function CustomerProofPage() {
                       className="leading-none text-[#1a1612]"
                       style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
                     >
-                      Plates
+                      Proofs
                     </h2>
                     <span
                       className="uppercase tracking-[0.28em] text-[#1a1612]/55"
                       style={{ fontFamily: MONO, fontSize: 10 }}
                     >
-                      {plateCount === 1 ? '1 plate' : `${plateCount} plates`}
+                      {plateCount === 1 ? '1 proof' : `${plateCount} proofs`}
                       {recipientCount > 0 && (
                         <>
                           {' · '}
@@ -1286,10 +1286,10 @@ function PlateCard({
   const padded = plateNo < 10 ? `0${plateNo}` : String(plateNo)
   // Caption: applyCaptions on buildImageGroups already stamped
   // a label ("Front"/"Back"/filename-stem or ""); fall back to
-  // "Plate" so the right column is never empty.
-  const sideLabel = image.label || 'Plate'
+  // "Proof" so the right column is never empty.
+  const sideLabel = image.label || 'Proof'
   const downloadHref = image.signed_url ?? '#'
-  const downloadName = image.original_filename ?? `plate-${padded}.jpg`
+  const downloadName = image.original_filename ?? `proof-${padded}.jpg`
   return (
     <div className="relative">
       <div
@@ -1328,7 +1328,7 @@ function PlateCard({
                 className="h-[6px] w-[6px] rounded-[1px]"
                 style={{ background: brandColor }}
               />
-              Plate {padded}
+              Proof {padded}
             </span>
             <span
               className="uppercase tracking-[0.28em] text-[#6b6558]"
