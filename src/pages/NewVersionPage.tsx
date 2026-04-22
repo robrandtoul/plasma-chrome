@@ -21,6 +21,11 @@ interface Material {
   option_label: string | null
   featured_quantities: number[] | null
   multi_variant: boolean
+  // Needed so the inheritance path can tag a material as "archived
+  // since the prior version was made" and surface a warning near
+  // the picker. Filtered out of the default list, but present when
+  // the inherited material has been archived since v1.
+  archived_at: string | null
 }
 
 interface Variant {
@@ -72,6 +77,27 @@ export default function NewVersionPage() {
   const [currency, setCurrency] = useState<Currency | null>(null)
   const [variantTiers, setVariantTiers] = useState<Record<string, PriceTierRow[]>>({})
   const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({})
+  // Inheritance markers. Populated on mount when creating v2+ — the
+  // form reads the proof's current version and pre-fills currency /
+  // material / variants. Each boolean drives a muted "Inherited from
+  // vN" label next to its field; the flag clears when the designer
+  // edits the field, at which point the label disappears.
+  //
+  // inheritedVariantIdsRef stashes the variant IDs to restore after
+  // the material's variants load — can't be state because the
+  // variants-loading effect needs to read it synchronously and it
+  // shouldn't trigger a re-render when consumed. Cleared once the
+  // effect applies it.
+  //
+  // inheritedMaterialArchived surfaces a warning near the material
+  // field when the inherited material has been archived since the
+  // prior version was made. Designer can keep it or pick fresh.
+  const [inheritedVersionNumber, setInheritedVersionNumber] = useState<number | null>(null)
+  const [inheritedCurrency, setInheritedCurrency] = useState(false)
+  const [inheritedMaterial, setInheritedMaterial] = useState(false)
+  const [inheritedVariants, setInheritedVariants] = useState(false)
+  const [inheritedMaterialArchived, setInheritedMaterialArchived] = useState(false)
+  const inheritedVariantIdsRef = useRef<string[] | null>(null)
   // Two separate ink states so each form path (free-text vs per-ink) keeps
   // typing feel. They only cross over when the designer switches materials
   // between the "requires per-ink names" set and everything else.
@@ -106,54 +132,144 @@ export default function NewVersionPage() {
 
   useEffect(() => {
     if (!proofId) return
-    supabase.from('proofs').select('contacts(full_name, companies(name))').eq('id', proofId).single()
-      .then(({ data }) => {
-        const c = (data?.contacts as any)
-        if (c) {
-          setProofName(c.full_name ?? '')
-          setProofCompany(c.companies?.name ?? '')
-        }
-      })
 
-    // Pre-fill the names chip list from the project's most-recent
-    // prior version, if any. Designer can still edit freely. Only
-    // runs on mount — later material / variant / currency changes
-    // don't touch names.
-    supabase.from('proof_versions')
-      .select('names')
-      .eq('proof_id', proofId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-      .then(({ data }) => {
-        const prev = (data as any)?.names
-        if (Array.isArray(prev) && prev.length > 0) setNames(prev as string[])
-      })
+    let cancelled = false
 
-    // RLS already hides archived materials from non-admins (000065),
-    // but the explicit .is('archived_at', null) is kept as belt-and-
-    // braces so a future tweak to RLS can't silently leak them into
-    // the designer dropdown.
-    supabase.from('materials').select('id, display_name, requires_ink_names, option_label, featured_quantities, multi_variant').eq('is_active', true).eq('is_published', true).is('archived_at', null).order('sort_order')
-      .then(({ data }) => setMaterials((data ?? []) as Material[]))
+    async function load() {
+      // Customer name + company for the page chrome. Fires in
+      // parallel; not ordering-sensitive.
+      void supabase.from('proofs').select('contacts(full_name, companies(name))').eq('id', proofId!).single()
+        .then(({ data }) => {
+          if (cancelled) return
+          const c = (data?.contacts as any)
+          if (c) {
+            setProofName(c.full_name ?? '')
+            setProofCompany(c.companies?.name ?? '')
+          }
+        })
 
-    // Pre-fill the pricing display + currency from admin-configured
-    // defaults. Either column may be null ("no default") — in that case
-    // we leave the picker unselected so the designer has to pick
-    // explicitly before saving.
-    supabase.from('settings')
-      .select('default_pricing_display, default_currency')
-      .eq('id', 1)
-      .single()
-      .then(({ data }) => {
-        if (!data) return
-        if (data.default_pricing_display != null) {
-          setPricingDisplay((data.default_pricing_display === 'custom_quote' ? 'custom' : 'standard') as PricingDisplayValue)
+      // Names chip-list inheritance (existing behaviour: latest
+      // prior version by created_at, not is_current). Preserved as-is
+      // for now; migrating to is_current is a separate call.
+      void supabase.from('proof_versions')
+        .select('names')
+        .eq('proof_id', proofId!)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (cancelled) return
+          const prev = (data as any)?.names
+          if (Array.isArray(prev) && prev.length > 0) setNames(prev as string[])
+        })
+
+      // Materials for the picker. Filtered to active + published +
+      // non-archived by default. Inheritance below prepends an
+      // archived material back in if the prior version used one,
+      // so the designer can continue with it.
+      const materialsPromise = supabase
+        .from('materials')
+        .select('id, display_name, requires_ink_names, option_label, featured_quantities, multi_variant, archived_at')
+        .eq('is_active', true)
+        .eq('is_published', true)
+        .is('archived_at', null)
+        .order('sort_order')
+
+      // Inheritance from the proof's current version. Runs before
+      // the settings-defaults fetch so currency inheritance wins
+      // over the admin-configured default (specific intent beats
+      // global default). is_current = true targets the designer's
+      // promoted working version rather than "latest created", so
+      // if those have diverged (via Set as current in the modal),
+      // the promoted one is the source of truth.
+      const inheritPromise = supabase
+        .from('proof_versions')
+        .select('version_number, currency, material_id, pricing_snapshot')
+        .eq('proof_id', proofId!)
+        .eq('is_current', true)
+        .maybeSingle()
+
+      const [materialsResult, inheritResult] = await Promise.all([materialsPromise, inheritPromise])
+      if (cancelled) return
+
+      let materialsList = (materialsResult.data ?? []) as Material[]
+      let currencyInherited = false
+      const inherited = inheritResult.data as {
+        version_number: number
+        currency: string
+        material_id: string
+        pricing_snapshot: { variants?: { variant_id?: string }[] } | null
+      } | null
+
+      if (inherited) {
+        setInheritedVersionNumber(inherited.version_number)
+
+        // Currency — always inheritable.
+        setCurrency(inherited.currency as Currency)
+        setInheritedCurrency(true)
+        currencyInherited = true
+
+        // Material — if the inherited material is archived, it
+        // won't appear in the filtered list above. Fetch it
+        // unfiltered and prepend so the picker can still show it
+        // as the selected value.
+        const inMain = materialsList.some((m) => m.id === inherited.material_id)
+        if (!inMain) {
+          const { data: archivedMatData } = await supabase
+            .from('materials')
+            .select('id, display_name, requires_ink_names, option_label, featured_quantities, multi_variant, archived_at')
+            .eq('id', inherited.material_id)
+            .maybeSingle()
+          if (!cancelled && archivedMatData) {
+            materialsList = [archivedMatData as Material, ...materialsList]
+            setInheritedMaterialArchived(true)
+          }
         }
-        if (data.default_currency != null) {
-          setCurrency(data.default_currency as Currency)
+        setMaterials(materialsList)
+        setSelectedMaterialId(inherited.material_id)
+        setInheritedMaterial(true)
+
+        // Variants — stash in a ref for the variants-loading
+        // effect to consume once the material's variants finish
+        // loading. Without this, the material-effect's auto-select
+        // would stomp the inherited IDs before they could be
+        // applied.
+        const variantIds = Array.isArray(inherited.pricing_snapshot?.variants)
+          ? inherited.pricing_snapshot!.variants!
+              .map((v) => v.variant_id)
+              .filter((id): id is string => typeof id === 'string')
+          : []
+        if (variantIds.length > 0) {
+          inheritedVariantIdsRef.current = variantIds
+          setInheritedVariants(true)
         }
-      })
+      } else {
+        // v1 — no inheritance, just hydrate the picker with the
+        // unfiltered active+published materials.
+        setMaterials(materialsList)
+      }
+
+      // Settings defaults — currency default only applies if we
+      // didn't inherit one. Pricing display default is independent
+      // (not inherited — it's a per-version choice).
+      const { data: settings } = await supabase
+        .from('settings')
+        .select('default_pricing_display, default_currency')
+        .eq('id', 1)
+        .single()
+      if (cancelled) return
+      if (settings) {
+        if (settings.default_pricing_display != null) {
+          setPricingDisplay((settings.default_pricing_display === 'custom_quote' ? 'custom' : 'standard') as PricingDisplayValue)
+        }
+        if (!currencyInherited && settings.default_currency != null) {
+          setCurrency(settings.default_currency as Currency)
+        }
+      }
+    }
+
+    load()
+    return () => { cancelled = true }
   }, [proofId])
 
   useEffect(() => {
@@ -184,6 +300,27 @@ export default function NewVersionPage() {
 
       const v = (variantsResult.data ?? []) as Variant[]
       setVariants(v)
+
+      // Inheritance path. If the mount effect stashed variant IDs
+      // to restore, use them now — intersected with the variants
+      // that actually loaded (defensive in case a variant has been
+      // retired between versions). Consume the ref either way so a
+      // subsequent material change doesn't accidentally re-apply.
+      if (inheritedVariantIdsRef.current) {
+        const validInherited = inheritedVariantIdsRef.current.filter((id) =>
+          v.some((x) => x.id === id),
+        )
+        inheritedVariantIdsRef.current = null
+        if (validInherited.length > 0) {
+          setSelectedVariantIds(validInherited)
+          return
+        }
+        // Fell through — inherited IDs no longer match any variant
+        // (rare: variant retired). Clear the inheritance label and
+        // let the auto-select logic below pick defaults.
+        setInheritedVariants(false)
+      }
+
       const pickedMaterial = materials.find((m) => m.id === selectedMaterialId)
       if (pickedMaterial?.multi_variant) {
         setSelectedVariantIds(v.map((x) => x.id))
@@ -401,6 +538,9 @@ export default function NewVersionPage() {
     setSelectedVariantIds((prev) =>
       prev.includes(variantId) ? prev.filter((id) => id !== variantId) : [...prev, variantId]
     )
+    // Manual variant change clears the inheritance label — the set
+    // no longer matches what was carried forward.
+    setInheritedVariants(false)
   }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -620,6 +760,17 @@ export default function NewVersionPage() {
       if (parts.length > 0) setInkNamesArray(parts)
     }
     setSelectedMaterialId(nextId)
+    // Manual material change clears both the material and variant
+    // inheritance labels (a different material will auto-select
+    // its own variants, unrelated to the carried-forward ones).
+    // Also clears the archived-material warning — if the designer
+    // deliberately swapped away, they're not keeping the archived
+    // one. Discard any pending variant inheritance from the ref so
+    // a subsequent swap back can't accidentally re-apply it.
+    setInheritedMaterial(false)
+    setInheritedVariants(false)
+    setInheritedMaterialArchived(false)
+    inheritedVariantIdsRef.current = null
   }
 
   return (
@@ -703,6 +854,14 @@ export default function NewVersionPage() {
                 {materials.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
               </select>
               {shouldHighlight('material') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
+              {inheritedMaterial && inheritedVersionNumber != null && !inheritedMaterialArchived && (
+                <p className="mt-1.5 text-xs text-gray-400">Inherited from v{inheritedVersionNumber}</p>
+              )}
+              {inheritedMaterialArchived && inheritedVersionNumber != null && (
+                <p className="mt-1.5 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+                  The material used in v{inheritedVersionNumber} has been archived. Pick a current material or keep this one.
+                </p>
+              )}
             </div>
 
             {variantRequired && variants.length > 0 && variantType !== 'default' && (
@@ -735,7 +894,10 @@ export default function NewVersionPage() {
                 ) : (
                   <select
                     value={selectedVariantIds[0] ?? ''}
-                    onChange={(e) => setSelectedVariantIds(e.target.value ? [e.target.value] : [])}
+                    onChange={(e) => {
+                      setSelectedVariantIds(e.target.value ? [e.target.value] : [])
+                      setInheritedVariants(false)
+                    }}
                     className={[selectClass, shouldHighlight('variant') ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
                   >
                     <option value="">Select…</option>
@@ -743,6 +905,9 @@ export default function NewVersionPage() {
                   </select>
                 )}
                 {shouldHighlight('variant') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
+                {inheritedVariants && inheritedVersionNumber != null && (
+                  <p className="mt-1.5 text-xs text-gray-400">Inherited from v{inheritedVersionNumber}</p>
+                )}
               </div>
             )}
 
@@ -780,12 +945,18 @@ export default function NewVersionPage() {
             {!isCustomQuote && (
               <div ref={currencyRef} className="mb-4">
                 <label className="mb-1.5 block text-sm font-medium text-gray-700">Currency</label>
-                <CurrencyField value={currency} onChange={setCurrency} invalid={shouldHighlight('currency')} />
+                <CurrencyField
+                  value={currency}
+                  onChange={(c) => { setCurrency(c); setInheritedCurrency(false) }}
+                  invalid={shouldHighlight('currency')}
+                />
                 {shouldHighlight('currency')
                   ? <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>
                   : currency === null
                     ? <p className="mt-1.5 text-xs text-gray-400">Select one.</p>
-                    : null}
+                    : inheritedCurrency && inheritedVersionNumber != null
+                      ? <p className="mt-1.5 text-xs text-gray-400">Inherited from v{inheritedVersionNumber}</p>
+                      : null}
               </div>
             )}
 
