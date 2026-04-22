@@ -633,6 +633,32 @@ export default function ProofDetailPage() {
                           <span className="inline-flex items-center gap-2 text-xs font-medium text-emerald-800">
                             <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
                             Approved in {vRef}, {when} by {approval.actor_name}
+                            {/* Carry-forward provenance pill
+                                (migration 000083). Only renders
+                                when the approval is a carry-
+                                forward row AND still approved AND
+                                the source version still exists.
+                                FK ON DELETE SET NULL drops the
+                                pointer silently if the source
+                                version is deleted — in that case
+                                versionNumberById returns undefined
+                                and the pill hides. Stays hidden
+                                for changes_requested (even if the
+                                row was originally a carry) per
+                                the "honoured" semantics — the
+                                pill reads as "still carried and
+                                still valid". */}
+                            {(() => {
+                              const src = approval.carried_from_version_id
+                              if (!src) return null
+                              const srcNum = versionNumberById.get(src)
+                              if (srcNum == null) return null
+                              return (
+                                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-normal text-gray-500">
+                                  Carried from v{srcNum}
+                                </span>
+                              )
+                            })()}
                           </span>
                         )}
                         {approval?.state === 'changes_requested' && (

@@ -306,6 +306,14 @@ export default function VersionDetailModal({
 
   const featuredQuantities = version.materials?.featured_quantities ?? DEFAULT_FEATURED_QUANTITIES
   const isOnlyVersion = allVersions.length === 1
+  // Resolver for the "Carried from vN" provenance pill on
+  // ApprovalStateHeader. Built once per render from the same
+  // versions list the parent page already loaded. Returns
+  // undefined for version IDs not in this proof (FK ON DELETE
+  // SET NULL cascade, or pre-migration rows) so the pill
+  // silently hides.
+  const versionNumberById = new Map<string, number>()
+  for (const v of allVersions) versionNumberById.set(v.id, v.version_number)
 
   const deleteConfirmText = isOnlyVersion
     ? 'This is the only proof version. To remove it, delete the whole project instead.'
@@ -452,6 +460,7 @@ export default function VersionDetailModal({
                         images={nameImages}
                         proofLocked={proofLocked}
                         versionNumber={version.version_number}
+                        versionNumberById={versionNumberById}
                         onOpenApprove={() => setDialog({ mode: 'approve', name })}
                         onOpenChanges={() => setDialog({ mode: 'changes', name })}
                         onClear={() => clearApproval(name)}
@@ -481,6 +490,7 @@ export default function VersionDetailModal({
                           images={shared}
                           proofLocked={proofLocked}
                           versionNumber={version.version_number}
+                          versionNumberById={versionNumberById}
                           onOpenApprove={() => setDialog({ mode: 'approve', name: SHARED_APPROVAL_KEY })}
                           onOpenChanges={() => setDialog({ mode: 'changes', name: SHARED_APPROVAL_KEY })}
                           onClear={() => clearApproval(SHARED_APPROVAL_KEY)}
@@ -690,6 +700,7 @@ function ApprovalGroup({
   images,
   proofLocked,
   versionNumber,
+  versionNumberById,
   onOpenApprove,
   onOpenChanges,
   onClear,
@@ -702,6 +713,9 @@ function ApprovalGroup({
   images: ModalImage[]
   proofLocked: boolean
   versionNumber: number
+  // Map from proof_versions.id to version_number, for the
+  // carry-forward provenance pill inside ApprovalStateHeader.
+  versionNumberById: Map<string, number>
   onOpenApprove: () => void
   onOpenChanges: () => void
   onClear: () => void
@@ -718,7 +732,7 @@ function ApprovalGroup({
       <div className="mb-3 flex items-center justify-between gap-3">
         <p className="text-sm font-semibold text-gray-900">{heading}</p>
       </div>
-      <ApprovalStateHeader approval={approval} />
+      <ApprovalStateHeader approval={approval} versionNumberById={versionNumberById} />
       {!proofLocked && (
         <div className="mb-3">
           {!approval ? (
@@ -767,7 +781,13 @@ function ApprovalGroup({
   )
 }
 
-function ApprovalStateHeader({ approval }: { approval: ProofNameApproval | undefined }) {
+function ApprovalStateHeader({
+  approval,
+  versionNumberById,
+}: {
+  approval: ProofNameApproval | undefined
+  versionNumberById: Map<string, number>
+}) {
   if (!approval) {
     return (
       <div className="mb-3 rounded-lg bg-gray-50 px-3 py-2 text-xs font-medium text-gray-500 ring-1 ring-gray-200">
@@ -776,10 +796,29 @@ function ApprovalStateHeader({ approval }: { approval: ProofNameApproval | undef
     )
   }
   const when = new Date(approval.updated_at).toLocaleDateString('en-GB')
+  // Carry-forward provenance pill (migration 000083). Only resolves
+  // when the approval is still approved AND the source version
+  // still exists. Hidden on changes_requested even if the row is a
+  // carry — the pill means "carried AND still valid", not abstract
+  // provenance. Hidden if versionNumberById can't resolve the
+  // pointer (FK ON DELETE SET NULL cleared it, or the parent list
+  // is out of sync).
+  const carriedLabel =
+    approval.state === 'approved' && approval.carried_from_version_id
+      ? versionNumberById.get(approval.carried_from_version_id)
+      : undefined
+
   if (approval.state === 'approved') {
     return (
-      <div className="mb-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 ring-1 ring-emerald-200">
-        Approved {when} by {approval.actor_name}
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 ring-1 ring-emerald-200">
+        <span className="text-xs font-medium text-emerald-800">
+          Approved {when} by {approval.actor_name}
+        </span>
+        {carriedLabel != null && (
+          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-normal text-gray-500">
+            Carried from v{carriedLabel}
+          </span>
+        )}
       </div>
     )
   }

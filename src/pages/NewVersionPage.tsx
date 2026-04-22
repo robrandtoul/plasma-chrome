@@ -963,6 +963,7 @@ export default function NewVersionPage() {
           actor_ip: null
           actor_ua: null
           updated_at: string
+          carried_from_version_id: string
         }[] = []
 
         // Candidate slot keys: each name currently on v2 (common
@@ -1007,6 +1008,12 @@ export default function NewVersionPage() {
             actor_ip: null,
             actor_ua: null,
             updated_at: now,
+            // Provenance — points at the v1 this approval was
+            // carried from. UI resolves to vN via the parent
+            // page's already-loaded versions array. Preserved
+            // across state-change UPDATEs; nulled if v1 is
+            // later deleted (FK ON DELETE SET NULL).
+            carried_from_version_id: v1Carry.versionId,
           })
         }
 

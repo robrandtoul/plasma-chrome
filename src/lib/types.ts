@@ -116,6 +116,15 @@ export type ProofNameApproval = {
   actor_ua: string | null
   created_at: string
   updated_at: string
+  // Provenance pointer for carry-forward rows (migration 000083).
+  // Non-null only when the row was written by NewVersionPage's
+  // carry-forward branch; stamped to the source version's id at
+  // INSERT time and preserved across state-change UPDATEs. Cleared
+  // to null by the FK ON DELETE SET NULL if the source version is
+  // later deleted; UI resolves it to a version_number via the
+  // already-loaded versions array and silently skips the "Carried
+  // from vN" pill when the pointer is null or unresolvable.
+  carried_from_version_id: string | null
 }
 
 export interface ProofVersionImage {
