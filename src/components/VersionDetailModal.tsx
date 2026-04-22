@@ -494,11 +494,24 @@ export default function VersionDetailModal({
               <div className="border-b border-gray-100 px-6 py-4">
                 <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Pricing</p>
               </div>
-              <PricingDisplay
-                snapshot={version.pricing_snapshot}
-                currency={version.currency as Currency}
-                featuredQuantities={featuredQuantities}
-              />
+              {version.custom_quote ? (
+                // Custom-quote path — triggered either by the
+                // designer explicitly choosing Custom quote in the
+                // PricingDisplayField radio, or automatically when
+                // a 5+ ink variant (which has no price_tiers rows)
+                // is selected. Either way, the underlying column
+                // is proof_versions.custom_quote and the UI here
+                // doesn't need to know which trigger fired.
+                <div className="px-6 py-8 text-center text-sm text-gray-500">
+                  Custom quote — price and quantity agreed separately.
+                </div>
+              ) : (
+                <PricingDisplay
+                  snapshot={version.pricing_snapshot}
+                  currency={version.currency as Currency}
+                  featuredQuantities={featuredQuantities}
+                />
+              )}
               <div className="border-t border-gray-100 px-6 py-3">
                 <p className="text-xs text-gray-400">
                   {!version.custom_quote && version.currency === 'GBP' ? 'Prices include VAT. ' : ''}

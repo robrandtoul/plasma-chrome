@@ -373,17 +373,25 @@ export default function NewVersionPage() {
     setExpandedVariants({})
     if (selectedVariantIds.length === 0 || currency === null) return
 
+    // Capture the selection for this fetch so the callback can
+    // seed an empty-tiers entry for every variant we asked for.
+    // Having an entry for every selected variant (even those with
+    // zero price_tiers rows, like 5–8 ink variants) lets
+    // downstream logic distinguish "loaded, no prices" from "still
+    // loading". The custom-quote detection below relies on that
+    // distinction.
+    const requested = selectedVariantIds
     supabase.from('price_tiers')
       .select('material_variant_id, quantity, total_price')
-      .in('material_variant_id', selectedVariantIds)
+      .in('material_variant_id', requested)
       .eq('currency', currency)
       .order('quantity')
       .then(({ data }) => {
         const rows = (data ?? []) as PriceTierRow[]
         const tiersMap: Record<string, PriceTierRow[]> = {}
+        for (const vid of requested) tiersMap[vid] = []
         rows.forEach((r) => {
-          if (!tiersMap[r.material_variant_id]) tiersMap[r.material_variant_id] = []
-          tiersMap[r.material_variant_id].push(r)
+          tiersMap[r.material_variant_id]?.push(r)
         })
         setVariantTiers(tiersMap)
       })
@@ -669,7 +677,7 @@ export default function NewVersionPage() {
         pricing_snapshot: pricingSnapshot,
         change_notes: changeNotes.trim() || null,
         material_options: selectedOptions,
-        custom_quote: pricingDisplay === 'custom',
+        custom_quote: isCustomQuote,
         // Names array for split-name tooling. Empty is valid. The
         // DB trigger (migration 000070) snapshots the per-currency
         // surcharge from the material on INSERT, so no client-side
@@ -728,7 +736,36 @@ export default function NewVersionPage() {
   }
 
   const variantType = variants[0]?.variant_type
-  const isCustomQuote = pricingDisplay === 'custom'
+
+  // Custom-quote detection. Two independent triggers:
+  //   * user-choice: pricingDisplay === 'custom' (PricingDisplayField
+  //     radio set to Custom quote)
+  //   * auto: any selected variant has loaded with no price_tiers
+  //     rows for the current currency — e.g. 5–8 ink variants,
+  //     which have no per-tier pricing and are handled out-of-band.
+  // Seeding empty arrays in the variantTiers fetch (see above) makes
+  // "loaded with no prices" distinguishable from "still loading": a
+  // selected variant is only counted if its id has an entry in
+  // variantTiers.
+  const allTiersLoaded = selectedVariantIds.length > 0
+    && selectedVariantIds.every((vid) => vid in variantTiers)
+  const autoCustomQuote = allTiersLoaded
+    && selectedVariantIds.some((vid) => (variantTiers[vid] ?? []).length === 0)
+  const isCustomQuote = pricingDisplay === 'custom' || autoCustomQuote
+
+  // One-way auto-flip of the PricingDisplay radio so the UI doesn't
+  // lie about its mode. When a 5+ ink variant makes the form
+  // auto-custom, we push the radio to 'custom' so the designer
+  // sees a consistent state. Not reversed on the way back —
+  // switching to a 4-or-fewer-ink variant after the flip leaves
+  // the radio at 'custom' until the designer deliberately flips it
+  // back. That matches the model of "you picked a custom-quote
+  // variant; the form remembered that intent."
+  useEffect(() => {
+    if (autoCustomQuote && pricingDisplay !== 'custom') {
+      setPricingDisplay('custom')
+    }
+  }, [autoCustomQuote, pricingDisplay])
 
   const selectedMaterial = materials.find(m => m.id === selectedMaterialId)
   const isMultiVariant = selectedMaterial?.multi_variant ?? false
@@ -931,6 +968,20 @@ export default function NewVersionPage() {
                 {shouldHighlight('variant') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
                 {inheritedVariants && inheritedVersionNumber != null && (
                   <p className="mt-1.5 text-xs text-gray-400">Inherited from v{inheritedVersionNumber}</p>
+                )}
+                {/* Auto-custom-quote notice. Surfaces when the
+                    current variant selection has no price_tiers
+                    for the active currency — happens for 5+ ink
+                    variants (no tier pricing exists) and the form
+                    automatically enters custom-quote mode.
+                    Distinguished from the user-picked custom mode
+                    by autoCustomQuote (rather than isCustomQuote)
+                    so a user who explicitly chose Custom quote
+                    doesn't see a redundant notice. */}
+                {autoCustomQuote && (
+                  <p className="mt-1.5 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+                    This ink count has no standard pricing — saving as a custom quote. Price and quantity will be agreed separately.
+                  </p>
                 )}
               </div>
             )}
