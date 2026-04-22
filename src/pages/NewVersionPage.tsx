@@ -2473,8 +2473,15 @@ export default function NewVersionPage() {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-gray-100">
-                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Qty</th>
-                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Total ({currency})</th>
+                          {/* Mirrors the shared PricingDisplay
+                              component's headers so designer and
+                              customer views stay in lockstep.
+                              Currency suffix dropped from the
+                              price column — the cell values
+                              already carry the currency via
+                              formatPrice. */}
+                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Total quantity</th>
+                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Price</th>
                           <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Per card</th>
                         </tr>
                       </thead>

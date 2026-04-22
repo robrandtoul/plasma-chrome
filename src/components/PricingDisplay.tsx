@@ -129,8 +129,14 @@ function SingleVariantTable({
     <table className="w-full text-sm">
       <thead>
         <tr className="border-b border-gray-100">
-          <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Quantity</th>
-          <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400">Total</th>
+          {/* "Total quantity" + "Price" (rather than the earlier
+              "Quantity" + "Total") spells out that the quantity
+              is the full run across every name/variant, not
+              per-identity. Switching the second header away from
+              "Total" also avoids the adjacent double-use of the
+              word when "Total quantity" sits next to it. */}
+          <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Total quantity</th>
+          <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400">Price</th>
           <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400">Per card</th>
         </tr>
       </thead>
