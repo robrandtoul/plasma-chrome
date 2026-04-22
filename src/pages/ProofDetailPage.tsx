@@ -8,6 +8,7 @@ import { logAudit } from '../lib/audit'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import type { ProofNameApproval } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
+import { useLiveProofViews } from '../lib/useLiveProofViews'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -74,6 +75,38 @@ export default function ProofDetailPage() {
   useEffect(() => {
     if (id) loadProof(id)
   }, [id])
+
+  // Live realtime subscription — appends non-bot view rows to
+  // viewsByVersion as they arrive, so the customer-viewed dot
+  // updates without a refresh. Runs alongside the load-time
+  // fetch inside loadProof; the two don't conflict because the
+  // fetch overwrites the whole Map on reload and the hook
+  // appends incremental rows in between. Bot filter matches the
+  // fetch's .eq('is_bot', false) condition so live and refresh
+  // paths surface the same set of rows.
+  useLiveProofViews({
+    proofId: id,
+    versionIds: versions.map((v) => v.id),
+    onView: (row) => {
+      setViewsByVersion((prev) => {
+        // Idempotent append: if the row's id is already in the
+        // list (rare, but possible if the fetch races with the
+        // subscription and picks up the same row), skip. Newest
+        // rows go to the front to match the load-time query's
+        // .order('viewed_at', { ascending: false }).
+        const existing = prev.get(row.proof_version_id) ?? []
+        if (existing.some((r) => r.viewed_at === row.viewed_at && r.user_agent === row.user_agent)) {
+          return prev
+        }
+        const next = new Map(prev)
+        next.set(row.proof_version_id, [
+          { viewed_at: row.viewed_at, user_agent: row.user_agent },
+          ...existing,
+        ])
+        return next
+      })
+    },
+  })
 
   async function loadProof(proofId: string) {
     const [proofResult, versionsResult] = await Promise.all([
