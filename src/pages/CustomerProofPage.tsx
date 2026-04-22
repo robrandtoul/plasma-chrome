@@ -738,7 +738,7 @@ export default function CustomerProofPage() {
                   >
                     <h2
                       className="leading-none text-[#1a1612]"
-                      style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 36 }}
+                      style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
                     >
                       Plates
                     </h2>
@@ -1130,7 +1130,7 @@ export default function CustomerProofPage() {
                       typographic presence. */}
                   <h2
                     className="leading-none text-[#1a1612]"
-                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 36 }}
+                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
                   >
                     Important information
                   </h2>
@@ -1170,7 +1170,7 @@ export default function CustomerProofPage() {
                       typographic weight. */}
                   <h2
                     className="leading-none text-[#1a1612]"
-                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 36 }}
+                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
                   >
                     About {activeVersion.material_display}
                   </h2>
