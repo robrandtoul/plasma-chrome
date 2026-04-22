@@ -1567,9 +1567,18 @@ export default function NewVersionPage() {
             <p className="-mt-3 text-xs text-gray-400">Select one.</p>
           )}
 
-          {/* Material + variant + material-options selection */}
+          {/* Specification — split into two sub-groups (Design +
+              Layout) with Currency as a standalone line between
+              them. The outer SPECIFICATION heading is intentionally
+              gone; the sub-headings carry the structure. Sub-
+              headings use the same type-style as the old outer
+              heading so they read at matching weight. */}
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Specification</h2>
+            {/* ── DESIGN ─────────────────────────────────────────
+                Material + variant + material options + ink names.
+                Everything that describes what the physical card
+                looks like. */}
+            <h3 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Design</h3>
 
             <div className="mb-4">
               <label className="mb-1.5 block text-sm font-medium text-gray-700">Material</label>
@@ -1597,7 +1606,7 @@ export default function NewVersionPage() {
               <div ref={variantRef} className="mb-4">
                 <label className="mb-2 block text-sm font-medium text-gray-700">
                   {variantLabel(variantType)}
-                  {isMultiVariant && <span className="ml-2 font-normal text-gray-400">, select all to expose on the proof version</span>}
+                  {isMultiVariant && <span className="ml-2 font-normal text-gray-400">Tick every option you want the customer to see.</span>}
                 </label>
 
                 {isMultiVariant ? (
@@ -1685,24 +1694,6 @@ export default function NewVersionPage() {
               </div>
             )}
 
-            {!isCustomQuote && (
-              <div ref={currencyRef} className="mb-4">
-                <label className="mb-1.5 block text-sm font-medium text-gray-700">Currency</label>
-                <CurrencyField
-                  value={currency}
-                  onChange={(c) => { setCurrency(c); setInheritedCurrency(false) }}
-                  invalid={shouldHighlight('currency')}
-                />
-                {shouldHighlight('currency')
-                  ? <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>
-                  : currency === null
-                    ? <p className="mt-1.5 text-xs text-gray-400">Select one.</p>
-                    : inheritedCurrency && inheritedVersionNumber != null
-                      ? <p className="mt-1.5 text-xs text-gray-400">Inherited from v{inheritedVersionNumber}</p>
-                      : null}
-              </div>
-            )}
-
             {requiresInkNames ? (
               <div ref={inkNamesRef}>
                 <label className="mb-1.5 block text-sm font-medium text-gray-700">Ink names</label>
@@ -1745,6 +1736,67 @@ export default function NewVersionPage() {
                   onChange={(e) => setInkNamesText(e.target.value)} className={inputClass} />
               </div>
             )}
+
+            {/* ── Currency (standalone, no heading) ──────────────
+                Sits between Design and Layout with the same
+                vertical breathing room as a sub-group, so it
+                reads as an equal-weight third unit. Hidden in
+                custom-quote mode — no price on display, no need
+                for a currency pick. */}
+            {!isCustomQuote && (
+              <div ref={currencyRef} className="mt-8">
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">Currency</label>
+                <CurrencyField
+                  value={currency}
+                  onChange={(c) => { setCurrency(c); setInheritedCurrency(false) }}
+                  invalid={shouldHighlight('currency')}
+                />
+                {shouldHighlight('currency')
+                  ? <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>
+                  : currency === null
+                    ? <p className="mt-1.5 text-xs text-gray-400">Select one.</p>
+                    : inheritedCurrency && inheritedVersionNumber != null
+                      ? <p className="mt-1.5 text-xs text-gray-400">Inherited from v{inheritedVersionNumber}</p>
+                      : null}
+              </div>
+            )}
+
+            {/* ── LAYOUT ─────────────────────────────────────────
+                Names + sidedness + per-side shared toggles.
+                Everything that describes how the design is split
+                across people and sides. Order is names →
+                sidedness → shared front → shared back: names is
+                the primary axis; sidedness gates whether shared-
+                back renders at all; shared toggles depend on the
+                axes above. Shared-back stays conditional on
+                sidedness === 'two-sided'. */}
+            <h3 className="mt-8 mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Layout</h3>
+
+            {/* Names on this order — chip input backs the
+                proof_versions.names array. The DB trigger snapshots
+                the per-currency split-name tooling surcharge onto
+                the version on save.
+
+                "(optional)" suffix is conditional: when neither
+                shared toggle is on, every slot is per-name, so at
+                least one name is required and "(optional)" would
+                be misleading. The validation hint handles the
+                required-but-empty case; the label just drops the
+                misleading suffix. */}
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                Names on this order
+                {(sharedFront || sharedBack) && (
+                  <span className="font-normal text-gray-400"> (optional)</span>
+                )}
+              </label>
+              <NameChipInput
+                names={names}
+                onChange={handleNamesChange}
+                placeholder="Who is this proof for? Press Enter after each name"
+                ariaLabel="Names on this order"
+              />
+            </div>
 
             {/* Shape controls — sidedness + per-side shared
                 toggles. Together with names[] and the material's
@@ -1789,15 +1841,19 @@ export default function NewVersionPage() {
                 </fieldset>
               </div>
 
+              {/* Shared-toggle sub-text always describes what the
+                  toggle does when ON. The OFF state implicitly
+                  means the opposite ("a separate design per name"),
+                  which was the previous sub-text for OFF —
+                  describing opposite states from the label/toggle
+                  confused designers during sit-and-test. */}
               <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3">
                 <div>
                   <div className="text-sm font-medium text-gray-700">
                     Shared front
                   </div>
                   <div className="text-xs text-gray-500">
-                    {sharedFront
-                      ? 'One front design shared across everyone.'
-                      : 'A separate front per name.'}
+                    One front design used for every card.
                   </div>
                 </div>
                 <button
@@ -1827,9 +1883,7 @@ export default function NewVersionPage() {
                       Shared back
                     </div>
                     <div className="text-xs text-gray-500">
-                      {sharedBack
-                        ? 'One back design shared across everyone.'
-                        : 'A separate back per name.'}
+                      One back design used for every card.
                     </div>
                   </div>
                   <button
@@ -1852,22 +1906,6 @@ export default function NewVersionPage() {
                   </button>
                 </div>
               )}
-            </div>
-
-            {/* Names on this order — chip input backs the
-                proof_versions.names array. Optional. The DB trigger
-                snapshots the per-currency split-name tooling
-                surcharge onto the version on save. */}
-            <div className="mt-5">
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                Names on this order <span className="font-normal text-gray-400">(optional)</span>
-              </label>
-              <NameChipInput
-                names={names}
-                onChange={handleNamesChange}
-                placeholder="Who is this proof for? Press Enter after each name"
-                ariaLabel="Names on this order"
-              />
             </div>
 
           </section>
