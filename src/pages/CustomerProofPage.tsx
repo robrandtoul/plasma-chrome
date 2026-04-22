@@ -339,8 +339,15 @@ export default function CustomerProofPage() {
         </div>
       )}
       {showPartialApprovalBanner && (
-        <div className="bg-gray-100 px-4 py-4 text-center">
-          <p className="text-sm font-medium text-gray-700">
+        // Two-line blue info banner, same padding + centred
+        // rhythm as the emerald fully-approved banner above so
+        // the middle state reads as a first-class signal rather
+        // than page chrome. Heading gets the bold/text-sm weight
+        // the emerald heading uses; subtext drops to text-xs,
+        // matching the emerald approval-date line.
+        <div className="bg-blue-50 px-4 py-4 text-center">
+          <p className="text-sm font-bold text-blue-900">Partially approved</p>
+          <p className="mt-0.5 text-xs text-blue-800">
             Some sections are already approved from a previous version. The rest are awaiting your review.
           </p>
         </div>
