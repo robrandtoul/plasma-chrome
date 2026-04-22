@@ -185,7 +185,15 @@ function formatRelative(iso: string): string {
 // grouped list — lines Material/Status/Date/Preview/AddVersion up in the
 // same horizontal positions. The leftmost column flexes for customer name
 // in Recent or a "v3" label in the main list.
-const ROW_GRID = 'grid items-center gap-3 grid-cols-[minmax(0,1fr)_8rem_7rem_5.5rem_5.5rem_6.5rem]'
+//
+// Responsive: below sm: (iOS portrait etc.) the 6-track desktop template
+// demands ~580px which busts a 390px viewport, collapsing the 1fr track
+// to 0 and clipping the customer block. Mobile gets a 3-track cut —
+// customer / material / status — with narrower fixed widths. Date,
+// Preview, and Add version are hidden via `hidden sm:block` on each of
+// those three trailing cells at each render site, so they drop out of
+// the grid entirely on mobile rather than wrapping into a second row.
+const ROW_GRID = 'grid items-center gap-3 grid-cols-[minmax(0,1fr)_5.5rem_6.5rem] sm:grid-cols-[minmax(0,1fr)_8rem_7rem_5.5rem_5.5rem_6.5rem]'
 
 // ── Recent projects ───────────────────────────────────────────────────────────
 
@@ -535,12 +543,14 @@ export default function DashboardPage() {
                         </div>
                         <span className="truncate text-sm text-gray-400">{r.materialDisplay}</span>
                         <StatusPill status={r.status} />
-                        <span className="text-sm text-gray-400">{formatRelative(r.lastWorkedAt)}</span>
+                        <span className="hidden text-sm text-gray-400 sm:block">{formatRelative(r.lastWorkedAt)}</span>
                         {/* Recent list is built from proof_versions, so every row here has at least one version. */}
-                        <PreviewLink proofId={r.proofId} hasVersions />
+                        <div className="hidden sm:block">
+                          <PreviewLink proofId={r.proofId} hasVersions />
+                        </div>
                         {locked
-                          ? <span />
-                          : <AddVersionLink proofId={r.proofId} />}
+                          ? <span className="hidden sm:block" />
+                          : <div className="hidden sm:block"><AddVersionLink proofId={r.proofId} /></div>}
                       </div>
                     )
                   })}
@@ -672,11 +682,13 @@ export default function DashboardPage() {
                                   {proof.material_display ?? '—'}
                                 </span>
                                 <StatusPill status={proof.status} />
-                                <span className="text-sm text-gray-400">{formatRelative(proof.lastActivityAt)}</span>
-                                <PreviewLink proofId={proof.id} hasVersions={proof.current_version != null} />
+                                <span className="hidden text-sm text-gray-400 sm:block">{formatRelative(proof.lastActivityAt)}</span>
+                                <div className="hidden sm:block">
+                                  <PreviewLink proofId={proof.id} hasVersions={proof.current_version != null} />
+                                </div>
                                 {canAddVersion
-                                  ? <AddVersionLink proofId={proof.id} />
-                                  : <span />}
+                                  ? <div className="hidden sm:block"><AddVersionLink proofId={proof.id} /></div>
+                                  : <span className="hidden sm:block" />}
                               </div>
                             )
                           })}
