@@ -762,6 +762,7 @@ export default function ProofDetailPage() {
           viewHistory={viewsByVersion.get(selectedVersion.id) ?? []}
           contactFullName={proof.contacts.full_name}
           onClose={() => setSelectedVersion(null)}
+          onApprovalsChanged={() => { if (id) loadProof(id) }}
           onVersionUpdated={handleVersionUpdated}
           onDeleteProofRequested={() => {
             setSelectedVersion(null)

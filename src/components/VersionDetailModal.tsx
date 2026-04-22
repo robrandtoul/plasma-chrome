@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { PricingDisplay } from './PricingDisplay'
@@ -51,6 +51,7 @@ export default function VersionDetailModal({
   onClose,
   onVersionUpdated,
   onDeleteProofRequested,
+  onApprovalsChanged,
 }: {
   version: ModalVersion
   proofId: string
@@ -65,6 +66,13 @@ export default function VersionDetailModal({
   onClose: () => void
   onVersionUpdated: (message: string) => void
   onDeleteProofRequested?: () => void
+  // Fired on close when the user made at least one approval write
+  // (upsert or clear) during this modal session. Parent uses this
+  // to refresh the project-level Names roll-up which otherwise
+  // goes stale — the roll-up on ProofDetailPage reads approvals
+  // separately from the modal's own scoped fetch. No-op if nothing
+  // was written; no-op if the prop isn't supplied.
+  onApprovalsChanged?: () => void
 }) {
   const navigate = useNavigate()
   const [images, setImages] = useState<ModalImage[]>([])
@@ -84,6 +92,28 @@ export default function VersionDetailModal({
     | { mode: 'approve' | 'changes'; name: string }
     | null
   >(null)
+  // Dirty flag — set true after any approval write, checked on
+  // close to decide whether to fire onApprovalsChanged. Kept as a
+  // ref rather than state because we don't want a re-render when
+  // it flips; it's purely a "has something changed since modal
+  // opened" marker that only needs to survive until close. Firing
+  // the callback only on close (not per-write) avoids work on the
+  // parent's roll-up while it's obscured by the modal.
+  const approvalsDirtyRef = useRef(false)
+
+  // Wrapped close handler. Flushes the dirty flag up to the parent
+  // via onApprovalsChanged before calling onClose, so the project
+  // page's Names roll-up refreshes the next time it's visible. Used
+  // by every close path — Esc key, backdrop click, header X button,
+  // and both footer Close buttons (locked + active variants) — so
+  // no path can skip the flush.
+  function handleClose() {
+    if (approvalsDirtyRef.current) {
+      onApprovalsChanged?.()
+      approvalsDirtyRef.current = false
+    }
+    onClose()
+  }
 
   useEffect(() => {
     loadImages()
@@ -94,11 +124,15 @@ export default function VersionDetailModal({
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         if (lightboxSrc) { setLightboxSrc(null); return }
-        if (deleteState !== 'working') onClose()
+        if (deleteState !== 'working') handleClose()
       }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
+    // handleClose is defined in render scope; we don't put it in
+    // deps because the effect only cares about the latest reference
+    // at fire time and deleteState already triggers re-registration.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lightboxSrc, deleteState, onClose])
 
   useEffect(() => {
@@ -182,6 +216,7 @@ export default function VersionDetailModal({
     setError(null)
     setDialog(null)
     await loadApprovals()
+    approvalsDirtyRef.current = true
   }
 
   // Delete the approval row for a given name, returning the UI to
@@ -202,6 +237,7 @@ export default function VersionDetailModal({
     }
     setError(null)
     await loadApprovals()
+    approvalsDirtyRef.current = true
   }
 
   async function handleSetCurrent() {
@@ -277,7 +313,7 @@ export default function VersionDetailModal({
       {/* Backdrop */}
       <div
         className="fixed inset-0 z-40 bg-black/50"
-        onClick={() => deleteState === 'idle' && !lightboxSrc && onClose()}
+        onClick={() => deleteState === 'idle' && !lightboxSrc && handleClose()}
       />
 
       {/* Panel — full-screen on mobile, centred sheet on desktop */}
@@ -305,7 +341,7 @@ export default function VersionDetailModal({
               )}
             </div>
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="ml-4 shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
             >
               <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -530,7 +566,7 @@ export default function VersionDetailModal({
                     : 'This project is approved and locked. Reopen the project to make changes.'}
                 </p>
                 <button
-                  onClick={onClose}
+                  onClick={handleClose}
                   className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-700"
                 >
                   Close
@@ -593,7 +629,7 @@ export default function VersionDetailModal({
                     Edit version
                   </button>
                   <button
-                    onClick={onClose}
+                    onClick={handleClose}
                     className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-700"
                   >
                     Close
