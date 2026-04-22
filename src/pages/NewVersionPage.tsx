@@ -1932,21 +1932,32 @@ function CarryCard({
   // overrides the toggle visually + functionally.
   const effectiveKeepOn = keep && !hasReplacement
 
+  // Chrome precedence:
+  //   1. Replacement queued  → amber (action committed, approval
+  //      being discarded on save — action state wins)
+  //   2. Otherwise if approved → emerald (approval base, at rest)
+  //   3. Otherwise            → neutral gray
+  // Emerald only shows at rest. Amber replacement-state overrides
+  // it, keeping the "action committed" signal consistent with how
+  // the Open section already uses amber on changes_requested pills.
   return (
     <div
       className={[
         'rounded-xl p-2.5 transition-all',
         hasReplacement
           ? 'bg-amber-50 ring-1 ring-amber-200'
-          : 'bg-gray-50 ring-1 ring-gray-200',
+          : approval?.state === 'approved'
+            ? 'bg-emerald-50 ring-1 ring-emerald-200'
+            : 'bg-gray-50 ring-1 ring-gray-200',
       ].join(' ')}
     >
       {/* Label row — sits above the thumbnail. Shared cards get
           a muted pill; named cards show the name as plain text.
-          The v1 approval state pill sits inline to the right of
-          the label when the slot has an approval. Drives the
-          flattened layout: each card self-identifies, so the
-          per-name <h3> headings above grids aren't needed. */}
+          The changes_requested pill sits inline on Open-section
+          amber cards; the previous "approved" pill is gone since
+          the emerald card chrome carries that signal now, and
+          dropping it frees horizontal room before the name label
+          truncates. */}
       <div
         className={[
           'mb-2 flex items-center gap-2 transition-opacity',
@@ -1963,11 +1974,6 @@ function CarryCard({
             title={nameLabel}
           >
             {nameLabel}
-          </span>
-        )}
-        {approval?.state === 'approved' && (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
-            v{v1VersionNumber} approved
           </span>
         )}
         {approval?.state === 'changes_requested' && (
