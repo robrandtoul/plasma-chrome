@@ -1122,13 +1122,19 @@ export default function CustomerProofPage() {
             <section style={{ background: PAPER, color: '#1a1612' }}>
               <div className="mx-auto max-w-[1040px] px-6 pb-10 pt-20 sm:px-8">
                 <div className="pt-10" style={{ borderTop: `1px solid ${PAPER_BORDER}` }}>
-                  <p
-                    className="uppercase tracking-[0.32em] text-[#1a1612]/55"
-                    style={{ fontFamily: MONO, fontSize: 10 }}
+                  {/* Heading matches the Plates section — Cormorant
+                      400 at 36px, leading-none — so the three
+                      near-white sections (Plates / Important info
+                      / About) read as equal-weight editorial
+                      blocks rather than Plates carrying all the
+                      typographic presence. */}
+                  <h2
+                    className="leading-none text-[#1a1612]"
+                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 36 }}
                   >
                     Important information
-                  </p>
-                  <p className="mt-5 max-w-[78ch] whitespace-pre-line text-[15px] leading-[1.7] text-[#1a1612]/80">
+                  </h2>
+                  <p className="mt-6 max-w-[78ch] whitespace-pre-line text-[15px] leading-[1.7] text-[#1a1612]/80">
                     {publicSettings.disclaimer_text}
                   </p>
                   {publicSettings.reply_email && (
@@ -1159,13 +1165,16 @@ export default function CustomerProofPage() {
             <section style={{ background: PAPER, color: '#1a1612' }}>
               <div className="mx-auto max-w-[1040px] px-6 pb-24 pt-10 sm:px-8">
                 <div className="pt-12" style={{ borderTop: `1px solid ${PAPER_BORDER}` }}>
-                  <p
-                    className="uppercase tracking-[0.32em] text-[#1a1612]/55"
-                    style={{ fontFamily: MONO, fontSize: 10 }}
+                  {/* Serif heading at the Plates size — keeps the
+                      three near-white sections reading at equal
+                      typographic weight. */}
+                  <h2
+                    className="leading-none text-[#1a1612]"
+                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 36 }}
                   >
                     About {activeVersion.material_display}
-                  </p>
-                  <div className="mt-6 grid items-start gap-10 sm:grid-cols-[1.4fr_1fr] sm:gap-16">
+                  </h2>
+                  <div className="mt-8 grid items-start gap-10 sm:grid-cols-[1.4fr_1fr] sm:gap-16">
                     <div>
                       <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-[#1a1612]/80">
                         {activeVersion.material_description}
