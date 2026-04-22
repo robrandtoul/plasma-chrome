@@ -364,6 +364,22 @@ export default function CustomerProofPage() {
                     ? 'grid grid-cols-1 gap-8 sm:grid-cols-2 sm:gap-6'
                     : 'grid grid-cols-1 gap-8 sm:grid-cols-2 sm:gap-6 md:grid-cols-3'
 
+              // Per-group pairing rule: when a group has both a
+              // front and a back image, render the images in a
+              // 2-col grid at md+ so front / back read side-by-
+              // side. Any other shape (single image, or multiple
+              // images on the same side) keeps the stacked
+              // space-y-6 layout. Rule is per group — a shared
+              // front alongside per-person backs still renders
+              // the shared group full-width (no back in that
+              // group) and each named back group full-width (no
+              // front in that group).
+              const groupIsPair = (g: ImageGroup) =>
+                g.images.some((i) => i.side === 'front') &&
+                g.images.some((i) => i.side === 'back')
+              const pairedListClass = 'grid grid-cols-1 gap-6 md:grid-cols-2'
+              const stackedListClass = 'space-y-6'
+
               return (
                 // mt-10 gives the first heading (Shared hero or a
                 // named-group section heading) clear air above the
@@ -371,7 +387,12 @@ export default function CustomerProofPage() {
                 // directly above in the flow.
                 <div className="mb-8 mt-10 space-y-10">
                   {sharedGroup && (
-                    <div className="mx-auto w-full max-w-[880px] space-y-6">
+                    <div
+                      className={[
+                        'mx-auto w-full max-w-[880px]',
+                        groupIsPair(sharedGroup) ? pairedListClass : stackedListClass,
+                      ].join(' ')}
+                    >
                       {sharedGroup.images.map((img) => (
                         <ImageCard
                           key={img.id}
@@ -409,7 +430,9 @@ export default function CustomerProofPage() {
                           <h3 className="mb-4 text-lg font-bold uppercase tracking-wide text-gray-900">
                             {group.heading}
                           </h3>
-                          <div className="space-y-6">
+                          <div
+                            className={groupIsPair(group) ? pairedListClass : stackedListClass}
+                          >
                             {group.images.map((img) => (
                               <ImageCard
                                 key={img.id}
