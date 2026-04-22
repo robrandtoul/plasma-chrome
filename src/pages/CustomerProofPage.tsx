@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge } from '../lib/types'
+import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { formatPrice } from '../lib/currency'
 import { PricingDisplay } from '../components/PricingDisplay'
 import { ImageCard, type GridImage } from '../components/ImageGrid'
@@ -201,6 +202,72 @@ export default function CustomerProofPage() {
   const isApproved = proof.status === 'approved'
   const viewingApprovedVersion = isApproved && activeVersion?.is_current === true
 
+  // Per-name approval roll-up for the current version. Drives the
+  // muted "partially approved" banner when some slots carry
+  // approvals from a prior version but others are still open on
+  // the current version. changes_requested is deliberately
+  // treated as "not approved" here — we don't surface that state
+  // to the customer in this shipment. Null / empty approvals
+  // array is the common case (jsonb_agg coalesce in
+  // public_proof_versions guarantees an array, never null).
+  const currentVersion = activeVersion?.is_current === true ? activeVersion : null
+  const approvedNamesOnCurrent = new Set(
+    (currentVersion?.approvals ?? [])
+      .filter((a) => a.state === 'approved')
+      .map((a) => a.name),
+  )
+  // Slot identities present on the current version. Mirrors the
+  // designer-side rule: current version's names[] plus the
+  // shared sentinel when the version has any associated_name=null
+  // images in its image set. Versions with no slots (shouldn't
+  // happen given validation, but defensive) collapse the banner
+  // logic to silent.
+  const currentVersionHasSharedImages = currentVersion
+    ? (versionImages[currentVersion.id] ?? []).some((img) => img.associated_name == null)
+    : false
+  const currentSlotIdentities: string[] = currentVersion
+    ? [
+        ...(currentVersionHasSharedImages ? [SHARED_APPROVAL_KEY] : []),
+        ...currentVersion.names,
+      ]
+    : []
+  const approvedSlotCount = currentSlotIdentities.filter((id) =>
+    approvedNamesOnCurrent.has(id),
+  ).length
+  // "Some but not all slots approved" — the carry-forward middle
+  // state. Only shown on the current version; older versions
+  // stay silent regardless. If proof.status is fully approved
+  // the emerald banner wins (below) and this branch sits dark.
+  const showPartialApprovalBanner =
+    activeVersion?.is_current === true &&
+    !viewingApprovedVersion &&
+    currentSlotIdentities.length > 0 &&
+    approvedSlotCount > 0 &&
+    approvedSlotCount < currentSlotIdentities.length
+
+  // Version-id → version_number map for "Approved from v{n}" pill
+  // provenance resolution. Cheap to build here since `versions`
+  // is already loaded for the version selector.
+  const versionNumberById = new Map<string, number>()
+  for (const v of versions) versionNumberById.set(v.id, v.version_number)
+
+  // Per-identity approval lookup for the group-heading pills.
+  // Keyed on SHARED_APPROVAL_KEY or a real name. Returns the
+  // provenance string for the pill: "Approved from v{n}" when
+  // the approval carried forward and the source version is
+  // resolvable; plain "Approved" otherwise.
+  function approvalPillFor(identity: string): string | null {
+    const row = (currentVersion?.approvals ?? []).find(
+      (a) => a.name === identity && a.state === 'approved',
+    )
+    if (!row) return null
+    if (row.carried_from_version_id) {
+      const n = versionNumberById.get(row.carried_from_version_id)
+      if (n != null) return `Approved from v${n}`
+    }
+    return 'Approved'
+  }
+
   // Derived: options for the currently-viewed version.
   const versionOptions = activeVersion?.material_options ?? []
   const showOptionSwitcher = versionOptions.length >= 2
@@ -252,7 +319,15 @@ export default function CustomerProofPage() {
   return (
     <div className="min-h-screen bg-gray-50">
 
-      {/* Approval banner — only when viewing the approved version */}
+      {/* Approval banner — three states:
+          1. Every slot on the current version approved AND the
+             designer has flipped proofs.status to 'approved' →
+             emerald "This proof has been approved" with date.
+          2. Some slots approved, others still open (carry-
+             forward middle state) → muted neutral banner.
+          3. Zero slots approved → silent (no banner).
+          Older versions silent in all cases — we only signal
+          state for the live version. */}
       {viewingApprovedVersion && (
         <div className="bg-emerald-100 px-4 py-4 text-center">
           <p className="text-sm font-bold text-emerald-800">This proof has been approved</p>
@@ -261,6 +336,13 @@ export default function CustomerProofPage() {
               Approved on {new Date(proof.approved_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
             </p>
           )}
+        </div>
+      )}
+      {showPartialApprovalBanner && (
+        <div className="bg-gray-100 px-4 py-4 text-center">
+          <p className="text-sm font-medium text-gray-700">
+            Some sections are already approved from a previous version. The rest are awaiting your review.
+          </p>
         </div>
       )}
 
@@ -426,10 +508,39 @@ export default function CustomerProofPage() {
                               consistent with other section labels
                               on the page. Darker grey matches the
                               page's main customer-name treatment
-                              at the top. */}
-                          <h3 className="mb-4 text-lg font-bold uppercase tracking-wide text-gray-900">
-                            {group.heading}
-                          </h3>
+                              at the top.
+                              Approval pill — per-group signal
+                              used when the current version has a
+                              proof_name_approvals row with
+                              state='approved' for this identity.
+                              Copy flips to "Approved from v{n}"
+                              when the approval carried forward
+                              from a prior version and we can
+                              resolve that version's number from
+                              the already-loaded versions list;
+                              falls back to plain "Approved" when
+                              the pointer is null or unresolvable.
+                              Shared group has no heading rendered
+                              in this layout so no shared-pill
+                              attachment point is needed here —
+                              the banner above carries that
+                              signal. */}
+                          <div className="mb-4 flex flex-wrap items-center gap-3">
+                            <h3 className="text-lg font-bold uppercase tracking-wide text-gray-900">
+                              {group.heading}
+                            </h3>
+                            {(() => {
+                              const pill = group.heading != null
+                                ? approvalPillFor(group.heading)
+                                : null
+                              if (!pill) return null
+                              return (
+                                <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                                  {pill}
+                                </span>
+                              )
+                            })()}
+                          </div>
                           <div
                             className={groupIsPair(group) ? pairedListClass : stackedListClass}
                           >

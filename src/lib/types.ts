@@ -76,6 +76,20 @@ export interface PublicProofVersion {
   // Null when the material has no configured surcharge for the
   // chosen currency (carbon CNC, some paper).
   split_name_surcharge_snapshot: number | null
+  // ── Per-name approvals (migration 000087) ────────────────────────────────
+  // Every proof_name_approvals row for this version, aggregated
+  // into a jsonb array on the view. Empty array when nothing's
+  // been approved yet — never null (coalesce on the SQL side).
+  // Customer page uses this to render partial-approval UI: a
+  // muted roll-up banner + per-group "Approved" / "Approved from
+  // v{n}" pills when carry-forward is in play. Actor identity
+  // fields (actor_name / actor_ip / actor_ua) stay off the view
+  // — designer-only audit concern.
+  approvals: Array<{
+    name: string
+    state: 'approved' | 'changes_requested'
+    carried_from_version_id: string | null
+  }>
 }
 
 export interface PublicMaterialOption {
