@@ -332,7 +332,10 @@ export default function DashboardPage() {
       .from('proofs')
       .select(
         'id, created_at, last_activity_at, status,' +
-        'contacts(id, full_name, companies(id, name)),' +
+        // email is pulled for search only — not rendered on the
+        // project cards. Keeps the search predicate below able to
+        // match against it without another round-trip.
+        'contacts(id, full_name, email, companies(id, name)),' +
         'proof_versions(id, version_number, is_current, material_display)'
       )
       .order('last_activity_at', { ascending: false, nullsFirst: false })
@@ -429,13 +432,20 @@ export default function DashboardPage() {
     navigate('/login')
   }
 
-  // Filter by search, then count dormant before building sections
+  // Filter by search, then count dormant before building sections.
+  // Substring + case-insensitive across three fields: customer
+  // name, company, and email. Email is search-only — cards don't
+  // render it — but matching against it helps when the designer
+  // remembers the Help Scout thread before the contact name.
+  // Missing values (null company, contact with no email) fall
+  // back to '' so the includes check is safe.
   const q = search.trim().toLowerCase()
   const filtered = q
     ? rawProofs.filter((p: any) => {
         const name    = (p.contacts?.full_name      ?? '').toLowerCase()
         const company = (p.contacts?.companies?.name ?? '').toLowerCase()
-        return name.includes(q) || company.includes(q)
+        const email   = (p.contacts?.email           ?? '').toLowerCase()
+        return name.includes(q) || company.includes(q) || email.includes(q)
       })
     : rawProofs
 
@@ -568,7 +578,7 @@ export default function DashboardPage() {
             <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
               <input
                 type="search"
-                placeholder="Search customer or company"
+                placeholder="Search customer, company, or email"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
