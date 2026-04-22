@@ -2039,12 +2039,17 @@ function CarryCard({
         {displayLabel}
       </p>
       {hasReplacement && (
-        <p
-          className="mt-1 truncate text-xs text-amber-800"
-          title={replacement!.file.name}
-        >
-          Replacing with: {replacement!.file.name}
-        </p>
+        <div className="mt-1">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-amber-700">
+            Replacing with
+          </p>
+          <p
+            className="truncate text-xs text-amber-800"
+            title={replacement!.file.name}
+          >
+            {replacement!.file.name}
+          </p>
+        </div>
       )}
       <div className="mt-2.5 flex items-center justify-between gap-2">
         {/* Keep toggle (switch). Disabled while a replacement is
