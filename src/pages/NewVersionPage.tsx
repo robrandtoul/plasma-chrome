@@ -148,21 +148,6 @@ export default function NewVersionPage() {
           }
         })
 
-      // Names chip-list inheritance (existing behaviour: latest
-      // prior version by created_at, not is_current). Preserved as-is
-      // for now; migrating to is_current is a separate call.
-      void supabase.from('proof_versions')
-        .select('names')
-        .eq('proof_id', proofId!)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-        .then(({ data }) => {
-          if (cancelled) return
-          const prev = (data as any)?.names
-          if (Array.isArray(prev) && prev.length > 0) setNames(prev as string[])
-        })
-
       // Materials for the picker. Filtered to active + published +
       // non-archived by default. Inheritance below prepends an
       // archived material back in if the prior version used one,
@@ -175,16 +160,19 @@ export default function NewVersionPage() {
         .is('archived_at', null)
         .order('sort_order')
 
-      // Inheritance from the proof's current version. Runs before
-      // the settings-defaults fetch so currency inheritance wins
-      // over the admin-configured default (specific intent beats
-      // global default). is_current = true targets the designer's
-      // promoted working version rather than "latest created", so
-      // if those have diverged (via Set as current in the modal),
-      // the promoted one is the source of truth.
+      // Inheritance from the proof's current version. Single query
+      // pulls currency + material + variant (via pricing_snapshot) +
+      // names so all four form fields hydrate from the same source.
+      // is_current = true targets the designer's promoted working
+      // version rather than "latest created" — if those have
+      // diverged (via Set as current in the modal), the promoted
+      // version is the source of truth. Runs before the
+      // settings-defaults fetch so currency inheritance wins over
+      // the admin-configured default (specific intent beats global
+      // default).
       const inheritPromise = supabase
         .from('proof_versions')
-        .select('version_number, currency, material_id, pricing_snapshot')
+        .select('version_number, currency, material_id, pricing_snapshot, names')
         .eq('proof_id', proofId!)
         .eq('is_current', true)
         .maybeSingle()
@@ -199,10 +187,20 @@ export default function NewVersionPage() {
         currency: string
         material_id: string
         pricing_snapshot: { variants?: { variant_id?: string }[] } | null
+        names: string[] | null
       } | null
 
       if (inherited) {
         setInheritedVersionNumber(inherited.version_number)
+
+        // Names chip-list — previously pulled from "latest created"
+        // in a separate query; now folded into this one so it
+        // tracks the same is_current version as the other fields.
+        // No inheritance label: existing design keeps names free-
+        // form with no visual "carried forward" indicator.
+        if (Array.isArray(inherited.names) && inherited.names.length > 0) {
+          setNames(inherited.names)
+        }
 
         // Currency — always inheritable.
         setCurrency(inherited.currency as Currency)
