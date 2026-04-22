@@ -153,7 +153,7 @@ export default function ProofDetailPage() {
         .single(),
       supabase
         .from('proof_versions')
-        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, change_notes, pricing_snapshot, shipping_note, custom_quote, names, materials(featured_quantities)')
+        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, materials(featured_quantities)')
         .eq('proof_id', proofId)
         .order('version_number', { ascending: false }),
     ])
@@ -607,8 +607,13 @@ export default function ProofDetailPage() {
         `Approved: ${approvedDate}\n` +
         `Material: ${currentMaterial}\n\n`
 
+      // Mirror the UI table's identity-column label swap. Read
+      // card_type from the current version so "Variant" shows
+      // for tiered membership and "Name" stays for business.
+      const identityColumnLabel =
+        currentVersion?.card_type === 'membership' ? 'Variant' : 'Name'
       const columns: string[] = []
-      if (!isAllShared) columns.push('Name')
+      if (!isAllShared) columns.push(identityColumnLabel)
       if (!isOneSided) columns.push('Side')
       columns.push('Version', 'Filename')
       const manifestLines: string[] = [columns.join('\t')]
@@ -1100,12 +1105,20 @@ export default function ProofDetailPage() {
           const nameOrder = new Map<string, number>()
           currentVersion?.names.forEach((n, i) => nameOrder.set(n, i))
           const isOneSided = !rows.some((r) => r.side === 'back')
-          // Membership mode detection: every approved image is
-          // Shared (associated_name IS NULL). Same column-
-          // suppression parity as isOneSided — no point rendering
-          // a column that's a single repeated value. Derived from
-          // data, not a schema flag.
+          // Every approved image is Shared (associated_name IS
+          // NULL). Triggers column suppression in the UI table +
+          // manifest, and root-level placement in the ZIP —
+          // nothing to fold under a one-repeating-value column.
+          // Same parity rule as isOneSided.
           const isAllShared = rows.length > 0 && rows.every((r) => r.associatedName == null)
+          // Column-label copy: "Name" for business (recipient
+          // people), "Variant" for membership with ≥1 variants
+          // (tier labels). When isAllShared triggers the column
+          // is suppressed entirely so the label is moot in that
+          // case. Read card_type from the current version — in
+          // practice every version in a project shares one mode.
+          const identityColumnLabel =
+            currentVersion?.card_type === 'membership' ? 'Variant' : 'Name'
           const sorted = [...rows].sort((a, b) => {
             const aShared = a.associatedName == null ? 0 : 1
             const bShared = b.associatedName == null ? 0 : 1
@@ -1135,7 +1148,7 @@ export default function ProofDetailPage() {
                       <thead>
                         <tr className="border-b border-gray-100">
                           {!isAllShared && (
-                            <th className="w-36 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Name</th>
+                            <th className="w-36 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">{identityColumnLabel}</th>
                           )}
                           {!isOneSided && (
                             <th className="w-24 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Side</th>

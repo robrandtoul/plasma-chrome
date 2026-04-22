@@ -2,6 +2,16 @@ export type Currency = 'GBP' | 'EUR' | 'USD'
 
 export type ProofStatus = 'in_progress' | 'approved' | 'dormant' | 'abandoned'
 
+// Top-level mode for a proof version (migration 000086). Business
+// is the standard split-name workflow (names are recipient
+// people). Membership covers "one design for everyone" (empty
+// names) and "tier variants" (names holds the variant labels —
+// Bronze/Silver/Gold, etc.) via the same names[] column.
+// Customer-facing UI doesn't need to distinguish — group
+// rendering reads associated_name only — so this type is
+// designer-side only.
+export type CardType = 'business' | 'membership'
+
 export interface PublicProof {
   id: string
   customer_name: string

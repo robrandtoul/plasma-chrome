@@ -25,8 +25,14 @@ export interface ModalVersion {
   // Recipient names for this version (migration 000070). Drives the
   // per-name approval grouping below. Empty array = single-subject
   // project, approval section collapses to just the shared image
-  // group with no per-name controls.
+  // group with no per-name controls. In membership mode (see
+  // card_type below), names holds tier variant labels rather than
+  // recipient names.
   names: string[]
+  // Top-level mode (migration 000086). Drives column-label copy
+  // in approved-artwork + variant-vs-name framing. Customer-
+  // facing surfaces don't distinguish.
+  card_type: 'business' | 'membership'
   materials: { featured_quantities: number[] } | null
 }
 
