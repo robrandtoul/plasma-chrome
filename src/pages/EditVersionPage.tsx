@@ -11,6 +11,7 @@ import { CurrencyField } from '../components/CurrencyField'
 import { PageDropOverlay } from '../components/PageDropOverlay'
 import NameChipInput from '../components/NameChipInput'
 import { matchImageToName } from '../lib/matchImageToName'
+import { safeRemoveImagePaths } from '../lib/imageStorage'
 import type { Currency, PricingSnapshot } from '../lib/types'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -511,11 +512,15 @@ export default function EditVersionPage() {
       return
     }
 
-    // Delete removed images
+    // Delete removed images. Storage object is only actually
+    // removed if no other proof_version_images row references the
+    // same path — carry-forward from NewVersionPage can leave v1
+    // and v2 sharing image_paths, and a blind storage.remove here
+    // would nuke the counterpart version's still-referenced file.
     if (removedIds.length > 0) {
       await supabase.from('proof_version_images').delete().in('id', removedIds)
       if (removedPaths.length > 0) {
-        await supabase.storage.from('proof-images').remove(removedPaths)
+        await safeRemoveImagePaths(removedPaths)
       }
     }
 

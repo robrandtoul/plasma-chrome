@@ -12,7 +12,8 @@ import { CurrencyField } from '../components/CurrencyField'
 import { PageDropOverlay } from '../components/PageDropOverlay'
 import NameChipInput from '../components/NameChipInput'
 import { matchImageToName } from '../lib/matchImageToName'
-import type { Currency } from '../lib/types'
+import type { Currency, ProofNameApproval } from '../lib/types'
+import { SHARED_APPROVAL_KEY } from '../lib/types'
 
 interface Material {
   id: string
@@ -58,6 +59,30 @@ interface ImageEntry {
   // Designer can override via the per-image dropdowns before save.
   associated_name: string | null
   side: 'front' | 'back' | null
+}
+
+// One v1 image, loaded on mount to drive carry-forward cards.
+// file_path is the storage key shared across versions when Keep is
+// on — no copy happens. preview is a short-TTL signed URL.
+interface V1Image {
+  v1RowId: string
+  file_path: string
+  preview: string
+  original_filename: string | null
+  associated_name: string | null   // null = shared
+  material_option: string | null   // null = no-option
+}
+
+// Everything the UI + save path needs to decide carry-forward
+// outcomes. Null when creating v1 (no prior version to carry from);
+// the form falls back to the existing flat image UI in that case.
+interface V1CarryContext {
+  versionId: string
+  versionNumber: number
+  names: string[]
+  materialOptions: string[]   // codes — '' represents "no-option" equivalent on v2
+  images: V1Image[]
+  approvalsByName: Record<string, ProofNameApproval>  // keyed by recipient name OR SHARED_APPROVAL_KEY
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -113,6 +138,23 @@ export default function NewVersionPage() {
   const [selectedOptions, setSelectedOptions] = useState<string[]>([])
   const [imagesByOption, setImagesByOption] = useState<Record<string, ImageEntry[]>>({ '': [] })
   const [activeImageOption, setActiveImageOption] = useState('')
+
+  // ── Shape B carry-forward state ──────────────────────────────────────────
+  // v1Carry is null when creating v1 or when the form can't find an
+  // is_current prior version. The render path and save path both
+  // key off this — null → legacy flat UI, non-null → grouped UI
+  // with Keep toggles and carry semantics.
+  const [v1Carry, setV1Carry] = useState<V1CarryContext | null>(null)
+  // Keep toggle state per v1 row. Default true on mount for every
+  // carried row. Flips to false automatically when a replacement
+  // is queued for that row (and stays false even if the replacement
+  // is later cleared — designer intent is to replace, not keep).
+  const [keepByV1RowId, setKeepByV1RowId] = useState<Record<string, boolean>>({})
+  // Replacement files queued per v1 row. File + preview for the
+  // card's render. Undefined entry = no replacement.
+  const [replacementByV1RowId, setReplacementByV1RowId] = useState<
+    Record<string, { file: File; preview: string }>
+  >({})
   const [fileError, setFileError] = useState('')
   const [fileNote, setFileNote] = useState('')
   const [error, setError] = useState('')
@@ -172,7 +214,7 @@ export default function NewVersionPage() {
       // default).
       const inheritPromise = supabase
         .from('proof_versions')
-        .select('version_number, currency, material_id, pricing_snapshot, names, ink_names')
+        .select('id, version_number, currency, material_id, pricing_snapshot, names, ink_names, material_options')
         .eq('proof_id', proofId!)
         .eq('is_current', true)
         .maybeSingle()
@@ -183,12 +225,14 @@ export default function NewVersionPage() {
       let materialsList = (materialsResult.data ?? []) as Material[]
       let currencyInherited = false
       const inherited = inheritResult.data as {
+        id: string
         version_number: number
         currency: string
         material_id: string
         pricing_snapshot: { variants?: { variant_id?: string }[] } | null
         names: string[] | null
         ink_names: string[] | null
+        material_options: string[] | null
       } | null
 
       if (inherited) {
@@ -271,6 +315,74 @@ export default function NewVersionPage() {
         // v1 — no inheritance, just hydrate the picker with the
         // unfiltered active+published materials.
         setMaterials(materialsList)
+      }
+
+      // Shape B carry-forward load. Only runs when we have an
+      // inherited (is_current) version — that's the v1 we're
+      // cloning from. Fetches all images + approvals in parallel,
+      // builds signed URLs for the image previews (1h TTL matches
+      // the edit and modal paths), and stashes the lot in
+      // v1Carry. Default Keep=on for every carried image.
+      //
+      // If no inherited version exists (v1 creation), skip entirely
+      // — the form falls back to the legacy flat image UI.
+      if (inherited) {
+        const [imagesResult, approvalsResult] = await Promise.all([
+          supabase
+            .from('proof_version_images')
+            .select('id, image_path, original_filename, associated_name, material_option, sort_order')
+            .eq('proof_version_id', inherited.id)
+            .order('sort_order'),
+          supabase
+            .from('proof_name_approvals')
+            .select('*')
+            .eq('proof_version_id', inherited.id),
+        ])
+        if (cancelled) return
+
+        const imageRows = (imagesResult.data ?? []) as {
+          id: string
+          image_path: string
+          original_filename: string | null
+          associated_name: string | null
+          material_option: string | null
+          sort_order: number
+        }[]
+
+        const imagesWithUrls: V1Image[] = await Promise.all(
+          imageRows.map(async (r) => {
+            const { data: urlData } = await supabase.storage
+              .from('proof-images')
+              .createSignedUrl(r.image_path, 3600)
+            return {
+              v1RowId: r.id,
+              file_path: r.image_path,
+              preview: urlData?.signedUrl ?? '',
+              original_filename: r.original_filename,
+              associated_name: r.associated_name,
+              material_option: r.material_option,
+            }
+          }),
+        )
+        if (cancelled) return
+
+        const approvalsByName: Record<string, ProofNameApproval> = {}
+        for (const a of (approvalsResult.data ?? []) as ProofNameApproval[]) {
+          approvalsByName[a.name] = a
+        }
+
+        const keepDefaults: Record<string, boolean> = {}
+        for (const img of imagesWithUrls) keepDefaults[img.v1RowId] = true
+
+        setV1Carry({
+          versionId: inherited.id,
+          versionNumber: inherited.version_number,
+          names: Array.isArray(inherited.names) ? inherited.names : [],
+          materialOptions: Array.isArray(inherited.material_options) ? inherited.material_options : [],
+          images: imagesWithUrls,
+          approvalsByName,
+        })
+        setKeepByV1RowId(keepDefaults)
       }
 
       // Settings defaults — currency default only applies if we
@@ -367,6 +479,45 @@ export default function NewVersionPage() {
     load()
     return () => { cancelled = true }
   }, [selectedMaterialId])
+
+  // ── Shape B carry-forward helpers ────────────────────────────────────────
+  // Keep toggle fires on designer click. When flipping from on→off,
+  // we clear any replacement file queued for this row (designer has
+  // decided the image is gone; holding onto a replacement would be
+  // confusing). When flipping off→on, designer is explicitly
+  // re-carrying; no replacement side effect.
+  function handleKeepToggle(v1RowId: string, next: boolean) {
+    setKeepByV1RowId((prev) => ({ ...prev, [v1RowId]: next }))
+    if (!next) {
+      setReplacementByV1RowId((prev) => {
+        const { [v1RowId]: _, ...rest } = prev
+        return rest
+      })
+    }
+  }
+
+  // Replacement upload auto-flips Keep off. The carry row is
+  // semantically replaced — new file_path, new proof_version_images
+  // row. Approval can't carry for the slot.
+  function handleReplacementUpload(v1RowId: string, file: File) {
+    setReplacementByV1RowId((prev) => ({
+      ...prev,
+      [v1RowId]: { file, preview: URL.createObjectURL(file) },
+    }))
+    setKeepByV1RowId((prev) => ({ ...prev, [v1RowId]: false }))
+  }
+
+  function handleReplacementClear(v1RowId: string) {
+    setReplacementByV1RowId((prev) => {
+      const entry = prev[v1RowId]
+      if (entry) URL.revokeObjectURL(entry.preview)
+      const { [v1RowId]: _, ...rest } = prev
+      return rest
+    })
+    // Restore Keep to on — designer changed their mind about the
+    // replacement, so the v1 image is now the intended carry again.
+    setKeepByV1RowId((prev) => ({ ...prev, [v1RowId]: true }))
+  }
 
   useEffect(() => {
     setVariantTiers({})
@@ -616,12 +767,37 @@ export default function NewVersionPage() {
       (imagesByOption[fk] ?? []).map(entry => ({ entry, option: fk === '' ? null : fk }))
     )
 
+    // Shape B: collect the v1 rows that need carrying (keep=true +
+    // no replacement) and the replacement uploads (any v1 row with
+    // a queued replacement file). Carried rows share file_path with
+    // v1 — no upload needed. Replacement rows get their own upload
+    // path. Fresh rows (allEntries above) get their own upload
+    // paths too.
+    const carriedV1Rows = v1Carry
+      ? v1Carry.images.filter(
+          (img) =>
+            (keepByV1RowId[img.v1RowId] ?? true) && !replacementByV1RowId[img.v1RowId],
+        )
+      : []
+    const replacementEntries = v1Carry
+      ? v1Carry.images
+          .filter((img) => !!replacementByV1RowId[img.v1RowId])
+          .map((img) => ({ v1Img: img, file: replacementByV1RowId[img.v1RowId]!.file }))
+      : []
+
+    // Upload replacement + fresh files in parallel. Carried rows
+    // are not in this batch — they reuse v1's file_path.
+    const freshUploadBatch = [
+      ...replacementEntries.map((r) => ({ kind: 'replacement' as const, file: r.file, v1Img: r.v1Img })),
+      ...allEntries.map((e) => ({ kind: 'fresh' as const, file: e.entry.file, entry: e.entry, option: e.option })),
+    ]
+
     const uploadResults = await Promise.all(
-      allEntries.map(async ({ entry }) => {
+      freshUploadBatch.map(async (item) => {
         const path = `${proofId}/${uuidv4()}.jpg`
         const { error: uploadError } = await supabase.storage
           .from('proof-images')
-          .upload(path, entry.file, { contentType: entry.file.type, upsert: false })
+          .upload(path, item.file, { contentType: item.file.type, upsert: false })
         return { path, error: uploadError }
       })
     )
@@ -683,6 +859,10 @@ export default function NewVersionPage() {
         // surcharge from the material on INSERT, so no client-side
         // amount calc.
         names: names.map((n) => n.trim()).filter(Boolean),
+        // Explicit clone lineage. Null when creating v1 (no v1Carry
+        // loaded) or admin-inserted rows. Drives downstream
+        // analytics and any future "this is a clone of..." UI.
+        cloned_from_version_id: v1Carry?.versionId ?? null,
       })
       .select('id')
       .single()
@@ -694,19 +874,50 @@ export default function NewVersionPage() {
       return
     }
 
-    const imageInserts = allEntries.map(({ entry, option }, i) => {
-      const optionKey = option ?? ''
-      const sortOrder = (imagesByOption[optionKey] ?? []).findIndex(e => e.localId === entry.localId)
-      return {
-        proof_version_id: versionData.id,
-        image_path: uploadedPaths[i],
-        sort_order: sortOrder,
-        material_option: option,
-        original_filename: entry.file.name,
-        associated_name: entry.associated_name,
-        side: entry.side,
-      }
-    })
+    // Build image inserts. Three sources:
+    //   1. Carried rows: reuse v1's file_path, no upload
+    //   2. Replacement rows: new upload path, associated_name +
+    //      material_option copied from the v1 row being replaced
+    //   3. Fresh rows: new upload path, associated_name + side
+    //      from the form's ImageEntry
+    // Ordering: carried first (preserving v1 sort_order proxy),
+    // then replacement/fresh in upload-batch order. Precise
+    // sort_order for customer-page rendering comes from an integer
+    // index into the final array.
+    const carriedInserts = carriedV1Rows.map((img) => ({
+      proof_version_id: versionData.id,
+      image_path: img.file_path,
+      material_option: img.material_option,
+      original_filename: img.original_filename,
+      associated_name: img.associated_name,
+      side: null,
+    }))
+
+    // uploadedPaths is laid out as [replacements..., fresh...];
+    // slice accordingly to assign paths to the right inserts.
+    const replacementPaths = uploadedPaths.slice(0, replacementEntries.length)
+    const freshPaths = uploadedPaths.slice(replacementEntries.length)
+
+    const replacementInserts = replacementEntries.map((r, i) => ({
+      proof_version_id: versionData.id,
+      image_path: replacementPaths[i],
+      material_option: r.v1Img.material_option,
+      original_filename: r.file.name,
+      associated_name: r.v1Img.associated_name,
+      side: null,
+    }))
+
+    const freshInserts = allEntries.map(({ entry, option }, i) => ({
+      proof_version_id: versionData.id,
+      image_path: freshPaths[i],
+      material_option: option,
+      original_filename: entry.file.name,
+      associated_name: entry.associated_name,
+      side: entry.side,
+    }))
+
+    const allInserts = [...carriedInserts, ...replacementInserts, ...freshInserts]
+    const imageInserts = allInserts.map((row, i) => ({ ...row, sort_order: i }))
 
     const { error: imgInsertError } = await supabase.from('proof_version_images').insert(imageInserts)
 
@@ -716,6 +927,103 @@ export default function NewVersionPage() {
       setError(`Failed to save images: ${imgInsertError.message}`)
       setSubmitting(false)
       return
+    }
+
+    // ── Approval carry-forward ──────────────────────────────────
+    // Carries an approval from v1 to v2 for a given slot (name or
+    // __shared__) iff ALL of the following hold:
+    //
+    //   1. v1 had an approval with state='approved' for the slot
+    //   2. v2's material_options set exactly matches v1's
+    //      (any drop or addition blocks carry for every slot)
+    //   3. Every v1 image at every (option, name) coordinate for
+    //      this slot was carried (keep=true, no replacement), and
+    //      no new images were added at any coordinate for the slot
+    //
+    // Computed client-side here rather than via a DB trigger
+    // because the rule depends on per-slot image-set identity,
+    // which is easiest to decide with the form's carry state at
+    // hand. Audit of approval.carried happens implicitly via the
+    // approval row's existence; no separate audit entry.
+    if (v1Carry) {
+      const v1Opts = new Set(v1Carry.materialOptions)
+      const v2Opts = new Set(selectedOptions)
+      const optionsMatch =
+        v1Opts.size === v2Opts.size &&
+        [...v1Opts].every((o) => v2Opts.has(o))
+
+      if (optionsMatch) {
+        const now = new Date().toISOString()
+        const carriedApprovals: {
+          proof_version_id: string
+          name: string
+          state: 'approved'
+          change_request: null
+          actor_name: string
+          actor_ip: null
+          actor_ua: null
+          updated_at: string
+        }[] = []
+
+        // Candidate slot keys: each name currently on v2 (common
+        // with v1 or not — non-common names can't carry since v1
+        // didn't approve them), plus the shared sentinel.
+        const slotKeys = [SHARED_APPROVAL_KEY, ...names.filter((n) => n.trim().length > 0)]
+        for (const nameKey of slotKeys) {
+          const v1Approval = v1Carry.approvalsByName[nameKey]
+          if (!v1Approval || v1Approval.state !== 'approved') continue
+
+          const assocFilter = nameKey === SHARED_APPROVAL_KEY ? null : nameKey
+
+          // v1's images for this slot (across all option
+          // coordinates).
+          const v1ImagesForSlot = v1Carry.images.filter(
+            (img) => img.associated_name === assocFilter,
+          )
+
+          // Identity check — every v1 image must be carried
+          // (keep=true, no replacement). If any v1 image for
+          // this slot was dropped or replaced, the approval
+          // doesn't carry.
+          const allCarried = v1ImagesForSlot.every(
+            (img) => (keepByV1RowId[img.v1RowId] ?? true) && !replacementByV1RowId[img.v1RowId],
+          )
+          if (!allCarried) continue
+
+          // No new images for this slot. Fresh allEntries with
+          // associated_name matching this slot would break
+          // identity.
+          const anyFreshForSlot = allEntries.some(
+            ({ entry }) => entry.associated_name === assocFilter,
+          )
+          if (anyFreshForSlot) continue
+
+          carriedApprovals.push({
+            proof_version_id: versionData.id,
+            name: nameKey,
+            state: 'approved',
+            change_request: null,
+            actor_name: v1Approval.actor_name,
+            actor_ip: null,
+            actor_ua: null,
+            updated_at: now,
+          })
+        }
+
+        if (carriedApprovals.length > 0) {
+          const { error: approvalErr } = await supabase
+            .from('proof_name_approvals')
+            .insert(carriedApprovals)
+          if (approvalErr) {
+            // Approval carry is best-effort — don't unwind the
+            // whole version save just because audit/approval
+            // writes failed. Log via audit but let the save
+            // succeed; designer can manually approve from the
+            // modal if needed.
+            console.error('[approval-carry] Failed to carry v1 approvals:', approvalErr.message)
+          }
+        }
+      }
     }
 
     void logAudit({
@@ -1096,10 +1404,164 @@ export default function NewVersionPage() {
 
           </section>
 
+          {/* Shape B carry-forward from v1.
+              Only renders when the project has an is_current prior
+              version to carry from. Within each option tab, shows
+              a Shared group and one group per name that exists in
+              both v1's names[] and the current form's names[].
+              Each group lists v1's images as ghosted cards with a
+              Keep toggle (default on) and a Replace upload slot.
+              Fresh uploads for v2 continue to go through the
+              existing image section below via the associated_name
+              dropdown — per-(option, name) drop zones here are
+              deliberately scoped to a follow-up pass.
+              Approval carry-forward is computed at save time; see
+              the save handler. */}
+          {v1Carry && (
+            <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+              <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
+                Carry forward from v{v1Carry.versionNumber}
+              </h2>
+              <p className="mb-4 text-xs text-gray-500">
+                Keep toggles on by default. Upload a replacement to swap an image out — that slot won't carry its approval.
+              </p>
+
+              {/* Option tabs for carry — reuses activeImageOption
+                  from the fresh-image section below so both stay
+                  in sync. Hidden when the material has no options. */}
+              {optionMode && selectedOptions.length > 0 && (
+                <div className="mb-4 flex gap-0 border-b border-gray-100">
+                  {selectedOptions.map((fCode) => {
+                    const f = availableOptions.find((x) => x.code === fCode)
+                    const isActive = activeImageOption === fCode
+                    return (
+                      <button
+                        key={fCode}
+                        type="button"
+                        onClick={() => setActiveImageOption(fCode)}
+                        className={[
+                          '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
+                          isActive
+                            ? 'border-gray-900 text-gray-900'
+                            : 'border-transparent text-gray-400 hover:text-gray-700',
+                        ].join(' ')}
+                      >
+                        {f?.display_name ?? fCode}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+
+              {(() => {
+                // Figure out which option code's carry to show in
+                // this tab. Empty string for no-option materials
+                // (the legacy "tab" key used by imagesByOption).
+                const activeCode = optionMode ? activeImageOption : ''
+
+                // A slot is a (option, nameKey) coordinate. nameKey
+                // is SHARED_APPROVAL_KEY for shared or a recipient
+                // name. We render one section per active slot where
+                // v1 has at least one image, ordered as Shared
+                // first then names in v2.names[] order. v2 names
+                // that weren't in v1 won't have a carry section
+                // (nothing to carry); v1 names dropped from v2
+                // aren't shown either.
+                const commonNames = names.filter((n) => v1Carry.names.includes(n))
+                const slotKeys: string[] = [SHARED_APPROVAL_KEY, ...commonNames]
+
+                const slotSections = slotKeys.flatMap((nameKey) => {
+                  const assocFilter = nameKey === SHARED_APPROVAL_KEY ? null : nameKey
+                  const imagesInSlot = v1Carry.images.filter(
+                    (img) =>
+                      (img.material_option ?? '') === activeCode &&
+                      img.associated_name === assocFilter,
+                  )
+                  if (imagesInSlot.length === 0) return []
+                  const approval = v1Carry.approvalsByName[nameKey]
+                  const anyKeptWithoutReplacement = imagesInSlot.some(
+                    (img) => (keepByV1RowId[img.v1RowId] ?? true) && !replacementByV1RowId[img.v1RowId],
+                  )
+                  const showChangesWarning =
+                    approval?.state === 'changes_requested' && anyKeptWithoutReplacement
+                  const headerLabel = nameKey === SHARED_APPROVAL_KEY ? 'Shared' : nameKey
+
+                  return [
+                    <div key={nameKey} className="mb-6 last:mb-0">
+                      <div className="mb-2 flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-gray-800">{headerLabel}</h3>
+                        {approval?.state === 'approved' && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
+                            v{v1Carry.versionNumber} approved
+                          </span>
+                        )}
+                        {approval?.state === 'changes_requested' && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
+                            v{v1Carry.versionNumber} changes requested
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {imagesInSlot.map((img) => {
+                          const keep = keepByV1RowId[img.v1RowId] ?? true
+                          const replacement = replacementByV1RowId[img.v1RowId]
+                          return (
+                            <CarryCard
+                              key={img.v1RowId}
+                              img={img}
+                              keep={keep}
+                              replacement={replacement}
+                              onKeepChange={(v) => handleKeepToggle(img.v1RowId, v)}
+                              onReplacementUpload={(file) => handleReplacementUpload(img.v1RowId, file)}
+                              onReplacementClear={() => handleReplacementClear(img.v1RowId)}
+                            />
+                          )
+                        })}
+                      </div>
+                      {showChangesWarning && (
+                        <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+                          {headerLabel} was marked changes requested on v{v1Carry.versionNumber}. Keep will carry the image but the slot will be unapproved on v2. Upload a replacement to address the request.
+                        </p>
+                      )}
+                    </div>,
+                  ]
+                })
+
+                if (slotSections.length === 0) {
+                  return (
+                    <p className="text-sm text-gray-500">
+                      v{v1Carry.versionNumber} has no images for this {optionMode ? 'option tab' : 'version'}.
+                    </p>
+                  )
+                }
+                return <div>{slotSections}</div>
+              })()}
+
+              {/* Notice if v1 had images on option codes v2 doesn't
+                  offer — those carry options simply won't appear in
+                  any tab and their images are silently dropped. */}
+              {(() => {
+                if (!optionMode) return null
+                const v1OptionCodes = new Set(
+                  v1Carry.images.map((i) => i.material_option).filter((c): c is string => c != null),
+                )
+                const dropped = v1Carry.materialOptions.filter(
+                  (c) => v1OptionCodes.has(c) && !selectedOptions.includes(c),
+                )
+                if (dropped.length === 0) return null
+                return (
+                  <p className="mt-4 border-t border-gray-100 pt-4 text-xs text-gray-500">
+                    v{v1Carry.versionNumber} had images on {dropped.join(', ')} — these won't carry since v2 doesn't offer {dropped.length === 1 ? 'that option' : 'those options'}.
+                  </p>
+                )
+              })()}
+            </section>
+          )}
+
           {/* Image upload */}
           <section ref={imageSectionRef} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
-              Proof images
+              {v1Carry ? 'Fresh or replacement images' : 'Proof images'}
               {currentImages.length > 0 && (
                 <span className="ml-2 font-normal normal-case text-gray-400">— drag to reorder</span>
               )}
@@ -1342,3 +1804,87 @@ function material_display_for(id: string, materials: Material[]) {
 
 const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
 const selectClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white'
+
+// One carry-forward card — one v1 image, with Keep toggle and
+// Replace upload slot. Ghosted when Keep is off (the image won't
+// carry). When a replacement is queued, the card's thumbnail
+// swaps to the replacement preview and Keep is visually off
+// regardless of the toggle state (replacement wins).
+function CarryCard({
+  img,
+  keep,
+  replacement,
+  onKeepChange,
+  onReplacementUpload,
+  onReplacementClear,
+}: {
+  img: V1Image
+  keep: boolean
+  replacement: { file: File; preview: string } | undefined
+  onKeepChange: (v: boolean) => void
+  onReplacementUpload: (file: File) => void
+  onReplacementClear: () => void
+}) {
+  const hasReplacement = !!replacement
+  const showGhosted = !keep && !hasReplacement
+  const displayPreview = hasReplacement ? replacement!.preview : img.preview
+  const displayLabel = hasReplacement ? replacement!.file.name : (img.original_filename ?? 'v1 image')
+
+  function handleReplaceInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!ACCEPTED_TYPES.includes(file.type)) return
+    if (file.size > MAX_FILE_SIZE) return
+    onReplacementUpload(file)
+    // Clear the native input so picking the same file again
+    // later still triggers change.
+    e.target.value = ''
+  }
+
+  return (
+    <div
+      className={[
+        'relative rounded-xl border border-gray-200 bg-gray-50 p-2 transition-opacity',
+        showGhosted ? 'opacity-40' : '',
+      ].join(' ')}
+    >
+      <img src={displayPreview} alt={displayLabel} className="h-32 w-full rounded-lg object-cover" />
+      <p className="mt-2 truncate text-xs text-gray-500" title={displayLabel}>
+        {displayLabel}
+      </p>
+      {hasReplacement ? (
+        <div className="mt-2 flex items-center justify-between">
+          <span className="text-xs font-medium text-gray-700">Replacing</span>
+          <button
+            type="button"
+            onClick={onReplacementClear}
+            className="text-xs font-medium text-gray-400 underline-offset-2 hover:text-gray-700 hover:underline"
+          >
+            Undo
+          </button>
+        </div>
+      ) : (
+        <div className="mt-2 flex items-center justify-between">
+          <label className="inline-flex items-center gap-2 text-xs font-medium text-gray-700">
+            <input
+              type="checkbox"
+              checked={keep}
+              onChange={(e) => onKeepChange(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-gray-300"
+            />
+            Keep
+          </label>
+          <label className="cursor-pointer text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline">
+            Replace
+            <input
+              type="file"
+              accept={ACCEPTED_TYPES.join(',')}
+              onChange={handleReplaceInput}
+              className="sr-only"
+            />
+          </label>
+        </div>
+      )}
+    </div>
+  )
+}

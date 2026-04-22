@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { PricingDisplay } from './PricingDisplay'
 import { ImageGrid } from './ImageGrid'
+import { safeRemoveImagePaths } from '../lib/imageStorage'
 import type { Currency, PricingSnapshot, ProofNameApproval } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { DEFAULT_FEATURED_QUANTITIES } from '../lib/constants'
@@ -292,9 +293,12 @@ export default function VersionDetailModal({
       return
     }
 
-    // Remove from storage best-effort; version row is already gone
+    // Remove from storage best-effort; version row is already
+    // gone. Guard against nuking carried paths that another
+    // version (likely a v2 cloned from this one, or the v1 this
+    // was cloned from) still references via shared image_path.
     if (imagePaths.length > 0) {
-      await supabase.storage.from('proof-images').remove(imagePaths)
+      await safeRemoveImagePaths(imagePaths)
     }
 
     onVersionUpdated(`v${version.version_number} deleted`)
