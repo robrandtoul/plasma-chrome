@@ -348,7 +348,7 @@ export default function CustomerProofPage() {
         <div className="bg-blue-50 px-4 py-4 text-center">
           <p className="text-sm font-bold text-blue-900">Partially approved</p>
           <p className="mt-0.5 text-xs text-blue-800">
-            Some sections are already approved from a previous version. The rest are awaiting your review.
+            Some proofs are already approved from a previous version. The rest are awaiting your review.
           </p>
         </div>
       )}
