@@ -385,6 +385,26 @@ export default function NewVersionPage() {
         ])
         if (cancelled) return
 
+        // DIAGNOSTIC: temporary logging to pin down a carry-UI
+        // bug where v1 images with correct associated_name +
+        // side aren't showing up as CarryCards on v2's image
+        // section. Remove once the root cause is fixed.
+        // eslint-disable-next-line no-console
+        console.log('[nvp-carry-diag] v1 image query', {
+          inheritedVersionId: inherited.id,
+          inheritedVersionNumber: inherited.version_number,
+          inheritedMaterialOptions: inherited.material_options,
+          error: imagesResult.error,
+          rowCount: imagesResult.data?.length ?? 0,
+          rows: (imagesResult.data ?? []).map((r: any) => ({
+            id: r.id,
+            associated_name: r.associated_name,
+            material_option: r.material_option,
+            side: r.side,
+            original_filename: r.original_filename,
+          })),
+        })
+
         const imageRows = (imagesResult.data ?? []) as {
           id: string
           image_path: string
@@ -2187,15 +2207,58 @@ export default function NewVersionPage() {
               // one-sided) — silently don't render.
               const validSlots = new Set(slotTuples.map((s) => slotKey(s.identity, s.side)))
               const carryCellsBySlot: Record<string, V1Image[]> = {}
+              // DIAGNOSTIC — log per-image filter outcome so we can
+              // see exactly why carries are being dropped. Remove
+              // once the root cause is fixed.
+              const diagDrops: Array<{
+                v1RowId: string
+                associated_name: string | null
+                material_option: string | null
+                side: 'front' | 'back' | null
+                reason: string
+              }> = []
               if (v1Carry) {
                 for (const img of v1Carry.images) {
-                  if ((img.material_option ?? '') !== activeCode) continue
+                  if ((img.material_option ?? '') !== activeCode) {
+                    diagDrops.push({
+                      v1RowId: img.v1RowId,
+                      associated_name: img.associated_name,
+                      material_option: img.material_option,
+                      side: img.side,
+                      reason: `material_option ${JSON.stringify(img.material_option)} !== activeCode ${JSON.stringify(activeCode)}`,
+                    })
+                    continue
+                  }
                   const identity = img.associated_name ?? SHARED_APPROVAL_KEY
                   const side = img.side ?? 'front'
                   const key = slotKey(identity, side)
-                  if (!validSlots.has(key)) continue
+                  if (!validSlots.has(key)) {
+                    diagDrops.push({
+                      v1RowId: img.v1RowId,
+                      associated_name: img.associated_name,
+                      material_option: img.material_option,
+                      side: img.side,
+                      reason: `slot key ${JSON.stringify(key)} not in validSlots ${JSON.stringify([...validSlots])}`,
+                    })
+                    continue
+                  }
                   ;(carryCellsBySlot[key] ??= []).push(img)
                 }
+                // eslint-disable-next-line no-console
+                console.log('[nvp-carry-diag] carry builder', {
+                  cardType,
+                  sidedness,
+                  shared,
+                  names,
+                  activeCode,
+                  selectedOptions,
+                  availableOptions: availableOptions.map((o) => o.code),
+                  v1ImageCount: v1Carry.images.length,
+                  carriedCount: Object.values(carryCellsBySlot).flat().length,
+                  droppedCount: diagDrops.length,
+                  drops: diagDrops,
+                  validSlots: [...validSlots],
+                })
               }
 
               // Fresh cells keyed by slot. Each ImageEntry carries
