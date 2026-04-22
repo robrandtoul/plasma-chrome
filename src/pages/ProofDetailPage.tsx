@@ -563,23 +563,38 @@ export default function ProofDetailPage() {
 
       const zip = new JSZip()
 
-      // One folder per identity: Shared/ or {name}/. Filename is
-      // the original, never rewritten. Null original_filename
-      // falls back to a synthetic {id-short}.jpg leaf so the ZIP
-      // still extracts — designer will have seen the missing
-      // filename in the table.
+      // Membership detection: every approved image is Shared
+      // (associated_name IS NULL). Triggers two changes: images
+      // go straight into the ZIP root rather than into a Shared/
+      // folder (no hierarchy when there's only one group), and
+      // the manifest omits the Name column. Parity with the UI
+      // table's Name-column suppression above.
+      const isAllShared = approvedImages.every((r) => r.associatedName == null)
+
+      // One folder per identity: {name}/ in Business mode, or no
+      // folder (root-level) in Membership mode. Filename is the
+      // original, never rewritten. Null original_filename falls
+      // back to a synthetic {id-short}.jpg leaf so the ZIP still
+      // extracts — designer will have seen the missing filename
+      // in the table.
       for (let i = 0; i < sorted.length; i++) {
         const row = sorted[i]
-        const folder = row.associatedName == null ? 'Shared' : row.associatedName
         const leaf =
           row.originalFilename ?? `unnamed-${row.imageId.slice(0, 8)}.jpg`
-        zip.file(`${folder}/${leaf}`, blobs[i])
+        if (isAllShared) {
+          zip.file(leaf, blobs[i])
+        } else {
+          const folder = row.associatedName == null ? 'Shared' : row.associatedName
+          zip.file(`${folder}/${leaf}`, blobs[i])
+        }
       }
 
       // Manifest: plain-text header block + tab-separated table.
       // UTF-8 (JSZip default). Production uses this to cross-check
       // filename → recipient/side mapping without opening each
-      // subfolder.
+      // subfolder. Name column suppressed in membership mode for
+      // the same reason as the UI table — one repeating value
+      // ("Shared") adds no information.
       const approvedDate = proof.approved_at
         ? formatLongDate(proof.approved_at)
         : '—'
@@ -592,20 +607,21 @@ export default function ProofDetailPage() {
         `Approved: ${approvedDate}\n` +
         `Material: ${currentMaterial}\n\n`
 
-      const columns = isOneSided
-        ? ['Name', 'Version', 'Filename']
-        : ['Name', 'Side', 'Version', 'Filename']
+      const columns: string[] = []
+      if (!isAllShared) columns.push('Name')
+      if (!isOneSided) columns.push('Side')
+      columns.push('Version', 'Filename')
       const manifestLines: string[] = [columns.join('\t')]
       for (const row of sorted) {
         const nameCol = row.associatedName ?? 'Shared'
         const sideCol = (row.side ?? 'front') === 'front' ? 'Front' : 'Back'
         const versionCol = `v${row.versionNumber}`
         const fileCol = row.originalFilename ?? `unnamed-${row.imageId.slice(0, 8)}.jpg`
-        manifestLines.push(
-          isOneSided
-            ? [nameCol, versionCol, fileCol].join('\t')
-            : [nameCol, sideCol, versionCol, fileCol].join('\t'),
-        )
+        const rowCols: string[] = []
+        if (!isAllShared) rowCols.push(nameCol)
+        if (!isOneSided) rowCols.push(sideCol)
+        rowCols.push(versionCol, fileCol)
+        manifestLines.push(rowCols.join('\t'))
       }
       zip.file('manifest.txt', header + manifestLines.join('\n') + '\n')
 
@@ -1084,6 +1100,12 @@ export default function ProofDetailPage() {
           const nameOrder = new Map<string, number>()
           currentVersion?.names.forEach((n, i) => nameOrder.set(n, i))
           const isOneSided = !rows.some((r) => r.side === 'back')
+          // Membership mode detection: every approved image is
+          // Shared (associated_name IS NULL). Same column-
+          // suppression parity as isOneSided — no point rendering
+          // a column that's a single repeated value. Derived from
+          // data, not a schema flag.
+          const isAllShared = rows.length > 0 && rows.every((r) => r.associatedName == null)
           const sorted = [...rows].sort((a, b) => {
             const aShared = a.associatedName == null ? 0 : 1
             const bShared = b.associatedName == null ? 0 : 1
@@ -1112,7 +1134,9 @@ export default function ProofDetailPage() {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-gray-100">
-                          <th className="w-36 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Name</th>
+                          {!isAllShared && (
+                            <th className="w-36 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Name</th>
+                          )}
                           {!isOneSided && (
                             <th className="w-24 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Side</th>
                           )}
@@ -1129,7 +1153,9 @@ export default function ProofDetailPage() {
                           )
                           return (
                             <tr key={row.imageId} className="border-b border-gray-50 last:border-0">
-                              <td className="px-4 py-3 font-medium text-gray-900">{nameCol}</td>
+                              {!isAllShared && (
+                                <td className="px-4 py-3 font-medium text-gray-900">{nameCol}</td>
+                              )}
                               {!isOneSided && (
                                 <td className="px-4 py-3 text-gray-500">{sideCol}</td>
                               )}

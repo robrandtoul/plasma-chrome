@@ -134,25 +134,37 @@ export default function NewVersionPage() {
   // most-recent prior version (if any) on mount — designer still
   // edits freely. Empty list is valid and allowed at submit.
   const [names, setNames] = useState<string[]>([])
-  // ── Shape controls (sidedness + shared toggle) ───────────────────────────
-  // Drive the slot universe along with names[] and the material's
-  // options. Shared is only meaningful for two-sided projects:
-  // when ON, one side is a single design shared across every card
-  // (that side is internally always 'front' by convention — not
-  // surfaced in UI) and the other is personalised per name. When
-  // OFF, every card has its own design on every side. One-sided
-  // projects are always per-name, no shared option.
+  // ── Shape controls (card type + sidedness + shared toggle) ────────────────
+  // cardType is the top-level mode — 'business' is the standard
+  // split-name workflow (names + optional shared-front), while
+  // 'membership' collapses every slot to Shared (no names, no
+  // shared toggle). Derived from data on v2+: empty names[] on
+  // v(N-1) signals membership. No schema column — the rule is
+  // encoded in whether names is empty on a given version.
   //
-  // v1 defaults: two-sided, shared OFF. On v2+ creation, the mount
-  // effect derives sidedness + shared from v(N-1)'s images:
+  // sidedness + shared drive the slot universe along with names[]
+  // and the material's options (in business mode). Shared is only
+  // meaningful for two-sided projects: when ON, one side is a
+  // single design shared across every card (that side is
+  // internally always 'front' by convention — not surfaced in
+  // UI) and the other is personalised per name. When OFF, every
+  // card has its own design on every side. One-sided projects are
+  // always per-name, no shared option.
+  //
+  // v1 defaults: business card, two-sided, shared OFF. On v2+
+  // creation, the mount effect derives all three from v(N-1):
+  //   cardType  = v(N-1).names.length === 0 ? 'membership' : 'business'
   //   sidedness = exists image with side='back' ? 'two-sided' : 'one-sided'
   //   shared    = sidedness === 'two-sided'
   //               && exists image with associated_name IS NULL
   //                  AND side='front'
   //
-  // Flipping either control can invalidate approvals if v(N-1) had
+  // Flipping any of these can invalidate approvals if v(N-1) had
   // approved images whose slots vanish in the new shape. Handlers
   // below compute the impact and fire a confirm before applying.
+  // Card type flip is special — it changes the whole slot universe
+  // rather than a single dimension — see handleCardTypeChange.
+  const [cardType, setCardType] = useState<'business' | 'membership'>('business')
   const [sidedness, setSidedness] = useState<'one-sided' | 'two-sided'>('two-sided')
   const [shared, setShared] = useState(false)
   const [changeNotes, setChangeNotes] = useState('')
@@ -409,17 +421,29 @@ export default function NewVersionPage() {
         })
         setKeepByV1RowId(keepDefaults)
 
-        // Shape inheritance — derived from v(N-1)'s images. Null
+        // Shape inheritance — derived from v(N-1)'s data. Null
         // side normalises to 'front' for back-compat with pre-
         // migration-000085 data. With validation enforcing "every
         // slot has at least one image", derivation reliably
         // reconstructs the v(N-1) shape.
         //
+        //   cardType  — v(N-1) had no names → 'membership'
+        //               (there's no schema column; empty names
+        //               on the prior version is the signal)
         //   sidedness — any image has side='back' → two-sided
         //   shared    — two-sided AND any image has
         //               associated_name IS NULL AND side='front'
         //               (shared side is always 'front' by
         //               convention — see state declaration above)
+        //
+        // For membership, shared derivation is meaningless (every
+        // image is shared by definition) — we still compute and
+        // set it so flipping back to Business mid-edit restores a
+        // sensible toggle state, but the UI hides the toggle in
+        // membership mode.
+        const inheritedIsMembership =
+          Array.isArray(inherited.names) && inherited.names.length === 0
+        setCardType(inheritedIsMembership ? 'membership' : 'business')
         if (imagesWithUrls.length > 0) {
           const sideOf = (img: V1Image) => img.side ?? 'front'
           const hasBack = imagesWithUrls.some((i) => sideOf(i) === 'back')
@@ -946,6 +970,46 @@ export default function NewVersionPage() {
     setShared(next)
   }
 
+  function handleCardTypeChange(next: 'business' | 'membership') {
+    if (next === cardType) return
+    // Business → Membership collapses every per-name v1 image to
+    // Shared — but since membership has only Shared slots, any v1
+    // image with associated_name != null vanishes (no per-name
+    // slot in the new universe). Shared v1 images stay.
+    //
+    // Membership → Business reverses it: the new universe has
+    // Shared-front (if shared=true + two-sided) plus per-name
+    // slots (for names in the preserved form state). Any v1
+    // image whose tuple isn't in that future universe vanishes.
+    // Simplest general check: a v1 image's tuple is valid iff it
+    // would satisfy slotStillValid evaluated against the proposed
+    // (cardType=next, current sidedness/shared/names).
+    const vanishing = v1Carry
+      ? v1Carry.images.filter((img) => {
+          const normalizedSide: 'front' | 'back' = img.side ?? 'front'
+          if (normalizedSide === 'back' && sidedness === 'one-sided') return true
+          if (next === 'membership') {
+            // Membership: only Shared slots exist. Per-name
+            // v1 images orphan.
+            return img.associated_name != null
+          }
+          // Business: mirror the save-path slotStillValid rule.
+          const isSharedSlotForSide =
+            sidedness === 'two-sided' && shared && normalizedSide === 'front'
+          if (isSharedSlotForSide) return img.associated_name != null
+          if (img.associated_name == null) return true
+          return !names.includes(img.associated_name)
+        })
+      : []
+    if (!confirmShapeFlip(vanishing)) return
+    cleanupReplacementsFor(vanishing)
+    setCardType(next)
+    // Names + shared state are intentionally preserved across the
+    // flip. Mode-specific save path writes [] for names when
+    // membership, so the preserved form state is purely UX —
+    // re-switching back restores the chips and toggle position.
+  }
+
   function toggleVariant(variantId: string) {
     setSelectedVariantIds((prev) =>
       prev.includes(variantId) ? prev.filter((id) => id !== variantId) : [...prev, variantId]
@@ -1014,11 +1078,15 @@ export default function NewVersionPage() {
     //
     // v2 slot universe by (side, identity):
     //   * side='back' only valid when sidedness='two-sided'
-    //   * On two-sided + shared=true, the front side collapses to
-    //     a single Shared slot (assocName=null); the back side
-    //     stays per-name.
-    //   * Otherwise every valid side is per-name (assocName in
-    //     names[]), no Shared slot.
+    //   * cardType='membership': every slot is Shared
+    //     (assocName=null), no per-name slots exist. All images
+    //     save with associated_name=null regardless of where the
+    //     designer typed them in a previous business-mode edit.
+    //   * cardType='business':
+    //     - two-sided + shared=true: front collapses to a single
+    //       Shared slot (assocName=null); back stays per-name.
+    //     - otherwise: every valid side is per-name (assocName
+    //       in names[]), no Shared slot.
     // Null-side v1 rows normalise to 'front' for back-compat.
     const v2Names = new Set(names)
     const slotStillValid = (
@@ -1027,6 +1095,7 @@ export default function NewVersionPage() {
     ): boolean => {
       const normalizedSide: 'front' | 'back' = side ?? 'front'
       if (normalizedSide === 'back' && sidedness === 'one-sided') return false
+      if (cardType === 'membership') return assocName == null
       const isSharedSlotForSide =
         sidedness === 'two-sided' && shared && normalizedSide === 'front'
       if (isSharedSlotForSide) return assocName == null
@@ -1120,11 +1189,22 @@ export default function NewVersionPage() {
         change_notes: changeNotes.trim() || null,
         material_options: selectedOptions,
         custom_quote: isCustomQuote,
-        // Names array for split-name tooling. Empty is valid. The
-        // DB trigger (migration 000070) snapshots the per-currency
-        // surcharge from the material on INSERT, so no client-side
-        // amount calc.
-        names: names.map((n) => n.trim()).filter(Boolean),
+        // Names array for split-name tooling. Empty is valid —
+        // it's also the signal for membership-card mode (no
+        // schema column for card type; derivation on v2+ reads
+        // names.length === 0 as membership). The DB trigger
+        // (migration 000070) snapshots the per-currency surcharge
+        // from the material on INSERT, so no client-side amount
+        // calc.
+        //
+        // Write [] in membership mode regardless of preserved
+        // state. Mode is the signal, not the state — the in-form
+        // chips are kept across mode flips for UX (re-switching
+        // restores them in UI) but must not leak into the saved
+        // version if the designer commits as membership.
+        names: cardType === 'membership'
+          ? []
+          : names.map((n) => n.trim()).filter(Boolean),
         // Explicit clone lineage. Null when creating v1 (no v1Carry
         // loaded) or admin-inserted rows. Drives downstream
         // analytics and any future "this is a clone of..." UI.
@@ -1393,10 +1473,15 @@ export default function NewVersionPage() {
   // Slot universe for validation — one tuple per (identity, side)
   // across the project, shared across every option tab. Mirrors the
   // render-time slot universe in the image section so validation
-  // agrees with what the designer can see. Empty list = no slots
-  // at all (names=[] + no shared slot); caught by hasAnySlot below,
-  // though the names-is-required validation makes that hard to
-  // reach in practice.
+  // agrees with what the designer can see.
+  //
+  // Membership mode: every side is a single Shared slot. No per-
+  // name slots ever exist in this mode, names is hidden in the
+  // UI, and the save path writes names: [] regardless of what's
+  // in form state.
+  //
+  // Business mode: see state-declaration comment for the full
+  // rule (sidedness + shared + names).
   const sidesForValidation: ('front' | 'back')[] =
     sidedness === 'two-sided' ? ['front', 'back'] : ['front']
   const slotTuplesForValidation: {
@@ -1404,6 +1489,10 @@ export default function NewVersionPage() {
     side: 'front' | 'back'
   }[] = []
   for (const side of sidesForValidation) {
+    if (cardType === 'membership') {
+      slotTuplesForValidation.push({ identity: null, side })
+      continue
+    }
     const isSharedSlotForSide =
       sidedness === 'two-sided' && shared && side === 'front'
     if (isSharedSlotForSide) {
@@ -1449,12 +1538,18 @@ export default function NewVersionPage() {
     )
 
   // Names became required when the Shared control was simplified
-  // to one toggle — every project now has at least one per-name
-  // dimension (one-sided: all sides per-name; two-sided + shared:
-  // back is per-name; two-sided + !shared: both sides per-name).
-  // Empty names[] therefore means no slots exist. The chip input
-  // trims internally, so we count non-blank trimmed entries.
-  const namesValid = names.some((n) => n.trim().length > 0)
+  // to one toggle — every Business project has at least one per-
+  // name dimension (one-sided: all sides per-name; two-sided +
+  // shared: back is per-name; two-sided + !shared: both sides
+  // per-name). Empty names[] therefore means no slots exist. The
+  // chip input trims internally, so we count non-blank trimmed
+  // entries.
+  //
+  // Membership mode skips this requirement entirely — every slot
+  // is Shared, names is hidden in the UI, and the save path
+  // writes []. Empty chip state is the normal steady state.
+  const namesValid =
+    cardType === 'membership' || names.some((n) => n.trim().length > 0)
 
   const validations = {
     images:         everySlotHasImage,
@@ -1805,40 +1900,87 @@ export default function NewVersionPage() {
             )}
 
             {/* ── LAYOUT ─────────────────────────────────────────
-                Names + sidedness + shared. Everything that
-                describes how the design is split across people
-                and sides. Order is names → sidedness → shared:
-                names is the primary axis and is required;
-                sidedness gates whether Shared renders at all;
-                Shared only applies to two-sided projects (one
-                side shared, the other per-name — by internal
-                convention the shared side is always 'front'). */}
+                Card type + names + sidedness + shared. Top-level
+                split is Card type: Business card is the standard
+                split-name workflow (names + optional shared-
+                front); Membership card collapses every slot to
+                Shared and hides names + shared toggle entirely.
+                Order is card type → names (business only) →
+                sidedness → shared (business only + two-sided +
+                ≥2 names). Names is required in Business mode and
+                irrelevant in Membership; shared side by internal
+                convention is always 'front' in Business. */}
             <h3 className="mt-8 mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Layout</h3>
 
-            {/* Names on this order — chip input backs the
-                proof_versions.names array. Required: with the
-                simplified shape model every project has at least
-                one per-name dimension (one-sided: all sides;
-                two-sided + shared: back; two-sided + !shared:
-                both). The DB trigger snapshots the per-currency
-                split-name tooling surcharge onto the version on
-                save. */}
-            <div ref={namesRef}>
+            {/* Card type — segmented pill mirroring Sidedness. v1
+                defaults to Business. v2+ inheritance derives from
+                v(N-1).names.length === 0 (membership) vs non-
+                empty (business). Flipping Business → Membership
+                orphans any per-name v1 images; the handler fires
+                the same approval-invalidation confirm as the
+                other shape flips before applying. */}
+            <div className="mb-5">
               <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                Names on this order
+                Card type
               </label>
-              <NameChipInput
-                names={names}
-                onChange={handleNamesChange}
-                placeholder="Who is this proof for? Press Enter after each name"
-                ariaLabel="Names on this order"
-              />
-              {shouldHighlight('names') && (
-                <p className="mt-1.5 text-xs font-medium text-rose-500">
-                  Add at least one name.
-                </p>
-              )}
+              <fieldset className="inline-flex rounded-xl border border-gray-200 bg-white p-0.5">
+                <legend className="sr-only">Card type</legend>
+                {(['business', 'membership'] as const).map((opt) => {
+                  const selected = cardType === opt
+                  return (
+                    <label
+                      key={opt}
+                      className={[
+                        'cursor-pointer rounded-lg px-5 py-1.5 text-sm font-semibold transition-colors',
+                        'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
+                        selected ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-900',
+                      ].join(' ')}
+                    >
+                      <input
+                        type="radio"
+                        name="cardType"
+                        value={opt}
+                        checked={selected}
+                        onChange={() => handleCardTypeChange(opt)}
+                        className="sr-only"
+                      />
+                      {opt === 'business' ? 'Business card' : 'Membership card'}
+                    </label>
+                  )
+                })}
+              </fieldset>
             </div>
+
+            {/* Names on this order — chip input backs the
+                proof_versions.names array. Rendered only in
+                Business mode; hidden in Membership (DOM removal,
+                not disable), where every slot is Shared and
+                names has no meaning. Required in Business mode:
+                every Business project has at least one per-name
+                dimension (one-sided: all sides; two-sided +
+                shared: back; two-sided + !shared: both). Chip
+                state is preserved across Card type flips — re-
+                switching back restores prior chips. The DB
+                trigger snapshots the per-currency split-name
+                tooling surcharge onto the version on save. */}
+            {cardType === 'business' && (
+              <div ref={namesRef}>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                  Names on this order
+                </label>
+                <NameChipInput
+                  names={names}
+                  onChange={handleNamesChange}
+                  placeholder="Who is this proof for? Press Enter after each name"
+                  ariaLabel="Names on this order"
+                />
+                {shouldHighlight('names') && (
+                  <p className="mt-1.5 text-xs font-medium text-rose-500">
+                    Add at least one name.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Shape controls — sidedness + shared. Together with
                 names[] and the material's options, these drive
@@ -1881,20 +2023,23 @@ export default function NewVersionPage() {
                 </fieldset>
               </div>
 
-              {/* Shared only renders on two-sided projects with
-                  ≥2 names. One-sided is always fully per-name so
-                  there's nothing meaningful for Shared to toggle.
-                  With a single name the "shared across all cards
-                  vs personalised per name" distinction collapses —
-                  there's only one card. Removing from the DOM
+              {/* Shared only renders in Business mode on two-
+                  sided projects with ≥2 names. Membership is
+                  implicitly shared on both sides — toggle is
+                  meaningless. One-sided is always fully per-
+                  name so there's nothing to toggle. With a
+                  single name the "shared across all cards vs
+                  personalised per name" distinction collapses
+                  — there's only one card. Removing from the DOM
                   rather than disabling keeps the form visually
                   simpler. Sub-text describes the effect rather
                   than a state, since "shared" on its own is
                   ambiguous about which side gets shared.
                   State is NOT auto-reset when names drops below
-                  2; re-adding a chip restores the toggle with
-                  its prior value. */}
-              {sidedness === 'two-sided' && names.length >= 2 && (
+                  2 or on Card type flip; re-entering the
+                  qualifying shape restores the toggle with its
+                  prior value. */}
+              {cardType === 'business' && sidedness === 'two-sided' && names.length >= 2 && (
                 <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3">
                   <div>
                     <div className="text-sm font-medium text-gray-700">
@@ -1990,18 +2135,25 @@ export default function NewVersionPage() {
               const activeCode = optionMode ? activeImageOption : ''
 
               // Slot universe: (identity, side) tuples derived
-              // from sidedness + shared + names. Identity is
-              // SHARED_APPROVAL_KEY for the (always-front) shared
-              // slot, else a recipient name. Shared side is fixed
-              // to 'front' by internal convention (see state
-              // declaration). Post-migration-000085 v1 images
-              // always have side non-null; pre-migration nulls are
-              // treated as 'front' for back-compat.
+              // from cardType + sidedness + shared + names.
+              // Identity is SHARED_APPROVAL_KEY for shared slots,
+              // else a recipient name. Membership mode collapses
+              // every slot to Shared. Business mode with shared=
+              // true (and two-sided) collapses front to Shared,
+              // back to per-name. Shared side for business is
+              // fixed to 'front' by internal convention (see
+              // state declaration). Post-migration-000085 v1
+              // images always have side non-null; pre-migration
+              // nulls are treated as 'front' for back-compat.
               const sides: ('front' | 'back')[] =
                 sidedness === 'two-sided' ? ['front', 'back'] : ['front']
               type SlotTuple = { identity: string; side: 'front' | 'back' }
               const slotTuples: SlotTuple[] = []
               for (const side of sides) {
+                if (cardType === 'membership') {
+                  slotTuples.push({ identity: SHARED_APPROVAL_KEY, side })
+                  continue
+                }
                 const isSharedSlotForSide =
                   sidedness === 'two-sided' && shared && side === 'front'
                 if (isSharedSlotForSide) {
