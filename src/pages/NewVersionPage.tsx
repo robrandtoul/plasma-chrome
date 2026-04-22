@@ -125,6 +125,18 @@ export default function NewVersionPage() {
   const [inheritedVariants, setInheritedVariants] = useState(false)
   const [inheritedMaterialArchived, setInheritedMaterialArchived] = useState(false)
   const inheritedVariantIdsRef = useRef<string[] | null>(null)
+  // Inherited material_options stash — mirrors the variant-ids
+  // pattern above. Material-options don't live on state at mount
+  // time (they're fetched by the material-variants effect once
+  // the material id is known), so we stash the inherited codes
+  // here and let that effect re-apply them after its own
+  // options query resolves. Without this, the effect's
+  // unconditional setSelectedOptions([base.code]) stomps the
+  // inherited set before the carry-render ever sees it, and v1
+  // images saved under a non-base option (e.g. Brushed / Mirror
+  // on Steel, or any non-Natural species on Wood) render as
+  // EmptySlot cells on v2.
+  const inheritedMaterialOptionsRef = useRef<string[] | null>(null)
   // Two separate ink states so each form path (free-text vs per-ink) keeps
   // typing feel. They only cross over when the designer switches materials
   // between the "requires per-ink names" set and everything else.
@@ -332,6 +344,22 @@ export default function NewVersionPage() {
           setInheritedVariants(true)
         }
 
+        // Material options — stash in a ref for the same effect
+        // to consume once that effect's options query resolves.
+        // Mirrors the variant-ids pattern above. Same stomping
+        // hazard: the effect unconditionally sets
+        // selectedOptions=[base.code] on load, which would drop
+        // v1's full option set (e.g. ['brushed', 'mirror']) down
+        // to just the base. That in turn leaves carry-forward
+        // images saved under non-base options invisible on v2
+        // because the carry filter keys on activeImageOption.
+        if (
+          Array.isArray(inherited.material_options) &&
+          inherited.material_options.length > 0
+        ) {
+          inheritedMaterialOptionsRef.current = inherited.material_options
+        }
+
         // Ink names — inherited ink_names is a plain text[] on the
         // DB. Which form-state slot we write to depends on the
         // inherited material's requires_ink_names flag: true =>
@@ -384,26 +412,6 @@ export default function NewVersionPage() {
             .eq('proof_version_id', inherited.id),
         ])
         if (cancelled) return
-
-        // DIAGNOSTIC: temporary logging to pin down a carry-UI
-        // bug where v1 images with correct associated_name +
-        // side aren't showing up as CarryCards on v2's image
-        // section. Remove once the root cause is fixed.
-        // eslint-disable-next-line no-console
-        console.log('[nvp-carry-diag] v1 image query', {
-          inheritedVersionId: inherited.id,
-          inheritedVersionNumber: inherited.version_number,
-          inheritedMaterialOptions: inherited.material_options,
-          error: imagesResult.error,
-          rowCount: imagesResult.data?.length ?? 0,
-          rows: (imagesResult.data ?? []).map((r: any) => ({
-            id: r.id,
-            associated_name: r.associated_name,
-            material_option: r.material_option,
-            side: r.side,
-            original_filename: r.original_filename,
-          })),
-        })
 
         const imageRows = (imagesResult.data ?? []) as {
           id: string
@@ -531,11 +539,24 @@ export default function NewVersionPage() {
       const v = (variantsResult.data ?? []) as Variant[]
       setVariants(v)
 
-      // Inheritance path. If the mount effect stashed variant IDs
-      // to restore, use them now — intersected with the variants
-      // that actually loaded (defensive in case a variant has been
-      // retired between versions). Consume the ref either way so a
-      // subsequent material change doesn't accidentally re-apply.
+      // Variants — apply inherited IDs first (if the mount
+      // effect stashed any), otherwise fall through to the
+      // material's auto-select defaults. Intersection with the
+      // freshly-loaded variants is defensive in case a variant
+      // has been retired between versions. Consume the ref
+      // either way so a subsequent material change doesn't
+      // accidentally re-apply.
+      //
+      // Note: the previous version of this block used an early
+      // `return` when inherited variants applied, which also
+      // silently skipped the options initialisation below. That
+      // turned out to be the root cause of v1 images rendering
+      // as EmptySlot cells on v2 — availableOptions stayed at
+      // [], activeImageOption stayed at '', and the carry
+      // filter keyed on activeImageOption never matched any v1
+      // image that had a material_option set. Switched to an
+      // applied-flag + fall-through so options always run.
+      let variantsApplied = false
       if (inheritedVariantIdsRef.current) {
         const validInherited = inheritedVariantIdsRef.current.filter((id) =>
           v.some((x) => x.id === id),
@@ -543,30 +564,58 @@ export default function NewVersionPage() {
         inheritedVariantIdsRef.current = null
         if (validInherited.length > 0) {
           setSelectedVariantIds(validInherited)
-          return
+          variantsApplied = true
+        } else {
+          // Fell through — inherited IDs no longer match any
+          // variant (rare: variant retired). Clear the
+          // inheritance label and let the auto-select below
+          // pick defaults.
+          setInheritedVariants(false)
         }
-        // Fell through — inherited IDs no longer match any variant
-        // (rare: variant retired). Clear the inheritance label and
-        // let the auto-select logic below pick defaults.
-        setInheritedVariants(false)
+      }
+      if (!variantsApplied) {
+        const pickedMaterial = materials.find((m) => m.id === selectedMaterialId)
+        if (pickedMaterial?.multi_variant) {
+          setSelectedVariantIds(v.map((x) => x.id))
+        } else if (v.length === 1) {
+          setSelectedVariantIds([v[0].id])
+        } else {
+          setSelectedVariantIds([])
+        }
       }
 
-      const pickedMaterial = materials.find((m) => m.id === selectedMaterialId)
-      if (pickedMaterial?.multi_variant) {
-        setSelectedVariantIds(v.map((x) => x.id))
-      } else if (v.length === 1) {
-        setSelectedVariantIds([v[0].id])
-      } else {
-        setSelectedVariantIds([])
-      }
-
+      // Options — apply inherited option codes first (if the
+      // mount effect stashed any), otherwise fall back to the
+      // material's base option. Without the inherited branch,
+      // v2 would always boot with just [base.code] selected and
+      // v1 images saved under any non-base option would render
+      // as EmptySlot cells on their respective tabs. Intersection
+      // with loaded options is defensive — an option code may
+      // have been retired or renamed since v1.
       const options = (optionsResult.data ?? []) as MaterialOption[]
       setAvailableOptions(options)
       if (options.length > 0) {
-        const base = options.find(o => o.is_base) ?? options[0]
-        setSelectedOptions([base.code])
-        setActiveImageOption(base.code)
-        setImagesByOption({ [base.code]: [] })
+        let optionsApplied = false
+        if (inheritedMaterialOptionsRef.current) {
+          const validInheritedOpts = inheritedMaterialOptionsRef.current.filter(
+            (code) => options.some((o) => o.code === code),
+          )
+          inheritedMaterialOptionsRef.current = null
+          if (validInheritedOpts.length > 0) {
+            setSelectedOptions(validInheritedOpts)
+            setActiveImageOption(validInheritedOpts[0])
+            setImagesByOption(
+              Object.fromEntries(validInheritedOpts.map((c) => [c, []])),
+            )
+            optionsApplied = true
+          }
+        }
+        if (!optionsApplied) {
+          const base = options.find((o) => o.is_base) ?? options[0]
+          setSelectedOptions([base.code])
+          setActiveImageOption(base.code)
+          setImagesByOption({ [base.code]: [] })
+        }
       }
     }
 
@@ -2207,58 +2256,15 @@ export default function NewVersionPage() {
               // one-sided) — silently don't render.
               const validSlots = new Set(slotTuples.map((s) => slotKey(s.identity, s.side)))
               const carryCellsBySlot: Record<string, V1Image[]> = {}
-              // DIAGNOSTIC — log per-image filter outcome so we can
-              // see exactly why carries are being dropped. Remove
-              // once the root cause is fixed.
-              const diagDrops: Array<{
-                v1RowId: string
-                associated_name: string | null
-                material_option: string | null
-                side: 'front' | 'back' | null
-                reason: string
-              }> = []
               if (v1Carry) {
                 for (const img of v1Carry.images) {
-                  if ((img.material_option ?? '') !== activeCode) {
-                    diagDrops.push({
-                      v1RowId: img.v1RowId,
-                      associated_name: img.associated_name,
-                      material_option: img.material_option,
-                      side: img.side,
-                      reason: `material_option ${JSON.stringify(img.material_option)} !== activeCode ${JSON.stringify(activeCode)}`,
-                    })
-                    continue
-                  }
+                  if ((img.material_option ?? '') !== activeCode) continue
                   const identity = img.associated_name ?? SHARED_APPROVAL_KEY
                   const side = img.side ?? 'front'
                   const key = slotKey(identity, side)
-                  if (!validSlots.has(key)) {
-                    diagDrops.push({
-                      v1RowId: img.v1RowId,
-                      associated_name: img.associated_name,
-                      material_option: img.material_option,
-                      side: img.side,
-                      reason: `slot key ${JSON.stringify(key)} not in validSlots ${JSON.stringify([...validSlots])}`,
-                    })
-                    continue
-                  }
+                  if (!validSlots.has(key)) continue
                   ;(carryCellsBySlot[key] ??= []).push(img)
                 }
-                // eslint-disable-next-line no-console
-                console.log('[nvp-carry-diag] carry builder', {
-                  cardType,
-                  sidedness,
-                  shared,
-                  names,
-                  activeCode,
-                  selectedOptions,
-                  availableOptions: availableOptions.map((o) => o.code),
-                  v1ImageCount: v1Carry.images.length,
-                  carriedCount: Object.values(carryCellsBySlot).flat().length,
-                  droppedCount: diagDrops.length,
-                  drops: diagDrops,
-                  validSlots: [...validSlots],
-                })
               }
 
               // Fresh cells keyed by slot. Each ImageEntry carries
