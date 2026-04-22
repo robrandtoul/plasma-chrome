@@ -778,7 +778,6 @@ export default function CustomerProofPage() {
                         <PlateCard
                           key={img.id}
                           image={img}
-                          plateNo={idx + 1}
                           brandColor={BRAND_ORDER[idx % BRAND_ORDER.length]}
                           accent={ACCENT}
                           alt={`Proof version ${activeVersion.version_number}`}
@@ -791,18 +790,21 @@ export default function CustomerProofPage() {
                   {namedGroups.length > 0 && (
                     <div className="space-y-14">
                       {(() => {
-                        // Global plate counter — running across
-                        // groups so plate numbers increment 01 →
-                        // 02 → 03 → 04 in reading order rather
-                        // than resetting per group. Matches the
-                        // spec where the page as a whole has
-                        // N plates, not N plates per name.
-                        let runningIdx = sharedGroup ? sharedGroup.images.length : 0
+                        // Running colour-rotation index across
+                        // all groups in reading order so each
+                        // image on the page gets a distinct
+                        // bullet colour from BRAND_ORDER (red →
+                        // pink → indigo → teal). The per-image
+                        // "Proof NN" numbering that used to ride
+                        // along with this counter was dropped
+                        // when the caption switched to a two-
+                        // line FRONT/BACK + filename layout.
+                        let colorIdx = sharedGroup ? sharedGroup.images.length : 0
                         return namedGroups.map((group) => {
                           const pill =
                             group.heading != null ? approvalPillFor(group.heading) : null
-                          const startIdx = runningIdx
-                          runningIdx += group.images.length
+                          const startIdx = colorIdx
+                          colorIdx += group.images.length
                           return (
                             <div key={group.heading ?? ''}>
                               <div className="mb-5 flex flex-wrap items-baseline justify-between gap-3">
@@ -850,13 +852,12 @@ export default function CustomerProofPage() {
                                 }
                               >
                                 {group.images.map((img, localIdx) => {
-                                  const globalIdx = startIdx + localIdx
+                                  const dotIdx = startIdx + localIdx
                                   return (
                                     <PlateCard
                                       key={img.id}
                                       image={img}
-                                      plateNo={globalIdx + 1}
-                                      brandColor={BRAND_ORDER[globalIdx % BRAND_ORDER.length]}
+                                      brandColor={BRAND_ORDER[dotIdx % BRAND_ORDER.length]}
                                       accent={ACCENT}
                                       alt={`${group.heading} — proof version ${activeVersion.version_number}`}
                                       onClick={setLightboxSrc}
@@ -1256,49 +1257,37 @@ export default function CustomerProofPage() {
   )
 }
 
-// Editorial plate card — single image with a giant ghost
-// number behind it, a technical caption strip below (Plate No ·
-// Side · Download), and the image-caption text from
-// applyCaptions above (e.g. "Front" / "Back" / filename-stem).
-// Ghost number picks up one of the four brand colours in a
-// rotating dot before the "Plate NN" label. Clicking the image
-// opens the lightbox via the parent's onClick handler. Storage
-// download link is keyed on image.signed_url — non-null post-
-// fetch — and the filename falls back to the image id tail
-// when original_filename is missing.
+// Editorial plate card — single image with a two-line caption
+// strip below. Primary line: brand-colour bullet + side label
+// ("Front" / "Back" on two-sided projects, stripped filename
+// stem on one-sided multi-image groups, blank on one-sided
+// single-image groups — applyCaptions stamps image.label with
+// the right value for every case). Secondary line: raw
+// uploaded original_filename (with extension), muted and
+// truncated with a full-name tooltip on hover. Hidden when
+// original_filename is null (pre-migration-000021 legacy
+// rows). Clicking the image opens the lightbox via the
+// parent's onClick handler. Download link uses the real
+// uploaded filename so the customer's downloads folder
+// matches what they saw on the page.
 function PlateCard({
   image,
-  plateNo,
   brandColor,
   accent,
   alt,
   onClick,
 }: {
   image: GridImage
-  plateNo: number
   brandColor: string
   accent: string
   alt: string
   onClick: (src: string) => void
 }) {
   const MONO = "'JetBrains Mono', ui-monospace, monospace"
-  const SERIF = "'Cormorant Garamond', Georgia, serif"
-  const padded = plateNo < 10 ? `0${plateNo}` : String(plateNo)
-  // Caption: applyCaptions on buildImageGroups already stamped
-  // a label ("Front"/"Back"/filename-stem or ""); fall back to
-  // "Proof" so the right column is never empty.
-  const sideLabel = image.label || 'Proof'
   const downloadHref = image.signed_url ?? '#'
-  const downloadName = image.original_filename ?? `proof-${padded}.jpg`
+  const downloadName = image.original_filename ?? 'proof.jpg'
   return (
     <div className="relative">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -left-2 -top-8 select-none leading-none text-[#1a1612]/10"
-        style={{ fontFamily: SERIF, fontSize: 120 }}
-      >
-        {padded}
-      </div>
       <figure className="relative">
         <button
           type="button"
@@ -1318,24 +1307,33 @@ function PlateCard({
             <div className="aspect-[5/3] w-full" style={{ background: '#f4f1ea' }} />
           )}
         </button>
-        <figcaption className="mt-4 flex items-baseline justify-between gap-4 border-t border-[#1a1612]/15 pt-3">
-          <div className="flex flex-wrap items-baseline gap-4">
-            <span
-              className="inline-flex items-center gap-2 uppercase tracking-[0.28em] text-[#1a1612]"
+        {/* Two-line caption — primary side label on top, raw
+            filename on a muted line below, Download button
+            right-aligned opposite. items-start so the button
+            hugs the top of the caption block and lines up with
+            the primary label; min-w-0 + flex-1 on the left so
+            truncate works on the filename line when it's long. */}
+        <figcaption className="mt-4 flex items-start justify-between gap-4 border-t border-[#1a1612]/15 pt-3">
+          <div className="min-w-0 flex-1">
+            <div
+              className="flex items-center gap-2 uppercase tracking-[0.28em] text-[#1a1612]"
               style={{ fontFamily: MONO, fontSize: 10 }}
             >
               <span
-                className="h-[6px] w-[6px] rounded-[1px]"
+                className="h-[6px] w-[6px] shrink-0 rounded-[1px]"
                 style={{ background: brandColor }}
               />
-              Proof {padded}
-            </span>
-            <span
-              className="uppercase tracking-[0.28em] text-[#6b6558]"
-              style={{ fontFamily: MONO, fontSize: 10 }}
-            >
-              {sideLabel}
-            </span>
+              {image.label && <span className="truncate">{image.label}</span>}
+            </div>
+            {image.original_filename && (
+              <div
+                className="mt-1 truncate text-[#1a1612]/50"
+                style={{ fontFamily: MONO, fontSize: 10 }}
+                title={image.original_filename}
+              >
+                {image.original_filename}
+              </div>
+            )}
           </div>
           {image.signed_url && (
             <a
@@ -1344,7 +1342,7 @@ function PlateCard({
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="inline-flex items-center gap-1.5 rounded-full border border-[#1a1612]/25 px-3 py-1 uppercase tracking-[0.22em] text-[#6b6558] transition-colors hover:border-[color:var(--a)] hover:bg-[color:var(--a)] hover:text-white"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#1a1612]/25 px-3 py-1 uppercase tracking-[0.22em] text-[#6b6558] transition-colors hover:border-[color:var(--a)] hover:bg-[color:var(--a)] hover:text-white"
               style={{
                 fontFamily: MONO,
                 fontSize: 10,
