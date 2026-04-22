@@ -69,6 +69,10 @@ interface V1Image {
   original_filename: string | null
   associated_name: string | null   // null = shared
   material_option: string | null   // null = no-option
+  // Null back-compat for pre-migration-000085 data. App-level
+  // back-compat treats null as 'front' in carry-match and
+  // rendering. Post-migration data is strictly 'front' | 'back'.
+  side: 'front' | 'back' | null
 }
 
 // Everything the UI + save path needs to decide carry-forward
@@ -130,6 +134,21 @@ export default function NewVersionPage() {
   // most-recent prior version (if any) on mount — designer still
   // edits freely. Empty list is valid and allowed at submit.
   const [names, setNames] = useState<string[]>([])
+  // ── Shape controls (sidedness + per-side shared toggles) ─────────────────
+  // Drive the slot universe along with names[] and the material's
+  // options. Defaults on v1 creation match the classic Plasma
+  // shape (two-sided business card, shared-front design, per-
+  // person backs). On v2+ creation, the mount effect derives these
+  // from v(N-1)'s images: sidedness from whether any image has
+  // side='back', sharedFront / sharedBack from whether any image
+  // has associated_name=null on the matching side.
+  //
+  // Flipping any of these can invalidate approvals if v(N-1) had
+  // approved images whose slots vanish in the new shape. Handlers
+  // below compute the impact and fire a confirm before applying.
+  const [sidedness, setSidedness] = useState<'one-sided' | 'two-sided'>('two-sided')
+  const [sharedFront, setSharedFront] = useState(true)
+  const [sharedBack, setSharedBack] = useState(false)
   const [changeNotes, setChangeNotes] = useState('')
   const [pricingDisplay, setPricingDisplay] = useState<PricingDisplayValue | null>(null)
   const [availableOptions, setAvailableOptions] = useState<MaterialOption[]>([])
@@ -327,7 +346,7 @@ export default function NewVersionPage() {
         const [imagesResult, approvalsResult] = await Promise.all([
           supabase
             .from('proof_version_images')
-            .select('id, image_path, original_filename, associated_name, material_option, sort_order')
+            .select('id, image_path, original_filename, associated_name, material_option, side, sort_order')
             .eq('proof_version_id', inherited.id)
             .order('sort_order'),
           supabase
@@ -343,6 +362,7 @@ export default function NewVersionPage() {
           original_filename: string | null
           associated_name: string | null
           material_option: string | null
+          side: 'front' | 'back' | null
           sort_order: number
         }[]
 
@@ -358,6 +378,7 @@ export default function NewVersionPage() {
               original_filename: r.original_filename,
               associated_name: r.associated_name,
               material_option: r.material_option,
+              side: r.side,
             }
           }),
         )
@@ -380,6 +401,29 @@ export default function NewVersionPage() {
           approvalsByName,
         })
         setKeepByV1RowId(keepDefaults)
+
+        // Shape inheritance — derived from v(N-1)'s images.
+        // Null side is treated as 'front' for back-compat with
+        // pre-migration-000085 data. With validation enforcing
+        // "every slot has at least one image", derivation
+        // reliably reconstructs the v(N-1) shape.
+        //
+        //   sidedness    — any image has side='back' → two-sided
+        //   sharedFront  — any image has associated_name=null on front
+        //   sharedBack   — any image has associated_name=null on back
+        if (imagesWithUrls.length > 0) {
+          const sideOf = (img: V1Image) => img.side ?? 'front'
+          const hasBack = imagesWithUrls.some((i) => sideOf(i) === 'back')
+          const hasSharedFront = imagesWithUrls.some(
+            (i) => i.associated_name == null && sideOf(i) === 'front',
+          )
+          const hasSharedBack = imagesWithUrls.some(
+            (i) => i.associated_name == null && sideOf(i) === 'back',
+          )
+          setSidedness(hasBack ? 'two-sided' : 'one-sided')
+          setSharedFront(hasSharedFront)
+          setSharedBack(hasSharedBack)
+        }
       }
 
       // Settings defaults — currency default only applies if we
@@ -657,7 +701,7 @@ export default function NewVersionPage() {
   // already exist in v1's storage). First-file-wins for drops
   // isn't enforced here; this accepts all valid files and the
   // caller's caller decides whether to pass 1 or N.
-  function addFilesToSlot(optionCode: string, associated_name: string | null, files: File[]) {
+  function addFilesToSlot(optionCode: string, associated_name: string | null, side: 'front' | 'back', files: File[]) {
     setFileError('')
     setFileNote('')
     if (files.length === 0) return
@@ -705,7 +749,7 @@ export default function NewVersionPage() {
           file,
           preview: URL.createObjectURL(file),
           associated_name,
-          side: null as 'front' | 'back' | null,
+          side: side as 'front' | 'back' | null,
         })),
       ],
     }))
@@ -807,6 +851,91 @@ export default function NewVersionPage() {
     setNames(next)
   }
 
+  // ── Shape toggle handlers ──────────────────────────────────────
+  // Each handler computes which v1 images would become unreachable
+  // under the proposed shape, surfaces a confirm dialog if any of
+  // those images carry an approved v1 approval, then (on proceed)
+  // cleans up replacementByV1RowId entries for the orphaned rows
+  // and revokes their preview URLs. Keep state (keepByV1RowId) is
+  // deliberately preserved — if the designer flips back to the
+  // original shape, carries resurface.
+
+  function cleanupReplacementsFor(orphanedV1Images: V1Image[]) {
+    if (orphanedV1Images.length === 0) return
+    const ids = new Set(orphanedV1Images.map((i) => i.v1RowId))
+    setReplacementByV1RowId((prev) => {
+      const out: typeof prev = {}
+      for (const [k, v] of Object.entries(prev)) {
+        if (ids.has(k)) {
+          URL.revokeObjectURL(v.preview)
+          continue
+        }
+        out[k] = v
+      }
+      return out
+    })
+  }
+
+  function confirmShapeFlip(vanishing: V1Image[]): boolean {
+    if (!v1Carry || vanishing.length === 0) return true
+    const approvedCount = vanishing.filter((i) => {
+      const key = i.associated_name ?? SHARED_APPROVAL_KEY
+      return v1Carry.approvalsByName[key]?.state === 'approved'
+    }).length
+    if (approvedCount === 0) return true
+    return window.confirm(
+      `Flipping this will discard customer approval on ${approvedCount} image${approvedCount === 1 ? '' : 's'}. Continue?`,
+    )
+  }
+
+  function handleSidednessChange(next: 'one-sided' | 'two-sided') {
+    if (next === sidedness) return
+    // Two-sided → one-sided drops every back-side v1 image.
+    // One-sided → two-sided is additive (no v1 back images to
+    // lose, since v(N-1) was one-sided by definition).
+    const vanishing =
+      v1Carry && next === 'one-sided'
+        ? v1Carry.images.filter((i) => (i.side ?? 'front') === 'back')
+        : []
+    if (!confirmShapeFlip(vanishing)) return
+    cleanupReplacementsFor(vanishing)
+    setSidedness(next)
+    // sharedBack always resets on flip — spec explicitly says
+    // don't remember prior value when flipping one→two, and on
+    // two→one the toggle is hidden anyway, so we normalise to
+    // false in both directions to keep state clean.
+    setSharedBack(false)
+  }
+
+  function handleSharedFrontChange(next: boolean) {
+    if (next === sharedFront) return
+    // ON→OFF: shared-front v1 images vanish (replaced by per-name
+    // front slots). OFF→ON: per-name front v1 images vanish
+    // (replaced by a shared-front slot).
+    const vanishing = v1Carry
+      ? v1Carry.images.filter((i) => {
+          if ((i.side ?? 'front') !== 'front') return false
+          return next ? i.associated_name != null : i.associated_name == null
+        })
+      : []
+    if (!confirmShapeFlip(vanishing)) return
+    cleanupReplacementsFor(vanishing)
+    setSharedFront(next)
+  }
+
+  function handleSharedBackChange(next: boolean) {
+    if (next === sharedBack) return
+    const vanishing = v1Carry
+      ? v1Carry.images.filter((i) => {
+          if ((i.side ?? 'front') !== 'back') return false
+          return next ? i.associated_name != null : i.associated_name == null
+        })
+      : []
+    if (!confirmShapeFlip(vanishing)) return
+    cleanupReplacementsFor(vanishing)
+    setSharedBack(next)
+  }
+
   function toggleVariant(variantId: string) {
     setSelectedVariantIds((prev) =>
       prev.includes(variantId) ? prev.filter((id) => id !== variantId) : [...prev, variantId]
@@ -864,28 +993,48 @@ export default function NewVersionPage() {
     // path. Fresh rows (allEntries above) get their own upload
     // paths too.
     //
-    // Belt-and-braces guard: skip rows whose associated_name is no
-    // longer in v2's names[] (and isn't null/Shared). UI already
-    // hides carry cells for removed names, and handleNamesChange
-    // purges replacement state, but this filter catches any edge
-    // where state wasn't cleaned (e.g. rapid add-then-remove, or
-    // any future code path that might leave stale keep/replacement
-    // entries behind).
+    // Belt-and-braces guard: skip rows whose (identity, side) tuple
+    // is no longer in v2's slot universe. UI already hides carry
+    // cells for dead slots, and handleNamesChange / shape toggle
+    // handlers purge replacement state, but this filter catches
+    // any edge where state wasn't cleaned (e.g. rapid toggle
+    // flips, or any future code path that might leave stale
+    // keep/replacement entries behind).
+    //
+    // v2 slot universe by (side, identity):
+    //   * side='back' only valid when sidedness='two-sided'
+    //   * For each valid side, either the Shared slot (assocName=null)
+    //     exists (if that side's sharedXxx toggle is on) OR the
+    //     per-name slots exist (assocName in names[]), never both.
+    // Null-side v1 rows are normalised to 'front' for back-compat.
     const v2Names = new Set(names)
-    const slotStillValid = (assocName: string | null) =>
-      assocName == null || v2Names.has(assocName)
+    const slotStillValid = (
+      assocName: string | null,
+      side: 'front' | 'back' | null,
+    ): boolean => {
+      const normalizedSide: 'front' | 'back' = side ?? 'front'
+      if (normalizedSide === 'back' && sidedness === 'one-sided') return false
+      const isSharedForSide =
+        normalizedSide === 'front' ? sharedFront : sharedBack
+      if (isSharedForSide) return assocName == null
+      return assocName != null && v2Names.has(assocName)
+    }
 
     const carriedV1Rows = v1Carry
       ? v1Carry.images.filter(
           (img) =>
             (keepByV1RowId[img.v1RowId] ?? true) &&
             !replacementByV1RowId[img.v1RowId] &&
-            slotStillValid(img.associated_name),
+            slotStillValid(img.associated_name, img.side),
         )
       : []
     const replacementEntries = v1Carry
       ? v1Carry.images
-          .filter((img) => !!replacementByV1RowId[img.v1RowId] && slotStillValid(img.associated_name))
+          .filter(
+            (img) =>
+              !!replacementByV1RowId[img.v1RowId] &&
+              slotStillValid(img.associated_name, img.side),
+          )
           .map((img) => ({ v1Img: img, file: replacementByV1RowId[img.v1RowId]!.file }))
       : []
 
@@ -988,13 +1137,21 @@ export default function NewVersionPage() {
     // then replacement/fresh in upload-batch order. Precise
     // sort_order for customer-page rendering comes from an integer
     // index into the final array.
+    // Side is stamped from v1's side with null→'front' back-compat
+    // for pre-migration-000085 data. Post-migration every new row
+    // is non-null — designer-facing shape controls guarantee every
+    // slot has an explicit side, and the slotStillValid filter
+    // above will have rejected anything that doesn't fit v2's
+    // shape, so this normalisation is only ever reached for rows
+    // whose v1 side was null and whose slot still exists on the
+    // front side of v2.
     const carriedInserts = carriedV1Rows.map((img) => ({
       proof_version_id: versionData.id,
       image_path: img.file_path,
       material_option: img.material_option,
       original_filename: img.original_filename,
       associated_name: img.associated_name,
-      side: null,
+      side: (img.side ?? 'front') as 'front' | 'back',
     }))
 
     // uploadedPaths is laid out as [replacements..., fresh...];
@@ -1008,7 +1165,10 @@ export default function NewVersionPage() {
       material_option: r.v1Img.material_option,
       original_filename: r.file.name,
       associated_name: r.v1Img.associated_name,
-      side: null,
+      // Replacement inherits the v1 row's slot (same associated_name,
+      // same side). Null-side v1 rows normalise to 'front' — same
+      // back-compat rule as carriedInserts.
+      side: (r.v1Img.side ?? 'front') as 'front' | 'back',
     }))
 
     const freshInserts = allEntries.map(({ entry, option }, i) => ({
@@ -1017,7 +1177,10 @@ export default function NewVersionPage() {
       material_option: option,
       original_filename: entry.file.name,
       associated_name: entry.associated_name,
-      side: entry.side,
+      // addFilesToSlot stamps an explicit 'front' | 'back' from the
+      // slot's coordinate, so side is always non-null here. Fallback
+      // to 'front' is belt-and-braces — never null on new rows.
+      side: (entry.side ?? 'front') as 'front' | 'back',
     }))
 
     const allInserts = [...carriedInserts, ...replacementInserts, ...freshInserts]
@@ -1087,11 +1250,18 @@ export default function NewVersionPage() {
           )
 
           // Identity check — every v1 image must be carried
-          // (keep=true, no replacement). If any v1 image for
-          // this slot was dropped or replaced, the approval
-          // doesn't carry.
+          // (keep=true, no replacement) AND land in a v2 slot
+          // that still exists. A shape flip (e.g. two-sided →
+          // one-sided) can orphan v1 images without the
+          // designer unticking Keep, so slotStillValid is the
+          // authoritative gate. If any v1 image for this slot
+          // was dropped, replaced, or orphaned by shape flip,
+          // the approval doesn't carry.
           const allCarried = v1ImagesForSlot.every(
-            (img) => (keepByV1RowId[img.v1RowId] ?? true) && !replacementByV1RowId[img.v1RowId],
+            (img) =>
+              (keepByV1RowId[img.v1RowId] ?? true) &&
+              !replacementByV1RowId[img.v1RowId] &&
+              slotStillValid(img.associated_name, img.side),
           )
           if (!allCarried) continue
 
@@ -1207,15 +1377,48 @@ export default function NewVersionPage() {
   // Flipping any failing field to valid clears its error highlight live.
   const imagesFinishKeys = optionMode ? selectedOptions : ['']
 
-  // Per-option image count: kept carries + queued replacements +
-  // fresh uploads. Carried rows with keep=false and no replacement
-  // drop on save, so they don't count. Replacements count even
-  // when keep=false (the replacement IS the saved row).
-  function savedImagesInOption(optionCode: string): number {
-    const fresh = (imagesByOption[optionCode] ?? []).length
+  // Slot universe for validation — one tuple per (identity, side)
+  // across the project, shared across every option tab. Mirrors the
+  // render-time slot universe in the image section so validation
+  // agrees with what the designer can see. Empty list = no slots
+  // at all (one-sided + !sharedFront + names=[]); caught by
+  // hasAnySlot below.
+  const sidesForValidation: ('front' | 'back')[] =
+    sidedness === 'two-sided' ? ['front', 'back'] : ['front']
+  const slotTuplesForValidation: {
+    identity: string | null
+    side: 'front' | 'back'
+  }[] = []
+  for (const side of sidesForValidation) {
+    const isSharedForSide =
+      (side === 'front' && sharedFront) || (side === 'back' && sharedBack)
+    if (isSharedForSide) {
+      slotTuplesForValidation.push({ identity: null, side })
+    } else {
+      for (const name of names) slotTuplesForValidation.push({ identity: name, side })
+    }
+  }
+  const hasAnySlot = slotTuplesForValidation.length > 0
+
+  // Count "saved image" at a specific (option, identity, side)
+  // slot: kept carries + queued replacements + fresh uploads, all
+  // filtered to that tuple. Carries with keep=false and no
+  // replacement drop on save, so they don't count. Replacements
+  // count even when keep=false (the replacement IS the saved row).
+  // Null side on a v1 row is normalised to 'front' for back-compat.
+  function savedImagesInSlot(
+    optionCode: string,
+    identity: string | null,
+    side: 'front' | 'back',
+  ): number {
+    const fresh = (imagesByOption[optionCode] ?? []).filter(
+      (e) => e.associated_name === identity && (e.side ?? 'front') === side,
+    ).length
     if (!v1Carry) return fresh
     const carryKeptOrReplaced = v1Carry.images.filter((img) => {
       if ((img.material_option ?? '') !== optionCode) return false
+      if (img.associated_name !== identity) return false
+      if ((img.side ?? 'front') !== side) return false
       const hasRep = !!replacementByV1RowId[img.v1RowId]
       const keep = keepByV1RowId[img.v1RowId] ?? true
       return hasRep || keep
@@ -1223,8 +1426,16 @@ export default function NewVersionPage() {
     return fresh + carryKeptOrReplaced
   }
 
+  const everySlotHasImage =
+    hasAnySlot &&
+    imagesFinishKeys.every((fk) =>
+      slotTuplesForValidation.every(
+        (slot) => savedImagesInSlot(fk, slot.identity, slot.side) > 0,
+      ),
+    )
+
   const validations = {
-    images:         imagesFinishKeys.every(fk => savedImagesInOption(fk) > 0),
+    images:         everySlotHasImage,
     pricingDisplay: pricingDisplay !== null,
     material:       !!selectedMaterialId,
     variant:        !variantRequired || selectedVariantIds.length > 0,
@@ -1234,13 +1445,35 @@ export default function NewVersionPage() {
   const isValid = Object.values(validations).every(Boolean)
   const shouldHighlight = (k: keyof typeof validations) => submitAttempted && !validations[k]
 
-  // Specific images message so the designer knows which finish tab needs attention.
-  const invalidOptionKey = !validations.images
-    ? imagesFinishKeys.find(fk => savedImagesInOption(fk) === 0)
-    : undefined
-  const imagesHint = invalidOptionKey !== undefined && invalidOptionKey !== ''
-    ? `At least one image required for ${availableOptions.find(f => f.code === invalidOptionKey)?.display_name ?? invalidOptionKey}.`
-    : 'At least one proof image required.'
+  // Specific images message. Priority: no-slot universe first
+  // (can't save an empty shape), then the first empty (option,
+  // identity, side) tuple so the designer knows exactly where to
+  // upload.
+  const imagesHint = !hasAnySlot
+    ? 'Add at least one name, or turn on a shared design toggle.'
+    : (() => {
+        for (const fk of imagesFinishKeys) {
+          for (const slot of slotTuplesForValidation) {
+            if (savedImagesInSlot(fk, slot.identity, slot.side) === 0) {
+              const optionLabel =
+                fk === ''
+                  ? ''
+                  : availableOptions.find((f) => f.code === fk)?.display_name ?? fk
+              const identityLabel =
+                slot.identity == null ? 'Shared' : slot.identity
+              const sideLabel =
+                sidedness === 'two-sided'
+                  ? slot.side === 'front'
+                    ? ' front'
+                    : ' back'
+                  : ''
+              const where = optionLabel ? ` on ${optionLabel}` : ''
+              return `Add an image for ${identityLabel}${sideLabel}${where}.`
+            }
+          }
+        }
+        return 'At least one proof image required.'
+      })()
 
   // Preserve previously-entered ink data when switching between "requires
   // per-ink" and optional materials — best-effort, joined/split on commas.
@@ -1513,6 +1746,114 @@ export default function NewVersionPage() {
               </div>
             )}
 
+            {/* Shape controls — sidedness + per-side shared
+                toggles. Together with names[] and the material's
+                options, these drive the slot universe in the
+                image section below. v1 defaults match the classic
+                Plasma shape (two-sided, shared-front design,
+                per-person backs). v2+ inherits from v(N-1)'s
+                images. Flipping any of these can invalidate v1
+                approvals if approved images would become
+                unreachable — the handlers below surface a confirm
+                first. */}
+            <div className="mt-5 space-y-3">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                  Sidedness
+                </label>
+                <fieldset className="inline-flex rounded-xl border border-gray-200 bg-white p-0.5">
+                  <legend className="sr-only">Sidedness</legend>
+                  {(['one-sided', 'two-sided'] as const).map((opt) => {
+                    const selected = sidedness === opt
+                    return (
+                      <label
+                        key={opt}
+                        className={[
+                          'cursor-pointer rounded-lg px-5 py-1.5 text-sm font-semibold transition-colors',
+                          'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
+                          selected ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-900',
+                        ].join(' ')}
+                      >
+                        <input
+                          type="radio"
+                          name="sidedness"
+                          value={opt}
+                          checked={selected}
+                          onChange={() => handleSidednessChange(opt)}
+                          className="sr-only"
+                        />
+                        {opt === 'one-sided' ? 'One-sided' : 'Two-sided'}
+                      </label>
+                    )
+                  })}
+                </fieldset>
+              </div>
+
+              <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <div>
+                  <div className="text-sm font-medium text-gray-700">
+                    Shared front
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {sharedFront
+                      ? 'One front design shared across everyone.'
+                      : 'A separate front per name.'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleSharedFrontChange(!sharedFront)}
+                  role="switch"
+                  aria-checked={sharedFront}
+                  aria-label="Shared front design"
+                  className={[
+                    'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors',
+                    sharedFront ? 'bg-gray-900' : 'bg-gray-200',
+                  ].join(' ')}
+                >
+                  <span
+                    className={[
+                      'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-white transition-transform',
+                      sharedFront ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
+                    ].join(' ')}
+                  />
+                </button>
+              </div>
+
+              {sidedness === 'two-sided' && (
+                <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3">
+                  <div>
+                    <div className="text-sm font-medium text-gray-700">
+                      Shared back
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {sharedBack
+                        ? 'One back design shared across everyone.'
+                        : 'A separate back per name.'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleSharedBackChange(!sharedBack)}
+                    role="switch"
+                    aria-checked={sharedBack}
+                    aria-label="Shared back design"
+                    className={[
+                      'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors',
+                      sharedBack ? 'bg-gray-900' : 'bg-gray-200',
+                    ].join(' ')}
+                  >
+                    <span
+                      className={[
+                        'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-white transition-transform',
+                        sharedBack ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
+                      ].join(' ')}
+                    />
+                  </button>
+                </div>
+              )}
+            </div>
+
             {/* Names on this order — chip input backs the
                 proof_versions.names array. Optional. The DB trigger
                 snapshots the per-currency split-name tooling
@@ -1592,55 +1933,76 @@ export default function NewVersionPage() {
               // settled carries last.
               const activeCode = optionMode ? activeImageOption : ''
 
-              // Slot universe for this tab: Shared-sentinel + each
-              // name in v2's names[]. Carry v1 images for names
-              // common with v2.names[]; drop v1 images for
-              // v2-removed names (nothing to carry into).
-              type SlotKey = string   // name, or SHARED_APPROVAL_KEY
-              const slotKeys: SlotKey[] = [SHARED_APPROVAL_KEY, ...names]
+              // Slot universe: (identity, side) tuples derived
+              // from sidedness + per-side shared toggles + names.
+              // Identity is SHARED_APPROVAL_KEY for shared-side
+              // slots, else a recipient name. Post-migration-000085
+              // v1 images always have side non-null; pre-migration
+              // nulls are treated as 'front' for back-compat.
+              const sides: ('front' | 'back')[] =
+                sidedness === 'two-sided' ? ['front', 'back'] : ['front']
+              type SlotTuple = { identity: string; side: 'front' | 'back' }
+              const slotTuples: SlotTuple[] = []
+              for (const side of sides) {
+                const isSharedForSide =
+                  (side === 'front' && sharedFront) || (side === 'back' && sharedBack)
+                if (isSharedForSide) {
+                  slotTuples.push({ identity: SHARED_APPROVAL_KEY, side })
+                } else {
+                  for (const name of names) slotTuples.push({ identity: name, side })
+                }
+              }
 
-              // Carry cells per slot key, in v1 order.
-              const carryCellsBySlot: Record<string, typeof v1Carry extends null ? never : V1Image[]> = {}
+              const slotKey = (identity: string, side: 'front' | 'back') => `${identity}|${side}`
+
+              // Carry cells keyed by slot. v1 image matches a slot
+              // iff its (identity, side) coordinate matches. v1
+              // images whose name was dropped from v2.names[] —
+              // or whose (identity, side) combo isn't in the new
+              // universe (e.g. removed Alice-back after the
+              // sharedBack toggle flipped) — silently don't render.
+              const validSlots = new Set(slotTuples.map((s) => slotKey(s.identity, s.side)))
+              const carryCellsBySlot: Record<string, V1Image[]> = {}
               if (v1Carry) {
                 for (const img of v1Carry.images) {
                   if ((img.material_option ?? '') !== activeCode) continue
-                  const key = img.associated_name ?? SHARED_APPROVAL_KEY
-                  // Drop cards for names no longer in v2.names[];
-                  // shared always carries through.
-                  if (key !== SHARED_APPROVAL_KEY && !names.includes(key)) continue
+                  const identity = img.associated_name ?? SHARED_APPROVAL_KEY
+                  const side = img.side ?? 'front'
+                  const key = slotKey(identity, side)
+                  if (!validSlots.has(key)) continue
                   ;(carryCellsBySlot[key] ??= []).push(img)
                 }
               }
 
-              // Fresh cells per slot key, in upload order. Reads
-              // from imagesByOption directly (still the canonical
-              // state); derived filter by associated_name per slot.
+              // Fresh cells keyed by slot. Each ImageEntry carries
+              // its (associated_name, side) stamped at drop time,
+              // so the grouping is cheap.
               const freshCellsBySlot: Record<string, ImageEntry[]> = {}
               for (const entry of (imagesByOption[activeCode] ?? [])) {
-                const key = entry.associated_name ?? SHARED_APPROVAL_KEY
+                const identity = entry.associated_name ?? SHARED_APPROVAL_KEY
+                const side = entry.side ?? 'front'
+                const key = slotKey(identity, side)
+                if (!validSlots.has(key)) continue
                 ;(freshCellsBySlot[key] ??= []).push(entry)
               }
 
               // Build an intermediate per-cell representation.
-              // Each cell becomes its own sort entry with a five-
-              // way bucket (see spec), then we sort the flat list.
+              // slotKey is composite now ({identity}|{side}) but
+              // carries identity + side for downstream rendering.
               type Cell =
-                | { kind: 'carry'; img: V1Image; slotKey: string }
-                | { kind: 'fresh'; entry: ImageEntry; slotKey: string }
-                | { kind: 'empty'; slotKey: string }
+                | { kind: 'carry'; img: V1Image; slotKey: string; identity: string; side: 'front' | 'back' }
+                | { kind: 'fresh'; entry: ImageEntry; slotKey: string; identity: string; side: 'front' | 'back' }
+                | { kind: 'empty'; slotKey: string; identity: string; side: 'front' | 'back' }
 
               const cells: Cell[] = []
-              for (const slotKey of slotKeys) {
-                const carries = carryCellsBySlot[slotKey] ?? []
-                const freshes = freshCellsBySlot[slotKey] ?? []
-                for (const img of carries) cells.push({ kind: 'carry', img, slotKey })
-                for (const entry of freshes) cells.push({ kind: 'fresh', entry, slotKey })
-                // An empty slot is rendered only when there are no
-                // cards at all for that slot. Keeps the grid
-                // predictable: one drop target per slot, gone once
-                // the slot has content.
+              for (const tuple of slotTuples) {
+                const key = slotKey(tuple.identity, tuple.side)
+                const carries = carryCellsBySlot[key] ?? []
+                const freshes = freshCellsBySlot[key] ?? []
+                for (const img of carries) cells.push({ kind: 'carry', img, slotKey: key, identity: tuple.identity, side: tuple.side })
+                for (const entry of freshes) cells.push({ kind: 'fresh', entry, slotKey: key, identity: tuple.identity, side: tuple.side })
                 if (carries.length === 0 && freshes.length === 0) {
-                  cells.push({ kind: 'empty', slotKey })
+                  cells.push({ kind: 'empty', slotKey: key, identity: tuple.identity, side: tuple.side })
                 }
               }
 
@@ -1660,19 +2022,26 @@ export default function NewVersionPage() {
                 return 4
               }
 
-              const nameOrderFor = (slotKey: string) =>
-                slotKey === SHARED_APPROVAL_KEY ? -1 : names.indexOf(slotKey)
+              const nameOrderFor = (identity: string) =>
+                identity === SHARED_APPROVAL_KEY ? -1 : names.indexOf(identity)
+              const sideOrderFor = (side: 'front' | 'back') => (side === 'front' ? 0 : 1)
 
+              // Sort precedence: bucket → side (fronts before
+              // backs within a bucket, per spec) → isShared
+              // (Shared before named within the same side) → name
+              // order → original index for stability.
               const sortedCells = cells
                 .map((cell, originalIdx) => ({
                   cell,
                   originalIdx,
                   bucket: stateBucketFor(cell),
-                  isShared: (cell.slotKey === SHARED_APPROVAL_KEY ? 0 : 1) as 0 | 1,
-                  nameOrder: nameOrderFor(cell.slotKey),
+                  sideOrder: sideOrderFor(cell.side),
+                  isShared: (cell.identity === SHARED_APPROVAL_KEY ? 0 : 1) as 0 | 1,
+                  nameOrder: nameOrderFor(cell.identity),
                 }))
                 .sort((a, b) => {
                   if (a.bucket !== b.bucket) return a.bucket - b.bucket
+                  if (a.sideOrder !== b.sideOrder) return a.sideOrder - b.sideOrder
                   if (a.isShared !== b.isShared) return a.isShared - b.isShared
                   if (a.nameOrder !== b.nameOrder) return a.nameOrder - b.nameOrder
                   return a.originalIdx - b.originalIdx
@@ -1703,6 +2072,9 @@ export default function NewVersionPage() {
                 })
               }
 
+              // Side badge shows Front/Back on two-sided projects,
+              // suppressed on one-sided.
+              const sideBadge = sidedness === 'two-sided'
               function renderCell(cell: Cell, showLabel: boolean) {
                 if (cell.kind === 'carry') {
                   const nameKey = cell.img.associated_name ?? SHARED_APPROVAL_KEY
@@ -1714,6 +2086,7 @@ export default function NewVersionPage() {
                       key={`carry-${cell.img.v1RowId}`}
                       img={cell.img}
                       nameLabel={showLabel ? cell.img.associated_name : undefined}
+                      sideLabel={sideBadge ? cell.side : null}
                       approval={approval}
                       v1VersionNumber={v1Carry?.versionNumber ?? 0}
                       keep={keep}
@@ -1726,23 +2099,25 @@ export default function NewVersionPage() {
                   )
                 }
                 if (cell.kind === 'fresh') {
-                  const slotName = cell.slotKey === SHARED_APPROVAL_KEY ? null : cell.slotKey
+                  const slotName = cell.identity === SHARED_APPROVAL_KEY ? null : cell.identity
                   return (
                     <FreshImageCard
                       key={`fresh-${cell.entry.localId}`}
                       entry={cell.entry}
                       nameLabel={showLabel ? slotName : undefined}
+                      sideLabel={sideBadge ? cell.side : null}
                       onRemove={() => removeImage(cell.entry.localId)}
                     />
                   )
                 }
                 // empty
-                const slotName = cell.slotKey === SHARED_APPROVAL_KEY ? null : cell.slotKey
+                const slotName = cell.identity === SHARED_APPROVAL_KEY ? null : cell.identity
                 return (
                   <EmptySlot
                     key={`empty-${cell.slotKey}-${activeCode}`}
                     nameLabel={showLabel ? slotName : undefined}
-                    onFiles={(files) => addFilesToSlot(activeCode, slotName, files)}
+                    sideLabel={sideBadge ? cell.side : null}
+                    onFiles={(files) => addFilesToSlot(activeCode, slotName, cell.side, files)}
                   />
                 )
               }
@@ -1950,6 +2325,7 @@ const selectClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm 
 function CarryCard({
   img,
   nameLabel,
+  sideLabel,
   approval,
   v1VersionNumber,
   keep,
@@ -1963,6 +2339,9 @@ function CarryCard({
   // null => Shared; string => named recipient; undefined =>
   // hide the label row entirely (first-cell-in-slot rule).
   nameLabel: string | null | undefined
+  // 'front' | 'back' renders a side badge; null suppresses it
+  // (one-sided projects).
+  sideLabel: 'front' | 'back' | null
   // v1's approval for this card's slot. Drives the inline pill
   // above the thumbnail (amber for changes_requested; emerald
   // signal is on the card chrome itself).
@@ -2043,23 +2422,30 @@ function CarryCard({
           truncates.
           nameLabel === undefined hides the entire row for repeat
           cells in the same slot (first-cell-in-slot label rule). */}
-      {nameLabel !== undefined && (
+      {(nameLabel !== undefined || sideLabel != null) && (
         <div
           className={[
             'mb-2 flex items-center gap-2 transition-opacity',
             showGhosted ? 'opacity-40' : '',
           ].join(' ')}
         >
-          {nameLabel == null ? (
-            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
-              Shared
-            </span>
-          ) : (
-            <span
-              className="truncate text-sm font-medium text-gray-700"
-              title={nameLabel}
-            >
-              {nameLabel}
+          {nameLabel !== undefined && (
+            nameLabel == null ? (
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+                Shared
+              </span>
+            ) : (
+              <span
+                className="truncate text-sm font-medium text-gray-700"
+                title={nameLabel}
+              >
+                {nameLabel}
+              </span>
+            )
+          )}
+          {sideLabel != null && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600">
+              {sideLabel === 'front' ? 'Front' : 'Back'}
             </span>
           )}
           {approval?.state === 'changes_requested' && (
@@ -2160,26 +2546,35 @@ function CarryCard({
 function FreshImageCard({
   entry,
   nameLabel,
+  sideLabel,
   onRemove,
 }: {
   entry: ImageEntry
   nameLabel: string | null | undefined
+  sideLabel: 'front' | 'back' | null
   onRemove: () => void
 }) {
   return (
     <div className="rounded-xl bg-gray-50 p-2.5 ring-1 ring-gray-200 transition-all">
-      {nameLabel !== undefined && (
+      {(nameLabel !== undefined || sideLabel != null) && (
         <div className="mb-2 flex items-center gap-2">
-          {nameLabel == null ? (
-            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
-              Shared
-            </span>
-          ) : (
-            <span
-              className="truncate text-sm font-medium text-gray-700"
-              title={nameLabel}
-            >
-              {nameLabel}
+          {nameLabel !== undefined && (
+            nameLabel == null ? (
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+                Shared
+              </span>
+            ) : (
+              <span
+                className="truncate text-sm font-medium text-gray-700"
+                title={nameLabel}
+              >
+                {nameLabel}
+              </span>
+            )
+          )}
+          {sideLabel != null && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600">
+              {sideLabel === 'front' ? 'Front' : 'Back'}
             </span>
           )}
         </div>
@@ -2214,9 +2609,11 @@ function FreshImageCard({
 // the main grid's sort.
 function EmptySlot({
   nameLabel,
+  sideLabel,
   onFiles,
 }: {
   nameLabel: string | null | undefined
+  sideLabel: 'front' | 'back' | null
   onFiles: (files: File[]) => void
 }) {
   const [dragOver, setDragOver] = useState(false)
@@ -2253,18 +2650,25 @@ function EmptySlot({
           : 'border-gray-200 bg-gray-50/50 hover:border-gray-300 hover:bg-gray-50',
       ].join(' ')}
     >
-      {nameLabel !== undefined && (
+      {(nameLabel !== undefined || sideLabel != null) && (
         <div className="mb-2 flex items-center gap-2">
-          {nameLabel == null ? (
-            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
-              Shared
-            </span>
-          ) : (
-            <span
-              className="truncate text-sm font-medium text-gray-700"
-              title={nameLabel}
-            >
-              {nameLabel}
+          {nameLabel !== undefined && (
+            nameLabel == null ? (
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+                Shared
+              </span>
+            ) : (
+              <span
+                className="truncate text-sm font-medium text-gray-700"
+                title={nameLabel}
+              >
+                {nameLabel}
+              </span>
+            )
+          )}
+          {sideLabel != null && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600">
+              {sideLabel === 'front' ? 'Front' : 'Back'}
             </span>
           )}
         </div>

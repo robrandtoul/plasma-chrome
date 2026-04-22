@@ -630,6 +630,12 @@ function formatNamesList(names: string[]): string {
 //       side present    → "Front" or "Back"
 //       side null, ≥ 2 images in group → original filename stem
 //       side null, 1 image in group    → blank (no label row)
+//   * Side labels suppressed entirely when the project is one-
+//     sided (i.e. no image in the set has side='back'). In that
+//     case every image has side='front' (post-migration-000085)
+//     or side=null (legacy data), and "Front" captions would be
+//     redundant — the customer only ever sees one side, so
+//     labelling it would just add noise.
 //
 // The ImageCard / Caption components read each image's `label`
 // field, so the caption rule is applied by rewriting `label`
@@ -664,12 +670,18 @@ function buildImageGroups(images: GridImage[]): ImageGroup[] {
   shared.sort(sideSort)
   for (const arr of namedByKey.values()) arr.sort(sideSort)
 
+  // One-sided detection is global across the whole image set, not
+  // per-group, so a named group containing only front images
+  // doesn't swallow the Front/Back labels of a second group with
+  // both sides. The flag drives applyCaptions below.
+  const isOneSided = !images.some((img) => img.side === 'back')
+
   const applyCaptions = (group: GridImage[]): GridImage[] => {
     const single = group.length === 1
     return group.map((img) => {
       let label = ''
-      if (img.side === 'front') label = 'Front'
-      else if (img.side === 'back') label = 'Back'
+      if (!isOneSided && img.side === 'front') label = 'Front'
+      else if (!isOneSided && img.side === 'back') label = 'Back'
       else if (!single && img.original_filename) {
         label = img.original_filename.replace(/\.[^.]*$/, '')
       }
