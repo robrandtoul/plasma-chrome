@@ -1862,15 +1862,20 @@ export default function NewVersionPage() {
                 </fieldset>
               </div>
 
-              {/* Shared only renders on two-sided projects.
-                  One-sided is always fully per-name so there's
-                  nothing meaningful for Shared to toggle —
-                  removing from the DOM rather than disabling
-                  keeps the form visually simpler. Sub-text
-                  describes the effect rather than a state, since
-                  "shared" on its own is ambiguous about which
-                  side gets shared. */}
-              {sidedness === 'two-sided' && (
+              {/* Shared only renders on two-sided projects with
+                  ≥2 names. One-sided is always fully per-name so
+                  there's nothing meaningful for Shared to toggle.
+                  With a single name the "shared across all cards
+                  vs personalised per name" distinction collapses —
+                  there's only one card. Removing from the DOM
+                  rather than disabling keeps the form visually
+                  simpler. Sub-text describes the effect rather
+                  than a state, since "shared" on its own is
+                  ambiguous about which side gets shared.
+                  State is NOT auto-reset when names drops below
+                  2; re-adding a chip restores the toggle with
+                  its prior value. */}
+              {sidedness === 'two-sided' && names.length >= 2 && (
                 <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3">
                   <div>
                     <div className="text-sm font-medium text-gray-700">
