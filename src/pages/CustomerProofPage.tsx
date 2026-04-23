@@ -1245,7 +1245,16 @@ export default function CustomerProofPage() {
                           alt={`${activeVersion.material_display} swatch`}
                           className="h-56 w-56 object-contain sm:h-80 sm:w-80"
                           style={{
-                            filter: `drop-shadow(0 40px 60px ${ACCENT_GLOW})`,
+                            // Neutral greyscale shadow — reads as
+                            // "image resting on the page" rather
+                            // than carrying a brand glow. Same
+                            // offset + blur as the previous
+                            // ACCENT_GLOW version; only the tint
+                            // swaps out. Fallback gradient sphere
+                            // (below) keeps its ACCENT-tinted
+                            // shadow because it's a decorative
+                            // placeholder, not a product image.
+                            filter: 'drop-shadow(0 40px 60px rgba(0,0,0,0.28))',
                           }}
                         />
                       ) : (
