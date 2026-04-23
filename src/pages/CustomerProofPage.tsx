@@ -1980,11 +1980,19 @@ function RevisionsCoachmark({
     // lets any style recalc settle), then again when fonts
     // finish loading (serif metrics change dot spacing at
     // font-swap moment).
+    //
+    // raf2 lives in the outer closure so the rAF1 callback
+    // can assign to it without needing to hang a property
+    // off the rAF1 number primitive (which throws TypeError
+    // in strict mode and silently kills the whole pipeline
+    // on mount — the symptom was the coachmark never
+    // rendering because setLayout never committed).
+    let raf1: number | null = null
+    let raf2: number | null = null
     measure()
-    const raf1 = requestAnimationFrame(() => {
+    raf1 = requestAnimationFrame(() => {
       measure()
-      const raf2 = requestAnimationFrame(measure)
-      ;(raf1 as unknown as { _raf2?: number })._raf2 = raf2
+      raf2 = requestAnimationFrame(measure)
     })
     if (typeof document !== 'undefined' && document.fonts?.ready) {
       document.fonts.ready.then(measure).catch(() => {
@@ -1999,11 +2007,22 @@ function RevisionsCoachmark({
     const onWindowResize = () => measure()
     window.addEventListener('resize', onWindowResize)
 
+    // Belt-and-braces: when the timeline swaps from its
+    // placeholder h-7 div to the real rail (after its own
+    // useLayoutEffect flips width from null to a number),
+    // the rAF chain should catch it — but a MutationObserver
+    // on the parent's subtree gives us a direct signal on
+    // the exact commit that adds the active-dot button, so
+    // the coachmark always measures against real DOM rather
+    // than racing a state update.
+    const mo = new MutationObserver(() => measure())
+    mo.observe(parent, { childList: true, subtree: true })
+
     return () => {
-      cancelAnimationFrame(raf1)
-      const raf2 = (raf1 as unknown as { _raf2?: number })._raf2
-      if (typeof raf2 === 'number') cancelAnimationFrame(raf2)
+      if (raf1 != null) cancelAnimationFrame(raf1)
+      if (raf2 != null) cancelAnimationFrame(raf2)
       ro.disconnect()
+      mo.disconnect()
       window.removeEventListener('resize', onWindowResize)
     }
   }, [parentRef, activeVersionNumber])
