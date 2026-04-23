@@ -563,8 +563,22 @@ export default function CustomerProofPage() {
                   // pill and leave the | separator orphaned.
                   // At sm+ the layout returns to the original
                   // single-row pattern verbatim.
+                  //
+                  // Mobile also swaps the shape tokens:
+                  //   * rounded-3xl (24px) instead of the
+                  //     desktop's rounded-full semicircle —
+                  //     straightens the pill's top/bottom
+                  //     edges so the stacked content isn't
+                  //     fighting a tight curve.
+                  //   * pl-4 pr-6 instead of the desktop's
+                  //     tight pl-2 pr-5 — gives the tick
+                  //     circle and the end of the secondary
+                  //     text real breathing room from the
+                  //     inner edges. Desktop padding stays
+                  //     asymmetric because the dot sits flush
+                  //     against the semicircle's curve.
                   <div
-                    className="inline-flex flex-col items-start gap-2 rounded-full py-2 pl-2 pr-5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4"
+                    className="inline-flex flex-col items-start gap-2 rounded-3xl py-2 pl-4 pr-6 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4 sm:rounded-full sm:pl-2 sm:pr-5"
                     style={{
                       background: tone.bg,
                       border: `1px solid ${tone.border}`,
