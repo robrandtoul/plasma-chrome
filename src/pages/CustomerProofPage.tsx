@@ -1475,7 +1475,7 @@ export default function CustomerProofPage() {
               className="uppercase tracking-[0.22em] text-white/45"
               style={{ fontFamily: MONO, fontSize: 12 }}
             >
-              © Plasma Design
+              © PlasmaDesign
             </span>
           </div>
           {/* Proof ref · version — drops either piece when its
