@@ -556,43 +556,62 @@ export default function CustomerProofPage() {
                       divider: 'rgba(125,211,252,0.3)',
                     }
                 return (
+                  // Stacks vertically at narrow viewports —
+                  // dot + label cluster on one row, secondary
+                  // text on the next — so the secondary text
+                  // doesn't wrap awkwardly inside a single-row
+                  // pill and leave the | separator orphaned.
+                  // At sm+ the layout returns to the original
+                  // single-row pattern verbatim.
                   <div
-                    className="inline-flex flex-wrap items-center gap-4 rounded-full py-2 pl-2 pr-5"
+                    className="inline-flex flex-col items-start gap-2 rounded-full py-2 pl-2 pr-5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4"
                     style={{
                       background: tone.bg,
                       border: `1px solid ${tone.border}`,
                       boxShadow: tone.glow,
                     }}
                   >
+                    {/* Dot + label cluster — always stays
+                        inline regardless of viewport so the
+                        mobile stacked shape is a clean 2-row
+                        layout rather than dot / label / text
+                        on three separate rows. */}
+                    <div className="flex items-center gap-4">
+                      <span
+                        aria-hidden
+                        className="grid h-7 w-7 shrink-0 place-items-center rounded-full"
+                        style={{ background: tone.dotBg, boxShadow: tone.dotGlow }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                          <path
+                            d="M3 7L6 10L11 4"
+                            stroke="white"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </span>
+                      <span
+                        className="uppercase"
+                        style={{
+                          fontFamily: MONO,
+                          fontSize: 12,
+                          color: tone.label,
+                          letterSpacing: '0.3em',
+                        }}
+                      >
+                        {isApprovedKind ? 'Approved' : 'Partially approved'}
+                      </span>
+                    </div>
+                    {/* Divider — only meaningful between
+                        adjacent inline items on the desktop
+                        row. Hidden (display:none) on mobile so
+                        it both disappears visually and drops
+                        out of the flex layout (no ghost gap). */}
                     <span
                       aria-hidden
-                      className="grid h-7 w-7 shrink-0 place-items-center rounded-full"
-                      style={{ background: tone.dotBg, boxShadow: tone.dotGlow }}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                        <path
-                          d="M3 7L6 10L11 4"
-                          stroke="white"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </span>
-                    <span
-                      className="uppercase"
-                      style={{
-                        fontFamily: MONO,
-                        fontSize: 12,
-                        color: tone.label,
-                        letterSpacing: '0.3em',
-                      }}
-                    >
-                      {isApprovedKind ? 'Approved' : 'Partially approved'}
-                    </span>
-                    <span
-                      aria-hidden
-                      className="h-4 w-px shrink-0"
+                      className="hidden h-4 w-px shrink-0 sm:inline-block"
                       style={{ background: tone.divider }}
                     />
                     <span
