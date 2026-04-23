@@ -506,83 +506,100 @@ export default function CustomerProofPage() {
               customer sees on landing — replaces the old
               between-masthead-and-hero banner. */}
           <div className="mx-auto max-w-[1040px] px-6 py-20 sm:px-8">
-            {heroApprovalStrip && activeVersion && (() => {
-              const total = versionImages[activeVersion.id]?.length ?? 0
-              const isApprovedKind = heroApprovalStrip.kind === 'approved'
-              // Colour tokens for the chip. Green for full
-              // approval, sky-blue for the carry-forward
-              // partial state — same palette the old banner
-              // used, now in one unified chip pattern.
-              const tone = isApprovedKind
-                ? {
-                    bg: 'rgba(74,222,128,0.1)',
-                    border: 'rgba(74,222,128,0.4)',
-                    glow: '0 0 32px rgba(74,222,128,0.18)',
-                    dotBg: APPROVED_GREEN,
-                    dotGlow: '0 0 14px rgba(74,222,128,0.5)',
-                    label: APPROVED_GREEN,
-                    divider: 'rgba(74,222,128,0.3)',
-                  }
-                : {
-                    bg: 'rgba(125,211,252,0.1)',
-                    border: 'rgba(125,211,252,0.4)',
-                    glow: '0 0 32px rgba(125,211,252,0.18)',
-                    dotBg: '#7dd3fc',
-                    dotGlow: '0 0 14px rgba(125,211,252,0.5)',
-                    label: '#7dd3fc',
-                    divider: 'rgba(125,211,252,0.3)',
-                  }
-              return (
-                <div
-                  className="mb-10 inline-flex flex-wrap items-center gap-4 rounded-full py-2 pl-2 pr-5"
-                  style={{
-                    background: tone.bg,
-                    border: `1px solid ${tone.border}`,
-                    boxShadow: tone.glow,
-                  }}
-                >
-                  <span
-                    aria-hidden
-                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full"
-                    style={{ background: tone.dotBg, boxShadow: tone.dotGlow }}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                      <path
-                        d="M3 7L6 10L11 4"
-                        stroke="white"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </span>
-                  <span
-                    className="uppercase"
+            {/* Approval-chip slot — always rendered as a
+                fixed-height wrapper regardless of approval
+                state, so switching versions via the revisions
+                timeline (approved ↔ unapproved) doesn't shift
+                the "Proofs for" eyebrow + customer name up and
+                down. min-h-11 (44px) matches the chip's
+                rendered height: h-7 dot (28px) + py-2 vertical
+                padding (16px). mb-10 lives on the wrapper so
+                the gap to the eyebrow is constant whether the
+                chip is present or not. When the chip wraps
+                to a second line on very narrow viewports the
+                wrapper expands via min-height (not max-) —
+                a wrap-vs-no-wrap jump can still occur at that
+                edge, but the approved ↔ unapproved jump at
+                the same viewport is eliminated. */}
+            <div className="mb-10 min-h-11">
+              {heroApprovalStrip && activeVersion && (() => {
+                const total = versionImages[activeVersion.id]?.length ?? 0
+                const isApprovedKind = heroApprovalStrip.kind === 'approved'
+                // Colour tokens for the chip. Green for full
+                // approval, sky-blue for the carry-forward
+                // partial state — same palette the old banner
+                // used, now in one unified chip pattern.
+                const tone = isApprovedKind
+                  ? {
+                      bg: 'rgba(74,222,128,0.1)',
+                      border: 'rgba(74,222,128,0.4)',
+                      glow: '0 0 32px rgba(74,222,128,0.18)',
+                      dotBg: APPROVED_GREEN,
+                      dotGlow: '0 0 14px rgba(74,222,128,0.5)',
+                      label: APPROVED_GREEN,
+                      divider: 'rgba(74,222,128,0.3)',
+                    }
+                  : {
+                      bg: 'rgba(125,211,252,0.1)',
+                      border: 'rgba(125,211,252,0.4)',
+                      glow: '0 0 32px rgba(125,211,252,0.18)',
+                      dotBg: '#7dd3fc',
+                      dotGlow: '0 0 14px rgba(125,211,252,0.5)',
+                      label: '#7dd3fc',
+                      divider: 'rgba(125,211,252,0.3)',
+                    }
+                return (
+                  <div
+                    className="inline-flex flex-wrap items-center gap-4 rounded-full py-2 pl-2 pr-5"
                     style={{
-                      fontFamily: MONO,
-                      fontSize: 12,
-                      color: tone.label,
-                      letterSpacing: '0.3em',
+                      background: tone.bg,
+                      border: `1px solid ${tone.border}`,
+                      boxShadow: tone.glow,
                     }}
                   >
-                    {isApprovedKind ? 'Approved' : 'Partially approved'}
-                  </span>
-                  <span
-                    aria-hidden
-                    className="h-4 w-px shrink-0"
-                    style={{ background: tone.divider }}
-                  />
-                  <span
-                    className="text-white/75"
-                    style={{ fontFamily: MONO, fontSize: 12 }}
-                  >
-                    {isApprovedKind
-                      ? `Signed off ${heroApprovalStrip.dateLabel ?? 'today'} · ${total} / ${total} proof${total === 1 ? '' : 's'}`
-                      : 'Some proofs already signed off, others awaiting review'}
-                  </span>
-                </div>
-              )
-            })()}
+                    <span
+                      aria-hidden
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-full"
+                      style={{ background: tone.dotBg, boxShadow: tone.dotGlow }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <path
+                          d="M3 7L6 10L11 4"
+                          stroke="white"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </span>
+                    <span
+                      className="uppercase"
+                      style={{
+                        fontFamily: MONO,
+                        fontSize: 12,
+                        color: tone.label,
+                        letterSpacing: '0.3em',
+                      }}
+                    >
+                      {isApprovedKind ? 'Approved' : 'Partially approved'}
+                    </span>
+                    <span
+                      aria-hidden
+                      className="h-4 w-px shrink-0"
+                      style={{ background: tone.divider }}
+                    />
+                    <span
+                      className="text-white/75"
+                      style={{ fontFamily: MONO, fontSize: 12 }}
+                    >
+                      {isApprovedKind
+                        ? `Signed off ${heroApprovalStrip.dateLabel ?? 'today'} · ${total} / ${total} proof${total === 1 ? '' : 's'}`
+                        : 'Some proofs already signed off, others awaiting review'}
+                    </span>
+                  </div>
+                )
+              })()}
+            </div>
             <p
               className="uppercase tracking-[0.24em] text-white/45"
               style={{ fontFamily: MONO, fontSize: 12 }}
