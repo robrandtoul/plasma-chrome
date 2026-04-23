@@ -408,22 +408,18 @@ export default function CustomerProofPage() {
       {/* ───── Top: deep ink hero ─────
           Masthead (logo + brand rule) → approval strip →
           editorial hero (customer name + facts) → Revisions
-          tabs + option switcher. Dual-glow backdrop with a low-
-          opacity 4-colour conic gradient on the opposite side —
-          adds a chromatic hint of the brand palette behind the
-          material glow without going garish. */}
+          tabs + option switcher. Flat ink backdrop with a
+          subtle top-down gradient easing from a slightly
+          warmer near-black (#1b1725) at the top into INK at
+          the bottom. Calmer than the earlier dual-glow /
+          conic-brand treatment; lets the hero typography
+          carry the section without chromatic noise behind
+          it. */}
       <div className="relative overflow-hidden text-white" style={{ background: INK }}>
         <div
           aria-hidden
-          className="pointer-events-none absolute -top-40 right-[-120px] h-[520px] w-[520px] rounded-full blur-[120px]"
-          style={{ background: ACCENT_GLOW }}
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -top-52 left-[-160px] h-[480px] w-[480px] rounded-full blur-[140px] opacity-30"
-          style={{
-            background: `conic-gradient(from 210deg, ${BRAND_ORDER[0]}, ${BRAND_ORDER[1]}, ${BRAND_ORDER[2]}, ${BRAND_ORDER[3]}, ${BRAND_ORDER[0]})`,
-          }}
+          className="pointer-events-none absolute inset-0"
+          style={{ background: `linear-gradient(180deg, #1b1725 0%, ${INK} 100%)` }}
         />
         <div className="relative">
 
