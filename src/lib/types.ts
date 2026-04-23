@@ -66,6 +66,14 @@ export interface PublicProofVersion {
   created_at: string
   material_options: string[]
   featured_quantities: number[]
+  // ── Expanded-set quantities (migration 000093/094) ───────────────────────
+  // Curated "show more" reveal set on the customer pricing
+  // table. Null when the material hasn't been curated yet —
+  // customer page falls back to the first 10 tiers ascending
+  // from the version's pricing snapshot in that case. The
+  // default 5-row view still comes from featured_quantities
+  // above; these two columns are independent.
+  expanded_quantities: number[] | null
   material_disclaimer: string | null
   /** Paragraph-style text shown in the customer-facing "About [Material]" block. */
   material_description: string | null

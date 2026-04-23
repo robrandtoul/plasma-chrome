@@ -7,7 +7,7 @@ import { formatPrice } from '../lib/currency'
 import { type GridImage } from '../components/ImageGrid'
 import { logCustomerEvent } from '../lib/audit'
 import { getPublicSettings, type PublicSettings } from '../lib/publicSettings'
-import type { PricingSnapshot, Currency } from '../lib/types'
+import type { PricingSnapshot, PricingVariant, Currency } from '../lib/types'
 
 const SIGNED_URL_TTL = 60 * 60 * 24 // 24 hours
 
@@ -1284,6 +1284,7 @@ export default function CustomerProofPage() {
                   snapshot={activeVersion.pricing_snapshot}
                   currency={activeVersion.currency}
                   featuredQuantities={activeVersion.featured_quantities}
+                  expandedQuantities={activeVersion.expanded_quantities}
                   quantitySurcharges={quantitySurcharges}
                   accent={ACCENT}
                   accentGlow={ACCENT_GLOW}
@@ -2645,10 +2646,30 @@ function InkSpecRow({ label, value }: { label: string; value: string }) {
 // customer proofs in practice); single-variant — the common
 // case and the one the design mocks — gets the editorial
 // treatment.
+//
+// Row-set logic (post-000093/094):
+//   * defaultQuantities — the 5-row default view (featured
+//     filter intersected with the snapshot's available tiers).
+//     Edge case: if that intersection is empty (thin-tier
+//     material where none of the featured qtys exist on the
+//     snapshot), fall through to the snapshot's full tier set
+//     so the table never renders zero rows.
+//   * expandedSet — what "show more" reveals. If the material
+//     has expanded_quantities curated, intersect with snapshot
+//     and use that. Else fall back to the first 10 tiers
+//     ascending from the snapshot. Never the full 40-row dump.
+//   * lookupSet — the full snapshot tier list, in ascending
+//     order. Fed only to the QuantityLookup below; the table
+//     itself never shows it.
+// "Show more" button hides when expanded equals default
+// (nothing new to reveal).
+const EXPANDED_FALLBACK_CAP = 10
+
 function InkPricingTable({
   snapshot,
   currency,
   featuredQuantities,
+  expandedQuantities,
   quantitySurcharges,
   accent,
   accentGlow,
@@ -2658,6 +2679,7 @@ function InkPricingTable({
   snapshot: PricingSnapshot
   currency: Currency
   featuredQuantities: number[]
+  expandedQuantities: number[] | null
   quantitySurcharges: Record<number, number>
   accent: string
   accentGlow: string
@@ -2668,20 +2690,46 @@ function InkPricingTable({
   const { variants } = snapshot
   if (!variants?.length) return null
 
-  const allQuantities = [
+  const lookupSet = [
     ...new Set(variants.flatMap((v) => Object.keys(v.prices).map(Number))),
   ].sort((a, b) => a - b)
-  const featured = new Set(featuredQuantities)
-  const visibleQuantities = showAll
-    ? allQuantities
-    : allQuantities.filter((q) => featured.has(q))
-  const hiddenCount = allQuantities.length - allQuantities.filter((q) => featured.has(q)).length
-  const showToggle = hiddenCount > 0
+  const snapshotSet = new Set(lookupSet)
+
+  // Default view — featured_quantities filtered to what the
+  // snapshot actually has prices for. Thin-tier fallback to
+  // the full set so we never render an empty table.
+  const featuredFiltered = lookupSet.filter((q) => featuredQuantities.includes(q))
+  const defaultQuantities = featuredFiltered.length > 0 ? featuredFiltered : lookupSet
+
+  // Expanded view — curated list if present and intersects with
+  // the snapshot, otherwise the first 10 tiers ascending from
+  // the snapshot. Cap is a ceiling, not a floor: shorter
+  // snapshots give shorter expanded sets.
+  const expandedFromCurated = expandedQuantities
+    ? expandedQuantities.filter((q) => snapshotSet.has(q)).sort((a, b) => a - b)
+    : []
+  const expandedSet =
+    expandedFromCurated.length > 0
+      ? expandedFromCurated
+      : lookupSet.slice(0, EXPANDED_FALLBACK_CAP)
+
+  // Hide the toggle when the expanded set adds nothing beyond
+  // the default view. Same-length + same-contents check; order
+  // is guaranteed ascending on both.
+  const expandedMatchesDefault =
+    expandedSet.length === defaultQuantities.length &&
+    expandedSet.every((q, i) => q === defaultQuantities[i])
+  const showToggle = !expandedMatchesDefault
+
+  const visibleQuantities = showAll ? expandedSet : defaultQuantities
 
   // Single-variant path — the design mock's shape. Multi-
   // variant proofs (rare: thickness + ink count variants in
   // the same material) fall through to a compact per-variant
-  // list below.
+  // list below. Single-variant path also gets the quantity
+  // lookup appended underneath; the multi-variant grid isn't
+  // shaped for the inline lookup result, so the lookup is
+  // hidden there per the ship decision.
   if (variants.length === 1) {
     const variant = variants[0]
     const rows = visibleQuantities
@@ -2692,78 +2740,88 @@ function InkPricingTable({
       }))
     if (rows.length === 0) return null
     return (
-      <table className="w-full border-collapse">
-        <thead>
-          <tr className="border-b border-white/15">
-            <th
-              className="py-4 text-left uppercase tracking-[0.22em] text-white/45"
-              style={{ fontFamily: mono, fontSize: 12 }}
-            >
-              Total quantity
-            </th>
-            <th
-              className="py-4 text-right uppercase tracking-[0.22em] text-white/45"
-              style={{ fontFamily: mono, fontSize: 12 }}
-            >
-              Price
-            </th>
-            <th
-              className="py-4 text-right uppercase tracking-[0.22em] text-white/45"
-              style={{ fontFamily: mono, fontSize: 12 }}
-            >
-              Per card
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(({ qty, price }) => (
-            <tr
-              key={qty}
-              className="border-b"
-              style={{ borderColor: 'rgba(255,255,255,0.08)' }}
-            >
-              <td
-                className="py-5 leading-none text-white"
-                style={{ fontFamily: serif, fontWeight: 400, fontSize: 28 }}
+      <>
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="border-b border-white/15">
+              <th
+                className="py-4 text-left uppercase tracking-[0.22em] text-white/45"
+                style={{ fontFamily: mono, fontSize: 12 }}
               >
-                {qty.toLocaleString()}
-              </td>
-              <td
-                className="py-5 text-right text-white"
-                style={{ fontFamily: mono, fontSize: 16 }}
+                Total quantity
+              </th>
+              <th
+                className="py-4 text-right uppercase tracking-[0.22em] text-white/45"
+                style={{ fontFamily: mono, fontSize: 12 }}
               >
-                {formatPrice(price, currency)}
-              </td>
-              <td
-                className="py-5 text-right text-white/50"
-                style={{ fontFamily: mono, fontSize: 13 }}
+                Price
+              </th>
+              <th
+                className="py-4 text-right uppercase tracking-[0.22em] text-white/45"
+                style={{ fontFamily: mono, fontSize: 12 }}
               >
-                {formatPrice(price / qty, currency, 2)}
-              </td>
+                Per card
+              </th>
             </tr>
-          ))}
-          {showToggle && (
-            <tr>
-              <td colSpan={3} className="pt-4 text-center">
-                <button
-                  type="button"
-                  aria-expanded={showAll}
-                  onClick={() => setShowAll((v) => !v)}
-                  className="inline-flex items-center gap-2 rounded-full px-5 py-2 uppercase tracking-[0.22em] text-white transition-all hover:brightness-110"
-                  style={{
-                    fontFamily: mono,
-                    fontSize: 12,
-                    background: accent,
-                    boxShadow: `0 0 24px ${accentGlow}`,
-                  }}
+          </thead>
+          <tbody>
+            {rows.map(({ qty, price }) => (
+              <tr
+                key={qty}
+                className="border-b"
+                style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+              >
+                <td
+                  className="py-5 leading-none text-white"
+                  style={{ fontFamily: serif, fontWeight: 400, fontSize: 28 }}
                 >
-                  {showAll ? 'Show fewer quantities ↑' : 'Show all quantities ↓'}
-                </button>
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+                  {qty.toLocaleString()}
+                </td>
+                <td
+                  className="py-5 text-right text-white"
+                  style={{ fontFamily: mono, fontSize: 16 }}
+                >
+                  {formatPrice(price, currency)}
+                </td>
+                <td
+                  className="py-5 text-right text-white/50"
+                  style={{ fontFamily: mono, fontSize: 13 }}
+                >
+                  {formatPrice(price / qty, currency, 2)}
+                </td>
+              </tr>
+            ))}
+            {showToggle && (
+              <tr>
+                <td colSpan={3} className="pt-4 text-center">
+                  <button
+                    type="button"
+                    aria-expanded={showAll}
+                    onClick={() => setShowAll((v) => !v)}
+                    className="inline-flex items-center gap-2 rounded-full px-5 py-2 uppercase tracking-[0.22em] text-white transition-all hover:brightness-110"
+                    style={{
+                      fontFamily: mono,
+                      fontSize: 12,
+                      background: accent,
+                      boxShadow: `0 0 24px ${accentGlow}`,
+                    }}
+                  >
+                    {showAll ? 'Show fewer quantities ↑' : 'Show all quantities ↓'}
+                  </button>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+        <QuantityLookup
+          variant={variant}
+          currency={currency}
+          lookupSet={lookupSet}
+          quantitySurcharges={quantitySurcharges}
+          serif={serif}
+          mono={mono}
+        />
+      </>
     )
   }
 
@@ -2864,6 +2922,177 @@ function InkPricingTable({
           )}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+// Compact quantity lookup strip that sits below the single-
+// variant pricing table. Customer types a number, lookup runs
+// against the version's snapshot tier set (lookupSet) in memory
+// — no DB round-trip, so no debounce. Four result shapes:
+//
+//   * Exact match        → one row, caption "For {qty}".
+//   * Between two tiers  → two bracketing rows, caption
+//                          "{qty} falls between two tiers.
+//                          Closest tiers:".
+//   * Below lowest tier  → one row at the lowest, caption
+//                          "Below our listed range. Lowest
+//                          tier:".
+//   * Above highest tier → one row at the highest, caption
+//                          "Above our listed range. Highest
+//                          tier is {highestTier}. For volumes
+//                          beyond that, get in touch." (the
+//                          {qty} the customer typed never
+//                          appears in the caption here — we
+//                          don't want the highest-tier value
+//                          colliding with the user's input in
+//                          the same sentence).
+//
+// Empty / non-numeric input → no result panel, just the field
+// sitting quietly. No error state, no red text; mismatch is
+// informational, not a correction. Multi-variant mode hides the
+// lookup entirely per the ship decision — the compact row-based
+// result shape doesn't fit the multi-column grid above it.
+function QuantityLookup({
+  variant,
+  currency,
+  lookupSet,
+  quantitySurcharges,
+  serif,
+  mono,
+}: {
+  variant: PricingVariant
+  currency: Currency
+  lookupSet: number[]
+  quantitySurcharges: Record<number, number>
+  serif: string
+  mono: string
+}) {
+  const [raw, setRaw] = useState('')
+  if (lookupSet.length === 0) return null
+
+  const parsed = /^\d+$/.test(raw.trim()) ? parseInt(raw.trim(), 10) : null
+  const query = parsed != null && parsed > 0 ? parsed : null
+
+  // Price resolver for any tier in the lookupSet. Matches the
+  // table's treatment: base price from the snapshot plus any
+  // option-specific per-quantity surcharge.
+  const priceAt = (qty: number): number | null => {
+    const base = variant.prices[String(qty)]
+    if (base == null) return null
+    return base + (quantitySurcharges[qty] ?? 0)
+  }
+
+  // Resolve the query into a caption + the set of tier rows to
+  // render. Captions never mention the user's typed value and
+  // the highest-tier value in the same sentence (see header
+  // comment).
+  let caption: string | null = null
+  let tiers: number[] = []
+  if (query != null) {
+    const lowest = lookupSet[0]
+    const highest = lookupSet[lookupSet.length - 1]
+    if (variant.prices[String(query)] != null) {
+      caption = `For ${query.toLocaleString()}`
+      tiers = [query]
+    } else if (query < lowest) {
+      caption = 'Below our listed range. Lowest tier:'
+      tiers = [lowest]
+    } else if (query > highest) {
+      caption = `Above our listed range. Highest tier is ${highest.toLocaleString()}. For volumes beyond that, get in touch.`
+      tiers = [highest]
+    } else {
+      // Between two tiers — find the brackets. lookupSet is
+      // sorted ascending, so linear scan is fine (typical
+      // lengths are well under 40 entries).
+      let lower = lowest
+      let upper = highest
+      for (let i = 0; i < lookupSet.length - 1; i++) {
+        if (lookupSet[i] < query && query < lookupSet[i + 1]) {
+          lower = lookupSet[i]
+          upper = lookupSet[i + 1]
+          break
+        }
+      }
+      caption = `${query.toLocaleString()} falls between two tiers. Closest tiers:`
+      tiers = [lower, upper]
+    }
+  }
+
+  return (
+    <div className="mt-8 border-t border-white/10 pt-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+        <label
+          htmlFor="quantity-lookup"
+          className="shrink-0 uppercase tracking-[0.22em] text-white/45"
+          style={{ fontFamily: mono, fontSize: 12 }}
+        >
+          Find a quantity
+        </label>
+        <input
+          id="quantity-lookup"
+          type="number"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          min={1}
+          value={raw}
+          onChange={(e) => setRaw(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Escape') setRaw('') }}
+          placeholder="e.g. 175"
+          className="w-full rounded-none bg-transparent px-3 py-2 text-white placeholder:text-white/30 focus:outline-none sm:max-w-[160px]"
+          style={{
+            fontFamily: mono,
+            fontSize: 16,
+            border: '1px solid rgba(255,255,255,0.15)',
+          }}
+          onFocus={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.45)' }}
+          onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)' }}
+        />
+      </div>
+      {caption && tiers.length > 0 && (
+        <div className="mt-5">
+          <p
+            className="uppercase tracking-[0.22em] text-white/45"
+            style={{ fontFamily: mono, fontSize: 12 }}
+          >
+            {caption}
+          </p>
+          <table className="mt-3 w-full border-collapse">
+            <tbody>
+              {tiers.map((qty) => {
+                const price = priceAt(qty)
+                if (price == null) return null
+                return (
+                  <tr
+                    key={qty}
+                    className="border-b"
+                    style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+                  >
+                    <td
+                      className="py-4 leading-none text-white"
+                      style={{ fontFamily: serif, fontWeight: 400, fontSize: 24 }}
+                    >
+                      {qty.toLocaleString()}
+                    </td>
+                    <td
+                      className="py-4 text-right text-white"
+                      style={{ fontFamily: mono, fontSize: 15 }}
+                    >
+                      {formatPrice(price, currency)}
+                    </td>
+                    <td
+                      className="py-4 text-right text-white/50"
+                      style={{ fontFamily: mono, fontSize: 12 }}
+                    >
+                      {formatPrice(price / qty, currency, 2)}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
