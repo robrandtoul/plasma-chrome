@@ -719,12 +719,39 @@ export default function CustomerProofPage() {
             const namedGroups = groups.filter((g) => g.kind === 'named')
             if (!sharedGroup && namedGroups.length === 0) return null
 
+            // Virtual-pair shared images into named groups for
+            // sides those groups lack. Drops the standalone
+            // shared section entirely when every shared image
+            // got consumed — avoids showing the same image
+            // twice. Partial consumption (shared has B, named
+            // consumed F but not B) leaves the unused shared
+            // images on the standalone section so no image is
+            // ever dropped from the page. See the helper for
+            // the colour-rotation note and the "reference
+            // equality" semantics on the clone.
+            const { augmentedNamedGroups, unconsumedSharedImages } =
+              augmentNamedGroupsWithSharedPairs(sharedGroup, namedGroups)
+            const sharedStandaloneImages = unconsumedSharedImages
+            const renderSharedStandalone = sharedStandaloneImages.length > 0
+            const sharedStandaloneGroup: ImageGroup | null =
+              renderSharedStandalone && sharedGroup
+                ? { ...sharedGroup, images: sharedStandaloneImages }
+                : null
+
+            // Proof-count subtext reads the project's true
+            // image count — count each shared image once, not
+            // per injected instance. Keeps "N proofs · M
+            // recipients" accurate when a single shared front
+            // renders inside two named pairs.
             const plateCount = [...(sharedGroup?.images ?? []), ...namedGroups.flatMap((g) => g.images)].length
             const recipientCount = namedGroups.length || (sharedGroup ? 1 : 0)
 
             // Per-group pairing rule — front + back in the same
             // group render side-by-side at md+. Inherited from
             // the da895cf pairing shipment; unchanged here.
+            // After augmentation, named groups that received a
+            // shared injection now satisfy this predicate and
+            // flip to the paired layout automatically.
             const groupIsPair = (g: ImageGroup) =>
               g.images.some((i) => i.side === 'front') &&
               g.images.some((i) => i.side === 'back')
@@ -760,22 +787,26 @@ export default function CustomerProofPage() {
                     </span>
                   </div>
 
-                  {/* Shared group — renders alone with no
-                      heading (the approval banner in the hero
-                      strip carries that signal). Width matches
-                      the named groups below so the whole Proofs
-                      section reads at a consistent image size. */}
-                  {sharedGroup && (
+                  {/* Shared group — renders alone when there
+                      are unconsumed shared images (either no
+                      named groups exist, or named groups exist
+                      but didn't need every shared image for
+                      virtual pairing). Heading stays suppressed;
+                      the approval banner in the hero strip
+                      carries that signal. Width matches the
+                      named groups below for a consistent
+                      section-wide image size. */}
+                  {sharedStandaloneGroup && (
                     <div
                       className={[
                         'w-full',
-                        namedGroups.length > 0 ? 'mb-14' : '',
-                        groupIsPair(sharedGroup)
+                        augmentedNamedGroups.length > 0 ? 'mb-14' : '',
+                        groupIsPair(sharedStandaloneGroup)
                           ? 'grid grid-cols-1 gap-6 md:grid-cols-2'
                           : 'space-y-6',
                       ].join(' ')}
                     >
-                      {sharedGroup.images.map((img, idx) => (
+                      {sharedStandaloneGroup.images.map((img, idx) => (
                         <PlateCard
                           key={img.id}
                           image={img}
@@ -788,20 +819,31 @@ export default function CustomerProofPage() {
                     </div>
                   )}
 
-                  {namedGroups.length > 0 && (
+                  {augmentedNamedGroups.length > 0 && (
                     <div className="space-y-14">
                       {(() => {
                         // Running colour-rotation index across
                         // all groups in reading order so each
-                        // image on the page gets a distinct
-                        // bullet colour from BRAND_ORDER (red →
-                        // pink → indigo → teal). The per-image
-                        // "Proof NN" numbering that used to ride
-                        // along with this counter was dropped
-                        // when the caption switched to a two-
-                        // line FRONT/BACK + filename layout.
-                        let colorIdx = sharedGroup ? sharedGroup.images.length : 0
-                        return namedGroups.map((group) => {
+                        // rendered image-instance on the page
+                        // gets a distinct bullet colour from
+                        // BRAND_ORDER (red → pink → indigo →
+                        // teal). Counted starts at the number of
+                        // images actually rendered in the
+                        // standalone shared section — NOT the
+                        // full shared-group size — so shared
+                        // images consumed into named groups via
+                        // virtual pairing don't inflate the
+                        // offset. A shared image injected into
+                        // two different named groups therefore
+                        // picks up two different colours (one
+                        // per rendered instance), which keeps
+                        // the palette cycling visibly across
+                        // every card rather than clustering two
+                        // cards onto the same hue.
+                        let colorIdx = sharedStandaloneGroup
+                          ? sharedStandaloneGroup.images.length
+                          : 0
+                        return augmentedNamedGroups.map((group) => {
                           const pill =
                             group.heading != null ? approvalPillFor(group.heading) : null
                           const startIdx = colorIdx
@@ -1658,6 +1700,77 @@ interface ImageGroup {
   kind: 'shared' | 'named'
   heading: string | null
   images: GridImage[]
+}
+
+// Virtual-pair the shared group into each named group for sides
+// the named group doesn't already cover. Result: when shared
+// carries a front and named groups only carry backs (the
+// "shared design / per-person backs" classic shape), each
+// named group ends up with both sides and renders as a paired
+// card via groupIsPair / md:grid-cols-2 at render time, rather
+// than the shared front rendering standalone and each named
+// back rendering as its own single-image card.
+//
+// Consumed shared images — those injected into at least one
+// named group — are excluded from the `unconsumedSharedImages`
+// return so the caller can render the standalone shared
+// section with only the leftovers (or skip it entirely when
+// every shared image got consumed).
+//
+// No-op in two cases: no named groups at all (all-shared
+// project) or no shared group (fully bespoke project). The
+// augmented named groups then equal the input namedGroups and
+// unconsumed equals the full shared list (or []).
+//
+// Shared images get cloned by reference into each named group
+// that needs them — the same image object may appear in two
+// named groups, which is fine for rendering (React keys off
+// image.id and GridImage is treated as immutable everywhere
+// downstream). The colour-rotation bullet runs on a per-
+// rendered-instance index (see render), so the same shared
+// image injected into Alec and Kyle picks up different dot
+// colours — that was a deliberate call to keep the page's
+// chromatic motif cycling through all four brand colours
+// across every rendered card rather than pinning each shared
+// image to a single colour.
+function augmentNamedGroupsWithSharedPairs(
+  sharedGroup: ImageGroup | null,
+  namedGroups: ImageGroup[],
+): { augmentedNamedGroups: ImageGroup[]; unconsumedSharedImages: GridImage[] } {
+  if (!sharedGroup || namedGroups.length === 0) {
+    return {
+      augmentedNamedGroups: namedGroups,
+      unconsumedSharedImages: sharedGroup?.images ?? [],
+    }
+  }
+  const sideWeight = (s: GridImage['side']): number =>
+    s === 'front' ? 0 : s === 'back' ? 1 : 2
+  const consumed = new Set<string>()
+  const augmented = namedGroups.map((group) => {
+    const hasFront = group.images.some((i) => i.side === 'front')
+    const hasBack = group.images.some((i) => i.side === 'back')
+    const injections: GridImage[] = []
+    if (!hasFront) {
+      const sharedFront = sharedGroup.images.find((i) => i.side === 'front')
+      if (sharedFront) {
+        injections.push(sharedFront)
+        consumed.add(sharedFront.id)
+      }
+    }
+    if (!hasBack) {
+      const sharedBack = sharedGroup.images.find((i) => i.side === 'back')
+      if (sharedBack) {
+        injections.push(sharedBack)
+        consumed.add(sharedBack.id)
+      }
+    }
+    if (injections.length === 0) return group
+    const merged = [...group.images, ...injections]
+    merged.sort((a, b) => sideWeight(a.side) - sideWeight(b.side))
+    return { ...group, images: merged }
+  })
+  const unconsumed = sharedGroup.images.filter((i) => !consumed.has(i.id))
+  return { augmentedNamedGroups: augmented, unconsumedSharedImages: unconsumed }
 }
 
 function buildImageGroups(images: GridImage[]): ImageGroup[] {
