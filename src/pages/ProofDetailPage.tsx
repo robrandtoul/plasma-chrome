@@ -30,6 +30,13 @@ interface Proof {
   helpscout_override_reason: string | null
   internal_notes: string | null
   created_at: string
+  // Customer's disclaimer acknowledgement timestamp (migration
+  // 000091). Null until the customer ticks the "I've read this"
+  // box on the proof page. Rendered as a muted subline under the
+  // status pill at any status — unlike the dashboard tail we keep
+  // it visible post-approval so designers can see when the ack
+  // actually happened during a dispute.
+  disclaimer_acknowledged_at: string | null
   contacts: {
     full_name: string
     email: string
@@ -148,7 +155,7 @@ export default function ProofDetailPage() {
     const [proofResult, versionsResult] = await Promise.all([
       supabase
         .from('proofs')
-        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, contacts(full_name, email, companies(name))')
+        .select('id, status, approved_at, abandoned_at, helpscout_thread_url, helpscout_conversation_id, helpscout_conversation_url, helpscout_override_reason, internal_notes, created_at, disclaimer_acknowledged_at, contacts(full_name, email, companies(name))')
         .eq('id', proofId)
         .single(),
       supabase
@@ -718,6 +725,24 @@ export default function ProofDetailPage() {
               </div>
               {isDormant && (
                 <p className="mt-1.5 text-xs text-gray-400">No activity for 30+ days. Add a version to reactivate.</p>
+              )}
+              {/* Disclaimer acknowledgement subline (migration 000091).
+                  Renders at any status once the customer ticks the
+                  "I've read this and understand the terms" box on
+                  the customer page. Copy deliberately echoes the
+                  customer-facing label — "Terms" — so the designer
+                  sees the same word the customer consented against.
+                  HH:mm in 24h en-GB to match the rest of the app's
+                  British formatting. */}
+              {proof.disclaimer_acknowledged_at && (
+                <p className="mt-1.5 text-xs text-gray-400">
+                  Terms acknowledged on {formatLongDate(proof.disclaimer_acknowledged_at)} at{' '}
+                  {new Date(proof.disclaimer_acknowledged_at).toLocaleTimeString('en-GB', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false,
+                  })}
+                </p>
               )}
             </div>
           </div>

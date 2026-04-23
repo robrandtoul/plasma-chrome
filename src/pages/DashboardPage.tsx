@@ -44,6 +44,13 @@ interface ProofItem {
   status: ProofStatus
   viewedState: ViewedState
   lastViewedAt: string | null
+  // Customer's disclaimer acknowledgement timestamp (migration
+  // 000091). Null until the customer ticks the "I've read this"
+  // box on the proof page. Surfaced in the row subtitle as a
+  // "· Acked {relativeTime}" tail, but only while the proof is
+  // still in_progress — once approved the ack is implied and
+  // the tail becomes noise.
+  disclaimerAckedAt: string | null
 }
 
 interface RecentProject {
@@ -129,6 +136,7 @@ function buildSections(
       status,
       viewedState: viewed.state,
       lastViewedAt: viewed.lastViewedAt,
+      disclaimerAckedAt: p.disclaimer_acknowledged_at ?? null,
     })
   }
 
@@ -331,7 +339,7 @@ export default function DashboardPage() {
     const proofsPromise = supabase
       .from('proofs')
       .select(
-        'id, created_at, last_activity_at, status,' +
+        'id, created_at, last_activity_at, status, disclaimer_acknowledged_at,' +
         // email is pulled for search only — not rendered on the
         // project cards. Keeps the search predicate below able to
         // match against it without another round-trip.
@@ -691,6 +699,15 @@ export default function DashboardPage() {
                                     {proof.current_version != null ? `v${proof.current_version}` : '—'}
                                     {proof.viewedState !== 'unviewed' && proof.lastViewedAt && (
                                       <span className="ml-1 text-[11px]" title={formatAbsoluteDateTime(proof.lastViewedAt)}>· Viewed {relativeTime(proof.lastViewedAt)}</span>
+                                    )}
+                                    {/* Disclaimer ack tail — only surfaced while
+                                        the proof is still in_progress. Once
+                                        approved the ack is implied by the
+                                        approval itself; abandoned / dormant
+                                        rows drop it too to keep the tail
+                                        focused on active work. */}
+                                    {proof.status === 'in_progress' && proof.disclaimerAckedAt && (
+                                      <span className="ml-1 text-[11px]" title={formatAbsoluteDateTime(proof.disclaimerAckedAt)}>· Acked {relativeTime(proof.disclaimerAckedAt)}</span>
                                     )}
                                   </span>
                                 </span>
