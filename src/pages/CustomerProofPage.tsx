@@ -431,19 +431,12 @@ export default function CustomerProofPage() {
                 </span>
               </div>
               <div className="flex items-center gap-5">
-                {activeOption && (
-                  <span
-                    className="inline-flex items-center gap-2 uppercase tracking-[0.22em] text-white/60"
-                    style={{ fontFamily: MONO, fontSize: 12 }}
-                  >
-                    <span
-                      className="h-[6px] w-[6px] rounded-full"
-                      style={{ background: ACCENT }}
-                    />
-                    {activeVersion?.material_display}
-                    {activeOption ? ` · ${activeOption.display_name}` : ''}
-                  </span>
-                )}
+                {/* Masthead right-side = proof reference only.
+                    The material + variant composite that used
+                    to ride here was dropped — the hero facts
+                    row, revisions finish-picker, and spec sheet
+                    already carry the same information three
+                    times below. */}
                 {proofRef && (
                   <span
                     className="uppercase tracking-[0.22em] text-white/45"
