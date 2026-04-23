@@ -435,7 +435,7 @@ export default function CustomerProofPage() {
                 <span className="ml-1 h-4 w-px bg-white/20" />
                 <span
                   className="uppercase tracking-[0.22em] text-white/55"
-                  style={{ fontFamily: MONO, fontSize: 10 }}
+                  style={{ fontFamily: MONO, fontSize: 12 }}
                 >
                   Proof Viewer
                 </span>
@@ -444,7 +444,7 @@ export default function CustomerProofPage() {
                 {activeOption && (
                   <span
                     className="inline-flex items-center gap-2 uppercase tracking-[0.22em] text-white/60"
-                    style={{ fontFamily: MONO, fontSize: 10 }}
+                    style={{ fontFamily: MONO, fontSize: 12 }}
                   >
                     <span
                       className="h-[6px] w-[6px] rounded-full"
@@ -456,7 +456,7 @@ export default function CustomerProofPage() {
                 )}
                 <span
                   className="uppercase tracking-[0.22em] text-white/45"
-                  style={{ fontFamily: MONO, fontSize: 10 }}
+                  style={{ fontFamily: MONO, fontSize: 12 }}
                 >
                   {proofRef}
                 </span>
@@ -481,8 +481,8 @@ export default function CustomerProofPage() {
                 {heroApprovalStrip.kind === 'approved' ? (
                   <div className="flex items-center gap-4">
                     <span
-                      className="inline-flex items-center gap-2 uppercase tracking-[0.28em]"
-                      style={{ fontFamily: MONO, fontSize: 10, color: APPROVED_GREEN }}
+                      className="inline-flex items-center gap-2 uppercase tracking-[0.22em]"
+                      style={{ fontFamily: MONO, fontSize: 12, color: APPROVED_GREEN }}
                     >
                       <span
                         className="h-[6px] w-[6px] rounded-full"
@@ -502,8 +502,8 @@ export default function CustomerProofPage() {
                 ) : (
                   <div className="flex items-center gap-4">
                     <span
-                      className="inline-flex items-center gap-2 uppercase tracking-[0.28em] text-sky-300"
-                      style={{ fontFamily: MONO, fontSize: 10 }}
+                      className="inline-flex items-center gap-2 uppercase tracking-[0.22em] text-sky-300"
+                      style={{ fontFamily: MONO, fontSize: 12 }}
                     >
                       <span
                         className="h-[6px] w-[6px] rounded-full bg-sky-300"
@@ -518,7 +518,7 @@ export default function CustomerProofPage() {
                 )}
                 <span
                   className="uppercase tracking-[0.22em] text-white/45"
-                  style={{ fontFamily: MONO, fontSize: 10 }}
+                  style={{ fontFamily: MONO, fontSize: 12 }}
                 >
                   v{activeVersion?.version_number ?? '—'}
                 </span>
@@ -532,8 +532,8 @@ export default function CustomerProofPage() {
               dominant object at 76px. */}
           <div className="mx-auto max-w-[1040px] px-6 py-20 sm:px-8">
             <p
-              className="uppercase tracking-[0.32em] text-white/45"
-              style={{ fontFamily: MONO, fontSize: 10 }}
+              className="uppercase tracking-[0.24em] text-white/45"
+              style={{ fontFamily: MONO, fontSize: 12 }}
             >
               {(activeVersion?.names?.length ?? 0) >= 2 ? 'Proofs for' : 'Proof for'}
             </p>
@@ -556,8 +556,8 @@ export default function CustomerProofPage() {
               <div className="mt-10 flex flex-wrap items-start gap-x-10 gap-y-5">
                 <div>
                   <p
-                    className="uppercase tracking-[0.28em] text-white/40"
-                    style={{ fontFamily: MONO, fontSize: 9 }}
+                    className="uppercase tracking-[0.22em] text-white/40"
+                    style={{ fontFamily: MONO, fontSize: 11 }}
                   >
                     Material
                   </p>
@@ -571,8 +571,8 @@ export default function CustomerProofPage() {
                 </div>
                 <div>
                   <p
-                    className="uppercase tracking-[0.28em] text-white/40"
-                    style={{ fontFamily: MONO, fontSize: 9 }}
+                    className="uppercase tracking-[0.22em] text-white/40"
+                    style={{ fontFamily: MONO, fontSize: 11 }}
                   >
                     Revision
                   </p>
@@ -584,8 +584,8 @@ export default function CustomerProofPage() {
                 {activeVersion.names.length > 0 && (
                   <div>
                     <p
-                      className="uppercase tracking-[0.28em] text-white/40"
-                      style={{ fontFamily: MONO, fontSize: 9 }}
+                      className="uppercase tracking-[0.22em] text-white/40"
+                      style={{ fontFamily: MONO, fontSize: 11 }}
                     >
                       {activeVersion.names.length >= 2 ? 'Names' : 'Name'}
                     </p>
@@ -613,8 +613,8 @@ export default function CustomerProofPage() {
                 {versions.length > 1 && (
                   <>
                     <span
-                      className="uppercase tracking-[0.28em] text-white/45"
-                      style={{ fontFamily: MONO, fontSize: 10 }}
+                      className="uppercase tracking-[0.22em] text-white/45"
+                      style={{ fontFamily: MONO, fontSize: 12 }}
                     >
                       Revisions
                     </span>
@@ -632,14 +632,14 @@ export default function CustomerProofPage() {
                                 ? 'text-white'
                                 : 'text-white/70 hover:text-white',
                             ].join(' ')}
-                            style={{ fontFamily: MONO, fontSize: 12 }}
+                            style={{ fontFamily: MONO, fontSize: 13 }}
                           >
                             <span className="inline-flex items-center gap-2">
                               v{v.version_number}
                               {v.is_current && (
                                 <span
                                   className="tracking-[0.22em]"
-                                  style={{ fontFamily: MONO, fontSize: 9, color: ACCENT }}
+                                  style={{ fontFamily: MONO, fontSize: 11, color: ACCENT }}
                                 >
                                   · {isApproved ? 'Approved' : 'Current'}
                                 </span>
@@ -678,7 +678,7 @@ export default function CustomerProofPage() {
                           ].join(' ')}
                           style={{
                             fontFamily: MONO,
-                            fontSize: 10,
+                            fontSize: 12,
                             ...(isActive
                               ? { background: ACCENT, boxShadow: `0 0 20px ${ACCENT_GLOW}` }
                               : {}),
@@ -770,8 +770,8 @@ export default function CustomerProofPage() {
                       Proofs
                     </h2>
                     <span
-                      className="uppercase tracking-[0.28em] text-[#1a1612]/55"
-                      style={{ fontFamily: MONO, fontSize: 10 }}
+                      className="uppercase tracking-[0.22em] text-[#1a1612]/55"
+                      style={{ fontFamily: MONO, fontSize: 12 }}
                     >
                       {plateCount === 1 ? '1 proof' : `${plateCount} proofs`}
                       {recipientCount > 0 && (
@@ -862,7 +862,7 @@ export default function CustomerProofPage() {
                                     className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 uppercase tracking-[0.22em]"
                                     style={{
                                       fontFamily: MONO,
-                                      fontSize: 10,
+                                      fontSize: 12,
                                       background: 'rgba(74,222,128,0.14)',
                                       color: '#1e7a3e',
                                       border: '1px solid rgba(74,222,128,0.45)',
@@ -930,8 +930,8 @@ export default function CustomerProofPage() {
               <div className="grid gap-10 sm:grid-cols-[1fr_2fr] sm:gap-16">
                 <div>
                   <p
-                    className="uppercase tracking-[0.32em] text-white/40"
-                    style={{ fontFamily: MONO, fontSize: 10 }}
+                    className="uppercase tracking-[0.24em] text-white/40"
+                    style={{ fontFamily: MONO, fontSize: 12 }}
                   >
                     § 02
                   </p>
@@ -973,8 +973,8 @@ export default function CustomerProofPage() {
                 <div className="mt-20 grid gap-10 border-t border-white/10 pt-14 sm:grid-cols-[1fr_2fr] sm:gap-16">
                   <div>
                     <p
-                      className="uppercase tracking-[0.32em] text-white/40"
-                      style={{ fontFamily: MONO, fontSize: 10 }}
+                      className="uppercase tracking-[0.24em] text-white/40"
+                      style={{ fontFamily: MONO, fontSize: 12 }}
                     >
                       § 03
                     </p>
@@ -995,8 +995,8 @@ export default function CustomerProofPage() {
                       <span style={{ color: ACCENT }}>”</span>
                     </p>
                     <p
-                      className="mt-6 uppercase tracking-[0.28em] text-white/45"
-                      style={{ fontFamily: MONO, fontSize: 10 }}
+                      className="mt-6 uppercase tracking-[0.22em] text-white/45"
+                      style={{ fontFamily: MONO, fontSize: 12 }}
                     >
                       — Plasma Design · v{activeVersion.version_number}
                     </p>
@@ -1020,8 +1020,8 @@ export default function CustomerProofPage() {
               <div className="mb-10 flex flex-wrap items-baseline justify-between gap-3 border-b border-white/10 pb-4">
                 <div>
                   <p
-                    className="uppercase tracking-[0.32em] text-white/40"
-                    style={{ fontFamily: MONO, fontSize: 10 }}
+                    className="uppercase tracking-[0.24em] text-white/40"
+                    style={{ fontFamily: MONO, fontSize: 12 }}
                   >
                     § 04
                   </p>
@@ -1038,16 +1038,16 @@ export default function CustomerProofPage() {
                     versionOptions.length > 0 &&
                     materialHasSurcharges && (
                       <p
-                        className="uppercase tracking-[0.28em] text-white/45"
-                        style={{ fontFamily: MONO, fontSize: 10 }}
+                        className="uppercase tracking-[0.22em] text-white/45"
+                        style={{ fontFamily: MONO, fontSize: 12 }}
                       >
                         Prices shown for {activeOption.display_name} {optionLabelSingular.toLowerCase()}
                       </p>
                     )}
                   {!activeVersion.custom_quote && (
                     <p
-                      className="mt-1 uppercase tracking-[0.28em] text-white/45"
-                      style={{ fontFamily: MONO, fontSize: 10 }}
+                      className="mt-1 uppercase tracking-[0.22em] text-white/45"
+                      style={{ fontFamily: MONO, fontSize: 12 }}
                     >
                       {activeVersion.currency}
                       {activeVersion.currency === 'GBP' ? ' · VAT included' : ''}
@@ -1105,8 +1105,8 @@ export default function CustomerProofPage() {
                       activeVersion.split_name_surcharge_snapshot > 0 && (
                         <div className="border border-white/10 p-6">
                           <p
-                            className="uppercase tracking-[0.28em]"
-                            style={{ fontFamily: MONO, fontSize: 10, color: ACCENT }}
+                            className="uppercase tracking-[0.22em]"
+                            style={{ fontFamily: MONO, fontSize: 12, color: ACCENT }}
                           >
                             Split-name tooling
                           </p>
@@ -1125,8 +1125,8 @@ export default function CustomerProofPage() {
                             to any quantity
                           </p>
                           <p
-                            className="mt-2 uppercase tracking-[0.28em] text-white/45"
-                            style={{ fontFamily: MONO, fontSize: 10 }}
+                            className="mt-2 uppercase tracking-[0.22em] text-white/45"
+                            style={{ fontFamily: MONO, fontSize: 12 }}
                           >
                             {activeVersion.names.length} names ×{' '}
                             {formatPrice(
@@ -1140,8 +1140,8 @@ export default function CustomerProofPage() {
                     {activeVersion.shipping_note && (
                       <div className="border border-white/10 p-6">
                         <p
-                          className="uppercase tracking-[0.28em] text-white/45"
-                          style={{ fontFamily: MONO, fontSize: 10 }}
+                          className="uppercase tracking-[0.22em] text-white/45"
+                          style={{ fontFamily: MONO, fontSize: 12 }}
                         >
                           Shipping
                         </p>
@@ -1239,8 +1239,8 @@ export default function CustomerProofPage() {
                         }}
                       />
                       <p
-                        className="mt-4 uppercase tracking-[0.28em] text-[#1a1612]/55"
-                        style={{ fontFamily: MONO, fontSize: 10 }}
+                        className="mt-4 uppercase tracking-[0.22em] text-[#1a1612]/55"
+                        style={{ fontFamily: MONO, fontSize: 12 }}
                       >
                         Swatch · {activeOption?.display_name ?? activeVersion.material_display}
                       </p>
@@ -1266,15 +1266,15 @@ export default function CustomerProofPage() {
           <div className="flex items-center gap-3">
             <img src="/logo-cards.png" alt="Plasma" className="h-8 w-auto opacity-70" />
             <span
-              className="uppercase tracking-[0.28em] text-white/45"
-              style={{ fontFamily: MONO, fontSize: 10 }}
+              className="uppercase tracking-[0.22em] text-white/45"
+              style={{ fontFamily: MONO, fontSize: 12 }}
             >
               © Plasma Design
             </span>
           </div>
           <p
-            className="uppercase tracking-[0.28em] text-white/45"
-            style={{ fontFamily: MONO, fontSize: 10 }}
+            className="uppercase tracking-[0.22em] text-white/45"
+            style={{ fontFamily: MONO, fontSize: 12 }}
           >
             {proofRef}
             {activeVersion ? ` · v${activeVersion.version_number}` : ''}
@@ -1359,8 +1359,8 @@ function PlateCard({
         <figcaption className="mt-4 flex items-start justify-between gap-4 border-t border-[#1a1612]/15 pt-3">
           <div className="min-w-0 flex-1">
             <div
-              className="flex items-center gap-2 uppercase tracking-[0.28em] text-[#1a1612]"
-              style={{ fontFamily: MONO, fontSize: 10 }}
+              className="flex items-center gap-2 uppercase tracking-[0.22em] text-[#1a1612]"
+              style={{ fontFamily: MONO, fontSize: 12 }}
             >
               <span
                 className="h-[6px] w-[6px] shrink-0 rounded-[1px]"
@@ -1371,7 +1371,7 @@ function PlateCard({
             {image.original_filename && (
               <div
                 className="mt-1 truncate text-[#1a1612]/50"
-                style={{ fontFamily: MONO, fontSize: 10 }}
+                style={{ fontFamily: MONO, fontSize: 12 }}
                 title={image.original_filename}
               >
                 {image.original_filename}
@@ -1388,7 +1388,7 @@ function PlateCard({
               className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#1a1612]/25 px-3 py-1 uppercase tracking-[0.22em] text-[#6b6558] transition-colors hover:border-[color:var(--a)] hover:bg-[color:var(--a)] hover:text-white"
               style={{
                 fontFamily: MONO,
-                fontSize: 10,
+                fontSize: 12,
                 // CSS variable so the hover styles above pick
                 // up the indigo accent cleanly without inline
                 // hover handlers.
@@ -1412,8 +1412,8 @@ function InkSpecRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid grid-cols-[140px_1fr] items-baseline gap-6 border-t border-white/10 py-5 sm:grid-cols-[200px_1fr] sm:gap-8">
       <dt
-        className="uppercase tracking-[0.28em] text-white/45"
-        style={{ fontFamily: MONO, fontSize: 10 }}
+        className="uppercase tracking-[0.22em] text-white/45"
+        style={{ fontFamily: MONO, fontSize: 12 }}
       >
         {label}
       </dt>
@@ -1486,20 +1486,20 @@ function InkPricingTable({
         <thead>
           <tr className="border-b border-white/15">
             <th
-              className="py-4 text-left uppercase tracking-[0.28em] text-white/45"
-              style={{ fontFamily: mono, fontSize: 10 }}
+              className="py-4 text-left uppercase tracking-[0.22em] text-white/45"
+              style={{ fontFamily: mono, fontSize: 12 }}
             >
               Total quantity
             </th>
             <th
-              className="py-4 text-right uppercase tracking-[0.28em] text-white/45"
-              style={{ fontFamily: mono, fontSize: 10 }}
+              className="py-4 text-right uppercase tracking-[0.22em] text-white/45"
+              style={{ fontFamily: mono, fontSize: 12 }}
             >
               Price
             </th>
             <th
-              className="py-4 text-right uppercase tracking-[0.28em] text-white/45"
-              style={{ fontFamily: mono, fontSize: 10 }}
+              className="py-4 text-right uppercase tracking-[0.22em] text-white/45"
+              style={{ fontFamily: mono, fontSize: 12 }}
             >
               Per card
             </th>
@@ -1539,10 +1539,10 @@ function InkPricingTable({
                   type="button"
                   aria-expanded={showAll}
                   onClick={() => setShowAll((v) => !v)}
-                  className="inline-flex items-center gap-2 rounded-full px-5 py-2 uppercase tracking-[0.28em] text-white transition-all hover:brightness-110"
+                  className="inline-flex items-center gap-2 rounded-full px-5 py-2 uppercase tracking-[0.22em] text-white transition-all hover:brightness-110"
                   style={{
                     fontFamily: mono,
-                    fontSize: 10,
+                    fontSize: 12,
                     background: accent,
                     boxShadow: `0 0 24px ${accentGlow}`,
                   }}
@@ -1567,16 +1567,16 @@ function InkPricingTable({
         <thead>
           <tr className="border-b border-white/15">
             <th
-              className="py-4 pr-4 text-left uppercase tracking-[0.28em] text-white/45"
-              style={{ fontFamily: mono, fontSize: 10 }}
+              className="py-4 pr-4 text-left uppercase tracking-[0.22em] text-white/45"
+              style={{ fontFamily: mono, fontSize: 12 }}
             >
               Total quantity
             </th>
             {variants.map((v) => (
               <th
                 key={v.variant_id}
-                className="py-4 pl-4 text-right uppercase tracking-[0.28em] text-white/45"
-                style={{ fontFamily: mono, fontSize: 10 }}
+                className="py-4 pl-4 text-right uppercase tracking-[0.22em] text-white/45"
+                style={{ fontFamily: mono, fontSize: 12 }}
               >
                 {v.display}
               </th>
@@ -1622,7 +1622,7 @@ function InkPricingTable({
                       </div>
                       <div
                         className="text-white/45"
-                        style={{ fontFamily: mono, fontSize: 11 }}
+                        style={{ fontFamily: mono, fontSize: 12 }}
                       >
                         {formatPrice(price / qty, currency, 2)} each
                       </div>
@@ -1639,10 +1639,10 @@ function InkPricingTable({
                   type="button"
                   aria-expanded={showAll}
                   onClick={() => setShowAll((v) => !v)}
-                  className="inline-flex items-center gap-2 rounded-full px-5 py-2 uppercase tracking-[0.28em] text-white transition-all hover:brightness-110"
+                  className="inline-flex items-center gap-2 rounded-full px-5 py-2 uppercase tracking-[0.22em] text-white transition-all hover:brightness-110"
                   style={{
                     fontFamily: mono,
-                    fontSize: 10,
+                    fontSize: 12,
                     background: accent,
                     boxShadow: `0 0 24px ${accentGlow}`,
                   }}
