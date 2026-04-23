@@ -1229,7 +1229,7 @@ export default function CustomerProofPage() {
                         </p>
                       )}
                     </div>
-                    <div className="flex flex-col items-center sm:-mt-6 sm:items-end">
+                    <div className="flex flex-col items-center sm:-mt-12 sm:items-end">
                       {/* Material swatch — real card-stack image
                           uploaded via admin → material content
                           (materials.icon_url). Falls back to a
