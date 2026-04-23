@@ -871,7 +871,26 @@ export default function CustomerProofPage() {
                           const startIdx = colorIdx
                           colorIdx += group.images.length
                           return (
-                            <div key={group.heading ?? ''}>
+                            <div
+                              key={group.heading ?? ''}
+                              // Hairline rule + symmetric padding
+                              // between named groups so each
+                              // recipient reads as its own block
+                              // rather than blurring into the
+                              // next via ambient whitespace. The
+                              // rule sits at the top edge of
+                              // each group's box; the surrounding
+                              // space-y-14 on the parent gives
+                              // 56px above the rule (margin) and
+                              // the matching pt-14 here gives
+                              // 56px below it, so the line floats
+                              // centred in a 112px gap.
+                              // first:* zeroes both on the first
+                              // group so the rule doesn't sit
+                              // above the opening section or
+                              // bracket the list awkwardly.
+                              className="border-t border-[#1a1612]/10 pt-14 first:border-t-0 first:pt-0"
+                            >
                               <div className="mb-5 flex flex-wrap items-baseline justify-between gap-3">
                                 <h3
                                   className="text-[#1a1612]"
