@@ -29,47 +29,16 @@ export default function CustomerProofPage() {
   // ref survives React strict-mode's double-invoke of effects
   // whereas state wouldn't.
   const viewRecordedRef = useRef(false)
-  // Disclaimer acknowledgment — ISO timestamp when the customer
-  // ticked "I've read this", null when not yet acknowledged.
-  // Initialised synchronously from localStorage so the gate
-  // doesn't flash the expanded state on a page re-open after
-  // the customer already ack'd. Key is scoped per-proof so
-  // acking proof A doesn't silently clear the gate on proof B
-  // if the customer bounces between them. Try/catch for Safari
-  // private mode where localStorage throws.
-  const [disclaimerAck, setDisclaimerAck] = useState<string | null>(() => {
-    if (typeof window === 'undefined' || !id) return null
-    try {
-      return localStorage.getItem(`proof_disclaimer_ack_${id}`)
-    } catch {
-      return null
-    }
-  })
-  // Resync on proof-id change so React-Router nav between
-  // proofs (rare but possible) doesn't leak ack state across
-  // proofs. Declared BEFORE the persist effect so on a fresh
-  // mount it runs first, loading the correct value before
-  // persist writes anything back.
-  useEffect(() => {
-    if (!id) return
-    try {
-      setDisclaimerAck(localStorage.getItem(`proof_disclaimer_ack_${id}`))
-    } catch {
-      // private mode — leave state as-is
-    }
-  }, [id])
-  useEffect(() => {
-    if (!id) return
-    try {
-      if (disclaimerAck) {
-        localStorage.setItem(`proof_disclaimer_ack_${id}`, disclaimerAck)
-      } else {
-        localStorage.removeItem(`proof_disclaimer_ack_${id}`)
-      }
-    } catch {
-      // private mode — skip persistence
-    }
-  }, [id, disclaimerAck])
+  // Disclaimer acknowledgement is now a server-side event —
+  // authoritative timestamp lives on proofs.disclaimer_acknowledged_at
+  // and rides along with the public_proofs read (migrations 000091 +
+  // 000092). Client-side state here is just the transient
+  // saving / error signal while the edge function round-trips;
+  // the actual ack value is read from `proof.disclaimer_acknowledged_at`
+  // and kept in sync by patching the proof state in-place after
+  // a successful write.
+  const [ackSaving, setAckSaving] = useState(false)
+  const [ackError, setAckError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) { setNotFound(true); return }
@@ -136,6 +105,36 @@ export default function CustomerProofPage() {
     return () => window.clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeVersion?.id])
+
+  // Call the acknowledge-disclaimer edge function. Idempotent on
+  // the server — second click returns the existing timestamp —
+  // but we still gate client-side on already-ack'd / in-flight
+  // so the button UX is tight. Patches the proof state in place
+  // on success so the checkbox renders as ticked + disabled
+  // immediately without a refetch round-trip.
+  async function handleAckChange(checked: boolean) {
+    if (!checked) return
+    if (!id || !proof) return
+    if (proof.disclaimer_acknowledged_at) return
+    if (ackSaving) return
+    setAckSaving(true)
+    setAckError(null)
+    try {
+      const { data, error } = await supabase.functions.invoke<{
+        acknowledged_at?: string
+        error?: string
+      }>('acknowledge-disclaimer', { body: { proofId: id } })
+      if (error) throw new Error(error.message || 'Network error')
+      if (!data?.acknowledged_at) throw new Error(data?.error ?? 'Unknown error')
+      setProof((prev) =>
+        prev ? { ...prev, disclaimer_acknowledged_at: data.acknowledged_at! } : prev,
+      )
+    } catch (err) {
+      setAckError((err as Error).message || 'Could not save')
+    } finally {
+      setAckSaving(false)
+    }
+  }
 
   async function loadProof(proofId: string) {
     setLoading(true)
@@ -1429,185 +1428,174 @@ export default function CustomerProofPage() {
             </section>
           )}
 
-          {/* ───── Before you approve (acknowledgment gate) ─────
-              Final block before the footer. Doubles as a read-
-              receipt on the legal disclaimer copy: customer
-              must tick "I've read this" before the footer sits
-              below it. State persists in localStorage per-
-              proof so revisiting the page doesn't re-expand
-              the gate once ack'd, and the "Review again" link
-              clears the ack + re-expands. Section only renders
-              when publicSettings.disclaimer_text is populated
-              — an empty disclaimer would leave an empty gate.
-              Ink background (INK_DEEP, same as the Pricing
-              section) sets the gate apart from the near-white
-              About block above. */}
+          {/* ───── Before you approve (acknowledgement gate) ─────
+              Final block before the footer. Permanent-state
+              read-receipt on the legal disclaimer copy: the
+              customer ticks "I've read this" once, the edge
+              function writes proof.disclaimer_acknowledged_at,
+              and subsequent visits render the checkbox ticked
+              + disabled with a small timestamp line below.
+              No un-tick affordance — ack is permanent per
+              proof (scaffolding for the future Approve flow
+              which will gate on this column being non-null).
+              Section only renders when publicSettings.disclaimer_text
+              is populated — an empty disclaimer would leave an
+              empty gate. Ink background (INK_DEEP, same as the
+              Pricing section) sets the gate apart from the
+              near-white About block above. */}
           {publicSettings?.disclaimer_text && (
             <section className="py-16" style={{ background: INK_DEEP }}>
               <div className="mx-auto max-w-[1040px] px-6 sm:px-8">
-                {disclaimerAck ? (
-                  /* Collapsed / acknowledged state — green-
-                     bordered strip with a check mark, ack copy
-                     + timestamp, and a "Review again" link
-                     that clears the ack and re-expands. */
-                  <div
-                    className="flex flex-wrap items-center justify-between gap-4 rounded-xl px-5 py-4"
+                <div
+                  className="rounded-xl px-7 py-8"
+                  style={{
+                    background: 'rgba(255,255,255,0.02)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                  }}
+                >
+                  <p
+                    className="uppercase tracking-[0.32em]"
                     style={{
-                      background: 'rgba(74,222,128,0.06)',
-                      border: '1px solid rgba(74,222,128,0.25)',
+                      fontFamily: MONO,
+                      fontSize: 10,
+                      // Brand teal — the one from the 4-colour
+                      // signature rule. Ties the gate's kicker
+                      // visually to the brand palette without
+                      // using the Plasma indigo (which carries
+                      // the "interactive" signal elsewhere).
+                      color: BRAND_ORDER[3],
                     }}
                   >
-                    <div className="flex items-center gap-4">
-                      <div
-                        aria-hidden
-                        className="grid h-7 w-7 shrink-0 place-items-center rounded-full"
-                        style={{ background: 'rgba(74,222,128,0.18)' }}
+                    Before you approve
+                  </p>
+                  <h2
+                    className="mt-3 text-white"
+                    style={{
+                      fontFamily: SERIF,
+                      fontWeight: 400,
+                      fontSize: 36,
+                      lineHeight: 1.1,
+                    }}
+                  >
+                    Please check this proof carefully.
+                  </h2>
+                  <p className="mt-6 max-w-[72ch] whitespace-pre-line text-[15px] leading-[1.75] text-white/75">
+                    {publicSettings.disclaimer_text}
+                  </p>
+                  {publicSettings.reply_email && (
+                    <p className="mt-5 text-[13px] text-white/60">
+                      Need changes? Reply to{' '}
+                      <a
+                        href={`mailto:${publicSettings.reply_email}`}
+                        className="text-white/85 underline underline-offset-4 hover:text-white"
                       >
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                          <path
-                            d="M3 7L6 10L11 4"
-                            stroke={APPROVED_GREEN}
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
+                        {publicSettings.reply_email}
+                      </a>
+                      .
+                    </p>
+                  )}
+                  {(() => {
+                    const ackAt = proof.disclaimer_acknowledged_at
+                    const isAcked = !!ackAt
+                    // Label borders: solid green tint when
+                    // acked (reads as "done"), default white
+                    // hairline otherwise. Cursor disabled
+                    // signals the locked state.
+                    const labelClass = [
+                      'mt-8 flex w-fit items-center gap-3 rounded-lg px-4 py-3 transition-colors',
+                      isAcked
+                        ? 'cursor-default'
+                        : ackSaving
+                          ? 'cursor-wait'
+                          : 'cursor-pointer hover:border-white/30',
+                    ].join(' ')
+                    const labelStyle = isAcked
+                      ? { border: '1px solid rgba(74,222,128,0.45)' }
+                      : { border: '1px solid rgba(255,255,255,0.15)' }
+                    return (
+                      <>
+                        <label className={labelClass} style={labelStyle}>
+                          <input
+                            type="checkbox"
+                            className="sr-only"
+                            checked={isAcked}
+                            disabled={isAcked || ackSaving}
+                            onChange={(e) => handleAckChange(e.target.checked)}
                           />
-                        </svg>
-                      </div>
-                      <div>
-                        <p
-                          className="uppercase tracking-[0.28em]"
-                          style={{
-                            fontFamily: MONO,
-                            fontSize: 10,
-                            color: APPROVED_GREEN,
-                          }}
-                        >
-                          Proof terms acknowledged
-                        </p>
-                        <p
-                          className="mt-0.5 uppercase tracking-[0.2em] text-white/45"
-                          style={{ fontFamily: MONO, fontSize: 10 }}
-                        >
-                          {(() => {
-                            // Defensive parse — if localStorage
-                            // ever held a malformed value, fall
-                            // back to the raw string so the
-                            // timestamp still renders something
-                            // rather than throwing.
-                            const d = new Date(disclaimerAck)
-                            if (Number.isNaN(d.getTime())) return disclaimerAck
-                            const datePart = d.toLocaleDateString('en-GB', {
-                              day: 'numeric',
-                              month: 'short',
-                              year: 'numeric',
-                            })
-                            const timePart = d.toLocaleTimeString('en-GB', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })
-                            return `${datePart}, ${timePart}`
-                          })()}
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setDisclaimerAck(null)}
-                      className="uppercase tracking-[0.22em] text-white/55 underline-offset-4 hover:text-white/85 hover:underline"
-                      style={{ fontFamily: MONO, fontSize: 10 }}
-                    >
-                      Review again
-                    </button>
-                  </div>
-                ) : (
-                  /* Expanded / not-yet-acknowledged state —
-                     kicker → headline → disclaimer body → reply-
-                     email line (when configured) → checkbox
-                     that flips state to the acknowledged branch
-                     above. Checkbox is a styled sibling of a
-                     visually-hidden native input so clicking
-                     the label toggles via the native behaviour
-                     and onChange captures the tick. */
-                  <div
-                    className="rounded-xl px-7 py-8"
-                    style={{
-                      background: 'rgba(255,255,255,0.02)',
-                      border: '1px solid rgba(255,255,255,0.12)',
-                    }}
-                  >
-                    <p
-                      className="uppercase tracking-[0.32em]"
-                      style={{
-                        fontFamily: MONO,
-                        fontSize: 10,
-                        // Brand teal — the one from the 4-colour
-                        // signature rule. Ties the gate's
-                        // kicker visually to the brand palette
-                        // without using the Plasma indigo
-                        // (which carries the "interactive"
-                        // signal elsewhere on the page).
-                        color: BRAND_ORDER[3],
-                      }}
-                    >
-                      Before you approve
-                    </p>
-                    <h2
-                      className="mt-3 text-white"
-                      style={{
-                        fontFamily: SERIF,
-                        fontWeight: 400,
-                        fontSize: 36,
-                        lineHeight: 1.1,
-                      }}
-                    >
-                      Please check this proof carefully.
-                    </h2>
-                    <p className="mt-6 max-w-[72ch] whitespace-pre-line text-[15px] leading-[1.75] text-white/75">
-                      {publicSettings.disclaimer_text}
-                    </p>
-                    {publicSettings.reply_email && (
-                      <p className="mt-5 text-[13px] text-white/60">
-                        Need changes? Reply to{' '}
-                        <a
-                          href={`mailto:${publicSettings.reply_email}`}
-                          className="text-white/85 underline underline-offset-4 hover:text-white"
-                        >
-                          {publicSettings.reply_email}
-                        </a>
-                        .
-                      </p>
-                    )}
-                    <label
-                      className="mt-8 flex w-fit cursor-pointer items-center gap-3 rounded-lg px-4 py-3 transition-colors hover:border-white/30"
-                      style={{ border: '1px solid rgba(255,255,255,0.15)' }}
-                    >
-                      <input
-                        type="checkbox"
-                        className="sr-only"
-                        checked={false}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setDisclaimerAck(new Date().toISOString())
-                          }
-                        }}
-                      />
-                      <span
-                        aria-hidden
-                        className="grid h-5 w-5 shrink-0 place-items-center rounded-[4px]"
-                        style={{
-                          border: '1.5px solid rgba(255,255,255,0.45)',
-                          background: 'rgba(255,255,255,0.04)',
-                        }}
-                      />
-                      <span
-                        className="uppercase tracking-[0.24em] text-white/85"
-                        style={{ fontFamily: MONO, fontSize: 11 }}
-                      >
-                        I've read this and understand the terms
-                      </span>
-                    </label>
-                  </div>
-                )}
+                          <span
+                            aria-hidden
+                            className="grid h-5 w-5 shrink-0 place-items-center rounded-[4px]"
+                            style={
+                              isAcked
+                                ? {
+                                    background: APPROVED_GREEN,
+                                    border: `1.5px solid ${APPROVED_GREEN}`,
+                                  }
+                                : {
+                                    background: 'rgba(255,255,255,0.04)',
+                                    border: '1.5px solid rgba(255,255,255,0.45)',
+                                  }
+                            }
+                          >
+                            {isAcked && (
+                              <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                                <path
+                                  d="M2.5 6.5L5 9L9.5 3.5"
+                                  stroke="#0f0d0b"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                            )}
+                          </span>
+                          <span
+                            className="uppercase tracking-[0.24em] text-white/85"
+                            style={{ fontFamily: MONO, fontSize: 11 }}
+                          >
+                            I've read this and understand the terms
+                          </span>
+                        </label>
+                        {/* Post-checkbox status line —
+                            "Acknowledged {date}" when ack'd;
+                            muted-red retry message on edge-
+                            function failure; nothing while
+                            saving (the cursor-wait + disabled
+                            input carry that signal). */}
+                        {isAcked && ackAt && (
+                          <p
+                            className="mt-3 uppercase tracking-[0.2em] text-white/50"
+                            style={{ fontFamily: MONO, fontSize: 10 }}
+                          >
+                            Acknowledged{' '}
+                            {(() => {
+                              const d = new Date(ackAt)
+                              if (Number.isNaN(d.getTime())) return ackAt
+                              const datePart = d.toLocaleDateString('en-GB', {
+                                day: 'numeric',
+                                month: 'short',
+                                year: 'numeric',
+                              })
+                              const timePart = d.toLocaleTimeString('en-GB', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })
+                              return `${datePart}, ${timePart}`
+                            })()}
+                          </p>
+                        )}
+                        {ackError && !isAcked && (
+                          <p
+                            className="mt-3 text-[12px] text-rose-300/90"
+                            style={{ fontFamily: MONO }}
+                          >
+                            Couldn't save, please try again.
+                          </p>
+                        )}
+                      </>
+                    )
+                  })()}
+                </div>
               </div>
             </section>
           )}

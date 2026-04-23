@@ -29,6 +29,14 @@ export interface PublicProof {
   // linking a conversation, per migration 000067) — render
   // paths hide the badge when null rather than falling back.
   helpscout_conversation_id: string | null
+  // Customer's disclaimer acknowledgement timestamp (migration
+  // 000091 + 000092). Null when the customer hasn't ticked
+  // "I've read this" yet. Written once per proof (not per
+  // version) — the terms apply to the Plasma↔customer
+  // relationship, not to each revision. The audit columns
+  // (ip / ua / by_name) stay on the base table and are
+  // designer-only.
+  disclaimer_acknowledged_at: string | null
 }
 
 // One entry per variant exposed on a proof version.
