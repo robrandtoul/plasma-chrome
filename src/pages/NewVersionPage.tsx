@@ -2629,11 +2629,14 @@ const selectClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm 
 //     original thumb. Keep toggle is forced visually off and
 //     disabled; Undo re-enables the toggle path.
 //
-// Thumb stays as the v1 preview in all three states — the
-// replacement's filename shows as a caption. That keeps the
-// card's identity tied to the v1 image it's reviewing, with the
-// replacement treated as metadata about what's happening to
-// that slot rather than a new card.
+// Thumb swaps to the replacement's preview once one is queued —
+// the designer needs to verify at a glance that the file they
+// just dropped is the one they intended. The v1 filename stays
+// as the caption below the thumb and the amber "Replacing with
+// {filename}" block spells out the new file, so the "what's
+// being replaced" context isn't lost when the thumb swaps. In
+// the other two states (Keep on / Keep off, no replacement) the
+// thumb is the v1 preview.
 function CarryCard({
   img,
   nameLabel,
@@ -2768,7 +2771,7 @@ function CarryCard({
         </div>
       )}
       <img
-        src={img.preview}
+        src={replacement?.preview ?? img.preview}
         alt={displayLabel}
         className={[
           'h-32 w-full rounded-lg object-cover transition-opacity',
