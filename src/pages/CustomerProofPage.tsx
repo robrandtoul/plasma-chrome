@@ -360,7 +360,6 @@ export default function CustomerProofPage() {
   const ACCENT = '#7b3ff2'
   const ACCENT_GLOW = 'rgba(123,63,242,0.55)'
   const APPROVED_GREEN = '#4ade80'
-  const APPROVED_GLOW = 'rgba(74,222,128,0.4)'
   const BRAND_ORDER = ['#e11735', '#d81c7e', '#4a21a6', '#3ba58a']
   const SERIF = "'Cormorant Garamond', Georgia, serif"
   const SANS = "'Inter Tight', system-ui, sans-serif"
@@ -498,65 +497,92 @@ export default function CustomerProofPage() {
             </div>
           </div>
 
-          {/* Approval strip — three states: green full / blue
-              partial / silent. Version chip on the right echoes
-              the Plates-section name + approval shape. */}
-          {heroApprovalStrip && (
-            <div className="border-b border-white/10">
-              <div className="mx-auto flex max-w-[1040px] flex-wrap items-center justify-between gap-3 px-6 py-4 sm:px-8">
-                {heroApprovalStrip.kind === 'approved' ? (
-                  <div className="flex items-center gap-4">
-                    <span
-                      className="inline-flex items-center gap-2 uppercase tracking-[0.22em]"
-                      style={{ fontFamily: MONO, fontSize: 12, color: APPROVED_GREEN }}
-                    >
-                      <span
-                        className="h-[6px] w-[6px] rounded-full"
-                        style={{
-                          background: APPROVED_GREEN,
-                          boxShadow: `0 0 8px ${APPROVED_GLOW}`,
-                        }}
-                      />
-                      Approved
-                    </span>
-                    {heroApprovalStrip.dateLabel && (
-                      <span className="text-[13px] text-white/70">
-                        Approved on {heroApprovalStrip.dateLabel}
-                      </span>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-4">
-                    <span
-                      className="inline-flex items-center gap-2 uppercase tracking-[0.22em] text-sky-300"
-                      style={{ fontFamily: MONO, fontSize: 12 }}
-                    >
-                      <span
-                        className="h-[6px] w-[6px] rounded-full bg-sky-300"
-                        style={{ boxShadow: '0 0 8px rgba(125,211,252,0.45)' }}
-                      />
-                      Partially approved
-                    </span>
-                    <span className="max-w-[56ch] text-[13px] text-white/70">
-                      Some proofs are already approved from a previous version. The rest are awaiting your review.
-                    </span>
-                  </div>
-                )}
-                <span
-                  className="uppercase tracking-[0.22em] text-white/45"
-                  style={{ fontFamily: MONO, fontSize: 12 }}
-                >
-                  v{activeVersion?.version_number ?? '—'}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Hero — "Proofs for" label + customer name + italic
-              company + quick-facts row (material / revision /
-              names). Scaled so the name reads as the page's
-              dominant object at 76px. */}
+          {/* Hero — approval chip (when applicable) + "Proofs for"
+              eyebrow + customer name + italic company + quick-
+              facts row (material / revision / names). Scaled so
+              the name reads as the page's dominant object at
+              76px. The approval chip sits INSIDE the hero,
+              above the eyebrow, so it's the first thing the
+              customer sees on landing — replaces the old
+              between-masthead-and-hero banner. */}
           <div className="mx-auto max-w-[1040px] px-6 py-20 sm:px-8">
+            {heroApprovalStrip && activeVersion && (() => {
+              const total = versionImages[activeVersion.id]?.length ?? 0
+              const isApprovedKind = heroApprovalStrip.kind === 'approved'
+              // Colour tokens for the chip. Green for full
+              // approval, sky-blue for the carry-forward
+              // partial state — same palette the old banner
+              // used, now in one unified chip pattern.
+              const tone = isApprovedKind
+                ? {
+                    bg: 'rgba(74,222,128,0.1)',
+                    border: 'rgba(74,222,128,0.4)',
+                    glow: '0 0 32px rgba(74,222,128,0.18)',
+                    dotBg: APPROVED_GREEN,
+                    dotGlow: '0 0 14px rgba(74,222,128,0.5)',
+                    label: APPROVED_GREEN,
+                    divider: 'rgba(74,222,128,0.3)',
+                  }
+                : {
+                    bg: 'rgba(125,211,252,0.1)',
+                    border: 'rgba(125,211,252,0.4)',
+                    glow: '0 0 32px rgba(125,211,252,0.18)',
+                    dotBg: '#7dd3fc',
+                    dotGlow: '0 0 14px rgba(125,211,252,0.5)',
+                    label: '#7dd3fc',
+                    divider: 'rgba(125,211,252,0.3)',
+                  }
+              return (
+                <div
+                  className="mb-10 inline-flex flex-wrap items-center gap-4 rounded-full py-2 pl-2 pr-5"
+                  style={{
+                    background: tone.bg,
+                    border: `1px solid ${tone.border}`,
+                    boxShadow: tone.glow,
+                  }}
+                >
+                  <span
+                    aria-hidden
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full"
+                    style={{ background: tone.dotBg, boxShadow: tone.dotGlow }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                      <path
+                        d="M3 7L6 10L11 4"
+                        stroke="white"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </span>
+                  <span
+                    className="uppercase"
+                    style={{
+                      fontFamily: MONO,
+                      fontSize: 12,
+                      color: tone.label,
+                      letterSpacing: '0.3em',
+                    }}
+                  >
+                    {isApprovedKind ? 'Approved' : 'Partially approved'}
+                  </span>
+                  <span
+                    aria-hidden
+                    className="h-4 w-px shrink-0"
+                    style={{ background: tone.divider }}
+                  />
+                  <span
+                    className="text-white/75"
+                    style={{ fontFamily: MONO, fontSize: 12 }}
+                  >
+                    {isApprovedKind
+                      ? `Signed off ${heroApprovalStrip.dateLabel ?? 'today'} · ${total} / ${total} proof${total === 1 ? '' : 's'}`
+                      : 'Some proofs already signed off, others awaiting review'}
+                  </span>
+                </div>
+              )
+            })()}
             <p
               className="uppercase tracking-[0.24em] text-white/45"
               style={{ fontFamily: MONO, fontSize: 12 }}
@@ -624,94 +650,36 @@ export default function CustomerProofPage() {
             )}
           </div>
 
-          {/* Revisions timeline + finish-options row — both sit
-              on the ink strip below the hero. Renders when the
-              proof has >1 version or the active version offers
-              ≥2 options; silent when the page collapses to a
-              single-version / single-option proof.
-              Row 1: full-width timeline rail (extracted to the
-              RevisionsTimeline component below — needs a
-              ResizeObserver for the wide/narrow branch).
-              Row 2: option-switcher pills with a left-aligned
-              mono label, separated from row 1 by a hairline
-              border + generous vertical rhythm. */}
-          {activeVersion && (versions.length > 1 || showOptionSwitcher) && (
-            <div className="border-t border-white/10">
-              <div className="mx-auto max-w-[1040px] px-6 py-6 sm:px-8">
-                {versions.length > 1 && (
-                  <RevisionsTimeline
-                    versions={versions}
-                    activeVersion={activeVersion}
-                    onSelectVersion={setActiveVersion}
-                    tokens={{
-                      ink: INK,
-                      inkDeep: INK_DEEP,
-                      accent: ACCENT,
-                      accentGlow: ACCENT_GLOW,
-                      approvedGreen: APPROVED_GREEN,
-                      serif: SERIF,
-                      mono: MONO,
-                    }}
-                  />
-                )}
-                {showOptionSwitcher && (
-                  <div
-                    className={[
-                      'flex flex-wrap items-center gap-x-6 gap-y-3',
-                      versions.length > 1 ? 'mt-7 border-t border-white/[0.08] pt-5' : '',
-                    ].join(' ')}
-                  >
-                    <span
-                      className="uppercase tracking-[0.22em] text-white/45"
-                      style={{ fontFamily: MONO, fontSize: 12 }}
-                    >
-                      {optionLabelSingular}
-                    </span>
-                    <div className="ml-auto flex flex-wrap items-center gap-2">
-                      {versionOptions.map((code) => {
-                        const o = materialOptions.find(
-                          (x) =>
-                            x.material_id === activeVersion.material_id && x.code === code,
-                        )
-                        const isActive = activeOptionCode === code
-                        const fromPrice = optionFromPrice(code)
-                        return (
-                          <button
-                            key={code}
-                            onClick={() => setActiveOptionCode(code)}
-                            className={[
-                              'rounded-full px-3.5 py-1.5 uppercase tracking-[0.22em] transition-colors',
-                              isActive
-                                ? 'text-white'
-                                : 'text-white/80 ring-1 ring-white/20 hover:text-white hover:ring-white/40',
-                            ].join(' ')}
-                            style={{
-                              fontFamily: MONO,
-                              fontSize: 12,
-                              ...(isActive
-                                ? { background: ACCENT, boxShadow: `0 0 20px ${ACCENT_GLOW}` }
-                                : {}),
-                            }}
-                          >
-                            {o?.display_name ?? code}
-                            {fromPrice != null && !activeVersion.custom_quote && (
-                              <span
-                                className={['ml-1.5', isActive ? 'text-white/80' : 'text-white/50'].join(' ')}
-                              >
-                                (+from {formatPrice(fromPrice, activeVersion.currency, 0)})
-                              </span>
-                            )}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </div>
+
+      {/* ───── Revision history band ─────
+          Dedicated zone below the hero — a header row, a
+          spotlight column showing the active v-number + Latest/
+          History chip + date, and the timeline rail. Coachmark
+          overlays the rail on first visit to teach the rail
+          interaction (localStorage-persisted, dismisses on
+          × click or any dot click). Rationale for finish
+          pills NOT living here: they change which proofs are
+          visible, so they belong adjacent to the proofs in
+          the Plates section header — not grouped with
+          time-based revision metadata. */}
+      {activeVersion && versions.length > 1 && (
+        <RevisionsBand
+          versions={versions}
+          activeVersion={activeVersion}
+          onSelectVersion={setActiveVersion}
+          tokens={{
+            ink: INK,
+            inkDeep: INK_DEEP,
+            accent: ACCENT,
+            accentGlow: ACCENT_GLOW,
+            approvedGreen: APPROVED_GREEN,
+            serif: SERIF,
+            mono: MONO,
+          }}
+        />
+      )}
 
       {activeVersion && (
         <>
@@ -769,43 +737,124 @@ export default function CustomerProofPage() {
             return (
               <section style={{ background: PAPER, color: '#1a1612' }}>
                 <div className="mx-auto max-w-[1040px] px-6 py-20 sm:px-8 sm:py-24">
+                  {/* Section header — left cluster is the
+                      Proofs heading + count subtitle stacked
+                      vertically; right cluster is the Finish
+                      selector. Finish pills live here (not in
+                      the revisions band) because they change
+                      which proofs are visible, so they belong
+                      adjacent to the proofs they affect rather
+                      than grouped with time-based revision
+                      metadata. items-end so the pill row hugs
+                      the bottom edge of the heading cluster
+                      regardless of whether the subtitle
+                      renders. */}
                   <div
-                    className="mb-10 flex flex-wrap items-baseline justify-between gap-3 pb-4"
+                    className="mb-10 flex flex-wrap items-end justify-between gap-4 pb-4"
                     style={{ borderBottom: `1px solid ${PAPER_BORDER}` }}
                   >
-                    <h2
-                      className="leading-none text-[#1a1612]"
-                      style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
-                    >
-                      Proofs
-                    </h2>
-                    {/* Count subtext — rendered for business
-                        cards only. Membership cards hide the
-                        whole line (the "proof count vs
-                        people" framing doesn't map to membership
-                        tiers). Business-card copy reads
-                        "{N} unique proofs · {M} people" to
-                        make the per-card uniqueness explicit;
-                        the special "Shared" branch survives for
-                        the rare all-shared business card (shared
-                        group only, no named groups). */}
-                    {activeVersion.card_type !== 'membership' && (
-                      <span
-                        className="uppercase tracking-[0.22em] text-[#1a1612]/55"
-                        style={{ fontFamily: MONO, fontSize: 12 }}
+                    <div>
+                      <h2
+                        className="leading-none text-[#1a1612]"
+                        style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
                       >
-                        {plateCount === 1 ? '1 unique proof' : `${plateCount} unique proofs`}
-                        {recipientCount > 0 && (
-                          <>
-                            {' · '}
-                            {recipientCount === 1
-                              ? sharedGroup && namedGroups.length === 0
-                                ? 'Shared'
-                                : '1 person'
-                              : `${recipientCount} people`}
-                          </>
-                        )}
-                      </span>
+                        Proofs
+                      </h2>
+                      {/* Count subtitle — rendered for business
+                          cards only. Membership cards hide the
+                          whole line (the "proof count vs
+                          people" framing doesn't map to
+                          membership tiers). The special
+                          "Shared" branch survives for the rare
+                          all-shared business card (shared group
+                          only, no named groups). */}
+                      {activeVersion.card_type !== 'membership' && (
+                        <span
+                          className="mt-3 block uppercase tracking-[0.22em] text-[#1a1612]/55"
+                          style={{ fontFamily: MONO, fontSize: 12 }}
+                        >
+                          {plateCount === 1 ? '1 unique proof' : `${plateCount} unique proofs`}
+                          {recipientCount > 0 && (
+                            <>
+                              {' · '}
+                              {recipientCount === 1
+                                ? sharedGroup && namedGroups.length === 0
+                                  ? 'Shared'
+                                  : '1 person'
+                                : `${recipientCount} people`}
+                            </>
+                          )}
+                        </span>
+                      )}
+                    </div>
+                    {/* Finish selector — segmented pill group
+                        on a faint ink-tinted surface so it
+                        reads as a control rather than
+                        decoration. Active pill swaps to solid
+                        ink with white text; inactive pills
+                        stay ink-at-70% and brighten on hover.
+                        Surcharge suffix ("+£49") is preserved
+                        from the pre-move rendering so customers
+                        still see the cost delta, just in a
+                        tighter form. */}
+                    {showOptionSwitcher && (
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span
+                          className="uppercase tracking-[0.22em] text-[#1a1612]/55"
+                          style={{ fontFamily: MONO, fontSize: 11 }}
+                        >
+                          {optionLabelSingular}
+                        </span>
+                        <div
+                          className="inline-flex flex-wrap items-center gap-1 rounded-full p-1"
+                          style={{
+                            background: 'rgba(26,22,18,0.05)',
+                            border: `1px solid ${PAPER_BORDER}`,
+                          }}
+                        >
+                          {versionOptions.map((code) => {
+                            const o = materialOptions.find(
+                              (x) =>
+                                x.material_id === activeVersion.material_id &&
+                                x.code === code,
+                            )
+                            const isActive = activeOptionCode === code
+                            const fromPrice = optionFromPrice(code)
+                            return (
+                              <button
+                                key={code}
+                                type="button"
+                                onClick={() => setActiveOptionCode(code)}
+                                className={[
+                                  'rounded-full px-3 py-1 uppercase tracking-[0.22em] transition-colors',
+                                  isActive
+                                    ? 'text-white'
+                                    : 'text-[#1a1612]/70 hover:text-[#1a1612]',
+                                ].join(' ')}
+                                style={{
+                                  fontFamily: MONO,
+                                  fontSize: 11,
+                                  ...(isActive ? { background: '#1a1612' } : {}),
+                                }}
+                              >
+                                {o?.display_name ?? code}
+                                {fromPrice != null && !activeVersion.custom_quote && (
+                                  <span
+                                    className="ml-1.5"
+                                    style={{
+                                      color: isActive
+                                        ? 'rgba(255,255,255,0.7)'
+                                        : 'rgba(26,22,18,0.45)',
+                                    }}
+                                  >
+                                    +{formatPrice(fromPrice, activeVersion.currency, 0)}
+                                  </span>
+                                )}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
                     )}
                   </div>
 
@@ -1565,6 +1614,391 @@ export default function CustomerProofPage() {
 // single-image groups — applyCaptions stamps image.label with
 // the right value for every case). Secondary line: raw
 // uploaded original_filename (with extension), muted and
+// ── Revisions band ───────────────────────────────────────────
+// Dedicated zone below the hero containing the section header
+// (§ 01 · Revision history + "Viewing latest" / "Viewing
+// v{n} of {total}" status), a spotlight column showing the
+// active version as a big serif number with a Latest/History
+// chip + date, and the RevisionsTimeline rail on the right.
+// Lays on a subtle accent-tinted gradient over the ink
+// background so the whole band reads as its own zone
+// separate from the hero above.
+//
+// The band also owns the first-visit coachmark — lifted to
+// band scope (vs the timeline component itself) so wrapping
+// onSelectVersion picks up both "× click dismiss" and "any
+// rail-dot click dismiss" in one place without the timeline
+// needing to know about coach state. localStorage persists
+// dismissal across reloads (key: pv_timeline_coach_seen),
+// scoped globally because it's teaching the interaction,
+// not a per-proof note.
+//
+// Responsive note: the coachmark's DOM query only matches
+// when the timeline is in wide mode (dot rail). In the
+// narrow stepper path the query returns null, the
+// measurement gate stays unset, and the coachmark silently
+// hides — the stepper's prev/next arrows already telegraph
+// the interaction, no tooltip needed.
+function RevisionsBand({
+  versions,
+  activeVersion,
+  onSelectVersion,
+  tokens,
+}: {
+  versions: PublicProofVersion[]
+  activeVersion: PublicProofVersion
+  onSelectVersion: (v: PublicProofVersion) => void
+  tokens: {
+    ink: string
+    inkDeep: string
+    accent: string
+    accentGlow: string
+    approvedGreen: string
+    serif: string
+    mono: string
+  }
+}) {
+  const { ink, accent, accentGlow, approvedGreen, serif, mono } = tokens
+  const railRef = useRef<HTMLDivElement>(null)
+
+  const [coachSeen, setCoachSeen] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true
+    try {
+      return localStorage.getItem('pv_timeline_coach_seen') === '1'
+    } catch {
+      // Safari private mode — don't nag in that case either.
+      return true
+    }
+  })
+  const dismissCoach = () => {
+    try {
+      localStorage.setItem('pv_timeline_coach_seen', '1')
+    } catch {
+      // storage unavailable — still dismiss in-memory
+    }
+    setCoachSeen(true)
+  }
+  const handleSelectVersion = (v: PublicProofVersion) => {
+    onSelectVersion(v)
+    if (!coachSeen) dismissCoach()
+  }
+
+  const latest = versions[versions.length - 1]
+  const isLatestActive = activeVersion.id === latest.id
+  const activeDate = new Date(activeVersion.created_at)
+    .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+    .toUpperCase()
+
+  const chipBase =
+    'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 uppercase tracking-[0.22em]'
+  const LatestChip = () => (
+    <span
+      className={chipBase}
+      style={{
+        fontFamily: mono,
+        fontSize: 10,
+        background: 'rgba(74,222,128,0.15)',
+        color: approvedGreen,
+        border: '1px solid rgba(74,222,128,0.35)',
+      }}
+    >
+      <span
+        className="h-[5px] w-[5px] rounded-full"
+        style={{ background: approvedGreen }}
+      />
+      Latest
+    </span>
+  )
+  const HistoryChip = () => (
+    <span
+      className={chipBase}
+      style={{
+        fontFamily: mono,
+        fontSize: 10,
+        background: 'rgba(123,63,242,0.15)',
+        color: accent,
+        border: '1px solid rgba(123,63,242,0.35)',
+      }}
+    >
+      <span className="h-[5px] w-[5px] rounded-full" style={{ background: accent }} />
+      History
+    </span>
+  )
+
+  return (
+    <section className="border-t border-white/10" style={{ background: ink }}>
+      <div
+        style={{
+          background:
+            'linear-gradient(180deg, rgba(123,63,242,0.04) 0%, rgba(123,63,242,0) 100%)',
+        }}
+      >
+        <div className="mx-auto max-w-[1040px] px-6 py-8 sm:px-8">
+          {/* Header row — § 01 section number in accent +
+              "REVISION HISTORY" mono label on the left;
+              "VIEWING LATEST" / "VIEWING V{n} OF {total}" on
+              the right. Whitespace-nowrap on the left cluster
+              so the label doesn't wrap when the band gets
+              narrow. */}
+          <div className="mb-5 flex flex-wrap items-baseline justify-between gap-3">
+            <div className="flex items-baseline gap-3 whitespace-nowrap">
+              <span
+                className="uppercase"
+                style={{
+                  fontFamily: mono,
+                  fontSize: 11,
+                  color: accent,
+                  letterSpacing: '0.3em',
+                }}
+              >
+                § 01
+              </span>
+              <span
+                className="uppercase text-white/80"
+                style={{ fontFamily: mono, fontSize: 11, letterSpacing: '0.3em' }}
+              >
+                Revision history
+              </span>
+            </div>
+            <span
+              className="uppercase tracking-[0.22em] text-white/45"
+              style={{ fontFamily: mono, fontSize: 11 }}
+            >
+              {isLatestActive
+                ? 'Viewing latest'
+                : `Viewing v${activeVersion.version_number} of ${versions.length}`}
+            </span>
+          </div>
+
+          {/* Grid: spotlight (auto) + rail (1fr), 32px gap,
+              vertically centered so the big serif v-number
+              sits visually aligned with the rail's y-axis. */}
+          <div
+            className="grid items-center gap-8"
+            style={{ gridTemplateColumns: 'auto 1fr' }}
+          >
+            {/* Spotlight — min-width so narrow active
+                numbers (v1, v2) don't collapse the column,
+                right-hand hairline separates from the rail. */}
+            <div
+              className="min-w-[120px] pr-8"
+              style={{ borderRight: '1px solid rgba(255,255,255,0.1)' }}
+            >
+              <div className="flex items-baseline gap-3">
+                <span
+                  className="leading-none text-white"
+                  style={{ fontFamily: serif, fontWeight: 400, fontSize: 56 }}
+                >
+                  v{activeVersion.version_number}
+                </span>
+                {isLatestActive ? <LatestChip /> : <HistoryChip />}
+              </div>
+              <p
+                className="mt-2 uppercase text-white/55"
+                style={{ fontFamily: mono, fontSize: 11, letterSpacing: '0.24em' }}
+              >
+                {activeDate}
+              </p>
+            </div>
+
+            {/* Rail column — the timeline renders inside; the
+                coachmark sits absolutely positioned above the
+                active dot, scoped by railRef for the DOM
+                query + parent-relative coords. position:
+                relative on the wrapper is load-bearing for
+                the coachmark's absolute positioning. */}
+            <div ref={railRef} className="relative">
+              <RevisionsTimeline
+                versions={versions}
+                activeVersion={activeVersion}
+                onSelectVersion={handleSelectVersion}
+                tokens={tokens}
+              />
+              {!coachSeen && (
+                <RevisionsCoachmark
+                  parentRef={railRef}
+                  activeVersionNumber={activeVersion.version_number}
+                  isLatestActive={isLatestActive}
+                  onDismiss={dismissCoach}
+                  accent={accent}
+                  accentGlow={accentGlow}
+                  mono={mono}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ── Revisions coachmark ──────────────────────────────────────
+// First-visit tooltip pointing at the active dot on the
+// revisions rail. Box is edge-clamped to stay inside the
+// parent container; arrow is clamped to stay inside the box's
+// rounded corners but always sits directly above the active
+// dot. Measurement runs aggressively — useLayoutEffect +
+// raf x2 + document.fonts.ready + ResizeObserver on both
+// parent and the active button + window resize — because any
+// of those can shift the dot's x-position between mount and
+// first paint in practice.
+//
+// Render is gated on `layout !== null` so we don't flash a
+// mispositioned box while the measurement pipeline warms up.
+// In narrow (stepper) mode the active-dot selector returns
+// null, layout never sets, component returns null. No
+// special-case branch needed.
+function RevisionsCoachmark({
+  parentRef,
+  activeVersionNumber,
+  isLatestActive,
+  onDismiss,
+  accent,
+  accentGlow,
+  mono,
+}: {
+  parentRef: React.RefObject<HTMLDivElement | null>
+  activeVersionNumber: number
+  isLatestActive: boolean
+  onDismiss: () => void
+  accent: string
+  accentGlow: string
+  mono: string
+}) {
+  const BOX_W = 260
+  const MARGIN = 6
+  const [layout, setLayout] = useState<{
+    boxLeft: number
+    arrowOffset: number
+  } | null>(null)
+
+  useLayoutEffect(() => {
+    const parent = parentRef.current
+    if (!parent) return
+
+    const measure = () => {
+      const p = parentRef.current
+      if (!p) return
+      const dot = p.querySelector<HTMLElement>(
+        'button[data-rev-active="1"] span > span',
+      )
+      if (!dot) return
+      const parentRect = p.getBoundingClientRect()
+      const dotRect = dot.getBoundingClientRect()
+      const dotCenterX = dotRect.left + dotRect.width / 2 - parentRect.left
+      const parentW = parentRect.width
+      const boxLeft = Math.max(
+        MARGIN,
+        Math.min(parentW - BOX_W - MARGIN, dotCenterX - BOX_W / 2),
+      )
+      const arrowOffset = Math.max(14, Math.min(BOX_W - 14, dotCenterX - boxLeft))
+      setLayout({ boxLeft, arrowOffset })
+    }
+
+    // Run now, then again on two consecutive animation
+    // frames (first frame lays the rail out, second frame
+    // lets any style recalc settle), then again when fonts
+    // finish loading (serif metrics change dot spacing at
+    // font-swap moment).
+    measure()
+    const raf1 = requestAnimationFrame(() => {
+      measure()
+      const raf2 = requestAnimationFrame(measure)
+      ;(raf1 as unknown as { _raf2?: number })._raf2 = raf2
+    })
+    if (typeof document !== 'undefined' && document.fonts?.ready) {
+      document.fonts.ready.then(measure).catch(() => {
+        // document.fonts not implemented / rejected — skip
+      })
+    }
+
+    const ro = new ResizeObserver(() => measure())
+    ro.observe(parent)
+    const activeBtn = parent.querySelector<HTMLElement>('button[data-rev-active="1"]')
+    if (activeBtn) ro.observe(activeBtn)
+    const onWindowResize = () => measure()
+    window.addEventListener('resize', onWindowResize)
+
+    return () => {
+      cancelAnimationFrame(raf1)
+      const raf2 = (raf1 as unknown as { _raf2?: number })._raf2
+      if (typeof raf2 === 'number') cancelAnimationFrame(raf2)
+      ro.disconnect()
+      window.removeEventListener('resize', onWindowResize)
+    }
+  }, [parentRef, activeVersionNumber])
+
+  if (!layout) return null
+
+  return (
+    <div
+      className="pointer-events-none absolute z-30"
+      style={{
+        left: layout.boxLeft,
+        bottom: 'calc(100% + 14px)',
+        width: BOX_W,
+      }}
+    >
+      <div
+        className="pointer-events-auto relative rounded-xl px-4 py-3"
+        style={{
+          background: 'rgba(28,22,48,0.98)',
+          border: `1px solid ${accent}`,
+          boxShadow: `0 10px 30px rgba(0,0,0,0.4), 0 0 40px ${accentGlow}`,
+        }}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p
+              className="uppercase"
+              style={{
+                fontFamily: mono,
+                fontSize: 9,
+                color: accent,
+                letterSpacing: '0.22em',
+              }}
+            >
+              Tip · Revision history
+            </p>
+            <p className="mt-2 text-[13px] leading-[1.5] text-white/85">
+              Click any dot to see how the proof changed. You're on{' '}
+              <span style={{ color: accent }}>v{activeVersionNumber}</span>
+              {isLatestActive ? ' — the latest.' : '.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onDismiss}
+            aria-label="Dismiss tip"
+            className="shrink-0 leading-none text-white/40 transition-colors hover:text-white/80"
+            style={{ fontSize: 18 }}
+          >
+            ×
+          </button>
+        </div>
+        {/* Arrow — 12×12 rotated square inheriting the box's
+            bg + the two border edges that face the dot below,
+            so it reads as a continuous diamond arrow on the
+            border. arrowOffset is the x-centre of the arrow
+            within the box; offset by 6 to centre the rotated
+            square. */}
+        <span
+          aria-hidden
+          className="absolute h-3 w-3 rotate-45"
+          style={{
+            bottom: -7,
+            left: layout.arrowOffset - 6,
+            background: 'rgba(28,22,48,0.98)',
+            borderRight: `1px solid ${accent}`,
+            borderBottom: `1px solid ${accent}`,
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
 // ── Revisions timeline ───────────────────────────────────────
 // Horizontal rail of version markers that replaces the old
 // "v1 v2 v3" button strip. Dots are connected by a faint white
@@ -1897,10 +2331,15 @@ function RevisionsTimeline({
                 onClick={() => onSelectVersion(v)}
                 title={`v${v.version_number} · ${fmtDate(v.created_at)}`}
                 className="flex h-7 items-center"
+                data-rev-active={isActive ? '1' : undefined}
               >
-                <div className="grid h-[22px] w-[22px] place-items-center">
+                {/* Dot slot is a span (not div) so the coachmark's
+                    DOM query — button[data-rev-active="1"] span > span —
+                    resolves to the real dot element first in
+                    document order. */}
+                <span className="grid h-[22px] w-[22px] place-items-center">
                   <span className="block h-1.5 w-1.5 rounded-full bg-white/40 transition-colors hover:bg-white/70" />
-                </div>
+                </span>
               </button>
             )
           }
@@ -1911,8 +2350,9 @@ function RevisionsTimeline({
               type="button"
               onClick={() => onSelectVersion(v)}
               className="flex h-7 items-center gap-2"
+              data-rev-active={isActive ? '1' : undefined}
             >
-              <div className="grid h-[22px] w-[22px] place-items-center">
+              <span className="grid h-[22px] w-[22px] place-items-center">
                 <span
                   className="block rounded-full transition-all"
                   style={
@@ -1931,7 +2371,7 @@ function RevisionsTimeline({
                         }
                   }
                 />
-              </div>
+              </span>
               {/* Label cluster — ink background knocks out the
                   rail line behind the text. h-7 items-center
                   matches the outer row so the serif size swap
