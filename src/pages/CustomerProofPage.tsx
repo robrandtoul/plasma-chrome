@@ -500,7 +500,7 @@ export default function CustomerProofPage() {
               eyebrow + customer name + italic company + quick-
               facts row (material / revision / names). Scaled so
               the name reads as the page's dominant object at
-              76px. The approval chip sits INSIDE the hero,
+              61px. The approval chip sits INSIDE the hero,
               above the eyebrow, so it's the first thing the
               customer sees on landing — replaces the old
               between-masthead-and-hero banner. */}
@@ -653,7 +653,7 @@ export default function CustomerProofPage() {
             </p>
             <h1
               className="mt-4 leading-[0.98] tracking-[-0.015em] text-white"
-              style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 72 }}
+              style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 61 }}
             >
               {proof.customer_name}
             </h1>
