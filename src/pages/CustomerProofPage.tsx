@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge } from '../lib/types'
@@ -25,7 +25,6 @@ export default function CustomerProofPage() {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
-  const tabStripRef = useRef<HTMLDivElement>(null)
   // Guards the once-per-page-load proof_version_views insert. A
   // ref survives React strict-mode's double-invoke of effects
   // whereas state wouldn't.
@@ -44,16 +43,6 @@ export default function CustomerProofPage() {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [lightboxSrc])
-
-  // On initial load, scroll the active tab to the left edge of the strip.
-  useEffect(() => {
-    if (loading) return
-    const strip = tabStripRef.current
-    if (!strip) return
-    const activeTab = strip.querySelector<HTMLElement>('[data-active="true"]')
-    if (!activeTab) return
-    strip.scrollLeft = Math.max(0, activeTab.offsetLeft - 8)
-  }, [loading])
 
   // When active version changes, reset the option switcher to the first option
   // this version exposes.
@@ -601,103 +590,87 @@ export default function CustomerProofPage() {
             )}
           </div>
 
-          {/* Revisions tabs + option switcher — both sit on the
-              ink row below the hero, ordered left→right so the
-              axes read as "which version, in which finish". Only
-              renders when there's more than one version or the
-              version offers ≥2 options — silent when the page
-              collapses to a single-version / single-option proof. */}
+          {/* Revisions timeline + finish-options row — both sit
+              on the ink strip below the hero. Renders when the
+              proof has >1 version or the active version offers
+              ≥2 options; silent when the page collapses to a
+              single-version / single-option proof.
+              Row 1: full-width timeline rail (extracted to the
+              RevisionsTimeline component below — needs a
+              ResizeObserver for the wide/narrow branch).
+              Row 2: option-switcher pills with a left-aligned
+              mono label, separated from row 1 by a hairline
+              border + generous vertical rhythm. */}
           {activeVersion && (versions.length > 1 || showOptionSwitcher) && (
             <div className="border-t border-white/10">
-              <div
-                ref={tabStripRef}
-                className="mx-auto flex max-w-[1040px] flex-wrap items-center gap-x-8 gap-y-3 px-6 py-4 sm:px-8"
-              >
+              <div className="mx-auto max-w-[1040px] px-6 py-6 sm:px-8">
                 {versions.length > 1 && (
-                  <>
+                  <RevisionsTimeline
+                    versions={versions}
+                    activeVersion={activeVersion}
+                    onSelectVersion={setActiveVersion}
+                    tokens={{
+                      ink: INK,
+                      inkDeep: INK_DEEP,
+                      accent: ACCENT,
+                      accentGlow: ACCENT_GLOW,
+                      approvedGreen: APPROVED_GREEN,
+                      serif: SERIF,
+                      mono: MONO,
+                    }}
+                  />
+                )}
+                {showOptionSwitcher && (
+                  <div
+                    className={[
+                      'flex flex-wrap items-center gap-x-6 gap-y-3',
+                      versions.length > 1 ? 'mt-7 border-t border-white/[0.08] pt-5' : '',
+                    ].join(' ')}
+                  >
                     <span
                       className="uppercase tracking-[0.22em] text-white/45"
                       style={{ fontFamily: MONO, fontSize: 12 }}
                     >
-                      Revisions
+                      {optionLabelSingular}
                     </span>
-                    <div className="flex flex-wrap gap-6">
-                      {[...versions].reverse().map((v) => {
-                        const isActive = activeVersion?.id === v.id
+                    <div className="ml-auto flex flex-wrap items-center gap-2">
+                      {versionOptions.map((code) => {
+                        const o = materialOptions.find(
+                          (x) =>
+                            x.material_id === activeVersion.material_id && x.code === code,
+                        )
+                        const isActive = activeOptionCode === code
+                        const fromPrice = optionFromPrice(code)
                         return (
                           <button
-                            key={v.id}
-                            data-active={isActive ? 'true' : undefined}
-                            onClick={() => setActiveVersion(v)}
+                            key={code}
+                            onClick={() => setActiveOptionCode(code)}
                             className={[
-                              'relative uppercase tracking-[0.22em] transition-colors',
+                              'rounded-full px-3.5 py-1.5 uppercase tracking-[0.22em] transition-colors',
                               isActive
                                 ? 'text-white'
-                                : 'text-white/70 hover:text-white',
+                                : 'text-white/80 ring-1 ring-white/20 hover:text-white hover:ring-white/40',
                             ].join(' ')}
-                            style={{ fontFamily: MONO, fontSize: 13 }}
+                            style={{
+                              fontFamily: MONO,
+                              fontSize: 12,
+                              ...(isActive
+                                ? { background: ACCENT, boxShadow: `0 0 20px ${ACCENT_GLOW}` }
+                                : {}),
+                            }}
                           >
-                            <span className="inline-flex items-center gap-2">
-                              v{v.version_number}
-                              {v.is_current && (
-                                <span
-                                  className="tracking-[0.22em]"
-                                  style={{ fontFamily: MONO, fontSize: 11, color: ACCENT }}
-                                >
-                                  · {isApproved ? 'Approved' : 'Current'}
-                                </span>
-                              )}
-                            </span>
-                            {isActive && (
+                            {o?.display_name ?? code}
+                            {fromPrice != null && !activeVersion.custom_quote && (
                               <span
-                                className="absolute -bottom-[17px] left-0 right-0 h-[2px]"
-                                style={{ background: ACCENT, boxShadow: `0 0 10px ${ACCENT}` }}
-                              />
+                                className={['ml-1.5', isActive ? 'text-white/80' : 'text-white/50'].join(' ')}
+                              >
+                                (+from {formatPrice(fromPrice, activeVersion.currency, 0)})
+                              </span>
                             )}
                           </button>
                         )
                       })}
                     </div>
-                  </>
-                )}
-                {showOptionSwitcher && (
-                  <div className="ml-auto flex flex-wrap items-center gap-2">
-                    {versionOptions.map((code) => {
-                      const o = materialOptions.find(
-                        (x) =>
-                          x.material_id === activeVersion.material_id && x.code === code,
-                      )
-                      const isActive = activeOptionCode === code
-                      const fromPrice = optionFromPrice(code)
-                      return (
-                        <button
-                          key={code}
-                          onClick={() => setActiveOptionCode(code)}
-                          className={[
-                            'rounded-full px-3.5 py-1.5 uppercase tracking-[0.22em] transition-colors',
-                            isActive
-                              ? 'text-white'
-                              : 'text-white/80 ring-1 ring-white/20 hover:text-white hover:ring-white/40',
-                          ].join(' ')}
-                          style={{
-                            fontFamily: MONO,
-                            fontSize: 12,
-                            ...(isActive
-                              ? { background: ACCENT, boxShadow: `0 0 20px ${ACCENT_GLOW}` }
-                              : {}),
-                          }}
-                        >
-                          {o?.display_name ?? code}
-                          {fromPrice != null && !activeVersion.custom_quote && (
-                            <span
-                              className={['ml-1.5', isActive ? 'text-white/80' : 'text-white/50'].join(' ')}
-                            >
-                              (+from {formatPrice(fromPrice, activeVersion.currency, 0)})
-                            </span>
-                          )}
-                        </button>
-                      )
-                    })}
                   </div>
                 )}
               </div>
@@ -1363,6 +1336,410 @@ export default function CustomerProofPage() {
 // single-image groups — applyCaptions stamps image.label with
 // the right value for every case). Secondary line: raw
 // uploaded original_filename (with extension), muted and
+// ── Revisions timeline ───────────────────────────────────────
+// Horizontal rail of version markers that replaces the old
+// "v1 v2 v3" button strip. Dots are connected by a faint white
+// base line; a glowing accent-coloured segment runs from v1 up
+// to the active marker. Labelled markers (v1, latest, active,
+// current) render serif v-numbers + mono dates inline; the
+// remaining versions render as small tick dots that tooltip to
+// "v{n} · {date}" on hover. "Current" (green) and "Viewing"
+// (accent) chips ride on the label clusters — Current is
+// always pinned to the latest marker, Viewing renders on the
+// active marker only when active !== latest.
+//
+// Overflow handling: for projects with 20+ versions, the rail
+// would get visually cramped. Always include v1, latest,
+// active, and the is_current marker; fill remaining slots with
+// evenly-sampled intermediates up to a width-derived cap
+// (~12–20 markers at laptop/desktop widths). Sampled
+// intermediates are always unlabelled ticks.
+//
+// Knockout detail: the rail line runs horizontally through the
+// full row at the dots' y-centre. Where a label cluster
+// renders inline with its dot, the cluster carries
+// background: ink so it visually erases the line segment
+// behind the v-number, date, and chip text. Without this,
+// the line would strike through each label.
+//
+// Narrow mode: collapses to a stepper (prev · centre pill ·
+// next) at container widths < 520px. Centre pill opens a
+// dropdown list of all versions; tap selects + closes.
+// Threshold intentionally smaller than Tailwind's sm
+// breakpoint so it only engages on genuinely narrow
+// containers, not just on phone-sized viewports where the
+// timeline could still fit with sampling.
+function RevisionsTimeline({
+  versions,
+  activeVersion,
+  onSelectVersion,
+  tokens,
+}: {
+  versions: PublicProofVersion[]
+  activeVersion: PublicProofVersion
+  onSelectVersion: (v: PublicProofVersion) => void
+  tokens: {
+    ink: string
+    inkDeep: string
+    accent: string
+    accentGlow: string
+    approvedGreen: string
+    serif: string
+    mono: string
+  }
+}) {
+  const wrapperRef = useRef<HTMLDivElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState<number | null>(null)
+  const [open, setOpen] = useState(false)
+
+  // Sync-measure container width before first paint so narrow
+  // viewports don't flash the wide layout. ResizeObserver
+  // handles subsequent width changes (window resize, parent
+  // layout reflow).
+  useLayoutEffect(() => {
+    const el = wrapperRef.current
+    if (!el) return
+    setWidth(el.getBoundingClientRect().width)
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) setWidth(entry.contentRect.width)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  // Close the narrow-mode dropdown on outside click. Scoped to
+  // this instance so other dropdowns elsewhere on the page
+  // (if any ever exist) wouldn't interfere.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (!dropdownRef.current) return
+      if (!dropdownRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  const { ink, inkDeep, accent, accentGlow, approvedGreen, serif, mono } = tokens
+
+  const fmtDate = (iso: string) =>
+    new Date(iso)
+      .toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+      .toUpperCase()
+
+  const latest = versions[versions.length - 1]
+  const current = versions.find((v) => v.is_current) ?? latest
+  const activeIdx = versions.findIndex((v) => v.id === activeVersion.id)
+  const isLatestActive = activeVersion.id === latest.id
+
+  // Green "Current" chip — always pinned to the latest marker,
+  // regardless of the designer's is_current selection. Kept as
+  // a local component so the two renderers (wide timeline +
+  // narrow dropdown + narrow centre pill) share the styling.
+  const CurrentChip = () => (
+    <span
+      className="inline-flex shrink-0 items-center rounded-full px-2 py-[3px] uppercase tracking-[0.2em]"
+      style={{
+        fontFamily: mono,
+        fontSize: 9,
+        background: 'rgba(74,222,128,0.15)',
+        color: approvedGreen,
+        border: `1px solid rgba(74,222,128,0.35)`,
+      }}
+    >
+      Current
+    </span>
+  )
+  // Accent "Viewing" chip — rides on the active marker only
+  // when active !== latest. Leading 5px dot echoes the rail
+  // dot colour so the chip visually ties back to the marker.
+  const ViewingChip = () => (
+    <span
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-[3px] uppercase tracking-[0.2em]"
+      style={{
+        fontFamily: mono,
+        fontSize: 9,
+        background: 'rgba(123,63,242,0.18)',
+        color: accent,
+        border: `1px solid rgba(123,63,242,0.45)`,
+      }}
+    >
+      <span
+        className="h-[5px] w-[5px] shrink-0 rounded-full"
+        style={{ background: accent }}
+      />
+      Viewing
+    </span>
+  )
+
+  // Don't render until we've measured; avoids the wide-mode
+  // flash on narrow viewports. h-7 placeholder reserves the
+  // row height so the surrounding layout doesn't shift when
+  // the timeline lands.
+  if (width === null) {
+    return <div ref={wrapperRef} className="relative h-7" />
+  }
+
+  const NARROW_THRESHOLD = 520
+  const isNarrow = width < NARROW_THRESHOLD
+
+  // ── Narrow / stepper mode ─────────────────────────────────
+  if (isNarrow) {
+    const canPrev = activeIdx > 0
+    const canNext = activeIdx < versions.length - 1
+    return (
+      <div ref={wrapperRef} className="relative">
+        <div className="flex items-stretch gap-2">
+          <button
+            type="button"
+            aria-label="Previous version"
+            disabled={!canPrev}
+            onClick={() => canPrev && onSelectVersion(versions[activeIdx - 1])}
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/15 text-white/70 transition-colors hover:border-white/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-white/15 disabled:hover:text-white/70"
+            style={{ fontFamily: mono, fontSize: 18 }}
+          >
+            ‹
+          </button>
+          <div className="relative flex-1" ref={dropdownRef}>
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              aria-expanded={open}
+              className="flex h-11 w-full items-center justify-center gap-3 rounded-full border border-white/15 px-4 hover:border-white/35"
+            >
+              <span
+                className="leading-none text-white"
+                style={{ fontFamily: serif, fontWeight: 400, fontSize: 20 }}
+              >
+                v{activeVersion.version_number}
+              </span>
+              <span
+                className="uppercase tracking-[0.2em] text-white/50"
+                style={{ fontFamily: mono, fontSize: 9 }}
+              >
+                of {versions.length}
+              </span>
+              {isLatestActive ? <CurrentChip /> : <ViewingChip />}
+              <span
+                className="text-white/50"
+                style={{ fontFamily: mono, fontSize: 12 }}
+                aria-hidden
+              >
+                ▾
+              </span>
+            </button>
+            {open && (
+              <div
+                className="absolute left-0 right-0 top-full z-20 mt-2 max-h-[320px] overflow-y-auto overflow-x-hidden rounded-lg shadow-xl ring-1 ring-white/15"
+                style={{ background: inkDeep }}
+              >
+                {[...versions].reverse().map((v, i) => {
+                  const isActiveRow = v.id === activeVersion.id
+                  return (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => {
+                        onSelectVersion(v)
+                        setOpen(false)
+                      }}
+                      className={[
+                        'flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors',
+                        i > 0 ? 'border-t border-white/10' : '',
+                        isActiveRow ? 'bg-white/[0.04]' : 'hover:bg-white/[0.03]',
+                      ].join(' ')}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span
+                          className="leading-none text-white"
+                          style={{ fontFamily: serif, fontWeight: 400, fontSize: 20 }}
+                        >
+                          v{v.version_number}
+                        </span>
+                        <span
+                          className="uppercase tracking-[0.2em] text-white/50"
+                          style={{ fontFamily: mono, fontSize: 9 }}
+                        >
+                          {fmtDate(v.created_at)}
+                        </span>
+                      </div>
+                      {v.id === latest.id && <CurrentChip />}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            aria-label="Next version"
+            disabled={!canNext}
+            onClick={() => canNext && onSelectVersion(versions[activeIdx + 1])}
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/15 text-white/70 transition-colors hover:border-white/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-white/15 disabled:hover:text-white/70"
+            style={{ fontFamily: mono, fontSize: 18 }}
+          >
+            ›
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Wide / timeline mode ──────────────────────────────────
+  //
+  // Pick the displayed marker set. Always-include set uses a
+  // Set keyed on version id to dedupe the common case where
+  // multiple roles land on the same version (active === latest
+  // === current, active === current, etc.) Remaining slots are
+  // filled from intermediates by even-interval sampling so the
+  // sampled ticks visually space the rail without clustering.
+  const maxMarkers = Math.max(6, Math.min(20, Math.floor((width - 160) / 26)))
+  const alwaysIds = new Set<string>([
+    versions[0].id,
+    latest.id,
+    current.id,
+    activeVersion.id,
+  ])
+  const intermediates = versions.filter((v) => !alwaysIds.has(v.id))
+  const remaining = Math.max(0, maxMarkers - alwaysIds.size)
+  const sampledIds = new Set<string>()
+  if (remaining > 0 && intermediates.length > 0) {
+    const take = Math.min(remaining, intermediates.length)
+    const step = intermediates.length / take
+    for (let i = 0; i < take; i++) {
+      const idx = Math.min(
+        intermediates.length - 1,
+        Math.floor(i * step + step / 2),
+      )
+      sampledIds.add(intermediates[idx].id)
+    }
+  }
+  const displayed = versions.filter(
+    (v) => alwaysIds.has(v.id) || sampledIds.has(v.id),
+  )
+  const displayedActiveIdx = displayed.findIndex((v) => v.id === activeVersion.id)
+  const activePct =
+    displayed.length > 1 ? (displayedActiveIdx / (displayed.length - 1)) * 100 : 0
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      {/* Base rail — faint white baseline running the full row
+          width at the dots' y-centre (top:14 = half of h-7).
+          h-px is 1 physical pixel — reads as a hair-thin track
+          against the ink backdrop. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-0 right-0 h-px bg-white/15"
+        style={{ top: 14 }}
+      />
+      {/* Filled rail — accent-coloured segment from the start
+          of the rail up to the active marker. Width is a
+          percentage of the full rail, derived from the
+          active's index within the displayed set. Soft
+          box-shadow glow ties it visually to the active dot's
+          glow. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-0 h-px transition-all duration-200"
+        style={{
+          top: 14,
+          width: `${activePct}%`,
+          background: accent,
+          boxShadow: `0 0 8px ${accentGlow}`,
+        }}
+      />
+      {/* Markers — flex-distributed across the full rail. Each
+          marker is h-7 items-center so size-swaps between
+          active / inactive / tick dots happen inside a locked
+          row height rather than pushing the cluster up or
+          down. */}
+      <div className="relative flex h-7 items-center justify-between">
+        {displayed.map((v) => {
+          const isActive = v.id === activeVersion.id
+          const isLabeled = alwaysIds.has(v.id)
+          const isLatestMarker = v.id === latest.id
+
+          if (!isLabeled) {
+            return (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => onSelectVersion(v)}
+                title={`v${v.version_number} · ${fmtDate(v.created_at)}`}
+                className="flex h-7 items-center"
+              >
+                <div className="grid h-[22px] w-[22px] place-items-center">
+                  <span className="block h-1.5 w-1.5 rounded-full bg-white/40 transition-colors hover:bg-white/70" />
+                </div>
+              </button>
+            )
+          }
+
+          return (
+            <button
+              key={v.id}
+              type="button"
+              onClick={() => onSelectVersion(v)}
+              className="flex h-7 items-center gap-2"
+            >
+              <div className="grid h-[22px] w-[22px] place-items-center">
+                <span
+                  className="block rounded-full transition-all"
+                  style={
+                    isActive
+                      ? {
+                          width: 18,
+                          height: 18,
+                          background: accent,
+                          boxShadow: `0 0 12px ${accentGlow}`,
+                        }
+                      : {
+                          width: 12,
+                          height: 12,
+                          background: 'transparent',
+                          border: `1.5px solid ${accent}`,
+                        }
+                  }
+                />
+              </div>
+              {/* Label cluster — ink background knocks out the
+                  rail line behind the text. h-7 items-center
+                  matches the outer row so the serif size swap
+                  between 22px (active) and 18px (inactive)
+                  happens inside a fixed-height slot and can't
+                  shift the cluster vertically. */}
+              <div
+                className="flex h-7 items-center gap-2 px-2"
+                style={{ background: ink }}
+              >
+                <span
+                  className="leading-none text-white"
+                  style={{
+                    fontFamily: serif,
+                    fontWeight: 400,
+                    fontSize: isActive ? 22 : 18,
+                  }}
+                >
+                  v{v.version_number}
+                </span>
+                <span
+                  className="uppercase tracking-[0.2em] text-white/50"
+                  style={{ fontFamily: mono, fontSize: 9 }}
+                >
+                  {fmtDate(v.created_at)}
+                </span>
+                {isLatestMarker && <CurrentChip />}
+                {isActive && !isLatestActive && <ViewingChip />}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // truncated with a full-name tooltip on hover. Hidden when
 // original_filename is null (pre-migration-000021 legacy
 // rows). Clicking the image opens the lightbox via the
