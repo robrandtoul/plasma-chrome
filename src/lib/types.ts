@@ -20,6 +20,15 @@ export interface PublicProof {
   status: ProofStatus
   approved_at: string | null
   abandoned_at: string | null
+  // Help Scout conversation id — exposed on public_proofs by
+  // migration 000089. Used on the customer page to render a
+  // small "PL · {id}" reference badge in the masthead/footer
+  // so the customer has something short to quote back when
+  // they reply. Null for proofs created via the override
+  // flow (designer set helpscout_override_reason instead of
+  // linking a conversation, per migration 000067) — render
+  // paths hide the badge when null rather than falling back.
+  helpscout_conversation_id: string | null
 }
 
 // One entry per variant exposed on a proof version.

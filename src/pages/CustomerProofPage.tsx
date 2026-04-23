@@ -359,11 +359,16 @@ export default function CustomerProofPage() {
     return 'radial-gradient(circle at 35% 30%, #a79be0 0%, #6b58b3 45%, #2d2352 100%)'
   }
 
-  // Short customer-facing reference derived from the proof id.
-  // Real value is a UUID, too long to surface raw. Trim to the
-  // first 8 chars and uppercase so it reads like a studio job
-  // reference on the masthead + footer.
-  const proofRef = `PL · ${proof.id.slice(0, 8).toUpperCase()}`
+  // Short customer-facing reference — the proof's Help Scout
+  // conversation id, prefixed with PL · for the editorial feel.
+  // Exposed on public_proofs by migration 000089. Hidden
+  // entirely when null (override proofs with no linked HS
+  // thread, per migration 000067) rather than falling back to
+  // a synthesised value — mixed formats in the same badge
+  // spot read worse than just not rendering.
+  const proofRef = proof.helpscout_conversation_id
+    ? `PL · ${proof.helpscout_conversation_id}`
+    : null
 
   // Hero approval strip — green when the version is fully
   // approved + the designer has flipped proof.status; blue for
@@ -454,12 +459,14 @@ export default function CustomerProofPage() {
                     {activeOption ? ` · ${activeOption.display_name}` : ''}
                   </span>
                 )}
-                <span
-                  className="uppercase tracking-[0.22em] text-white/45"
-                  style={{ fontFamily: MONO, fontSize: 12 }}
-                >
-                  {proofRef}
-                </span>
+                {proofRef && (
+                  <span
+                    className="uppercase tracking-[0.22em] text-white/45"
+                    style={{ fontFamily: MONO, fontSize: 12 }}
+                  >
+                    {proofRef}
+                  </span>
+                )}
               </div>
             </div>
             {/* Brand 4-colour signature rule — quiet echo of the
@@ -1304,13 +1311,22 @@ export default function CustomerProofPage() {
               © Plasma Design
             </span>
           </div>
-          <p
-            className="uppercase tracking-[0.22em] text-white/45"
-            style={{ fontFamily: MONO, fontSize: 12 }}
-          >
-            {proofRef}
-            {activeVersion ? ` · v${activeVersion.version_number}` : ''}
-          </p>
+          {/* Proof ref · version — drops either piece when its
+              underlying value isn't available (override proofs
+              with null helpscout_conversation_id; the rare
+              no-version page state). Full collapse when both
+              are missing so the footer doesn't render an empty
+              paragraph. */}
+          {(proofRef || activeVersion) && (
+            <p
+              className="uppercase tracking-[0.22em] text-white/45"
+              style={{ fontFamily: MONO, fontSize: 12 }}
+            >
+              {proofRef}
+              {proofRef && activeVersion ? ' · ' : ''}
+              {activeVersion ? `v${activeVersion.version_number}` : ''}
+            </p>
+          )}
         </div>
       </footer>
 
