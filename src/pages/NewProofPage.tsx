@@ -61,12 +61,23 @@ export default function NewProofPage() {
   const contactInputRef = useRef<HTMLInputElement>(null)
 
   // Prefill tokens — consumed once so later user edits don't re-apply them.
+  // NOTE: pendingContactPrefillRef is consumed on the first effect pass
+  // that runs load() past its early-return. If URL-prefill ever starts
+  // interacting with an identity flip (e.g. a future "flip individual
+  // mode post-prefill" flow), the ref would be consumed on the first
+  // pass and unable to restore on subsequent passes — same shape as the
+  // pendingPasteNewContactRef bug this file once had. See the "sticky
+  // ref" pattern used below for that ref if you need to harden this one.
   const pendingContactPrefillRef = useRef<string | null>(prefillContactId)
   const pendingFocusContactRef   = useRef<boolean>(!!prefillCompanyId && !prefillContactId)
   // Populated by the paste-from-Help-Scout flow when the customer
-  // isn't already in our DB. The contact-load effect consumes this
-  // once the loading pass finishes so the pre-filled name + email
-  // aren't wiped by the effect's reset.
+  // isn't already in our DB. Sticky across identity flips — the
+  // contact-load effect re-applies it on every pass until one of
+  // selectContact / clearContact explicitly clears it (or the
+  // component unmounts on submit). Needed so that unticking
+  // "No company (individual)" after a paste of a customer whose HS
+  // record had no organization doesn't wipe the prefilled name +
+  // email when the effect re-runs.
   const pendingPasteNewContactRef = useRef<{ name: string; email: string } | null>(null)
 
   // ── Proof fields ───────────────────────────────────────────────────────────
@@ -157,6 +168,19 @@ export default function NewProofPage() {
     setNewContactName('')
     setNewContactEmail('')
 
+    // Re-apply paste-staged new contact on every effect pass. The
+    // ref is sticky (not consumed here) so it survives identity
+    // flips — the designer can untick "No company" after a paste of
+    // a no-org customer without losing the prefilled name + email,
+    // and can pick or change a company afterwards without the flip
+    // wiping their data. Cleared only by selectContact (real contact
+    // picked) / clearContact (designer reset) / unmount on submit.
+    if (pendingPasteNewContactRef.current) {
+      setAddingContact(true)
+      setNewContactName(pendingPasteNewContactRef.current.name)
+      setNewContactEmail(pendingPasteNewContactRef.current.email)
+    }
+
     if (!isIndividual && !selectedCompany) return
 
     async function load() {
@@ -189,17 +213,11 @@ export default function NewProofPage() {
         }
       }
 
-      // Paste flow landed a new contact that isn't in the DB yet —
-      // consume the ref and pre-fill the add-contact form regardless
-      // of whether other contacts exist on this company.
-      if (pendingPasteNewContactRef.current) {
-        const { name, email } = pendingPasteNewContactRef.current
-        pendingPasteNewContactRef.current = null
-        setAddingContact(true)
-        setNewContactName(name)
-        setNewContactEmail(email)
-        return
-      }
+      // Paste-staged new contact is now re-applied at the top of the
+      // effect (sticky ref), so no consumption needed here. If the
+      // ref is set we've already set addingContact=true; the
+      // branches below still need to respect that. contacts.length
+      // === 0 is a no-op when addingContact is already true.
 
       if (contacts.length === 0) {
         // Nothing to choose from — drop straight into the add-new form
@@ -520,6 +538,10 @@ export default function NewProofPage() {
   // ── Contact handlers ───────────────────────────────────────────────────────
 
   function selectContact(c: Contact) {
+    // Picking a real contact supersedes any paste-staged new
+    // contact — clear the sticky ref so later identity flips don't
+    // re-apply the stale paste data on top of the chosen contact.
+    pendingPasteNewContactRef.current = null
     setSelectedContact(c)
     setContactSearch(c.full_name)
     setContactOpen(false)
@@ -536,6 +558,10 @@ export default function NewProofPage() {
   }
 
   function clearContact() {
+    // Designer explicitly abandoned the staged contact — drop the
+    // paste-staged ref so it doesn't re-apply on the next effect
+    // pass when the contact-load effect's resets wipe the form.
+    pendingPasteNewContactRef.current = null
     setSelectedContact(null)
     setAddingContact(false)
     setContactSearch('')
