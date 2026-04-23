@@ -515,13 +515,20 @@ export default function CustomerProofPage() {
                 rendered height: h-7 dot (28px) + py-2 vertical
                 padding (16px). mb-10 lives on the wrapper so
                 the gap to the eyebrow is constant whether the
-                chip is present or not. When the chip wraps
-                to a second line on very narrow viewports the
-                wrapper expands via min-height (not max-) —
-                a wrap-vs-no-wrap jump can still occur at that
-                edge, but the approved ↔ unapproved jump at
-                the same viewport is eliminated. */}
-            <div className="mb-10 min-h-11">
+                chip is present or not.
+                display: flex on the wrapper (not the default
+                block) is load-bearing for pixel stability:
+                with default block layout an inline-flex child
+                participates in the wrapper's line-box and
+                baseline-aligns against an ambient line-height,
+                which adds 1–2px of half-leading on top of the
+                chip's 44px box and leaves the wrapper a hair
+                taller than the empty / unapproved state
+                (which has no line-box at all). Swapping to
+                flex + items-start takes the chip out of
+                line-box formatting entirely so the wrapper
+                renders at exactly 44px in both states. */}
+            <div className="mb-10 flex min-h-11 items-start">
               {heroApprovalStrip && activeVersion && (() => {
                 const total = versionImages[activeVersion.id]?.length ?? 0
                 const isApprovedKind = heroApprovalStrip.kind === 'approved'
