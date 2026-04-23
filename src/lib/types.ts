@@ -99,6 +99,12 @@ export interface PublicProofVersion {
     state: 'approved' | 'changes_requested'
     carried_from_version_id: string | null
   }>
+  // ── Card type (migration 000090 — customer-side view) ─────────────────────
+  // Was a designer-only concept while the customer page rendered
+  // identical chrome for both modes (see f70b551). Now surfaced
+  // to the customer view because the Proofs-section count
+  // subtext copy-switches / hides based on this value.
+  card_type: CardType
 }
 
 export interface PublicMaterialOption {

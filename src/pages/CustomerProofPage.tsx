@@ -776,22 +776,34 @@ export default function CustomerProofPage() {
                     >
                       Proofs
                     </h2>
-                    <span
-                      className="uppercase tracking-[0.22em] text-[#1a1612]/55"
-                      style={{ fontFamily: MONO, fontSize: 12 }}
-                    >
-                      {plateCount === 1 ? '1 proof' : `${plateCount} proofs`}
-                      {recipientCount > 0 && (
-                        <>
-                          {' · '}
-                          {recipientCount === 1
-                            ? sharedGroup && namedGroups.length === 0
-                              ? 'Shared'
-                              : '1 recipient'
-                            : `${recipientCount} recipients`}
-                        </>
-                      )}
-                    </span>
+                    {/* Count subtext — rendered for business
+                        cards only. Membership cards hide the
+                        whole line (the "proof count vs
+                        people" framing doesn't map to membership
+                        tiers). Business-card copy reads
+                        "{N} unique proofs · {M} people" to
+                        make the per-card uniqueness explicit;
+                        the special "Shared" branch survives for
+                        the rare all-shared business card (shared
+                        group only, no named groups). */}
+                    {activeVersion.card_type !== 'membership' && (
+                      <span
+                        className="uppercase tracking-[0.22em] text-[#1a1612]/55"
+                        style={{ fontFamily: MONO, fontSize: 12 }}
+                      >
+                        {plateCount === 1 ? '1 unique proof' : `${plateCount} unique proofs`}
+                        {recipientCount > 0 && (
+                          <>
+                            {' · '}
+                            {recipientCount === 1
+                              ? sharedGroup && namedGroups.length === 0
+                                ? 'Shared'
+                                : '1 person'
+                              : `${recipientCount} people`}
+                          </>
+                        )}
+                      </span>
+                    )}
                   </div>
 
                   {/* Shared group — renders alone when there
