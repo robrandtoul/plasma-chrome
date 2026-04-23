@@ -1198,7 +1198,7 @@ export default function CustomerProofPage() {
                     className="leading-none text-[#1a1612]"
                     style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
                   >
-                    About {activeVersion.material_display}
+                    About our {activeVersion.material_display} cards
                   </h2>
                   <div className="mt-8 grid items-start gap-10 sm:grid-cols-[1.4fr_1fr] sm:gap-16">
                     <div>
