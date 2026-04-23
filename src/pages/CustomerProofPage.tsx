@@ -865,6 +865,18 @@ export default function CustomerProofPage() {
                         let colorIdx = sharedStandaloneGroup
                           ? sharedStandaloneGroup.images.length
                           : 0
+                        // When a shared-standalone group sits
+                        // above the named-groups block, keep the
+                        // rule + padding on the first named
+                        // group too — treats the shared block as
+                        // the preceding sibling so the shared →
+                        // first-named boundary reads as a proper
+                        // divider, not a floating introduction.
+                        // When there's no shared block above,
+                        // the first named group opens the list
+                        // and shouldn't sit behind a rule
+                        // (would read as a bracket).
+                        const firstNamedGroupSkipsRule = !sharedStandaloneGroup
                         return augmentedNamedGroups.map((group) => {
                           const pill =
                             group.heading != null ? approvalPillFor(group.heading) : null
@@ -885,11 +897,18 @@ export default function CustomerProofPage() {
                               // the matching pt-14 here gives
                               // 56px below it, so the line floats
                               // centred in a 112px gap.
-                              // first:* zeroes both on the first
-                              // group so the rule doesn't sit
-                              // above the opening section or
-                              // bracket the list awkwardly.
-                              className="border-t border-[#1a1612]/10 pt-14 first:border-t-0 first:pt-0"
+                              // first:* reset only applied when
+                              // firstNamedGroupSkipsRule — i.e.
+                              // when no shared block sits above
+                              // the named list. With shared
+                              // present, every named group
+                              // (including the first) keeps the
+                              // rule so shared → named reads as
+                              // a proper section boundary.
+                              className={[
+                                'border-t border-[#1a1612]/20 pt-14',
+                                firstNamedGroupSkipsRule ? 'first:border-t-0 first:pt-0' : '',
+                              ].join(' ')}
                             >
                               <div className="mb-5 flex flex-wrap items-baseline justify-between gap-3">
                                 <h3
