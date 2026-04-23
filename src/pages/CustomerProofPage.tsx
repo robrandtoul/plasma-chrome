@@ -1230,14 +1230,39 @@ export default function CustomerProofPage() {
                       )}
                     </div>
                     <div className="flex flex-col items-center sm:items-end">
-                      <div
-                        aria-hidden
-                        className="h-40 w-40 rounded-full sm:h-48 sm:w-48"
-                        style={{
-                          background: materialSwatchGradient(activeVersion.material_display),
-                          boxShadow: `0 30px 60px -20px ${ACCENT_GLOW}, inset -10px -10px 30px rgba(0,0,0,0.35)`,
-                        }}
-                      />
+                      {/* Material swatch — real card-stack image
+                          uploaded via admin → material content
+                          (materials.icon_url). Falls back to a
+                          decorative gradient sphere when the
+                          admin hasn't uploaded an image yet so
+                          the section never collapses awkwardly.
+                          drop-shadow filter (vs box-shadow)
+                          means the glow wraps the image's real
+                          alpha shape, not its bounding box —
+                          reads right for transparent PNGs of
+                          card stacks and still fine on opaque
+                          images. object-contain preserves the
+                          natural aspect rather than cropping to
+                          a square. */}
+                      {activeVersion.material_icon_url ? (
+                        <img
+                          src={activeVersion.material_icon_url}
+                          alt={`${activeVersion.material_display} swatch`}
+                          className="h-40 w-40 object-contain sm:h-48 sm:w-48"
+                          style={{
+                            filter: `drop-shadow(0 30px 40px ${ACCENT_GLOW})`,
+                          }}
+                        />
+                      ) : (
+                        <div
+                          aria-hidden
+                          className="h-40 w-40 rounded-full sm:h-48 sm:w-48"
+                          style={{
+                            background: materialSwatchGradient(activeVersion.material_display),
+                            boxShadow: `0 30px 60px -20px ${ACCENT_GLOW}, inset -10px -10px 30px rgba(0,0,0,0.35)`,
+                          }}
+                        />
+                      )}
                       <p
                         className="mt-4 uppercase tracking-[0.22em] text-[#1a1612]/55"
                         style={{ fontFamily: MONO, fontSize: 12 }}
