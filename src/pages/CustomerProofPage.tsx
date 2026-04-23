@@ -1100,14 +1100,8 @@ export default function CustomerProofPage() {
             <div className="mx-auto max-w-[1040px] px-6 py-20 sm:px-8 sm:py-24">
               <div className="grid gap-10 sm:grid-cols-[1fr_2fr] sm:gap-16">
                 <div>
-                  <p
-                    className="uppercase tracking-[0.24em] text-white/40"
-                    style={{ fontFamily: MONO, fontSize: 12 }}
-                  >
-                    § 02
-                  </p>
                   <h2
-                    className="mt-3 leading-[1.02] text-white"
+                    className="leading-[1.02] text-white"
                     style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
                   >
                     Specification
@@ -1143,14 +1137,8 @@ export default function CustomerProofPage() {
               {activeVersion.change_notes && (
                 <div className="mt-20 grid gap-10 border-t border-white/10 pt-14 sm:grid-cols-[1fr_2fr] sm:gap-16">
                   <div>
-                    <p
-                      className="uppercase tracking-[0.24em] text-white/40"
-                      style={{ fontFamily: MONO, fontSize: 12 }}
-                    >
-                      § 03
-                    </p>
                     <h2
-                      className="mt-3 leading-[1.02] text-white"
+                      className="leading-[1.02] text-white"
                       style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
                     >
                       Notes
@@ -1190,14 +1178,8 @@ export default function CustomerProofPage() {
             <div className="mx-auto max-w-[1040px] px-6 py-20 sm:px-8 sm:py-24">
               <div className="mb-10 flex flex-wrap items-baseline justify-between gap-3 border-b border-white/10 pb-4">
                 <div>
-                  <p
-                    className="uppercase tracking-[0.24em] text-white/40"
-                    style={{ fontFamily: MONO, fontSize: 12 }}
-                  >
-                    § 04
-                  </p>
                   <h2
-                    className="mt-2 leading-none text-white"
+                    className="leading-none text-white"
                     style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
                   >
                     Pricing
@@ -1667,8 +1649,8 @@ export default function CustomerProofPage() {
 // uploaded original_filename (with extension), muted and
 // ── Revisions band ───────────────────────────────────────────
 // Dedicated zone below the hero containing the section header
-// (§ 01 · Revision history + "Viewing latest" / "Viewing
-// v{n} of {total}" status), a spotlight column showing the
+// ("Revision history" + "Viewing latest" / "Viewing v{n} of
+// {total}" status), a spotlight column showing the
 // active version as a big serif number with a Latest/History
 // chip + date, and the RevisionsTimeline rail on the right.
 // Lays on a subtle accent-tinted gradient over the ink
@@ -1785,32 +1767,17 @@ function RevisionsBand({
         }}
       >
         <div className="mx-auto max-w-[1040px] px-6 py-8 sm:px-8">
-          {/* Header row — § 01 section number in accent +
-              "REVISION HISTORY" mono label on the left;
-              "VIEWING LATEST" / "VIEWING V{n} OF {total}" on
-              the right. Whitespace-nowrap on the left cluster
-              so the label doesn't wrap when the band gets
-              narrow. */}
+          {/* Header row — "REVISION HISTORY" mono label on the
+              left; "VIEWING LATEST" / "VIEWING V{n} OF {total}"
+              on the right. Whitespace-nowrap on the label so it
+              doesn't wrap when the band gets narrow. */}
           <div className="mb-5 flex flex-wrap items-baseline justify-between gap-3">
-            <div className="flex items-baseline gap-3 whitespace-nowrap">
-              <span
-                className="uppercase"
-                style={{
-                  fontFamily: mono,
-                  fontSize: 11,
-                  color: accent,
-                  letterSpacing: '0.3em',
-                }}
-              >
-                § 01
-              </span>
-              <span
-                className="uppercase text-white/80"
-                style={{ fontFamily: mono, fontSize: 11, letterSpacing: '0.3em' }}
-              >
-                Revision history
-              </span>
-            </div>
+            <span
+              className="uppercase whitespace-nowrap text-white/80"
+              style={{ fontFamily: mono, fontSize: 11, letterSpacing: '0.3em' }}
+            >
+              Revision history
+            </span>
             <span
               className="uppercase tracking-[0.22em] text-white/45"
               style={{ fontFamily: mono, fontSize: 11 }}
