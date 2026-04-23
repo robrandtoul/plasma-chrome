@@ -896,10 +896,17 @@ export default function ProofDetailPage() {
             sentinel key for Shared. Per-entry state is the latest
             approval row across ALL versions of this project, so a
             name approved in v2 still reads as approved here even if
-            v3 (current) has no entry yet. */}
+            v3 (current) has no entry yet.
+            Membership-card proofs skip the section entirely — they
+            have no recipient concept, so a lone "Shared / Pending"
+            row is placeholder noise. Gated on the CURRENT version's
+            card_type, not "any version", because mode is conceptually
+            per-version even though in practice designers don't
+            switch modes mid-project. */}
         {(() => {
           const currentVersion = versions.find((v) => v.is_current)
           if (!currentVersion) return null
+          if (currentVersion.card_type === 'membership') return null
           const hasShared = versionsWithShared.has(currentVersion.id)
           if (currentVersion.names.length === 0 && !hasShared) return null
 
