@@ -761,13 +761,14 @@ export default function CustomerProofPage() {
                   </div>
 
                   {/* Shared group — renders alone with no
-                      heading (banner carries that signal). Kept
-                      at max-w-880 centred so it reads as "the
-                      reference". */}
+                      heading (the approval banner in the hero
+                      strip carries that signal). Width matches
+                      the named groups below so the whole Proofs
+                      section reads at a consistent image size. */}
                   {sharedGroup && (
                     <div
                       className={[
-                        'mx-auto w-full max-w-[880px]',
+                        'w-full',
                         namedGroups.length > 0 ? 'mb-14' : '',
                         groupIsPair(sharedGroup)
                           ? 'grid grid-cols-1 gap-6 md:grid-cols-2'
