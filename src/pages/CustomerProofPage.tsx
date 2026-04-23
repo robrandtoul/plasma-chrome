@@ -106,6 +106,67 @@ export default function CustomerProofPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeVersion?.id])
 
+  // After the initial paint settles, warm the browser cache for
+  // every historic version's images so the timeline feels instant
+  // when the customer clicks back through earlier revisions. The
+  // signed URLs are already resolved in versionImages state; we
+  // just need the bytes in the HTTP cache. Best-effort and silent
+  // on failure, no UI surface. The active version is already being
+  // fetched by the DOM so we skip it to avoid doubling bandwidth
+  // on the hot path.
+  //
+  // Dependency is [versionImages, activeVersion?.id] rather than
+  // just [activeVersion?.id]: versionImages is what arms the
+  // effect once loadProof settles (it starts as an empty object,
+  // then lands populated), and the active-id change is what
+  // causes the re-fire when the customer switches versions via
+  // the timeline, so the new active is skipped and the rest stay
+  // warm.
+  useEffect(() => {
+    if (!activeVersion) return
+    const urls: string[] = []
+    for (const [versionId, imgs] of Object.entries(versionImages)) {
+      if (versionId === activeVersion.id) continue
+      for (const img of imgs) {
+        if (img.signed_url) urls.push(img.signed_url)
+      }
+    }
+    if (urls.length === 0) return
+
+    const preloaders: HTMLImageElement[] = []
+    const preload = () => {
+      for (const url of urls) {
+        const img = new Image()
+        img.src = url
+        preloaders.push(img)
+      }
+    }
+
+    // requestIdleCallback is missing in Safari, fall back to a
+    // short timeout so the preload still runs after first paint
+    // without contesting the render-critical path.
+    const ric = window as unknown as {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout?: number }) => number
+      cancelIdleCallback?: (handle: number) => void
+    }
+    let idleHandle: number | null = null
+    let timerHandle: number | null = null
+    if (ric.requestIdleCallback) {
+      idleHandle = ric.requestIdleCallback(preload, { timeout: 2000 })
+    } else {
+      timerHandle = window.setTimeout(preload, 200)
+    }
+
+    return () => {
+      if (idleHandle != null && ric.cancelIdleCallback) ric.cancelIdleCallback(idleHandle)
+      if (timerHandle != null) window.clearTimeout(timerHandle)
+      // Null the src on in-flight preloaders so the browser can
+      // abort downloads that have not already completed. Cheap,
+      // defensive, no-op if already finished.
+      for (const img of preloaders) img.src = ''
+    }
+  }, [versionImages, activeVersion?.id])
+
   // Call the acknowledge-disclaimer edge function. Idempotent on
   // the server — second click returns the existing timestamp —
   // but we still gate client-side on already-ack'd / in-flight
