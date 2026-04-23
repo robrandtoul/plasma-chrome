@@ -512,23 +512,29 @@ export default function CustomerProofPage() {
                 timeline (approved ↔ unapproved) doesn't shift
                 the "Proofs for" eyebrow + customer name up
                 and down.
-                Height arithmetic must include the chip's
-                border: h-7 dot (28px) + py-2 vertical padding
-                (16px) + 1px top border + 1px bottom border =
-                46px. An earlier pass used min-h-11 (44px),
-                2px short — chip-present state grew to 46px
-                to fit its actual box while the empty state
-                stayed floored at 44px, producing the
-                residual 1–2px jump. min-h-[46px] now matches
-                the chip's true rendered height in both
-                states. mb-10 lives on the wrapper so the gap
-                to the eyebrow is constant whether the chip
-                is present or not. display: flex (not default
-                block) keeps the chip out of line-box
-                formatting so baseline-alignment + ambient
-                line-height don't add half-leading on top of
-                the 46px box. */}
-            <div className="mb-10 flex min-h-[46px] items-start">
+                Desktop (sm+): h-7 dot (28px) + py-2 vertical
+                padding (16px) + 1px top border + 1px bottom
+                border = 46px single-row pill. sm:min-h-[46px]
+                matches that exactly.
+                Mobile (<sm): the c521f7c restructure stacks
+                the chip vertically — dot/label cluster on
+                row 1, secondary text on row 2. Height adds
+                the second row's ~18px line-height + 8px
+                inter-row gap (~72px baseline). At narrow
+                viewports the secondary text wraps to 2 lines
+                (partial-approval copy, or approved copy
+                below ~390px) pushing rendered height to
+                ~90px. min-h-[120px] reserves floor above
+                that worst case so the layout stays locked
+                across approved ↔ unapproved flips on phone;
+                a few extra pixels of empty dark ink when
+                unapproved is invisible, whereas
+                under-reserving brings the jump back.
+                display: flex (not default block) keeps the
+                chip out of line-box formatting so baseline-
+                alignment + ambient line-height don't add
+                half-leading on top of the box. */}
+            <div className="mb-10 flex min-h-[120px] items-start sm:min-h-[46px]">
               {heroApprovalStrip && activeVersion && (() => {
                 const total = versionImages[activeVersion.id]?.length ?? 0
                 const isApprovedKind = heroApprovalStrip.kind === 'approved'
