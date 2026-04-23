@@ -1276,12 +1276,6 @@ export default function CustomerProofPage() {
                           }}
                         />
                       )}
-                      <p
-                        className="mt-4 uppercase tracking-[0.22em] text-[#1a1612]/55"
-                        style={{ fontFamily: MONO, fontSize: 12 }}
-                      >
-                        Swatch · {activeOption?.display_name ?? activeVersion.material_display}
-                      </p>
                     </div>
                   </div>
                 </div>
