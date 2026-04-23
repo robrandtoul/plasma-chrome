@@ -1244,22 +1244,35 @@ export default function CustomerProofPage() {
                           images. object-contain preserves the
                           natural aspect rather than cropping to
                           a square. */}
+                      {/* Sized to read as a feature, not a
+                          thumbnail. 14rem on mobile / 20rem on
+                          sm+ (up from 10rem/12rem pre-fix).
+                          Fits inside the ~1fr right column of
+                          the sm:grid-cols-[1.4fr_1fr] grid at
+                          the section's max-w-[1040px] outer
+                          width with room to spare, and stays
+                          well within a 375px mobile viewport
+                          once the grid stacks to single
+                          column. Top-alignment with the body
+                          paragraph is already handled by the
+                          outer grid's items-start; no per-
+                          column self-alignment needed. */}
                       {activeVersion.material_icon_url ? (
                         <img
                           src={activeVersion.material_icon_url}
                           alt={`${activeVersion.material_display} swatch`}
-                          className="h-40 w-40 object-contain sm:h-48 sm:w-48"
+                          className="h-56 w-56 object-contain sm:h-80 sm:w-80"
                           style={{
-                            filter: `drop-shadow(0 30px 40px ${ACCENT_GLOW})`,
+                            filter: `drop-shadow(0 40px 60px ${ACCENT_GLOW})`,
                           }}
                         />
                       ) : (
                         <div
                           aria-hidden
-                          className="h-40 w-40 rounded-full sm:h-48 sm:w-48"
+                          className="h-56 w-56 rounded-full sm:h-80 sm:w-80"
                           style={{
                             background: materialSwatchGradient(activeVersion.material_display),
-                            boxShadow: `0 30px 60px -20px ${ACCENT_GLOW}, inset -10px -10px 30px rgba(0,0,0,0.35)`,
+                            boxShadow: `0 40px 80px -20px ${ACCENT_GLOW}, inset -14px -14px 40px rgba(0,0,0,0.35)`,
                           }}
                         />
                       )}
