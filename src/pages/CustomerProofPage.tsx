@@ -510,25 +510,25 @@ export default function CustomerProofPage() {
                 fixed-height wrapper regardless of approval
                 state, so switching versions via the revisions
                 timeline (approved ↔ unapproved) doesn't shift
-                the "Proofs for" eyebrow + customer name up and
-                down. min-h-11 (44px) matches the chip's
-                rendered height: h-7 dot (28px) + py-2 vertical
-                padding (16px). mb-10 lives on the wrapper so
-                the gap to the eyebrow is constant whether the
-                chip is present or not.
-                display: flex on the wrapper (not the default
-                block) is load-bearing for pixel stability:
-                with default block layout an inline-flex child
-                participates in the wrapper's line-box and
-                baseline-aligns against an ambient line-height,
-                which adds 1–2px of half-leading on top of the
-                chip's 44px box and leaves the wrapper a hair
-                taller than the empty / unapproved state
-                (which has no line-box at all). Swapping to
-                flex + items-start takes the chip out of
-                line-box formatting entirely so the wrapper
-                renders at exactly 44px in both states. */}
-            <div className="mb-10 flex min-h-11 items-start">
+                the "Proofs for" eyebrow + customer name up
+                and down.
+                Height arithmetic must include the chip's
+                border: h-7 dot (28px) + py-2 vertical padding
+                (16px) + 1px top border + 1px bottom border =
+                46px. An earlier pass used min-h-11 (44px),
+                2px short — chip-present state grew to 46px
+                to fit its actual box while the empty state
+                stayed floored at 44px, producing the
+                residual 1–2px jump. min-h-[46px] now matches
+                the chip's true rendered height in both
+                states. mb-10 lives on the wrapper so the gap
+                to the eyebrow is constant whether the chip
+                is present or not. display: flex (not default
+                block) keeps the chip out of line-box
+                formatting so baseline-alignment + ambient
+                line-height don't add half-leading on top of
+                the 46px box. */}
+            <div className="mb-10 flex min-h-[46px] items-start">
               {heroApprovalStrip && activeVersion && (() => {
                 const total = versionImages[activeVersion.id]?.length ?? 0
                 const isApprovedKind = heroApprovalStrip.kind === 'approved'
