@@ -1182,7 +1182,7 @@ export default function CustomerProofPage() {
                                 activeVersion.currency,
                               )}
                             </span>{' '}
-                            to any quantity
+                            to the prices above
                           </p>
                           <p
                             className="mt-2 uppercase tracking-[0.22em] text-white/45"
