@@ -1227,17 +1227,23 @@ export default function CustomerProofPage() {
               the section collapses silently. */}
           {activeVersion.material_description && (
             <section style={{ background: PAPER, color: '#1a1612' }}>
-              <div className="mx-auto max-w-[1040px] px-6 pb-24 pt-10 sm:px-8">
-                <div className="pt-12" style={{ borderTop: `1px solid ${PAPER_BORDER}` }}>
-                  {/* Serif heading at the Plates size — keeps the
-                      three near-white sections reading at equal
-                      typographic weight. */}
-                  <h2
-                    className="leading-none text-[#1a1612]"
-                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
-                  >
-                    About our {activeVersion.material_display.toLowerCase()} cards
-                  </h2>
+              {/* Outer padding matches the Plates section's
+                  py-20 sm:py-24 rhythm now that the inner
+                  pt-12 + border-top wrapper has been removed.
+                  The ink-deep Pricing → PAPER About transition
+                  already produces a strong visual break; an
+                  additional hairline rule on top of that was
+                  belt-and-braces and read as redundant. */}
+              <div className="mx-auto max-w-[1040px] px-6 py-20 sm:px-8 sm:py-24">
+                {/* Serif heading at the Plates size — keeps the
+                    three near-white sections reading at equal
+                    typographic weight. */}
+                <h2
+                  className="leading-none text-[#1a1612]"
+                  style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
+                >
+                  About our {activeVersion.material_display.toLowerCase()} cards
+                </h2>
                   <div className="mt-8 grid items-start gap-10 sm:grid-cols-[1.4fr_1fr] sm:gap-16">
                     <div>
                       <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-[#1a1612]/80">
@@ -1307,7 +1313,6 @@ export default function CustomerProofPage() {
                       )}
                     </div>
                   </div>
-                </div>
               </div>
             </section>
           )}
