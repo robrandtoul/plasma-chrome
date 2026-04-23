@@ -1917,11 +1917,11 @@ function RevisionsBand({
 // revisions rail. Box is edge-clamped to stay inside the
 // parent container; arrow is clamped to stay inside the box's
 // rounded corners but always sits directly above the active
-// dot. Measurement runs aggressively — useLayoutEffect +
-// raf x2 + document.fonts.ready + ResizeObserver on both
-// parent and the active button + window resize — because any
-// of those can shift the dot's x-position between mount and
-// first paint in practice.
+// dot. Measurement runs aggressively — useEffect + raf x2 +
+// document.fonts.ready + ResizeObserver on both parent and
+// the active button + MutationObserver on the parent subtree
+// + window resize — because any of those can shift the dot's
+// x-position between mount and first paint in practice.
 //
 // Render is gated on `layout !== null` so we don't flash a
 // mispositioned box while the measurement pipeline warms up.
@@ -1952,7 +1952,17 @@ function RevisionsCoachmark({
     arrowOffset: number
   } | null>(null)
 
-  useLayoutEffect(() => {
+  // useEffect (not useLayoutEffect) because ancestor DOM refs
+  // aren't set when a descendant's useLayoutEffect runs — React
+  // commits bottom-up, so the rail wrapper's ref is only assigned
+  // after this component's layout effect would fire, meaning the
+  // effect would bail on parent=null and the whole measurement
+  // pipeline would silently never set up. useEffect fires after
+  // the full commit phase completes, by which point all refs in
+  // the tree are populated. The component gates render on
+  // layout !== null so there's no paint-flash concern from the
+  // slightly later fire timing.
+  useEffect(() => {
     const parent = parentRef.current
     if (!parent) return
 
