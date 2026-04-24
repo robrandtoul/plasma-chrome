@@ -51,6 +51,14 @@ export interface PricingSnapshot {
   variants: PricingVariant[]
 }
 
+// One entry in materials.key_features (migration 000100). Curated
+// per-material on the customer About section as a numbered editorial
+// list. title is the bolded lead; body is the supporting line beneath.
+export interface KeyFeature {
+  title: string
+  body: string
+}
+
 export interface PublicProofVersion {
   id: string
   proof_id: string
@@ -81,12 +89,13 @@ export interface PublicProofVersion {
   display_quantities: number[] | null
   quote_min_quantity: number | null
   quote_max_quantity: number | null
-  // ── Key features (migration 000099) ───────────────────────────────────────
-  // Curated list of short one-liners surfaced on the customer
-  // proof page's About section as a bulleted list below the
-  // narrative paragraph. Null or empty means no curation; the
-  // render block hides cleanly in that case.
-  key_features: string[] | null
+  // ── Key features (migration 000100) ───────────────────────────────────────
+  // Curated list of title/body pairs surfaced on the customer
+  // proof page's About section as a numbered editorial list
+  // (01-04). Supersedes the flat string[] shape from migration
+  // 000099. Null or empty means no curation; the render block
+  // hides cleanly (kicker + rule still render as section chrome).
+  key_features: KeyFeature[] | null
   material_disclaimer: string | null
   /** Paragraph-style text shown in the customer-facing "About [Material]" block. */
   material_description: string | null

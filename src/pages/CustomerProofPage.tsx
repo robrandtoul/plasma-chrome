@@ -1406,40 +1406,73 @@ export default function CustomerProofPage() {
                 {/* Serif heading at the Plates size — keeps the
                     three near-white sections reading at equal
                     typographic weight. */}
+                {/* Mono kicker above the h2 — editorial frame
+                    for the About section. Always renders,
+                    regardless of whether the material has
+                    curated key_features, because it's section
+                    chrome rather than feature-list chrome. */}
+                <p
+                  className="mb-3 uppercase"
+                  style={{
+                    fontFamily: MONO,
+                    fontSize: 11,
+                    letterSpacing: '0.22em',
+                    color: ACCENT,
+                  }}
+                >
+                  Material notes
+                </p>
                 <h2
                   className="leading-none text-[#1a1612]"
                   style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
                 >
                   About our {activeVersion.material_display.toLowerCase()} cards
                 </h2>
-                  <div className="mt-8 grid items-start gap-10 sm:grid-cols-[1.4fr_1fr] sm:gap-16">
+                {/* Hairline ACCENT rule between heading and the
+                    content grid. Replaces the grid's former mt-8
+                    with its own vertical margins (mt-6 mb-5).
+                    Pairs with the kicker as section chrome; both
+                    render unconditionally. */}
+                <div
+                  aria-hidden
+                  className="mt-6 mb-5 h-px w-12"
+                  style={{ background: ACCENT }}
+                />
+                  <div className="grid items-start gap-10 sm:grid-cols-[1.4fr_1fr] sm:gap-16">
                     <div>
                       <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-[#1a1612]/80">
                         {activeVersion.material_description}
                       </p>
-                      {/* Key features — curated bullet list per
-                          material (migration 000099). Hidden
-                          cleanly when the material hasn't been
-                          curated (null) or the list is empty, so
-                          materials without features don't leave
-                          stray mt-6 spacing. 6px ACCENT-filled
-                          circle bullet aligns visually with the
-                          first line of each feature via a small
-                          top offset (the flex baseline would sit
-                          the dot on the text baseline, too low;
-                          cap height reads better). */}
+                      {/* Key features — numbered editorial list
+                          (migration 000100). Each entry is a
+                          {title, body} pair. Hidden cleanly when
+                          the material hasn't been curated (null)
+                          or the list is empty; the section's
+                          kicker + rule still render as chrome.
+                          items-baseline aligns the 24px serif
+                          numeral's baseline with the title's
+                          baseline so the numeral reads tall
+                          against the pair — standard editorial
+                          treatment. */}
                       {activeVersion.key_features && activeVersion.key_features.length > 0 && (
-                        <ul className="mt-6 max-w-[62ch] space-y-2">
+                        <ul className="mt-6 max-w-[62ch] space-y-[1.15rem]">
                           {activeVersion.key_features.map((feature, i) => (
-                            <li key={i} className="grid grid-cols-[10px_1fr] items-start gap-3">
+                            <li key={i} className="grid grid-cols-[40px_1fr] items-baseline gap-3">
                               <span
                                 aria-hidden
-                                className="mt-[0.55em] h-[6px] w-[6px] rounded-full"
-                                style={{ background: ACCENT }}
-                              />
-                              <span className="text-[15px] leading-[1.6] text-[#1a1612]/85">
-                                {feature}
+                                className="leading-none"
+                                style={{ fontFamily: SERIF, fontSize: 24, color: ACCENT }}
+                              >
+                                {String(i + 1).padStart(2, '0')}
                               </span>
+                              <div>
+                                <p className="mb-0.5 text-[14px] font-medium text-[#1a1612]">
+                                  {feature.title}
+                                </p>
+                                <p className="text-[13px] leading-[1.55] text-[#1a1612]/70">
+                                  {feature.body}
+                                </p>
+                              </div>
                             </li>
                           ))}
                         </ul>
