@@ -2706,10 +2706,10 @@ function InkPricingTable({
   // Single-variant path — the design mock's shape. Multi-
   // variant proofs (rare: thickness + ink count variants in
   // the same material) fall through to a compact per-variant
-  // list below. Single-variant path also gets the quantity
-  // lookup appended underneath; the multi-variant grid isn't
-  // shaped for the inline lookup result, so the lookup is
-  // hidden there per the ship decision.
+  // grid below. Both paths render the prominent QuantityLookup
+  // card underneath: the lookup's result grid mirrors the
+  // multi-variant main-table shape regardless of variant count,
+  // so the same component serves both surfaces.
   if (variants.length === 1) {
     const variant = variants[0]
     const rows = visibleQuantities
@@ -2774,7 +2774,7 @@ function InkPricingTable({
           </tbody>
         </table>
         <QuantityLookup
-          variant={variant}
+          variants={variants}
           currency={currency}
           lookupSet={lookupSet}
           quoteMinQuantity={quoteMinQuantity}
@@ -2791,7 +2791,11 @@ function InkPricingTable({
   // variant. Not styled as editorially as the single-variant
   // path; this branch is rare on customer proofs (most
   // materials ship with a single variant_id on the snapshot).
+  // Same QuantityLookup card renders below the grid — the
+  // lookup's result grid is column-per-variant too, so it
+  // reads consistently with the main table above.
   return (
+    <>
     <div className="overflow-x-auto">
       <table className="w-full border-collapse">
         <thead>
@@ -2865,18 +2869,43 @@ function InkPricingTable({
         </tbody>
       </table>
     </div>
+    <QuantityLookup
+      variants={variants}
+      currency={currency}
+      lookupSet={lookupSet}
+      quoteMinQuantity={quoteMinQuantity}
+      quoteMaxQuantity={quoteMaxQuantity}
+      quantitySurcharges={quantitySurcharges}
+      serif={serif}
+      mono={mono}
+    />
+    </>
   )
 }
 
-// Compact quantity lookup strip that sits below the single-
-// variant pricing table. Customer types a number, lookup runs
-// against the version's snapshot tier set (lookupSet) in memory
-// — no DB round-trip, so no debounce. Branch order inside the
-// parsed-query block:
+// Prominent quantity picker card that sits below the pricing
+// table. Dedicated card treatment — serif heading, body-size
+// input, optional result grid — so the picker reads as a
+// proper feature rather than a caption-weight footnote. Works
+// for both single-variant and multi-variant proofs; the result
+// grid is always column-per-variant (using variants[i].display
+// as the header, same source as the main multi-variant table),
+// which means a single grid shape serves one variant or many.
 //
-//   1. query < quote_min_quantity  → small-runs caption, no row.
-//   2. query > quote_max_quantity  → large-runs caption, no row.
-//   3. Exact match                 → one row, caption "For {qty}".
+// Customer types a number, lookup runs against the version's
+// snapshot tier set (lookupSet) in memory — no DB round-trip,
+// so no debounce. Branch order inside the parsed-query block:
+//
+//   1. query < quote_min_quantity  → small-runs caption, no grid.
+//   2. query > quote_max_quantity  → large-runs caption, no grid.
+//   3. Exact match in any variant  → one row, caption "For {qty}".
+//                                    Exact-match uses lookupSet
+//                                    membership (union across
+//                                    variants), so a tier priced
+//                                    by only some variants still
+//                                    captures — the grid cell for
+//                                    the variant that doesn't
+//                                    price it renders a "—".
 //   4. Below lowest snapshot tier  → one row at the lowest,
 //                                    caption "Below our listed
 //                                    range. Lowest tier:". Only
@@ -2888,11 +2917,9 @@ function InkPricingTable({
 //                                    range. Highest tier is
 //                                    {highestTier}. For volumes
 //                                    beyond that, get in touch."
-//                                    Same fallback conditions as
-//                                    below. The customer's
-//                                    typed value never appears
-//                                    in this caption next to
-//                                    the highest-tier value —
+//                                    Customer's typed value never
+//                                    appears in this caption next
+//                                    to the highest-tier value —
 //                                    avoids two numbers fighting
 //                                    for attention in one sentence.
 //   6. Between two tiers           → two bracketing rows,
@@ -2900,17 +2927,18 @@ function InkPricingTable({
 //                                    two tiers. Closest tiers:".
 //
 // Bounds are checked before snapshot-range branches because the
-// designer's bounds are a commercial gate — "please get in touch
+// designer's bounds are a commercial gate: "please get in touch
 // for small runs" should win over "below our listed range" when
-// both would apply.
+// both would apply. The out-of-bounds captions (branches 1-2)
+// render at body size with no grid — they're a commercial message,
+// not a tier signpost.
 //
-// Empty / non-numeric input → no result panel, just the field
-// sitting quietly. No error state, no red text; mismatch is
-// informational, not a correction. Multi-variant mode hides the
-// lookup entirely per the ship decision — the compact row-based
-// result shape doesn't fit the multi-column grid above it.
+// Empty / non-numeric input → no result panel, just the card at
+// rest (heading + input, no caption, no grid, no stray spacing).
+// No error state, no red text; mismatch is informational, not
+// a correction.
 function QuantityLookup({
-  variant,
+  variants,
   currency,
   lookupSet,
   quoteMinQuantity,
@@ -2919,7 +2947,7 @@ function QuantityLookup({
   serif,
   mono,
 }: {
-  variant: PricingVariant
+  variants: PricingVariant[]
   currency: Currency
   lookupSet: number[]
   quoteMinQuantity: number | null
@@ -2930,23 +2958,24 @@ function QuantityLookup({
 }) {
   const [raw, setRaw] = useState('')
   if (lookupSet.length === 0) return null
+  if (variants.length === 0) return null
 
   const parsed = /^\d+$/.test(raw.trim()) ? parseInt(raw.trim(), 10) : null
   const query = parsed != null && parsed > 0 ? parsed : null
 
-  // Price resolver for any tier in the lookupSet. Matches the
-  // table's treatment: base price from the snapshot plus any
-  // option-specific per-quantity surcharge.
-  const priceAt = (qty: number): number | null => {
+  // Per-cell price resolver. Returns null when this variant
+  // doesn't price this tier; the grid cell renders a "—"
+  // placeholder in that case, matching the main multi-variant
+  // table's treatment.
+  const priceAt = (qty: number, variant: PricingVariant): number | null => {
     const base = variant.prices[String(qty)]
     if (base == null) return null
     return base + (quantitySurcharges[qty] ?? 0)
   }
 
   // Resolve the query into a caption + the set of tier rows to
-  // render. Bounds (branches 1-2) suppress the tier row entirely
-  // and surface only a caption — the commercial message is
-  // "please get in touch", not "here's the nearest tier".
+  // render. Bounds (branches 1-2) set tiers=[] so the grid is
+  // suppressed entirely; the commercial message stands alone.
   let caption: string | null = null
   let tiers: number[] = []
   if (query != null) {
@@ -2958,7 +2987,7 @@ function QuantityLookup({
     } else if (quoteMaxQuantity != null && query > quoteMaxQuantity) {
       caption = 'Please get in touch for pricing on large runs.'
       tiers = []
-    } else if (variant.prices[String(query)] != null) {
+    } else if (lookupSet.includes(query)) {
       caption = `For ${query.toLocaleString()}`
       tiers = [query]
     } else if (query < lowest) {
@@ -2986,78 +3015,116 @@ function QuantityLookup({
   }
 
   return (
-    <div className="mt-8 border-t border-white/10 pt-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-        <label
-          htmlFor="quantity-lookup"
-          className="shrink-0 uppercase tracking-[0.22em] text-white/45"
-          style={{ fontFamily: mono, fontSize: 12 }}
-        >
-          Find a quantity
-        </label>
-        <input
-          id="quantity-lookup"
-          type="number"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          min={1}
-          value={raw}
-          onChange={(e) => setRaw(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Escape') setRaw('') }}
-          placeholder="e.g. 175"
-          className="w-full rounded-none bg-transparent px-3 py-2 text-white placeholder:text-white/30 focus:outline-none sm:max-w-[160px]"
-          style={{
-            fontFamily: mono,
-            fontSize: 16,
-            border: '1px solid rgba(255,255,255,0.15)',
-          }}
-          onFocus={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.45)' }}
-          onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)' }}
-        />
-      </div>
+    <div className="mt-8 border border-white/15 p-8">
+      <h3
+        id="quantity-picker-heading"
+        className="text-white"
+        style={{ fontFamily: serif, fontWeight: 400, fontSize: 28, lineHeight: 1.1 }}
+      >
+        Need a price for a specific quantity?
+      </h3>
+      <input
+        type="number"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        min={1}
+        value={raw}
+        onChange={(e) => setRaw(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Escape') setRaw('') }}
+        placeholder="Enter quantity"
+        aria-labelledby="quantity-picker-heading"
+        className="mt-5 w-full max-w-sm bg-transparent px-4 py-3 text-white placeholder:text-white/30 focus:outline-none"
+        style={{
+          fontFamily: mono,
+          fontSize: 18,
+          border: '1px solid rgba(255,255,255,0.15)',
+        }}
+        onFocus={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.45)' }}
+        onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)' }}
+      />
+      {/* Result panel — rendered only when the input has
+          parsed into a query. The card feels compact at rest
+          when the input is empty. aria-live/role=status makes
+          screen readers announce caption changes as the
+          customer types without re-announcing the rest of
+          the card's chrome. */}
       {caption && (
-        <div className="mt-5">
+        <div className="mt-8" aria-live="polite" role="status">
           <p
-            className="uppercase tracking-[0.22em] text-white/45"
-            style={{ fontFamily: mono, fontSize: 12 }}
+            className="text-white/80"
+            style={{ fontFamily: serif, fontWeight: 400, fontSize: 16, lineHeight: 1.4 }}
           >
             {caption}
           </p>
           {tiers.length > 0 && (
-            <table className="mt-3 w-full border-collapse">
-              <tbody>
-                {tiers.map((qty) => {
-                  const price = priceAt(qty)
-                  if (price == null) return null
-                  return (
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="border-b border-white/15">
+                    {/* Blank header above the qty column — the
+                        serif quantity in each body row is
+                        self-describing, no "Total quantity"
+                        heading needed. */}
+                    <th aria-hidden className="py-3 pr-4" />
+                    {variants.map((v) => (
+                      <th
+                        key={v.variant_id}
+                        className="py-3 pl-4 text-right uppercase tracking-[0.22em] text-white/45"
+                        style={{ fontFamily: mono, fontSize: 12 }}
+                      >
+                        {v.display}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tiers.map((qty) => (
                     <tr
                       key={qty}
                       className="border-b"
                       style={{ borderColor: 'rgba(255,255,255,0.08)' }}
                     >
                       <td
-                        className="py-4 leading-none text-white"
+                        className="py-4 pr-4 leading-none text-white"
                         style={{ fontFamily: serif, fontWeight: 400, fontSize: 24 }}
                       >
                         {qty.toLocaleString()}
                       </td>
-                      <td
-                        className="py-4 text-right text-white"
-                        style={{ fontFamily: mono, fontSize: 15 }}
-                      >
-                        {formatPrice(price, currency)}
-                      </td>
-                      <td
-                        className="py-4 text-right text-white/50"
-                        style={{ fontFamily: mono, fontSize: 12 }}
-                      >
-                        {formatPrice(price / qty, currency, 2)}
-                      </td>
+                      {variants.map((v) => {
+                        const price = priceAt(qty, v)
+                        if (price == null) {
+                          return (
+                            <td
+                              key={v.variant_id}
+                              className="py-4 pl-4 text-right text-white/30"
+                              style={{ fontFamily: mono, fontSize: 14 }}
+                            >
+                              —
+                            </td>
+                          )
+                        }
+                        return (
+                          <td key={v.variant_id} className="py-4 pl-4 text-right">
+                            <div
+                              className="text-white"
+                              style={{ fontFamily: mono, fontSize: 16 }}
+                            >
+                              {formatPrice(price, currency)}
+                            </div>
+                            <div
+                              className="text-white/45"
+                              style={{ fontFamily: mono, fontSize: 12 }}
+                            >
+                              {formatPrice(price / qty, currency, 2)} each
+                            </div>
+                          </td>
+                        )
+                      })}
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}
