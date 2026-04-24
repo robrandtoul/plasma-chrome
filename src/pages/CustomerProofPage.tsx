@@ -425,29 +425,6 @@ export default function CustomerProofPage() {
   const SANS = "'Inter Tight', system-ui, sans-serif"
   const MONO = "'JetBrains Mono', ui-monospace, monospace"
 
-  // Swatch gradient in the About section — derived from the
-  // material display string. Falls back to an indigo-tinted
-  // neutral for materials we don't have an explicit swatch for.
-  // Lives here rather than as a DB column because swatch
-  // rendering is a pure design concern; the same material can
-  // carry a different swatch treatment on a different page.
-  function materialSwatchGradient(display: string): string {
-    const t = display.toLowerCase()
-    if (/copper/.test(t))
-      return 'radial-gradient(circle at 35% 30%, #e5a87b 0%, #b96c3d 45%, #6b3d22 100%)'
-    if (/gold/.test(t))
-      return 'radial-gradient(circle at 35% 30%, #f5d878 0%, #c9a13f 45%, #7c6020 100%)'
-    if (/steel|gunmetal|gun metal/.test(t))
-      return 'radial-gradient(circle at 35% 30%, #c5d0d8 0%, #7a8b98 45%, #3e4a55 100%)'
-    if (/carbon/.test(t))
-      return 'radial-gradient(circle at 35% 30%, #8a969e 0%, #4a545c 45%, #1a1f23 100%)'
-    if (/walnut|cherry|birch|maple|bamboo|wood/.test(t))
-      return 'radial-gradient(circle at 35% 30%, #c89a6c 0%, #8e5a30 45%, #4a2d18 100%)'
-    if (/paper|card/.test(t))
-      return 'radial-gradient(circle at 35% 30%, #f7f3ea 0%, #d8cfbe 45%, #988c76 100%)'
-    return 'radial-gradient(circle at 35% 30%, #a79be0 0%, #6b58b3 45%, #2d2352 100%)'
-  }
-
   // Short customer-facing reference — the proof's Help Scout
   // conversation id, prefixed with PL · for the editorial feel.
   // Exposed on public_proofs by migration 000089. Hidden
@@ -1438,24 +1415,33 @@ export default function CustomerProofPage() {
                   className="mt-6 mb-5 h-px w-12"
                   style={{ background: ACCENT }}
                 />
-                  <div className="grid items-start gap-10 sm:grid-cols-[1.4fr_1fr] sm:gap-16">
+                  {/* Balanced two-column grid at md+ (narrative
+                      left, key features right). Stacks to a
+                      single column below the breakpoint in
+                      reading order: narrative → features. When
+                      key_features is null or empty the right
+                      column renders an empty <div>; the grid
+                      keeps its two-column shape so narrative
+                      width (max-w-[62ch]) stays stable and the
+                      right side reads as deliberate breathing
+                      room rather than the layout reshaping. */}
+                  <div className="grid gap-10 md:grid-cols-2">
+                    <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-[#1a1612]/80">
+                      {activeVersion.material_description}
+                    </p>
                     <div>
-                      <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-[#1a1612]/80">
-                        {activeVersion.material_description}
-                      </p>
-                      {/* Key features — numbered editorial list
+                      {/* Numbered editorial key features list
                           (migration 000100). Each entry is a
-                          {title, body} pair. Hidden cleanly when
-                          the material hasn't been curated (null)
-                          or the list is empty; the section's
-                          kicker + rule still render as chrome.
+                          {title, body} pair. Gated on presence
+                          of curated features; right column
+                          wrapper stays regardless so the grid
+                          shape stays stable across materials.
                           items-baseline aligns the 24px serif
                           numeral's baseline with the title's
-                          baseline so the numeral reads tall
-                          against the pair — standard editorial
-                          treatment. */}
+                          baseline — standard editorial
+                          treatment, numeral reads tall. */}
                       {activeVersion.key_features && activeVersion.key_features.length > 0 && (
-                        <ul className="mt-6 max-w-[62ch] space-y-[1.15rem]">
+                        <ul className="max-w-[62ch] space-y-[1.15rem]">
                           {activeVersion.key_features.map((feature, i) => (
                             <li key={i} className="grid grid-cols-[40px_1fr] items-baseline gap-3">
                               <span
@@ -1477,70 +1463,22 @@ export default function CustomerProofPage() {
                           ))}
                         </ul>
                       )}
-                      {activeVersion.material_disclaimer && (
-                        <p className="mt-6 max-w-[62ch] whitespace-pre-line text-[13px] leading-[1.6] text-[#1a1612]/60">
-                          {activeVersion.material_disclaimer}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex flex-col items-center sm:-mt-24 sm:items-end">
-                      {/* Material swatch — real card-stack image
-                          uploaded via admin → material content
-                          (materials.icon_url). Falls back to a
-                          decorative gradient sphere when the
-                          admin hasn't uploaded an image yet so
-                          the section never collapses awkwardly.
-                          drop-shadow filter (vs box-shadow)
-                          means the glow wraps the image's real
-                          alpha shape, not its bounding box —
-                          reads right for transparent PNGs of
-                          card stacks and still fine on opaque
-                          images. object-contain preserves the
-                          natural aspect rather than cropping to
-                          a square. */}
-                      {/* Sized to read as a feature, not a
-                          thumbnail. 14rem on mobile / 20rem on
-                          sm+ (up from 10rem/12rem pre-fix).
-                          Fits inside the ~1fr right column of
-                          the sm:grid-cols-[1.4fr_1fr] grid at
-                          the section's max-w-[1040px] outer
-                          width with room to spare, and stays
-                          well within a 375px mobile viewport
-                          once the grid stacks to single
-                          column. Top-alignment with the body
-                          paragraph is already handled by the
-                          outer grid's items-start; no per-
-                          column self-alignment needed. */}
-                      {activeVersion.material_icon_url ? (
-                        <img
-                          src={activeVersion.material_icon_url}
-                          alt={`${activeVersion.material_display} swatch`}
-                          className="h-56 w-56 object-contain sm:h-80 sm:w-80"
-                          style={{
-                            // Neutral greyscale shadow — reads as
-                            // "image resting on the page" rather
-                            // than carrying a brand glow. Same
-                            // offset + blur as the previous
-                            // ACCENT_GLOW version; only the tint
-                            // swaps out. Fallback gradient sphere
-                            // (below) keeps its ACCENT-tinted
-                            // shadow because it's a decorative
-                            // placeholder, not a product image.
-                            filter: 'drop-shadow(0 40px 60px rgba(0,0,0,0.28))',
-                          }}
-                        />
-                      ) : (
-                        <div
-                          aria-hidden
-                          className="h-56 w-56 rounded-full sm:h-80 sm:w-80"
-                          style={{
-                            background: materialSwatchGradient(activeVersion.material_display),
-                            boxShadow: `0 40px 80px -20px ${ACCENT_GLOW}, inset -14px -14px 40px rgba(0,0,0,0.35)`,
-                          }}
-                        />
-                      )}
                     </div>
                   </div>
+
+                  {/* Material disclaimer — full-width below the
+                      grid, conditional. Stronger vertical break
+                      (mt-10) than the previous single-column
+                      layout's mt-6 so the disclaimer reads as a
+                      summary row rather than a continuation of
+                      either column above it. max-w-[62ch] keeps
+                      the reading width sensible within the
+                      wider container. */}
+                  {activeVersion.material_disclaimer && (
+                    <p className="mt-10 max-w-[62ch] whitespace-pre-line text-[13px] leading-[1.6] text-[#1a1612]/60">
+                      {activeVersion.material_disclaimer}
+                    </p>
+                  )}
               </div>
             </section>
           )}
