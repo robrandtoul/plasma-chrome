@@ -1417,8 +1417,35 @@ export default function CustomerProofPage() {
                       <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-[#1a1612]/80">
                         {activeVersion.material_description}
                       </p>
+                      {/* Key features — curated bullet list per
+                          material (migration 000099). Hidden
+                          cleanly when the material hasn't been
+                          curated (null) or the list is empty, so
+                          materials without features don't leave
+                          stray mt-6 spacing. 6px ACCENT-filled
+                          circle bullet aligns visually with the
+                          first line of each feature via a small
+                          top offset (the flex baseline would sit
+                          the dot on the text baseline, too low;
+                          cap height reads better). */}
+                      {activeVersion.key_features && activeVersion.key_features.length > 0 && (
+                        <ul className="mt-6 max-w-[62ch] space-y-2">
+                          {activeVersion.key_features.map((feature, i) => (
+                            <li key={i} className="grid grid-cols-[10px_1fr] items-start gap-3">
+                              <span
+                                aria-hidden
+                                className="mt-[0.55em] h-[6px] w-[6px] rounded-full"
+                                style={{ background: ACCENT }}
+                              />
+                              <span className="text-[15px] leading-[1.6] text-[#1a1612]/85">
+                                {feature}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                       {activeVersion.material_disclaimer && (
-                        <p className="mt-4 max-w-[62ch] whitespace-pre-line text-[13px] leading-[1.6] text-[#1a1612]/60">
+                        <p className="mt-6 max-w-[62ch] whitespace-pre-line text-[13px] leading-[1.6] text-[#1a1612]/60">
                           {activeVersion.material_disclaimer}
                         </p>
                       )}

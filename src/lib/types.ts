@@ -81,6 +81,12 @@ export interface PublicProofVersion {
   display_quantities: number[] | null
   quote_min_quantity: number | null
   quote_max_quantity: number | null
+  // ── Key features (migration 000099) ───────────────────────────────────────
+  // Curated list of short one-liners surfaced on the customer
+  // proof page's About section as a bulleted list below the
+  // narrative paragraph. Null or empty means no curation; the
+  // render block hides cleanly in that case.
+  key_features: string[] | null
   material_disclaimer: string | null
   /** Paragraph-style text shown in the customer-facing "About [Material]" block. */
   material_description: string | null
