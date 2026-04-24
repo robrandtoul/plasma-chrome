@@ -1168,24 +1168,38 @@ export default function CustomerProofPage() {
                     Specification
                   </h2>
                   <p className="mt-5 max-w-[30ch] text-[14px] leading-[1.55] text-white/55">
-                    Everything that's going to the printer. These are the values your approval locks in.
+                    The details captured in this proof. Final thickness, options, and quantity are confirmed when you place your order.
                   </p>
                 </div>
                 <dl className="border-t border-white/10">
                   <InkSpecRow label="Material" value={activeVersion.material_display} />
+                  {/* Sides — derived from the image set. Two-sided
+                      iff any image on the active version carries
+                      side='back'; otherwise front only. Pre-
+                      migration-000085 data with null sides reads
+                      as front only, which matches the historic
+                      single-sided proofs' reality. */}
+                  <InkSpecRow
+                    label="Sides"
+                    value={
+                      (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
+                        ? 'Front and back'
+                        : 'Front only'
+                    }
+                  />
                   {activeOption && (
                     <InkSpecRow label={optionLabelSingular} value={activeOption.display_name} />
                   )}
                   {activeVersion.ink_names.length > 0 && (
                     <InkSpecRow
-                      label={activeVersion.ink_names.length === 1 ? 'Ink' : 'Inks'}
+                      label="Ink colours"
                       value={activeVersion.ink_names.join('\n')}
                     />
                   )}
                   {activeVersion.names.length > 0 && (
                     <InkSpecRow
-                      label={activeVersion.names.length === 1 ? 'Name' : 'Names'}
-                      value={formatNamesList(activeVersion.names)}
+                      label="Names on card"
+                      value={activeVersion.names.join('\n')}
                     />
                   )}
                   <InkSpecRow
