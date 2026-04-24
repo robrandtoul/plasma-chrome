@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
+import type { KeyFeature } from '../../lib/types'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,11 @@ export interface MaterialContent {
   // Null on either side = unbounded on that side.
   quote_min_quantity: number | null
   quote_max_quantity: number | null
+  // ── Key features (migration 000100) ──────────────────────────────────
+  // Curated {title, body} pairs surfaced on the customer About
+  // section as a numbered editorial list. Null or empty means
+  // not yet curated; customer render hides the block cleanly.
+  key_features: KeyFeature[] | null
 }
 
 // Kept in sync with the CHECK constraint on materials.category installed
@@ -41,6 +47,28 @@ const CATEGORY_OPTIONS: { value: Category; label: string }[] = [
 
 const ACCEPTED = ['image/png', 'image/jpeg', 'image/svg+xml']
 const MAX_SIZE = 2 * 1024 * 1024
+
+// Soft-only bounds for key_features editing. Over-length shows an
+// amber warning beneath the field; doesn't block save. 1.5x the
+// current seed content's max length (title 34, body 76 as at
+// migration 000100). Cap of 8 features mirrors the customer page's
+// numbered render — beyond that becomes visual noise.
+const TITLE_SOFT_MAX = 50
+const BODY_SOFT_MAX = 120
+const MAX_FEATURES = 8
+
+// Deep-equality for an array of {title, body} pairs. Used by the
+// save guard to skip DB writes on no-op blurs. Inline rather than
+// pulling in a dep — the comparison is tiny and honest.
+function keyFeaturesEqual(a: KeyFeature[] | null, b: KeyFeature[] | null): boolean {
+  if (a == null && b == null) return true
+  if (a == null || b == null) return false
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].title !== b[i].title || a[i].body !== b[i].body) return false
+  }
+  return true
+}
 
 // Pull the "foo.png" tail out of a Supabase public URL so we can delete
 // the file when the icon is replaced or removed.
@@ -102,6 +130,25 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
   const [displayQtysError, setDisplayQtysError] = useState<string | null>(null)
   const [quoteMinError, setQuoteMinError] = useState<string | null>(null)
   const [quoteMaxError, setQuoteMaxError] = useState<string | null>(null)
+
+  // Key features draft + error (migration 000100). Whole-array
+  // auto-save on any row blur; remove-row saves immediately.
+  // Draft holds raw (un-trimmed) user text so admins can type
+  // freely; save-time normalises via trim + filter-empty.
+  const [draftFeatures, setDraftFeatures] = useState<KeyFeature[]>(
+    material.key_features ?? [],
+  )
+  const [featuresError, setFeaturesError] = useState<string | null>(null)
+  // Index of the row just added via "Add feature", so its title
+  // input can auto-focus on the next render. Cleared after focus
+  // fires so a later unrelated render doesn't steal focus.
+  const [pendingFocusIdx, setPendingFocusIdx] = useState<number | null>(null)
+  const featureTitleRefs = useRef<Map<number, HTMLInputElement>>(new Map())
+  useEffect(() => {
+    if (pendingFocusIdx == null) return
+    const input = featureTitleRefs.current.get(pendingFocusIdx)
+    if (input) { input.focus(); setPendingFocusIdx(null) }
+  }, [pendingFocusIdx, draftFeatures])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && !saving) onClose() }
@@ -383,6 +430,84 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
       targetLabel: material.display_name,
       beforeValue: { quote_max_quantity: prev },
       afterValue: { quote_max_quantity: next },
+    })
+  }
+
+  // ── Key features editor helpers ──────────────────────────────────────
+  //
+  // Draft state is liberal (admin can leave an empty row while
+  // typing). Commit state is tight: saveKeyFeatures trims and
+  // filters empty rows before writing. Whole-array save on any
+  // field blur; remove-row saves immediately because state is
+  // stable at click time.
+
+  function updateFeature(idx: number, field: 'title' | 'body', value: string) {
+    setDraftFeatures((prev) => {
+      const next = [...prev]
+      next[idx] = { ...next[idx], [field]: value }
+      return next
+    })
+  }
+
+  function addFeature() {
+    setDraftFeatures((prev) => {
+      if (prev.length >= MAX_FEATURES) return prev
+      const nextIdx = prev.length
+      // Schedule focus to land on the new row's title input on
+      // the next render (when the input exists in the DOM).
+      setPendingFocusIdx(nextIdx)
+      return [...prev, { title: '', body: '' }]
+    })
+    // No save yet — empty rows are invalid and would be filtered
+    // out. Save fires when the admin blurs away from the new row.
+  }
+
+  async function removeFeature(idx: number) {
+    // Build the next draft synchronously so we can both update
+    // state and commit in one pass (the setState below is
+    // asynchronous, so we pass the computed value into save).
+    const nextDraft = draftFeatures.filter((_, i) => i !== idx)
+    setDraftFeatures(nextDraft)
+    await saveKeyFeatures(nextDraft)
+  }
+
+  async function saveKeyFeatures(explicit?: KeyFeature[]) {
+    // Source of truth: explicit arg (from removeFeature) or
+    // current draft state (from input blurs).
+    const source = explicit ?? draftFeatures
+    const trimmed: KeyFeature[] = source
+      .map((f) => ({ title: f.title.trim(), body: f.body.trim() }))
+      .filter((f) => f.title.length > 0 && f.body.length > 0)
+
+    // Empty array saves as null — matches the customer render
+    // gate (`key_features && length > 0`). Keeps DB state clean
+    // too: null means "not curated", empty array means nothing.
+    const next: KeyFeature[] | null = trimmed.length === 0 ? null : trimmed
+    const prev = material.key_features
+
+    if (keyFeaturesEqual(prev, next)) { setFeaturesError(null); return }
+
+    setSaving(true)
+    const { error: err } = await supabase
+      .from('materials')
+      .update({ key_features: next })
+      .eq('id', material.id)
+    setSaving(false)
+    if (err) {
+      setFeaturesError(`Failed to save: ${err.message}`)
+      return
+    }
+    setFeaturesError(null)
+    material.key_features = next
+    onSaved({ ...material })
+    setSavedAt(Date.now())
+    void logAudit({
+      action: 'material.key_features_updated',
+      targetType: 'material',
+      targetId: material.id,
+      targetLabel: material.display_name,
+      beforeValue: { key_features: prev },
+      afterValue: { key_features: next },
     })
   }
 
@@ -709,6 +834,96 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
               <p className="mt-1.5 text-xs text-gray-500">
                 Displayed on the customer-facing proof page for any proof using this material. Paragraph breaks render as spacing.
               </p>
+            </section>
+
+            {/* Key features (migration 000100) — curated
+                {title, body} pairs surfaced on the customer
+                About section as a numbered editorial list.
+                Whole-array auto-save on any row blur; remove
+                triggers immediate save. Empty array normalises
+                to null on save for parity with the customer
+                render gate. */}
+            <section>
+              <h4 className="mb-3 text-sm font-semibold text-gray-800">Key features</h4>
+              <p className="mb-4 text-xs text-gray-500">
+                Surfaced on the customer proof page under the About section, numbered 01 to {draftFeatures.length.toString().padStart(2, '0')} in the order shown here. Each feature is a short title plus a one-line supporting description.
+              </p>
+
+              {draftFeatures.length === 0 && (
+                <p className="mb-3 text-sm text-gray-500">
+                  No features yet. Click "Add feature" to start.
+                </p>
+              )}
+
+              <ol className="space-y-3">
+                {draftFeatures.map((feature, i) => {
+                  const titleOver = feature.title.length > TITLE_SOFT_MAX
+                  const bodyOver = feature.body.length > BODY_SOFT_MAX
+                  return (
+                    <li
+                      key={i}
+                      className="grid grid-cols-[32px_1fr_auto] items-start gap-3 rounded-lg border border-gray-200 p-3"
+                    >
+                      {/* Plain gray sans-serif numeral — admin
+                          chrome tone, not the customer page's
+                          serif ACCENT editorial treatment. */}
+                      <span className="pt-2 text-sm font-semibold text-gray-400 tabular-nums">
+                        {String(i + 1).padStart(2, '0')}
+                      </span>
+                      <div className="min-w-0 space-y-2">
+                        <input
+                          ref={(el) => {
+                            if (el) featureTitleRefs.current.set(i, el)
+                            else featureTitleRefs.current.delete(i)
+                          }}
+                          type="text"
+                          value={feature.title}
+                          onChange={(e) => updateFeature(i, 'title', e.target.value)}
+                          onBlur={() => { void saveKeyFeatures() }}
+                          placeholder="Title (e.g. Rolled stainless steel)"
+                          className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                        />
+                        <input
+                          type="text"
+                          value={feature.body}
+                          onChange={(e) => updateFeature(i, 'body', e.target.value)}
+                          onBlur={() => { void saveKeyFeatures() }}
+                          placeholder="Supporting line (e.g. Precision etched from sheet metal…)"
+                          className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                        />
+                        {(titleOver || bodyOver) && (
+                          <p className="text-xs text-amber-600">
+                            {titleOver && `Title over ${TITLE_SOFT_MAX} chars may crowd the customer layout.`}
+                            {titleOver && bodyOver && ' '}
+                            {bodyOver && `Body over ${BODY_SOFT_MAX} chars may wrap awkwardly.`}
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { void removeFeature(i) }}
+                        className="rounded px-2 py-1 text-xs font-medium text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+                        aria-label={`Remove feature ${i + 1}`}
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  )
+                })}
+              </ol>
+
+              <button
+                type="button"
+                onClick={addFeature}
+                disabled={draftFeatures.length >= MAX_FEATURES}
+                className="mt-3 text-sm font-medium text-gray-600 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                + Add feature{draftFeatures.length >= MAX_FEATURES && ' (max reached)'}
+              </button>
+
+              {featuresError && (
+                <p className="mt-2 text-xs text-rose-600">{featuresError}</p>
+              )}
             </section>
 
             {/* Pricing presentation (migration 000095) — curated

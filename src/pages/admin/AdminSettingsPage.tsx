@@ -78,7 +78,7 @@ export default function AdminSettingsPage() {
     // wouldn't.
     const { data } = await supabase
       .from('materials')
-      .select('id, code, display_name, category, description, icon_url, is_published, archived_at, display_quantities, quote_min_quantity, quote_max_quantity')
+      .select('id, code, display_name, category, description, icon_url, is_published, archived_at, display_quantities, quote_min_quantity, quote_max_quantity, key_features')
       .eq('is_active', true)
       .order('sort_order')
     setMaterials((data ?? []) as MaterialContent[])
