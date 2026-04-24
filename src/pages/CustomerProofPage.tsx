@@ -1283,11 +1283,10 @@ export default function CustomerProofPage() {
                 <InkPricingTable
                   snapshot={activeVersion.pricing_snapshot}
                   currency={activeVersion.currency}
-                  featuredQuantities={activeVersion.featured_quantities}
-                  expandedQuantities={activeVersion.expanded_quantities}
+                  displayQuantities={activeVersion.display_quantities}
+                  quoteMinQuantity={activeVersion.quote_min_quantity}
+                  quoteMaxQuantity={activeVersion.quote_max_quantity}
                   quantitySurcharges={quantitySurcharges}
-                  accent={ACCENT}
-                  accentGlow={ACCENT_GLOW}
                   serif={SERIF}
                   mono={MONO}
                 />
@@ -2647,46 +2646,41 @@ function InkSpecRow({ label, value }: { label: string; value: string }) {
 // case and the one the design mocks — gets the editorial
 // treatment.
 //
-// Row-set logic (post-000093/094):
-//   * defaultQuantities — the 5-row default view (featured
-//     filter intersected with the snapshot's available tiers).
-//     Edge case: if that intersection is empty (thin-tier
-//     material where none of the featured qtys exist on the
-//     snapshot), fall through to the snapshot's full tier set
-//     so the table never renders zero rows.
-//   * expandedSet — what "show more" reveals. If the material
-//     has expanded_quantities curated, intersect with snapshot
-//     and use that. Else fall back to the first 10 tiers
-//     ascending from the snapshot. Never the full 40-row dump.
+// Row-set logic (post migration 000095 — single-list model):
+//   * visibleQuantities — derived from display_quantities on
+//     the material. If the curated list is populated AND
+//     intersects the snapshot, we render the intersection
+//     sorted ascending. If the material has not been curated
+//     (null) OR its curated list has no intersection with the
+//     snapshot (thin-tier fallthrough), we show the first 10
+//     tiers ascending from the snapshot so the table never
+//     renders zero rows. No "show more" toggle any more — the
+//     QuantityLookup below handles anything outside the shown
+//     rows, within the designer's quote bounds.
 //   * lookupSet — the full snapshot tier list, in ascending
 //     order. Fed only to the QuantityLookup below; the table
 //     itself never shows it.
-// "Show more" button hides when expanded equals default
-// (nothing new to reveal).
-const EXPANDED_FALLBACK_CAP = 10
+const DISPLAY_FALLBACK_CAP = 10
 
 function InkPricingTable({
   snapshot,
   currency,
-  featuredQuantities,
-  expandedQuantities,
+  displayQuantities,
+  quoteMinQuantity,
+  quoteMaxQuantity,
   quantitySurcharges,
-  accent,
-  accentGlow,
   serif,
   mono,
 }: {
   snapshot: PricingSnapshot
   currency: Currency
-  featuredQuantities: number[]
-  expandedQuantities: number[] | null
+  displayQuantities: number[] | null
+  quoteMinQuantity: number | null
+  quoteMaxQuantity: number | null
   quantitySurcharges: Record<number, number>
-  accent: string
-  accentGlow: string
   serif: string
   mono: string
 }) {
-  const [showAll, setShowAll] = useState(false)
   const { variants } = snapshot
   if (!variants?.length) return null
 
@@ -2695,33 +2689,19 @@ function InkPricingTable({
   ].sort((a, b) => a - b)
   const snapshotSet = new Set(lookupSet)
 
-  // Default view — featured_quantities filtered to what the
-  // snapshot actually has prices for. Thin-tier fallback to
-  // the full set so we never render an empty table.
-  const featuredFiltered = lookupSet.filter((q) => featuredQuantities.includes(q))
-  const defaultQuantities = featuredFiltered.length > 0 ? featuredFiltered : lookupSet
-
-  // Expanded view — curated list if present and intersects with
-  // the snapshot, otherwise the first 10 tiers ascending from
-  // the snapshot. Cap is a ceiling, not a floor: shorter
-  // snapshots give shorter expanded sets.
-  const expandedFromCurated = expandedQuantities
-    ? expandedQuantities.filter((q) => snapshotSet.has(q)).sort((a, b) => a - b)
+  // Curated list intersected with the snapshot (drops any
+  // entries the snapshot does not actually price). Edge case
+  // #5 fallthrough: if curation is populated but the intersection
+  // is empty (designer listed tiers the snapshot does not price),
+  // fall back to the first 10 ascending. Same treatment when
+  // display_quantities itself is null (not yet curated).
+  const displayFromCurated = displayQuantities
+    ? displayQuantities.filter((q) => snapshotSet.has(q)).sort((a, b) => a - b)
     : []
-  const expandedSet =
-    expandedFromCurated.length > 0
-      ? expandedFromCurated
-      : lookupSet.slice(0, EXPANDED_FALLBACK_CAP)
-
-  // Hide the toggle when the expanded set adds nothing beyond
-  // the default view. Same-length + same-contents check; order
-  // is guaranteed ascending on both.
-  const expandedMatchesDefault =
-    expandedSet.length === defaultQuantities.length &&
-    expandedSet.every((q, i) => q === defaultQuantities[i])
-  const showToggle = !expandedMatchesDefault
-
-  const visibleQuantities = showAll ? expandedSet : defaultQuantities
+  const visibleQuantities =
+    displayFromCurated.length > 0
+      ? displayFromCurated
+      : lookupSet.slice(0, DISPLAY_FALLBACK_CAP)
 
   // Single-variant path — the design mock's shape. Multi-
   // variant proofs (rare: thickness + ink count variants in
@@ -2791,32 +2771,14 @@ function InkPricingTable({
                 </td>
               </tr>
             ))}
-            {showToggle && (
-              <tr>
-                <td colSpan={3} className="pt-4 text-center">
-                  <button
-                    type="button"
-                    aria-expanded={showAll}
-                    onClick={() => setShowAll((v) => !v)}
-                    className="inline-flex items-center gap-2 rounded-full px-5 py-2 uppercase tracking-[0.22em] text-white transition-all hover:brightness-110"
-                    style={{
-                      fontFamily: mono,
-                      fontSize: 12,
-                      background: accent,
-                      boxShadow: `0 0 24px ${accentGlow}`,
-                    }}
-                  >
-                    {showAll ? 'Show fewer quantities ↑' : 'Show all quantities ↓'}
-                  </button>
-                </td>
-              </tr>
-            )}
           </tbody>
         </table>
         <QuantityLookup
           variant={variant}
           currency={currency}
           lookupSet={lookupSet}
+          quoteMinQuantity={quoteMinQuantity}
+          quoteMaxQuantity={quoteMaxQuantity}
           quantitySurcharges={quantitySurcharges}
           serif={serif}
           mono={mono}
@@ -2900,26 +2862,6 @@ function InkPricingTable({
               </tr>
             )
           })}
-          {showToggle && (
-            <tr>
-              <td colSpan={1 + variants.length} className="pt-4 text-center">
-                <button
-                  type="button"
-                  aria-expanded={showAll}
-                  onClick={() => setShowAll((v) => !v)}
-                  className="inline-flex items-center gap-2 rounded-full px-5 py-2 uppercase tracking-[0.22em] text-white transition-all hover:brightness-110"
-                  style={{
-                    fontFamily: mono,
-                    fontSize: 12,
-                    background: accent,
-                    boxShadow: `0 0 24px ${accentGlow}`,
-                  }}
-                >
-                  {showAll ? 'Show fewer quantities ↑' : 'Show all quantities ↓'}
-                </button>
-              </td>
-            </tr>
-          )}
         </tbody>
       </table>
     </div>
@@ -2929,24 +2871,38 @@ function InkPricingTable({
 // Compact quantity lookup strip that sits below the single-
 // variant pricing table. Customer types a number, lookup runs
 // against the version's snapshot tier set (lookupSet) in memory
-// — no DB round-trip, so no debounce. Four result shapes:
+// — no DB round-trip, so no debounce. Branch order inside the
+// parsed-query block:
 //
-//   * Exact match        → one row, caption "For {qty}".
-//   * Between two tiers  → two bracketing rows, caption
-//                          "{qty} falls between two tiers.
-//                          Closest tiers:".
-//   * Below lowest tier  → one row at the lowest, caption
-//                          "Below our listed range. Lowest
-//                          tier:".
-//   * Above highest tier → one row at the highest, caption
-//                          "Above our listed range. Highest
-//                          tier is {highestTier}. For volumes
-//                          beyond that, get in touch." (the
-//                          {qty} the customer typed never
-//                          appears in the caption here — we
-//                          don't want the highest-tier value
-//                          colliding with the user's input in
-//                          the same sentence).
+//   1. query < quote_min_quantity  → small-runs caption, no row.
+//   2. query > quote_max_quantity  → large-runs caption, no row.
+//   3. Exact match                 → one row, caption "For {qty}".
+//   4. Below lowest snapshot tier  → one row at the lowest,
+//                                    caption "Below our listed
+//                                    range. Lowest tier:". Only
+//                                    fires when quote bounds are
+//                                    null or set wider than the
+//                                    snapshot.
+//   5. Above highest snapshot tier → one row at the highest,
+//                                    caption "Above our listed
+//                                    range. Highest tier is
+//                                    {highestTier}. For volumes
+//                                    beyond that, get in touch."
+//                                    Same fallback conditions as
+//                                    below. The customer's
+//                                    typed value never appears
+//                                    in this caption next to
+//                                    the highest-tier value —
+//                                    avoids two numbers fighting
+//                                    for attention in one sentence.
+//   6. Between two tiers           → two bracketing rows,
+//                                    caption "{qty} falls between
+//                                    two tiers. Closest tiers:".
+//
+// Bounds are checked before snapshot-range branches because the
+// designer's bounds are a commercial gate — "please get in touch
+// for small runs" should win over "below our listed range" when
+// both would apply.
 //
 // Empty / non-numeric input → no result panel, just the field
 // sitting quietly. No error state, no red text; mismatch is
@@ -2957,6 +2913,8 @@ function QuantityLookup({
   variant,
   currency,
   lookupSet,
+  quoteMinQuantity,
+  quoteMaxQuantity,
   quantitySurcharges,
   serif,
   mono,
@@ -2964,6 +2922,8 @@ function QuantityLookup({
   variant: PricingVariant
   currency: Currency
   lookupSet: number[]
+  quoteMinQuantity: number | null
+  quoteMaxQuantity: number | null
   quantitySurcharges: Record<number, number>
   serif: string
   mono: string
@@ -2984,15 +2944,21 @@ function QuantityLookup({
   }
 
   // Resolve the query into a caption + the set of tier rows to
-  // render. Captions never mention the user's typed value and
-  // the highest-tier value in the same sentence (see header
-  // comment).
+  // render. Bounds (branches 1-2) suppress the tier row entirely
+  // and surface only a caption — the commercial message is
+  // "please get in touch", not "here's the nearest tier".
   let caption: string | null = null
   let tiers: number[] = []
   if (query != null) {
     const lowest = lookupSet[0]
     const highest = lookupSet[lookupSet.length - 1]
-    if (variant.prices[String(query)] != null) {
+    if (quoteMinQuantity != null && query < quoteMinQuantity) {
+      caption = 'Please get in touch for pricing on small runs.'
+      tiers = []
+    } else if (quoteMaxQuantity != null && query > quoteMaxQuantity) {
+      caption = 'Please get in touch for pricing on large runs.'
+      tiers = []
+    } else if (variant.prices[String(query)] != null) {
       caption = `For ${query.toLocaleString()}`
       tiers = [query]
     } else if (query < lowest) {
@@ -3049,7 +3015,7 @@ function QuantityLookup({
           onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)' }}
         />
       </div>
-      {caption && tiers.length > 0 && (
+      {caption && (
         <div className="mt-5">
           <p
             className="uppercase tracking-[0.22em] text-white/45"
@@ -3057,40 +3023,42 @@ function QuantityLookup({
           >
             {caption}
           </p>
-          <table className="mt-3 w-full border-collapse">
-            <tbody>
-              {tiers.map((qty) => {
-                const price = priceAt(qty)
-                if (price == null) return null
-                return (
-                  <tr
-                    key={qty}
-                    className="border-b"
-                    style={{ borderColor: 'rgba(255,255,255,0.08)' }}
-                  >
-                    <td
-                      className="py-4 leading-none text-white"
-                      style={{ fontFamily: serif, fontWeight: 400, fontSize: 24 }}
+          {tiers.length > 0 && (
+            <table className="mt-3 w-full border-collapse">
+              <tbody>
+                {tiers.map((qty) => {
+                  const price = priceAt(qty)
+                  if (price == null) return null
+                  return (
+                    <tr
+                      key={qty}
+                      className="border-b"
+                      style={{ borderColor: 'rgba(255,255,255,0.08)' }}
                     >
-                      {qty.toLocaleString()}
-                    </td>
-                    <td
-                      className="py-4 text-right text-white"
-                      style={{ fontFamily: mono, fontSize: 15 }}
-                    >
-                      {formatPrice(price, currency)}
-                    </td>
-                    <td
-                      className="py-4 text-right text-white/50"
-                      style={{ fontFamily: mono, fontSize: 12 }}
-                    >
-                      {formatPrice(price / qty, currency, 2)}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                      <td
+                        className="py-4 leading-none text-white"
+                        style={{ fontFamily: serif, fontWeight: 400, fontSize: 24 }}
+                      >
+                        {qty.toLocaleString()}
+                      </td>
+                      <td
+                        className="py-4 text-right text-white"
+                        style={{ fontFamily: mono, fontSize: 15 }}
+                      >
+                        {formatPrice(price, currency)}
+                      </td>
+                      <td
+                        className="py-4 text-right text-white/50"
+                        style={{ fontFamily: mono, fontSize: 12 }}
+                      >
+                        {formatPrice(price / qty, currency, 2)}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
     </div>

@@ -65,15 +65,22 @@ export interface PublicProofVersion {
   is_current: boolean
   created_at: string
   material_options: string[]
-  featured_quantities: number[]
-  // ── Expanded-set quantities (migration 000093/094) ───────────────────────
-  // Curated "show more" reveal set on the customer pricing
-  // table. Null when the material hasn't been curated yet —
-  // customer page falls back to the first 10 tiers ascending
-  // from the version's pricing snapshot in that case. The
-  // default 5-row view still comes from featured_quantities
-  // above; these two columns are independent.
-  expanded_quantities: number[] | null
+  // ── Display list + quote bounds (migrations 000095 / 000096) ─────────────
+  // display_quantities drives the single curated pricing table
+  // on the customer page. Null means no curation, page falls
+  // back to the first 10 tiers ascending from the pricing
+  // snapshot. Replaces the 000012 featured_quantities and the
+  // 000093 expanded_quantities two-column model.
+  //
+  // quote_min_quantity / quote_max_quantity bound the customer-
+  // facing quantity lookup input. Null on either side means
+  // unbounded on that side. Evaluated before snapshot-range
+  // fallbacks, so the designer can suppress quoting for small
+  // or large runs independently of whether a snapshot tier
+  // exists for that quantity.
+  display_quantities: number[] | null
+  quote_min_quantity: number | null
+  quote_max_quantity: number | null
   material_disclaimer: string | null
   /** Paragraph-style text shown in the customer-facing "About [Material]" block. */
   material_description: string | null

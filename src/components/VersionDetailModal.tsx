@@ -6,7 +6,7 @@ import { ImageGrid } from './ImageGrid'
 import { safeRemoveImagePaths } from '../lib/imageStorage'
 import type { Currency, PricingSnapshot, ProofNameApproval } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
-import { DEFAULT_FEATURED_QUANTITIES } from '../lib/constants'
+import { DEFAULT_DISPLAY_QUANTITIES } from '../lib/constants'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 
 export interface ModalVersion {
@@ -33,7 +33,7 @@ export interface ModalVersion {
   // in approved-artwork + variant-vs-name framing. Customer-
   // facing surfaces don't distinguish.
   card_type: 'business' | 'membership'
-  materials: { featured_quantities: number[] } | null
+  materials: { display_quantities: number[] } | null
 }
 
 interface ModalImage {
@@ -310,7 +310,7 @@ export default function VersionDetailModal({
     onVersionUpdated(`v${version.version_number} deleted`)
   }
 
-  const featuredQuantities = version.materials?.featured_quantities ?? DEFAULT_FEATURED_QUANTITIES
+  const displayQuantities = version.materials?.display_quantities ?? DEFAULT_DISPLAY_QUANTITIES
   const isOnlyVersion = allVersions.length === 1
   // Resolver for the "Carried from vN" provenance pill on
   // ApprovalStateHeader. Built once per render from the same
@@ -529,7 +529,7 @@ export default function VersionDetailModal({
                 <PricingDisplay
                   snapshot={version.pricing_snapshot}
                   currency={version.currency as Currency}
-                  featuredQuantities={featuredQuantities}
+                  displayQuantities={displayQuantities}
                 />
               )}
               <div className="border-t border-gray-100 px-6 py-3">

@@ -160,7 +160,7 @@ export default function ProofDetailPage() {
         .single(),
       supabase
         .from('proof_versions')
-        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, materials(featured_quantities)')
+        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, materials(display_quantities)')
         .eq('proof_id', proofId)
         .order('version_number', { ascending: false }),
     ])

@@ -15,6 +15,15 @@ export interface MaterialContent {
   is_published: boolean
   /** Null means active. Timestamp means soft-archived. */
   archived_at: string | null
+  // ── Customer-facing pricing presentation (migration 000095) ───────────
+  // Curated display list for the customer pricing table. Null
+  // means not yet curated; customer page falls back to the first
+  // 10 tiers ascending from the version's pricing snapshot.
+  display_quantities: number[] | null
+  // Quote-range bounds for the customer's quantity lookup input.
+  // Null on either side = unbounded on that side.
+  quote_min_quantity: number | null
+  quote_max_quantity: number | null
 }
 
 // Kept in sync with the CHECK constraint on materials.category installed
@@ -73,6 +82,26 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
   const [archiveError, setArchiveError] = useState<string | null>(null)
   const [unarchiveNotice, setUnarchiveNotice] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Display list + quote bounds (migration 000095). Three new
+  // auto-save-on-blur fields. The display_quantities draft is
+  // stored as the comma-or-space-separated string the admin is
+  // typing; it's parsed on blur into a sorted-ascending deduped
+  // int[] for the save. quoteMin / quoteMax drafts are strings so
+  // we can distinguish "" (meaning null) from "0" (rejected as
+  // invalid). Parsed on blur.
+  const [draftDisplayQtys, setDraftDisplayQtys] = useState(
+    (material.display_quantities ?? []).join(', '),
+  )
+  const [draftQuoteMin, setDraftQuoteMin] = useState(
+    material.quote_min_quantity == null ? '' : String(material.quote_min_quantity),
+  )
+  const [draftQuoteMax, setDraftQuoteMax] = useState(
+    material.quote_max_quantity == null ? '' : String(material.quote_max_quantity),
+  )
+  const [displayQtysError, setDisplayQtysError] = useState<string | null>(null)
+  const [quoteMinError, setQuoteMinError] = useState<string | null>(null)
+  const [quoteMaxError, setQuoteMaxError] = useState<string | null>(null)
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && !saving) onClose() }
@@ -194,6 +223,166 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
       targetLabel: material.display_name,
       beforeValue: { description: prev },
       afterValue: { description: trimmed },
+    })
+  }
+
+  // Parse the display-quantities text field into a sorted-
+  // ascending deduped int[]. Returns:
+  //   { ok: true, parsed: [], canonical: '' }     — empty (save as null)
+  //   { ok: true, parsed: [...], canonical: '…' } — valid ints
+  //   { ok: false, reason: '...' }                — invalid
+  // Accepts comma AND whitespace separators so "100, 250 500"
+  // works. Rejects non-numeric tokens, zero, and negatives; silently
+  // dedupes and sorts so the admin doesn't need to worry about
+  // order or duplicates.
+  function parseDisplayQuantities(raw: string): (
+    | { ok: true; parsed: number[]; canonical: string }
+    | { ok: false; reason: string }
+  ) {
+    const trimmed = raw.trim()
+    if (trimmed === '') return { ok: true, parsed: [], canonical: '' }
+    const tokens = trimmed.split(/[,\s]+/).filter((s) => s.length > 0)
+    const seen = new Set<number>()
+    const bad: string[] = []
+    for (const tok of tokens) {
+      if (!/^\d+$/.test(tok)) { bad.push(tok); continue }
+      const n = parseInt(tok, 10)
+      if (!Number.isFinite(n) || n <= 0) { bad.push(tok); continue }
+      seen.add(n)
+    }
+    if (bad.length > 0) {
+      return {
+        ok: false,
+        reason: `Could not read as positive integers: ${bad.slice(0, 3).join(', ')}${bad.length > 3 ? '…' : ''}.`,
+      }
+    }
+    const sorted = [...seen].sort((a, b) => a - b)
+    return { ok: true, parsed: sorted, canonical: sorted.join(', ') }
+  }
+
+  // Parse a single bound (quote_min / quote_max) input. Blank → null
+  // (unbounded). Non-integer / non-positive → error.
+  function parseBound(raw: string): (
+    | { ok: true; value: number | null }
+    | { ok: false; reason: string }
+  ) {
+    const trimmed = raw.trim()
+    if (trimmed === '') return { ok: true, value: null }
+    if (!/^\d+$/.test(trimmed)) return { ok: false, reason: 'Whole number only.' }
+    const n = parseInt(trimmed, 10)
+    if (!Number.isFinite(n) || n <= 0) return { ok: false, reason: 'Must be greater than zero.' }
+    return { ok: true, value: n }
+  }
+
+  async function saveDisplayQuantities() {
+    const result = parseDisplayQuantities(draftDisplayQtys)
+    if (!result.ok) { setDisplayQtysError(result.reason); return }
+    // Re-normalise the draft to the canonical form so the admin
+    // sees "100, 250, 500" even if they typed "500 100 250".
+    setDraftDisplayQtys(result.canonical)
+    setDisplayQtysError(null)
+    const next: number[] | null = result.parsed.length === 0 ? null : result.parsed
+    const prev = material.display_quantities
+    // Arrays compared by deep equality (same length + same elements).
+    const unchanged =
+      (prev == null && next == null) ||
+      (prev != null && next != null && prev.length === next.length && prev.every((v, i) => v === next[i]))
+    if (unchanged) return
+    setSaving(true)
+    const { error: err } = await supabase
+      .from('materials')
+      .update({ display_quantities: next })
+      .eq('id', material.id)
+    setSaving(false)
+    if (err) {
+      setDisplayQtysError(`Failed to save: ${err.message}`)
+      setDraftDisplayQtys((prev ?? []).join(', '))
+      return
+    }
+    material.display_quantities = next
+    onSaved({ ...material })
+    setSavedAt(Date.now())
+    void logAudit({
+      action: 'material.display_quantities_updated',
+      targetType: 'material',
+      targetId: material.id,
+      targetLabel: material.display_name,
+      beforeValue: { display_quantities: prev },
+      afterValue: { display_quantities: next },
+    })
+  }
+
+  async function saveQuoteMinQuantity() {
+    const result = parseBound(draftQuoteMin)
+    if (!result.ok) { setQuoteMinError(result.reason); return }
+    const next = result.value
+    // Cross-field validation — if max is set and non-null next
+    // would exceed it, refuse the save with an inline error.
+    const maxResult = parseBound(draftQuoteMax)
+    if (maxResult.ok && maxResult.value != null && next != null && next > maxResult.value) {
+      setQuoteMinError('Must be less than or equal to the maximum.')
+      return
+    }
+    setQuoteMinError(null)
+    if (next === material.quote_min_quantity) return
+    setSaving(true)
+    const prev = material.quote_min_quantity
+    const { error: err } = await supabase
+      .from('materials')
+      .update({ quote_min_quantity: next })
+      .eq('id', material.id)
+    setSaving(false)
+    if (err) {
+      setQuoteMinError(`Failed to save: ${err.message}`)
+      setDraftQuoteMin(prev == null ? '' : String(prev))
+      return
+    }
+    material.quote_min_quantity = next
+    onSaved({ ...material })
+    setSavedAt(Date.now())
+    void logAudit({
+      action: 'material.quote_min_quantity_updated',
+      targetType: 'material',
+      targetId: material.id,
+      targetLabel: material.display_name,
+      beforeValue: { quote_min_quantity: prev },
+      afterValue: { quote_min_quantity: next },
+    })
+  }
+
+  async function saveQuoteMaxQuantity() {
+    const result = parseBound(draftQuoteMax)
+    if (!result.ok) { setQuoteMaxError(result.reason); return }
+    const next = result.value
+    const minResult = parseBound(draftQuoteMin)
+    if (minResult.ok && minResult.value != null && next != null && next < minResult.value) {
+      setQuoteMaxError('Must be greater than or equal to the minimum.')
+      return
+    }
+    setQuoteMaxError(null)
+    if (next === material.quote_max_quantity) return
+    setSaving(true)
+    const prev = material.quote_max_quantity
+    const { error: err } = await supabase
+      .from('materials')
+      .update({ quote_max_quantity: next })
+      .eq('id', material.id)
+    setSaving(false)
+    if (err) {
+      setQuoteMaxError(`Failed to save: ${err.message}`)
+      setDraftQuoteMax(prev == null ? '' : String(prev))
+      return
+    }
+    material.quote_max_quantity = next
+    onSaved({ ...material })
+    setSavedAt(Date.now())
+    void logAudit({
+      action: 'material.quote_max_quantity_updated',
+      targetType: 'material',
+      targetId: material.id,
+      targetLabel: material.display_name,
+      beforeValue: { quote_max_quantity: prev },
+      afterValue: { quote_max_quantity: next },
     })
   }
 
@@ -519,6 +708,95 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
               />
               <p className="mt-1.5 text-xs text-gray-500">
                 Displayed on the customer-facing proof page for any proof using this material. Paragraph breaks render as spacing.
+              </p>
+            </section>
+
+            {/* Pricing presentation (migration 000095) — curated
+                display list + quote-range bounds. Three related
+                inputs grouped so the admin treats them as a unit
+                when deciding how this material shows up on the
+                customer page. */}
+            <section>
+              <h4 className="mb-3 text-sm font-semibold text-gray-800">Pricing presentation</h4>
+
+              {/* Display quantities */}
+              <label className="mb-1.5 block text-sm font-medium text-gray-700">Display quantities</label>
+              <input
+                type="text"
+                value={draftDisplayQtys}
+                onChange={(e) => { setDraftDisplayQtys(e.target.value); setDisplayQtysError(null) }}
+                onBlur={saveDisplayQuantities}
+                placeholder="e.g. 100, 250, 500, 1000"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              />
+              {/* Preview / status line — green when parsed cleanly,
+                  rose on error. Both colours use the same position
+                  so the admin always looks to the same spot for
+                  feedback. */}
+              {displayQtysError ? (
+                <p className="mt-1.5 text-xs text-rose-600">{displayQtysError}</p>
+              ) : (() => {
+                // Live preview without committing. Mirrors saveDisplayQuantities'
+                // parse so what the admin sees matches what will save.
+                const preview = parseDisplayQuantities(draftDisplayQtys)
+                if (!preview.ok) return null
+                if (preview.parsed.length === 0) {
+                  return (
+                    <p className="mt-1.5 text-xs text-gray-500">
+                      Preview: empty. Customer page will fall back to the first 10 tiers in the pricing snapshot.
+                    </p>
+                  )
+                }
+                return (
+                  <p className="mt-1.5 text-xs text-gray-500">
+                    Preview: {preview.parsed.map((n) => n.toLocaleString()).join(', ')}
+                  </p>
+                )
+              })()}
+              <p className="mt-1 text-xs text-gray-400">
+                Comma or space separated. Customer page shows these rows (intersected with the snapshot) on the single pricing table. Leave blank to fall back to the first 10 tiers in the snapshot.
+              </p>
+
+              {/* Quote bounds — side-by-side on wide widths,
+                  stacked on narrow. Both optional. */}
+              <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700">Minimum quantity for quote</label>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step={1}
+                    value={draftQuoteMin}
+                    onChange={(e) => { setDraftQuoteMin(e.target.value); setQuoteMinError(null) }}
+                    onBlur={saveQuoteMinQuantity}
+                    placeholder="Leave blank for no minimum"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                  />
+                  {quoteMinError && (
+                    <p className="mt-1.5 text-xs text-rose-600">{quoteMinError}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700">Maximum quantity for quote</label>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step={1}
+                    value={draftQuoteMax}
+                    onChange={(e) => { setDraftQuoteMax(e.target.value); setQuoteMaxError(null) }}
+                    onBlur={saveQuoteMaxQuantity}
+                    placeholder="Leave blank for no maximum"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                  />
+                  {quoteMaxError && (
+                    <p className="mt-1.5 text-xs text-rose-600">{quoteMaxError}</p>
+                  )}
+                </div>
+              </div>
+              <p className="mt-1.5 text-xs text-gray-400">
+                Bound the customer's quantity-lookup input. Typing a value outside the range returns a "please get in touch" message instead of a tier row.
               </p>
             </section>
 

@@ -5,12 +5,12 @@ import type { Currency, PricingSnapshot } from '../lib/types'
 export function PricingDisplay({
   snapshot,
   currency,
-  featuredQuantities,
+  displayQuantities,
   quantitySurcharges = {},
 }: {
   snapshot: PricingSnapshot
   currency: Currency
-  featuredQuantities: number[]
+  displayQuantities: number[]
   quantitySurcharges?: Record<number, number>
 }) {
   const [showAll, setShowAll] = useState(false)
@@ -21,12 +21,17 @@ export function PricingDisplay({
     variants.flatMap((v) => Object.keys(v.prices).map(Number))
   )].sort((a, b) => a - b)
 
-  const featured = new Set(featuredQuantities)
+  // Designer preview keeps a show-more toggle so the designer can
+  // audit every tier behind the curated list. Customer page (post
+  // migration 000095) uses the curated list only — no toggle —
+  // and defers to quote bounds + the lookup input for anything
+  // outside the shown rows.
+  const displaySet = new Set(displayQuantities)
   const visibleQuantities = showAll
     ? allQuantities
-    : allQuantities.filter((q) => featured.has(q))
+    : allQuantities.filter((q) => displaySet.has(q))
 
-  const hiddenCount = allQuantities.length - allQuantities.filter((q) => featured.has(q)).length
+  const hiddenCount = allQuantities.length - allQuantities.filter((q) => displaySet.has(q)).length
   const showToggle = hiddenCount > 0
 
   return variants.length === 1 ? (
@@ -34,7 +39,7 @@ export function PricingDisplay({
       variant={variants[0]}
       currency={currency}
       quantities={visibleQuantities}
-      featured={featured}
+      displaySet={displaySet}
       quantitySurcharges={quantitySurcharges}
       showToggle={showToggle}
       showAll={showAll}
@@ -45,7 +50,7 @@ export function PricingDisplay({
       variants={variants}
       currency={currency}
       quantities={visibleQuantities}
-      featured={featured}
+      displaySet={displaySet}
       quantitySurcharges={quantitySurcharges}
       showToggle={showToggle}
       showAll={showAll}
@@ -104,7 +109,7 @@ function SingleVariantTable({
   variant,
   currency,
   quantities,
-  featured,
+  displaySet,
   quantitySurcharges,
   showToggle,
   showAll,
@@ -113,7 +118,7 @@ function SingleVariantTable({
   variant: PricingSnapshot['variants'][0]
   currency: Currency
   quantities: number[]
-  featured: Set<number>
+  displaySet: Set<number>
   quantitySurcharges: Record<number, number>
   showToggle: boolean
   showAll: boolean
@@ -142,7 +147,7 @@ function SingleVariantTable({
       </thead>
       <tbody>
         {rows.map(({ qty, price }) => {
-          const isReveal = !featured.has(qty)
+          const isReveal = !displaySet.has(qty)
           return (
             <tr
               key={qty}
@@ -171,7 +176,7 @@ function MultiVariantGrid({
   variants,
   currency,
   quantities,
-  featured,
+  displaySet,
   quantitySurcharges,
   showToggle,
   showAll,
@@ -180,7 +185,7 @@ function MultiVariantGrid({
   variants: PricingSnapshot['variants']
   currency: Currency
   quantities: number[]
-  featured: Set<number>
+  displaySet: Set<number>
   quantitySurcharges: Record<number, number>
   showToggle: boolean
   showAll: boolean
@@ -208,7 +213,7 @@ function MultiVariantGrid({
         <tbody>
           {quantities.map((qty) => {
             const surcharge = quantitySurcharges[qty] ?? 0
-            const isReveal = !featured.has(qty)
+            const isReveal = !displaySet.has(qty)
             return (
               <tr
                 key={qty}

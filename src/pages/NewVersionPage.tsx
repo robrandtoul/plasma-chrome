@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase'
 import { logAudit } from '../lib/audit'
 import { formatPrice } from '../lib/currency'
 import { pluralLabel, variantLabel } from '../lib/labels'
-import { DEFAULT_FEATURED_QUANTITIES } from '../lib/constants'
+import { DEFAULT_DISPLAY_QUANTITIES } from '../lib/constants'
 import { PricingDisplayField, type PricingDisplayValue } from '../components/PricingDisplayField'
 import { CurrencyField } from '../components/CurrencyField'
 import NameChipInput from '../components/NameChipInput'
@@ -18,7 +18,7 @@ interface Material {
   display_name: string
   requires_ink_names: boolean
   option_label: string | null
-  featured_quantities: number[] | null
+  display_quantities: number[] | null
   multi_variant: boolean
   // Needed so the inheritance path can tag a material as "archived
   // since the prior version was made" and surface a warning near
@@ -252,7 +252,7 @@ export default function NewVersionPage() {
       // so the designer can continue with it.
       const materialsPromise = supabase
         .from('materials')
-        .select('id, display_name, requires_ink_names, option_label, featured_quantities, multi_variant, archived_at')
+        .select('id, display_name, requires_ink_names, option_label, display_quantities, multi_variant, archived_at')
         .eq('is_active', true)
         .eq('is_published', true)
         .is('archived_at', null)
@@ -317,7 +317,7 @@ export default function NewVersionPage() {
         if (!inMain) {
           const { data: archivedMatData } = await supabase
             .from('materials')
-            .select('id, display_name, requires_ink_names, option_label, featured_quantities, multi_variant, archived_at')
+            .select('id, display_name, requires_ink_names, option_label, display_quantities, multi_variant, archived_at')
             .eq('id', inherited.material_id)
             .maybeSingle()
           if (!cancelled && archivedMatData) {
@@ -2518,11 +2518,11 @@ export default function NewVersionPage() {
             if (!variant) return null
 
             const material = materials.find((m) => m.id === selectedMaterialId)
-            const featuredSet = new Set(material?.featured_quantities ?? DEFAULT_FEATURED_QUANTITIES)
+            const displaySet = new Set(material?.display_quantities ?? DEFAULT_DISPLAY_QUANTITIES)
             const userExpanded = !!expandedVariants[vid]
-            const visibleTiers = tiers.filter((t) => featuredSet.has(t.quantity) || userExpanded)
+            const visibleTiers = tiers.filter((t) => displaySet.has(t.quantity) || userExpanded)
             const hiddenCount = tiers.length - visibleTiers.length
-            const showToggle = hiddenCount > 0 || (userExpanded && tiers.length > featuredSet.size)
+            const showToggle = hiddenCount > 0 || (userExpanded && tiers.length > displaySet.size)
             const variantLabel = variantType === 'default'
               ? material_display_for(selectedMaterialId, materials)
               : variant.display_name
