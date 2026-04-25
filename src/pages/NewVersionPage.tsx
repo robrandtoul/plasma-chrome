@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, type ChangeEvent } from 'react'
+import { useEffect, useState, useRef, Fragment, type ChangeEvent } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { v4 as uuidv4 } from 'uuid'
 import { supabase } from '../lib/supabase'
@@ -412,6 +412,18 @@ export default function NewVersionPage() {
         setMaterials(materialsList)
       }
 
+      // Form-collapse decision (Tier 2c). Made HERE rather than via
+      // a useEffect on [inheritedVersionNumber] because the effect
+      // pattern races: the effect fires on initial render with the
+      // dep value still null (inheritance not yet loaded), opens
+      // the form, and never re-collapses when inheritance arrives.
+      // Setting it inline here means the decision is made once with
+      // real data: expand on v1 (no inheritance source — full form
+      // visible from the start), collapse on v2+ (summary card
+      // takes over until the designer clicks Edit or hits a
+      // validation failure).
+      setFormExpanded(inherited === null)
+
       // Shape B carry-forward load. Only runs when we have an
       // inherited (is_current) version — that's the v1 we're
       // cloning from. Fetches all images + approvals in parallel,
@@ -532,15 +544,6 @@ export default function NewVersionPage() {
     load()
     return () => { cancelled = true }
   }, [proofId])
-
-  // Open the form by default on v1 creation (no inheritance source
-  // means the summary card has nothing to render — fall back to
-  // today's behaviour with the form fields visible). On v2+ the
-  // form stays collapsed until the designer clicks "Edit details"
-  // or hits a validation failure on submit.
-  useEffect(() => {
-    if (inheritedVersionNumber === null) setFormExpanded(true)
-  }, [inheritedVersionNumber])
 
   useEffect(() => {
     setVariants([])
@@ -1799,55 +1802,108 @@ export default function NewVersionPage() {
         <form id="new-version-form" onSubmit={handleSubmit} className="space-y-6">
 
           {/* Carry-forward summary card — only renders on v2+ when
-              there's an inheritance source. Bullet-line summary of
-              what this version inherits from v(N-1), updates live
-              as the designer edits in expanded mode. Warnings
-              (archived material, currency mismatch) render inside
-              the card so they're visible even when the form below
-              is collapsed. "Edit details" expands the form for the
-              rest of the page lifecycle (no re-collapse). */}
+              there's an inheritance source. Labelled name-value
+              rows show what this version inherits from v(N-1),
+              update live as the designer edits in expanded mode.
+              Warnings (archived material, currency mismatch)
+              render inside the card so they're visible even when
+              the form below is collapsed. "Edit details" expands
+              the form for the rest of the page lifecycle (no
+              re-collapse). */}
           {inheritedVersionNumber !== null && (() => {
             // Resolve current form state into the entities the
-            // summary builder expects. Reads from current state so
-            // the bullet line updates live in expanded mode.
+            // summary needs. Reads from current state so each row
+            // value updates live in expanded mode.
             const summaryMaterial = materials.find((m) => m.id === selectedMaterialId)
             const summarySelectedVariants = variants.filter((v) => selectedVariantIds.includes(v.id))
             const summaryNonBaseOption = availableOptions.find(
               (o) => selectedOptions.includes(o.code) && !o.is_base,
             )
-            // Ink names count: prefer the positional array (per-ink
+            // Ink names: prefer the positional array (per-ink
             // input on requires_ink_names materials) when populated,
-            // otherwise count comma-separated entries from the
-            // free-form input. Only renders when material requires
-            // ink names — for non-ink-count materials the bullet
-            // skips entirely.
-            const inkCount = summaryMaterial?.requires_ink_names
+            // otherwise split the free-form text input on commas.
+            // Only relevant when the material requires ink names.
+            const inkNames = summaryMaterial?.requires_ink_names
               ? (inkNamesArray.filter((n) => n.trim()).length > 0
-                  ? inkNamesArray.filter((n) => n.trim()).length
-                  : inkNamesText.split(',').map((s) => s.trim()).filter(Boolean).length)
-              : 0
-            const summaryText = buildSummaryText({
-              materialName: summaryMaterial?.display_name ?? null,
-              variants: summarySelectedVariants.map((v) => ({
-                display_name: v.display_name,
-                variant_type: v.variant_type,
-              })),
-              optionName: summaryNonBaseOption?.display_name ?? null,
-              currency: currency,
-              inkNamesCount: inkCount,
-              names: names,
-              sidedness: sidedness,
-              shared: shared,
-              cardType: cardType,
-            })
+                  ? inkNamesArray.map((n) => n.trim()).filter(Boolean)
+                  : inkNamesText.split(',').map((s) => s.trim()).filter(Boolean))
+              : []
+
+            // Build the rows array. Each entry contributes one
+            // labelled row to the dl below; rules:
+            //   * Material — always rendered (when summaryMaterial
+            //     resolves; defensive against the brief load
+            //     window between inheritedVersionNumber arriving
+            //     and materials list arriving).
+            //   * Variant row — derived from material.variant_type
+            //     via VARIANT_ROW_LABEL. 'default' returns
+            //     undefined and the row skips. ink_count gets
+            //     "Ink count" rather than "Inks" so it doesn't
+            //     collide with the ink names row below.
+            //   * Option — uses material.option_label as the row
+            //     label (e.g. "Finish: Brushed", "Species: Oak").
+            //     Skips when no non-base option is selected or the
+            //     material has no option_label configured.
+            //   * Currency — always rendered.
+            //   * Inks — only when material requires ink names AND
+            //     at least one ink name is filled in.
+            //   * Names — only when names list is non-empty.
+            //   * Sides — always rendered. "1" / "2 (shared front)" /
+            //     "2" depending on sidedness + shared.
+            //   * Card type — only when membership (business is
+            //     the implicit default).
+            const rows: { label: string; value: string }[] = []
+            if (summaryMaterial) {
+              rows.push({ label: 'Material', value: summaryMaterial.display_name })
+              // variant_type lives on the variant rows (all variants
+              // of one material share the same variant_type per the
+              // material_variants schema), not on the local Material
+              // interface. Pull from the first selected variant.
+              // Defaults to undefined when variants haven't loaded yet
+              // — the row skips anyway in that case.
+              const variantType = summarySelectedVariants[0]?.variant_type
+              const variantLabel = variantType ? VARIANT_ROW_LABEL[variantType] : undefined
+              if (variantLabel && summarySelectedVariants.length > 0) {
+                rows.push({
+                  label: variantLabel,
+                  value: formatVariantsValue(summarySelectedVariants),
+                })
+              }
+              if (summaryNonBaseOption && summaryMaterial.option_label) {
+                rows.push({
+                  label: summaryMaterial.option_label,
+                  value: summaryNonBaseOption.display_name,
+                })
+              }
+            }
+            if (currency) rows.push({ label: 'Currency', value: currency })
+            if (summaryMaterial?.requires_ink_names && inkNames.length > 0) {
+              rows.push({ label: 'Inks', value: formatJoinedList(inkNames) })
+            }
+            if (names.length > 0) {
+              rows.push({ label: 'Names', value: formatJoinedList(names) })
+            }
+            const sidesValue = sidedness === 'one-sided'
+              ? '1'
+              : (shared ? '2 (shared front)' : '2')
+            rows.push({ label: 'Sides', value: sidesValue })
+            if (cardType === 'membership') {
+              rows.push({ label: 'Card type', value: 'Membership' })
+            }
+
             return (
               <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
                 <h3 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
                   Carried from v{inheritedVersionNumber}
                 </h3>
-                <p className="text-base leading-relaxed text-gray-700">
-                  {summaryText}
-                </p>
+                <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5">
+                  {rows.map(({ label, value }) => (
+                    <Fragment key={label}>
+                      <dt className="text-right text-sm font-medium text-gray-500">{label}:</dt>
+                      <dd className="text-sm text-gray-900">{value}</dd>
+                    </Fragment>
+                  ))}
+                </dl>
                 {inheritedMaterialArchived && (
                   <p className="mt-3 text-sm text-amber-700">
                     The material has been archived. Edit details to pick a current one, or keep this for continuity.
@@ -2715,65 +2771,61 @@ export default function NewVersionPage() {
 
 // ── Summary card helpers (Tier 2c) ──────────────────────────────────────────
 //
-// Build the bullet line shown on the collapsed summary card. Pure
-// function over resolved entities (looked up from current form state
-// at render time) so the summary updates live as the designer edits
-// in expanded mode. Field order matches the agreed spec:
-//   Material → Variant → Option → Currency → Ink count → Names →
-//   Sidedness → Shared → Card type
-// Null / empty values skip their bullet entirely (no "none"
-// placeholders). Variant skips "Default" (uninformative for default-
-// variant materials). Multi-variant collapses to a count. Card type
-// only appears for membership (business is the implicit default).
-function buildSummaryText(args: {
-  materialName: string | null
-  // variant_type comes through as the wider `string` from the page's
-  // local Variant interface (variant_type column is constrained at
-  // the DB level by a CHECK, not in TS). Pluralisation switch below
-  // pattern-matches the known values; anything else falls through
-  // to the generic "variants" label.
-  variants: { display_name: string; variant_type: string }[]
-  optionName: string | null
-  currency: string | null
-  inkNamesCount: number
-  names: string[]
-  sidedness: 'one-sided' | 'two-sided'
-  shared: boolean
-  cardType: 'business' | 'membership'
-}): string {
-  const parts: string[] = []
-  if (args.materialName) parts.push(args.materialName)
-  if (args.variants.length === 1) {
-    const v = args.variants[0]
-    if (v.display_name !== 'Default') parts.push(v.display_name)
-  } else if (args.variants.length > 1) {
-    const t = args.variants[0]?.variant_type
-    const label = t === 'thickness' ? 'thicknesses'
-      : t === 'finish' ? 'finishes'
-      : t === 'ink_count' ? 'ink counts'
-      : 'variants'
-    parts.push(`${args.variants.length} ${label}`)
-  }
-  if (args.optionName) parts.push(args.optionName)
-  if (args.currency) parts.push(args.currency)
-  if (args.inkNamesCount > 0) parts.push(args.inkNamesCount === 1 ? '1 ink' : `${args.inkNamesCount} inks`)
-  if (args.names.length > 0) parts.push(formatNamesShort(args.names))
-  parts.push(args.sidedness === 'two-sided' ? '2 sides' : '1 side')
-  if (args.sidedness === 'two-sided' && args.shared) parts.push('shared front')
-  if (args.cardType === 'membership') parts.push('membership')
-  return parts.join(' · ')
+// The summary card renders labelled name-value rows in a <dl> grid.
+// These helpers shape the row values; the row assembly itself
+// happens inline in the IIFE that builds the card (so it can read
+// live from current form state and update as the designer edits).
+//
+// formatJoinedList: shared name-and-N-others truncation used by
+// the Names row and the Inks (ink names) row. Three or fewer
+// renders the full list with "and" before the last; four or more
+// collapses to "first and N others" so the row stays scannable on
+// projects with long lists.
+function formatJoinedList(items: string[]): string {
+  if (items.length === 0) return ''
+  if (items.length === 1) return items[0]
+  if (items.length === 2) return `${items[0]} and ${items[1]}`
+  if (items.length === 3) return `${items[0]}, ${items[1]} and ${items[2]}`
+  return `${items[0]} and ${items.length - 1} others`
 }
 
-// Like formatNamesList but truncates aggressively for the summary
-// card. Three or fewer renders the full list with "and" before the
-// last; four or more collapses to "Alice and N others" so the bullet
-// line stays scannable even on projects with long recipient lists.
-function formatNamesShort(names: string[]): string {
-  if (names.length === 0) return ''
-  if (names.length === 1) return names[0]
-  if (names.length === 2) return `${names[0]} and ${names[1]}`
-  if (names.length === 3) return `${names[0]}, ${names[1]} and ${names[2]}`
-  return `${names[0]} and ${names.length - 1} others`
+// formatVariantsValue: builds the value cell for the variant row
+// (Thickness / Finish / Ink count). Single variant → display_name
+// verbatim. Multi-variant → smart strip: tokenise on whitespace,
+// detect a shared trailing token, strip from all but the last
+// entry, and join with comma + "and". Falls back to a plain
+// comma-and-and join when units differ. Examples:
+//   ["300 micron", "500 micron", "800 micron"] → "300, 500 and 800 micron"
+//   ["1 Ink", "2 Inks"]                         → "1 Ink and 2 Inks" (units differ)
+//   ["Natural", "Brushed", "Mirror"]            → "Natural, Brushed and Mirror"
+//   ["1mm", "0.8mm"]                            → "1mm and 0.8mm" (single tokens)
+function formatVariantsValue(variants: { display_name: string }[]): string {
+  if (variants.length === 0) return ''
+  if (variants.length === 1) return variants[0].display_name
+  const tokens = variants.map((v) => v.display_name.trim().split(/\s+/))
+  const lastTokens = tokens.map((t) => t[t.length - 1])
+  const sharedUnit =
+    lastTokens.every((u) => u === lastTokens[0]) &&
+    tokens.every((t) => t.length >= 2)
+  if (sharedUnit) {
+    const numbers = tokens.map((t) => t.slice(0, -1).join(' '))
+    const unit = lastTokens[0]
+    if (numbers.length === 2) return `${numbers[0]} and ${numbers[1]} ${unit}`
+    return `${numbers.slice(0, -1).join(', ')} and ${numbers[numbers.length - 1]} ${unit}`
+  }
+  return formatJoinedList(variants.map((v) => v.display_name))
+}
+
+// Map material.variant_type → label for the Variant row. Default-
+// variant materials (wood, acrylic, carbon fibre seeded as the only
+// "default" types in 000009) skip the variant row entirely — the
+// Material row alone carries enough information. Ink-count
+// materials get "Ink count" rather than "Inks" to disambiguate
+// from the separate Inks (ink names) row.
+const VARIANT_ROW_LABEL: Record<string, string> = {
+  thickness: 'Thickness',
+  finish: 'Finish',
+  ink_count: 'Ink count',
 }
 
 /** Build a compact "Select a X and a Y" hint for the Save button's
