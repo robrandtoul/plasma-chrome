@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, Fragment, type ChangeEvent } from 'react'
+import { useEffect, useState, useRef, Fragment, type ChangeEvent, type CSSProperties } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { v4 as uuidv4 } from 'uuid'
 import { supabase } from '../lib/supabase'
@@ -75,6 +75,26 @@ interface V1Image {
   side: 'front' | 'back' | null
 }
 
+// Snapshot of every value inherited from v(N-1) at form-load time.
+// Per-field carried/edited indicators derive from comparing this
+// snapshot to current form state — see the c.* derivations in render.
+// Null on v1 creation (no inheritance source) and the indicators
+// collapse to "not carried" everywhere.
+interface InheritedSnapshot {
+  versionNumber: number
+  materialId: string
+  variantIds: string[]
+  currency: Currency
+  cardType: 'business' | 'membership'
+  sidedness: 'one-sided' | 'two-sided'
+  shared: boolean
+  pricingDisplay: PricingDisplayValue
+  names: string[]
+  inkNamesArray: string[]
+  inkNamesText: string
+  materialOptions: string[]
+}
+
 // Everything the UI + save path needs to decide carry-forward
 // outcomes. Null when creating v1 (no prior version to carry from);
 // the form falls back to the existing flat image UI in that case.
@@ -104,11 +124,13 @@ export default function NewVersionPage() {
   const [currency, setCurrency] = useState<Currency | null>(null)
   const [variantTiers, setVariantTiers] = useState<Record<string, PriceTierRow[]>>({})
   const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({})
-  // Inheritance markers. Populated on mount when creating v2+ — the
-  // form reads the proof's current version and pre-fills currency /
-  // material / variants. Each boolean drives a muted "Inherited from
-  // vN" label next to its field; the flag clears when the designer
-  // edits the field, at which point the label disappears.
+  // Inheritance tracking. On v2+ creation we snapshot every inherited
+  // value into inheritedSnapshot once the prior version loads. From
+  // there each field derives its own isCarried/isEdited live by
+  // comparing the snapshot to current state — so "modify then revert"
+  // naturally clears the edited indicator without bespoke flag
+  // bookkeeping. Null on v1 (no prior version) and the comparisons
+  // collapse to "not carried" everywhere.
   //
   // inheritedVariantIdsRef stashes the variant IDs to restore after
   // the material's variants load — can't be state because the
@@ -119,10 +141,7 @@ export default function NewVersionPage() {
   // inheritedMaterialArchived surfaces a warning near the material
   // field when the inherited material has been archived since the
   // prior version was made. Designer can keep it or pick fresh.
-  const [inheritedVersionNumber, setInheritedVersionNumber] = useState<number | null>(null)
-  const [inheritedCurrency, setInheritedCurrency] = useState(false)
-  const [inheritedMaterial, setInheritedMaterial] = useState(false)
-  const [inheritedVariants, setInheritedVariants] = useState(false)
+  const [inheritedSnapshot, setInheritedSnapshot] = useState<InheritedSnapshot | null>(null)
   const [inheritedMaterialArchived, setInheritedMaterialArchived] = useState(false)
   const inheritedVariantIdsRef = useRef<string[] | null>(null)
   // Inherited material_options stash — mirrors the variant-ids
@@ -292,6 +311,11 @@ export default function NewVersionPage() {
       let materialsList = (materialsResult.data ?? []) as Material[]
       let currencyInherited = false
       let pricingDisplayInherited = false
+      // Partial snapshot — captured progressively across the
+      // inherited block, finalised once sidedness + shared are
+      // derived from v1's image set further below. Null when
+      // there's nothing to inherit (v1 creation).
+      let partialSnapshot: Omit<InheritedSnapshot, 'sidedness' | 'shared'> | null = null
       const inherited = inheritResult.data as {
         id: string
         version_number: number
@@ -306,20 +330,16 @@ export default function NewVersionPage() {
       } | null
 
       if (inherited) {
-        setInheritedVersionNumber(inherited.version_number)
-
         // Names chip-list — previously pulled from "latest created"
         // in a separate query; now folded into this one so it
         // tracks the same is_current version as the other fields.
-        // No inheritance label: existing design keeps names free-
-        // form with no visual "carried forward" indicator.
-        if (Array.isArray(inherited.names) && inherited.names.length > 0) {
-          setNames(inherited.names)
+        const inheritedNames = Array.isArray(inherited.names) ? inherited.names : []
+        if (inheritedNames.length > 0) {
+          setNames(inheritedNames)
         }
 
         // Currency — always inheritable.
         setCurrency(inherited.currency as Currency)
-        setInheritedCurrency(true)
         currencyInherited = true
 
         // Material — if the inherited material is archived, it
@@ -340,7 +360,6 @@ export default function NewVersionPage() {
         }
         setMaterials(materialsList)
         setSelectedMaterialId(inherited.material_id)
-        setInheritedMaterial(true)
 
         // Variants — stash in a ref for the variants-loading
         // effect to consume once the material's variants finish
@@ -354,7 +373,6 @@ export default function NewVersionPage() {
           : []
         if (variantIds.length > 0) {
           inheritedVariantIdsRef.current = variantIds
-          setInheritedVariants(true)
         }
 
         // Material options — stash in a ref for the same effect
@@ -385,16 +403,18 @@ export default function NewVersionPage() {
         // and save-time slice(0, inkCount) drops anything beyond.
         // Extra entries persist in state so toggling variant up and
         // down within a material doesn't lose designer data.
-        const inheritedMaterial = materialsList.find((m) => m.id === inherited.material_id)
-        if (
-          inheritedMaterial &&
-          Array.isArray(inherited.ink_names) &&
-          inherited.ink_names.length > 0
-        ) {
-          if (inheritedMaterial.requires_ink_names) {
-            setInkNamesArray(inherited.ink_names)
+        const inheritedMaterialRecord = materialsList.find((m) => m.id === inherited.material_id)
+        const inheritedInkNamesRaw = Array.isArray(inherited.ink_names) ? inherited.ink_names : []
+        let snapshotInkNamesArray: string[] = []
+        let snapshotInkNamesText = ''
+        if (inheritedMaterialRecord && inheritedInkNamesRaw.length > 0) {
+          if (inheritedMaterialRecord.requires_ink_names) {
+            setInkNamesArray(inheritedInkNamesRaw)
+            snapshotInkNamesArray = inheritedInkNamesRaw
           } else {
-            setInkNamesText(inherited.ink_names.join(', '))
+            const joined = inheritedInkNamesRaw.join(', ')
+            setInkNamesText(joined)
+            snapshotInkNamesText = joined
           }
         }
 
@@ -404,8 +424,27 @@ export default function NewVersionPage() {
         // and a standard-priced project stays standard. Carrying
         // forward removes a redundant click. Settings-default
         // fallback below only fires when nothing was inherited.
-        setPricingDisplay(inherited.custom_quote ? 'custom' : 'standard')
+        const inheritedPricingDisplay: PricingDisplayValue = inherited.custom_quote ? 'custom' : 'standard'
+        setPricingDisplay(inheritedPricingDisplay)
         pricingDisplayInherited = true
+
+        // Stash partial snapshot values; sidedness + shared get
+        // derived from v1's images in the image-loading block
+        // below, where the snapshot is finalised and committed to
+        // state.
+        partialSnapshot = {
+          versionNumber: inherited.version_number,
+          materialId: inherited.material_id,
+          variantIds,
+          currency: inherited.currency as Currency,
+          cardType: inherited.card_type,
+          pricingDisplay: inheritedPricingDisplay,
+          names: inheritedNames,
+          inkNamesArray: snapshotInkNamesArray,
+          inkNamesText: snapshotInkNamesText,
+          materialOptions:
+            Array.isArray(inherited.material_options) ? inherited.material_options : [],
+        }
       } else {
         // v1 — no inheritance, just hydrate the picker with the
         // unfiltered active+published materials.
@@ -509,6 +548,11 @@ export default function NewVersionPage() {
         //               (shared side is always 'front' by
         //               convention — see state declaration above)
         setCardType(inherited.card_type)
+        // Default the snapshot to the v1 state-defaults — only
+        // overwritten if there's at least one v1 image to derive
+        // from (matches the actual setSidedness/setShared paths).
+        let inheritedSidedness: 'one-sided' | 'two-sided' = 'two-sided'
+        let inheritedShared = false
         if (imagesWithUrls.length > 0) {
           const sideOf = (img: V1Image) => img.side ?? 'front'
           const hasBack = imagesWithUrls.some((i) => sideOf(i) === 'back')
@@ -518,6 +562,21 @@ export default function NewVersionPage() {
           )
           setSidedness(nextSidedness)
           setShared(nextSidedness === 'two-sided' && hasSharedFront)
+          inheritedSidedness = nextSidedness
+          inheritedShared = nextSidedness === 'two-sided' && hasSharedFront
+        }
+
+        // Finalise the inheritance snapshot — partialSnapshot was
+        // populated up top in the same `if (inherited)` block, so
+        // it's guaranteed non-null here. Per-field carried/edited
+        // indicators in render compare this snapshot to current
+        // state.
+        if (partialSnapshot) {
+          setInheritedSnapshot({
+            ...partialSnapshot,
+            sidedness: inheritedSidedness,
+            shared: inheritedShared,
+          })
         }
       }
 
@@ -600,13 +659,12 @@ export default function NewVersionPage() {
         if (validInherited.length > 0) {
           setSelectedVariantIds(validInherited)
           variantsApplied = true
-        } else {
-          // Fell through — inherited IDs no longer match any
-          // variant (rare: variant retired). Clear the
-          // inheritance label and let the auto-select below
-          // pick defaults.
-          setInheritedVariants(false)
         }
+        // Fell through — inherited IDs no longer match any
+        // variant (rare: variant retired). The auto-select below
+        // picks defaults. Per-field carried/edited derivation
+        // compares against the snapshot, so the indicator just
+        // surfaces as "edited" — no flag bookkeeping needed.
       }
       if (!variantsApplied) {
         const pickedMaterial = materials.find((m) => m.id === selectedMaterialId)
@@ -1119,9 +1177,8 @@ export default function NewVersionPage() {
     setSelectedVariantIds((prev) =>
       prev.includes(variantId) ? prev.filter((id) => id !== variantId) : [...prev, variantId]
     )
-    // Manual variant change clears the inheritance label — the set
-    // no longer matches what was carried forward.
-    setInheritedVariants(false)
+    // Per-field carried/edited derivation compares the current
+    // selection against the snapshot — no manual flag clear needed.
   }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -1716,15 +1773,12 @@ export default function NewVersionPage() {
       if (parts.length > 0) setInkNamesArray(parts)
     }
     setSelectedMaterialId(nextId)
-    // Manual material change clears both the material and variant
-    // inheritance labels (a different material will auto-select
-    // its own variants, unrelated to the carried-forward ones).
-    // Also clears the archived-material warning — if the designer
-    // deliberately swapped away, they're not keeping the archived
-    // one. Discard any pending variant inheritance from the ref so
-    // a subsequent swap back can't accidentally re-apply it.
-    setInheritedMaterial(false)
-    setInheritedVariants(false)
+    // Manual material change clears the archived-material warning
+    // — if the designer deliberately swapped away, they're not
+    // keeping the archived one. Discard any pending variant
+    // inheritance from the ref so a subsequent swap back can't
+    // accidentally re-apply it. Per-field carried/edited derivation
+    // handles the indicator state via the snapshot comparison.
     setInheritedMaterialArchived(false)
     inheritedVariantIdsRef.current = null
   }
@@ -1765,6 +1819,81 @@ export default function NewVersionPage() {
       </button>
     </div>
   )
+
+  // ── Per-field carried/edited derivations ───────────────────────
+  // The inheritance snapshot captures every value carried from
+  // v(N-1) at form-load time. Each carried field then derives
+  // isCarried/isEdited live by comparing the snapshot to current
+  // state — modify-then-revert naturally clears the edited flag
+  // because the comparison flips back to equal.
+  //
+  // Equality semantics:
+  //   * setEquals  — variants, material options. Order isn't
+  //     meaningful (the customer view sorts these anyway).
+  //   * arrayEquals — names, positional ink names. Order matters
+  //     (recipient ordering, positional ink slots).
+  //   * Strict !== — scalars (currency, materialId, cardType,
+  //     sidedness, shared, pricingDisplay).
+  //
+  // isCarried gates the visual treatment entirely. A field with
+  // no inheritance source (v1 creation, or a snapshot value of
+  // empty list for things like names where the carried value was
+  // also empty) renders without the violet ribbon.
+  const inh = inheritedSnapshot
+  const inheritedVersionNumber = inh?.versionNumber ?? null
+  const carry = {
+    material: {
+      isCarried: inh !== null,
+      isEdited: inh !== null && inh.materialId !== selectedMaterialId,
+    },
+    variants: {
+      isCarried: inh !== null && inh.variantIds.length > 0,
+      isEdited: inh !== null && inh.variantIds.length > 0 && !setEquals(inh.variantIds, selectedVariantIds),
+    },
+    currency: {
+      isCarried: inh !== null,
+      isEdited: inh !== null && inh.currency !== currency,
+    },
+    cardType: {
+      isCarried: inh !== null,
+      isEdited: inh !== null && inh.cardType !== cardType,
+    },
+    sidedness: {
+      isCarried: inh !== null,
+      isEdited: inh !== null && inh.sidedness !== sidedness,
+    },
+    shared: {
+      isCarried: inh !== null,
+      isEdited: inh !== null && inh.shared !== shared,
+    },
+    pricingDisplay: {
+      isCarried: inh !== null,
+      isEdited: inh !== null && inh.pricingDisplay !== pricingDisplay,
+    },
+    names: {
+      isCarried: inh !== null && inh.names.length > 0,
+      isEdited: inh !== null && inh.names.length > 0 && !arrayEquals(inh.names, names),
+    },
+    inkNames: {
+      isCarried:
+        inh !== null && (inh.inkNamesArray.length > 0 || inh.inkNamesText.length > 0),
+      isEdited:
+        inh !== null
+        && (inh.inkNamesArray.length > 0 || inh.inkNamesText.length > 0)
+        && (
+          inh.inkNamesArray.length > 0
+            ? !arrayEquals(inh.inkNamesArray, inkNamesArray)
+            : inh.inkNamesText !== inkNamesText
+        ),
+    },
+    options: {
+      isCarried: inh !== null && inh.materialOptions.length > 0,
+      isEdited:
+        inh !== null
+        && inh.materialOptions.length > 0
+        && !setEquals(inh.materialOptions, selectedOptions),
+    },
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1892,7 +2021,7 @@ export default function NewVersionPage() {
             }
 
             return (
-              <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+              <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
                 <h3 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
                   Carried from v{inheritedVersionNumber}
                 </h3>
@@ -1933,15 +2062,27 @@ export default function NewVersionPage() {
           {formExpanded && (
           <>
           {/* Pricing display — required choice between standard grid and custom quote */}
-          <PricingDisplayField
-            value={pricingDisplay}
-            onChange={setPricingDisplay}
-            invalid={shouldHighlight('pricingDisplay')}
-            forwardRef={pricingDisplayRef}
-          />
-          {pricingDisplay === null && !shouldHighlight('pricingDisplay') && (
-            <p className="-mt-3 text-xs text-gray-400">Select one.</p>
+          {/* Pricing display — wrapped in the carry-forward
+              treatment when this is a v2+ creation. Pill renders
+              outside the wrapper so it sits on the field's own
+              label line; the violet ribbon wraps the radio cards
+              themselves. */}
+          {carry.pricingDisplay.isCarried && inheritedVersionNumber != null && (
+            <div className="mb-2.5 flex justify-end">
+              <CarriedPill edited={carry.pricingDisplay.isEdited} versionNumber={inheritedVersionNumber} />
+            </div>
           )}
+          <div style={carriedFieldStyle(carry.pricingDisplay.isCarried, carry.pricingDisplay.isEdited)}>
+            <PricingDisplayField
+              value={pricingDisplay}
+              onChange={setPricingDisplay}
+              invalid={shouldHighlight('pricingDisplay')}
+              forwardRef={pricingDisplayRef}
+            />
+            {pricingDisplay === null && !shouldHighlight('pricingDisplay') && (
+              <p className="-mt-3 text-xs text-gray-400">Select one.</p>
+            )}
+          </div>
 
           {/* Specification — split into two sub-groups (Design +
               Layout) with Currency as a standalone line between
@@ -1949,167 +2090,194 @@ export default function NewVersionPage() {
               gone; the sub-headings carry the structure. Sub-
               headings use the same type-style as the old outer
               heading so they read at matching weight. */}
-          <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+          <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
             {/* ── DESIGN ─────────────────────────────────────────
                 Material + variant + material options + ink names.
                 Everything that describes what the physical card
                 looks like. */}
-            <h3 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Design</h3>
+            <h3 className="mb-7 text-sm font-semibold uppercase tracking-widest text-gray-400">Design</h3>
 
-            <div className="mb-4">
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">Material</label>
-              <select
-                ref={materialRef}
-                value={selectedMaterialId}
-                onChange={(e) => handleMaterialChange(e.target.value)}
-                className={[selectClass, shouldHighlight('material') ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
-              >
-                <option value="">Select a material…</option>
-                {materials.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
-              </select>
-              {shouldHighlight('material') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
-              {inheritedMaterial && inheritedVersionNumber != null && !inheritedMaterialArchived && (
-                <p className="mt-1.5 text-xs text-gray-400">Carried from v{inheritedVersionNumber}</p>
-              )}
-              {inheritedMaterialArchived && inheritedVersionNumber != null && (
-                <p className="mt-1.5 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
-                  The material used in v{inheritedVersionNumber} has been archived. Pick a current material or keep this one.
-                </p>
-              )}
+            <div className="mb-8">
+              <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                <span>Material</span>
+                {carry.material.isCarried && inheritedVersionNumber != null && !inheritedMaterialArchived && (
+                  <CarriedPill edited={carry.material.isEdited} versionNumber={inheritedVersionNumber} />
+                )}
+              </label>
+              <div style={carriedFieldStyle(carry.material.isCarried && !inheritedMaterialArchived, carry.material.isEdited)}>
+                <select
+                  ref={materialRef}
+                  value={selectedMaterialId}
+                  onChange={(e) => handleMaterialChange(e.target.value)}
+                  className={[selectClass, shouldHighlight('material') ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
+                >
+                  <option value="">Select a material…</option>
+                  {materials.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
+                </select>
+                {shouldHighlight('material') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
+                {inheritedMaterialArchived && inheritedVersionNumber != null && (
+                  <p className="mt-1.5 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+                    The material used in v{inheritedVersionNumber} has been archived. Pick a current material or keep this one.
+                  </p>
+                )}
+              </div>
             </div>
 
             {variantRequired && variants.length > 0 && variantType !== 'default' && (
-              <div ref={variantRef} className="mb-4">
-                <label className="mb-2 block text-sm font-medium text-gray-700">
-                  {variantLabel(variantType)}
-                  {isMultiVariant && <span className="ml-2 font-normal text-gray-400">Tick every option you want the customer to see.</span>}
+              <div ref={variantRef} className="mb-8">
+                <label className="mb-2.5 flex flex-wrap items-center gap-2 text-sm font-medium text-gray-700">
+                  <span>{variantLabel(variantType)}</span>
+                  {carry.variants.isCarried && inheritedVersionNumber != null && (
+                    <CarriedPill edited={carry.variants.isEdited} versionNumber={inheritedVersionNumber} />
+                  )}
+                  {isMultiVariant && <span className="ml-1 font-normal text-gray-400">Tick every option you want the customer to see.</span>}
                 </label>
 
-                {isMultiVariant ? (
-                  <div className={[
-                    'flex flex-wrap gap-2 rounded-lg',
-                    shouldHighlight('variant') ? 'p-2 ring-1 ring-rose-300' : '',
-                  ].join(' ')}>
-                    {variants.map((v) => {
-                      const checked = selectedVariantIds.includes(v.id)
-                      return (
-                        <button key={v.id} type="button" onClick={() => toggleVariant(v.id)}
-                          className={[
-                            'rounded-full px-4 py-1.5 text-sm font-medium ring-1 transition-colors',
-                            checked
-                              ? 'bg-gray-900 text-white ring-gray-900'
-                              : 'bg-white text-gray-600 ring-gray-200 hover:bg-gray-50',
-                          ].join(' ')}>
-                          {v.display_name}
-                        </button>
-                      )
-                    })}
-                  </div>
-                ) : (
-                  <select
-                    value={selectedVariantIds[0] ?? ''}
-                    onChange={(e) => {
-                      setSelectedVariantIds(e.target.value ? [e.target.value] : [])
-                      setInheritedVariants(false)
-                    }}
-                    className={[selectClass, shouldHighlight('variant') ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
-                  >
-                    <option value="">Select…</option>
-                    {variants.map((v) => <option key={v.id} value={v.id}>{v.display_name}</option>)}
-                  </select>
-                )}
-                {shouldHighlight('variant') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
-                {inheritedVariants && inheritedVersionNumber != null && (
-                  <p className="mt-1.5 text-xs text-gray-400">Carried from v{inheritedVersionNumber}</p>
-                )}
-                {/* Auto-custom-quote notice. Surfaces when the
-                    current variant selection has no price_tiers
-                    for the active currency — happens for 5+ ink
-                    variants (no tier pricing exists) and the form
-                    automatically enters custom-quote mode.
-                    Distinguished from the user-picked custom mode
-                    by autoCustomQuote (rather than isCustomQuote)
-                    so a user who explicitly chose Custom quote
-                    doesn't see a redundant notice. */}
-                {autoCustomQuote && (
-                  <p className="mt-1.5 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
-                    This ink count has no standard pricing, saving as a custom quote. Price and quantity will be agreed separately.
-                  </p>
-                )}
+                <div style={carriedFieldStyle(carry.variants.isCarried, carry.variants.isEdited)}>
+                  {isMultiVariant ? (
+                    <div className={[
+                      'flex flex-wrap gap-2 rounded-lg',
+                      shouldHighlight('variant') ? 'p-2 ring-1 ring-rose-300' : '',
+                    ].join(' ')}>
+                      {variants.map((v) => {
+                        const checked = selectedVariantIds.includes(v.id)
+                        return (
+                          <button key={v.id} type="button" onClick={() => toggleVariant(v.id)}
+                            className={[
+                              'rounded-full px-5 py-2 text-sm font-medium transition-colors',
+                              checked
+                                ? ''
+                                : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
+                            ].join(' ')}
+                            style={checked ? hybridChipSelectedStyle : undefined}>
+                            {v.display_name}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedVariantIds[0] ?? ''}
+                      onChange={(e) => {
+                        setSelectedVariantIds(e.target.value ? [e.target.value] : [])
+                      }}
+                      className={[selectClass, shouldHighlight('variant') ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
+                    >
+                      <option value="">Select…</option>
+                      {variants.map((v) => <option key={v.id} value={v.id}>{v.display_name}</option>)}
+                    </select>
+                  )}
+                  {shouldHighlight('variant') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
+                  {/* Auto-custom-quote notice. Surfaces when the
+                      current variant selection has no price_tiers
+                      for the active currency — happens for 5+ ink
+                      variants (no tier pricing exists) and the form
+                      automatically enters custom-quote mode.
+                      Distinguished from the user-picked custom mode
+                      by autoCustomQuote (rather than isCustomQuote)
+                      so a user who explicitly chose Custom quote
+                      doesn't see a redundant notice. */}
+                  {autoCustomQuote && (
+                    <p className="mt-1.5 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+                      This ink count has no standard pricing, saving as a custom quote. Price and quantity will be agreed separately.
+                    </p>
+                  )}
+                </div>
               </div>
             )}
 
             {/* Option selection — for materials that expose multi-options
                 (finishes on metals, species on wood, etc.) */}
             {hasOptions && (
-              <div className="mb-4">
-                <label className="mb-2 block text-sm font-medium text-gray-700">{optionLabelPlural}</label>
-                <div className="flex flex-wrap gap-2">
-                  {availableOptions.map(o => {
-                    const selected = selectedOptions.includes(o.code)
-                    return (
-                      <button
-                        key={o.code}
-                        type="button"
-                        onClick={() => toggleOption(o.code)}
-                        className={[
-                          'rounded-full px-4 py-1.5 text-sm font-medium ring-1 transition-colors',
-                          selected
-                            ? 'bg-gray-900 text-white ring-gray-900'
-                            : 'bg-white text-gray-600 ring-gray-200 hover:bg-gray-50',
-                        ].join(' ')}
-                      >
-                        {o.display_name}
-                      </button>
-                    )
-                  })}
+              <div className="mb-8">
+                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                  <span>{optionLabelPlural}</span>
+                  {carry.options.isCarried && inheritedVersionNumber != null && (
+                    <CarriedPill edited={carry.options.isEdited} versionNumber={inheritedVersionNumber} />
+                  )}
+                </label>
+                <div style={carriedFieldStyle(carry.options.isCarried, carry.options.isEdited)}>
+                  <div className="flex flex-wrap gap-2">
+                    {availableOptions.map(o => {
+                      const selected = selectedOptions.includes(o.code)
+                      return (
+                        <button
+                          key={o.code}
+                          type="button"
+                          onClick={() => toggleOption(o.code)}
+                          className={[
+                            'rounded-full px-5 py-2 text-sm font-medium transition-colors',
+                            selected
+                              ? ''
+                              : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
+                          ].join(' ')}
+                          style={selected ? hybridChipSelectedStyle : undefined}
+                        >
+                          {o.display_name}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="mt-1.5 text-xs text-gray-400">
+                    Select which {optionLabelPlural.toLowerCase()} to offer. Each {optionLabelSingular.toLowerCase()} gets its own proof images.
+                  </p>
                 </div>
-                <p className="mt-1.5 text-xs text-gray-400">
-                  Select which {optionLabelPlural.toLowerCase()} to offer. Each {optionLabelSingular.toLowerCase()} gets its own proof images.
-                </p>
               </div>
             )}
 
             {requiresInkNames ? (
-              <div ref={inkNamesRef}>
-                <label className="mb-1.5 block text-sm font-medium text-gray-700">Ink names</label>
-                {inkCount === 0 ? (
-                  <p className="text-sm text-gray-400">Select a variant to enter ink names.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {Array.from({ length: inkCount }).map((_, i) => {
-                      const fieldInvalid = submitAttempted && !inkNameValidities[i]
-                      return (
-                        <div key={i}>
-                          <label className="mb-0.5 block text-xs font-medium text-gray-500">Ink {i + 1}</label>
-                          <input
-                            type="text"
-                            placeholder="e.g. Pantone 185 C"
-                            value={inkNamesArray[i] ?? ''}
-                            onChange={(e) => {
-                              const next = [...inkNamesArray]
-                              next[i] = e.target.value
-                              setInkNamesArray(next)
-                            }}
-                            className={[
-                              inputClass,
-                              fieldInvalid ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : '',
-                            ].join(' ')}
-                          />
-                          {fieldInvalid && <p className="mt-1 text-xs font-medium text-rose-500">Required</p>}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
+              <div ref={inkNamesRef} className="mb-8">
+                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                  <span>Ink names</span>
+                  {carry.inkNames.isCarried && inheritedVersionNumber != null && (
+                    <CarriedPill edited={carry.inkNames.isEdited} versionNumber={inheritedVersionNumber} />
+                  )}
+                </label>
+                <div style={carriedFieldStyle(carry.inkNames.isCarried, carry.inkNames.isEdited)}>
+                  {inkCount === 0 ? (
+                    <p className="text-sm text-gray-400">Select a variant to enter ink names.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {Array.from({ length: inkCount }).map((_, i) => {
+                        const fieldInvalid = submitAttempted && !inkNameValidities[i]
+                        return (
+                          <div key={i}>
+                            <label className="mb-0.5 block text-xs font-medium text-gray-500">Ink {i + 1}</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. Pantone 185 C"
+                              value={inkNamesArray[i] ?? ''}
+                              onChange={(e) => {
+                                const next = [...inkNamesArray]
+                                next[i] = e.target.value
+                                setInkNamesArray(next)
+                              }}
+                              className={[
+                                inputClass,
+                                fieldInvalid ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : '',
+                              ].join(' ')}
+                            />
+                            {fieldInvalid && <p className="mt-1 text-xs font-medium text-rose-500">Required</p>}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                  Ink names <span className="font-normal text-gray-400">(optional, comma-separated)</span>
+              <div className="mb-8">
+                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                  <span>Ink names</span>
+                  <span className="font-normal text-gray-400">(optional, comma-separated)</span>
+                  {carry.inkNames.isCarried && inheritedVersionNumber != null && (
+                    <CarriedPill edited={carry.inkNames.isEdited} versionNumber={inheritedVersionNumber} />
+                  )}
                 </label>
-                <input type="text" placeholder="e.g. Pantone 185 C, Metallic Gold" value={inkNamesText}
-                  onChange={(e) => setInkNamesText(e.target.value)} className={inputClass} />
+                <div style={carriedFieldStyle(carry.inkNames.isCarried, carry.inkNames.isEdited)}>
+                  <input type="text" placeholder="e.g. Pantone 185 C, Metallic Gold" value={inkNamesText}
+                    onChange={(e) => setInkNamesText(e.target.value)} className={inputClass} />
+                </div>
               </div>
             )}
 
@@ -2120,20 +2288,25 @@ export default function NewVersionPage() {
                 custom-quote mode — no price on display, no need
                 for a currency pick. */}
             {!isCustomQuote && (
-              <div ref={currencyRef} className="mt-8">
-                <label className="mb-1.5 block text-sm font-medium text-gray-700">Currency</label>
-                <CurrencyField
-                  value={currency}
-                  onChange={(c) => { setCurrency(c); setInheritedCurrency(false) }}
-                  invalid={shouldHighlight('currency')}
-                />
-                {shouldHighlight('currency')
-                  ? <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>
-                  : currency === null
-                    ? <p className="mt-1.5 text-xs text-gray-400">Select one.</p>
-                    : inheritedCurrency && inheritedVersionNumber != null
-                      ? <p className="mt-1.5 text-xs text-gray-400">Carried from v{inheritedVersionNumber}</p>
+              <div ref={currencyRef} className="mt-8 mb-8">
+                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                  <span>Currency</span>
+                  {carry.currency.isCarried && inheritedVersionNumber != null && (
+                    <CarriedPill edited={carry.currency.isEdited} versionNumber={inheritedVersionNumber} />
+                  )}
+                </label>
+                <div style={carriedFieldStyle(carry.currency.isCarried, carry.currency.isEdited)}>
+                  <CurrencyField
+                    value={currency}
+                    onChange={(c) => setCurrency(c)}
+                    invalid={shouldHighlight('currency')}
+                  />
+                  {shouldHighlight('currency')
+                    ? <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>
+                    : currency === null
+                      ? <p className="mt-1.5 text-xs text-gray-400">Select one.</p>
                       : null}
+                </div>
               </div>
             )}
 
@@ -2148,7 +2321,7 @@ export default function NewVersionPage() {
                 ≥2 names). Names is required in Business mode and
                 irrelevant in Membership; shared side by internal
                 convention is always 'front' in Business. */}
-            <h3 className="mt-8 mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Layout</h3>
+            <h3 className="mt-8 mb-7 text-sm font-semibold uppercase tracking-widest text-gray-400">Layout</h3>
 
             {/* Card type — segmented pill mirroring Sidedness. v1
                 defaults to Business. v2+ inheritance derives from
@@ -2157,36 +2330,42 @@ export default function NewVersionPage() {
                 orphans any per-name v1 images; the handler fires
                 the same approval-invalidation confirm as the
                 other shape flips before applying. */}
-            <div className="mb-5">
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                Card type
+            <div className="mb-8">
+              <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                <span>Card type</span>
+                {carry.cardType.isCarried && inheritedVersionNumber != null && (
+                  <CarriedPill edited={carry.cardType.isEdited} versionNumber={inheritedVersionNumber} />
+                )}
               </label>
-              <fieldset className="inline-flex rounded-xl border border-gray-200 bg-white p-0.5">
-                <legend className="sr-only">Card type</legend>
-                {(['business', 'membership'] as const).map((opt) => {
-                  const selected = cardType === opt
-                  return (
-                    <label
-                      key={opt}
-                      className={[
-                        'cursor-pointer rounded-lg px-5 py-1.5 text-sm font-semibold transition-colors',
-                        'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
-                        selected ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-900',
-                      ].join(' ')}
-                    >
-                      <input
-                        type="radio"
-                        name="cardType"
-                        value={opt}
-                        checked={selected}
-                        onChange={() => handleCardTypeChange(opt)}
-                        className="sr-only"
-                      />
-                      {opt === 'business' ? 'Business card' : 'Membership card'}
-                    </label>
-                  )
-                })}
-              </fieldset>
+              <div style={carriedFieldStyle(carry.cardType.isCarried, carry.cardType.isEdited)}>
+                <fieldset className="inline-flex rounded-xl border border-gray-200 bg-white p-0.5">
+                  <legend className="sr-only">Card type</legend>
+                  {(['business', 'membership'] as const).map((opt) => {
+                    const selected = cardType === opt
+                    return (
+                      <label
+                        key={opt}
+                        className={[
+                          'cursor-pointer rounded-lg px-5 py-2 text-sm font-semibold transition-colors',
+                          'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
+                          selected ? '' : 'text-gray-500 hover:text-gray-900',
+                        ].join(' ')}
+                        style={selected ? hybridChipSelectedStyle : undefined}
+                      >
+                        <input
+                          type="radio"
+                          name="cardType"
+                          value={opt}
+                          checked={selected}
+                          onChange={() => handleCardTypeChange(opt)}
+                          className="sr-only"
+                        />
+                        {opt === 'business' ? 'Business card' : 'Membership card'}
+                      </label>
+                    )
+                  })}
+                </fieldset>
+              </div>
             </div>
 
             {/* Chip input backs the proof_versions.names array.
@@ -2201,34 +2380,39 @@ export default function NewVersionPage() {
                 snapshots the per-currency split-name tooling
                 surcharge onto the version on save (runs
                 regardless of mode). */}
-            <div ref={namesRef}>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+            <div ref={namesRef} className="mb-8">
+              <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
                 {cardType === 'business' ? (
-                  'Names on this order'
+                  <span>Names on this order</span>
                 ) : (
                   <>
-                    Variants
-                    <span className="font-normal text-gray-400"> (optional)</span>
+                    <span>Variants</span>
+                    <span className="font-normal text-gray-400">(optional)</span>
                   </>
                 )}
+                {carry.names.isCarried && inheritedVersionNumber != null && (
+                  <CarriedPill edited={carry.names.isEdited} versionNumber={inheritedVersionNumber} />
+                )}
               </label>
-              <NameChipInput
-                names={names}
-                onChange={handleNamesChange}
-                placeholder={
-                  cardType === 'business'
-                    ? 'Who is this proof for? Press Enter after each name'
-                    : 'e.g. Bronze, Silver, Gold. Press Enter after each variant'
-                }
-                ariaLabel={
-                  cardType === 'business' ? 'Names on this order' : 'Tier variants'
-                }
-              />
-              {shouldHighlight('names') && (
-                <p className="mt-1.5 text-xs font-medium text-rose-500">
-                  Add at least one name.
-                </p>
-              )}
+              <div style={carriedFieldStyle(carry.names.isCarried, carry.names.isEdited)}>
+                <NameChipInput
+                  names={names}
+                  onChange={handleNamesChange}
+                  placeholder={
+                    cardType === 'business'
+                      ? 'Who is this proof for? Press Enter after each name'
+                      : 'e.g. Bronze, Silver, Gold. Press Enter after each variant'
+                  }
+                  ariaLabel={
+                    cardType === 'business' ? 'Names on this order' : 'Tier variants'
+                  }
+                />
+                {shouldHighlight('names') && (
+                  <p className="mt-1.5 text-xs font-medium text-rose-500">
+                    Add at least one name.
+                  </p>
+                )}
+              </div>
             </div>
 
             {/* Shape controls — sidedness + shared. Together with
@@ -2239,37 +2423,43 @@ export default function NewVersionPage() {
                 invalidate v1 approvals if approved images would
                 become unreachable — the handlers above surface a
                 confirm first. */}
-            <div className="mt-5 space-y-3">
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                  Sidedness
+            <div className="space-y-3">
+              <div className="mb-2">
+                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                  <span>Sidedness</span>
+                  {carry.sidedness.isCarried && inheritedVersionNumber != null && (
+                    <CarriedPill edited={carry.sidedness.isEdited} versionNumber={inheritedVersionNumber} />
+                  )}
                 </label>
-                <fieldset className="inline-flex rounded-xl border border-gray-200 bg-white p-0.5">
-                  <legend className="sr-only">Sidedness</legend>
-                  {(['one-sided', 'two-sided'] as const).map((opt) => {
-                    const selected = sidedness === opt
-                    return (
-                      <label
-                        key={opt}
-                        className={[
-                          'cursor-pointer rounded-lg px-5 py-1.5 text-sm font-semibold transition-colors',
-                          'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
-                          selected ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-900',
-                        ].join(' ')}
-                      >
-                        <input
-                          type="radio"
-                          name="sidedness"
-                          value={opt}
-                          checked={selected}
-                          onChange={() => handleSidednessChange(opt)}
-                          className="sr-only"
-                        />
-                        {opt === 'one-sided' ? 'One-sided' : 'Two-sided'}
-                      </label>
-                    )
-                  })}
-                </fieldset>
+                <div style={carriedFieldStyle(carry.sidedness.isCarried, carry.sidedness.isEdited)}>
+                  <fieldset className="inline-flex rounded-xl border border-gray-200 bg-white p-0.5">
+                    <legend className="sr-only">Sidedness</legend>
+                    {(['one-sided', 'two-sided'] as const).map((opt) => {
+                      const selected = sidedness === opt
+                      return (
+                        <label
+                          key={opt}
+                          className={[
+                            'cursor-pointer rounded-lg px-5 py-2 text-sm font-semibold transition-colors',
+                            'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
+                            selected ? '' : 'text-gray-500 hover:text-gray-900',
+                          ].join(' ')}
+                          style={selected ? hybridChipSelectedStyle : undefined}
+                        >
+                          <input
+                            type="radio"
+                            name="sidedness"
+                            value={opt}
+                            checked={selected}
+                            onChange={() => handleSidednessChange(opt)}
+                            className="sr-only"
+                          />
+                          {opt === 'one-sided' ? 'One-sided' : 'Two-sided'}
+                        </label>
+                      )
+                    })}
+                  </fieldset>
+                </div>
               </div>
 
               {/* Shared renders on two-sided projects with ≥2
@@ -2289,33 +2479,38 @@ export default function NewVersionPage() {
                   re-entering the qualifying shape restores the
                   toggle with its prior value. */}
               {sidedness === 'two-sided' && names.length >= 2 && (
-                <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3">
-                  <div>
-                    <div className="text-sm font-medium text-gray-700">
-                      Shared
+                <div style={carriedFieldStyle(carry.shared.isCarried, carry.shared.isEdited)}>
+                  <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3">
+                    <div>
+                      <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                        <span>Shared</span>
+                        {carry.shared.isCarried && inheritedVersionNumber != null && (
+                          <CarriedPill edited={carry.shared.isEdited} versionNumber={inheritedVersionNumber} />
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        One side shared across all cards, the other personalised per name.
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-500">
-                      One side shared across all cards, the other personalised per name.
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleSharedChange(!shared)}
-                    role="switch"
-                    aria-checked={shared}
-                    aria-label="Shared design"
-                    className={[
-                      'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors',
-                      shared ? 'bg-gray-900' : 'bg-gray-200',
-                    ].join(' ')}
-                  >
-                    <span
+                    <button
+                      type="button"
+                      onClick={() => handleSharedChange(!shared)}
+                      role="switch"
+                      aria-checked={shared}
+                      aria-label="Shared design"
                       className={[
-                        'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-white transition-transform',
-                        shared ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
+                        'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors',
+                        shared ? 'bg-gray-900' : 'bg-gray-200',
                       ].join(' ')}
-                    />
-                  </button>
+                    >
+                      <span
+                        className={[
+                          'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-white transition-transform',
+                          shared ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
+                        ].join(' ')}
+                      />
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -2334,7 +2529,7 @@ export default function NewVersionPage() {
               replacement; drop or click on an empty slot to
               upload fresh into that slot's (option, name)
               coordinate. */}
-          <section ref={imageSectionRef} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+          <section ref={imageSectionRef} className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
             <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
               {v1Carry ? `Proof images, carrying from v${v1Carry.versionNumber}` : 'Proof images'}
             </h2>
@@ -2672,7 +2867,7 @@ export default function NewVersionPage() {
           </div>
 
           {/* Change notes */}
-          <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+          <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Change notes</h2>
             <textarea rows={3} placeholder="What changed in this version? Shown to the customer."
               value={changeNotes} onChange={(e) => setChangeNotes(e.target.value)} className={inputClass} />
@@ -2704,7 +2899,7 @@ export default function NewVersionPage() {
               : variant.display_name
 
             return (
-              <section key={vid} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+              <section key={vid} className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
                 <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
                   Pricing: {variantLabel}
                 </h2>
@@ -2852,6 +3047,78 @@ function material_display_for(id: string, materials: Material[]) {
 
 const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
 const selectClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white'
+
+// ── Carry-forward visual treatment (D) ──────────────────────────────────────
+// Each carried field on v2+ creation gets a left-border ribbon, a soft
+// background tint, and a small pill on the label line. When the
+// designer edits the value the ribbon switches to gray and the pill
+// flips to "edited" — a quiet but unmistakable signal of which fields
+// inherited and which have been touched.
+
+// Pill that sits next to the field label. Violet "from v{N}" while
+// the value matches the snapshot, gray "edited" once the designer
+// modifies it.
+function CarriedPill({ edited, versionNumber }: { edited: boolean; versionNumber: number }) {
+  if (edited) {
+    return (
+      <span
+        className="inline-flex items-center rounded-full text-[11px] font-medium"
+        style={{ background: '#fef3c7', color: '#92400e', padding: '2px 8px' }}
+      >
+        edited
+      </span>
+    )
+  }
+  return (
+    <span
+      className="inline-flex items-center rounded-full text-[11px] font-medium"
+      style={{ background: 'rgba(123,63,242,0.12)', color: '#5b2bba', padding: '2px 8px' }}
+    >
+      from v{versionNumber}
+    </span>
+  )
+}
+
+// Style applied to the wrapper around a carried field's control.
+// Empty object when the field isn't carried (v1 creation, or a field
+// that wasn't in the inherited snapshot) so the call site can apply
+// it unconditionally.
+function carriedFieldStyle(carried: boolean, edited: boolean): CSSProperties {
+  if (!carried) return {}
+  return {
+    borderLeft: edited ? '4px solid #f59e0b' : '4px solid #7b3ff2',
+    background: edited ? 'rgba(245,158,11,0.06)' : 'rgba(123,63,242,0.045)',
+    paddingLeft: '12px',
+    paddingTop: '8px',
+    paddingBottom: '8px',
+    borderRadius: '6px',
+  }
+}
+
+// Inline style for the selected state of a hybrid chip / segmented
+// control button — soft violet tint with a 1.5px violet ring via
+// inset box-shadow (no layout shift). Replaces the previous
+// black-filled selected state on variant chips, material-options
+// chips, card-type segmented, sidedness segmented, and the currency
+// segmented (CurrencyField.tsx).
+const hybridChipSelectedStyle: CSSProperties = {
+  background: 'rgba(123,63,242,0.16)',
+  color: '#5b2bba',
+  boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
+}
+
+// Order-sensitive equality (recipient names, positional ink names).
+function arrayEquals<T>(a: T[], b: T[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i])
+}
+
+// Order-insensitive equality (variant ids, material option codes —
+// "[300um, 500um]" and "[500um, 300um]" describe the same selection).
+function setEquals<T>(a: T[], b: T[]): boolean {
+  if (a.length !== b.length) return false
+  const setB = new Set(b)
+  return a.every((v) => setB.has(v))
+}
 
 // One carry-forward card, one v1 image. Three visual states:
 //

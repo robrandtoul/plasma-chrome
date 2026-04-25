@@ -1,6 +1,17 @@
+import type { CSSProperties } from 'react'
 import type { Currency } from '../lib/types'
 
 const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
+
+// Hybrid selected-state — soft violet tint with a 1.5px violet ring
+// via inset box-shadow. Mirrors the chip and segmented-control
+// styling used elsewhere on the new-version form (variant chips,
+// material-options chips, card-type / sidedness segmented).
+const hybridChipSelectedStyle: CSSProperties = {
+  background: 'rgba(123,63,242,0.16)',
+  color: '#5b2bba',
+  boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
+}
 
 export function CurrencyField({
   value,
@@ -29,15 +40,16 @@ export function CurrencyField({
           <label
             key={c}
             className={[
-              'rounded-lg px-5 py-1.5 text-sm font-semibold transition-colors',
+              'rounded-lg px-5 py-2 text-sm font-semibold transition-colors',
               'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
               disabled ? 'cursor-not-allowed' : 'cursor-pointer',
               selected
-                ? 'bg-gray-900 text-white'
+                ? ''
                 : disabled
                   ? 'text-gray-400'
                   : 'text-gray-500 hover:text-gray-900',
             ].join(' ')}
+            style={selected && !disabled ? hybridChipSelectedStyle : undefined}
           >
             <input
               type="radio"
