@@ -901,59 +901,196 @@ export default function NewVersionPage() {
       dedupedOk.push(file)
     }
 
-    // Fallback identity for files whose filename had no recognised
-    // name token. Mirrors the cell builder's slot logic: shared on
-    // the front side when two-sided + shared is on, shared on every
-    // side for membership-single, otherwise the first recipient
-    // name. Returns null to mean "shared".
+    // Identity-aware slot resolver. The previous implementation
+    // resolved side from the heuristic or alternator first, then
+    // picked the identity, which produced orphan entries on
+    // asymmetric shapes: a file matched to "Richard" (back-only in
+    // a two-sided + shared shape) could land on front when the
+    // alternator happened to point there, with the cell builder
+    // silently filtering it out and the entry accumulating in
+    // state as a duplicate-detection ghost.
+    //
+    // The shape rule used by the cell builder is the source of
+    // truth: each identity has a fixed set of valid sides given
+    // the (sidedness, shared, cardType, names) combination. The
+    // resolver below queries that set per identity and overrides
+    // the heuristic side when the identity has only one valid
+    // side. The drop-order alternator only fires when the chosen
+    // identity has both sides available, so it cannot produce an
+    // invalid slot.
     const isMembershipSingle = cardType === 'membership' && names.length === 0
-    function fallbackIdentityFor(side: 'front' | 'back'): string | null {
-      if (isMembershipSingle) return null
-      if (sidedness === 'two-sided' && shared && side === 'front') return null
-      return names[0] ?? null
+
+    // Returns the valid sides for a given identity in the current
+    // shape. Empty list = identity has no slots at all (e.g. a
+    // shared identity in a non-shared shape, or a named identity
+    // in a membership-single shape). Mirrors the cell builder's
+    // slotTuples logic.
+    function availableSidesForIdentity(identity: string | null): Array<'front' | 'back'> {
+      if (sidedness === 'one-sided') {
+        // One-sided: every identity that has any slot has front.
+        if (isMembershipSingle) return identity == null ? ['front'] : []
+        return identity == null ? [] : (names.includes(identity) ? ['front'] : [])
+      }
+      // Two-sided.
+      if (isMembershipSingle) {
+        return identity == null ? ['front', 'back'] : []
+      }
+      if (shared) {
+        // Shared front collapses to a single shared identity;
+        // back stays per-identity.
+        return identity == null ? ['front'] : (names.includes(identity) ? ['back'] : [])
+      }
+      // Two-sided + not shared: per-identity on both sides.
+      return identity == null ? [] : (names.includes(identity) ? ['front', 'back'] : [])
     }
 
-    // Drop-order side alternator for files with no side hint. Resets
-    // per batch so two consecutive single-file drops both start
-    // front. Ignored on one-sided projects where every file is
-    // stamped front by definition.
+    // Per-batch alternator for hintless files where the chosen
+    // identity has both sides available. Resets per drop so two
+    // consecutive single-file drops both start front. State only
+    // advances when the alternator actually fires, so a batch of
+    // back-only-identity files does not accidentally desync the
+    // front/back rhythm for any later both-sides-available file.
     let nextHintlessSide: 'front' | 'back' = 'front'
+    function alternateSide(): 'front' | 'back' {
+      const s = nextHintlessSide
+      nextHintlessSide = nextHintlessSide === 'front' ? 'back' : 'front'
+      return s
+    }
 
-    const newEntries: ImageEntry[] = dedupedOk.map((file) => {
+    // Fallback identity preference order when the heuristic has no
+    // name match. Shared comes first if the shape exposes a shared
+    // identity (membership-single, or two-sided + shared), then
+    // each named identity in chip order. The resolver walks this
+    // list looking for the first identity whose available sides
+    // can satisfy the file's resolved side hint, falling back to
+    // any identity with at least one slot if none match the side
+    // preference.
+    const fallbackOrder: Array<string | null> = []
+    if (isMembershipSingle || (sidedness === 'two-sided' && shared)) {
+      fallbackOrder.push(null)
+    }
+    for (const name of names) fallbackOrder.push(name)
+
+    function resolveSlot(file: File): { identity: string | null; side: 'front' | 'back' } | null {
       const match = matchImageToName(file.name, names)
-
-      const side: 'front' | 'back' =
-        sidedness === 'one-sided'
-          ? 'front'
-          : (match.side ?? (() => {
-              const s = nextHintlessSide
-              nextHintlessSide = nextHintlessSide === 'front' ? 'back' : 'front'
-              return s
-            })())
-
-      // Heuristic name only sticks if it is still in names. Defensive
-      // guard against stale matches if the chip set has changed since
-      // the file was named (rare here, since names is read live, but
-      // free to keep).
-      const associated_name: string | null =
+      const heuristicSide: 'front' | 'back' | null =
+        sidedness === 'one-sided' ? 'front' : match.side
+      const heuristicIdentity =
         match.associatedName != null && names.includes(match.associatedName)
           ? match.associatedName
-          : fallbackIdentityFor(side)
+          : null
 
-      return {
+      // Helper: given a candidate identity and a side hint, pick
+      // a side that lives in the identity's available list.
+      // Returns null when the identity has no slots at all.
+      function pickSideFor(identity: string | null, hint: 'front' | 'back' | null): 'front' | 'back' | null {
+        const sides = availableSidesForIdentity(identity)
+        if (sides.length === 0) return null
+        if (hint != null && sides.includes(hint)) return hint
+        if (sides.length === 1) return sides[0]
+        return alternateSide()
+      }
+
+      // Try the heuristic identity first when it actually matches
+      // a current name. The heuristic side hint is honoured if the
+      // identity supports it; otherwise the resolver overrides
+      // (an asymmetric shape may force the side regardless of
+      // what the filename suggests, which beats orphaning).
+      if (heuristicIdentity != null) {
+        const side = pickSideFor(heuristicIdentity, heuristicSide)
+        if (side != null) return { identity: heuristicIdentity, side }
+      }
+
+      // Walk the fallback identity order. First pass: find an
+      // identity that supports the heuristic side hint (if any).
+      // This keeps the side-hint signal informative even for
+      // files with no name token: a "Front.jpg" drop biases
+      // towards a front-supporting identity.
+      if (heuristicSide != null) {
+        for (const candidate of fallbackOrder) {
+          const sides = availableSidesForIdentity(candidate)
+          if (sides.length === 0) continue
+          if (sides.includes(heuristicSide)) {
+            return { identity: candidate, side: heuristicSide }
+          }
+        }
+      }
+
+      // Second pass: any identity with at least one slot. Side
+      // resolves via pickSideFor (which alternates only when
+      // both sides are available).
+      for (const candidate of fallbackOrder) {
+        const side = pickSideFor(candidate, null)
+        if (side != null) return { identity: candidate, side }
+      }
+
+      // No identity has any valid slot. Should be unreachable
+      // because hasAnySlot gated the function entry; defensive
+      // null lets the validation pass below report it.
+      return null
+    }
+
+    const newEntries: ImageEntry[] = []
+    const orphanFilenames: string[] = []
+    for (const file of dedupedOk) {
+      const slot = resolveSlot(file)
+      if (slot == null) {
+        orphanFilenames.push(file.name)
+        continue
+      }
+      newEntries.push({
         localId: uuidv4(),
         file,
         preview: URL.createObjectURL(file),
-        associated_name,
-        side,
+        associated_name: slot.identity,
+        side: slot.side,
+      })
+    }
+
+    // Belt-and-braces: cross-check every stamped entry against the
+    // exact slot universe the cell builder uses. The resolver
+    // above should never produce an orphan when hasAnySlot is
+    // true, but a future refactor that diverges from the cell
+    // builder's slot rule would silently leak entries into state
+    // again. Surfacing fileError here turns that class of bug
+    // into a loud failure rather than a silent missing card.
+    const validSlotKey = (id: string | null, s: 'front' | 'back') =>
+      `${id ?? '__shared__'}|${s}`
+    const validKeys = new Set(
+      slotTuplesForValidation.map((t) => validSlotKey(t.identity, t.side)),
+    )
+    const accepted: ImageEntry[] = []
+    for (const entry of newEntries) {
+      const key = validSlotKey(entry.associated_name, entry.side ?? 'front')
+      if (validKeys.has(key)) {
+        accepted.push(entry)
+      } else {
+        URL.revokeObjectURL(entry.preview)
+        orphanFilenames.push(entry.file.name)
       }
-    })
+    }
+
+    // Surface orphan failures as a hard error. These should be
+    // unreachable in practice, but reaching this branch means the
+    // resolver and the cell builder have diverged, which is a
+    // bug the designer should see immediately rather than have
+    // silently swallowed by the cell-builder filter.
+    if (orphanFilenames.length > 0) {
+      const sample = orphanFilenames.slice(0, 3).join(', ')
+      const more = orphanFilenames.length > 3 ? `, and ${orphanFilenames.length - 3} more` : ''
+      setFileError(
+        `Could not place ${orphanFilenames.length} file${orphanFilenames.length === 1 ? '' : 's'}: ${sample}${more}. The slot shape changed mid-drop, refresh and try again.`,
+      )
+    }
 
     // Assemble fileNote covering added count, cap overflow, type/
     // size rejections, and duplicates. Errors set fileError above
-    // and return early; this branch always has at least one new
-    // entry to report on.
-    const noteParts: string[] = [`Added ${newEntries.length}.`]
+    // and return early earlier; this branch always has at least
+    // one accepted entry to report on (orphans are reported via
+    // fileError above and are independent of the success count).
+    if (accepted.length === 0) return
+
+    const noteParts: string[] = [`Added ${accepted.length}.`]
     if (partition.rejectedByLimit > 0) {
       noteParts.push(`${partition.rejectedByLimit} skipped (${MAX_IMAGES}-image limit reached).`)
     }
@@ -975,7 +1112,7 @@ export default function NewVersionPage() {
 
     setImagesByOption((prev) => ({
       ...prev,
-      [optionCode]: [...(prev[optionCode] ?? []), ...newEntries],
+      [optionCode]: [...(prev[optionCode] ?? []), ...accepted],
     }))
   }
 
