@@ -10,6 +10,8 @@ import { PricingDisplayField, type PricingDisplayValue } from '../components/Pri
 import { CurrencyField } from '../components/CurrencyField'
 import NameChipInput from '../components/NameChipInput'
 import { matchImageToName } from '../lib/matchImageToName'
+import { useImageFileDrop } from '../lib/useImageFileDrop'
+import { PageDropOverlay } from '../components/PageDropOverlay'
 import type { Currency, ProofNameApproval } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 
@@ -248,7 +250,6 @@ export default function NewVersionPage() {
   // auto-expands so the offending field is visible.
   const [formExpanded, setFormExpanded] = useState(false)
 
-  const fileRef             = useRef<HTMLInputElement>(null)
   const imageSectionRef     = useRef<HTMLElement | null>(null)
   const pricingDisplayRef   = useRef<HTMLElement | null>(null)
   const materialRef         = useRef<HTMLSelectElement>(null)
@@ -257,6 +258,20 @@ export default function NewVersionPage() {
   const inkNamesRef         = useRef<HTMLDivElement>(null)
   const namesRef            = useRef<HTMLDivElement>(null)
   const toastTimerRef       = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Hidden file input behind the section-level drop zone's click-
+  // to-browse affordance. The zone is keyboard-accessible (Enter /
+  // Space activate the click), so the input has to be focusable
+  // via this ref rather than wrapped in a label.
+  const sectionDropInputRef = useRef<HTMLInputElement>(null)
+
+  // Page-wide drop affordance + zone-level drag styling. Mirrors the
+  // EditVersionPage pattern. The hook captures the latest onFiles
+  // via a ref internally so addFilesBatch's closure (defined further
+  // down) stays current without re-binding window listeners. Per-
+  // cell drop zones (CarryCard, EmptySlot) call e.stopPropagation
+  // in their drop handlers, so window-level drops only fire for
+  // drops outside any per-cell zone.
+  const { isZoneDragOver, isPageDragOver, zoneProps } = useImageFileDrop({ onFiles: (f) => addFilesBatch(f) })
 
   useEffect(() => {
     if (!proofId) return
@@ -788,7 +803,6 @@ export default function NewVersionPage() {
   const hasOptions = availableOptions.length > 0
   const optionMode  = hasOptions && selectedOptions.length > 0
   const activeKey   = optionMode ? activeImageOption : ''
-  const currentImages = imagesByOption[activeKey] ?? []
 
   function toggleOption(code: string) {
     setSelectedOptions(prev => {
@@ -818,73 +832,151 @@ export default function NewVersionPage() {
     })
   }
 
-  function addFiles(files: File[]) {
+  // Section-level batch drop. Called from the new section-level
+  // drop zone, the page-wide drop handler (window-level), and the
+  // zone's click-to-browse picker. Auto-distributes each file to a
+  // slot in the active option tab using the matchImageToName
+  // heuristic for filename hints, drop-order alternation for null
+  // sides (front, back, front, back, reset per batch), and a
+  // shape-derived fallback identity when the heuristic returns no
+  // name.
+  //
+  // Per-slot precision drops on EmptySlot still call addFilesToSlot
+  // directly (those zones e.stopPropagation in their drop handlers
+  // so window-level drops do not double-fire). CarryCard's per-card
+  // drop similarly stays out of this path. So this batch handler
+  // only fires for drops outside any per-cell zone.
+  function addFilesBatch(files: File[]) {
     setFileError('')
     setFileNote('')
     if (files.length === 0) return
 
-    // Filter to accepted image types (drops from desktop may include anything)
-    const okByType = files.filter(f => ACCEPTED_TYPES.includes(f.type))
-    const rejectedByType = files.length - okByType.length
-    if (okByType.length === 0) {
-      setFileError('Only image files can be added.')
+    // Gate: slot universe must exist before any image can land. In
+    // Business mode with no names, the cell builder has no slots and
+    // an entry would be unreachable from the grid. Surface the same
+    // copy as the disabled-state caption on the zone.
+    if (!hasAnySlot) {
+      setFileError('Add a name first to drop images.')
       return
     }
 
-    // 10 MB per-file size limit
-    const okBySize = okByType.filter(f => f.size <= MAX_FILE_SIZE)
-    const rejectedBySize = okByType.length - okBySize.length
-    if (okBySize.length === 0) {
-      setFileError('Each image must be 10 MB or smaller.')
+    const optionCode = activeKey
+    const freshInOption = (imagesByOption[optionCode] ?? []).length
+    const remaining = MAX_IMAGES - freshInOption
+
+    const partition = partitionFiles(files, remaining)
+
+    // Surface the right error for an all-rejected batch. Type wins
+    // over size wins over cap because that mirrors how a designer
+    // would diagnose: did anything get accepted at all, was it the
+    // wrong kind, the wrong size, or the slot full?
+    if (partition.ok.length === 0) {
+      if (partition.rejectedByType > 0) {
+        setFileError('Only image files can be added.')
+      } else if (partition.rejectedBySize > 0) {
+        setFileError('Each image must be 10 MB or smaller.')
+      } else if (partition.rejectedByLimit > 0) {
+        setFileNote(`Can't add more, ${MAX_IMAGES}-image limit reached for this tab.`)
+      }
       return
     }
 
-    // 10-images-per-finish cap
-    const remaining = MAX_IMAGES - currentImages.length
-    if (remaining <= 0) {
-      setFileNote(`Can't add more, ${MAX_IMAGES}-image limit reached.`)
-      return
+    // Duplicate detection within the active option's fresh entries.
+    // Signature is name + size — robust enough for accidental re-
+    // drags of the same Finder selection without needing to read
+    // file bytes. Skipped duplicates surface in fileNote, never in
+    // fileError (the designer's intent is benign).
+    const existingSignatures = new Set(
+      (imagesByOption[optionCode] ?? []).map((e) => `${e.file.name}|${e.file.size}`),
+    )
+    const dedupedOk: File[] = []
+    const duplicateNames: string[] = []
+    for (const file of partition.ok) {
+      const sig = `${file.name}|${file.size}`
+      if (existingSignatures.has(sig)) {
+        duplicateNames.push(file.name)
+        continue
+      }
+      existingSignatures.add(sig)
+      dedupedOk.push(file)
     }
 
-    const toAdd = okBySize.slice(0, remaining)
-    const rejectedByLimit = okBySize.length - toAdd.length
-
-    const notes: string[] = []
-    if (rejectedByLimit > 0) {
-      notes.push(`Added ${toAdd.length}. ${rejectedByLimit} skipped (${MAX_IMAGES}-image limit reached).`)
+    // Fallback identity for files whose filename had no recognised
+    // name token. Mirrors the cell builder's slot logic: shared on
+    // the front side when two-sided + shared is on, shared on every
+    // side for membership-single, otherwise the first recipient
+    // name. Returns null to mean "shared".
+    const isMembershipSingle = cardType === 'membership' && names.length === 0
+    function fallbackIdentityFor(side: 'front' | 'back'): string | null {
+      if (isMembershipSingle) return null
+      if (sidedness === 'two-sided' && shared && side === 'front') return null
+      return names[0] ?? null
     }
-    if (rejectedByType > 0 || rejectedBySize > 0) {
-      const reasons: string[] = []
-      if (rejectedByType > 0) reasons.push(`${rejectedByType} non-image`)
-      if (rejectedBySize > 0) reasons.push(`${rejectedBySize} over 10 MB`)
-      notes.push(`Ignored: ${reasons.join(', ')}.`)
-    }
-    if (notes.length > 0) setFileNote(notes.join(' '))
 
-    setImagesByOption(prev => {
-      const cur = prev[activeKey] ?? []
+    // Drop-order side alternator for files with no side hint. Resets
+    // per batch so two consecutive single-file drops both start
+    // front. Ignored on one-sided projects where every file is
+    // stamped front by definition.
+    let nextHintlessSide: 'front' | 'back' = 'front'
+
+    const newEntries: ImageEntry[] = dedupedOk.map((file) => {
+      const match = matchImageToName(file.name, names)
+
+      const side: 'front' | 'back' =
+        sidedness === 'one-sided'
+          ? 'front'
+          : (match.side ?? (() => {
+              const s = nextHintlessSide
+              nextHintlessSide = nextHintlessSide === 'front' ? 'back' : 'front'
+              return s
+            })())
+
+      // Heuristic name only sticks if it is still in names. Defensive
+      // guard against stale matches if the chip set has changed since
+      // the file was named (rare here, since names is read live, but
+      // free to keep).
+      const associated_name: string | null =
+        match.associatedName != null && names.includes(match.associatedName)
+          ? match.associatedName
+          : fallbackIdentityFor(side)
+
       return {
-        ...prev,
-        [activeKey]: [
-          ...cur,
-          ...toAdd.map((file) => {
-            const match = matchImageToName(file.name, names)
-            return {
-              localId: uuidv4(),
-              file,
-              preview: URL.createObjectURL(file),
-              associated_name: match.associatedName,
-              side: match.side,
-            }
-          }),
-        ],
+        localId: uuidv4(),
+        file,
+        preview: URL.createObjectURL(file),
+        associated_name,
+        side,
       }
     })
-  }
 
-  function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
-    addFiles(Array.from(e.target.files ?? []))
-    if (fileRef.current) fileRef.current.value = ''
+    // Assemble fileNote covering added count, cap overflow, type/
+    // size rejections, and duplicates. Errors set fileError above
+    // and return early; this branch always has at least one new
+    // entry to report on.
+    const noteParts: string[] = [`Added ${newEntries.length}.`]
+    if (partition.rejectedByLimit > 0) {
+      noteParts.push(`${partition.rejectedByLimit} skipped (${MAX_IMAGES}-image limit reached).`)
+    }
+    const ignored: string[] = []
+    if (partition.rejectedByType > 0) ignored.push(`${partition.rejectedByType} non-image`)
+    if (partition.rejectedBySize > 0) ignored.push(`${partition.rejectedBySize} over 10 MB`)
+    if (ignored.length > 0) noteParts.push(`Ignored: ${ignored.join(', ')}.`)
+    if (duplicateNames.length > 0) {
+      noteParts.push(
+        duplicateNames.length === 1
+          ? `${duplicateNames[0]} already added.`
+          : `${duplicateNames.length} duplicates skipped.`,
+      )
+    }
+    // Only show the note when there's something to report beyond
+    // the bare success count. The standard "added N" alone is
+    // already obvious from the fresh cards appearing.
+    if (noteParts.length > 1) setFileNote(noteParts.join(' '))
+
+    setImagesByOption((prev) => ({
+      ...prev,
+      [optionCode]: [...(prev[optionCode] ?? []), ...newEntries],
+    }))
   }
 
   // Per-slot file addition. Called when the designer drops or
@@ -901,45 +993,36 @@ export default function NewVersionPage() {
     setFileNote('')
     if (files.length === 0) return
 
-    const okByType = files.filter((f) => ACCEPTED_TYPES.includes(f.type))
-    const rejectedByType = files.length - okByType.length
-    if (okByType.length === 0) {
-      setFileError('Only image files can be added.')
-      return
-    }
-
-    const okBySize = okByType.filter((f) => f.size <= MAX_FILE_SIZE)
-    const rejectedBySize = okByType.length - okBySize.length
-    if (okBySize.length === 0) {
-      setFileError('Each image must be 10 MB or smaller.')
-      return
-    }
-
     const freshInOption = (imagesByOption[optionCode] ?? []).length
     const remaining = MAX_IMAGES - freshInOption
-    if (remaining <= 0) {
-      setFileNote(`Can't add more, ${MAX_IMAGES}-image limit reached for this tab.`)
+    const partition = partitionFiles(files, remaining)
+
+    if (partition.ok.length === 0) {
+      if (partition.rejectedByType > 0) {
+        setFileError('Only image files can be added.')
+      } else if (partition.rejectedBySize > 0) {
+        setFileError('Each image must be 10 MB or smaller.')
+      } else if (partition.rejectedByLimit > 0) {
+        setFileNote(`Can't add more, ${MAX_IMAGES}-image limit reached for this tab.`)
+      }
       return
     }
 
-    const toAdd = okBySize.slice(0, remaining)
-    const rejectedByLimit = okBySize.length - toAdd.length
-
-    const notes: string[] = []
-    if (rejectedByLimit > 0) notes.push(`Added ${toAdd.length}. ${rejectedByLimit} skipped (${MAX_IMAGES}-image limit reached).`)
-    if (rejectedByType > 0 || rejectedBySize > 0) {
-      const reasons: string[] = []
-      if (rejectedByType > 0) reasons.push(`${rejectedByType} non-image`)
-      if (rejectedBySize > 0) reasons.push(`${rejectedBySize} over 10 MB`)
-      notes.push(`Ignored: ${reasons.join(', ')}.`)
+    const noteParts: string[] = []
+    if (partition.rejectedByLimit > 0) {
+      noteParts.push(`Added ${partition.ok.length}. ${partition.rejectedByLimit} skipped (${MAX_IMAGES}-image limit reached).`)
     }
-    if (notes.length > 0) setFileNote(notes.join(' '))
+    const ignored: string[] = []
+    if (partition.rejectedByType > 0) ignored.push(`${partition.rejectedByType} non-image`)
+    if (partition.rejectedBySize > 0) ignored.push(`${partition.rejectedBySize} over 10 MB`)
+    if (ignored.length > 0) noteParts.push(`Ignored: ${ignored.join(', ')}.`)
+    if (noteParts.length > 0) setFileNote(noteParts.join(' '))
 
     setImagesByOption((prev) => ({
       ...prev,
       [optionCode]: [
         ...(prev[optionCode] ?? []),
-        ...toAdd.map((file) => ({
+        ...partition.ok.map((file) => ({
           localId: uuidv4(),
           file,
           preview: URL.createObjectURL(file),
@@ -953,21 +1036,25 @@ export default function NewVersionPage() {
   // Replacement-on-drop for carry cards. First file wins; the
   // rest are discarded (replacements are 1:1 by definition).
   // Supersedes any previously-queued replacement for that row by
-  // revoking the old object URL first.
+  // revoking the old object URL first. Uses partitionFiles with an
+  // unbounded `remaining` (replacement does not count against the
+  // fresh-image cap) and a single-file slice; type and size
+  // rejections still surface, just with the replacement-specific
+  // copy.
   function handleReplacementDrop(v1RowId: string, files: File[]) {
     if (files.length === 0) return
-    const first = files[0]
-    if (!ACCEPTED_TYPES.includes(first.type)) {
-      setFileError('Replacement must be an image file.')
-      return
-    }
-    if (first.size > MAX_FILE_SIZE) {
-      setFileError('Replacement must be 10 MB or smaller.')
+    const partition = partitionFiles(files.slice(0, 1), Number.POSITIVE_INFINITY)
+    if (partition.ok.length === 0) {
+      if (partition.rejectedByType > 0) {
+        setFileError('Replacement must be an image file.')
+      } else if (partition.rejectedBySize > 0) {
+        setFileError('Replacement must be 10 MB or smaller.')
+      }
       return
     }
     const existing = replacementByV1RowId[v1RowId]
     if (existing) URL.revokeObjectURL(existing.preview)
-    handleReplacementUpload(v1RowId, first)
+    handleReplacementUpload(v1RowId, partition.ok[0])
   }
 
   function removeImage(localId: string) {
@@ -983,6 +1070,27 @@ export default function NewVersionPage() {
         const removed = list.find((e) => e.localId === localId)
         if (removed) URL.revokeObjectURL(removed.preview)
         out[key] = list.filter((e) => e.localId !== localId)
+      }
+      return out
+    })
+  }
+
+  // Single-click side flip on a FreshImageCard. Toggles entry.side
+  // between front and back; the cell builder regroups by
+  // (identity, side) on next render, so the card visually moves to
+  // its new slot without any extra plumbing. Only meaningful on
+  // two-sided projects; the FreshImageCard hides the affordance on
+  // one-sided so this should not be reachable in that mode, but
+  // the flip is harmless if it is.
+  function flipFreshSide(localId: string) {
+    setImagesByOption((prev) => {
+      const out: Record<string, ImageEntry[]> = {}
+      for (const [key, list] of Object.entries(prev)) {
+        out[key] = list.map((e) =>
+          e.localId === localId
+            ? { ...e, side: (e.side ?? 'front') === 'front' ? 'back' : 'front' }
+            : e,
+        )
       }
       return out
     })
@@ -1093,8 +1201,8 @@ export default function NewVersionPage() {
     //
     // One-sided → two-sided: additive (no v1 back images to lose
     // since v(N-1) was one-sided by definition). Shared stays OFF
-    // on the flip — designer opts in explicitly.
-    const vanishing: V1Image[] = v1Carry
+    // on the flip; designer opts in explicitly.
+    const vanishingV1: V1Image[] = v1Carry
       ? next === 'one-sided'
         ? v1Carry.images.filter((i) => {
             const side = i.side ?? 'front'
@@ -1105,8 +1213,65 @@ export default function NewVersionPage() {
           })
         : []
       : []
-    if (!confirmShapeFlip(vanishing)) return
-    cleanupReplacementsFor(vanishing)
+
+    // Fresh entries that would orphan on the same flip. Mirrors the
+    // v1 vanishing list against imagesByOption so the unified
+    // confirm covers both buckets, and the cleanup branch below
+    // drops them and revokes their preview URLs in one pass.
+    const vanishingFresh: { optionCode: string; entry: ImageEntry }[] = []
+    if (next === 'one-sided') {
+      for (const [optionCode, list] of Object.entries(imagesByOption)) {
+        for (const entry of list) {
+          const side = entry.side ?? 'front'
+          if (side === 'back') {
+            vanishingFresh.push({ optionCode, entry })
+            continue
+          }
+          if (shared && entry.associated_name == null) {
+            vanishingFresh.push({ optionCode, entry })
+          }
+        }
+      }
+    }
+
+    // Unified confirm. Approved-v1 images are the only bucket that
+    // surfaces a confirm in the v1-only path; here we always
+    // confirm whenever any image is at risk so the designer sees
+    // the full impact (v1 approvals plus their own queued uploads).
+    if (vanishingV1.length > 0 || vanishingFresh.length > 0) {
+      const v1ApprovedCount = vanishingV1.filter((i) => {
+        const key = i.associated_name ?? SHARED_APPROVAL_KEY
+        return v1Carry?.approvalsByName[key]?.state === 'approved'
+      }).length
+      // If nothing is approved AND nothing fresh is at risk, the
+      // flip is purely cosmetic on v1 carry state and we can skip
+      // the prompt (matches existing confirmShapeFlip semantics).
+      if (v1ApprovedCount > 0 || vanishingFresh.length > 0) {
+        const carriedLabel = v1ApprovedCount === 1 ? '1 carried image' : `${v1ApprovedCount} carried images`
+        const uploadedLabel = vanishingFresh.length === 1 ? '1 uploaded image' : `${vanishingFresh.length} uploaded images`
+        const proceed = window.confirm(
+          `Flipping to one-sided will discard ${carriedLabel} and ${uploadedLabel}. Continue?`,
+        )
+        if (!proceed) return
+      }
+    }
+
+    cleanupReplacementsFor(vanishingV1)
+
+    // Drop fresh vanishings from imagesByOption and revoke their
+    // preview object URLs so they do not leak.
+    if (vanishingFresh.length > 0) {
+      const idsToDrop = new Set(vanishingFresh.map((v) => v.entry.localId))
+      for (const { entry } of vanishingFresh) URL.revokeObjectURL(entry.preview)
+      setImagesByOption((prev) => {
+        const out: Record<string, ImageEntry[]> = {}
+        for (const [key, list] of Object.entries(prev)) {
+          out[key] = list.filter((e) => !idsToDrop.has(e.localId))
+        }
+        return out
+      })
+    }
+
     setSidedness(next)
     // Shared resets on every flip: going two→one it's no longer
     // meaningful, and going one→two we don't remember a prior
@@ -1905,6 +2070,15 @@ export default function NewVersionPage() {
           {validationToast}
         </div>
       )}
+      {/* Page-wide drag overlay. Activates while the designer drags
+          a file from outside the browser onto any part of the page.
+          Drops are routed via useImageFileDrop's window listeners
+          to addFilesBatch, which auto-distributes across slots in
+          the active option tab. Per-cell zones (CarryCard,
+          EmptySlot) intercept their own drops via stopPropagation
+          first, so the overlay never double-fires for a precise
+          drop. */}
+      <PageDropOverlay visible={isPageDragOver} />
       <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6">
 
         <div className="mb-6">
@@ -2531,18 +2705,101 @@ export default function NewVersionPage() {
               upload fresh into that slot's (option, name)
               coordinate. */}
           <section ref={imageSectionRef} className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
-            <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
               {v1Carry ? `Proof images, carrying from v${v1Carry.versionNumber}` : 'Proof images'}
             </h2>
-            {v1Carry ? (
-              <p className="mb-4 text-xs text-gray-500">
-                Keep toggles on by default. Drop an image on any card to swap it out, that slot won't carry its approval.
-              </p>
-            ) : (
-              <p className="mb-4 text-xs text-gray-500">
-                Drop images on empty slots, click to browse. JPEG up to 10 MB each.
-              </p>
-            )}
+
+            {/* Section-level batch drop zone. Routes drops through
+                addFilesBatch which auto-distributes each file to a
+                slot using matchImageToName for filename hints, and
+                drop-order alternation (front, back, front, back,
+                reset per batch) for files where the heuristic
+                returns null side. EmptySlot per-slot zones still
+                exist below the grid for precise placement; this
+                zone is the "drop a folder, walk away" affordance.
+
+                Three states:
+                  * Disabled — slot universe is empty (Business
+                    mode with no names yet). Click and drop are
+                    inert; copy explains why.
+                  * Drag-over — page-level or zone-level drag is
+                    active. Violet ring matches the form's hybrid
+                    styling.
+                  * Idle — default. Dashed gray. Click opens the
+                    multi-file picker via the local input ref.
+
+                v1Carry's per-card "drop on the card to replace"
+                pattern still works through CarryCard's own drop
+                handler. The window-level handler in the
+                useImageFileDrop hook only fires for drops outside
+                any per-cell zone (CarryCard and EmptySlot both
+                stopPropagation on their own drop events). */}
+            {(() => {
+              const dropDisabled = !hasAnySlot
+              const isDragActive = isZoneDragOver || isPageDragOver
+              const dropZoneStyle: CSSProperties = isDragActive
+                ? {
+                    background: 'rgba(123,63,242,0.045)',
+                    boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
+                  }
+                : {}
+              return (
+                <div className="mb-4">
+                  <div
+                    {...(dropDisabled ? {} : zoneProps)}
+                    onClick={() => {
+                      if (dropDisabled) return
+                      sectionDropInputRef.current?.click()
+                    }}
+                    role="button"
+                    tabIndex={dropDisabled ? -1 : 0}
+                    aria-disabled={dropDisabled}
+                    onKeyDown={(e) => {
+                      if (dropDisabled) return
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        sectionDropInputRef.current?.click()
+                      }
+                    }}
+                    className={[
+                      'flex flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-7 text-center transition-colors',
+                      dropDisabled
+                        ? 'cursor-not-allowed border-gray-200 bg-gray-50/60 text-gray-400'
+                        : isDragActive
+                          ? 'cursor-copy border-transparent text-gray-900'
+                          : 'cursor-pointer border-gray-300 bg-gray-50/40 text-gray-600 hover:border-gray-400 hover:bg-gray-50',
+                    ].join(' ')}
+                    style={dropZoneStyle}
+                  >
+                    {dropDisabled ? (
+                      <p className="text-sm font-medium">Add a name first to drop images.</p>
+                    ) : isDragActive ? (
+                      <p className="text-sm font-semibold">Drop to add</p>
+                    ) : (
+                      <>
+                        <p className="text-sm font-medium">Drop images here, or click to browse</p>
+                        <p className="mt-1 text-xs text-gray-400">
+                          {v1Carry
+                            ? `We will tag each file by name and side, then place it. Drop on a card below to replace a v${v1Carry.versionNumber} image instead.`
+                            : 'We will tag each file by name and side, then place it. JPEG up to 10 MB each.'}
+                        </p>
+                      </>
+                    )}
+                    <input
+                      ref={sectionDropInputRef}
+                      type="file"
+                      accept={ACCEPTED_TYPES.join(',')}
+                      multiple
+                      onChange={(e) => {
+                        addFilesBatch(Array.from(e.target.files ?? []))
+                        e.target.value = ''
+                      }}
+                      className="sr-only"
+                    />
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* Option tabs */}
             {optionMode && selectedOptions.length > 0 && (
@@ -2768,7 +3025,9 @@ export default function NewVersionPage() {
                       entry={cell.entry}
                       nameLabel={showLabel ? slotName : undefined}
                       sideLabel={sideBadge ? cell.side : null}
+                      twoSided={sidedness === 'two-sided'}
                       onRemove={() => removeImage(cell.entry.localId)}
+                      onFlipSide={() => flipFreshSide(cell.entry.localId)}
                     />
                   )
                 }
@@ -2834,19 +3093,6 @@ export default function NewVersionPage() {
                 </p>
               )
             })()}
-
-            {/* Hidden input used by the EmptySlot click-to-upload
-                flow — kept at the section level since EmptySlots
-                are recreated on every render and shouldn't each
-                carry their own input node. */}
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/jpeg"
-              multiple
-              onChange={handleFileChange}
-              className="hidden"
-            />
 
             {fileError && <p className="mt-2 text-sm text-red-600">{fileError}</p>}
             {fileNote && <p className="mt-2 text-sm text-gray-500">{fileNote}</p>}
@@ -3131,6 +3377,31 @@ function selectedChipStyle(edited: boolean): CSSProperties {
   return edited ? hybridChipEditedSelectedStyle : hybridChipSelectedStyle
 }
 
+// Validates a batch of files against the new-version constraints
+// in one pass: ACCEPTED_TYPES (JPEG only), MAX_FILE_SIZE (10 MB
+// per file), and a caller-supplied cap on remaining slots. Returns
+// the survivors plus per-reason rejection counts so each call site
+// can shape its own messaging. Pass Number.POSITIVE_INFINITY for
+// `remaining` when the cap does not apply (e.g. CarryCard
+// replacements, which do not consume MAX_IMAGES). The order of
+// filtering matters: type first, size second, cap last; a non-
+// image file is rejected as non-image even if it would also have
+// been over size.
+function partitionFiles(files: File[], remaining: number): {
+  ok: File[]
+  rejectedByType: number
+  rejectedBySize: number
+  rejectedByLimit: number
+} {
+  const okByType = files.filter((f) => ACCEPTED_TYPES.includes(f.type))
+  const rejectedByType = files.length - okByType.length
+  const okBySize = okByType.filter((f) => f.size <= MAX_FILE_SIZE)
+  const rejectedBySize = okByType.length - okBySize.length
+  const ok = okBySize.slice(0, Math.max(0, remaining))
+  const rejectedByLimit = okBySize.length - ok.length
+  return { ok, rejectedByType, rejectedBySize, rejectedByLimit }
+}
+
 // Order-sensitive equality (recipient names, positional ink names).
 function arrayEquals<T>(a: T[], b: T[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i])
@@ -3205,9 +3476,17 @@ function CarryCard({
   function handleReplaceInput(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    if (!ACCEPTED_TYPES.includes(file.type)) return
-    if (file.size > MAX_FILE_SIZE) return
-    onReplacementUpload(file)
+    // Same checks as the page-level path (type + size), routed
+    // through partitionFiles for consistency. The Replace button
+    // is a single-file picker, so cap is unbounded. Silent bail
+    // on rejection matches the prior behaviour (CarryCard has no
+    // fileError surface of its own).
+    const partition = partitionFiles([file], Number.POSITIVE_INFINITY)
+    if (partition.ok.length === 0) {
+      e.target.value = ''
+      return
+    }
+    onReplacementUpload(partition.ok[0])
     // Clear the native input so picking the same file again
     // later still triggers change.
     e.target.value = ''
@@ -3235,6 +3514,13 @@ function CarryCard({
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     if (!e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
+    // Stop the native event from bubbling to window, where the
+    // useImageFileDrop hook's drop listener would otherwise also
+    // pick it up and route the file through addFilesBatch in
+    // addition to the replacement queue. React's synthetic
+    // stopPropagation stops the React tree only; we need the
+    // native one to break out of bubble-to-window.
+    e.nativeEvent.stopPropagation()
     setDragOver(false)
     onReplacementDrop(Array.from(e.dataTransfer.files))
   }
@@ -3388,13 +3674,27 @@ function FreshImageCard({
   entry,
   nameLabel,
   sideLabel,
+  twoSided,
   onRemove,
+  onFlipSide,
 }: {
   entry: ImageEntry
   nameLabel: string | null | undefined
   sideLabel: 'front' | 'back' | null
+  // Drives whether the Move-to-{other-side} affordance renders. On
+  // one-sided projects every fresh entry is front by definition, so
+  // there is nothing to flip to.
+  twoSided: boolean
   onRemove: () => void
+  // Single-click toggle of entry.side. The cell builder regroups
+  // the card to its new slot on the next render.
+  onFlipSide: () => void
 }) {
+  // Effective side for the flip-button copy. Pulls from entry rather
+  // than sideLabel because sideLabel is null on one-sided projects
+  // (the badge is suppressed) but entry.side is still meaningful.
+  const currentSide: 'front' | 'back' = entry.side ?? 'front'
+  const flipTargetLabel = currentSide === 'front' ? 'back' : 'front'
   return (
     <div className="rounded-xl bg-gray-50 p-2.5 ring-1 ring-gray-200 transition-all">
       {(nameLabel !== undefined || sideLabel != null) && (
@@ -3428,11 +3728,23 @@ function FreshImageCard({
       <p className="mt-2 truncate text-xs text-gray-400" title={entry.file.name}>
         {entry.file.name}
       </p>
-      <div className="mt-2.5 flex items-center justify-end">
+      <div className="mt-2.5 flex items-center justify-between gap-2">
+        {twoSided ? (
+          <button
+            type="button"
+            onClick={onFlipSide}
+            className="shrink-0 text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+            aria-label={`Move to ${flipTargetLabel}`}
+          >
+            Move to {flipTargetLabel}
+          </button>
+        ) : (
+          <span aria-hidden="true" />
+        )}
         <button
           type="button"
           onClick={onRemove}
-          className="text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+          className="shrink-0 text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
         >
           Remove
         </button>
@@ -3470,6 +3782,11 @@ function EmptySlot({
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     if (!e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
+    // Stop bubble to window so the useImageFileDrop hook's drop
+    // listener does not also fire and double-route the file
+    // through addFilesBatch. See CarryCard.handleDrop for the
+    // full reasoning.
+    e.nativeEvent.stopPropagation()
     setDragOver(false)
     onFiles(Array.from(e.dataTransfer.files))
   }
