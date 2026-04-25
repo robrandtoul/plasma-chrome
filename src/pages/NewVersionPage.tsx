@@ -3247,7 +3247,7 @@ export default function NewVersionPage() {
               if (!showHeadings) {
                 const labels = computeLabelVisibility(sortedCells)
                 return (
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {sortedCells.map((cell, i) => renderCell(cell, labels[i]))}
                   </div>
                 )
@@ -3260,13 +3260,13 @@ export default function NewVersionPage() {
                   <p className="mb-3 mt-2 text-xs font-medium uppercase tracking-wide text-gray-500">
                     Open
                   </p>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {openCells.map((cell, i) => renderCell(cell, openLabels[i]))}
                   </div>
                   <p className="mb-3 mt-8 text-xs font-medium uppercase tracking-wide text-gray-500">
                     Previously approved
                   </p>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {approvedCells.map((cell, i) => renderCell(cell, approvedLabels[i]))}
                   </div>
                 </>
@@ -3783,7 +3783,7 @@ function CarryCard({
         src={replacement?.preview ?? img.preview}
         alt={displayLabel}
         className={[
-          'h-32 w-full rounded-lg object-cover transition-opacity',
+          'aspect-[16/10] w-full rounded-lg object-cover transition-opacity',
           showGhosted ? 'opacity-40' : '',
         ].join(' ')}
       />
@@ -3920,7 +3920,7 @@ function FreshImageCard({
       <img
         src={entry.preview}
         alt={entry.file.name}
-        className="h-32 w-full rounded-lg object-cover"
+        className="aspect-[16/10] w-full rounded-lg object-cover"
       />
       <p className="mt-2 truncate text-xs text-gray-400" title={entry.file.name}>
         {entry.file.name}
@@ -4030,7 +4030,7 @@ function EmptySlot({
       )}
       <div
         className={[
-          'flex h-32 w-full items-center justify-center rounded-lg text-center text-xs',
+          'flex aspect-[16/10] w-full items-center justify-center rounded-lg text-center text-xs',
           dragOver ? 'text-indigo-700' : 'text-gray-400',
         ].join(' ')}
       >
