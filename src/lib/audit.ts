@@ -2,13 +2,16 @@
 // perspective — the promise resolves (never rejects) regardless of
 // success, so user-facing mutations are never gated on the log write.
 //
-// Two entry points:
-//   logAudit            — signed-in designer/admin actions. The RPC
-//                         stamps actor_id from auth.uid() server-side
-//                         (can't be spoofed).
-//   logCustomerEvent    — anon customer actions. Caller provides the
-//                         customer's email for attribution; actor_id
-//                         is left null.
+// Single entry point:
+//   logAudit  — signed-in designer/admin actions. The RPC stamps
+//               actor_id from auth.uid() server-side (can't be
+//               spoofed).
+//
+// The previous logCustomerEvent wrapper was removed alongside the
+// log_customer_event RPC (migration 000101) — that anon-write surface
+// had no input validation and the only customer-side use
+// (`version.viewed` audit on page load) was redundant with the
+// dedicated proof_version_views table populated via record_proof_view.
 
 import { supabase } from './supabase'
 
@@ -33,33 +36,6 @@ export async function logAudit(args: AuditArgs): Promise<void> {
       target_label: args.targetLabel ?? null,
       before_value: args.beforeValue ?? null,
       after_value: args.afterValue ?? null,
-      metadata: args.metadata ?? null,
-    })
-    if (error) console.warn('[audit]', args.action, 'failed:', error.message)
-  } catch (e) {
-    console.warn('[audit]', args.action, 'threw:', (e as Error).message)
-  }
-}
-
-export interface CustomerAuditArgs {
-  action: string
-  targetType?: string
-  targetId?: string | null
-  targetLabel?: string
-  actorEmail?: string
-  actorLabel?: string
-  metadata?: JsonLike
-}
-
-export async function logCustomerEvent(args: CustomerAuditArgs): Promise<void> {
-  try {
-    const { error } = await supabase.rpc('log_customer_event', {
-      action: args.action,
-      target_type: args.targetType ?? null,
-      target_id: args.targetId ?? null,
-      target_label: args.targetLabel ?? null,
-      actor_email: args.actorEmail ?? null,
-      actor_label: args.actorLabel ?? null,
       metadata: args.metadata ?? null,
     })
     if (error) console.warn('[audit]', args.action, 'failed:', error.message)

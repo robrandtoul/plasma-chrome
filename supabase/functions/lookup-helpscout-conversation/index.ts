@@ -2,8 +2,11 @@
 // full contact details, so the new-proof form can auto-populate a
 // whole record from a single URL or conversation-number paste.
 //
-// Expects Supabase auth; returns 401 if unauthenticated. Requires
-// HELPSCOUT_APP_ID, HELPSCOUT_APP_SECRET secrets.
+// Designer or admin only — uses the requireDesigner helper from
+// _shared/admin.ts which validates the JWT, checks profiles.role
+// is in ('admin', 'designer'), and rejects deactivated accounts.
+// Closes audit finding H3.
+// Requires HELPSCOUT_APP_ID, HELPSCOUT_APP_SECRET secrets.
 //
 // POST body (exactly one of):
 //   { conversationId: string }      -- the big numeric id (e.g. 3289110044)
@@ -20,7 +23,7 @@
 //   * If the conversation has no primaryCustomer, the response's
 //     `customer` is null and the client surfaces a dedicated error.
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { requireDesigner } from '../_shared/admin.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -129,21 +132,12 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
-  // Authenticate the caller via their Supabase JWT.
-  const authHeader = req.headers.get('Authorization') ?? ''
-  if (!authHeader.toLowerCase().startsWith('bearer ')) {
-    return json({ error: 'Unauthorized', reason: 'missing_bearer' }, 401)
-  }
-  const jwt = authHeader.replace(/^[Bb]earer\s+/, '').trim()
-
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-  )
-  const { data: userData, error: userError } = await supabase.auth.getUser(jwt)
-  if (userError || !userData?.user) {
-    return json({ error: 'Unauthorized', reason: 'invalid_token', detail: userError?.message }, 401)
-  }
+  // Designer or admin role required — closes audit finding H3.
+  // Pre-shipment, this endpoint accepted any authenticated user;
+  // a non-staff role would have been able to fetch full customer
+  // details for any conversation by id, leaking HS customer data.
+  const check = await requireDesigner(req)
+  if (check instanceof Response) return check
 
   let conversationId: string | undefined
   let conversationNumber: string | undefined

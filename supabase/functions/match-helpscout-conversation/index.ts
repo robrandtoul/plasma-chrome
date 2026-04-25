@@ -2,13 +2,16 @@
 // designer can auto-link (or pick from) a thread when creating a new
 // project in the proof viewer.
 //
-// Expects Supabase auth; returns 401 if unauthenticated. Requires these
-// secrets set on the project: HELPSCOUT_APP_ID, HELPSCOUT_APP_SECRET.
+// Designer or admin only — uses the requireDesigner helper from
+// _shared/admin.ts which validates the JWT, checks profiles.role
+// is in ('admin', 'designer'), and rejects deactivated accounts.
+// Closes audit finding H3.
+// Requires these secrets: HELPSCOUT_APP_ID, HELPSCOUT_APP_SECRET.
 //
 // POST body: { email: string }
 // Response: { matches: Array<{ id, subject, status, modifiedAt, url }> }
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { requireDesigner } from '../_shared/admin.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -119,25 +122,12 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
-  // Authenticate the caller via their Supabase JWT. We pass the token
-  // explicitly to getUser() so we validate the caller's token rather
-  // than any session the client may have cached.
-  const authHeader = req.headers.get('Authorization') ?? ''
-  console.log('auth header present:', authHeader ? authHeader.slice(0, 12) + '…' : '(none)')
-  if (!authHeader.toLowerCase().startsWith('bearer ')) {
-    return json({ error: 'Unauthorized', reason: 'missing_bearer' }, 401)
-  }
-  const jwt = authHeader.replace(/^[Bb]earer\s+/, '').trim()
-
-  const supabase = createClient(
-    Deno.env.get('SUPABASE_URL') ?? '',
-    Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-  )
-  const { data: userData, error: userError } = await supabase.auth.getUser(jwt)
-  if (userError || !userData?.user) {
-    console.log('getUser failed:', userError?.message, 'userData:', JSON.stringify(userData))
-    return json({ error: 'Unauthorized', reason: 'invalid_token', detail: userError?.message }, 401)
-  }
+  // Designer or admin role required — closes audit finding H3.
+  // Pre-shipment, this endpoint accepted any authenticated user;
+  // a non-staff role would have been able to consume the
+  // project's Help Scout API quota and enumerate customer data.
+  const check = await requireDesigner(req)
+  if (check instanceof Response) return check
 
   // Parse input.
   let email = ''

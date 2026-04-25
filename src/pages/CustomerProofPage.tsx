@@ -5,11 +5,8 @@ import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMater
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { formatPrice } from '../lib/currency'
 import { type GridImage } from '../components/ImageGrid'
-import { logCustomerEvent } from '../lib/audit'
 import { getPublicSettings, type PublicSettings } from '../lib/publicSettings'
 import type { PricingSnapshot, PricingVariant, Currency } from '../lib/types'
-
-const SIGNED_URL_TTL = 60 * 60 * 24 // 24 hours
 
 export default function CustomerProofPage() {
   const { id } = useParams<{ id: string }>()
@@ -221,45 +218,43 @@ export default function CustomerProofPage() {
     const initialVersion = rawVersions.find((v) => v.is_current) ?? rawVersions[rawVersions.length - 1] ?? null
     setActiveVersion(initialVersion)
 
-    // Fire a single view audit entry per page load. We don't expose the
-    // customer's email on the public view, so actor_email stays null; the
-    // row still tells us "someone viewed this proof at this time".
-    void logCustomerEvent({
-      action: 'version.viewed',
-      targetType: 'proof',
-      targetId: freshProof.id,
-      targetLabel: freshProof.customer_name ?? 'proof view',
-      metadata: {
-        user_agent: navigator.userAgent,
-        viewed_version: initialVersion?.version_number ?? null,
-      },
-    })
+    // Customer view tracking happens in the proof_version_views
+    // table via the record_proof_view RPC fired below (after a
+    // 2.5s settle delay). The previous duplicate write to
+    // audit_log via logCustomerEvent has been removed alongside
+    // the dropped log_customer_event RPC (audit finding H2).
 
     if (rawVersions.length > 0) {
-      // Load images for all versions
-      const versionIds = rawVersions.map((v) => v.id)
-      const { data: imageRows } = await supabase
-        .from('public_proof_version_images')
-        .select('*')
-        .in('proof_version_id', versionIds)
-        .order('sort_order')
-
-      const imagesWithUrls = await Promise.all(
-        ((imageRows ?? []) as Omit<GridImage, 'signed_url'>[]).map(async (img) => {
-          const { data } = await supabase.storage
-            .from('proof-images')
-            .createSignedUrl((img as any).image_path, SIGNED_URL_TTL)
-          return { ...img, signed_url: data?.signedUrl ?? '' }
-        })
+      // Load images for every version of this proof. Images come
+      // from the customer-proof-images edge function (anon-callable)
+      // which validates the proof exists and signs URLs server-side
+      // using service-role. Replaces the previous direct
+      // storage.from('proof-images').createSignedUrl(...) loop;
+      // closes audit finding H1 (anon storage path enumeration)
+      // by removing the customer-side need for an anon SELECT
+      // policy on storage.objects.
+      const { data: imgData, error: imgError } = await supabase.functions.invoke<{ images: GridImage[] }>(
+        'customer-proof-images',
+        { body: { proofId } },
       )
-
-      const byVersion: Record<string, GridImage[]> = {}
-      imagesWithUrls.forEach((img) => {
-        const pvid = (img as any).proof_version_id as string
-        if (!byVersion[pvid]) byVersion[pvid] = []
-        byVersion[pvid].push(img as GridImage)
-      })
-      setVersionImages(byVersion)
+      if (imgError || !imgData?.images) {
+        // Graceful failure: render the page without images rather
+        // than blocking the whole load. The function itself does
+        // per-image graceful degradation; this branch covers
+        // hard failures (network, function error).
+        setVersionImages({})
+      } else {
+        const byVersion: Record<string, GridImage[]> = {}
+        imgData.images.forEach((img) => {
+          // proof_version_id rides on the row but isn't in the
+          // GridImage type. Same shape (and same cast pattern) as
+          // the pre-shipment direct-fetch path.
+          const pvid = (img as unknown as { proof_version_id: string }).proof_version_id
+          if (!byVersion[pvid]) byVersion[pvid] = []
+          byVersion[pvid].push(img)
+        })
+        setVersionImages(byVersion)
+      }
 
       // Load material options for every material referenced by these versions
       const materialIds = [...new Set(rawVersions.map(v => v.material_id))]

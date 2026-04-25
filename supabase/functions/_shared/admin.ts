@@ -80,3 +80,61 @@ export async function requireAdmin(req: Request): Promise<CallerContext | Respon
 
   return { admin, user, callerId: userData.user.id, callerEmail, callerLabel }
 }
+
+/**
+ * Validate the Authorization header, check the caller is an active
+ * designer or admin, and return a CallerContext. Used by endpoints
+ * that staff legitimately need (Help Scout lookups, conversation
+ * matches) but where customers and any other non-staff role should
+ * be rejected.
+ *
+ * Closes audit finding H3: previously the Help Scout endpoints
+ * accepted any authenticated user, which would have leaked a path
+ * for non-staff roles to consume the project's HS API quota or
+ * enumerate customer data once any such role existed.
+ *
+ * Mirrors requireAdmin's shape rather than refactoring to a generic
+ * requireRole(roles[]) — the duplication is honest at two functions
+ * and would have churned every existing requireAdmin caller for no
+ * gain. If a third staff role ever appears, refactor then.
+ */
+export async function requireDesigner(req: Request): Promise<CallerContext | Response> {
+  const authHeader = req.headers.get('Authorization') ?? ''
+  if (!authHeader.toLowerCase().startsWith('bearer ')) {
+    return json({ error: 'Unauthorized' }, 401)
+  }
+  const jwt = authHeader.replace(/^[Bb]earer\s+/, '').trim()
+
+  const anon = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+  )
+  const { data: userData, error: userErr } = await anon.auth.getUser(jwt)
+  if (userErr || !userData?.user) return json({ error: 'Unauthorized' }, 401)
+
+  const admin = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+    { auth: { persistSession: false, autoRefreshToken: false } },
+  )
+  const { data: profile } = await admin
+    .from('profiles')
+    .select('role, deactivated_at, full_name')
+    .eq('id', userData.user.id)
+    .single()
+  if (!profile || profile.deactivated_at) return json({ error: 'Forbidden' }, 403)
+  if (profile.role !== 'admin' && profile.role !== 'designer') {
+    return json({ error: 'Forbidden' }, 403)
+  }
+
+  const user = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+    { global: { headers: { Authorization: authHeader } } },
+  )
+
+  const callerEmail = userData.user.email ?? ''
+  const callerLabel = (profile.full_name as string | null) ?? callerEmail
+
+  return { admin, user, callerId: userData.user.id, callerEmail, callerLabel }
+}
