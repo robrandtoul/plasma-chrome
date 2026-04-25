@@ -2285,11 +2285,22 @@ export default function NewVersionPage() {
             //     Skips when no non-base option is selected or the
             //     material has no option_label configured.
             //   * Currency — always rendered.
+            //   * Pricing — always rendered on v2+ (pricingDisplay
+            //     is always set on inheritance load). "Standard"
+            //     or "Custom quote".
             //   * Inks — only when material requires ink names AND
             //     at least one ink name is filled in.
             //   * Names — only when names list is non-empty.
+            //   * Approved on v{N} — only when at least one name
+            //     has an 'approved' state on v1 AND that name is
+            //     still in current v2 names. Excludes the shared
+            //     sentinel; shared-side approval surfaces in the
+            //     Images row's approved count instead.
             //   * Sides — always rendered. "1" / "2 (shared front)" /
             //     "2" depending on sidedness + shared.
+            //   * Images — only when v1Carry has at least one
+            //     image. Static count of v1Carry as loaded; does
+            //     not react to Keep / Replace state.
             //   * Card type — only when membership (business is
             //     the implicit default).
             const rows: { label: string; value: string }[] = []
@@ -2317,16 +2328,65 @@ export default function NewVersionPage() {
               }
             }
             if (currency) rows.push({ label: 'Currency', value: currency })
+            // Pricing display — always inherited on v2+, never null.
+            // Reads from current state so the row updates live if
+            // the designer flips the field in expanded mode.
+            rows.push({
+              label: 'Pricing',
+              value: pricingDisplay === 'custom' ? 'Custom quote' : 'Standard',
+            })
             if (summaryMaterial?.requires_ink_names && inkNames.length > 0) {
               rows.push({ label: 'Inks', value: formatJoinedList(inkNames) })
             }
             if (names.length > 0) {
               rows.push({ label: 'Names', value: formatJoinedList(names) })
             }
+            // Approved-on-v{N} row. Reads v1's per-name approval
+            // table loaded into v1Carry.approvalsByName. The shared
+            // sentinel is filtered out (the brief asks for names
+            // only; shared-side approval surfaces in the Images
+            // row below). Names dropped on v2 in expanded mode are
+            // filtered out so a removed chip does not surface as a
+            // ghost approval.
+            const approvedNames = v1Carry
+              ? Object.entries(v1Carry.approvalsByName)
+                  .filter(([key, a]) => key !== SHARED_APPROVAL_KEY && a.state === 'approved')
+                  .map(([name]) => name)
+                  .filter((n) => names.includes(n))
+              : []
+            if (approvedNames.length > 0) {
+              rows.push({
+                label: `Approved on v${inheritedVersionNumber}`,
+                value: formatJoinedList(approvedNames),
+              })
+            }
             const sidesValue = sidedness === 'one-sided'
               ? '1'
               : (shared ? '2 (shared front)' : '2')
             rows.push({ label: 'Sides', value: sidesValue })
+            // Images composition — static count of v1Carry as
+            // loaded. Approved count uses the same identity-key
+            // pattern used by the cell builder's stateBucketFor:
+            // each image's identity is associated_name (or the
+            // shared sentinel when null), and the per-name
+            // approval state is read off v1Carry.approvalsByName.
+            // Three format branches: bare carried count, partial
+            // approved count, "all approved" when every image is
+            // covered.
+            if (v1Carry && v1Carry.images.length > 0) {
+              const total = v1Carry.images.length
+              const approvedCount = v1Carry.images.filter((img) => {
+                const key = img.associated_name ?? SHARED_APPROVAL_KEY
+                return v1Carry.approvalsByName[key]?.state === 'approved'
+              }).length
+              const value =
+                approvedCount === 0
+                  ? `${total} carried`
+                  : approvedCount === total
+                    ? `${total} carried, all approved`
+                    : `${total} carried, ${approvedCount} approved`
+              rows.push({ label: 'Images', value })
+            }
             if (cardType === 'membership') {
               rows.push({ label: 'Card type', value: 'Membership' })
             }
