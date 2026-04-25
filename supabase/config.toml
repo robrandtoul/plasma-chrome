@@ -412,6 +412,14 @@ verify_jwt = false
 [functions.helpscout-status]
 verify_jwt = false
 
+# customer-proof-images is anon-callable: customers reach the proof
+# page without a Supabase session, so the function must accept
+# requests without a verified user JWT. The handler does its own
+# proofId validation (UUID format) and existence check before
+# signing any URL, and uses service-role internally.
+[functions.customer-proof-images]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
