@@ -841,6 +841,14 @@ export default function NewVersionPage() {
   // shape-derived fallback identity when the heuristic returns no
   // name.
   //
+  // Smart-replace on v2+ flows: when a file resolves to a slot that
+  // already has a v1 carry image, the file queues as a replacement
+  // on that v1 row instead of being added as a fresh entry. First
+  // file in the batch matching a given v1 row claims it; subsequent
+  // files matching the same v1 row in the same batch fall through
+  // to the fresh-entry path on the same slot (multi-image-per-slot
+  // is a valid state the cell builder already renders).
+  //
   // Per-slot precision drops on EmptySlot still call addFilesToSlot
   // directly (those zones e.stopPropagation in their drop handlers
   // so window-level drops do not double-fire). CarryCard's per-card
@@ -881,14 +889,28 @@ export default function NewVersionPage() {
       return
     }
 
-    // Duplicate detection within the active option's fresh entries.
-    // Signature is name + size — robust enough for accidental re-
-    // drags of the same Finder selection without needing to read
-    // file bytes. Skipped duplicates surface in fileNote, never in
-    // fileError (the designer's intent is benign).
-    const existingSignatures = new Set(
-      (imagesByOption[optionCode] ?? []).map((e) => `${e.file.name}|${e.file.size}`),
+    // Duplicate detection across both fresh entries and queued
+    // replacements on the active option. Signature is name + size,
+    // robust enough for accidental re-drags of the same Finder
+    // selection without needing to read file bytes. Smart-replace
+    // can route a previously-dropped file into replacementByV1RowId
+    // instead of imagesByOption, so the dedup pool spans both
+    // surfaces; without this, a re-drop of the same file in the
+    // same session would silently overwrite a queued replacement
+    // (or land as a duplicate fresh entry alongside it).
+    // Skipped duplicates surface in fileNote, never in fileError
+    // (the designer's intent is benign).
+    const freshSignatures = (imagesByOption[optionCode] ?? []).map(
+      (e) => `${e.file.name}|${e.file.size}`,
     )
+    const replacementSignatures = v1Carry
+      ? v1Carry.images
+          .filter((img) => (img.material_option ?? '') === optionCode)
+          .map((img) => replacementByV1RowId[img.v1RowId])
+          .filter((r): r is NonNullable<typeof r> => !!r)
+          .map((r) => `${r.file.name}|${r.file.size}`)
+      : []
+    const existingSignatures = new Set([...freshSignatures, ...replacementSignatures])
     const dedupedOk: File[] = []
     const duplicateNames: string[] = []
     for (const file of partition.ok) {
@@ -1030,14 +1052,49 @@ export default function NewVersionPage() {
       return null
     }
 
+    // Smart-replace lookup. Returns the v1 image at the given
+    // (identity, side) on the active option, or undefined if no v1
+    // image lives there. Normalises material_option ?? '' (matches
+    // the active-option convention used in imagesByOption keys) and
+    // side ?? 'front' (back-compat for pre-migration v1 data with
+    // null sides). Identity comparison is direct because both this
+    // file's resolved identity and V1Image.associated_name use the
+    // same null-means-shared convention.
+    function findV1CarryAt(identity: string | null, side: 'front' | 'back'): V1Image | undefined {
+      if (!v1Carry) return undefined
+      return v1Carry.images.find((img) =>
+        (img.material_option ?? '') === optionCode &&
+        img.associated_name === identity &&
+        (img.side ?? 'front') === side,
+      )
+    }
+
     const newEntries: ImageEntry[] = []
+    const replacementsToQueue: { v1RowId: string; file: File }[] = []
     const orphanFilenames: string[] = []
+    // First-wins claim set per batch. A v1 row can only be replaced
+    // once per drop event; subsequent files in the same batch that
+    // resolve to the same v1-occupied slot fall through to fresh-
+    // entry placement on that slot (multi-image-per-slot is fine).
+    // Cross-batch behaviour stays "last-wins" because a fresh drop
+    // event re-runs the lookup and overwrites the previous queued
+    // replacement (matches CarryCard's per-card drop semantics).
+    const claimedV1RowIds = new Set<string>()
+
     for (const file of dedupedOk) {
       const slot = resolveSlot(file)
       if (slot == null) {
         orphanFilenames.push(file.name)
         continue
       }
+
+      const v1Match = findV1CarryAt(slot.identity, slot.side)
+      if (v1Match && !claimedV1RowIds.has(v1Match.v1RowId)) {
+        claimedV1RowIds.add(v1Match.v1RowId)
+        replacementsToQueue.push({ v1RowId: v1Match.v1RowId, file })
+        continue
+      }
+
       newEntries.push({
         localId: uuidv4(),
         file,
@@ -1083,14 +1140,53 @@ export default function NewVersionPage() {
       )
     }
 
-    // Assemble fileNote covering added count, cap overflow, type/
-    // size rejections, and duplicates. Errors set fileError above
-    // and return early earlier; this branch always has at least
-    // one accepted entry to report on (orphans are reported via
-    // fileError above and are independent of the success count).
-    if (accepted.length === 0) return
+    // Commit replacements. handleReplacementUpload owns the queue
+    // mutation and the keepByV1RowId flip-off; revoking the prior
+    // preview here mirrors handleReplacementDrop. Reads from a
+    // closure snapshot of replacementByV1RowId, but each iteration
+    // calls the setter which queues correctly even if the same v1
+    // row appears more than once across separate drop events
+    // (within one event the claim set forbids repeats).
+    for (const r of replacementsToQueue) {
+      const existing = replacementByV1RowId[r.v1RowId]
+      if (existing) URL.revokeObjectURL(existing.preview)
+      handleReplacementUpload(r.v1RowId, r.file)
+    }
 
-    const noteParts: string[] = [`Added ${accepted.length}.`]
+    // Append fresh entries.
+    if (accepted.length > 0) {
+      setImagesByOption((prev) => ({
+        ...prev,
+        [optionCode]: [...(prev[optionCode] ?? []), ...accepted],
+      }))
+    }
+
+    // fileNote assembly. Two layers:
+    //   1. Success clause (when at least one file landed): one of
+    //      three branches based on the fresh/replacement split.
+    //   2. Trailing rejection clauses (cap overflow, type/size,
+    //      duplicates) appended in order.
+    // Surface rule: replacement-bearing batches always show the
+    // note (the action is informative even with no rejections).
+    // Fresh-only batches keep the existing "show only when there's
+    // something else to report" suppression — the cards appearing
+    // already communicate the success. Duplicate-only batches
+    // (every file dedup'd) show the duplicate clause standalone so
+    // a re-drop doesn't appear silently ignored.
+    const freshAdded = accepted.length
+    const replaced = replacementsToQueue.length
+    const totalLanded = freshAdded + replaced
+    const v1VersionLabel = v1Carry ? `v${v1Carry.versionNumber}` : 'v1'
+    const noteParts: string[] = []
+    if (totalLanded > 0) {
+      if (freshAdded > 0 && replaced > 0) {
+        noteParts.push(`Added ${totalLanded}: ${freshAdded} new, ${replaced} replacing ${v1VersionLabel}.`)
+      } else if (replaced > 0) {
+        noteParts.push(`Replaced ${replaced} ${v1VersionLabel} image${replaced === 1 ? '' : 's'}.`)
+      } else {
+        noteParts.push(`Added ${freshAdded}.`)
+      }
+    }
     if (partition.rejectedByLimit > 0) {
       noteParts.push(`${partition.rejectedByLimit} skipped (${MAX_IMAGES}-image limit reached).`)
     }
@@ -1105,15 +1201,17 @@ export default function NewVersionPage() {
           : `${duplicateNames.length} duplicates skipped.`,
       )
     }
-    // Only show the note when there's something to report beyond
-    // the bare success count. The standard "added N" alone is
-    // already obvious from the fresh cards appearing.
-    if (noteParts.length > 1) setFileNote(noteParts.join(' '))
-
-    setImagesByOption((prev) => ({
-      ...prev,
-      [optionCode]: [...(prev[optionCode] ?? []), ...accepted],
-    }))
+    // Show conditions:
+    //   * Anything replaced — always show.
+    //   * Anything else to report alongside the bare success — show.
+    //   * Nothing landed but there are duplicates / rejections — show
+    //     so the designer sees why the drop produced no visible cards.
+    //   * Bare fresh-only success with no rejections — suppress.
+    const shouldShowNote =
+      replaced > 0 ||
+      (totalLanded > 0 && noteParts.length > 1) ||
+      (totalLanded === 0 && noteParts.length > 0)
+    if (shouldShowNote) setFileNote(noteParts.join(' '))
   }
 
   // Per-slot file addition. Called when the designer drops or
