@@ -218,6 +218,17 @@ export default function NewVersionPage() {
   const [submitAttempted, setSubmitAttempted] = useState(false)
   const [validationToast, setValidationToast] = useState('')
 
+  // ── Form collapse state (Tier 2c) ─────────────────────────────────────────
+  // The form is collapsed by default on v2+ creation behind a tight
+  // summary card showing "what this version inherits". Designer
+  // expands by clicking "Edit details" and the form stays expanded
+  // for the rest of the page lifecycle. Default true on v1 (no
+  // inheritance to summarise — full form visible from the start),
+  // flipped via the effect below once we know whether there's an
+  // inheritance source. Submit-time validation failure also
+  // auto-expands so the offending field is visible.
+  const [formExpanded, setFormExpanded] = useState(false)
+
   const fileRef             = useRef<HTMLInputElement>(null)
   const imageSectionRef     = useRef<HTMLElement | null>(null)
   const pricingDisplayRef   = useRef<HTMLElement | null>(null)
@@ -270,7 +281,7 @@ export default function NewVersionPage() {
       // default).
       const inheritPromise = supabase
         .from('proof_versions')
-        .select('id, version_number, currency, material_id, pricing_snapshot, names, ink_names, material_options, card_type')
+        .select('id, version_number, currency, material_id, pricing_snapshot, names, ink_names, material_options, card_type, custom_quote')
         .eq('proof_id', proofId!)
         .eq('is_current', true)
         .maybeSingle()
@@ -280,6 +291,7 @@ export default function NewVersionPage() {
 
       let materialsList = (materialsResult.data ?? []) as Material[]
       let currencyInherited = false
+      let pricingDisplayInherited = false
       const inherited = inheritResult.data as {
         id: string
         version_number: number
@@ -290,6 +302,7 @@ export default function NewVersionPage() {
         ink_names: string[] | null
         material_options: string[] | null
         card_type: 'business' | 'membership'
+        custom_quote: boolean
       } | null
 
       if (inherited) {
@@ -384,6 +397,15 @@ export default function NewVersionPage() {
             setInkNamesText(inherited.ink_names.join(', '))
           }
         }
+
+        // Pricing display (Tier 1) — was previously not inherited
+        // ("per-version choice" per an old comment). In practice
+        // a custom-quote project stays custom-quote across versions
+        // and a standard-priced project stays standard. Carrying
+        // forward removes a redundant click. Settings-default
+        // fallback below only fires when nothing was inherited.
+        setPricingDisplay(inherited.custom_quote ? 'custom' : 'standard')
+        pricingDisplayInherited = true
       } else {
         // v1 — no inheritance, just hydrate the picker with the
         // unfiltered active+published materials.
@@ -487,9 +509,10 @@ export default function NewVersionPage() {
         }
       }
 
-      // Settings defaults — currency default only applies if we
-      // didn't inherit one. Pricing display default is independent
-      // (not inherited — it's a per-version choice).
+      // Settings defaults — both currency and pricing display
+      // defaults only apply when we didn't inherit one (Tier 1
+      // brought pricingDisplay into the inheritance set, so the
+      // settings default is now strictly a v1-creation fallback).
       const { data: settings } = await supabase
         .from('settings')
         .select('default_pricing_display, default_currency')
@@ -497,7 +520,7 @@ export default function NewVersionPage() {
         .single()
       if (cancelled) return
       if (settings) {
-        if (settings.default_pricing_display != null) {
+        if (!pricingDisplayInherited && settings.default_pricing_display != null) {
           setPricingDisplay((settings.default_pricing_display === 'custom_quote' ? 'custom' : 'standard') as PricingDisplayValue)
         }
         if (!currencyInherited && settings.default_currency != null) {
@@ -509,6 +532,15 @@ export default function NewVersionPage() {
     load()
     return () => { cancelled = true }
   }, [proofId])
+
+  // Open the form by default on v1 creation (no inheritance source
+  // means the summary card has nothing to render — fall back to
+  // today's behaviour with the form fields visible). On v2+ the
+  // form stays collapsed until the designer clicks "Edit details"
+  // or hits a validation failure on submit.
+  useEffect(() => {
+    if (inheritedVersionNumber === null) setFormExpanded(true)
+  }, [inheritedVersionNumber])
 
   useEffect(() => {
     setVariants([])
@@ -1098,6 +1130,11 @@ export default function NewVersionPage() {
     // document order. No save attempt, no network. Live validation clears the
     // highlights on the next render as each field becomes valid.
     if (!isValid) {
+      // Auto-expand the form on validation failure so the offending
+      // field is visible — without this, scrollIntoView would target
+      // a hidden section when the form is collapsed in summary view.
+      setFormExpanded(true)
+
       const order: Array<{
         key: keyof typeof validations
         ref: React.RefObject<HTMLElement | null>
@@ -1761,6 +1798,84 @@ export default function NewVersionPage() {
 
         <form id="new-version-form" onSubmit={handleSubmit} className="space-y-6">
 
+          {/* Carry-forward summary card — only renders on v2+ when
+              there's an inheritance source. Bullet-line summary of
+              what this version inherits from v(N-1), updates live
+              as the designer edits in expanded mode. Warnings
+              (archived material, currency mismatch) render inside
+              the card so they're visible even when the form below
+              is collapsed. "Edit details" expands the form for the
+              rest of the page lifecycle (no re-collapse). */}
+          {inheritedVersionNumber !== null && (() => {
+            // Resolve current form state into the entities the
+            // summary builder expects. Reads from current state so
+            // the bullet line updates live in expanded mode.
+            const summaryMaterial = materials.find((m) => m.id === selectedMaterialId)
+            const summarySelectedVariants = variants.filter((v) => selectedVariantIds.includes(v.id))
+            const summaryNonBaseOption = availableOptions.find(
+              (o) => selectedOptions.includes(o.code) && !o.is_base,
+            )
+            // Ink names count: prefer the positional array (per-ink
+            // input on requires_ink_names materials) when populated,
+            // otherwise count comma-separated entries from the
+            // free-form input. Only renders when material requires
+            // ink names — for non-ink-count materials the bullet
+            // skips entirely.
+            const inkCount = summaryMaterial?.requires_ink_names
+              ? (inkNamesArray.filter((n) => n.trim()).length > 0
+                  ? inkNamesArray.filter((n) => n.trim()).length
+                  : inkNamesText.split(',').map((s) => s.trim()).filter(Boolean).length)
+              : 0
+            const summaryText = buildSummaryText({
+              materialName: summaryMaterial?.display_name ?? null,
+              variants: summarySelectedVariants.map((v) => ({
+                display_name: v.display_name,
+                variant_type: v.variant_type,
+              })),
+              optionName: summaryNonBaseOption?.display_name ?? null,
+              currency: currency,
+              inkNamesCount: inkCount,
+              names: names,
+              sidedness: sidedness,
+              shared: shared,
+              cardType: cardType,
+            })
+            return (
+              <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+                <h3 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
+                  Carried from v{inheritedVersionNumber}
+                </h3>
+                <p className="text-base leading-relaxed text-gray-700">
+                  {summaryText}
+                </p>
+                {inheritedMaterialArchived && (
+                  <p className="mt-3 text-sm text-amber-700">
+                    The material has been archived. Edit details to pick a current one, or keep this for continuity.
+                  </p>
+                )}
+                {!formExpanded && (
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setFormExpanded(true)}
+                      className="text-sm text-gray-600 underline underline-offset-4 hover:text-gray-900"
+                    >
+                      Edit details
+                    </button>
+                  </div>
+                )}
+              </section>
+            )
+          })()}
+
+          {/* Form fields — pricing display + design + layout. On v2+
+              creation these collapse behind the summary card above
+              by default, expanding when the designer clicks "Edit
+              details" (or when submit-time validation fails on a
+              field that lives in here). On v1 creation the
+              formExpanded effect sets this open immediately. */}
+          {formExpanded && (
+          <>
           {/* Pricing display — required choice between standard grid and custom quote */}
           <PricingDisplayField
             value={pricingDisplay}
@@ -1798,7 +1913,7 @@ export default function NewVersionPage() {
               </select>
               {shouldHighlight('material') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
               {inheritedMaterial && inheritedVersionNumber != null && !inheritedMaterialArchived && (
-                <p className="mt-1.5 text-xs text-gray-400">Inherited from v{inheritedVersionNumber}</p>
+                <p className="mt-1.5 text-xs text-gray-400">Carried from v{inheritedVersionNumber}</p>
               )}
               {inheritedMaterialArchived && inheritedVersionNumber != null && (
                 <p className="mt-1.5 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
@@ -1849,7 +1964,7 @@ export default function NewVersionPage() {
                 )}
                 {shouldHighlight('variant') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
                 {inheritedVariants && inheritedVersionNumber != null && (
-                  <p className="mt-1.5 text-xs text-gray-400">Inherited from v{inheritedVersionNumber}</p>
+                  <p className="mt-1.5 text-xs text-gray-400">Carried from v{inheritedVersionNumber}</p>
                 )}
                 {/* Auto-custom-quote notice. Surfaces when the
                     current variant selection has no price_tiers
@@ -1961,7 +2076,7 @@ export default function NewVersionPage() {
                   : currency === null
                     ? <p className="mt-1.5 text-xs text-gray-400">Select one.</p>
                     : inheritedCurrency && inheritedVersionNumber != null
-                      ? <p className="mt-1.5 text-xs text-gray-400">Inherited from v{inheritedVersionNumber}</p>
+                      ? <p className="mt-1.5 text-xs text-gray-400">Carried from v{inheritedVersionNumber}</p>
                       : null}
               </div>
             )}
@@ -2150,6 +2265,8 @@ export default function NewVersionPage() {
             </div>
 
           </section>
+          </>
+          )}
 
           {/* Unified image section.
               Per-(option, name) drop targets and empty slots unify
@@ -2511,8 +2628,11 @@ export default function NewVersionPage() {
               in Admin → Pricing; designers see the live values here
               to confirm the customer-facing number, not to modify
               it. Hidden in custom-quote mode and until a currency is
-              picked. */}
-          {!isCustomQuote && selectedVariantIds.length > 0 && currency !== null && selectedVariantIds.map((vid) => {
+              picked. Also gated on formExpanded (Tier 2c) so the
+              previews collapse with the form they verify — no point
+              showing pricing tables when the variant/currency
+              choices that produce them are hidden. */}
+          {formExpanded && !isCustomQuote && selectedVariantIds.length > 0 && currency !== null && selectedVariantIds.map((vid) => {
             const variant = variants.find((v) => v.id === vid)
             const tiers = variantTiers[vid] ?? []
             if (!variant) return null
@@ -2591,6 +2711,69 @@ export default function NewVersionPage() {
       </div>
     </div>
   )
+}
+
+// ── Summary card helpers (Tier 2c) ──────────────────────────────────────────
+//
+// Build the bullet line shown on the collapsed summary card. Pure
+// function over resolved entities (looked up from current form state
+// at render time) so the summary updates live as the designer edits
+// in expanded mode. Field order matches the agreed spec:
+//   Material → Variant → Option → Currency → Ink count → Names →
+//   Sidedness → Shared → Card type
+// Null / empty values skip their bullet entirely (no "none"
+// placeholders). Variant skips "Default" (uninformative for default-
+// variant materials). Multi-variant collapses to a count. Card type
+// only appears for membership (business is the implicit default).
+function buildSummaryText(args: {
+  materialName: string | null
+  // variant_type comes through as the wider `string` from the page's
+  // local Variant interface (variant_type column is constrained at
+  // the DB level by a CHECK, not in TS). Pluralisation switch below
+  // pattern-matches the known values; anything else falls through
+  // to the generic "variants" label.
+  variants: { display_name: string; variant_type: string }[]
+  optionName: string | null
+  currency: string | null
+  inkNamesCount: number
+  names: string[]
+  sidedness: 'one-sided' | 'two-sided'
+  shared: boolean
+  cardType: 'business' | 'membership'
+}): string {
+  const parts: string[] = []
+  if (args.materialName) parts.push(args.materialName)
+  if (args.variants.length === 1) {
+    const v = args.variants[0]
+    if (v.display_name !== 'Default') parts.push(v.display_name)
+  } else if (args.variants.length > 1) {
+    const t = args.variants[0]?.variant_type
+    const label = t === 'thickness' ? 'thicknesses'
+      : t === 'finish' ? 'finishes'
+      : t === 'ink_count' ? 'ink counts'
+      : 'variants'
+    parts.push(`${args.variants.length} ${label}`)
+  }
+  if (args.optionName) parts.push(args.optionName)
+  if (args.currency) parts.push(args.currency)
+  if (args.inkNamesCount > 0) parts.push(args.inkNamesCount === 1 ? '1 ink' : `${args.inkNamesCount} inks`)
+  if (args.names.length > 0) parts.push(formatNamesShort(args.names))
+  parts.push(args.sidedness === 'two-sided' ? '2 sides' : '1 side')
+  if (args.sidedness === 'two-sided' && args.shared) parts.push('shared front')
+  if (args.cardType === 'membership') parts.push('membership')
+  return parts.join(' · ')
+}
+
+// Like formatNamesList but truncates aggressively for the summary
+// card. Three or fewer renders the full list with "and" before the
+// last; four or more collapses to "Alice and N others" so the bullet
+// line stays scannable even on projects with long recipient lists.
+function formatNamesShort(names: string[]): string {
+  if (names.length === 0) return ''
+  if (names.length === 1) return names[0]
+  if (names.length === 2) return `${names[0]} and ${names[1]}`
+  if (names.length === 3) return `${names[0]}, ${names[1]} and ${names[2]}`
+  return `${names[0]} and ${names.length - 1} others`
 }
 
 /** Build a compact "Select a X and a Y" hint for the Save button's
