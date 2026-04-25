@@ -3,7 +3,7 @@ import type { Currency } from '../lib/types'
 
 const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
 
-// Hybrid selected-state — soft violet tint with a 1.5px violet ring
+// Hybrid selected-state. Soft violet tint with a 1.5px violet ring
 // via inset box-shadow. Mirrors the chip and segmented-control
 // styling used elsewhere on the new-version form (variant chips,
 // material-options chips, card-type / sidedness segmented).
@@ -13,17 +13,36 @@ const hybridChipSelectedStyle: CSSProperties = {
   boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
 }
 
+// Same shape as the violet style above, retinted amber. Used when
+// the parent field has been edited away from the value carried
+// from the prior version, so the selected button matches the
+// field's amber border, tint and pill instead of leaving a violet
+// active selection inside an amber wrapper.
+const hybridChipEditedSelectedStyle: CSSProperties = {
+  background: 'rgba(245,158,11,0.16)',
+  color: '#92400e',
+  boxShadow: 'inset 0 0 0 1.5px #f59e0b',
+}
+
 export function CurrencyField({
   value,
   onChange,
   disabled = false,
   invalid = false,
+  edited = false,
 }: {
   value: Currency | null
   onChange: (value: Currency) => void
   disabled?: boolean
   invalid?: boolean
+  // True when the parent field is in the carried-but-edited
+  // state. Drives the selected-button hue: violet on a clean
+  // carried field, amber once the designer has changed the
+  // currency. Defaults to false so v1 creation and any
+  // non-carried context just see violet.
+  edited?: boolean
 }) {
+  const selectedStyle = edited ? hybridChipEditedSelectedStyle : hybridChipSelectedStyle
   return (
     <fieldset
       disabled={disabled}
@@ -49,7 +68,7 @@ export function CurrencyField({
                   ? 'text-gray-400'
                   : 'text-gray-500 hover:text-gray-900',
             ].join(' ')}
-            style={selected && !disabled ? hybridChipSelectedStyle : undefined}
+            style={selected && !disabled ? selectedStyle : undefined}
           >
             <input
               type="radio"

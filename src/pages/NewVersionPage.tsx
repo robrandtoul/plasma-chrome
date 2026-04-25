@@ -2149,7 +2149,7 @@ export default function NewVersionPage() {
                                 ? ''
                                 : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
                             ].join(' ')}
-                            style={checked ? hybridChipSelectedStyle : undefined}>
+                            style={checked ? selectedChipStyle(carry.variants.isEdited) : undefined}>
                             {v.display_name}
                           </button>
                         )
@@ -2211,7 +2211,7 @@ export default function NewVersionPage() {
                               ? ''
                               : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
                           ].join(' ')}
-                          style={selected ? hybridChipSelectedStyle : undefined}
+                          style={selected ? selectedChipStyle(carry.options.isEdited) : undefined}
                         >
                           {o.display_name}
                         </button>
@@ -2300,6 +2300,7 @@ export default function NewVersionPage() {
                     value={currency}
                     onChange={(c) => setCurrency(c)}
                     invalid={shouldHighlight('currency')}
+                    edited={carry.currency.isEdited}
                   />
                   {shouldHighlight('currency')
                     ? <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>
@@ -2350,7 +2351,7 @@ export default function NewVersionPage() {
                           'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
                           selected ? '' : 'text-gray-500 hover:text-gray-900',
                         ].join(' ')}
-                        style={selected ? hybridChipSelectedStyle : undefined}
+                        style={selected ? selectedChipStyle(carry.cardType.isEdited) : undefined}
                       >
                         <input
                           type="radio"
@@ -2444,7 +2445,7 @@ export default function NewVersionPage() {
                             'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
                             selected ? '' : 'text-gray-500 hover:text-gray-900',
                           ].join(' ')}
-                          style={selected ? hybridChipSelectedStyle : undefined}
+                          style={selected ? selectedChipStyle(carry.sidedness.isEdited) : undefined}
                         >
                           <input
                             type="radio"
@@ -3096,7 +3097,7 @@ function carriedFieldStyle(carried: boolean, edited: boolean): CSSProperties {
 }
 
 // Inline style for the selected state of a hybrid chip / segmented
-// control button — soft violet tint with a 1.5px violet ring via
+// control button. Soft violet tint with a 1.5px violet ring via
 // inset box-shadow (no layout shift). Replaces the previous
 // black-filled selected state on variant chips, material-options
 // chips, card-type segmented, sidedness segmented, and the currency
@@ -3105,6 +3106,29 @@ const hybridChipSelectedStyle: CSSProperties = {
   background: 'rgba(123,63,242,0.16)',
   color: '#5b2bba',
   boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
+}
+
+// Same shape as the violet hybrid above, retinted amber for the
+// edited state. Picked at the call site by passing the field's
+// carry.X.isEdited so that an edited carried field's selected
+// chip / segmented button matches the field's amber border, tint
+// and pill instead of leaving a violet active selection inside
+// an amber wrapper.
+const hybridChipEditedSelectedStyle: CSSProperties = {
+  background: 'rgba(245,158,11,0.16)',
+  color: '#92400e',
+  boxShadow: 'inset 0 0 0 1.5px #f59e0b',
+}
+
+// Picks the right hue for a selected chip / segmented button based
+// on whether the field has been edited away from its inherited
+// value. Call sites pass the field's carry.X.isEdited; when the
+// field isn't carried at all (v1 creation) the flag is false so
+// violet wins, which is correct because v1 has no inheritance and
+// the violet/amber distinction collapses to "just the selected
+// look".
+function selectedChipStyle(edited: boolean): CSSProperties {
+  return edited ? hybridChipEditedSelectedStyle : hybridChipSelectedStyle
 }
 
 // Order-sensitive equality (recipient names, positional ink names).
