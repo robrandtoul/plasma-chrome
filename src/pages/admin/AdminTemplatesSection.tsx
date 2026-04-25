@@ -1,0 +1,386 @@
+// Admin section for editing customer-reply templates. Lives inside
+// AdminSettingsPage between Integrations and Materials. Foundation for
+// the customer-reply pipeline (Ship 1 of intervention 3); Ship 2 wires
+// the rendered template into the new-version flow's designer-facing
+// message editor, and Ship 3 routes it through the Help Scout API.
+//
+// Per template: insert toolbar (variable chips + if-block button),
+// blur-saving textarea, live preview pane with sample data, and a
+// Reset button. Audit log fires on every save and on Reset.
+
+import { useEffect, useRef, useState, type RefObject } from 'react'
+import { supabase } from '../../lib/supabase'
+import { logAudit } from '../../lib/audit'
+import {
+  renderTemplate,
+  TEMPLATE_VARIABLES,
+  DEFAULT_BODIES,
+  type TemplateContext,
+} from '../../lib/replyTemplates'
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+interface ReplyTemplate {
+  id: string
+  display_name: string
+  description: string
+  body: string
+  updated_at: string
+}
+
+// Two sample-data toggles for the preview. The "with company" axis
+// drives whether the {? company}…{/?} block renders; the "v1 / v2+"
+// axis drives version_number so the revision template's value cell
+// stays meaningful.
+type CompanyMode = 'with' | 'without'
+type VersionMode = 'v1' | 'v2'
+
+const SAMPLE_BASE = {
+  first_name: 'Kevin',
+  full_name: 'Kevin Knowles',
+  url: 'https://proofs.plasmadesign.co.uk/p/abcd-1234',
+  designer_first_name: '',
+}
+
+function buildSampleContext(company: CompanyMode, version: VersionMode): TemplateContext {
+  return {
+    ...SAMPLE_BASE,
+    company: company === 'with' ? 'Plasma Design' : null,
+    version_number: version === 'v1' ? 1 : 2,
+  }
+}
+
+// ── Section ──────────────────────────────────────────────────────────────────
+
+export default function AdminTemplatesSection() {
+  const [templates, setTemplates] = useState<ReplyTemplate[]>([])
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  useEffect(() => { void load() }, [])
+
+  async function load() {
+    const { data, error } = await supabase
+      .from('reply_templates')
+      .select('id, display_name, description, body, updated_at')
+      .order('id')
+    if (error) { setLoadError(error.message); return }
+    setTemplates((data ?? []) as ReplyTemplate[])
+  }
+
+  function handleSaved(updated: ReplyTemplate) {
+    setTemplates((prev) => prev.map((t) => t.id === updated.id ? updated : t))
+  }
+
+  if (loadError) {
+    return (
+      <section className="rounded-2xl bg-rose-50 p-6 text-sm text-rose-700 ring-1 ring-rose-200">
+        Failed to load reply templates: {loadError}
+      </section>
+    )
+  }
+
+  return (
+    <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+      <div className="mb-4">
+        <h3 className="text-sm font-semibold text-gray-900">Reply templates</h3>
+        <p className="mt-1 text-xs text-gray-500">
+          Templates the customer sees in their Help Scout inbox when a new proof goes
+          live. Variables substitute live; conditional blocks render only when their
+          variable has a value.
+        </p>
+      </div>
+
+      <div className="space-y-6">
+        {templates.length === 0 ? (
+          <p className="text-sm text-gray-400">Loading…</p>
+        ) : (
+          templates.map((t) => (
+            <TemplateCard key={t.id} template={t} onSaved={handleSaved} />
+          ))
+        )}
+      </div>
+
+      {templates.length > 0 && <VariableHelpPanel />}
+    </section>
+  )
+}
+
+// ── One template card ────────────────────────────────────────────────────────
+
+function TemplateCard({
+  template,
+  onSaved,
+}: {
+  template: ReplyTemplate
+  onSaved: (t: ReplyTemplate) => void
+}) {
+  const [draft, setDraft] = useState(template.body)
+  const [working, setWorking] = useState(false)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [companyMode, setCompanyMode] = useState<CompanyMode>('with')
+  const [versionMode, setVersionMode] = useState<VersionMode>(template.id === 'revision' ? 'v2' : 'v1')
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Sync draft to template.body when the parent reloads (e.g. after
+  // a Reset writes through the section's onSaved → state update).
+  useEffect(() => { setDraft(template.body) }, [template.body])
+
+  async function save(nextBody: string, action: 'template.body_updated' | 'template.reset_to_default') {
+    if (nextBody === template.body) return
+    setWorking(true)
+    setError(null)
+    const prevBody = template.body
+    const { data, error: err } = await supabase
+      .from('reply_templates')
+      .update({ body: nextBody, updated_at: new Date().toISOString() })
+      .eq('id', template.id)
+      .select('id, display_name, description, body, updated_at')
+      .single()
+    setWorking(false)
+    if (err || !data) {
+      setError(err?.message ?? 'Save failed')
+      // Roll back the draft if the optimistic state diverged.
+      setDraft(prevBody)
+      return
+    }
+    onSaved(data as ReplyTemplate)
+    setDraft((data as ReplyTemplate).body)
+    setSavedAt(Date.now())
+
+    void logAudit({
+      action,
+      targetType: 'template',
+      targetId: template.id,
+      targetLabel: template.display_name,
+      beforeValue: { body: prevBody },
+      afterValue: { body: nextBody },
+    })
+  }
+
+  function handleBlur() {
+    void save(draft, 'template.body_updated')
+  }
+
+  function handleReset() {
+    const def = DEFAULT_BODIES[template.id]
+    if (def == null) {
+      setError(`No default available for template ${template.id}`)
+      return
+    }
+    if (def === template.body) return
+    const ok = window.confirm('Discard your customisations and restore the default copy?')
+    if (!ok) return
+    void save(def, 'template.reset_to_default')
+  }
+
+  function handleInsertVariable(name: string) {
+    insertAtCursor(textareaRef, `{${name}}`)
+    syncDraftFromRef(textareaRef, setDraft)
+  }
+
+  function handleInsertIfBlock() {
+    // Inserts a skeleton with the variable name placeholder selected
+    // for immediate edit. The selection lands on the variable_name
+    // token between {? and }, so the admin can type the variable
+    // they want without first navigating the cursor.
+    const before = '{? '
+    const placeholder = 'variable_name'
+    const after = '}your conditional content{/?}'
+    insertSelectableAtCursor(textareaRef, before, placeholder, after)
+    syncDraftFromRef(textareaRef, setDraft)
+  }
+
+  const recentlySaved = savedAt != null && Date.now() - savedAt < 2000
+
+  const previewCtx = buildSampleContext(companyMode, versionMode)
+  const previewText = renderTemplate(draft, previewCtx)
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-4">
+      <div className="mb-1 flex items-center gap-3">
+        <h4 className="text-sm font-semibold text-gray-900">{template.display_name}</h4>
+        {working && <span className="text-xs text-gray-400">Saving…</span>}
+        {recentlySaved && !working && <span className="text-xs text-emerald-600">Saved</span>}
+        {error && <span className="text-xs text-rose-600">{error}</span>}
+      </div>
+      <p className="mb-3 text-xs text-gray-500">{template.description}</p>
+
+      {/* Insert toolbar */}
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <span className="mr-1 text-xs font-medium text-gray-500">Insert:</span>
+        {TEMPLATE_VARIABLES.map((v) => (
+          <button
+            key={v.name}
+            type="button"
+            onClick={() => handleInsertVariable(v.name)}
+            title={v.description}
+            className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-gray-200 transition-colors hover:bg-gray-100"
+          >
+            {`{${v.name}}`}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={handleInsertIfBlock}
+          title="Insert a conditional block. Renders only when the named variable has a value."
+          className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-violet-700 ring-1 ring-violet-200 transition-colors hover:bg-violet-50"
+        >
+          + if-block
+        </button>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        {/* Editor */}
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-500">Body</label>
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={handleBlur}
+            rows={10}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs leading-relaxed focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+          />
+        </div>
+
+        {/* Preview */}
+        <div>
+          <div className="mb-1 flex flex-wrap items-center gap-3">
+            <label className="text-xs font-medium text-gray-500">Preview</label>
+            <PreviewToggle<CompanyMode>
+              value={companyMode}
+              onChange={setCompanyMode}
+              options={[
+                { value: 'with',    label: 'with company' },
+                { value: 'without', label: 'without company' },
+              ]}
+            />
+            <PreviewToggle<VersionMode>
+              value={versionMode}
+              onChange={setVersionMode}
+              options={[
+                { value: 'v1', label: 'v1' },
+                { value: 'v2', label: 'v2+' },
+              ]}
+            />
+          </div>
+          <div className="min-h-[14rem] whitespace-pre-wrap rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs leading-relaxed text-gray-700">
+            {previewText}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 flex justify-end">
+        <button
+          type="button"
+          onClick={handleReset}
+          className="text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+        >
+          Reset to default
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Help panel ───────────────────────────────────────────────────────────────
+
+function VariableHelpPanel() {
+  return (
+    <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50/40 p-4">
+      <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Variables</h4>
+      <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
+        {TEMPLATE_VARIABLES.map((v) => (
+          <div key={v.name} className="contents">
+            <dt className="font-mono text-gray-700">{`{${v.name}}`}</dt>
+            <dd className="text-gray-500">{v.description}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <h4 className="mt-4 text-xs font-semibold uppercase tracking-wider text-gray-400">Conditionals</h4>
+      <p className="mt-2 text-xs text-gray-500">
+        Wrap a block in <code className="rounded bg-white px-1 ring-1 ring-gray-200">{'{? variable}'}</code> and{' '}
+        <code className="rounded bg-white px-1 ring-1 ring-gray-200">{'{/?}'}</code> to render only when the
+        variable has a value. For example:
+      </p>
+      <pre className="mt-2 overflow-x-auto rounded-lg bg-white px-3 py-2 text-xs text-gray-700 ring-1 ring-gray-200">{`Hi {first_name}{? company} from {company}{/?}, here's…`}</pre>
+    </div>
+  )
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function PreviewToggle<T extends string>({ value, onChange, options }: {
+  value: T
+  onChange: (v: T) => void
+  options: { value: T; label: string }[]
+}) {
+  return (
+    <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5">
+      {options.map((o) => {
+        const active = o.value === value
+        return (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(o.value)}
+            className={[
+              'rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors',
+              active ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-900',
+            ].join(' ')}
+          >
+            {o.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function insertAtCursor(ref: RefObject<HTMLTextAreaElement | null>, text: string) {
+  const ta = ref.current
+  if (!ta) return
+  const start = ta.selectionStart ?? ta.value.length
+  const end = ta.selectionEnd ?? ta.value.length
+  ta.setRangeText(text, start, end, 'end')
+  ta.focus()
+}
+
+// Insert {before}{placeholder}{after} and select {placeholder} so the
+// admin can immediately overwrite it with the variable they want.
+// Used by the if-block button so the conditional's variable name
+// lands selected for edit, not just inserted as static text.
+function insertSelectableAtCursor(
+  ref: RefObject<HTMLTextAreaElement | null>,
+  before: string,
+  placeholder: string,
+  after: string,
+) {
+  const ta = ref.current
+  if (!ta) return
+  const start = ta.selectionStart ?? ta.value.length
+  const end = ta.selectionEnd ?? ta.value.length
+  const insertedText = `${before}${placeholder}${after}`
+  ta.setRangeText(insertedText, start, end, 'end')
+  // Select the placeholder substring inside the just-inserted text.
+  const placeholderStart = start + before.length
+  const placeholderEnd = placeholderStart + placeholder.length
+  ta.focus()
+  ta.setSelectionRange(placeholderStart, placeholderEnd)
+}
+
+// React's value-controlled textarea doesn't see setRangeText edits as
+// onChange-worthy on every browser, so push the textarea's current
+// value back into local state explicitly after each programmatic
+// insert.
+function syncDraftFromRef(
+  ref: RefObject<HTMLTextAreaElement | null>,
+  setDraft: (v: string) => void,
+) {
+  const ta = ref.current
+  if (!ta) return
+  setDraft(ta.value)
+}

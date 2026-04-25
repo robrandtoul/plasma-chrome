@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
 import { invalidatePublicSettings } from '../../lib/publicSettings'
 import AdminMaterialContentModal, { type MaterialContent } from './AdminMaterialContentModal'
+import AdminTemplatesSection from './AdminTemplatesSection'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -327,6 +328,9 @@ export default function AdminSettingsPage() {
           </button>
         </div>
       </section>
+
+      {/* ── Reply templates ──────────────────────────────────── */}
+      <AdminTemplatesSection />
 
       {/* ── Materials ──────────────────────────────────────────── */}
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
