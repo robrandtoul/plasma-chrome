@@ -471,6 +471,20 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
     await saveKeyFeatures(nextDraft)
   }
 
+  // Reorder by swapping with the neighbour. dir=-1 moves the row
+  // earlier (Up), dir=+1 moves it later (Down). Bounds-guarded;
+  // a no-op call from a disabled-state misclick is harmless.
+  // Saves immediately with the explicit nextDraft to avoid the
+  // React state async gap, same pattern as removeFeature.
+  async function moveFeature(idx: number, dir: -1 | 1) {
+    const swapWith = idx + dir
+    if (swapWith < 0 || swapWith >= draftFeatures.length) return
+    const nextDraft = [...draftFeatures]
+    ;[nextDraft[idx], nextDraft[swapWith]] = [nextDraft[swapWith], nextDraft[idx]]
+    setDraftFeatures(nextDraft)
+    await saveKeyFeatures(nextDraft)
+  }
+
   async function saveKeyFeatures(explicit?: KeyFeature[]) {
     // Source of truth: explicit arg (from removeFeature) or
     // current draft state (from input blurs).
@@ -899,14 +913,45 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                           </p>
                         )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => { void removeFeature(i) }}
-                        className="rounded px-2 py-1 text-xs font-medium text-gray-400 hover:bg-rose-50 hover:text-rose-600"
-                        aria-label={`Remove feature ${i + 1}`}
-                      >
-                        Remove
-                      </button>
+                      {/* Action buttons grouped — Up / Down /
+                          Remove, equal weight, small. Up is
+                          disabled on the first row, Down on the
+                          last. Disabled treatment matches the
+                          Add-feature button: opacity-50 +
+                          cursor-not-allowed. Unicode arrows
+                          since lucide-react isn't in the deps;
+                          the glyphs read at admin chrome scale
+                          without needing a webfont. */}
+                      <div className="flex items-start gap-1">
+                        <button
+                          type="button"
+                          onClick={() => { void moveFeature(i, -1) }}
+                          disabled={i === 0}
+                          className="rounded px-2 py-1 text-xs font-medium text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-400"
+                          aria-label={`Move feature ${i + 1} up`}
+                          title="Move up"
+                        >
+                          ▲
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { void moveFeature(i, 1) }}
+                          disabled={i === draftFeatures.length - 1}
+                          className="rounded px-2 py-1 text-xs font-medium text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-400"
+                          aria-label={`Move feature ${i + 1} down`}
+                          title="Move down"
+                        >
+                          ▼
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { void removeFeature(i) }}
+                          className="rounded px-2 py-1 text-xs font-medium text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+                          aria-label={`Remove feature ${i + 1}`}
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </li>
                   )
                 })}
