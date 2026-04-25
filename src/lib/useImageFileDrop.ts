@@ -46,6 +46,27 @@ export function useImageFileDrop({ onFiles }: Options) {
       const files = Array.from(e.dataTransfer?.files ?? [])
       if (files.length > 0) onFilesRef.current(files)
     }
+    // Capture-phase drop listener. Mirrors handleDrop's state
+    // resets but does NOT call onFiles. Capture fires before any
+    // descendant's bubble-phase handler runs, so cell-level drop
+    // targets that call e.nativeEvent.stopPropagation() (CarryCard,
+    // EmptySlot — added in 05c77f1 to avoid double-routing into
+    // addFilesBatch) cannot prevent the page-level state from
+    // clearing. Without this, the page overlay and the section
+    // drop zone's drag-over styling stayed active indefinitely
+    // after a cell-intercepted drop, because the bubble-phase
+    // listener never received the event.
+    function handleDropCapture(e: DragEvent) {
+      if (!hasFiles(e.dataTransfer)) return
+      dragCounterRef.current = 0
+      setIsPageDragOver(false)
+      // Defensive: in normal flow zoneProps.onDragLeave clears
+      // isZoneDragOver before a cell drop lands, but a missed
+      // leave (e.g. fast cursor crossings, browser quirks) would
+      // leave the zone styled drag-over until the next drag.
+      // Capture-phase reset closes that gap too.
+      setIsZoneDragOver(false)
+    }
     function handleKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         dragCounterRef.current = 0
@@ -56,12 +77,14 @@ export function useImageFileDrop({ onFiles }: Options) {
     window.addEventListener('dragenter', handleDragEnter)
     window.addEventListener('dragleave', handleDragLeave)
     window.addEventListener('dragover', handleDragOver)
+    window.addEventListener('drop', handleDropCapture, true)
     window.addEventListener('drop', handleDrop)
     window.addEventListener('keydown', handleKey)
     return () => {
       window.removeEventListener('dragenter', handleDragEnter)
       window.removeEventListener('dragleave', handleDragLeave)
       window.removeEventListener('dragover', handleDragOver)
+      window.removeEventListener('drop', handleDropCapture, true)
       window.removeEventListener('drop', handleDrop)
       window.removeEventListener('keydown', handleKey)
     }
@@ -84,7 +107,15 @@ export function useImageFileDrop({ onFiles }: Options) {
     onDrop(e: React.DragEvent) {
       if (!hasFiles(e.dataTransfer)) return
       e.preventDefault()
-      e.stopPropagation() // prevent the window drop from also handling these files
+      // Stop native bubble so the window-level bubble-phase
+      // handleDrop does not also fire and double-route into
+      // onFiles (which would call addFilesBatch a second time
+      // after this zone handler already did). Same shape as the
+      // CarryCard / EmptySlot drop handlers in 05c77f1.
+      // Synthetic stopPropagation kept alongside for React-tree
+      // safety; the native one is what stops the window listener.
+      e.stopPropagation()
+      e.nativeEvent.stopPropagation()
       setIsZoneDragOver(false)
       dragCounterRef.current = 0
       setIsPageDragOver(false)
