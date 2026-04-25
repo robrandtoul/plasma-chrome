@@ -684,20 +684,44 @@ export default function CustomerProofPage() {
             >
               {(activeVersion?.names?.length ?? 0) >= 2 ? 'Proofs for' : 'Proof for'}
             </p>
-            <h1
-              className="mt-4 leading-[0.98] tracking-[-0.015em] text-white"
-              style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 61 }}
-            >
-              {proof.customer_name}
-            </h1>
-            {proof.company && (
-              <p
-                className="mt-3 italic text-white/55"
-                style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 28 }}
-              >
-                {proof.company}
-              </p>
-            )}
+            {/* Masthead heading rule: when the customer is a
+                company, promote the company name to the prominent
+                serif H1 and demote the contact's full name to the
+                italic sub-line. When there is no company, fall back
+                to the contact name in the prominent slot with no
+                sub-line.
+                Truthy check trims so an empty or whitespace-only
+                company string falls back to contact-prominent. The
+                sub-line is suppressed when the demoted value is
+                also empty or whitespace, so the masthead never
+                renders a stranded italic line. */}
+            {(() => {
+              const trimmedCompany = proof.company?.trim() ?? ''
+              const trimmedName = proof.customer_name?.trim() ?? ''
+              const companyProminent = trimmedCompany.length > 0
+              const primary = companyProminent ? proof.company! : proof.customer_name
+              const subline = companyProminent && trimmedName.length > 0
+                ? proof.customer_name
+                : null
+              return (
+                <>
+                  <h1
+                    className="mt-4 leading-[0.98] tracking-[-0.015em] text-white"
+                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 61 }}
+                  >
+                    {primary}
+                  </h1>
+                  {subline && (
+                    <p
+                      className="mt-3 italic text-white/55"
+                      style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 28 }}
+                    >
+                      {subline}
+                    </p>
+                  )}
+                </>
+              )
+            })()}
 
             {activeVersion && (
               <div className="mt-10 flex flex-wrap items-start gap-x-10 gap-y-5">
@@ -3340,10 +3364,28 @@ function AbandonedScreen({ proof }: { proof: PublicProof }) {
       <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
         <header className="mb-12">
           <p className="text-sm font-medium uppercase tracking-widest text-gray-400">Proof for</p>
-          <h1 className="mt-1 text-3xl font-bold text-gray-900">{proof.customer_name}</h1>
-          {proof.company && (
-            <p className="mt-1 text-lg text-gray-500">{proof.company}</p>
-          )}
+          {/* Same masthead rule as the live page: company prominent
+              when present (with the contact name as a muted sub-
+              line), contact name prominent when no company. Keeps
+              the customer's brand presence coherent across the live
+              and abandoned screens. */}
+          {(() => {
+            const trimmedCompany = proof.company?.trim() ?? ''
+            const trimmedName = proof.customer_name?.trim() ?? ''
+            const companyProminent = trimmedCompany.length > 0
+            const primary = companyProminent ? proof.company! : proof.customer_name
+            const subline = companyProminent && trimmedName.length > 0
+              ? proof.customer_name
+              : null
+            return (
+              <>
+                <h1 className="mt-1 text-3xl font-bold text-gray-900">{primary}</h1>
+                {subline && (
+                  <p className="mt-1 text-lg text-gray-500">{subline}</p>
+                )}
+              </>
+            )
+          })()}
         </header>
         <div className="rounded-2xl bg-white p-10 text-center shadow-sm ring-1 ring-gray-200">
           <h2 className="text-xl font-semibold text-gray-800">This proof is closed</h2>
