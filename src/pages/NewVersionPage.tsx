@@ -2210,43 +2210,6 @@ export default function NewVersionPage() {
     inheritedVariantIdsRef.current = null
   }
 
-  // Cancel + Save pair, defined once and rendered twice (top of
-  // the page beside the heading, and again at the bottom of the
-  // form below the image grid). Both renders emit the same JSX,
-  // so disabled state, label swaps, a11y hints, and any future
-  // chrome stay in lockstep. The submit button carries
-  // form="new-version-form" so placement outside the <form>
-  // element (top row) is as functional as placement inside
-  // (bottom row).
-  const actionRow = (
-    <div className="flex items-center gap-3">
-      <Link
-        to={`/proofs/${proofId}`}
-        className="text-sm font-medium text-gray-500 hover:text-gray-700"
-      >
-        Cancel
-      </Link>
-      <button
-        type="submit"
-        form="new-version-form"
-        disabled={submitting || !isValid}
-        title={!isValid ? missingFieldsHint(validations) : undefined}
-        aria-label={
-          !isValid
-            ? `Save version, ${missingFieldsHint(validations)}`
-            : undefined
-        }
-        className={[
-          'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
-          isValid ? 'bg-gray-900 hover:bg-gray-700' : 'bg-gray-900/60',
-          'disabled:cursor-not-allowed disabled:opacity-50',
-        ].join(' ')}
-      >
-        {submitting ? 'Uploading and saving…' : 'Save version'}
-      </button>
-    </div>
-  )
-
   // ── Per-field carried/edited derivations ───────────────────────
   // The inheritance snapshot captures every value carried from
   // v(N-1) at form-load time. Each carried field then derives
@@ -2341,29 +2304,21 @@ export default function NewVersionPage() {
           first, so the overlay never double-fires for a precise
           drop. */}
       <PageDropOverlay visible={isPageDragOver} />
-      <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6">
+      <div className="mx-auto max-w-2xl px-4 py-10 pb-32 sm:px-6">
 
         <div className="mb-6">
           <Link to={`/proofs/${proofId}`} className="text-sm text-gray-400 hover:text-gray-700">← Back to project</Link>
         </div>
 
-        {/* Page heading + top actions. The Cancel + Save pair is
-            defined once as `actionRow` below the heading row and
-            rendered twice (here and at the bottom of the form) so
-            any future chrome — saving spinner, progress pill, etc
-            — only has to be added in one place. Both instances
-            point at the same form via the submit button's `form=`
-            attribute, so placement inside or outside the form
-            element doesn't change behaviour. */}
-        <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              {savedVersion ? `Version v${savedVersion.number} saved` : 'Add version'}
-            </h1>
-            {proofName && <p className="mt-1 text-gray-500">{proofName}</p>}
-            {proofCompany && <p className="text-sm text-gray-400">{proofCompany}</p>}
-          </div>
-          {!savedVersion && actionRow}
+        {/* Page heading. Cancel + Save live in the sticky bottom
+            action bar (see end of return) so they're reachable
+            from any scroll position on the long-form layout. */}
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold text-gray-900">
+            {savedVersion ? `Version v${savedVersion.number} saved` : 'Add version'}
+          </h1>
+          {proofName && <p className="mt-1 text-gray-500">{proofName}</p>}
+          {proofCompany && <p className="text-sm text-gray-400">{proofCompany}</p>}
         </div>
 
         {savedVersion && (() => {
@@ -2592,40 +2547,70 @@ export default function NewVersionPage() {
           {formExpanded && (
           <>
           {/* Pricing display — required choice between standard grid and custom quote */}
-          {/* Pricing display — wrapped in the carry-forward
-              treatment when this is a v2+ creation. Pill renders
-              outside the wrapper so it sits on the field's own
-              label line; the violet ribbon wraps the radio cards
-              themselves. */}
-          {carry.pricingDisplay.isCarried && inheritedVersionNumber != null && (
-            <div className="mb-2.5 flex justify-end">
-              <CarriedPill edited={carry.pricingDisplay.isEdited} versionNumber={inheritedVersionNumber} />
-            </div>
-          )}
-          <div style={carriedFieldStyle(carry.pricingDisplay.isCarried, carry.pricingDisplay.isEdited)}>
-            <PricingDisplayField
-              value={pricingDisplay}
-              onChange={setPricingDisplay}
-              invalid={shouldHighlight('pricingDisplay')}
-              forwardRef={pricingDisplayRef}
-            />
-            {pricingDisplay === null && !shouldHighlight('pricingDisplay') && (
-              <p className="-mt-3 text-xs text-gray-400">Select one.</p>
-            )}
-          </div>
-
-          {/* Specification — split into two sub-groups (Design +
-              Layout) with Currency as a standalone line between
-              them. The outer SPECIFICATION heading is intentionally
-              gone; the sub-headings carry the structure. Sub-
-              headings use the same type-style as the old outer
-              heading so they read at matching weight. */}
+          {/* Commercial — pricing display + currency. The two
+              monetary decisions live together at the top of the
+              form, before the physical card decisions in
+              Specification. Hides Currency in custom-quote mode
+              (no price grid means no currency to denominate). */}
           <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
-            {/* ── DESIGN ─────────────────────────────────────────
-                Material + variant + material options + ink names.
-                Everything that describes what the physical card
-                looks like. */}
-            <h3 className="mb-7 text-sm font-semibold uppercase tracking-widest text-gray-400">Design</h3>
+            <div className="mb-7">
+              <h3 className="text-base font-semibold text-gray-900">Commercial</h3>
+              <p className="mt-0.5 text-xs text-gray-500">Currency and how customers see pricing.</p>
+            </div>
+
+            <div className="mb-8">
+              <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                <span>Pricing display</span>
+                {carry.pricingDisplay.isCarried && inheritedVersionNumber != null && (
+                  <CarriedPill edited={carry.pricingDisplay.isEdited} versionNumber={inheritedVersionNumber} />
+                )}
+              </label>
+              <div style={carriedFieldStyle(carry.pricingDisplay.isCarried, carry.pricingDisplay.isEdited)}>
+                <PricingDisplayField
+                  value={pricingDisplay}
+                  onChange={setPricingDisplay}
+                  invalid={shouldHighlight('pricingDisplay')}
+                  forwardRef={pricingDisplayRef}
+                />
+              </div>
+            </div>
+
+            {/* Currency — hidden in custom-quote mode (no grid, no
+                currency to denominate). Same shape as the previous
+                standalone Currency block, just relocated into the
+                Commercial card. */}
+            {!isCustomQuote && (
+              <div ref={currencyRef}>
+                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                  <span>Currency</span>
+                  {carry.currency.isCarried && inheritedVersionNumber != null && (
+                    <CarriedPill edited={carry.currency.isEdited} versionNumber={inheritedVersionNumber} />
+                  )}
+                </label>
+                <div style={carriedFieldStyle(carry.currency.isCarried, carry.currency.isEdited)}>
+                  <CurrencyField
+                    value={currency}
+                    onChange={(c) => setCurrency(c)}
+                    invalid={shouldHighlight('currency')}
+                    edited={carry.currency.isEdited}
+                  />
+                  {shouldHighlight('currency') && (
+                    <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* Specification — physical card decisions. Split into
+              Design (material, finish, ink names) and Layout
+              (names, sides, splits) sub-sections under their own
+              bold sans-serif headers. */}
+          <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
+            <div className="mb-7">
+              <h3 className="text-base font-semibold text-gray-900">Design</h3>
+              <p className="mt-0.5 text-xs text-gray-500">Material and finish.</p>
+            </div>
 
             <div className="mb-8">
               <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
@@ -2660,7 +2645,6 @@ export default function NewVersionPage() {
                   {carry.variants.isCarried && inheritedVersionNumber != null && (
                     <CarriedPill edited={carry.variants.isEdited} versionNumber={inheritedVersionNumber} />
                   )}
-                  {isMultiVariant && <span className="ml-1 font-normal text-gray-400">Tick every option you want the customer to see.</span>}
                 </label>
 
                 <div style={carriedFieldStyle(carry.variants.isCarried, carry.variants.isEdited)}>
@@ -2696,6 +2680,18 @@ export default function NewVersionPage() {
                       <option value="">Select…</option>
                       {variants.map((v) => <option key={v.id} value={v.id}>{v.display_name}</option>)}
                     </select>
+                  )}
+                  {/* Customer-perspective explanation of what
+                      ticking variants does. Replaces the previous
+                      "Tick every option you want the customer to
+                      see." which implied the wrong mental model
+                      (tick-as-approval rather than tick-as-column).
+                      Only renders for multi-variant materials —
+                      single-variant select shows nothing extra. */}
+                  {isMultiVariant && (
+                    <p className="mt-1.5 text-xs text-gray-500">
+                      Customer sees a column for each {variantLabel(variantType).toLowerCase()} you tick.
+                    </p>
                   )}
                   {shouldHighlight('variant') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
                   {/* Auto-custom-quote notice. Surfaces when the
@@ -2748,8 +2744,8 @@ export default function NewVersionPage() {
                       )
                     })}
                   </div>
-                  <p className="mt-1.5 text-xs text-gray-400">
-                    Select which {optionLabelPlural.toLowerCase()} to offer. Each {optionLabelSingular.toLowerCase()} gets its own proof images.
+                  <p className="mt-1.5 text-xs text-gray-500">
+                    Each {optionLabelSingular.toLowerCase()} becomes a tab on the customer's view, with its own proof images and pricing.
                   </p>
                 </div>
               </div>
@@ -2799,7 +2795,6 @@ export default function NewVersionPage() {
               <div className="mb-8">
                 <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
                   <span>Ink names</span>
-                  <span className="font-normal text-gray-400">(optional, comma-separated)</span>
                   {carry.inkNames.isCarried && inheritedVersionNumber != null && (
                     <CarriedPill edited={carry.inkNames.isEdited} versionNumber={inheritedVersionNumber} />
                   )}
@@ -2807,36 +2802,7 @@ export default function NewVersionPage() {
                 <div style={carriedFieldStyle(carry.inkNames.isCarried, carry.inkNames.isEdited)}>
                   <input type="text" placeholder="e.g. Pantone 185 C, Metallic Gold" value={inkNamesText}
                     onChange={(e) => setInkNamesText(e.target.value)} className={inputClass} />
-                </div>
-              </div>
-            )}
-
-            {/* ── Currency (standalone, no heading) ──────────────
-                Sits between Design and Layout with the same
-                vertical breathing room as a sub-group, so it
-                reads as an equal-weight third unit. Hidden in
-                custom-quote mode — no price on display, no need
-                for a currency pick. */}
-            {!isCustomQuote && (
-              <div ref={currencyRef} className="mt-8 mb-8">
-                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
-                  <span>Currency</span>
-                  {carry.currency.isCarried && inheritedVersionNumber != null && (
-                    <CarriedPill edited={carry.currency.isEdited} versionNumber={inheritedVersionNumber} />
-                  )}
-                </label>
-                <div style={carriedFieldStyle(carry.currency.isCarried, carry.currency.isEdited)}>
-                  <CurrencyField
-                    value={currency}
-                    onChange={(c) => setCurrency(c)}
-                    invalid={shouldHighlight('currency')}
-                    edited={carry.currency.isEdited}
-                  />
-                  {shouldHighlight('currency')
-                    ? <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>
-                    : currency === null
-                      ? <p className="mt-1.5 text-xs text-gray-400">Select one.</p>
-                      : null}
+                  <p className="mt-1.5 text-xs text-gray-500">Optional. Comma-separated.</p>
                 </div>
               </div>
             )}
@@ -2851,8 +2817,13 @@ export default function NewVersionPage() {
                 sidedness → shared (business only + two-sided +
                 ≥2 names). Names is required in Business mode and
                 irrelevant in Membership; shared side by internal
-                convention is always 'front' in Business. */}
-            <h3 className="mt-8 mb-7 text-sm font-semibold uppercase tracking-widest text-gray-400">Layout</h3>
+                convention is always 'front' in Business.
+                Currency lives in the Commercial card above; this
+                card holds the physical layout decisions only. */}
+            <div className="mt-10 mb-7">
+              <h3 className="text-base font-semibold text-gray-900">Layout</h3>
+              <p className="mt-0.5 text-xs text-gray-500">Names, sides, and how the card splits.</p>
+            </div>
 
             {/* Card type — segmented pill mirroring Sidedness. v1
                 defaults to Business. v2+ inheritance derives from
@@ -2913,14 +2884,7 @@ export default function NewVersionPage() {
                 regardless of mode). */}
             <div ref={namesRef} className="mb-8">
               <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
-                {cardType === 'business' ? (
-                  <span>Names on this order</span>
-                ) : (
-                  <>
-                    <span>Variants</span>
-                    <span className="font-normal text-gray-400">(optional)</span>
-                  </>
-                )}
+                <span>{cardType === 'business' ? 'Names on this order' : 'Variants'}</span>
                 {carry.names.isCarried && inheritedVersionNumber != null && (
                   <CarriedPill edited={carry.names.isEdited} versionNumber={inheritedVersionNumber} />
                 )}
@@ -2938,6 +2902,13 @@ export default function NewVersionPage() {
                     cardType === 'business' ? 'Names on this order' : 'Tier variants'
                   }
                 />
+                {/* Below-input subtitle for the optional/membership
+                    case, replacing the label's previous (optional)
+                    annotation. Keeps the label clean and harmonises
+                    with the rest of the form's helper rhythm. */}
+                {cardType === 'membership' && (
+                  <p className="mt-1.5 text-xs text-gray-500">Optional.</p>
+                )}
                 {shouldHighlight('names') && (
                   <p className="mt-1.5 text-xs font-medium text-rose-500">
                     Add at least one name.
@@ -3457,17 +3428,11 @@ export default function NewVersionPage() {
             )}
           </section>
 
-          {/* Bottom-of-form mirror of the top action row. Same
-              Cancel + Save pair, same form="new-version-form"
-              wiring, so clicking Save here routes through the
-              same handleSubmit → validation → scroll-to-first-
-              invalid path as the top button. Right-aligned to
-              match the top row's visual position within the
-              content column. Not sticky — the form needs the
-              vertical space for the image grid. */}
-          <div className="flex justify-end">
-            {actionRow}
-          </div>
+          {/* The previous bottom-of-form action row mirror was
+              dropped in form polish v2; the sticky action bar
+              below the form (rendered outside the form's flex
+              column) replaces both this mirror and the top-right
+              placement. */}
 
           {/* Change notes */}
           <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
@@ -3563,6 +3528,43 @@ export default function NewVersionPage() {
 
         </form>
       </div>
+
+      {/* Sticky bottom action bar. Replaces both the previous
+          top-right placement and the bottom-of-form mirror so
+          Cancel + Save are always reachable on long-form scrolls.
+          Aligned to the form's max-w-2xl content column for visual
+          consistency with the cards above; subtle white background
+          with backdrop blur reads as a separate layer over the
+          form. Hidden on the post-save MessageSendPanel branch
+          since the panel owns its own action chrome (Send / Skip).
+          The form's wrapper carries pb-32 so the last form
+          content scrolls clear of this bar. */}
+      {!savedVersion && (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 backdrop-blur">
+          <div className="mx-auto flex max-w-2xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+            <Link
+              to={`/proofs/${proofId}`}
+              className="text-sm font-medium text-gray-500 hover:text-gray-700"
+            >
+              Cancel
+            </Link>
+            <button
+              type="submit"
+              form="new-version-form"
+              disabled={submitting || !isValid}
+              title={!isValid ? missingFieldsHint(validations) : undefined}
+              aria-label={!isValid ? `Save version, ${missingFieldsHint(validations)}` : undefined}
+              className={[
+                'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
+                isValid ? 'bg-gray-900 hover:bg-gray-700' : 'bg-gray-900/60',
+                'disabled:cursor-not-allowed disabled:opacity-50',
+              ].join(' ')}
+            >
+              {submitting ? 'Uploading and saving…' : 'Save version'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

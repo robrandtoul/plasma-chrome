@@ -1,4 +1,38 @@
+// Compact pricing-display picker. Designer chooses whether the
+// customer sees a standard price grid or a custom-quote note.
+//
+// Segmented toggle (matches the form's other segmented controls:
+// Currency, Card type, Sidedness) plus a contextual one-line subtitle
+// that switches with selection so the customer-visible outcome stays
+// explained inline. Replaces the previous two-card radio layout
+// which cost ~120px of vertical space for the same choice.
+//
+// Used by NewVersionPage's Commercial section and EditVersionPage's
+// pricing block. Both surfaces benefit consistently from the rewrite;
+// EditVersionPage's standardDisabled / disabledReason pair keeps
+// working (the Standard button greys out and the reason renders as
+// an additional subtitle when set).
+
+import type { CSSProperties } from 'react'
+
 export type PricingDisplayValue = 'standard' | 'custom'
+
+const SUBTITLE_FOR_VALUE: Record<PricingDisplayValue, string> = {
+  standard: 'Customer sees a price grid based on material and quantity.',
+  custom: "Pricing is hidden. Customer sees a note saying you'll quote separately.",
+}
+const SUBTITLE_UNSET = 'Choose how customers see pricing.'
+
+// Inline selected-state style. Mirrors the violet hybrid used by
+// the other segmented controls on the new-version form (variant
+// chips, Card type, Sidedness, Currency). Kept inline here rather
+// than reaching across to NewVersionPage so PricingDisplayField
+// stays self-contained for EditVersionPage's usage too.
+const SELECTED_STYLE: CSSProperties = {
+  background: 'rgba(123,63,242,0.16)',
+  color: '#5b2bba',
+  boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
+}
 
 export function PricingDisplayField({
   value,
@@ -19,90 +53,54 @@ export function PricingDisplayField({
   // which is broken output. Disabling the option at the source
   // removes the footgun without needing a save-time guard.
   standardDisabled?: boolean
-  // Explanatory helper rendered below the fieldset when the
-  // Standard option is disabled, so the designer understands why.
+  // Explanatory helper rendered below the toggle when the Standard
+  // option is disabled, so the designer understands why.
   disabledReason?: string
 }) {
-  return (
-    <section
-      ref={forwardRef as React.RefObject<HTMLElement>}
-      className={[
-        'rounded-2xl bg-white p-6 shadow-sm ring-1',
-        invalid ? 'ring-rose-300' : 'ring-gray-200',
-      ].join(' ')}
-    >
-      <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Pricing display</h2>
-      <fieldset className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <legend className="sr-only">Choose how pricing is shown to the customer</legend>
-        <OptionCard
-          label="Standard pricing"
-          description="Customer sees a price grid based on material and quantity."
-          value="standard"
-          checked={value === 'standard'}
-          onChange={() => onChange('standard')}
-          disabled={standardDisabled}
-        />
-        <OptionCard
-          label="Custom quote"
-          description="Pricing is hidden. Customer sees a note saying you'll quote separately."
-          value="custom"
-          checked={value === 'custom'}
-          onChange={() => onChange('custom')}
-        />
-      </fieldset>
-      {standardDisabled && disabledReason && (
-        <p className="mt-3 text-xs text-gray-500">{disabledReason}</p>
-      )}
-      {invalid && <p className="mt-3 text-xs font-medium text-rose-500">Required</p>}
-    </section>
-  )
-}
+  const subtitle = value == null ? SUBTITLE_UNSET : SUBTITLE_FOR_VALUE[value]
 
-function OptionCard({
-  label,
-  description,
-  value,
-  checked,
-  onChange,
-  disabled = false,
-}: {
-  label: string
-  description: string
-  value: string
-  checked: boolean
-  onChange: () => void
-  disabled?: boolean
-}) {
   return (
-    <label
-      className={[
-        'relative flex flex-col rounded-xl border-2 p-4 transition-colors',
-        disabled
-          ? 'cursor-not-allowed border-gray-200 bg-gray-50/50 opacity-60'
-          : 'cursor-pointer focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
-        !disabled && (checked
-          ? 'border-gray-900 bg-gray-50'
-          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'),
-      ].join(' ')}
-    >
-      <input
-        type="radio"
-        name="pricing-display"
-        value={value}
-        checked={checked}
-        onChange={onChange}
-        disabled={disabled}
-        className="sr-only"
-      />
-      <div className="flex items-start justify-between gap-3">
-        <span className="text-sm font-semibold text-gray-900">{label}</span>
-        {checked && (
-          <svg className="h-4 w-4 shrink-0 text-gray-900" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l3.5 3.5 6.5-7" />
-          </svg>
-        )}
-      </div>
-      <p className="mt-1 text-xs text-gray-500">{description}</p>
-    </label>
+    <section ref={forwardRef as React.RefObject<HTMLElement>}>
+      <fieldset
+        className={[
+          'inline-flex rounded-xl border bg-white p-0.5',
+          invalid ? 'border-rose-300' : 'border-gray-200',
+        ].join(' ')}
+      >
+        <legend className="sr-only">Pricing display</legend>
+        {(['standard', 'custom'] as const).map((opt) => {
+          const selected = value === opt
+          const disabled = opt === 'standard' && standardDisabled
+          return (
+            <label
+              key={opt}
+              className={[
+                'rounded-lg px-5 py-2 text-sm font-semibold transition-colors',
+                'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
+                disabled ? 'cursor-not-allowed text-gray-300' : 'cursor-pointer',
+                !disabled && (selected ? '' : 'text-gray-500 hover:text-gray-900'),
+              ].join(' ')}
+              style={selected && !disabled ? SELECTED_STYLE : undefined}
+            >
+              <input
+                type="radio"
+                name="pricing-display"
+                value={opt}
+                checked={selected}
+                disabled={disabled}
+                onChange={() => !disabled && onChange(opt)}
+                className="sr-only"
+              />
+              {opt === 'standard' ? 'Standard pricing' : 'Custom quote'}
+            </label>
+          )
+        })}
+      </fieldset>
+      <p className="mt-1.5 text-xs text-gray-500">{subtitle}</p>
+      {standardDisabled && disabledReason && (
+        <p className="mt-1.5 text-xs text-gray-500">{disabledReason}</p>
+      )}
+      {invalid && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
+    </section>
   )
 }

@@ -661,13 +661,21 @@ export default function EditVersionPage() {
               Standard is disabled when the saved snapshot carries no
               per-tier prices (5+ ink versions, historical custom
               quotes) so the designer can't flip the version into a
-              standard-priced state that has no grid to show. */}
-          <PricingDisplayField
-            value={pricingDisplay}
-            onChange={setPricingDisplay}
-            standardDisabled={snapshotHasNoPrices}
-            disabledReason="No standard pricing available for this version. Saved as a custom quote."
-          />
+              standard-priced state that has no grid to show.
+              The PricingDisplayField rewrite (form polish v2) made
+              the component card-less so it can sit inside parent
+              cards on the new-version flow's Commercial section.
+              On this edit-version surface we wrap it with the
+              standalone-card chrome it used to provide internally. */}
+          <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Pricing display</h2>
+            <PricingDisplayField
+              value={pricingDisplay}
+              onChange={setPricingDisplay}
+              standardDisabled={snapshotHasNoPrices}
+              disabledReason="No standard pricing available for this version. Saved as a custom quote."
+            />
+          </section>
 
           {/* Specification */}
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
