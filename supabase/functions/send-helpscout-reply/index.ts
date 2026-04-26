@@ -96,6 +96,45 @@ interface SendReplyResult {
   thread_id: number
 }
 
+// Help Scout's reply endpoint requires customer.id explicitly,
+// despite earlier docs suggesting it falls back to primaryCustomer
+// when omitted. A 400 with `path: "customer", message: "must not be
+// null"` is the symptom when missing. Resolve the conversation's
+// primary customer id with a quick GET first, then include it in
+// the reply body. Throws HsError when the conversation is missing
+// (404), the GET fails for any other reason (passes status), or
+// the conversation has no primary customer to attribute the reply
+// to (502 — unusual; would need designer intervention in HS).
+async function fetchPrimaryCustomerId(
+  token: string,
+  conversationId: string,
+): Promise<number> {
+  console.log('[send-helpscout-reply] GET conversation for primary customer')
+  const resp = await fetch(
+    `https://api.helpscout.net/v2/conversations/${conversationId}`,
+    {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    },
+  )
+  if (resp.status === 404) {
+    throw new HsError(404, 'Help Scout conversation not found')
+  }
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '<body read failed>')
+    throw new HsError(resp.status, `Help Scout conversation fetch error (${resp.status}): ${text}`)
+  }
+  const data = await resp.json().catch(() => null)
+  const customerId = (data as { primaryCustomer?: { id?: number } } | null)?.primaryCustomer?.id
+  if (!customerId || typeof customerId !== 'number') {
+    throw new HsError(
+      502,
+      'Help Scout conversation has no primary customer; cannot attribute reply.',
+    )
+  }
+  console.log('[send-helpscout-reply] fetched primary customer', { id: customerId })
+  return customerId
+}
+
 // Help Scout's reply endpoint returns 201 Created with no body and a
 // Location header pointing at the new thread:
 //   Location: https://api.helpscout.net/v2/conversations/{conv}/threads/{thread}
@@ -106,12 +145,17 @@ async function postReply(
   conversationId: string,
   text: string,
   userId: number,
+  customerId: number,
 ): Promise<SendReplyResult> {
   const requestBody = JSON.stringify({
     text,
     user: userId,
-    // customer omitted: Help Scout uses the conversation's
-    // primaryCustomer by default, which is what we want.
+    // customer.id is required by Help Scout's reply endpoint; the
+    // earlier "omit and HS uses primaryCustomer by default" claim
+    // turned out to be false (HS returns 400 with path:"customer",
+    // message:"must not be null"). fetchPrimaryCustomerId resolves
+    // it from a quick GET before this call.
+    customer: { id: customerId },
     draft: false,
   })
   console.log('[send-helpscout-reply] POST reply', { conversationId, userId, bodyLen: text.length })
@@ -219,12 +263,14 @@ Deno.serve(async (req) => {
     }
     console.log('[send-helpscout-reply] secrets ok', { userIdNum })
 
-    // The HS API call path. Errors surface as HsError (from postReply
-    // or getAccessToken); other throws fall through to the outer catch.
+    // The HS API call path. Errors surface as HsError (from
+    // getAccessToken, fetchPrimaryCustomerId, or postReply); other
+    // throws fall through to the outer catch.
     let result: SendReplyResult
     try {
       const token = await getAccessToken(appId, appSecret)
-      result = await postReply(token, conversationId, body, userIdNum)
+      const customerId = await fetchPrimaryCustomerId(token, conversationId)
+      result = await postReply(token, conversationId, body, userIdNum, customerId)
     } catch (hsErr) {
       if (hsErr instanceof HsError) {
         const upstream = hsErr.status === 404 ? 404 : 502
