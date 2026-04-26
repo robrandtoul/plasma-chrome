@@ -157,6 +157,13 @@ async function postReply(
     // it from a quick GET before this call.
     customer: { id: customerId },
     draft: false,
+    // Transition the conversation to Pending as part of the reply
+    // action: the customer is being asked to review the proof, so
+    // it's waiting on them, not on us. Without this the thread
+    // stays Active in HS's queue and looks unhandled. The reply
+    // endpoint accepts status as an optional field that updates
+    // the parent conversation atomically with the new thread.
+    status: 'pending',
   })
   console.log('[send-helpscout-reply] POST reply', { conversationId, userId, bodyLen: text.length })
   const resp = await fetch(
