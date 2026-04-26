@@ -132,6 +132,70 @@ function htmlToPlainText(html: string | undefined | null): string {
     .trim()
 }
 
+// Strip known email cruft from a plain-text thread body so the
+// designer sees the actual message content rather than the email
+// chrome (signatures, satisfaction prompts, promotional templates,
+// quoted prior content). Each pattern is conservative: only known
+// shapes are touched, and a non-match leaves the body alone.
+//
+// Pattern application order matters. Run the most specific strips
+// first so a downstream pattern doesn't see fragments left behind by
+// an earlier one. The trim at the end mops up the whitespace that
+// the strips usually leave behind.
+//
+// Applied to both customer- and staff-side thread bodies because both
+// can carry cruft. Customer messages from email clients tend to have
+// signature blocks and quoted history; staff replies via Help Scout
+// carry the satisfaction-rating block, the auto-appended Plasma
+// signature template, and the card-types promotional footer.
+function cleanThreadBody(text: string): string {
+  if (!text) return ''
+  let s = text
+
+  // 1. Help Scout satisfaction block. Pattern: "How would you rate
+  //    (my|this) reply?" followed by satisfaction.helpscout.net
+  //    links. Strip the prompt and everything after it.
+  s = s.replace(/\n?\s*How would you rate (my|this) reply\?[\s\S]*$/i, '')
+
+  // 2. Card-types promotional template. Pattern: a line beginning
+  //    with "card types |" followed by piped URLs to plasmadesign.co.uk
+  //    product pages. Strip from that line to the end.
+  s = s.replace(/\n?\s*card types\s*\|[\s\S]*$/i, '')
+
+  // 3. Quoted prior messages. Pattern: a line shaped like
+  //    "On <date>, <name> wrote:" followed by quoted content (often
+  //    with leading "> " on each line). Strip the marker and
+  //    everything after.
+  s = s.replace(/\n?\s*On .+?,? .+? wrote:[\s\S]*$/i, '')
+
+  // 4. Email-client signature block. Pattern: a line that starts
+  //    with one of the common sign-off phrases on its own. Strip
+  //    from that line to the end. Conservative: requires the
+  //    sign-off to be at line start AND followed by either a
+  //    comma + EOL or just EOL, so a sentence like "Best regards
+  //    are due to your team" is not stripped.
+  s = s.replace(
+    /\n[ \t]*(kind regards|best regards|warm regards|regards|cheers|sincerely|thanks|many thanks)[,.]?\s*\n[\s\S]*$/i,
+    '',
+  )
+
+  // 5. Mailto bracket annotations. Email clients sometimes render
+  //    "name@example.com <mailto:name@example.com>". Strip the
+  //    bracketed annotation; leave the email address visible.
+  s = s.replace(/\s*<mailto:[^>]+>/g, '')
+
+  // 6. URL bracket annotations. Same shape for plain URLs:
+  //    "https://example.com <https://example.com>". Strip the
+  //    bracketed annotation.
+  s = s.replace(/\s*<(https?:\/\/[^>]+)>/g, '')
+
+  // 7. Collapse runs of 3+ blank lines down to 2 so the strips
+  //    above don't leave a trailing whitespace canyon.
+  s = s.replace(/\n{3,}/g, '\n\n')
+
+  return s.trim()
+}
+
 function authorNameFor(t: HsThread): string {
   const first = t.createdBy?.first ?? ''
   const last = t.createdBy?.last ?? ''
@@ -202,7 +266,12 @@ Deno.serve(async (req) => {
       type: t.type ?? 'unknown',
       authorName: authorNameFor(t),
       authorType: authorTypeFor(t),
-      bodyText: htmlToPlainText(t.body),
+      // htmlToPlainText projects the HTML to readable text; then
+      // cleanThreadBody strips the email cruft (signatures,
+      // satisfaction prompts, promotional templates, quoted prior
+      // content). Applied to every thread so both customer- and
+      // staff-side bodies surface clean in the panel.
+      bodyText: cleanThreadBody(htmlToPlainText(t.body)),
       createdAt: t.createdAt ?? '',
     }))
 
