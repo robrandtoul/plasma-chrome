@@ -136,7 +136,7 @@ export default function MessageSendPanel({
       if (cancelled) return
       setContextLoading(false)
       if (error) {
-        setContextError(error.message)
+        setContextError(await extractServerError(error, error.message))
         return
       }
       const payload = data as ContextResponse | { error: string }
@@ -171,9 +171,15 @@ export default function MessageSendPanel({
     })
 
     if (error) {
-      // Try to surface the upstream error message if available.
-      const message = (error as Error).message ?? 'Send failed.'
-      setSendError(message)
+      // supabase-js wraps non-2xx into a FunctionsHttpError whose
+      // .message is the generic "Edge Function returned a non-2xx
+      // status code". The actual function-emitted JSON body sits on
+      // .context (the underlying Response). Read it explicitly so
+      // the designer sees our error copy ("HELPSCOUT_DEFAULT_USER_ID
+      // not set", "Help Scout reply error (400): ...", etc) rather
+      // than the meaningless wrapper text.
+      const fallback = (error as Error).message ?? 'Send failed.'
+      setSendError(await extractServerError(error, fallback))
       setEditorState('error')
       return
     }
@@ -401,4 +407,27 @@ function formatThreadTimestamp(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+// supabase-js wraps every non-2xx function response in a
+// FunctionsHttpError whose .message is the generic "Edge Function
+// returned a non-2xx status code". The actual function-emitted body
+// is on err.context (the underlying Response). Read it explicitly
+// so the designer sees our error copy ("HELPSCOUT_DEFAULT_USER_ID
+// not set", "Help Scout reply error (400): ...") rather than the
+// wrapper. Falls back to fallbackMessage when the body is missing,
+// not JSON, or doesn't contain an error field.
+async function extractServerError(err: unknown, fallbackMessage: string): Promise<string> {
+  const ctx = (err as { context?: Response }).context
+  if (!ctx || typeof ctx.clone !== 'function') return fallbackMessage
+  try {
+    const cloned = ctx.clone()
+    const parsed = await cloned.json()
+    if (parsed && typeof parsed === 'object' && typeof parsed.error === 'string') {
+      return parsed.error
+    }
+  } catch {
+    // Body not JSON, body already consumed, etc — fall through.
+  }
+  return fallbackMessage
 }
