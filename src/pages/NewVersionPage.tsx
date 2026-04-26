@@ -12,6 +12,9 @@ import NameChipInput from '../components/NameChipInput'
 import { matchImageToName } from '../lib/matchImageToName'
 import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { PageDropOverlay } from '../components/PageDropOverlay'
+import MessageSendPanel from '../components/MessageSendPanel'
+import { firstName } from '../lib/firstName'
+import { customerProofPath } from '../lib/customerProofUrl'
 import type { Currency, ProofNameApproval } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 
@@ -119,6 +122,18 @@ export default function NewVersionPage() {
 
   const [proofName, setProofName] = useState('')
   const [proofCompany, setProofCompany] = useState('')
+  // Linked Help Scout conversation id, populated by the chrome
+  // query above. Null means the proof was never linked to a HS
+  // thread; the post-save MessageSendPanel reads this flag to
+  // decide between rendering the editor or the no-conversation
+  // continue-only path.
+  const [proofHelpScoutConversationId, setProofHelpScoutConversationId] =
+    useState<string | null>(null)
+  // Just-saved version, used to swap out the form for the
+  // MessageSendPanel after a successful save. Null while the form is
+  // editable; non-null after handleSubmit's insert returns. Replaces
+  // the previous immediate navigate(`/proofs/${proofId}`).
+  const [savedVersion, setSavedVersion] = useState<{ id: string; number: number } | null>(null)
   const [materials, setMaterials] = useState<Material[]>([])
   const [selectedMaterialId, setSelectedMaterialId] = useState('')
   const [variants, setVariants] = useState<Variant[]>([])
@@ -279,16 +294,21 @@ export default function NewVersionPage() {
     let cancelled = false
 
     async function load() {
-      // Customer name + company for the page chrome. Fires in
+      // Customer name + company for the page chrome, plus the linked
+      // Help Scout conversation id so the post-save MessageSendPanel
+      // (Ship 2 of intervention 3) knows whether to render the
+      // editor or fall back to the no-conversation path. Fires in
       // parallel; not ordering-sensitive.
-      void supabase.from('proofs').select('contacts(full_name, companies(name))').eq('id', proofId!).single()
+      void supabase.from('proofs').select('helpscout_conversation_id, contacts(full_name, companies(name))').eq('id', proofId!).single()
         .then(({ data }) => {
           if (cancelled) return
-          const c = (data?.contacts as any)
+          const row = data as any
+          const c = row?.contacts
           if (c) {
             setProofName(c.full_name ?? '')
             setProofCompany(c.companies?.name ?? '')
           }
+          setProofHelpScoutConversationId(row?.helpscout_conversation_id ?? null)
         })
 
       // Materials for the picker. Filtered to active + published +
@@ -1777,7 +1797,7 @@ export default function NewVersionPage() {
         // analytics and any future "this is a clone of..." UI.
         cloned_from_version_id: v1Carry?.versionId ?? null,
       })
-      .select('id')
+      .select('id, version_number')
       .single()
 
     if (insertError || !versionData) {
@@ -1981,7 +2001,14 @@ export default function NewVersionPage() {
       },
     })
 
-    navigate(`/proofs/${proofId}`)
+    // Hand off to the MessageSendPanel. The render branch below
+    // detects savedVersion and swaps the form for the panel; on
+    // send (or skip) the panel calls back to navigate.
+    setSavedVersion({
+      id: versionData.id,
+      number: (versionData as { version_number: number }).version_number,
+    })
+    setSubmitting(false)
   }
 
   const variantType = variants[0]?.variant_type
@@ -2330,14 +2357,48 @@ export default function NewVersionPage() {
             element doesn't change behaviour. */}
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Add version</h1>
+            <h1 className="text-2xl font-bold text-gray-900">
+              {savedVersion ? `Version v${savedVersion.number} saved` : 'Add version'}
+            </h1>
             {proofName && <p className="mt-1 text-gray-500">{proofName}</p>}
             {proofCompany && <p className="text-sm text-gray-400">{proofCompany}</p>}
           </div>
-          {actionRow}
+          {!savedVersion && actionRow}
         </div>
 
-        <form id="new-version-form" onSubmit={handleSubmit} className="space-y-6">
+        {savedVersion && (() => {
+          // Post-save MessageSendPanel branch. Replaces the form
+          // until the designer either sends a reply or skips. Both
+          // paths navigate to the project detail page.
+          const tplId: 'first_proof' | 'revision' =
+            savedVersion.number === 1 ? 'first_proof' : 'revision'
+          const customerUrl = `${window.location.origin}${customerProofPath(proofId!)}`
+          const messageContext = {
+            first_name: firstName(proofName),
+            full_name: proofName,
+            company: proofCompany || null,
+            version_number: savedVersion.number,
+            url: customerUrl,
+            // Designer accounts are deferred; the variable resolves
+            // to empty today. Templates currently hardcode "Plasma
+            // Design" in the signoff so the empty value is fine.
+            designer_first_name: '',
+          }
+          return (
+            <MessageSendPanel
+              proofId={proofId!}
+              versionId={savedVersion.id}
+              versionNumber={savedVersion.number}
+              templateId={tplId}
+              context={messageContext}
+              hasHelpScoutConversation={!!proofHelpScoutConversationId}
+              onSent={() => navigate(`/proofs/${proofId}`)}
+              onSkip={() => navigate(`/proofs/${proofId}`)}
+            />
+          )
+        })()}
+
+        <form id="new-version-form" onSubmit={handleSubmit} className={savedVersion ? 'hidden' : 'space-y-6'}>
 
           {/* Carry-forward summary card — only renders on v2+ when
               there's an inheritance source. Labelled name-value
