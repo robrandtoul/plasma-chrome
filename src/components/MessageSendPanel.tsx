@@ -61,6 +61,12 @@ export interface MessageSendPanelProps {
   hasHelpScoutConversation: boolean
   onSent: () => void
   onSkip: () => void
+  // Optional copy override for the secondary action button. The
+  // post-save context (new-version flow) uses the default; modal
+  // contexts (proof detail page Customer reply re-send) pass
+  // 'Cancel' so the button reads correctly when there's nowhere
+  // to navigate to.
+  skipLabel?: string
 }
 
 export default function MessageSendPanel({
@@ -72,6 +78,7 @@ export default function MessageSendPanel({
   hasHelpScoutConversation,
   onSent,
   onSkip,
+  skipLabel = 'Skip and go to project',
 }: MessageSendPanelProps) {
   // Editor body. Seeded from the rendered template once on mount;
   // subsequent edits don't re-render against the template (what you
@@ -167,7 +174,7 @@ export default function MessageSendPanel({
     setEditorState('sending')
 
     const { data, error } = await supabase.functions.invoke('send-helpscout-reply', {
-      body: { proof_id: proofId, body },
+      body: { proof_id: proofId, version_id: versionId, body },
     })
 
     if (error) {
@@ -341,7 +348,7 @@ export default function MessageSendPanel({
           disabled={editorState === 'sending'}
           className="text-sm font-medium text-gray-500 hover:text-gray-900 disabled:opacity-50"
         >
-          Skip and go to project
+          {skipLabel}
         </button>
         <button
           type="button"

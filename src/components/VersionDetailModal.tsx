@@ -34,6 +34,13 @@ export interface ModalVersion {
   // facing surfaces don't distinguish.
   card_type: 'business' | 'membership'
   materials: { display_quantities: number[] } | null
+  // Denormalised hot-path indicator (migration 000103) populated
+  // by the send-helpscout-reply edge function on a successful HS
+  // POST. Powers the Customer reply section on ProofDetailPage.
+  // Loaded here so the data is already in scope when a future
+  // ship surfaces per-version send history inside this modal;
+  // Ship 3 doesn't render it here, only on the page.
+  last_reply_sent_at: string | null
 }
 
 interface ModalImage {

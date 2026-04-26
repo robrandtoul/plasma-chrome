@@ -5,6 +5,8 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import VersionDetailModal, { type ModalVersion } from '../components/VersionDetailModal'
 import HelpScoutEditModal from '../components/HelpScoutEditModal'
+import MessageSendPanel from '../components/MessageSendPanel'
+import { firstName } from '../lib/firstName'
 import { logAudit } from '../lib/audit'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import type { ProofNameApproval } from '../lib/types'
@@ -103,6 +105,12 @@ export default function ProofDetailPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [showHelpscoutEdit, setShowHelpscoutEdit] = useState(false)
   const [showCustomerPreview, setShowCustomerPreview] = useState(false)
+  // Customer reply re-send modal + confirm-on-resend state. Both
+  // local-only — no URL or persisted state. The confirm-then-open
+  // sequence runs entirely client-side; opening the modal commits
+  // the editor flow which has its own audit log + send pipeline.
+  const [showReplyModal, setShowReplyModal] = useState(false)
+  const [showResendConfirm, setShowResendConfirm] = useState(false)
   // Approved artwork table data. Null = not loaded yet (project may
   // not be approved, or the fetch hasn't run); [] = approved but no
   // matching images (approval row with every slot's images deleted
@@ -160,7 +168,7 @@ export default function ProofDetailPage() {
         .single(),
       supabase
         .from('proof_versions')
-        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, materials(display_quantities)')
+        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, last_reply_sent_at, materials(display_quantities)')
         .eq('proof_id', proofId)
         .order('version_number', { ascending: false }),
     ])
@@ -886,6 +894,71 @@ export default function ProofDetailPage() {
           </div>
         </div>
 
+        {/* Customer reply (Ship 3 of intervention 3). Re-send
+            affordance scoped to the current version. Shows whether a
+            reply has gone out (denormalised proof_versions
+            .last_reply_sent_at), and lets the designer trigger or
+            re-trigger the editor without leaving the page. Hidden on
+            locked projects (approved/abandoned) and projects with no
+            versions; renders muted disabled-button copy when the
+            proof has no Help Scout conversation linked yet. */}
+        {(() => {
+          const currentVersion = versions.find((v) => v.is_current)
+          if (!currentVersion) return null
+          if (isLocked) return null
+          const hasHs = !!proof.helpscout_conversation_id
+          const lastSentIso = currentVersion.last_reply_sent_at
+          return (
+            <section className="mb-8 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Customer reply</p>
+              {!hasHs ? (
+                <div className="mt-2 flex items-start justify-between gap-4">
+                  <p className="text-sm text-gray-500">
+                    No Help Scout conversation linked. Add one in the Internal panel above to enable replies.
+                  </p>
+                  <button
+                    type="button"
+                    disabled
+                    className="shrink-0 rounded-lg bg-gray-200 px-4 py-2 text-sm font-semibold text-gray-400 cursor-not-allowed"
+                  >
+                    Send reply
+                  </button>
+                </div>
+              ) : lastSentIso ? (
+                <div className="mt-2 flex items-center justify-between gap-4">
+                  <p className="text-sm text-gray-700">
+                    Reply sent{' '}
+                    <span title={formatAbsoluteDateTime(lastSentIso)} className="font-medium text-gray-900">
+                      {relativeTime(lastSentIso)}
+                    </span>{' '}
+                    for v{currentVersion.version_number}.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowResendConfirm(true)}
+                    className="shrink-0 rounded-lg px-4 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+                  >
+                    Send again
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-2 flex items-center justify-between gap-4">
+                  <p className="text-sm text-gray-500">
+                    No reply sent yet for v{currentVersion.version_number}.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowReplyModal(true)}
+                    className="shrink-0 rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+                  >
+                    Send reply
+                  </button>
+                </div>
+              )}
+            </section>
+          )
+        })()}
+
         {/* Names roll-up — aggregate per-name approval state across
             the project's version history, plus a Shared row when the
             current version has shared images. Renders if either
@@ -1311,6 +1384,92 @@ export default function ProofDetailPage() {
           onClose={() => setShowHelpscoutEdit(false)}
         />
       )}
+
+      {/* Customer reply re-send modal. Hosts MessageSendPanel inside
+          the same overlay-plus-card chrome as HelpScoutEditModal /
+          ConfirmDialog. Only mounts when there's a current version
+          to attribute the reply to AND a Help Scout conversation
+          linked. The Customer reply section's gating already
+          prevents the Send button from opening the modal in those
+          cases, but the conditional here is defence in depth so a
+          stray setShowReplyModal(true) can't render an empty modal. */}
+      {showReplyModal && (() => {
+        const currentVersion = versions.find((v) => v.is_current)
+        if (!currentVersion) return null
+        if (!proof.helpscout_conversation_id) return null
+        const tplId: 'first_proof' | 'revision' =
+          currentVersion.version_number === 1 ? 'first_proof' : 'revision'
+        const customerUrl = `${window.location.origin}${customerProofPath(proof.id)}`
+        const messageContext = {
+          first_name: firstName(proof.contacts.full_name),
+          full_name: proof.contacts.full_name,
+          company: proof.contacts.companies?.name ?? null,
+          version_number: currentVersion.version_number,
+          url: customerUrl,
+          designer_first_name: '',
+        }
+        return (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/50"
+              onClick={() => setShowReplyModal(false)}
+            />
+            <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8">
+              <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
+                <MessageSendPanel
+                  proofId={proof.id}
+                  versionId={currentVersion.id}
+                  versionNumber={currentVersion.version_number}
+                  templateId={tplId}
+                  context={messageContext}
+                  hasHelpScoutConversation={true}
+                  onSent={() => {
+                    // Optimistically bump the version's
+                    // last_reply_sent_at so the section's "Reply
+                    // sent X ago" indicator flips immediately. The
+                    // edge function's service-role write lands a
+                    // moment later; loadProof picks up the
+                    // canonical timestamp on refresh.
+                    const nowIso = new Date().toISOString()
+                    setVersions((prev) =>
+                      prev.map((v) =>
+                        v.id === currentVersion.id ? { ...v, last_reply_sent_at: nowIso } : v,
+                      ),
+                    )
+                    setShowReplyModal(false)
+                    if (id) loadProof(id)
+                  }}
+                  onSkip={() => setShowReplyModal(false)}
+                  skipLabel="Cancel"
+                />
+              </div>
+            </div>
+          </>
+        )
+      })()}
+
+      {/* Re-send confirm dialog. Fires before opening the modal
+          when there's a previous send for the current version, so
+          a designer can't accidentally produce a duplicate reply
+          in Help Scout from a casual button click. The first send
+          on a version skips this and opens the editor directly. */}
+      {showResendConfirm && (() => {
+        const currentVersion = versions.find((v) => v.is_current)
+        const lastSentIso = currentVersion?.last_reply_sent_at ?? null
+        return (
+          <ConfirmDialog
+            message={`A reply was sent ${lastSentIso ? relativeTime(lastSentIso) : 'previously'}. Send another?`}
+            confirmLabel="Send another"
+            confirmClass="bg-gray-900 hover:bg-gray-700 text-white"
+            working={false}
+            onConfirm={() => {
+              setShowResendConfirm(false)
+              setShowReplyModal(true)
+            }}
+            onCancel={() => setShowResendConfirm(false)}
+          />
+        )
+      })()}
 
       {/* Version detail modal */}
       {selectedVersion && (

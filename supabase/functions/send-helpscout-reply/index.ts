@@ -17,7 +17,7 @@
 //   this default when null.
 //
 // POST body:
-//   { proof_id: string, body: string }
+//   { proof_id: string, version_id: string, body: string }
 //
 // Response (200):
 //   { thread_id: number }
@@ -214,23 +214,26 @@ Deno.serve(async (req) => {
 
     // Parse + validate body.
     let proofId: string | undefined
+    let versionId: string | undefined
     let body: string | undefined
     try {
       const parsed = await req.json()
       proofId = typeof parsed?.proof_id === 'string' ? parsed.proof_id.trim() : undefined
+      versionId = typeof parsed?.version_id === 'string' ? parsed.version_id.trim() : undefined
       body = typeof parsed?.body === 'string' ? parsed.body : undefined
     } catch (parseErr) {
       console.error('[send-helpscout-reply] body parse failed', parseErr)
       return json({ error: 'Invalid JSON body', debug: debugFromError(parseErr) }, 400)
     }
     if (!proofId) return json({ error: 'proof_id is required' }, 400)
+    if (!versionId) return json({ error: 'version_id is required' }, 400)
     if (body == null || body.trim() === '') {
       return json({ error: 'body is required' }, 400)
     }
     if (new TextEncoder().encode(body).byteLength > MAX_BODY_BYTES) {
       return json({ error: `Reply too long (${MAX_BODY_BYTES} byte cap). Trim and try again.` }, 400)
     }
-    console.log('[send-helpscout-reply] body validated', { proofId, bodyLen: body.length })
+    console.log('[send-helpscout-reply] body validated', { proofId, versionId, bodyLen: body.length })
 
     // Look up the proof's HS conversation id server-side. Service-role
     // client bypasses RLS so we can read the column directly.
@@ -292,6 +295,28 @@ Deno.serve(async (req) => {
         },
         502,
       )
+    }
+
+    // Denormalised hot-path indicator for the proof detail page's
+    // Customer reply section. Updated after a successful HS POST so
+    // designers see send state without querying audit_log (admin-only
+    // via RLS). Failure to write the column is logged but not
+    // surfaced as an error: the actual reply has already landed in HS,
+    // so the column being stale is mildly degraded but not broken.
+    // Audit log under action='proof.reply_sent' remains the canonical
+    // per-send history.
+    try {
+      const { error: updateErr } = await admin
+        .from('proof_versions')
+        .update({ last_reply_sent_at: new Date().toISOString() })
+        .eq('id', versionId)
+      if (updateErr) {
+        console.error('[send-helpscout-reply] last_reply_sent_at update failed', updateErr)
+      } else {
+        console.log('[send-helpscout-reply] last_reply_sent_at updated', { versionId })
+      }
+    } catch (updateThrow) {
+      console.error('[send-helpscout-reply] last_reply_sent_at update threw', updateThrow)
     }
 
     console.log('[send-helpscout-reply] success', result)
