@@ -212,6 +212,29 @@ Deno.serve(async (req) => {
     const { admin } = check
     console.log('[send-helpscout-reply] auth ok')
 
+    // Global on/off switch (migration 000104). When replies_enabled
+    // is false, the function rejects with 503 before doing any HS
+    // work. Used as a trial-week safety surface (default off in the
+    // migration) and a kill switch. The frontend's UI disable on
+    // MessageSendPanel and the proof detail page Customer reply
+    // section is the courtesy layer; this edge-function check is the
+    // actual safety surface that stops a stray request from sending
+    // a reply when the feature is paused.
+    const { data: settingsRow, error: settingsErr } = await admin
+      .from('settings')
+      .select('replies_enabled')
+      .eq('id', 1)
+      .single()
+    if (settingsErr) {
+      console.error('[send-helpscout-reply] settings lookup failed', settingsErr)
+      return json({ error: `Settings lookup failed: ${settingsErr.message}` }, 500)
+    }
+    if (!settingsRow?.replies_enabled) {
+      console.log('[send-helpscout-reply] rejected: replies disabled')
+      return json({ error: 'Customer replies are currently paused by an admin.' }, 503)
+    }
+    console.log('[send-helpscout-reply] replies enabled, proceeding')
+
     // Parse + validate body.
     let proofId: string | undefined
     let versionId: string | undefined

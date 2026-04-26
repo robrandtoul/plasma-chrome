@@ -30,6 +30,7 @@ import {
   DEFAULT_BODIES,
   type TemplateContext,
 } from '../lib/replyTemplates'
+import { getRepliesEnabled } from '../lib/repliesEnabled'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -98,6 +99,15 @@ export default function MessageSendPanel({
   const [contextError, setContextError] = useState<string | null>(null)
   const [showOlder, setShowOlder] = useState(false)
 
+  // Global on/off for the customer-reply send (migration 000104).
+  // Loaded on mount via the cached fetch in repliesEnabled.ts;
+  // null while loading. When false, the editor and context panel
+  // still render (designer can compose and read), but the Send
+  // button is disabled with an explanatory caption. The edge
+  // function rejects with 503 regardless, so this is the courtesy
+  // layer; the safety surface is server-side.
+  const [repliesEnabled, setRepliesEnabled] = useState<boolean | null>(null)
+
   // ── Mount: load template + render initial body ─────────────────────────────
   useEffect(() => {
     let cancelled = false
@@ -157,12 +167,30 @@ export default function MessageSendPanel({
     return () => { cancelled = true }
   }, [hasHelpScoutConversation, proofId])
 
+  // ── Mount: load the global replies-enabled flag ───────────────────────────
+  useEffect(() => {
+    let cancelled = false
+    void getRepliesEnabled().then((v) => {
+      if (!cancelled) setRepliesEnabled(v)
+    })
+    return () => { cancelled = true }
+  }, [])
+
   // ── Send ──────────────────────────────────────────────────────────────────
   async function handleSend() {
     if (editorState === 'sending') return
     if (sentThreadIdRef.current != null) {
       // Already sent, just navigate.
       onSent()
+      return
+    }
+    // Defence in depth: the button is disabled when replies are
+    // off, but a stray invocation (keyboard, programmatic) still
+    // gets blocked client-side. The edge function rejects with
+    // 503 regardless.
+    if (repliesEnabled === false) {
+      setSendError('Customer replies are currently paused by an admin.')
+      setEditorState('error')
       return
     }
     if (body.trim() === '') {
@@ -341,28 +369,36 @@ export default function MessageSendPanel({
       </section>
 
       {/* Actions */}
-      <div className="flex items-center justify-between">
-        <button
-          type="button"
-          onClick={onSkip}
-          disabled={editorState === 'sending'}
-          className="text-sm font-medium text-gray-500 hover:text-gray-900 disabled:opacity-50"
-        >
-          {skipLabel}
-        </button>
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={editorDisabled || !bodyReady}
-          className={[
-            'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
-            editorState === 'sending' || editorState === 'sent'
-              ? 'bg-gray-900/60 cursor-not-allowed'
-              : 'bg-gray-900 hover:bg-gray-700',
-          ].join(' ')}
-        >
-          {editorState === 'sending' ? 'Sending…' : editorState === 'sent' ? 'Sent ✓' : 'Send reply'}
-        </button>
+      <div>
+        {repliesEnabled === false && (
+          <p className="mb-2 text-right text-xs text-amber-700">
+            Replies are currently paused by an admin.
+          </p>
+        )}
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={onSkip}
+            disabled={editorState === 'sending'}
+            className="text-sm font-medium text-gray-500 hover:text-gray-900 disabled:opacity-50"
+          >
+            {skipLabel}
+          </button>
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={editorDisabled || !bodyReady || repliesEnabled === false}
+            title={repliesEnabled === false ? 'Replies are currently paused by an admin.' : undefined}
+            className={[
+              'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
+              editorState === 'sending' || editorState === 'sent' || repliesEnabled === false
+                ? 'bg-gray-900/60 cursor-not-allowed'
+                : 'bg-gray-900 hover:bg-gray-700',
+            ].join(' ')}
+          >
+            {editorState === 'sending' ? 'Sending…' : editorState === 'sent' ? 'Sent ✓' : 'Send reply'}
+          </button>
+        </div>
       </div>
     </div>
   )

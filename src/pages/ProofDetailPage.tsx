@@ -7,6 +7,7 @@ import VersionDetailModal, { type ModalVersion } from '../components/VersionDeta
 import HelpScoutEditModal from '../components/HelpScoutEditModal'
 import MessageSendPanel from '../components/MessageSendPanel'
 import { firstName } from '../lib/firstName'
+import { getRepliesEnabled } from '../lib/repliesEnabled'
 import { logAudit } from '../lib/audit'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import type { ProofNameApproval } from '../lib/types'
@@ -111,6 +112,13 @@ export default function ProofDetailPage() {
   // the editor flow which has its own audit log + send pipeline.
   const [showReplyModal, setShowReplyModal] = useState(false)
   const [showResendConfirm, setShowResendConfirm] = useState(false)
+  // Global on/off flag for the customer-reply send (migration
+  // 000104). Loaded on mount via the cached fetch in
+  // repliesEnabled.ts; null while loading. When false, the
+  // Customer reply section disables the Send / Send again buttons
+  // and adds an explanatory subtitle. The edge function rejects
+  // independently so this is the courtesy layer.
+  const [repliesEnabled, setRepliesEnabled] = useState<boolean | null>(null)
   // Approved artwork table data. Null = not loaded yet (project may
   // not be approved, or the fetch hasn't run); [] = approved but no
   // matching images (approval row with every slot's images deleted
@@ -126,6 +134,17 @@ export default function ProofDetailPage() {
   useEffect(() => {
     if (id) loadProof(id)
   }, [id])
+
+  // Mount-time fetch of the global replies-enabled flag. Cached
+  // via repliesEnabled.ts so concurrent surfaces share the same
+  // value; mount cost is one DB read per 60s of session.
+  useEffect(() => {
+    let cancelled = false
+    void getRepliesEnabled().then((v) => {
+      if (!cancelled) setRepliesEnabled(v)
+    })
+    return () => { cancelled = true }
+  }, [])
 
   // Live realtime subscription — appends non-bot view rows to
   // viewsByVersion as they arrive, so the customer-viewed dot
@@ -908,9 +927,21 @@ export default function ProofDetailPage() {
           if (isLocked) return null
           const hasHs = !!proof.helpscout_conversation_id
           const lastSentIso = currentVersion.last_reply_sent_at
+          // Replies-paused state takes precedence over the
+          // "Send/Send again" labelling: even when a previous send
+          // exists, the button stays disabled while the global
+          // flag is off so a designer doesn't trigger the confirm
+          // dialog only to fail on send.
+          const repliesPaused = repliesEnabled === false
+          const pausedNote =
+            role === 'admin'
+              ? 'Replies are currently paused. Enable in Settings.'
+              : 'Replies are currently paused.'
           return (
             <section className="mb-8 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Customer reply</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Customer reply</p>
+              </div>
               {!hasHs ? (
                 <div className="mt-2 flex items-start justify-between gap-4">
                   <p className="text-sm text-gray-500">
@@ -936,7 +967,14 @@ export default function ProofDetailPage() {
                   <button
                     type="button"
                     onClick={() => setShowResendConfirm(true)}
-                    className="shrink-0 rounded-lg px-4 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+                    disabled={repliesPaused}
+                    title={repliesPaused ? pausedNote : undefined}
+                    className={[
+                      'shrink-0 rounded-lg px-4 py-2 text-sm font-medium ring-1',
+                      repliesPaused
+                        ? 'bg-gray-100 text-gray-400 ring-gray-100 cursor-not-allowed'
+                        : 'text-gray-600 ring-gray-200 hover:bg-gray-50',
+                    ].join(' ')}
                   >
                     Send again
                   </button>
@@ -949,11 +987,21 @@ export default function ProofDetailPage() {
                   <button
                     type="button"
                     onClick={() => setShowReplyModal(true)}
-                    className="shrink-0 rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+                    disabled={repliesPaused}
+                    title={repliesPaused ? pausedNote : undefined}
+                    className={[
+                      'shrink-0 rounded-lg px-4 py-2 text-sm font-semibold',
+                      repliesPaused
+                        ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                        : 'bg-gray-900 text-white hover:bg-gray-700',
+                    ].join(' ')}
                   >
                     Send reply
                   </button>
                 </div>
+              )}
+              {repliesPaused && hasHs && (
+                <p className="mt-2 text-xs text-amber-700">{pausedNote}</p>
               )}
             </section>
           )

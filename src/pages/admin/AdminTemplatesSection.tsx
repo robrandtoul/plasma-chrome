@@ -17,6 +17,7 @@ import {
   DEFAULT_BODIES,
   type TemplateContext,
 } from '../../lib/replyTemplates'
+import { invalidateRepliesEnabled } from '../../lib/repliesEnabled'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -55,20 +56,73 @@ function buildSampleContext(company: CompanyMode, version: VersionMode): Templat
 export default function AdminTemplatesSection() {
   const [templates, setTemplates] = useState<ReplyTemplate[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
+  // Global on/off switch for the customer-reply send (migration
+  // 000104). Lives here alongside the templates because it gates
+  // the same feature; admin sees enable/disable + content
+  // configuration in one place. The flag is persisted on
+  // settings.replies_enabled and the value is cached client-side
+  // via repliesEnabled.ts; saving here invalidates that cache so
+  // designer surfaces in other tabs pick up the change faster
+  // than the 60s TTL.
+  const [repliesEnabled, setRepliesEnabled] = useState<boolean | null>(null)
+  const [togglingReplies, setTogglingReplies] = useState(false)
+  const [toggleError, setToggleError] = useState<string | null>(null)
 
   useEffect(() => { void load() }, [])
 
   async function load() {
-    const { data, error } = await supabase
-      .from('reply_templates')
-      .select('id, display_name, description, body, updated_at')
-      .order('id')
-    if (error) { setLoadError(error.message); return }
-    setTemplates((data ?? []) as ReplyTemplate[])
+    const [templatesResult, settingsResult] = await Promise.all([
+      supabase
+        .from('reply_templates')
+        .select('id, display_name, description, body, updated_at')
+        .order('id'),
+      supabase
+        .from('settings')
+        .select('replies_enabled')
+        .eq('id', 1)
+        .single(),
+    ])
+    if (templatesResult.error) {
+      setLoadError(templatesResult.error.message)
+      return
+    }
+    setTemplates((templatesResult.data ?? []) as ReplyTemplate[])
+    if (!settingsResult.error && settingsResult.data) {
+      setRepliesEnabled(!!settingsResult.data.replies_enabled)
+    }
   }
 
   function handleSaved(updated: ReplyTemplate) {
     setTemplates((prev) => prev.map((t) => t.id === updated.id ? updated : t))
+  }
+
+  async function handleToggleReplies(next: boolean) {
+    if (repliesEnabled === null) return
+    if (next === repliesEnabled) return
+    setTogglingReplies(true)
+    setToggleError(null)
+    const prev = repliesEnabled
+    // Optimistic state.
+    setRepliesEnabled(next)
+    const { error } = await supabase
+      .from('settings')
+      .update({ replies_enabled: next, updated_at: new Date().toISOString() })
+      .eq('id', 1)
+    setTogglingReplies(false)
+    if (error) {
+      setRepliesEnabled(prev)
+      setToggleError(error.message)
+      return
+    }
+    invalidateRepliesEnabled()
+    void logAudit({
+      action: 'setting.replies_enabled_updated',
+      targetType: 'setting',
+      targetId: 'replies_enabled',
+      targetLabel: 'Send replies',
+      beforeValue: { replies_enabled: prev },
+      afterValue: { replies_enabled: next },
+    })
   }
 
   if (loadError) {
@@ -82,12 +136,40 @@ export default function AdminTemplatesSection() {
   return (
     <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
       <div className="mb-4">
-        <h3 className="text-sm font-semibold text-gray-900">Reply templates</h3>
+        <h3 className="text-sm font-semibold text-gray-900">Customer replies</h3>
         <p className="mt-1 text-xs text-gray-500">
-          Templates the customer sees in their Help Scout inbox when a new proof goes
-          live. Variables substitute live; conditional blocks render only when their
-          variable has a value.
+          Enable replies, customise the message text, see how each variant renders.
         </p>
+      </div>
+
+      {/* Global on/off toggle. Sits at the top of the section so
+          enable/disable is the first thing an admin sees. The
+          template cards below are still editable when replies are
+          off — admins can refine the copy in advance and flip the
+          feature on once happy. */}
+      <div className="mb-6 flex items-start justify-between gap-4 rounded-xl border border-gray-200 bg-gray-50/40 p-4">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-gray-900">Send replies</p>
+          <p className="mt-1 text-xs text-gray-500">
+            Off: designers can compose messages but Send is disabled.
+            On: replies route through Help Scout to the customer.
+          </p>
+          {toggleError && (
+            <p className="mt-2 text-xs text-rose-600">{toggleError}</p>
+          )}
+        </div>
+        <div className="shrink-0 pt-0.5">
+          {repliesEnabled === null ? (
+            <span className="text-xs text-gray-400">Loading…</span>
+          ) : (
+            <Toggle
+              value={repliesEnabled}
+              onChange={(v) => void handleToggleReplies(v)}
+              disabled={togglingReplies}
+              label="Send replies"
+            />
+          )}
+        </div>
       </div>
 
       <div className="space-y-6">
@@ -102,6 +184,46 @@ export default function AdminTemplatesSection() {
 
       {templates.length > 0 && <VariableHelpPanel />}
     </section>
+  )
+}
+
+// ── Toggle ───────────────────────────────────────────────────────────────────
+//
+// Local copy of the app-wide toggle pattern (gray-900 / gray-200,
+// h-6 w-11, role="switch") so AdminTemplatesSection stays self-
+// contained. Same shape used elsewhere (Shared toggle on
+// NewVersionPage, Keep toggle on CarryCard, Show archived in
+// AdminSettingsPage) so the visual register is consistent.
+
+function Toggle({
+  value, onChange, disabled = false, label,
+}: {
+  value: boolean
+  onChange: (v: boolean) => void
+  disabled?: boolean
+  label: string
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={value}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!value)}
+      className={[
+        'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors',
+        value ? 'bg-gray-900' : 'bg-gray-200',
+        disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+      ].join(' ')}
+    >
+      <span
+        className={[
+          'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-white transition-transform',
+          value ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
+        ].join(' ')}
+      />
+    </button>
   )
 }
 

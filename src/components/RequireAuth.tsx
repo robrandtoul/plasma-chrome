@@ -1,5 +1,6 @@
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
+import { TrialModeBanner } from './TrialModeBanner'
 
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth()
@@ -14,5 +15,15 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
 
   if (!session) return <Navigate to="/login" replace />
 
-  return <>{children}</>
+  // TrialModeBanner is always mounted; it self-renders nothing
+  // when the global customer-replies feature is enabled, so the
+  // common path costs zero pixels. When the feature is paused
+  // (default migration state, plus any kill-switch flip), the
+  // banner shows on every authenticated page.
+  return (
+    <>
+      <TrialModeBanner />
+      {children}
+    </>
+  )
 }
