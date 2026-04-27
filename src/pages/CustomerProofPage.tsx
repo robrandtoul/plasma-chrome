@@ -1720,6 +1720,14 @@ export default function CustomerProofPage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
           onClick={() => setLightboxSrc(null)}
         >
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={(e) => { e.stopPropagation(); setLightboxSrc(null) }}
+            className="absolute right-4 top-4 grid h-11 w-11 place-items-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/20 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+          >
+            <span aria-hidden="true" className="text-2xl leading-none">×</span>
+          </button>
           <img
             src={lightboxSrc}
             alt="Proof image"
@@ -2626,7 +2634,7 @@ function PlateCard({
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#1a1612]/25 px-3 py-1 uppercase tracking-[0.22em] text-[#6b6558] transition-colors hover:border-[color:var(--a)] hover:bg-[color:var(--a)] hover:text-white"
+              className="inline-flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-full border border-[#1a1612]/25 px-3 py-1 uppercase tracking-[0.22em] text-[#6b6558] transition-colors hover:border-[color:var(--a)] hover:bg-[color:var(--a)] hover:text-white"
               style={{
                 fontFamily: MONO,
                 fontSize: 12,
@@ -2832,7 +2840,7 @@ function InkPricingTable({
         <thead>
           <tr className="border-b border-white/15">
             <th
-              className="py-4 pr-4 text-left uppercase tracking-[0.22em] text-white/45"
+              className="py-4 pr-2 text-left uppercase tracking-[0.22em] text-white/45 sm:pr-4"
               style={{ fontFamily: mono, fontSize: 12 }}
             >
               Total quantity
@@ -2840,7 +2848,7 @@ function InkPricingTable({
             {variants.map((v) => (
               <th
                 key={v.variant_id}
-                className="py-4 pl-4 text-right uppercase tracking-[0.22em] text-white/45"
+                className="py-4 pl-2 text-right uppercase tracking-[0.22em] text-white/45 sm:pl-4"
                 style={{ fontFamily: mono, fontSize: 12 }}
               >
                 {v.display}
@@ -2858,7 +2866,7 @@ function InkPricingTable({
                 style={{ borderColor: 'rgba(255,255,255,0.08)' }}
               >
                 <td
-                  className="py-4 pr-4 leading-none text-white"
+                  className="py-4 pr-2 leading-none text-white sm:pr-4"
                   style={{ fontFamily: serif, fontWeight: 400, fontSize: 24 }}
                 >
                   {qty.toLocaleString()}
@@ -2869,7 +2877,7 @@ function InkPricingTable({
                     return (
                       <td
                         key={v.variant_id}
-                        className="py-4 pl-4 text-right text-white/30"
+                        className="py-4 pl-2 text-right text-white/30 sm:pl-4"
                         style={{ fontFamily: mono, fontSize: 14 }}
                       >
                         —
@@ -2878,7 +2886,7 @@ function InkPricingTable({
                   }
                   const price = base + surcharge
                   return (
-                    <td key={v.variant_id} className="py-4 pl-4 text-right">
+                    <td key={v.variant_id} className="py-4 pl-2 text-right sm:pl-4">
                       <div
                         className="text-white"
                         style={{ fontFamily: mono, fontSize: 15 }}
