@@ -11,6 +11,7 @@ import {
   type ViewedState,
 } from '../lib/viewedState'
 import { designerPreviewPath } from '../lib/customerProofUrl'
+import { QuoteLink } from '../components/QuoteLink'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -472,6 +473,11 @@ export default function DashboardPage() {
             <h1 className="mt-1 text-2xl font-bold text-gray-900">Projects</h1>
           </div>
           <div className="flex items-center gap-3">
+            {/* QuoteLink lives in the per-page header on six pages today
+                (Dashboard, Admin, ProofDetail, NewProof, NewVersion,
+                EditVersion). Future "extract shared header" pass should
+                inline this once and remove the per-page insertions. */}
+            <QuoteLink />
             {role === 'admin' && (
               <Link
                 to="/admin/users"

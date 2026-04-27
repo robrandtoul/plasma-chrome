@@ -8,6 +8,7 @@ import { DEFAULT_DISPLAY_QUANTITIES } from '../lib/constants'
 import { PricingDisplay } from '../components/PricingDisplay'
 import { PricingDisplayField, type PricingDisplayValue } from '../components/PricingDisplayField'
 import { CurrencyField } from '../components/CurrencyField'
+import { QuoteLink } from '../components/QuoteLink'
 import { PageDropOverlay } from '../components/PageDropOverlay'
 import NameChipInput from '../components/NameChipInput'
 import { matchImageToName } from '../lib/matchImageToName'
@@ -638,8 +639,13 @@ export default function EditVersionPage() {
       )}
       <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6">
 
-        <div className="mb-6">
+        {/* Back + Quote compiler. QuoteLink lives in the per-page
+            header on six pages today. Future "extract shared header"
+            pass should inline this once and remove the per-page
+            insertions. */}
+        <div className="mb-6 flex items-center justify-between">
           <Link to={`/proofs/${proofId}`} className="text-sm text-gray-400 hover:text-gray-700">← Back to project</Link>
+          <QuoteLink variant="inline" />
         </div>
 
         {/* Page heading + top actions. Cancel + Save pair is

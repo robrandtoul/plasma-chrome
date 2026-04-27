@@ -5,6 +5,7 @@ import { useAuth } from '../lib/auth'
 import { logAudit } from '../lib/audit'
 import { parseHelpscoutUrl, MIN_OVERRIDE_REASON_LENGTH } from '../lib/helpscout'
 import { titleCase } from '../lib/titleCase'
+import { QuoteLink } from '../components/QuoteLink'
 
 // ── Local types ───────────────────────────────────────────────────────────────
 
@@ -742,8 +743,13 @@ export default function NewProofPage() {
     <div className="min-h-screen bg-gray-50">
       <div className="mx-auto max-w-xl px-4 py-10 sm:px-6">
 
-        <div className="mb-6">
+        {/* Back + Quote compiler. QuoteLink lives in the per-page
+            header on six pages today. Future "extract shared header"
+            pass should inline this once and remove the per-page
+            insertions. */}
+        <div className="mb-6 flex items-center justify-between">
           <Link to="/" className="text-sm text-gray-400 hover:text-gray-700">← Back to projects</Link>
+          <QuoteLink variant="inline" />
         </div>
 
         <h1 className="mb-8 text-2xl font-bold text-gray-900">New project</h1>

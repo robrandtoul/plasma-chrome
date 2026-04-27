@@ -15,6 +15,7 @@ import { PageDropOverlay } from '../components/PageDropOverlay'
 import MessageSendPanel from '../components/MessageSendPanel'
 import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
+import { QuoteLink } from '../components/QuoteLink'
 import type { Currency, ProofNameApproval } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 
@@ -2306,8 +2307,13 @@ export default function NewVersionPage() {
       <PageDropOverlay visible={isPageDragOver} />
       <div className="mx-auto max-w-2xl px-4 py-10 pb-32 sm:px-6">
 
-        <div className="mb-6">
+        {/* Back + Quote compiler. QuoteLink lives in the per-page
+            header on six pages today. Future "extract shared header"
+            pass should inline this once and remove the per-page
+            insertions. */}
+        <div className="mb-6 flex items-center justify-between">
           <Link to={`/proofs/${proofId}`} className="text-sm text-gray-400 hover:text-gray-700">← Back to project</Link>
+          <QuoteLink variant="inline" />
         </div>
 
         {/* Page heading. Cancel + Save live in the sticky bottom

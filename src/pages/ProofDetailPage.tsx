@@ -15,6 +15,7 @@ import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, designerPreviewPath } from '../lib/customerProofUrl'
+import { QuoteLink } from '../components/QuoteLink'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -711,9 +712,14 @@ export default function ProofDetailPage() {
     <div className="min-h-screen bg-gray-50">
       <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
 
-        {/* Back */}
-        <div className="mb-6">
+        {/* Back + Quote compiler. QuoteLink lives in the per-page
+            header on six pages today (Dashboard, Admin, ProofDetail,
+            NewProof, NewVersion, EditVersion). Future "extract shared
+            header" pass should inline this once and remove the
+            per-page insertions. */}
+        <div className="mb-6 flex items-center justify-between">
           <Link to="/" className="text-sm text-gray-400 hover:text-gray-700">← Back to projects</Link>
+          <QuoteLink variant="inline" />
         </div>
 
         {/* Proof header */}

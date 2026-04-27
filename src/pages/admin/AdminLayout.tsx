@@ -1,5 +1,6 @@
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
+import { QuoteLink } from '../../components/QuoteLink'
 
 // Sub-nav tabs for the admin area. Rendered as NavLinks so the active tab
 // picks up routing-aware styling. Add more entries here to extend the shell.
@@ -29,6 +30,10 @@ export default function AdminLayout() {
             <h1 className="mt-1 text-2xl font-bold text-gray-900">Admin</h1>
           </div>
           <div className="flex items-center gap-3">
+            {/* QuoteLink lives in the per-page header on six pages today.
+                Future "extract shared header" pass should inline this
+                once and remove the per-page insertions. */}
+            <QuoteLink />
             <Link
               to="/"
               className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"

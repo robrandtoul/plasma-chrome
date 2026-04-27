@@ -1,0 +1,80 @@
+import type { CustomQuoteFlagsState } from './CustomQuoteFlags'
+
+// Bailout panel that replaces HeadlinePrice + adjacent strips +
+// snap chips when ANY custom-quote trigger fires. Three triggers
+// today:
+//   - flags.nfc                       NFC chip selected
+//   - flags.uniqueContent             unique content per card
+//   - aboveMax !== null               typed quantity exceeds the
+//                                     largest priced tier for the
+//                                     active (variant, currency)
+//
+// First two are user-driven (CustomQuoteFlags toggles). The third
+// is derived in QuotePage from quantity + the loaded tiers map.
+//
+// Lists each active trigger in the "Why" block so the designer
+// can read aloud what the customer asked for and why this needs a
+// quote from Rob rather than a price off the live grid. The
+// over-max reason carries material/variant context inline because
+// the designer can't see the price area to confirm what they
+// typed when the panel is up.
+export interface AboveMaxDetail {
+  typedQuantity: number
+  maxQuantity: number
+  // Material's display_name as-stored, proper case.
+  materialName: string
+  // Variant's display_name as-stored, lowercased before render.
+  // Null for default-variant materials (Wood, Acrylic, base
+  // Carbon Fibre, Carbon Fibre with CNC) — the parenthetical is
+  // dropped in those cases.
+  variantName: string | null
+}
+
+export function CustomQuotePanel({
+  flags,
+  aboveMax = null,
+}: {
+  flags: CustomQuoteFlagsState
+  aboveMax?: AboveMaxDetail | null
+}) {
+  const reasons: string[] = []
+  if (flags.nfc) reasons.push('NFC chips selected')
+  if (flags.uniqueContent) reasons.push('Unique content per card selected')
+  if (aboveMax) {
+    const variantSuffix = aboveMax.variantName
+      ? ` (${aboveMax.variantName.toLowerCase()})`
+      : ''
+    reasons.push(
+      `Quantity ${aboveMax.typedQuantity.toLocaleString()} exceeds the priced range for ${aboveMax.materialName}${variantSuffix}. Maximum priced tier is ${aboveMax.maxQuantity.toLocaleString()}.`,
+    )
+  }
+
+  return (
+    <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 p-8">
+      <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+        Custom quote required
+      </p>
+      <p className="mt-3 text-2xl font-bold leading-tight text-amber-900">
+        This needs a custom quote — flag for Rob
+      </p>
+      <p className="mt-3 text-sm text-amber-800">
+        Live pricing isn't available for this configuration. Send the spec
+        to Rob with the customer's contact details and he'll come back
+        with a quote.
+      </p>
+      <div className="mt-4 rounded-lg border border-amber-200 bg-white/70 px-4 py-3">
+        <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+          Why
+        </p>
+        <ul className="mt-1.5 space-y-1 text-sm text-amber-900">
+          {reasons.map((r) => (
+            <li key={r} className="flex items-start gap-2">
+              <span aria-hidden className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-600" />
+              <span>{r}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  )
+}
