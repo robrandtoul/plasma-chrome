@@ -1888,20 +1888,18 @@ function RevisionsBand({
             </span>
           </div>
 
-          {/* Grid: spotlight (auto) + rail (1fr), 32px gap,
-              vertically centered so the big serif v-number
-              sits visually aligned with the rail's y-axis. */}
-          <div
-            className="grid items-center gap-8"
-            style={{ gridTemplateColumns: 'auto 1fr' }}
-          >
-            {/* Spotlight — min-width so narrow active
-                numbers (v1, v2) don't collapse the column,
-                right-hand hairline separates from the rail. */}
-            <div
-              className="min-w-[120px] pr-8"
-              style={{ borderRight: '1px solid rgba(255,255,255,0.1)' }}
-            >
+          {/* Grid: stacks vertically below sm: so the rail gets
+              full content width for the narrow / stepper mode
+              on phones; switches to spotlight (auto) + rail
+              (1fr) at sm+, vertically centered so the big serif
+              v-number sits visually aligned with the rail's
+              y-axis. */}
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-[auto_1fr] sm:items-center sm:gap-8">
+            {/* Spotlight — min-width + right-hand hairline only
+                apply at sm+ where the spotlight is a column.
+                Below sm: the spotlight is a stacked row above
+                the rail and neither rule makes sense. */}
+            <div className="sm:min-w-[120px] sm:border-r sm:border-white/10 sm:pr-8">
               <div className="flex items-baseline gap-3">
                 <span
                   className="leading-none text-white"
