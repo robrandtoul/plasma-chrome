@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
 import { invalidatePublicSettings } from '../../lib/publicSettings'
 import { invalidateVatRateGbp } from '../../lib/vatRateGbp'
+import { invalidateApprovalSettings } from '../../lib/approvalSettings'
 import AdminMaterialContentModal, { type MaterialContent } from './AdminMaterialContentModal'
 import AdminTemplatesSection from './AdminTemplatesSection'
 
@@ -23,6 +24,10 @@ interface Settings {
    *  compiler's GBP headline. Stored as a fraction (0.20 = 20%);
    *  CHECK 0..1 enforced at the column. Migration 000115. */
   vat_rate_gbp: number
+  /** Phase 2 customer approval flow (migration 000116). */
+  approvals_enabled: boolean
+  approve_confirmation_copy: string
+  request_changes_confirmation_copy: string
 }
 
 interface HelpScoutStatus {
@@ -33,12 +38,15 @@ interface HelpScoutStatus {
 
 /** Stable audit action string per field. */
 const AUDIT_ACTION: Record<keyof Settings, string> = {
-  disclaimer_text:         'setting.disclaimer_updated',
-  company_name:            'setting.company_name_updated',
-  reply_email:             'setting.reply_email_updated',
-  default_pricing_display: 'setting.default_pricing_display_updated',
-  default_currency:        'setting.default_currency_updated',
-  vat_rate_gbp:            'setting.vat_rate_gbp_updated',
+  disclaimer_text:                   'setting.disclaimer_updated',
+  company_name:                      'setting.company_name_updated',
+  reply_email:                       'setting.reply_email_updated',
+  default_pricing_display:           'setting.default_pricing_display_updated',
+  default_currency:                  'setting.default_currency_updated',
+  vat_rate_gbp:                      'setting.vat_rate_gbp_updated',
+  approvals_enabled:                 'setting.approvals_enabled_updated',
+  approve_confirmation_copy:         'setting.approve_confirmation_copy_updated',
+  request_changes_confirmation_copy: 'setting.request_changes_confirmation_copy_updated',
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -138,6 +146,13 @@ export default function AdminSettingsPage() {
     setSavedAt((s) => ({ ...s, [field]: Date.now() }))
     invalidatePublicSettings()
     if (field === 'vat_rate_gbp') invalidateVatRateGbp()
+    if (
+      field === 'approvals_enabled' ||
+      field === 'approve_confirmation_copy' ||
+      field === 'request_changes_confirmation_copy'
+    ) {
+      invalidateApprovalSettings()
+    }
 
     void logAudit({
       action: AUDIT_ACTION[field],
@@ -155,6 +170,26 @@ export default function AdminSettingsPage() {
     const draft = drafts[field]
     if (draft === undefined) return
     void saveField(field, draft as any)
+  }
+
+  // Blur handler for the two customer-approval confirmation copy
+  // textareas. Trims, rejects empty (so the spec defaults stay
+  // populated — admin can't accidentally wipe the modal body),
+  // otherwise saves the trimmed value.
+  function onConfirmationCopyBlur(
+    field: 'approve_confirmation_copy' | 'request_changes_confirmation_copy',
+  ) {
+    if (!settings) return
+    const draft = drafts[field]
+    if (draft === undefined) return
+    const trimmed = (draft as string).trim()
+    if (trimmed === '') {
+      setErrors((e) => ({ ...e, [field]: 'Confirmation copy cannot be empty.' }))
+      // Snap textarea back to the saved value.
+      setDrafts((d) => ({ ...d, [field]: undefined }))
+      return
+    }
+    void saveField(field, trimmed)
   }
 
   function recentlySaved(field: keyof Settings): boolean {
@@ -253,6 +288,59 @@ export default function AdminSettingsPage() {
               }}
               className={inputClass}
               placeholder="hello@plasmadesign.co.uk"
+            />
+          </FieldRow>
+        </div>
+      </section>
+
+      {/* ── Customer approvals (Phase 2) ──────────────────────────── */}
+      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+        <h3 className="mb-4 text-sm font-semibold text-gray-900">Customer approvals</h3>
+        <div className="space-y-5">
+          <FieldRow
+            label="Customer-facing approval flow enabled"
+            help="When off, customers see the read-only proof page and reply via email. Toggle on to enable the Approve and Request changes buttons on the customer page."
+            saved={recentlySaved('approvals_enabled')}
+            working={working.approvals_enabled}
+            error={errors.approvals_enabled}
+          >
+            <Toggle
+              value={settings.approvals_enabled}
+              onChange={(v) => void saveField('approvals_enabled', v)}
+              disabled={!!working.approvals_enabled}
+              label="Customer-facing approval flow enabled"
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Approve confirmation copy"
+            help="Shown to customers after they click Approve, before they confirm. Plain text, no markdown."
+            saved={recentlySaved('approve_confirmation_copy')}
+            working={working.approve_confirmation_copy}
+            error={errors.approve_confirmation_copy}
+          >
+            <textarea
+              value={drafts.approve_confirmation_copy ?? settings.approve_confirmation_copy}
+              onChange={(e) => setDrafts((d) => ({ ...d, approve_confirmation_copy: e.target.value }))}
+              onBlur={() => onConfirmationCopyBlur('approve_confirmation_copy')}
+              rows={3}
+              className={inputClass}
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Request changes confirmation copy"
+            help="Shown to customers after they click Request changes, before they confirm. Plain text, no markdown."
+            saved={recentlySaved('request_changes_confirmation_copy')}
+            working={working.request_changes_confirmation_copy}
+            error={errors.request_changes_confirmation_copy}
+          >
+            <textarea
+              value={drafts.request_changes_confirmation_copy ?? settings.request_changes_confirmation_copy}
+              onChange={(e) => setDrafts((d) => ({ ...d, request_changes_confirmation_copy: e.target.value }))}
+              onBlur={() => onConfirmationCopyBlur('request_changes_confirmation_copy')}
+              rows={3}
+              className={inputClass}
             />
           </FieldRow>
         </div>
@@ -508,6 +596,41 @@ function FieldRow({ label, help, saved, working, error, children }: {
   )
 }
 
+// Local copy of the app-wide toggle (gray-900 / gray-200, h-6 w-11,
+// role="switch") matching the AdminTemplatesSection toggle so the
+// Customer-approvals flow gate visually echoes the Send-replies gate.
+function Toggle({
+  value, onChange, disabled = false, label,
+}: {
+  value: boolean
+  onChange: (v: boolean) => void
+  disabled?: boolean
+  label: string
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={value}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!value)}
+      className={[
+        'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors',
+        value ? 'bg-gray-900' : 'bg-gray-200',
+        disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+      ].join(' ')}
+    >
+      <span
+        className={[
+          'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-white transition-transform',
+          value ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
+        ].join(' ')}
+      />
+    </button>
+  )
+}
+
 function RadioGroup<T extends string | null>({ value, onChange, options }: {
   value: T
   onChange: (v: T) => void
@@ -545,6 +668,9 @@ function humanFieldLabel(field: keyof Settings): string {
     default_pricing_display: 'Default pricing display',
     default_currency: 'Default currency',
     vat_rate_gbp: 'UK VAT rate (GBP)',
+    approvals_enabled: 'Customer-facing approval flow enabled',
+    approve_confirmation_copy: 'Approve confirmation copy',
+    request_changes_confirmation_copy: 'Request changes confirmation copy',
   }[field]
 }
 

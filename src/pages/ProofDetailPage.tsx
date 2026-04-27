@@ -57,6 +57,17 @@ function formatLongDate(iso: string): string {
 // proof_version_images (joined on proof_version_id + associated_name,
 // treating SHARED_APPROVAL_KEY as associated_name IS NULL). Each
 // row is exactly one image file destined for the production ZIP.
+interface ProofEventAuditDetail {
+  id: string
+  event_type: 'approve' | 'request_changes'
+  actor_name: string
+  comment: string | null
+  from_ip: string | null
+  from_ua: string | null
+  helpscout_thread_id: string | null
+  created_at: string
+}
+
 interface ApprovedImageRow {
   imageId: string
   imagePath: string
@@ -100,6 +111,17 @@ export default function ProofDetailPage() {
   // kept as a derived index rather than denormalised onto
   // proof_versions so the truth stays in the images table.
   const [versionsWithShared, setVersionsWithShared] = useState<Set<string>>(new Set())
+  // Phase 2 Prompt 8 — proof_events audit detail for the Names
+  // rollup. Loaded alongside approvals so each rollup row can
+  // expand into the customer's own action detail (actor, comment,
+  // timestamp, IP/UA, HS thread). Map keyed by `${versionId}|${name}`,
+  // value is the chronologically-latest event for that pair.
+  const [eventsByVersionAndName, setEventsByVersionAndName] = useState<
+    Map<string, ProofEventAuditDetail>
+  >(new Map())
+  // Tracks which Names rollup row is expanded into the audit panel.
+  // Single-string key ensures only one panel is open at a time.
+  const [expandedAuditKey, setExpandedAuditKey] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | 'abandon' | 'delete' | null>(null)
@@ -240,6 +262,40 @@ export default function ProofDetailPage() {
       setApprovals(approvalRowsLoaded)
     } else {
       setApprovals([])
+    }
+
+    // Phase 2 Prompt 8 — proof_events audit detail for the Names
+    // rollup expansion panel. Reduces the flat per-event rows to
+    // "latest event per (version, name)" client-side; the volume is
+    // tiny (≤ recipients × versions). Designers see all events
+    // (proof_events RLS is authenticated read).
+    if (versionIds.length > 0) {
+      const { data: eventRows } = await supabase
+        .from('proof_events')
+        .select('id, proof_version_id, name, event_type, actor_name, comment, from_ip, from_ua, helpscout_thread_id, created_at')
+        .in('proof_version_id', versionIds)
+        .order('created_at', { ascending: false })
+      const map = new Map<string, ProofEventAuditDetail>()
+      for (const r of (eventRows ?? []) as Array<
+        ProofEventAuditDetail & { proof_version_id: string; name: string | null }
+      >) {
+        const k = `${r.proof_version_id}|${r.name ?? SHARED_APPROVAL_KEY}`
+        if (!map.has(k)) {
+          map.set(k, {
+            id: r.id,
+            event_type: r.event_type,
+            actor_name: r.actor_name,
+            comment: r.comment,
+            from_ip: r.from_ip,
+            from_ua: r.from_ua,
+            helpscout_thread_id: r.helpscout_thread_id,
+            created_at: r.created_at,
+          })
+        }
+      }
+      setEventsByVersionAndName(map)
+    } else {
+      setEventsByVersionAndName(new Map())
     }
 
     // Approved-artwork join. Only bothers with the fetch when the
@@ -1090,6 +1146,17 @@ export default function ProofDetailPage() {
                     : isSharedRow
                     ? 'border-t border-gray-200'
                     : 'border-t border-gray-100'
+                  // Phase 2 Prompt 8 audit detail: pull the latest
+                  // event for this (version, name) pair if one
+                  // exists. Designer-recorded approvals (no event
+                  // row) skip the expand affordance entirely —
+                  // there's nothing customer-side to show.
+                  const auditKey = approval
+                    ? `${approval.proof_version_id}|${key}`
+                    : null
+                  const auditEvent = auditKey ? eventsByVersionAndName.get(auditKey) : undefined
+                  const expanded = expandedAuditKey === auditKey
+                  const hsFailed = auditEvent ? auditEvent.helpscout_thread_id == null : false
                   return (
                     <div
                       key={key}
@@ -1141,6 +1208,37 @@ export default function ProofDetailPage() {
                       </div>
                       {approval?.state === 'changes_requested' && approval.change_request && (
                         <p className="mt-1 text-xs text-gray-500">{approval.change_request}</p>
+                      )}
+                      {/* Phase 2 Prompt 8 — audit detail toggle.
+                          Renders only when there's a matching
+                          proof_events row (customer-recorded
+                          action). Designer-only approvals from
+                          the modal don't have an event row and
+                          skip the affordance entirely. */}
+                      {auditEvent && auditKey && (
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedAuditKey((prev) => (prev === auditKey ? null : auditKey))
+                            }
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-900"
+                          >
+                            {expanded ? 'Hide details' : 'View details'}
+                            {hsFailed && (
+                              <span
+                                title="Help Scout notification failed — customer was asked to email."
+                                aria-label="Help Scout notification failed"
+                                className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-700"
+                              >
+                                !
+                              </span>
+                            )}
+                          </button>
+                          {expanded && (
+                            <AuditPanel event={auditEvent} hsFailed={hsFailed} />
+                          )}
+                        </div>
                       )}
                     </div>
                   )
@@ -1605,6 +1703,72 @@ export default function ProofDetailPage() {
           {toast}
         </div>
       )}
+    </div>
+  )
+}
+
+// Phase 2 Prompt 8 — audit detail panel for the Names rollup.
+// Surfaces the customer-recorded event behind the approval state:
+// who acted, when, the comment they left, the Help Scout thread
+// link, and an inline IP/UA reveal toggle. Hidden by default so
+// the rollup stays compact.
+function AuditPanel({
+  event,
+  hsFailed,
+}: {
+  event: ProofEventAuditDetail
+  hsFailed: boolean
+}) {
+  const [showAudit, setShowAudit] = useState(false)
+  const ts = new Date(event.created_at)
+  const tsLabel = Number.isNaN(ts.getTime())
+    ? event.created_at
+    : `${ts.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} at ${ts.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}`
+  return (
+    <div className="mt-3 rounded-lg bg-gray-50 px-3 py-3 text-xs ring-1 ring-gray-200">
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1.5 text-gray-600">
+        <dt className="font-semibold text-gray-700">Actor</dt>
+        <dd className="text-gray-900">{event.actor_name}</dd>
+        <dt className="font-semibold text-gray-700">Recorded</dt>
+        <dd className="text-gray-900">{tsLabel}</dd>
+        {event.comment && (
+          <>
+            <dt className="font-semibold text-gray-700">Comment</dt>
+            <dd className="whitespace-pre-line text-gray-900">{event.comment}</dd>
+          </>
+        )}
+        <dt className="font-semibold text-gray-700">Help Scout</dt>
+        <dd>
+          {event.helpscout_thread_id ? (
+            <span className="text-gray-900">Thread {event.helpscout_thread_id}</span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-amber-700">
+              <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold">!</span>
+              Notification failed — customer was asked to email
+            </span>
+          )}
+          {!hsFailed && event.helpscout_thread_id && (
+            <span className="ml-2 text-[11px] text-gray-400">(thread id, no public link)</span>
+          )}
+        </dd>
+      </dl>
+      <div className="mt-2 border-t border-gray-200 pt-2">
+        <button
+          type="button"
+          onClick={() => setShowAudit((v) => !v)}
+          className="text-[11px] font-medium uppercase tracking-wider text-gray-400 hover:text-gray-700"
+        >
+          {showAudit ? 'Hide audit (IP / UA)' : 'View audit (IP / UA)'}
+        </button>
+        {showAudit && (
+          <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1.5 text-gray-500">
+            <dt>IP</dt>
+            <dd className="font-mono text-[11px] text-gray-700">{event.from_ip ?? '—'}</dd>
+            <dt>User-agent</dt>
+            <dd className="break-all font-mono text-[11px] text-gray-700">{event.from_ua ?? '—'}</dd>
+          </dl>
+        )}
+      </div>
     </div>
   )
 }

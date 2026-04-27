@@ -9,6 +9,11 @@ export interface PublicSettings {
   disclaimer_text: string
   company_name: string
   reply_email: string
+  // Phase 2 customer approval flow modal copy. Editable in admin
+  // (000116); falls back to the spec defaults below if the RPC ever
+  // returns null/empty so the modal still renders readable text.
+  approve_confirmation_copy: string
+  request_changes_confirmation_copy: string
 }
 
 const TTL_MS = 60_000
@@ -16,10 +21,17 @@ const TTL_MS = 60_000
 let cache: { value: PublicSettings; fetchedAt: number } | null = null
 let inFlight: Promise<PublicSettings> | null = null
 
+const APPROVE_COPY_DEFAULT =
+  "By approving, you're confirming that you've reviewed the proof and we're cleared to print as shown. Approval is final and triggers production scheduling."
+const REQUEST_CHANGES_COPY_DEFAULT =
+  "We'll update your proof based on your feedback. The team will reply within one working day."
+
 const DEFAULTS: PublicSettings = {
   disclaimer_text: '',
   company_name: 'PlasmaDesign Ltd',
   reply_email: '',
+  approve_confirmation_copy: APPROVE_COPY_DEFAULT,
+  request_changes_confirmation_copy: REQUEST_CHANGES_COPY_DEFAULT,
 }
 
 export async function getPublicSettings(): Promise<PublicSettings> {
@@ -29,10 +41,20 @@ export async function getPublicSettings(): Promise<PublicSettings> {
   inFlight = (async () => {
     try {
       const { data } = await supabase.rpc('public_settings')
+      const approveCopy = data?.approve_confirmation_copy
+      const rcCopy = data?.request_changes_confirmation_copy
       const value: PublicSettings = {
         disclaimer_text: (data?.disclaimer_text as string) ?? DEFAULTS.disclaimer_text,
         company_name:    (data?.company_name as string)    ?? DEFAULTS.company_name,
         reply_email:     (data?.reply_email as string)     ?? DEFAULTS.reply_email,
+        approve_confirmation_copy:
+          typeof approveCopy === 'string' && approveCopy.trim().length > 0
+            ? approveCopy
+            : DEFAULTS.approve_confirmation_copy,
+        request_changes_confirmation_copy:
+          typeof rcCopy === 'string' && rcCopy.trim().length > 0
+            ? rcCopy
+            : DEFAULTS.request_changes_confirmation_copy,
       }
       cache = { value, fetchedAt: Date.now() }
       return value

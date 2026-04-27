@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge } from '../lib/types'
+import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
+import type { ProofEventState } from '../lib/types'
 import { formatPrice } from '../lib/currency'
 import { type GridImage } from '../components/ImageGrid'
 import { getPublicSettings, type PublicSettings } from '../lib/publicSettings'
@@ -17,6 +18,13 @@ export default function CustomerProofPage() {
   const [versionImages, setVersionImages] = useState<Record<string, GridImage[]>>({})
   const [materialOptions, setMaterialOptions] = useState<PublicMaterialOption[]>([])
   const [optionSurcharges, setOptionSurcharges] = useState<PublicMaterialOptionSurcharge[]>([])
+  // Live pricing — replaces the proof_versions.pricing_snapshot
+  // read since Phase 2 (migration 000117). Both lists cover every
+  // material × currency referenced by this proof's versions; the
+  // active version's pricing snapshot shape is rebuilt from these
+  // rows in livePricingSnapshot below.
+  const [tierRows, setTierRows] = useState<PublicPriceTier[]>([])
+  const [variantRows, setVariantRows] = useState<PublicMaterialVariant[]>([])
   const [activeOptionCode, setActiveOptionCode] = useState<string | null>(null)
   const [publicSettings, setPublicSettings] = useState<PublicSettings | null>(null)
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
@@ -26,6 +34,10 @@ export default function CustomerProofPage() {
   // ref survives React strict-mode's double-invoke of effects
   // whereas state wouldn't.
   const viewRecordedRef = useRef(false)
+  // Anchor for the "Please confirm you've read the terms" nudge —
+  // a click on the disabled Approve button smooth-scrolls to this
+  // section so the customer is shown what's missing.
+  const disclaimerSectionRef = useRef<HTMLElement | null>(null)
   // Disclaimer acknowledgement is now a server-side event —
   // authoritative timestamp lives on proofs.disclaimer_acknowledged_at
   // and rides along with the public_proofs read (migrations 000091 +
@@ -36,6 +48,35 @@ export default function CustomerProofPage() {
   // a successful write.
   const [ackSaving, setAckSaving] = useState(false)
   const [ackError, setAckError] = useState<string | null>(null)
+
+  // ── Phase 2.5 per-recipient customer approval flow ─────────────
+  // actionPanel is the modal surface; null = closed. Carries both
+  // the version and the recipient name (or SHARED_APPROVAL_KEY for
+  // the shared section) so the modal copy and the edge-function
+  // call can attribute correctly.
+  // actionResults / successMessages key on `${versionId}|${name}`
+  // so each band's optimistic state is isolated — Alec approving
+  // doesn't lock Kyle's band.
+  const [actionPanel, setActionPanel] = useState<
+    | { versionId: string; name: string; type: 'approve' | 'request_changes' }
+    | null
+  >(null)
+  const [actionName, setActionName] = useState('')
+  const [actionComment, setActionComment] = useState('')
+  const [actionSubmitting, setActionSubmitting] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [actionResults, setActionResults] = useState<
+    Record<
+      string,
+      {
+        type: 'approve' | 'request_changes'
+        actorName: string
+        comment: string | null
+        createdAt: string
+      }
+    >
+  >({})
+  const [successMessages, setSuccessMessages] = useState<Record<string, string>>({})
 
   useEffect(() => {
     if (!id) { setNotFound(true); return }
@@ -194,6 +235,136 @@ export default function CustomerProofPage() {
     }
   }
 
+  // ── Phase 2.5 per-recipient action helpers ──────────────────────────────
+
+  // Composite key for actionResults / successMessages so each band
+  // (per recipient × version) has isolated optimistic state.
+  function bandKey(versionId: string, name: string): string {
+    return `${versionId}|${name}`
+  }
+
+  function openActionPanel(
+    versionId: string,
+    recipientName: string,
+    type: 'approve' | 'request_changes',
+  ) {
+    setActionPanel({ versionId, name: recipientName, type })
+    // Pre-fill actor_name with the recipient's name when it's a
+    // named band — the actor is most often the recipient
+    // themselves, with the field still editable in case someone's
+    // approving on their behalf. Shared bands open empty since
+    // there's no recipient to default to.
+    setActionName(recipientName === SHARED_APPROVAL_KEY ? '' : recipientName)
+    setActionComment('')
+    setActionError(null)
+  }
+
+  function closeActionPanel() {
+    setActionPanel(null)
+    setActionError(null)
+  }
+
+  async function submitAction() {
+    if (!actionPanel) return
+    const name = actionName.trim()
+    const comment = actionComment.trim()
+    // Client-side validation mirrors the edge function so the error
+    // surfaces inside the modal rather than after a round-trip.
+    if (!name) {
+      setActionError('Please enter your name.')
+      return
+    }
+    if (actionPanel.type === 'request_changes' && !comment) {
+      setActionError('Please describe the changes you need.')
+      return
+    }
+    setActionSubmitting(true)
+    setActionError(null)
+    try {
+      const { data, error } = await supabase.functions.invoke<
+        | { status: 'ok'; event_id: string }
+        | {
+            status: 'partial'
+            event_id: string
+            reason: 'helpscout_post_failed' | 'proof_name_approvals_sync_failed'
+          }
+        | { status: 'failed'; reason: string; detail?: string }
+      >('proof-action', {
+        body: {
+          proof_version_id: actionPanel.versionId,
+          event_type: actionPanel.type,
+          actor_name: name,
+          name: actionPanel.name,
+          comment: comment || undefined,
+        },
+      })
+      if (error) {
+        // Network / 5xx — generic fallback per spec.
+        setActionError(
+          'We\'re having trouble processing your request right now. Please reply to the email you received with this proof link — the team will pick it up there.',
+        )
+        return
+      }
+      const result = data
+      if (!result) {
+        setActionError(
+          'We\'re having trouble processing your request right now. Please reply to the email you received with this proof link — the team will pick it up there.',
+        )
+        return
+      }
+      if (result.status === 'failed') {
+        if (result.reason === 'approvals_disabled') {
+          setActionError(
+            'This action isn\'t available right now. Please reply to the email you received with this proof link.',
+          )
+        } else if (result.reason === 'validation') {
+          // The server already enforces the same rules as the
+          // client guard above; if we hit this branch it's an
+          // unexpected divergence (e.g. trim semantics). Surface
+          // the server detail when available, otherwise a generic
+          // validation prompt.
+          setActionError(
+            (result as { detail?: string }).detail ??
+              'Please check your details and try again.',
+          )
+        } else {
+          setActionError(
+            'We\'re having trouble processing your request right now. Please reply to the email you received with this proof link — the team will pick it up there.',
+          )
+        }
+        return
+      }
+      // ok / partial — both lock this band. Optimistically write
+      // the post-action state keyed on (versionId, name) so other
+      // bands stay independent. The next page load picks the same
+      // shape from approvals[] + latest_events_by_name on the view.
+      const verb = actionPanel.type === 'approve' ? 'approval' : 'change request'
+      const message =
+        result.status === 'partial'
+          ? `Thanks, ${name}. Your ${verb} has been recorded, but we couldn't notify the team automatically. To make sure they see it, please also reply to the email you received with this proof link.`
+          : `Thanks, ${name}. Your ${verb} has been recorded and the team has been notified.`
+      const key = bandKey(actionPanel.versionId, actionPanel.name)
+      const type = actionPanel.type
+      setActionResults((prev) => ({
+        ...prev,
+        [key]: {
+          type,
+          actorName: name,
+          comment: comment || null,
+          createdAt: new Date().toISOString(),
+        },
+      }))
+      setSuccessMessages((prev) => ({ ...prev, [key]: message }))
+      closeActionPanel()
+    } catch {
+      setActionError(
+        'We\'re having trouble processing your request right now. Please reply to the email you received with this proof link — the team will pick it up there.',
+      )
+    } finally {
+      setActionSubmitting(false)
+    }
+  }
+
   async function loadProof(proofId: string) {
     setLoading(true)
 
@@ -275,6 +446,32 @@ export default function CustomerProofPage() {
           .in('material_option_id', optionIds)
         setOptionSurcharges((surchargeRows ?? []) as PublicMaterialOptionSurcharge[])
       }
+
+      // Live pricing (Phase 2, migration 000117). Mirrors the
+      // material_options + option_surcharges sequential pattern
+      // above: variants first, then tier rows scoped to those
+      // variant IDs and the currencies this proof's versions use.
+      // The per-version PricingSnapshot shape is rebuilt on the fly
+      // in livePricingSnapshot below, so InkPricingTable's render
+      // code stays unchanged.
+      const { data: variantData } = await supabase
+        .from('public_material_variants')
+        .select('*')
+        .in('material_id', materialIds)
+        .order('sort_order')
+      const loadedVariants = (variantData ?? []) as PublicMaterialVariant[]
+      setVariantRows(loadedVariants)
+
+      if (loadedVariants.length > 0) {
+        const currencies = [...new Set(rawVersions.map(v => v.currency))]
+        const variantIds = loadedVariants.map(v => v.id)
+        const { data: tierData } = await supabase
+          .from('public_price_tiers')
+          .select('*')
+          .in('material_variant_id', variantIds)
+          .in('currency', currencies)
+        setTierRows((tierData ?? []) as PublicPriceTier[])
+      }
     }
 
     setLoading(false)
@@ -336,6 +533,339 @@ export default function CustomerProofPage() {
   const versionNumberById = new Map<string, number>()
   for (const v of versions) versionNumberById.set(v.id, v.version_number)
 
+  // Per-band state resolution for the Phase 2.5 customer action
+  // surface. Reads from three sources, in priority order:
+  //   1. actionResults[bandKey] — local optimistic state from a
+  //      just-completed POST (overrides server reads until next
+  //      page load).
+  //   2. activeVersion.approvals[name] — designer-side mirror of
+  //      the canonical state (proof_name_approvals row). Drives
+  //      the carried-from-v(N) muted banner, plus the basic
+  //      approved / changes_requested banners when no audit
+  //      detail is co-located.
+  //   3. activeVersion.latest_events_by_name[name] — audit detail
+  //      (actor_name, comment, created_at) for banners on customer-
+  //      recorded actions. Falls back gracefully when no event
+  //      exists (e.g. designer-only approvals).
+  type BandState =
+    | { kind: 'pending' }
+    | {
+        kind: 'optimistic'
+        type: 'approve' | 'request_changes'
+        actorName: string
+        comment: string | null
+        createdAt: string
+      }
+    | { kind: 'carried'; carriedFromVersionNumber: number | null }
+    | {
+        kind: 'approved'
+        actorName: string | null
+        comment: string | null
+        createdAt: string | null
+      }
+    | {
+        kind: 'changes_requested'
+        actorName: string | null
+        comment: string | null
+        createdAt: string | null
+      }
+
+  function getBandState(name: string): BandState {
+    if (!activeVersion) return { kind: 'pending' }
+    const key = bandKey(activeVersion.id, name)
+    const optimistic = actionResults[key]
+    if (optimistic) {
+      return {
+        kind: 'optimistic',
+        type: optimistic.type,
+        actorName: optimistic.actorName,
+        comment: optimistic.comment,
+        createdAt: optimistic.createdAt,
+      }
+    }
+    const approval = activeVersion.approvals.find((a) => a.name === name)
+    if (!approval) return { kind: 'pending' }
+    if (approval.state === 'approved' && approval.carried_from_version_id) {
+      return {
+        kind: 'carried',
+        carriedFromVersionNumber:
+          versionNumberById.get(approval.carried_from_version_id) ?? null,
+      }
+    }
+    // Audit detail from latest_events_by_name when the customer
+    // recorded the action. Shared-section events written by older
+    // code paths could carry name=null instead of '__shared__';
+    // both are accepted here for safety.
+    const event: ProofEventState | undefined =
+      activeVersion.latest_events_by_name.find(
+        (e) =>
+          e.name === name ||
+          (name === SHARED_APPROVAL_KEY && e.name == null),
+      )
+    if (approval.state === 'approved') {
+      return {
+        kind: 'approved',
+        actorName: event?.actor_name ?? null,
+        comment: event?.comment ?? null,
+        createdAt: event?.created_at ?? null,
+      }
+    }
+    return {
+      kind: 'changes_requested',
+      actorName: event?.actor_name ?? null,
+      comment: event?.comment ?? null,
+      createdAt: event?.created_at ?? null,
+    }
+  }
+
+  // Format an event timestamp for the banner body. Falls back to
+  // the empty string on null / parse failure so the rendered line
+  // is "by {actor}" rather than "by {actor} on Invalid Date".
+  function formatBandDate(iso: string | null): string {
+    if (!iso) return ''
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return ''
+    const datePart = d.toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    })
+    const timePart = d.toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+    return `${datePart} at ${timePart}`
+  }
+
+  // ── Per-band action surface ──────────────────────────────────
+  //
+  // Renders directly under each rendered group's image cluster
+  // (one band per named recipient + one for the shared section
+  // when present). Five visual states keyed off getBandState:
+  //
+  //   pending           → two buttons (Approve / Request changes)
+  //   optimistic        → success banner driven by the just-
+  //                       completed local action
+  //   carried           → muted "Approved (carried from v{N})"
+  //                       banner, no buttons
+  //   approved          → APPROVED banner with actor+date+comment
+  //   changes_requested → CHANGES REQUESTED banner with comment
+  //
+  // Approve button gates on proof.disclaimer_acknowledged_at when
+  // a disclaimer is configured (single proof-level gate covering
+  // all bands, per migration 000091). Request changes stays
+  // ungated.
+  function renderActionBand(name: string): React.ReactNode {
+    if (!activeVersion) return null
+    if (!activeVersion.approvals_enabled) return null
+
+    const state = getBandState(name)
+    const named = name !== SHARED_APPROVAL_KEY
+    const recipientLabel = named ? name : 'this proof'
+    const forSuffix = named ? ` for ${name}` : ''
+    const key = bandKey(activeVersion.id, name)
+    const successMessage = successMessages[key] ?? null
+
+    // Banner layouts per state. Light theme — sits inside the
+    // PAPER-backed proofs section so the editorial register is
+    // preserved.
+    const bannerBase =
+      'mt-6 flex flex-col gap-2 rounded-md px-5 py-4 text-[#1a1612]'
+    const KICKER_STYLE = {
+      fontFamily: MONO,
+      fontSize: 11,
+      letterSpacing: '0.22em',
+    } as const
+    const BODY_STYLE = { fontFamily: SERIF, fontWeight: 400, fontSize: 18, lineHeight: 1.35 } as const
+
+    if (state.kind === 'optimistic') {
+      const approved = state.type === 'approve'
+      return (
+        <div
+          className={bannerBase}
+          style={{
+            background: approved ? 'rgba(74,222,128,0.14)' : 'rgba(229,114,49,0.12)',
+            border: `1px solid ${approved ? 'rgba(74,222,128,0.45)' : 'rgba(229,114,49,0.45)'}`,
+          }}
+        >
+          <span
+            className="uppercase"
+            style={{ ...KICKER_STYLE, color: approved ? '#1e7a3e' : '#a04116' }}
+          >
+            {(approved ? 'APPROVED' : 'CHANGES REQUESTED') + (named ? ` FOR ${name}` : '')}
+          </span>
+          <span style={BODY_STYLE}>
+            by {state.actorName}
+            {formatBandDate(state.createdAt) ? ` on ${formatBandDate(state.createdAt)}` : ''}.
+          </span>
+          {state.comment && (
+            <p className="text-[14px] leading-[1.55] text-[#1a1612]/80" style={{ fontFamily: SANS }}>
+              "{state.comment}"
+            </p>
+          )}
+          {successMessage && (
+            <p className="text-[13px] leading-[1.55] text-[#1a1612]/70" style={{ fontFamily: SANS }}>
+              {successMessage}
+            </p>
+          )}
+        </div>
+      )
+    }
+
+    if (state.kind === 'carried') {
+      const subtitle =
+        state.carriedFromVersionNumber != null
+          ? `Approved (carried from v${state.carriedFromVersionNumber})`
+          : 'Approved (carried from a previous version)'
+      return (
+        <div
+          className={bannerBase}
+          style={{
+            background: 'rgba(74,222,128,0.08)',
+            border: '1px solid rgba(74,222,128,0.30)',
+          }}
+        >
+          <span className="uppercase" style={{ ...KICKER_STYLE, color: '#1e7a3e' }}>
+            {('Approved' + forSuffix).toUpperCase()}
+          </span>
+          <span style={{ ...BODY_STYLE, fontSize: 15, color: '#1a1612' }}>
+            {subtitle}
+          </span>
+        </div>
+      )
+    }
+
+    if (state.kind === 'approved' || state.kind === 'changes_requested') {
+      const approved = state.kind === 'approved'
+      return (
+        <div
+          className={bannerBase}
+          style={{
+            background: approved ? 'rgba(74,222,128,0.14)' : 'rgba(229,114,49,0.12)',
+            border: `1px solid ${approved ? 'rgba(74,222,128,0.45)' : 'rgba(229,114,49,0.45)'}`,
+          }}
+        >
+          <span
+            className="uppercase"
+            style={{ ...KICKER_STYLE, color: approved ? '#1e7a3e' : '#a04116' }}
+          >
+            {(approved ? 'APPROVED' : 'CHANGES REQUESTED') + (named ? ` FOR ${name}` : '')}
+          </span>
+          {(state.actorName || state.createdAt) && (
+            <span style={BODY_STYLE}>
+              {state.actorName ? `by ${state.actorName}` : ''}
+              {state.actorName && formatBandDate(state.createdAt) ? ' ' : ''}
+              {formatBandDate(state.createdAt)
+                ? `${state.actorName ? 'on' : 'On'} ${formatBandDate(state.createdAt)}`
+                : ''}
+              .
+            </span>
+          )}
+          {state.comment && (
+            <p className="text-[14px] leading-[1.55] text-[#1a1612]/80" style={{ fontFamily: SANS }}>
+              "{state.comment}"
+            </p>
+          )}
+        </div>
+      )
+    }
+
+    // pending — render the two buttons
+    const disclaimerConfigured = !!publicSettings?.disclaimer_text
+    const approveBlocked =
+      disclaimerConfigured && !proof?.disclaimer_acknowledged_at
+    const approveLabel = `Approve ${recipientLabel}${named ? "'s design" : ''}`
+    return (
+      <div className="mt-6 flex flex-col gap-3 sm:items-start">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <button
+            type="button"
+            aria-disabled={approveBlocked}
+            onClick={() => {
+              if (approveBlocked) {
+                disclaimerSectionRef.current?.scrollIntoView({
+                  behavior: 'smooth',
+                  block: 'center',
+                })
+                return
+              }
+              openActionPanel(activeVersion.id, name, 'approve')
+            }}
+            onMouseEnter={(e) => {
+              if (!approveBlocked) e.currentTarget.style.background = CTA_TEAL_HOVER
+            }}
+            onMouseLeave={(e) => {
+              if (!approveBlocked) e.currentTarget.style.background = CTA_TEAL
+            }}
+            onMouseDown={(e) => {
+              if (!approveBlocked) e.currentTarget.style.background = CTA_TEAL_PRESSED
+            }}
+            onMouseUp={(e) => {
+              if (!approveBlocked) e.currentTarget.style.background = CTA_TEAL_HOVER
+            }}
+            className={[
+              'inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 text-white transition-colors',
+              approveBlocked ? 'cursor-not-allowed opacity-50' : 'focus-visible:outline-none focus-visible:ring-2',
+            ].join(' ')}
+            style={{
+              background: CTA_TEAL,
+              fontFamily: MONO,
+              fontSize: 11,
+              letterSpacing: '0.22em',
+              textTransform: 'uppercase',
+              // Focus ring uses CTA_TEAL_RING (the brighter brand
+              // teal at 50% alpha) — overrides Tailwind's default
+              // ring colour so the focus state matches the resting
+              // primary fill.
+              ['--tw-ring-color' as string]: CTA_TEAL_RING,
+            }}
+          >
+            {approveLabel}
+          </button>
+          <button
+            type="button"
+            onClick={() => openActionPanel(activeVersion.id, name, 'request_changes')}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = CTA_GHOST_HOVER_BG
+              e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'transparent'
+              e.currentTarget.style.borderColor = CTA_GHOST_BORDER
+            }}
+            onMouseDown={(e) => {
+              e.currentTarget.style.background = CTA_GHOST_PRESSED_BG
+            }}
+            onMouseUp={(e) => {
+              e.currentTarget.style.background = CTA_GHOST_HOVER_BG
+            }}
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2"
+            style={{
+              background: 'transparent',
+              border: `1px solid ${CTA_GHOST_BORDER}`,
+              color: CTA_GHOST_TEXT,
+              fontFamily: MONO,
+              fontSize: 11,
+              letterSpacing: '0.22em',
+              textTransform: 'uppercase',
+              ['--tw-ring-color' as string]: CTA_TEAL_RING,
+            }}
+          >
+            Request changes
+          </button>
+        </div>
+        {approveBlocked && (
+          <p
+            className="uppercase tracking-[0.22em] text-[#1a1612]/60"
+            style={{ fontFamily: MONO, fontSize: 10 }}
+          >
+            Please confirm you've read the terms below first.
+          </p>
+        )}
+      </div>
+    )
+  }
+
   // Per-identity approval lookup for the group-heading pills.
   // Keyed on SHARED_APPROVAL_KEY or a real name. Returns the
   // provenance string for the pill: "Approved from v{n}" when
@@ -365,6 +895,43 @@ export default function CustomerProofPage() {
   const displayImages = versionOptions.length > 0 && activeOptionCode
     ? allVersionImages.filter(img => img.material_option === activeOptionCode || img.material_option == null)
     : allVersionImages
+
+  // Live pricing snapshot for the active version (Phase 2). Replaces
+  // the proof_versions.pricing_snapshot read with a derivation from
+  // tierRows + variantRows scoped to the active version's material
+  // and currency. Same shape as the legacy snapshot, so
+  // InkPricingTable / QuantityLookup render code is unchanged.
+  // Variants with zero priced tiers in the active currency are
+  // dropped from the grid; missing tier cells inside an otherwise-
+  // priced variant are handled at render time as "—".
+  const livePricingSnapshot: PricingSnapshot = activeVersion
+    ? {
+        variants: variantRows
+          .filter(v => v.material_id === activeVersion.material_id)
+          // Restrict to the designer's chosen subset when curated
+          // (migration 000118). Null falls through to the post-
+          // Phase-2 "show every active variant" default — the safe
+          // shape for legacy rows that pre-date the column.
+          .filter(v =>
+            activeVersion.displayed_variant_ids == null ||
+            activeVersion.displayed_variant_ids.includes(v.id)
+          )
+          .map(v => {
+            const prices: Record<string, number> = {}
+            for (const t of tierRows) {
+              if (t.material_variant_id === v.id && t.currency === activeVersion.currency) {
+                prices[String(t.quantity)] = t.total_price
+              }
+            }
+            return {
+              variant_id: v.id,
+              display: v.variant_type === 'default' ? 'Default' : v.display_name,
+              prices,
+            }
+          })
+          .filter(v => Object.keys(v.prices).length > 0),
+      }
+    : { variants: [] }
 
   // Per-quantity surcharge map for the active option, baked into every
   // pricing cell. Empty for base options or materials with no surcharges
@@ -414,6 +981,26 @@ export default function CustomerProofPage() {
   const PAPER_BORDER = 'rgba(26,22,18,0.12)'
   const ACCENT = '#7b3ff2'
   const ACCENT_GLOW = 'rgba(123,63,242,0.55)'
+  // Customer-CTA palette (deep teal). Scoped to the per-recipient
+  // Approve / Request changes action band + the modal Confirm
+  // button — kept separate from the page-wide ACCENT (which is the
+  // editorial purple used on the masthead glow, plate cards,
+  // version dots, blockquote marks, etc) so the brand register on
+  // the rest of the page is untouched. If the designer dashboard
+  // ever wants the same teal CTA, it can opt in to these tokens
+  // explicitly rather than inheriting via a shared name.
+  const CTA_TEAL          = '#2F7A60'
+  const CTA_TEAL_HOVER    = '#3D8C72'
+  const CTA_TEAL_PRESSED  = '#26644F'
+  const CTA_TEAL_RING     = 'rgba(81,180,148,0.5)'
+  // Secondary (Request changes) — firmer than the previous near-
+  // invisible grey so it doesn't disappear next to the new
+  // confident teal primary.
+  const CTA_GHOST_BORDER  = '#B8A99A'
+  const CTA_GHOST_TEXT    = '#5F564D'
+  const CTA_GHOST_HOVER_BG = '#FAF7F2'
+  const CTA_GHOST_PRESSED_BG = '#F2EDE4'
+  const CTA_GHOST_HOVER_BORDER = '#9F8E7E'
   const APPROVED_GREEN = '#4ade80'
   const BRAND_ORDER = ['#e11735', '#d81c7e', '#4a21a6', '#3ba58a']
   const SERIF = "'Cormorant Garamond', Georgia, serif"
@@ -991,21 +1578,37 @@ export default function CustomerProofPage() {
                       className={[
                         'w-full',
                         augmentedNamedGroups.length > 0 ? 'mb-14' : '',
-                        groupIsPair(sharedStandaloneGroup)
-                          ? 'grid grid-cols-1 gap-6 md:grid-cols-2'
-                          : 'space-y-6',
                       ].join(' ')}
                     >
-                      {sharedStandaloneGroup.images.map((img, idx) => (
-                        <PlateCard
-                          key={img.id}
-                          image={img}
-                          brandColor={BRAND_ORDER[idx % BRAND_ORDER.length]}
-                          accent={ACCENT}
-                          alt={`Proof version ${activeVersion.version_number}`}
-                          onClick={setLightboxSrc}
-                        />
-                      ))}
+                      <div
+                        className={
+                          groupIsPair(sharedStandaloneGroup)
+                            ? 'grid grid-cols-1 gap-6 md:grid-cols-2'
+                            : 'space-y-6'
+                        }
+                      >
+                        {sharedStandaloneGroup.images.map((img, idx) => (
+                          <PlateCard
+                            key={img.id}
+                            image={img}
+                            brandColor={BRAND_ORDER[idx % BRAND_ORDER.length]}
+                            accent={ACCENT}
+                            alt={`Proof version ${activeVersion.version_number}`}
+                            onClick={setLightboxSrc}
+                          />
+                        ))}
+                      </div>
+                      {/* Phase 2.5: shared-section action band, only
+                          rendered when there's no per-recipient list
+                          to attach bands to (membership / single-
+                          design proofs). When named groups are
+                          present, the shared images are virtual-
+                          paired into each named group's card and
+                          their per-recipient band carries the action
+                          surface — a separate shared band would
+                          duplicate. */}
+                      {augmentedNamedGroups.length === 0 &&
+                        renderActionBand(SHARED_APPROVAL_KEY)}
                     </div>
                   )}
 
@@ -1136,6 +1739,8 @@ export default function CustomerProofPage() {
                                   )
                                 })}
                               </div>
+                              {/* Phase 2.5 per-recipient action band. */}
+                              {group.heading != null && renderActionBand(group.heading)}
                             </div>
                           )
                         })
@@ -1291,7 +1896,7 @@ export default function CustomerProofPage() {
                 </div>
               ) : (
                 <InkPricingTable
-                  snapshot={activeVersion.pricing_snapshot}
+                  snapshot={livePricingSnapshot}
                   currency={activeVersion.currency}
                   displayQuantities={activeVersion.display_quantities}
                   quoteMinQuantity={activeVersion.quote_min_quantity}
@@ -1518,7 +2123,7 @@ export default function CustomerProofPage() {
               Pricing section) sets the gate apart from the
               near-white About block above. */}
           {publicSettings?.disclaimer_text && (
-            <section className="py-16" style={{ background: INK_DEEP }}>
+            <section ref={disclaimerSectionRef} className="py-16" style={{ background: INK_DEEP }}>
               <div className="mx-auto max-w-[1040px] px-6 sm:px-8">
                 <div
                   className="rounded-xl px-7 py-8"
@@ -1734,6 +2339,173 @@ export default function CustomerProofPage() {
             className="max-h-full max-w-full rounded-lg object-contain"
             onClick={(e) => e.stopPropagation()}
           />
+        </div>
+      )}
+
+      {/* Phase 2 action confirmation modal */}
+      {actionPanel && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => { if (!actionSubmitting) closeActionPanel() }}
+        >
+          <div
+            className="w-full max-w-[560px] rounded-xl px-7 py-8 text-white"
+            style={{
+              background: INK,
+              border: '1px solid rgba(255,255,255,0.12)',
+              boxShadow: '0 30px 80px rgba(0,0,0,0.6)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p
+              className="uppercase tracking-[0.32em]"
+              style={{
+                fontFamily: MONO,
+                fontSize: 10,
+                color: actionPanel.type === 'approve' ? APPROVED_GREEN : BRAND_ORDER[1],
+              }}
+            >
+              {actionPanel.type === 'approve'
+                ? actionPanel.name === SHARED_APPROVAL_KEY
+                  ? 'Approve this proof'
+                  : `Approve ${actionPanel.name}'s design`
+                : actionPanel.name === SHARED_APPROVAL_KEY
+                  ? 'Request changes'
+                  : `Request changes for ${actionPanel.name}`}
+            </p>
+            <p
+              className="mt-4 max-w-[60ch] whitespace-pre-line text-[15px] leading-[1.7] text-white/80"
+              style={{ fontFamily: SANS }}
+            >
+              {actionPanel.type === 'approve'
+                ? publicSettings?.approve_confirmation_copy ?? ''
+                : publicSettings?.request_changes_confirmation_copy ?? ''}
+            </p>
+
+            <div className="mt-6">
+              <label
+                className="block uppercase tracking-[0.22em] text-white/60"
+                style={{ fontFamily: MONO, fontSize: 10 }}
+              >
+                Your name <span className="text-rose-300/90">*</span>
+              </label>
+              <input
+                type="text"
+                value={actionName}
+                onChange={(e) => setActionName(e.target.value)}
+                disabled={actionSubmitting}
+                autoFocus
+                className="mt-2 w-full rounded-md bg-white/[0.04] px-4 py-3 text-white placeholder-white/30 outline-none ring-1 ring-white/15 transition-colors focus:ring-white/40"
+                style={{ fontFamily: SANS, fontSize: 15 }}
+              />
+            </div>
+
+            {actionPanel.type === 'request_changes' && (
+              <div className="mt-5">
+                <label
+                  className="block uppercase tracking-[0.22em] text-white/60"
+                  style={{ fontFamily: MONO, fontSize: 10 }}
+                >
+                  What changes do you need? <span className="text-rose-300/90">*</span>
+                </label>
+                <textarea
+                  value={actionComment}
+                  onChange={(e) => setActionComment(e.target.value)}
+                  disabled={actionSubmitting}
+                  rows={5}
+                  className="mt-2 w-full rounded-md bg-white/[0.04] px-4 py-3 text-white placeholder-white/30 outline-none ring-1 ring-white/15 transition-colors focus:ring-white/40"
+                  style={{ fontFamily: SANS, fontSize: 15 }}
+                />
+              </div>
+            )}
+
+            {actionPanel.type === 'approve' && (
+              <div className="mt-5">
+                <label
+                  className="block uppercase tracking-[0.22em] text-white/60"
+                  style={{ fontFamily: MONO, fontSize: 10 }}
+                >
+                  Anything to add? <span className="text-white/30">(optional)</span>
+                </label>
+                <textarea
+                  value={actionComment}
+                  onChange={(e) => setActionComment(e.target.value)}
+                  disabled={actionSubmitting}
+                  rows={3}
+                  className="mt-2 w-full rounded-md bg-white/[0.04] px-4 py-3 text-white placeholder-white/30 outline-none ring-1 ring-white/15 transition-colors focus:ring-white/40"
+                  style={{ fontFamily: SANS, fontSize: 15 }}
+                />
+              </div>
+            )}
+
+            {actionError && (
+              <p
+                className="mt-5 max-w-[60ch] text-[14px] leading-[1.55] text-rose-300/90"
+                style={{ fontFamily: SANS }}
+              >
+                {actionError}
+              </p>
+            )}
+
+            <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={closeActionPanel}
+                disabled={actionSubmitting}
+                className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 text-white/70 transition-colors hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                style={{
+                  background: 'transparent',
+                  border: '1px solid rgba(255,255,255,0.18)',
+                  fontFamily: MONO,
+                  fontSize: 11,
+                  letterSpacing: '0.22em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitAction()}
+                disabled={actionSubmitting}
+                onMouseEnter={(e) => {
+                  if (actionSubmitting) return
+                  if (actionPanel.type === 'approve') {
+                    e.currentTarget.style.background = CTA_TEAL_HOVER
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (actionPanel.type === 'approve') {
+                    e.currentTarget.style.background = CTA_TEAL
+                  }
+                }}
+                onMouseDown={(e) => {
+                  if (actionSubmitting) return
+                  if (actionPanel.type === 'approve') {
+                    e.currentTarget.style.background = CTA_TEAL_PRESSED
+                  }
+                }}
+                onMouseUp={(e) => {
+                  if (actionPanel.type === 'approve') {
+                    e.currentTarget.style.background = CTA_TEAL_HOVER
+                  }
+                }}
+                className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 transition-colors disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2"
+                style={{
+                  background: actionPanel.type === 'approve' ? CTA_TEAL : '#ffffff',
+                  color: actionPanel.type === 'approve' ? '#ffffff' : INK_DEEP,
+                  fontFamily: MONO,
+                  fontSize: 11,
+                  letterSpacing: '0.22em',
+                  textTransform: 'uppercase',
+                  ['--tw-ring-color' as string]:
+                    actionPanel.type === 'approve' ? CTA_TEAL_RING : 'rgba(255,255,255,0.4)',
+                }}
+              >
+                {actionSubmitting ? 'Sending…' : 'Confirm'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

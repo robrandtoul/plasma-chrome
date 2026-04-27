@@ -336,7 +336,7 @@ export default function NewVersionPage() {
       // default).
       const inheritPromise = supabase
         .from('proof_versions')
-        .select('id, version_number, currency, material_id, pricing_snapshot, names, ink_names, material_options, card_type, custom_quote')
+        .select('id, version_number, currency, material_id, displayed_variant_ids, names, ink_names, material_options, card_type, custom_quote')
         .eq('proof_id', proofId!)
         .eq('is_current', true)
         .maybeSingle()
@@ -357,7 +357,7 @@ export default function NewVersionPage() {
         version_number: number
         currency: string
         material_id: string
-        pricing_snapshot: { variants?: { variant_id?: string }[] } | null
+        displayed_variant_ids: string[] | null
         names: string[] | null
         ink_names: string[] | null
         material_options: string[] | null
@@ -401,11 +401,11 @@ export default function NewVersionPage() {
         // effect to consume once the material's variants finish
         // loading. Without this, the material-effect's auto-select
         // would stomp the inherited IDs before they could be
-        // applied.
-        const variantIds = Array.isArray(inherited.pricing_snapshot?.variants)
-          ? inherited.pricing_snapshot!.variants!
-              .map((v) => v.variant_id)
-              .filter((id): id is string => typeof id === 'string')
+        // applied. Source flipped to displayed_variant_ids in
+        // migration 000118; legacy rows pre-dating the column
+        // were backfilled from the snapshot.
+        const variantIds = Array.isArray(inherited.displayed_variant_ids)
+          ? inherited.displayed_variant_ids
           : []
         if (variantIds.length > 0) {
           inheritedVariantIdsRef.current = variantIds
@@ -1738,22 +1738,15 @@ export default function NewVersionPage() {
     const uploadedPaths = uploadResults.map((r) => r.path)
     const material = materials.find((m) => m.id === selectedMaterialId)!
 
-    // Freeze the live prices into the version's pricing_snapshot so
-    // the version has a stable record independent of any future
-    // changes made in Admin → Pricing. Read straight from
-    // variantTiers now that the form is read-only — the intermediate
-    // variantSnapshots state that used to track user edits is gone.
-    const pricingSnapshot = {
-      variants: selectedVariantIds.map((vid) => {
-        const variant = variants.find((v) => v.id === vid)!
-        const display = variant.variant_type === 'default' ? 'Default' : variant.display_name
-        const prices: Record<string, number> = {}
-        ;(variantTiers[vid] ?? []).forEach((t) => {
-          prices[t.quantity] = t.total_price
-        })
-        return { variant_id: vid, display, prices }
-      }),
-    }
+    // Pricing snapshot deliberately omitted — customer page reads
+    // live pricing from public_price_tiers since Phase 2. The
+    // pricing_snapshot column is retained for historical proofs
+    // created before this commit.
+    //
+    // displayed_variant_ids carries the designer's variant subset
+    // (migration 000118). Empty array is fine for custom-quote
+    // versions where no grid is rendered; non-empty captures
+    // exactly which variants the customer should see priced.
 
     // Ink names come from either the comma-separated text field (optional
     // materials) or the per-ink array (mandatory materials).
@@ -1774,7 +1767,7 @@ export default function NewVersionPage() {
         material_display: material.display_name,
         ink_names: parsedInkNames,
         currency: currencyForInsert,
-        pricing_snapshot: pricingSnapshot,
+        displayed_variant_ids: selectedVariantIds,
         change_notes: changeNotes.trim() || null,
         material_options: selectedOptions,
         custom_quote: isCustomQuote,

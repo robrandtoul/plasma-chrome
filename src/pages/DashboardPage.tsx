@@ -52,6 +52,27 @@ interface ProofItem {
   // still in_progress — once approved the ack is implied and
   // the tail becomes noise.
   disclaimerAckedAt: string | null
+  // True when the latest version has at least one recipient with
+  // proof_name_approvals.state = 'changes_requested'. Drives an
+  // amber "Changes requested" badge on the project list, taking
+  // precedence over "In progress" when set. Approved proofs keep
+  // the existing emerald badge regardless — once the proof's
+  // status flips to approved (designer action), individual change
+  // requests are historical context rather than open work.
+  hasChangesRequested: boolean
+}
+
+interface DashboardLatestEvent {
+  id: string
+  created_at: string
+  event_type: 'approve' | 'request_changes'
+  actor_name: string
+  recipient_name: string | null
+  helpscout_thread_id: string | null
+  proof_id: string
+  version_number: number
+  contact_name: string | null
+  company_name: string | null
 }
 
 interface RecentProject {
@@ -129,6 +150,12 @@ function buildSections(
     const versions = (p.proof_versions ?? []) as any[]
     const current  = versions.find((v) => v.is_current)
     const viewed = viewedByProofId.get(p.id) ?? { state: 'unviewed' as ViewedState, lastViewedAt: null }
+    // Per-recipient changes_requested rollup against the latest
+    // version. Approval rows for older versions are historical and
+    // shouldn't drive the current badge — a v1 change request that
+    // was satisfied by a v2 ship shouldn't keep the project flagged.
+    const currentApprovals = (current?.proof_name_approvals ?? []) as Array<{ state: string }>
+    const hasChangesRequested = currentApprovals.some((a) => a.state === 'changes_requested')
     cg.proofs.push({
       id: p.id,
       lastActivityAt,
@@ -138,6 +165,7 @@ function buildSections(
       viewedState: viewed.state,
       lastViewedAt: viewed.lastViewedAt,
       disclaimerAckedAt: p.disclaimer_acknowledged_at ?? null,
+      hasChangesRequested,
     })
   }
 
@@ -235,7 +263,21 @@ function buildRecent(
   return out
 }
 
-function StatusPill({ status }: { status: ProofStatus }) {
+// hasChangesRequested takes precedence over the default "In progress"
+// pill: a project with at least one recipient asking for changes is
+// active in a more specific way that designers want flagged. Approved
+// / Abandoned / Dormant pills are unaffected — those are stronger
+// signals than per-recipient state, and a project that's already in
+// one of those states shouldn't be re-classified by a stale
+// changes_requested row that happens to still exist on the latest
+// version.
+function StatusPill({
+  status,
+  hasChangesRequested = false,
+}: {
+  status: ProofStatus
+  hasChangesRequested?: boolean
+}) {
   if (status === 'approved') {
     return <span className="w-fit shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Approved</span>
   }
@@ -244,6 +286,9 @@ function StatusPill({ status }: { status: ProofStatus }) {
   }
   if (status === 'dormant') {
     return <span className="w-fit shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">Dormant</span>
+  }
+  if (hasChangesRequested) {
+    return <span className="w-fit shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-semibold text-orange-700">Changes requested</span>
   }
   return <span className="w-fit shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">In progress</span>
 }
@@ -311,6 +356,82 @@ function AddVersionLink({ proofId }: { proofId: string }) {
   )
 }
 
+// ── Latest activity sidebar (Phase 2 Prompt 8) ──────────────────────────────
+
+function LatestActivityPanel({
+  events,
+  navigate,
+}: {
+  events: DashboardLatestEvent[]
+  navigate: (to: string) => void
+}) {
+  return (
+    <div className="rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+      <div className="border-b border-gray-100 px-5 py-4">
+        <h2 className="text-sm font-semibold text-gray-900">Latest activity</h2>
+        <p className="mt-0.5 text-xs text-gray-400">Last 10 events</p>
+      </div>
+      {events.length === 0 ? (
+        <p className="px-5 py-8 text-center text-sm text-gray-400">
+          No customer activity yet.
+        </p>
+      ) : (
+        <ul>
+          {events.map((e, i) => {
+            const approve = e.event_type === 'approve'
+            const verb = approve ? 'approved' : 'requested changes on'
+            const projectLabel = [e.contact_name, e.company_name].filter(Boolean).join(' · ') || '(no contact)'
+            const recipient = e.recipient_name && e.recipient_name !== '__shared__'
+              ? e.recipient_name
+              : 'shared'
+            const failed = e.helpscout_thread_id == null
+            return (
+              <li
+                key={e.id}
+                onClick={() => navigate(`/proofs/${e.proof_id}`)}
+                className={[
+                  'flex cursor-pointer gap-3 px-5 py-3 hover:bg-gray-50',
+                  i > 0 ? 'border-t border-gray-100' : '',
+                ].join(' ')}
+              >
+                <span
+                  aria-hidden
+                  className={[
+                    'mt-1.5 h-2 w-2 shrink-0 rounded-full',
+                    approve ? 'bg-emerald-500' : 'bg-amber-500',
+                  ].join(' ')}
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm leading-snug text-gray-900">
+                    <span className="font-semibold">{e.actor_name}</span>{' '}
+                    <span className="text-gray-500">{verb}</span>
+                  </p>
+                  <p className="mt-0.5 truncate text-xs text-gray-500">
+                    {projectLabel} · v{e.version_number} · {recipient}
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] text-gray-400" title={formatAbsoluteDateTime(e.created_at)}>
+                      {formatRelative(e.created_at)}
+                    </span>
+                    {failed && (
+                      <span
+                        className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
+                        title="Help Scout notification failed — customer was asked to email."
+                      >
+                        notification failed
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
 function PlusIcon() {
@@ -329,6 +450,7 @@ export default function DashboardPage() {
   const [rawProofs, setRawProofs]       = useState<any[]>([])
   const [recent, setRecent]             = useState<RecentProject[]>([])
   const [viewedByProofId, setViewedByProofId] = useState<Map<string, { state: ViewedState; lastViewedAt: string | null }>>(new Map())
+  const [latestEvents, setLatestEvents] = useState<DashboardLatestEvent[]>([])
   const [loading, setLoading]           = useState(true)
   const [search, setSearch]             = useState('')
   const [sort, setSort]                 = useState<SortMode>(readSort)
@@ -345,7 +467,14 @@ export default function DashboardPage() {
         // project cards. Keeps the search predicate below able to
         // match against it without another round-trip.
         'contacts(id, full_name, email, companies(id, name)),' +
-        'proof_versions(id, version_number, is_current, material_display)'
+        // proof_name_approvals(state) is needed to derive the
+        // "Changes requested" badge. Phase 2 Prompt 8 lifts the
+        // per-recipient state up to a per-project rollup at the
+        // dashboard level — any 'changes_requested' on the latest
+        // version flips the badge. Disambiguator on the FK name is
+        // required because proof_name_approvals has two FKs to
+        // proof_versions (proof_version_id, carried_from_version_id).
+        'proof_versions(id, version_number, is_current, material_display, proof_name_approvals!proof_name_approvals_proof_version_id_fkey(state))'
       )
       .order('last_activity_at', { ascending: false, nullsFirst: false })
 
@@ -366,7 +495,21 @@ export default function DashboardPage() {
       .order('created_at', { ascending: false })
       .limit(50)
 
-    const [{ data: proofs }, { data: versions }] = await Promise.all([proofsPromise, recentPromise])
+    // Phase 2 Prompt 8: customer-action audit feed for the right
+    // sidebar. View dashboard_latest_events (000122) collapses the
+    // proof_events → proof_versions → proofs → contacts → companies
+    // join into a flat shape; we cap at 10 client-side via .limit().
+    const eventsPromise = supabase
+      .from('dashboard_latest_events')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(10)
+
+    const [{ data: proofs }, { data: versions }, { data: events }] = await Promise.all([
+      proofsPromise,
+      recentPromise,
+      eventsPromise,
+    ])
 
     // Load real (non-bot) views for every version we just pulled.
     // One query, then aggregate per version in JS. Designers
@@ -422,6 +565,7 @@ export default function DashboardPage() {
     setRawProofs(proofs ?? [])
     setViewedByProofId(viewedByProofId)
     setRecent(buildRecent((versions ?? []) as any[], viewedByProofId))
+    setLatestEvents((events ?? []) as DashboardLatestEvent[])
     setLoading(false)
   }
 
@@ -464,7 +608,9 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className="min-w-0">
 
         {/* Page header */}
         <div className="mb-8 flex items-center justify-between">
@@ -720,7 +866,10 @@ export default function DashboardPage() {
                                 <span className="truncate text-sm text-gray-400">
                                   {proof.material_display ?? '—'}
                                 </span>
-                                <StatusPill status={proof.status} />
+                                <StatusPill
+                                  status={proof.status}
+                                  hasChangesRequested={proof.hasChangesRequested}
+                                />
                                 <span className="hidden text-sm text-gray-400 sm:block">{formatRelative(proof.lastActivityAt)}</span>
                                 <div className="hidden sm:block">
                                   <PreviewLink proofId={proof.id} hasVersions={proof.current_version != null} />
@@ -740,6 +889,17 @@ export default function DashboardPage() {
             )}
           </>
         )}
+          </div>
+          {/* Phase 2 Prompt 8 — Latest activity sidebar (lg+, stacks
+              below on narrower viewports). Only renders once the
+              initial loading spinner is gone so the sidebar doesn't
+              flash empty before the events query resolves. */}
+          {!loading && (
+            <aside className="lg:sticky lg:top-10 lg:self-start">
+              <LatestActivityPanel events={latestEvents} navigate={navigate} />
+            </aside>
+          )}
+        </div>
       </div>
     </div>
   )

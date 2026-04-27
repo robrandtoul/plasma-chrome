@@ -420,6 +420,15 @@ verify_jwt = false
 [functions.customer-proof-images]
 verify_jwt = false
 
+# proof-action: anon-callable for the same reason — Phase 2 customer
+# Approve / Request changes flow runs on the unauthenticated proof
+# page. Defence in depth lives inside the handler: settings.approvals_
+# enabled re-check, UUID validation, body shape checks, IP/UA capture,
+# pricing snapshot at action time. proof_events table has no anon
+# INSERT policy, so writes go via service-role.
+[functions.proof-action]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

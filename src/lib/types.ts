@@ -143,6 +143,43 @@ export interface PublicProofVersion {
   // to the customer view because the Proofs-section count
   // subtext copy-switches / hides based on this value.
   card_type: CardType
+  // ── Variant subset (migration 000118) ─────────────────────────────────────
+  // Variant IDs the designer chose to offer on this version's pricing
+  // grid. Null = "no curation captured" — the customer page falls
+  // through to showing every active variant of the material (the post-
+  // Phase-2 default). uuid[] = explicit subset, possibly empty (custom-
+  // quote versions). Pre-Phase-2 rows backfilled by 000118 from the
+  // snapshot's variant_ids; new rows written directly by NewVersionPage.
+  displayed_variant_ids: string[] | null
+  // ── Phase 2.5 customer approval flow (migrations 000116, 000119, 000120, 000121) ───
+  // Latest event per (proof_version_id, recipient name) pair — one
+  // entry for each recipient who has acted on this version, plus
+  // optionally one entry with name=null for "whole-version" events
+  // on membership / single-design proofs. Empty array (never null)
+  // when no events exist for the version. Computed in
+  // public_proof_versions via DISTINCT ON … ORDER BY created_at DESC,
+  // so a recipient who requested changes and later approved shows
+  // only the most recent state here. helpscout_thread_id is null
+  // when an event was recorded but the HS notification leg failed.
+  latest_events_by_name: ProofEventState[]
+  // Global gate. False (default) hides the action buttons entirely
+  // and keeps the customer page in its read-only Phase 1 shape.
+  // Same value on every row — denormalised at the view layer to
+  // avoid a separate anon-readable surface on settings.
+  approvals_enabled: boolean
+}
+
+// One entry in PublicProofVersion.latest_events_by_name. Mirrors
+// the proof_events row shape for the customer-visible columns;
+// name maps to the recipient (null = whole-version). The shape is
+// the public contract for the customer page's per-recipient render.
+export interface ProofEventState {
+  name: string | null
+  event_type: 'approve' | 'request_changes'
+  actor_name: string
+  comment: string | null
+  created_at: string
+  helpscout_thread_id: string | null
 }
 
 export interface PublicMaterialOption {
@@ -160,6 +197,29 @@ export interface PublicMaterialOptionSurcharge {
   currency: Currency
   quantity: number
   surcharge: number
+}
+
+// ── Live pricing (Phase 2, migration 000117) ───────────────────────────────
+// public_price_tiers + public_material_variants together replace the
+// pricing_snapshot read on the customer page. material_variants is
+// authenticated-only at the table level (000010); the parallel public
+// view exposes only the columns the customer page needs to label
+// variant columns in the pricing grid.
+export interface PublicPriceTier {
+  id: string
+  material_variant_id: string
+  currency: Currency
+  quantity: number
+  total_price: number
+  unit_price: number
+}
+
+export interface PublicMaterialVariant {
+  id: string
+  material_id: string
+  display_name: string
+  variant_type: 'thickness' | 'ink_count' | 'finish' | 'default'
+  sort_order: number
 }
 
 export interface SiteSettings {
