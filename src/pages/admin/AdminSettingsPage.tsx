@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
 import { invalidatePublicSettings } from '../../lib/publicSettings'
+import { invalidateVatRateGbp } from '../../lib/vatRateGbp'
 import AdminMaterialContentModal, { type MaterialContent } from './AdminMaterialContentModal'
 import AdminTemplatesSection from './AdminTemplatesSection'
 
@@ -18,6 +19,10 @@ interface Settings {
   /** null means "no default — force the designer to choose". */
   default_pricing_display: PricingDisplayValue | null
   default_currency: CurrencyValue | null
+  /** UK VAT rate used to derive the ex-VAT readout on the quote
+   *  compiler's GBP headline. Stored as a fraction (0.20 = 20%);
+   *  CHECK 0..1 enforced at the column. Migration 000115. */
+  vat_rate_gbp: number
 }
 
 interface HelpScoutStatus {
@@ -33,6 +38,7 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   reply_email:             'setting.reply_email_updated',
   default_pricing_display: 'setting.default_pricing_display_updated',
   default_currency:        'setting.default_currency_updated',
+  vat_rate_gbp:            'setting.vat_rate_gbp_updated',
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -131,6 +137,7 @@ export default function AdminSettingsPage() {
 
     setSavedAt((s) => ({ ...s, [field]: Date.now() }))
     invalidatePublicSettings()
+    if (field === 'vat_rate_gbp') invalidateVatRateGbp()
 
     void logAudit({
       action: AUDIT_ACTION[field],
@@ -289,6 +296,59 @@ export default function AdminSettingsPage() {
                 { value: 'USD', label: 'USD' },
                 { value: null, label: 'No default' },
               ]}
+            />
+          </FieldRow>
+        </div>
+      </section>
+
+      {/* ── Pricing settings ─────────────────────────────────────── */}
+      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+        <h3 className="mb-4 text-sm font-semibold text-gray-900">Pricing settings</h3>
+        <div className="space-y-5">
+          <FieldRow
+            label="UK VAT rate (GBP)"
+            help="UK VAT rate. Currently 20% (0.20). Edit if HMRC changes it. EUR and USD prices are VAT-free and unaffected."
+            saved={recentlySaved('vat_rate_gbp')}
+            working={working.vat_rate_gbp}
+            error={errors.vat_rate_gbp}
+          >
+            <input
+              type="number"
+              min={0}
+              max={1}
+              step={0.01}
+              value={drafts.vat_rate_gbp ?? settings.vat_rate_gbp}
+              onChange={(e) => {
+                const raw = e.target.value
+                // Allow empty string while editing — onBlur snaps
+                // back to the saved value if the user leaves it
+                // empty.
+                if (raw === '') {
+                  setDrafts((d) => ({ ...d, vat_rate_gbp: undefined }))
+                  return
+                }
+                const n = Number(raw)
+                setDrafts((d) => ({ ...d, vat_rate_gbp: Number.isFinite(n) ? n : d.vat_rate_gbp }))
+              }}
+              onBlur={() => {
+                const draft = drafts.vat_rate_gbp
+                if (draft == null) {
+                  // Empty / nonsense — discard the draft, leave saved value as-is.
+                  setDrafts((d) => ({ ...d, vat_rate_gbp: undefined }))
+                  return
+                }
+                if (!Number.isFinite(draft) || draft < 0 || draft > 1) {
+                  setErrors((e) => ({ ...e, vat_rate_gbp: 'Must be between 0 and 1 (e.g. 0.20)' }))
+                  setDrafts((d) => ({ ...d, vat_rate_gbp: undefined }))
+                  return
+                }
+                // Round to 4dp to match the column's numeric(5,4)
+                // precision; avoids saving e.g. 0.20000000003 from
+                // a copy-paste.
+                const rounded = Math.round(draft * 10000) / 10000
+                void saveField('vat_rate_gbp', rounded)
+              }}
+              className={`${inputClass} max-w-[10rem]`}
             />
           </FieldRow>
         </div>
@@ -484,6 +544,7 @@ function humanFieldLabel(field: keyof Settings): string {
     reply_email: 'Reply email',
     default_pricing_display: 'Default pricing display',
     default_currency: 'Default currency',
+    vat_rate_gbp: 'UK VAT rate (GBP)',
   }[field]
 }
 

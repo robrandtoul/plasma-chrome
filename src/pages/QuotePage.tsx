@@ -6,6 +6,7 @@ import type { Currency } from '../lib/types'
 import type { QuoteMaterial, QuoteVariant } from '../lib/quote/types'
 import { calculate, splitNameSurchargeFor } from '../lib/quote/calculate'
 import { usePricing } from '../lib/quote/usePricing'
+import { getVatRateGbp } from '../lib/vatRateGbp'
 import { MaterialPicker } from '../components/quote/MaterialPicker'
 import { CollapsedMaterialBar } from '../components/quote/CollapsedMaterialBar'
 import { VariantPicker } from '../components/quote/VariantPicker'
@@ -82,6 +83,21 @@ export default function QuotePage() {
   useEffect(() => {
     if (selectedMaterialId) setIsMaterialPickerExpanded(false)
   }, [selectedMaterialId])
+
+  // GBP VAT rate from settings (migration 000115). Loaded once on
+  // mount via the cached helper in src/lib/vatRateGbp.ts; null
+  // until the first fetch resolves (HeadlinePrice suppresses the
+  // VAT note + ex-VAT line during that brief window rather than
+  // flashing a stale rate). Reload picks up admin-side changes
+  // within one cache TTL.
+  const [vatRate, setVatRate] = useState<number | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    getVatRateGbp().then((rate) => {
+      if (!cancelled) setVatRate(rate)
+    })
+    return () => { cancelled = true }
+  }, [])
 
   // Materials: filtered to is_active = true AND is_published = true
   // AND archived_at IS NULL. Mirrors the new-version form's filter
@@ -511,6 +527,7 @@ export default function QuotePage() {
                 quantity={quantity}
                 currency={currency}
                 loading={pricing.loading && !tiersFresh}
+                vatRate={vatRate}
               />
             )}
 
@@ -576,12 +593,14 @@ export default function QuotePage() {
                   finishOption: showFinishToggle && activeOption
                     ? { displayName: activeOption.display_name, isBase: activeOption.is_base }
                     : null,
-                  // Hardcoded 20% on v1 so the GBP total line
-                  // in the copy matches what HeadlinePrice
-                  // currently renders. PR #2 (configurable VAT
-                  // rate) replaces this with the loaded state
-                  // value on rebase.
-                  vatRate: 0.20,
+                  // Settings-loaded rate so the copy's GBP
+                  // total line + ex-VAT figure track whatever
+                  // HeadlinePrice is rendering. Stays null
+                  // briefly during the first paint while the
+                  // cached helper resolves; the formatter
+                  // suppresses both VAT lines for that window
+                  // rather than baking in a stale rate.
+                  vatRate,
                 })
                 return (
                   <CopyQuoteButton plainText={formatted.plainText} html={formatted.html} />
