@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import { logAudit } from '../../lib/audit'
@@ -73,6 +73,14 @@ export default function AdminUsersPage() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const menuContainerRef = useRef<HTMLDivElement>(null)
+  // Per-open placement decision. The menu is custom-positioned via
+  // CSS absolute placement (top-full vs bottom-full); when the
+  // natural-down placement would clip below the viewport, the
+  // useLayoutEffect below flips to up. Reset to 'down' on each open
+  // so a previously-flipped row doesn't carry stale placement to
+  // the next click.
+  const [menuPlacement, setMenuPlacement] = useState<'down' | 'up'>('down')
+  const openMenuRef = useRef<HTMLDivElement | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   // Set-password modal state — reset every time the dialog opens so a
   // typo'd password never bleeds across sessions.
@@ -94,6 +102,37 @@ export default function AdminUsersPage() {
     }
     document.addEventListener('mousedown', onDocClick)
     return () => document.removeEventListener('mousedown', onDocClick)
+  }, [openMenuId])
+
+  // Flip the per-row kebab menu when natural-down placement would
+  // clip below the viewport. Runs synchronously after mount via
+  // useLayoutEffect — setState inside it triggers a re-render
+  // before paint, so the user never sees the down→up jump.
+  //
+  // Algorithm: every open starts with placement='down' (the kebab
+  // onClick resets it). The effect then measures the menu's
+  // rendered rect; if rect.bottom overflows past a 16px safety
+  // margin, flip to 'up' — but only if there's room above. The
+  // dep array is [openMenuId] only, so the post-flip re-render
+  // doesn't loop the effect.
+  useLayoutEffect(() => {
+    if (!openMenuId) return
+    const el = openMenuRef.current
+    if (!el) return
+    const SAFE_MARGIN = 16
+    const rect = el.getBoundingClientRect()
+    if (rect.bottom > window.innerHeight - SAFE_MARGIN) {
+      const triggerWrap = el.parentElement
+      const triggerRect = triggerWrap?.getBoundingClientRect()
+      // Room above? If yes, flip up. If no (e.g. the table is
+      // longer than the viewport AND the kebab's wrapper is at
+      // the top), leave it as-is — clipping below is no worse
+      // than clipping above, and the page is naturally scrollable.
+      if (triggerRect && triggerRect.top - rect.height >= SAFE_MARGIN) {
+        setMenuPlacement('up')
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openMenuId])
 
   async function load() {
@@ -374,7 +413,20 @@ export default function AdminUsersPage() {
                     <td className="px-5 py-3 text-right">
                       <div className="relative inline-block">
                         <button
-                          onClick={() => setOpenMenuId(openMenuId === u.id ? null : u.id)}
+                          onClick={() => {
+                            // Opening a different row's menu: reset
+                            // placement to 'down' so the layout
+                            // effect measures from the natural
+                            // position. Closing (same id): just
+                            // null out openMenuId; placement is
+                            // ignored when closed.
+                            if (openMenuId === u.id) {
+                              setOpenMenuId(null)
+                            } else {
+                              setMenuPlacement('down')
+                              setOpenMenuId(u.id)
+                            }
+                          }}
                           aria-label={`Actions for ${u.full_name ?? u.email}`}
                           className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
                         >
@@ -385,7 +437,13 @@ export default function AdminUsersPage() {
                           </svg>
                         </button>
                         {openMenuId === u.id && (
-                          <div className="absolute right-0 top-full z-10 mt-1 w-56 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg">
+                          <div
+                            ref={openMenuRef}
+                            className={[
+                              'absolute right-0 z-10 w-56 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg',
+                              menuPlacement === 'up' ? 'bottom-full mb-1' : 'top-full mt-1',
+                            ].join(' ')}
+                          >
                             {/* Send password reset — primary affordance.
                                 Disabled for deactivated users (their auth
                                 row is banned, so any reset would land
