@@ -2066,56 +2066,6 @@ export default function CustomerProofPage() {
             </section>
           )}
 
-          {/* ───── Before you approve (informational reference) ─────
-              Mirror of the canonical disclaimer copy that now lives
-              inside the Approve modal. Purely informational here —
-              no tick box, no gate. The modal is the per-action
-              ack surface; this card is reference text for anyone
-              skimming the page. Section only renders when
-              publicSettings.disclaimer_text is populated. */}
-          {publicSettings?.disclaimer_text && (
-            <section className="py-16" style={{ background: INK_DEEP }}>
-              <div className="mx-auto max-w-[1040px] px-6 sm:px-8">
-                <div
-                  className="rounded-xl px-7 py-8"
-                  style={{
-                    background: 'rgba(255,255,255,0.02)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                  }}
-                >
-                  <p style={{ ...REG_A_BASE, color: BRAND_ORDER[3] }}>
-                    Before you approve
-                  </p>
-                  <h2
-                    className="mt-3 text-white"
-                    style={{
-                      fontFamily: SERIF,
-                      fontWeight: 400,
-                      fontSize: 36,
-                      lineHeight: 1.1,
-                    }}
-                  >
-                    Please check this proof carefully.
-                  </h2>
-                  <p className="mt-6 max-w-[72ch] whitespace-pre-line text-[15px] leading-[1.75] text-white/75">
-                    {publicSettings.disclaimer_text}
-                  </p>
-                  {publicSettings.reply_email && (
-                    <p className="mt-5 text-[13px] text-white/60">
-                      Need changes? Reply to{' '}
-                      <a
-                        href={`mailto:${publicSettings.reply_email}`}
-                        className="text-white/85 underline underline-offset-4 hover:text-white"
-                      >
-                        {publicSettings.reply_email}
-                      </a>
-                      .
-                    </p>
-                  )}
-                </div>
-              </div>
-            </section>
-          )}
         </>
       )}
 
