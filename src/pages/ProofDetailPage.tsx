@@ -128,7 +128,6 @@ export default function ProofDetailPage() {
   const [statusWorking, setStatusWorking] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [showHelpscoutEdit, setShowHelpscoutEdit] = useState(false)
-  const [showCustomerPreview, setShowCustomerPreview] = useState(false)
   // Customer reply re-send modal + confirm-on-resend state. Both
   // local-only — no URL or persisted state. The confirm-then-open
   // sequence runs entirely client-side; opening the modal commits
@@ -893,7 +892,17 @@ export default function ProofDetailPage() {
                   discoverable and teaches the unlock. */}
               <button
                 type="button"
-                onClick={() => setShowCustomerPreview(true)}
+                onClick={() => {
+                  // Open the customer page in a new tab rather than a
+                  // same-origin iframe modal. The previous modal
+                  // collapsed silently in some setups (parent HMR
+                  // reconnect on dev, X-Frame-Options on certain
+                  // deploys) and the external-link icon already
+                  // promised a new-window experience. noopener +
+                  // noreferrer so the customer-page tab can't reach
+                  // back into window.opener.
+                  window.open(designerPreviewPath(proof.id), '_blank', 'noopener,noreferrer')
+                }}
                 disabled={versions.length === 0}
                 title={versions.length === 0 ? 'Add a version to enable preview' : undefined}
                 className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400 disabled:ring-gray-100 disabled:hover:bg-transparent"
@@ -1519,41 +1528,6 @@ export default function ProofDetailPage() {
           </div>
         )}
       </div>
-
-      {/* Customer preview modal. An iframe loading the real public
-          proof URL so the designer sees exactly what renders for the
-          customer, not a reproduction. Faster than a new tab
-          (no context switch) and still accurate. */}
-      {showCustomerPreview && (
-        <>
-          <div className="fixed inset-0 z-40 bg-black/60" onClick={() => setShowCustomerPreview(false)} />
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
-              <div className="flex items-center justify-between border-b border-gray-100 px-6 py-3">
-                <div className="flex items-center gap-3">
-                  <h3 className="text-sm font-semibold text-gray-900">Preview as customer</h3>
-                  <span className="text-xs text-gray-500">Exactly what the customer sees.</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowCustomerPreview(false)}
-                  className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-                  aria-label="Close"
-                >
-                  <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-                  </svg>
-                </button>
-              </div>
-              <iframe
-                src={designerPreviewPath(proof.id)}
-                title="Customer preview"
-                className="flex-1 border-0 bg-white"
-              />
-            </div>
-          </div>
-        </>
-      )}
 
       {/* Change Help Scout conversation modal */}
       {showHelpscoutEdit && (
