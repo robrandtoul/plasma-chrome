@@ -415,22 +415,23 @@ function LatestActivityPanel({
             // Help Scout failure badge only applies to action events —
             // views never trigger an HS post.
             const failed = !isView && e.helpscout_thread_id == null
-            // Soft tint reinforces the dot colour at row level —
-            // makes scanning the feed by event type easier than the
-            // 8px dot alone. Hover bumps to the 100 shade of the same
-            // family so feedback stays in-palette.
-            const rowTint = isView
-              ? 'bg-sky-100 hover:bg-sky-200'
+            // Vertical accent bar on the leading edge stands in for
+            // the row tint — same colour signal, far less ink on
+            // the panel. 4px wide reads at a glance without crowding
+            // the content. Hover uses a neutral gray so feedback
+            // stays distinct from the event-type colour.
+            const rowAccent = isView
+              ? 'border-l-4 border-sky-500'
               : isApprove
-                ? 'bg-emerald-100 hover:bg-emerald-200'
-                : 'bg-amber-100 hover:bg-amber-200'
+                ? 'border-l-4 border-emerald-500'
+                : 'border-l-4 border-amber-500'
             return (
               <li
                 key={e.id}
                 onClick={() => navigate(`/proofs/${e.proof_id}`)}
                 className={[
-                  'flex cursor-pointer gap-3 px-5 py-3 transition-colors',
-                  rowTint,
+                  'flex cursor-pointer gap-3 py-3 pl-4 pr-5 transition-colors hover:bg-gray-50',
+                  rowAccent,
                   i > 0 ? 'border-t border-gray-100' : '',
                 ].join(' ')}
               >
