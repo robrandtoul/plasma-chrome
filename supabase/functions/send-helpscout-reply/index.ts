@@ -10,11 +10,15 @@
 // Required secrets:
 //   HELPSCOUT_APP_ID, HELPSCOUT_APP_SECRET — OAuth client credentials.
 //   HELPSCOUT_DEFAULT_USER_ID — numeric Help Scout staff user id used
-//   as the `user` field on the reply. Required because Help Scout's
-//   reply endpoint demands a real staff user; today there is no per-
-//   designer mapping. Future ships can add per-designer attribution
-//   by extending profiles with helpscout_user_id and falling back to
-//   this default when null.
+//   as the fallback `user` field on the reply when the designer's
+//   profile row has no helpscout_user_id mapping.
+//
+// Per-designer attribution (added in migration 000123):
+//   profiles.helpscout_user_id is a nullable integer. When non-null
+//   for the calling designer, that value is used as the `user` field
+//   instead of HELPSCOUT_DEFAULT_USER_ID. Designers without a mapping
+//   silently fall through to the env var — the path that existed
+//   before per-designer attribution shipped, so no regression.
 //
 // POST body:
 //   { proof_id: string, version_id: string, body: string }
@@ -209,8 +213,8 @@ Deno.serve(async (req) => {
 
     const check = await requireDesigner(req)
     if (check instanceof Response) return check
-    const { admin } = check
-    console.log('[send-helpscout-reply] auth ok')
+    const { admin, callerId } = check
+    console.log('[send-helpscout-reply] auth ok', { callerId })
 
     // Global on/off switch (migration 000104). When replies_enabled
     // is false, the function rejects with 503 before doing any HS
@@ -284,17 +288,48 @@ Deno.serve(async (req) => {
     if (!appId || !appSecret) {
       return json({ error: 'Help Scout credentials not configured' }, 500)
     }
-    if (!defaultUserId) {
-      return json(
-        { error: 'HELPSCOUT_DEFAULT_USER_ID secret is not set. An admin must configure a default Help Scout user before replies can be sent.' },
-        500,
-      )
+
+    // Per-designer attribution (migration 000123). Look up the
+    // calling designer's helpscout_user_id off profiles. If non-null,
+    // use it as the `user` field on the HS reply; otherwise fall
+    // through to HELPSCOUT_DEFAULT_USER_ID. Lookup failure is treated
+    // as null — the env-var fallback is the safety net, so a transient
+    // DB hiccup on this single field shouldn't block the reply.
+    let perDesignerHsId: number | null = null
+    {
+      const { data: profileRow, error: profileErr } = await admin
+        .from('profiles')
+        .select('helpscout_user_id')
+        .eq('id', callerId)
+        .single()
+      if (profileErr) {
+        console.warn('[send-helpscout-reply] profile lookup failed, falling back to default', profileErr.message)
+      } else {
+        const v = (profileRow as { helpscout_user_id: number | null } | null)?.helpscout_user_id ?? null
+        if (typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && v > 0) {
+          perDesignerHsId = v
+        }
+      }
     }
-    const userIdNum = Number(defaultUserId)
-    if (!Number.isFinite(userIdNum) || !Number.isInteger(userIdNum)) {
-      return json({ error: `HELPSCOUT_DEFAULT_USER_ID must be a numeric Help Scout user id (got ${JSON.stringify(defaultUserId)}).` }, 500)
+
+    let userIdNum: number
+    if (perDesignerHsId != null) {
+      userIdNum = perDesignerHsId
+      console.log('[send-helpscout-reply] using per-designer HS id', { userIdNum })
+    } else {
+      if (!defaultUserId) {
+        return json(
+          { error: 'HELPSCOUT_DEFAULT_USER_ID secret is not set. An admin must configure a default Help Scout user before replies can be sent.' },
+          500,
+        )
+      }
+      const parsed = Number(defaultUserId)
+      if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+        return json({ error: `HELPSCOUT_DEFAULT_USER_ID must be a numeric Help Scout user id (got ${JSON.stringify(defaultUserId)}).` }, 500)
+      }
+      userIdNum = parsed
+      console.log('[send-helpscout-reply] using default HS id', { userIdNum })
     }
-    console.log('[send-helpscout-reply] secrets ok', { userIdNum })
 
     // The HS API call path. Errors surface as HsError (from
     // getAccessToken, fetchPrimaryCustomerId, or postReply); other

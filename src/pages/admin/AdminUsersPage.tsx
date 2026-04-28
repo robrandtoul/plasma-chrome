@@ -14,6 +14,9 @@ interface AdminUser {
   deactivated_at: string | null
   created_at: string
   last_sign_in_at: string | null
+  /** Per-designer Help Scout user id (migration 000123).
+   *  Null = falls back to HELPSCOUT_DEFAULT_USER_ID at reply time. */
+  helpscout_user_id: number | null
 }
 
 type ActionDialog =
@@ -23,6 +26,7 @@ type ActionDialog =
   | { kind: 'reactivate'; user: AdminUser }
   | { kind: 'sendPasswordReset'; user: AdminUser }
   | { kind: 'setPassword'; user: AdminUser }
+  | { kind: 'setHelpscoutUserId'; user: AdminUser }
 
 // Charset + length match AddUserDialog so generated overrides feel
 // consistent across the admin surface (no 0/O, 1/l/I).
@@ -74,6 +78,10 @@ export default function AdminUsersPage() {
   // typo'd password never bleeds across sessions.
   const [pwInput, setPwInput] = useState('')
   const [pwShow, setPwShow] = useState(false)
+  // Set-Help-Scout-user-id modal state. Empty string = "no value
+  // entered" (treated as a clear when saved). Each modal open
+  // pre-fills with the user's current helpscout_user_id.
+  const [hsIdInput, setHsIdInput] = useState('')
 
   useEffect(() => { load() }, [])
 
@@ -114,6 +122,15 @@ export default function AdminUsersPage() {
     } else {
       setPwInput('')
       setPwShow(false)
+    }
+    // setHelpscoutUserId modal pre-fills with the user's current
+    // mapping, or empty when null. Reset on every open so the
+    // previous target's value never bleeds across.
+    if (d?.kind === 'setHelpscoutUserId') {
+      const current = d.user.helpscout_user_id
+      setHsIdInput(current == null ? '' : String(current))
+    } else {
+      setHsIdInput('')
     }
   }
 
@@ -222,6 +239,48 @@ export default function AdminUsersPage() {
     showToast(`Password updated for ${user.full_name ?? user.email}`)
   }
 
+  // Save / clear the per-designer Help Scout user id mapping.
+  // Empty input → null (clear). Any other input must parse as a
+  // positive integer. Validation is mirrored on the edge function;
+  // surfacing it client-side here keeps the modal copy useful.
+  async function confirmSetHelpscoutUserId(user: AdminUser, raw: string) {
+    const trimmed = raw.trim()
+    let nextValue: number | null
+    if (trimmed === '') {
+      nextValue = null
+    } else {
+      const parsed = Number(trimmed)
+      if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+        setActionError('Help Scout user ID must be a positive integer.')
+        return
+      }
+      nextValue = parsed
+    }
+    setActionWorking(true)
+    setActionError(null)
+    const { data, error } = await supabase.functions.invoke<{
+      status?: 'ok' | 'failed'; reason?: string; detail?: string; error?: string
+    }>('admin-set-helpscout-user-id', {
+      body: { userId: user.id, helpscoutUserId: nextValue },
+    })
+    setActionWorking(false)
+    if (error) {
+      setActionError(error.message)
+      return
+    }
+    if (data?.status !== 'ok') {
+      setActionError(data?.detail ?? data?.error ?? data?.reason ?? 'Failed to update mapping')
+      return
+    }
+    setActionDialog(null)
+    showToast(
+      nextValue == null
+        ? `Help Scout user ID cleared for ${user.full_name ?? user.email}`
+        : `Help Scout user ID updated for ${user.full_name ?? user.email}`,
+    )
+    await load()
+  }
+
   // Precompute counts for the last-admin guard.
   const activeAdminCount = users.filter((u) => u.role === 'admin' && !u.deactivated_at).length
 
@@ -265,6 +324,7 @@ export default function AdminUsersPage() {
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Role</th>
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Added</th>
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Last sign-in</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400" title="Help Scout user ID — used to attribute staff replies. Default = HELPSCOUT_DEFAULT_USER_ID env var.">HS user</th>
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Status</th>
                 <th className="w-12 px-5 py-3" />
               </tr>
@@ -301,6 +361,11 @@ export default function AdminUsersPage() {
                     </td>
                     <td className={subtleCellClass}>{formatRelative(u.created_at)}</td>
                     <td className={subtleCellClass}>{u.last_sign_in_at ? formatRelative(u.last_sign_in_at) : 'Never'}</td>
+                    <td className={subtleCellClass}>
+                      {u.helpscout_user_id == null
+                        ? <span className="text-gray-400" title="No mapping — falls back to HELPSCOUT_DEFAULT_USER_ID">Default</span>
+                        : <span className="font-mono">{u.helpscout_user_id}</span>}
+                    </td>
                     <td className="px-5 py-3">
                       {deactivated
                         ? <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">Deactivated</span>
@@ -342,6 +407,20 @@ export default function AdminUsersPage() {
                                     ? 'You are the last admin'
                                     : undefined
                               }
+                            />
+                            {/* Per-designer HS user attribution
+                                (migration 000123). Same disabled rule
+                                as Change role — a deactivated user
+                                isn't sending replies anyway, so the
+                                mapping has no effect; lock it down
+                                until they're reactivated for the same
+                                "no orphaned config on banned accounts"
+                                reason as the password actions. */}
+                            <MenuItem
+                              label="Set Help Scout user ID…"
+                              onClick={() => openDialog({ kind: 'setHelpscoutUserId', user: u })}
+                              disabled={deactivated}
+                              disabledHint={deactivated ? 'Reactivate the user first' : undefined}
                             />
                             {deactivated ? (
                               <MenuItem
@@ -468,6 +547,24 @@ export default function AdminUsersPage() {
           working={actionWorking}
           errorMsg={actionError}
           onConfirm={() => confirmSetPassword(actionDialog.user, pwInput)}
+          onCancel={() => { setActionDialog(null); setActionError(null) }}
+        />
+      )}
+
+      {/* Set Help Scout user ID modal —
+          per-designer mapping that overrides the project-wide
+          HELPSCOUT_DEFAULT_USER_ID env var when sending staff
+          replies via send-helpscout-reply. Empty input = clear
+          the mapping (designer falls back to the default). */}
+      {actionDialog?.kind === 'setHelpscoutUserId' && (
+        <SetHelpscoutUserIdDialog
+          user={actionDialog.user}
+          value={hsIdInput}
+          onChange={setHsIdInput}
+          onClear={() => setHsIdInput('')}
+          working={actionWorking}
+          errorMsg={actionError}
+          onConfirm={() => confirmSetHelpscoutUserId(actionDialog.user, hsIdInput)}
           onCancel={() => { setActionDialog(null); setActionError(null) }}
         />
       )}
@@ -642,6 +739,95 @@ function SetPasswordDialog({
               className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
             >
               {working ? 'Setting…' : 'Set password'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+function SetHelpscoutUserIdDialog({
+  user, value, onChange, onClear, working, errorMsg, onConfirm, onCancel,
+}: {
+  user: AdminUser
+  value: string
+  onChange: (v: string) => void
+  onClear: () => void
+  working: boolean
+  errorMsg: string | null
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+  // Save label flips between Clear / Save based on whether the input
+  // is empty — the empty case sends null to the edge function, which
+  // clears the mapping. Distinct labels make the destructive case
+  // explicit before the click.
+  const trimmed = value.trim()
+  const isClearing = trimmed === ''
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !working && onCancel()} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">
+              Help Scout user ID for {user.full_name ?? user.email}
+            </h3>
+            <p className="mt-1 text-xs text-gray-500">
+              When this designer sends staff replies via the proof viewer, replies will appear in Help Scout under this user ID. Leave empty to use the project default.
+            </p>
+          </div>
+
+          <div className="mt-4">
+            <label className="mb-1.5 block text-sm font-medium text-gray-700">
+              Help Scout user ID
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                disabled={working}
+                className={inputClass + ' font-mono'}
+                placeholder="Leave empty to use project default"
+                autoFocus
+              />
+              <button
+                type="button"
+                onClick={onClear}
+                disabled={working || value === ''}
+                className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Clear
+              </button>
+            </div>
+            <p className="mt-1.5 text-xs text-gray-400">
+              Current: {user.helpscout_user_id == null
+                ? <span>using project default (HELPSCOUT_DEFAULT_USER_ID)</span>
+                : <span className="font-mono">{user.helpscout_user_id}</span>}
+            </p>
+          </div>
+
+          {errorMsg && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>}
+
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              onClick={onCancel}
+              disabled={working}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onConfirm}
+              disabled={working}
+              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+            >
+              {working ? 'Saving…' : isClearing ? 'Clear mapping' : 'Save'}
             </button>
           </div>
         </div>
