@@ -420,10 +420,10 @@ function LatestActivityPanel({
             // 8px dot alone. Hover bumps to the 100 shade of the same
             // family so feedback stays in-palette.
             const rowTint = isView
-              ? 'bg-sky-50/70 hover:bg-sky-100/70'
+              ? 'bg-sky-100 hover:bg-sky-200'
               : isApprove
-                ? 'bg-emerald-50/70 hover:bg-emerald-100/70'
-                : 'bg-amber-50/70 hover:bg-amber-100/70'
+                ? 'bg-emerald-100 hover:bg-emerald-200'
+                : 'bg-amber-100 hover:bg-amber-200'
             return (
               <li
                 key={e.id}
