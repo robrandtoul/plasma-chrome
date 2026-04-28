@@ -576,23 +576,33 @@ export default function NewProofPage() {
     e.preventDefault()
     setError('')
 
+    // Helper: surface a manual-section validation error AND expand
+    // the disclosure if it's still collapsed, so the field the
+    // designer is being told to fill is actually on screen. The
+    // Help Scout lookup flow already calls setManualOpen(true) on
+    // success; this mirrors that for the validation-failure path.
+    const failManual = (msg: string) => {
+      setError(msg)
+      setManualOpen(true)
+    }
+
     if (!isIndividual && !selectedCompany) {
-      setError('Please select or add a company, or tick "No company".')
+      failManual('Please select or add a company, or tick "No company".')
       return
     }
     if (!isIndividual && selectedCompany && selectedCompany.id === null && !selectedCompany.name.trim()) {
-      setError('Company name is required.')
+      failManual('Company name is required.')
       return
     }
     if (!selectedContact && !addingContact) {
-      setError('Please select or add a contact.')
+      failManual('Please select or add a contact.')
       return
     }
     if (addingContact) {
-      if (!newContactName.trim()) { setError('Contact full name is required.'); return }
-      if (!newContactEmail.trim()) { setError('Contact email is required.'); return }
+      if (!newContactName.trim()) { failManual('Contact full name is required.'); return }
+      if (!newContactEmail.trim()) { failManual('Contact email is required.'); return }
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newContactEmail.trim())) {
-        setError('Please enter a valid email address.')
+        failManual('Please enter a valid email address.')
         return
       }
     }
