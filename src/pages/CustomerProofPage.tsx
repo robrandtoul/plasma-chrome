@@ -34,20 +34,16 @@ export default function CustomerProofPage() {
   // ref survives React strict-mode's double-invoke of effects
   // whereas state wouldn't.
   const viewRecordedRef = useRef(false)
-  // Anchor for the "Please confirm you've read the terms" nudge —
-  // a click on the disabled Approve button smooth-scrolls to this
-  // section so the customer is shown what's missing.
-  const disclaimerSectionRef = useRef<HTMLElement | null>(null)
-  // Disclaimer acknowledgement is now a server-side event —
-  // authoritative timestamp lives on proofs.disclaimer_acknowledged_at
-  // and rides along with the public_proofs read (migrations 000091 +
-  // 000092). Client-side state here is just the transient
-  // saving / error signal while the edge function round-trips;
-  // the actual ack value is read from `proof.disclaimer_acknowledged_at`
-  // and kept in sync by patching the proof state in-place after
-  // a successful write.
-  const [ackSaving, setAckSaving] = useState(false)
-  const [ackError, setAckError] = useState<string | null>(null)
+  // Per-recipient Approve buttons are always live — the disclaimer
+  // acknowledgement now lives inside the Approve modal as a tick
+  // box on the Confirm action. After the first successful Confirm
+  // in this page session, subsequent Approve modals collapse the
+  // disclaimer to a one-line reminder (the tick still gates
+  // Confirm). React-state only — closing the tab resets the
+  // session-scoped flag, by design. The bottom-of-page disclaimer
+  // card is purely informational reference text.
+  const [disclaimerAckedThisSession, setDisclaimerAckedThisSession] =
+    useState(false)
 
   // ── Phase 2.5 per-recipient customer approval flow ─────────────
   // actionPanel is the modal surface; null = closed. Carries both
@@ -65,6 +61,15 @@ export default function CustomerProofPage() {
   const [actionComment, setActionComment] = useState('')
   const [actionSubmitting, setActionSubmitting] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  // Modal-scoped disclaimer state. Reset every time the Approve
+  // modal opens so each action requires its own per-action ack —
+  // the session-scoped flag only collapses how prominently the
+  // disclaimer text is rendered. `actionDisclaimerExpanded`
+  // overrides the abbreviated view when the customer clicks the
+  // "Show disclaimer" affordance on a subsequent action.
+  const [actionDisclaimerAcked, setActionDisclaimerAcked] = useState(false)
+  const [actionDisclaimerExpanded, setActionDisclaimerExpanded] =
+    useState(false)
   const [actionResults, setActionResults] = useState<
     Record<
       string,
@@ -205,36 +210,6 @@ export default function CustomerProofPage() {
     }
   }, [versionImages, activeVersion?.id])
 
-  // Call the acknowledge-disclaimer edge function. Idempotent on
-  // the server — second click returns the existing timestamp —
-  // but we still gate client-side on already-ack'd / in-flight
-  // so the button UX is tight. Patches the proof state in place
-  // on success so the checkbox renders as ticked + disabled
-  // immediately without a refetch round-trip.
-  async function handleAckChange(checked: boolean) {
-    if (!checked) return
-    if (!id || !proof) return
-    if (proof.disclaimer_acknowledged_at) return
-    if (ackSaving) return
-    setAckSaving(true)
-    setAckError(null)
-    try {
-      const { data, error } = await supabase.functions.invoke<{
-        acknowledged_at?: string
-        error?: string
-      }>('acknowledge-disclaimer', { body: { proofId: id } })
-      if (error) throw new Error(error.message || 'Network error')
-      if (!data?.acknowledged_at) throw new Error(data?.error ?? 'Unknown error')
-      setProof((prev) =>
-        prev ? { ...prev, disclaimer_acknowledged_at: data.acknowledged_at! } : prev,
-      )
-    } catch (err) {
-      setAckError((err as Error).message || 'Could not save')
-    } finally {
-      setAckSaving(false)
-    }
-  }
-
   // ── Phase 2.5 per-recipient action helpers ──────────────────────────────
 
   // Composite key for actionResults / successMessages so each band
@@ -257,6 +232,13 @@ export default function CustomerProofPage() {
     setActionName(recipientName === SHARED_APPROVAL_KEY ? '' : recipientName)
     setActionComment('')
     setActionError(null)
+    // Per-action ack: every Approve open starts with the tick
+    // unset and Confirm disabled, regardless of whether the
+    // disclaimer has been acked earlier this session. The
+    // session flag only collapses how prominently the text is
+    // rendered (full vs one-line reminder + Show disclaimer).
+    setActionDisclaimerAcked(false)
+    setActionDisclaimerExpanded(false)
   }
 
   function closeActionPanel() {
@@ -276,6 +258,18 @@ export default function CustomerProofPage() {
     }
     if (actionPanel.type === 'request_changes' && !comment) {
       setActionError('Please describe the changes you need.')
+      return
+    }
+    // Approve flow only: the disclaimer tick gates Confirm
+    // when a disclaimer is configured. The button is already
+    // disabled in that state so this branch is a defensive
+    // mirror of the disabled prop, not a primary surface.
+    if (
+      actionPanel.type === 'approve' &&
+      publicSettings?.disclaimer_text &&
+      !actionDisclaimerAcked
+    ) {
+      setActionError('Please confirm you have read the disclaimer.')
       return
     }
     setActionSubmitting(true)
@@ -355,6 +349,13 @@ export default function CustomerProofPage() {
         },
       }))
       setSuccessMessages((prev) => ({ ...prev, [key]: message }))
+      // First successful Approve in this page session flips the
+      // session-scoped flag so subsequent Approve modals open
+      // with the abbreviated disclaimer reminder. Doesn't apply
+      // to Request Changes — that flow has no disclaimer at all.
+      if (type === 'approve') {
+        setDisclaimerAckedThisSession(true)
+      }
       closeActionPanel()
     } catch {
       setActionError(
@@ -651,10 +652,10 @@ export default function CustomerProofPage() {
   //   approved          → APPROVED banner with actor+date+comment
   //   changes_requested → CHANGES REQUESTED banner with comment
   //
-  // Approve button gates on proof.disclaimer_acknowledged_at when
-  // a disclaimer is configured (single proof-level gate covering
-  // all bands, per migration 000091). Request changes stays
-  // ungated.
+  // Both buttons are always live. The disclaimer ack now lives
+  // inside the Approve modal as a per-action tick box gating
+  // Confirm — see the modal block at the bottom of this file.
+  // Request changes stays ungated end-to-end.
   function renderActionBand(name: string): React.ReactNode {
     if (!activeVersion) return null
     if (!activeVersion.approvals_enabled) return null
@@ -771,42 +772,26 @@ export default function CustomerProofPage() {
     }
 
     // pending — render the two buttons
-    const disclaimerConfigured = !!publicSettings?.disclaimer_text
-    const approveBlocked =
-      disclaimerConfigured && !proof?.disclaimer_acknowledged_at
     const approveLabel = `Approve ${recipientLabel}${named ? "'s design" : ''}`
     return (
       <div className="mt-6 flex flex-col gap-3 sm:items-start">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <button
             type="button"
-            aria-disabled={approveBlocked}
-            onClick={() => {
-              if (approveBlocked) {
-                disclaimerSectionRef.current?.scrollIntoView({
-                  behavior: 'smooth',
-                  block: 'center',
-                })
-                return
-              }
-              openActionPanel(activeVersion.id, name, 'approve')
-            }}
+            onClick={() => openActionPanel(activeVersion.id, name, 'approve')}
             onMouseEnter={(e) => {
-              if (!approveBlocked) e.currentTarget.style.background = CTA_TEAL_HOVER
+              e.currentTarget.style.background = CTA_TEAL_HOVER
             }}
             onMouseLeave={(e) => {
-              if (!approveBlocked) e.currentTarget.style.background = CTA_TEAL
+              e.currentTarget.style.background = CTA_TEAL
             }}
             onMouseDown={(e) => {
-              if (!approveBlocked) e.currentTarget.style.background = CTA_TEAL_PRESSED
+              e.currentTarget.style.background = CTA_TEAL_PRESSED
             }}
             onMouseUp={(e) => {
-              if (!approveBlocked) e.currentTarget.style.background = CTA_TEAL_HOVER
+              e.currentTarget.style.background = CTA_TEAL_HOVER
             }}
-            className={[
-              'inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 text-white transition-colors',
-              approveBlocked ? 'cursor-not-allowed opacity-50' : 'focus-visible:outline-none focus-visible:ring-2',
-            ].join(' ')}
+            className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 text-white transition-colors focus-visible:outline-none focus-visible:ring-2"
             style={{
               background: CTA_TEAL,
               fontFamily: MONO,
@@ -854,14 +839,6 @@ export default function CustomerProofPage() {
             Request changes
           </button>
         </div>
-        {approveBlocked && (
-          <p
-            className="uppercase tracking-[0.22em] text-[#1a1612]/60"
-            style={{ fontFamily: MONO, fontSize: 10 }}
-          >
-            Please confirm you've read the terms below first.
-          </p>
-        )}
       </div>
     )
   }
@@ -2107,23 +2084,15 @@ export default function CustomerProofPage() {
             </section>
           )}
 
-          {/* ───── Before you approve (acknowledgement gate) ─────
-              Final block before the footer. Permanent-state
-              read-receipt on the legal disclaimer copy: the
-              customer ticks "I've read this" once, the edge
-              function writes proof.disclaimer_acknowledged_at,
-              and subsequent visits render the checkbox ticked
-              + disabled with a small timestamp line below.
-              No un-tick affordance — ack is permanent per
-              proof (scaffolding for the future Approve flow
-              which will gate on this column being non-null).
-              Section only renders when publicSettings.disclaimer_text
-              is populated — an empty disclaimer would leave an
-              empty gate. Ink background (INK_DEEP, same as the
-              Pricing section) sets the gate apart from the
-              near-white About block above. */}
+          {/* ───── Before you approve (informational reference) ─────
+              Mirror of the canonical disclaimer copy that now lives
+              inside the Approve modal. Purely informational here —
+              no tick box, no gate. The modal is the per-action
+              ack surface; this card is reference text for anyone
+              skimming the page. Section only renders when
+              publicSettings.disclaimer_text is populated. */}
           {publicSettings?.disclaimer_text && (
-            <section ref={disclaimerSectionRef} className="py-16" style={{ background: INK_DEEP }}>
+            <section className="py-16" style={{ background: INK_DEEP }}>
               <div className="mx-auto max-w-[1040px] px-6 sm:px-8">
                 <div
                   className="rounded-xl px-7 py-8"
@@ -2138,7 +2107,7 @@ export default function CustomerProofPage() {
                       fontFamily: MONO,
                       fontSize: 10,
                       // Brand teal — the one from the 4-colour
-                      // signature rule. Ties the gate's kicker
+                      // signature rule. Ties the section's kicker
                       // visually to the brand palette without
                       // using the Plasma indigo (which carries
                       // the "interactive" signal elsewhere).
@@ -2173,107 +2142,6 @@ export default function CustomerProofPage() {
                       .
                     </p>
                   )}
-                  {(() => {
-                    const ackAt = proof.disclaimer_acknowledged_at
-                    const isAcked = !!ackAt
-                    // Label borders: solid green tint when
-                    // acked (reads as "done"), default white
-                    // hairline otherwise. Cursor disabled
-                    // signals the locked state.
-                    const labelClass = [
-                      'mt-8 flex w-fit items-center gap-3 rounded-lg px-4 py-3 transition-colors',
-                      isAcked
-                        ? 'cursor-default'
-                        : ackSaving
-                          ? 'cursor-wait'
-                          : 'cursor-pointer hover:border-white/30',
-                    ].join(' ')
-                    const labelStyle = isAcked
-                      ? { border: '1px solid rgba(74,222,128,0.45)' }
-                      : { border: '1px solid rgba(255,255,255,0.15)' }
-                    return (
-                      <>
-                        <label className={labelClass} style={labelStyle}>
-                          <input
-                            type="checkbox"
-                            className="sr-only"
-                            checked={isAcked}
-                            disabled={isAcked || ackSaving}
-                            onChange={(e) => handleAckChange(e.target.checked)}
-                          />
-                          <span
-                            aria-hidden
-                            className="grid h-5 w-5 shrink-0 place-items-center rounded-[4px]"
-                            style={
-                              isAcked
-                                ? {
-                                    background: APPROVED_GREEN,
-                                    border: `1.5px solid ${APPROVED_GREEN}`,
-                                  }
-                                : {
-                                    background: 'rgba(255,255,255,0.04)',
-                                    border: '1.5px solid rgba(255,255,255,0.45)',
-                                  }
-                            }
-                          >
-                            {isAcked && (
-                              <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-                                <path
-                                  d="M2.5 6.5L5 9L9.5 3.5"
-                                  stroke="#0f0d0b"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                              </svg>
-                            )}
-                          </span>
-                          <span
-                            className="uppercase tracking-[0.24em] text-white/85"
-                            style={{ fontFamily: MONO, fontSize: 11 }}
-                          >
-                            I've read this and understand the terms
-                          </span>
-                        </label>
-                        {/* Post-checkbox status line —
-                            "Acknowledged {date}" when ack'd;
-                            muted-red retry message on edge-
-                            function failure; nothing while
-                            saving (the cursor-wait + disabled
-                            input carry that signal). */}
-                        {isAcked && ackAt && (
-                          <p
-                            className="mt-3 uppercase tracking-[0.2em] text-white/50"
-                            style={{ fontFamily: MONO, fontSize: 10 }}
-                          >
-                            Acknowledged{' '}
-                            {(() => {
-                              const d = new Date(ackAt)
-                              if (Number.isNaN(d.getTime())) return ackAt
-                              const datePart = d.toLocaleDateString('en-GB', {
-                                day: 'numeric',
-                                month: 'short',
-                                year: 'numeric',
-                              })
-                              const timePart = d.toLocaleTimeString('en-GB', {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })
-                              return `${datePart}, ${timePart}`
-                            })()}
-                          </p>
-                        )}
-                        {ackError && !isAcked && (
-                          <p
-                            className="mt-3 text-[12px] text-rose-300/90"
-                            style={{ fontFamily: MONO }}
-                          >
-                            Couldn't save, please try again.
-                          </p>
-                        )}
-                      </>
-                    )
-                  })()}
                 </div>
               </div>
             </section>
@@ -2342,12 +2210,20 @@ export default function CustomerProofPage() {
         </div>
       )}
 
-      {/* Phase 2 action confirmation modal */}
+      {/* Phase 2 action confirmation modal —
+          two-layer scroll pattern: outer backdrop owns the scroll,
+          inner flex wrapper uses min-h-full + items-center so the
+          card centres when it fits and pushes the page-scroll
+          when it doesn't. The disclaimer block + tick box can
+          push total height past 740px on a 360-wide viewport in
+          the full-text state; without the scroll the bottom of
+          the card (Confirm button) was unreachable. */}
       {actionPanel && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          className="fixed inset-0 z-50 overflow-y-auto bg-black/80"
           onClick={() => { if (!actionSubmitting) closeActionPanel() }}
         >
+          <div className="flex min-h-full items-center justify-center px-4 py-8">
           <div
             className="w-full max-w-[560px] rounded-xl px-7 py-8 text-white"
             style={{
@@ -2438,6 +2314,112 @@ export default function CustomerProofPage() {
               </div>
             )}
 
+            {/* ───── Per-action disclaimer + tick box ─────
+                Modal is the canonical home for the disclaimer
+                copy. The bottom-of-page card mirrors the same
+                string from publicSettings as informational
+                reference. The tick box gates Confirm and is
+                reset on every modal open — the per-action ack
+                is captured implicitly by the existence of the
+                proof_events row. The session-scoped flag only
+                changes how prominently the text is rendered:
+                full block on the first action, one-line
+                reminder + "Show disclaimer" affordance on
+                subsequent actions in the same page session. */}
+            {actionPanel.type === 'approve' && publicSettings?.disclaimer_text && (
+              <div className="mt-6">
+                <p
+                  className="uppercase tracking-[0.22em] text-white/60"
+                  style={{ fontFamily: MONO, fontSize: 10 }}
+                >
+                  Disclaimer
+                </p>
+                {disclaimerAckedThisSession && !actionDisclaimerExpanded ? (
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
+                    <p
+                      className="text-[14px] leading-[1.6] text-white/70"
+                      style={{ fontFamily: SANS }}
+                    >
+                      By confirming, you reaffirm you have read the disclaimer.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setActionDisclaimerExpanded(true)}
+                      className="self-start uppercase tracking-[0.22em] text-white/60 underline-offset-4 hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 rounded-sm"
+                      style={{ fontFamily: MONO, fontSize: 10 }}
+                    >
+                      Show disclaimer
+                    </button>
+                  </div>
+                ) : (
+                  <p
+                    className="mt-2 max-w-[60ch] whitespace-pre-line rounded-md px-4 py-3 text-[14px] leading-[1.65] text-white/75"
+                    style={{
+                      fontFamily: SANS,
+                      background: 'rgba(255,255,255,0.04)',
+                      border: '1px solid rgba(255,255,255,0.10)',
+                    }}
+                  >
+                    {publicSettings.disclaimer_text}
+                  </p>
+                )}
+                <label
+                  className={[
+                    'mt-4 flex w-fit items-center gap-3 rounded-lg px-4 py-3 transition-colors',
+                    actionSubmitting
+                      ? 'cursor-wait'
+                      : 'cursor-pointer hover:border-white/30',
+                  ].join(' ')}
+                  style={{
+                    border: actionDisclaimerAcked
+                      ? '1px solid rgba(74,222,128,0.45)'
+                      : '1px solid rgba(255,255,255,0.15)',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={actionDisclaimerAcked}
+                    disabled={actionSubmitting}
+                    onChange={(e) => setActionDisclaimerAcked(e.target.checked)}
+                  />
+                  <span
+                    aria-hidden
+                    className="grid h-5 w-5 shrink-0 place-items-center rounded-[4px]"
+                    style={
+                      actionDisclaimerAcked
+                        ? {
+                            background: APPROVED_GREEN,
+                            border: `1.5px solid ${APPROVED_GREEN}`,
+                          }
+                        : {
+                            background: 'rgba(255,255,255,0.04)',
+                            border: '1.5px solid rgba(255,255,255,0.45)',
+                          }
+                    }
+                  >
+                    {actionDisclaimerAcked && (
+                      <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                        <path
+                          d="M2.5 6.5L5 9L9.5 3.5"
+                          stroke="#0f0d0b"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </span>
+                  <span
+                    className="uppercase tracking-[0.24em] text-white/85"
+                    style={{ fontFamily: MONO, fontSize: 11 }}
+                  >
+                    I confirm I have read the disclaimer above
+                  </span>
+                </label>
+              </div>
+            )}
+
             {actionError && (
               <p
                 className="mt-5 max-w-[60ch] text-[14px] leading-[1.55] text-rose-300/90"
@@ -2464,47 +2446,62 @@ export default function CustomerProofPage() {
               >
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={() => void submitAction()}
-                disabled={actionSubmitting}
-                onMouseEnter={(e) => {
-                  if (actionSubmitting) return
-                  if (actionPanel.type === 'approve') {
-                    e.currentTarget.style.background = CTA_TEAL_HOVER
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (actionPanel.type === 'approve') {
-                    e.currentTarget.style.background = CTA_TEAL
-                  }
-                }}
-                onMouseDown={(e) => {
-                  if (actionSubmitting) return
-                  if (actionPanel.type === 'approve') {
-                    e.currentTarget.style.background = CTA_TEAL_PRESSED
-                  }
-                }}
-                onMouseUp={(e) => {
-                  if (actionPanel.type === 'approve') {
-                    e.currentTarget.style.background = CTA_TEAL_HOVER
-                  }
-                }}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 transition-colors disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2"
-                style={{
-                  background: actionPanel.type === 'approve' ? CTA_TEAL : '#ffffff',
-                  color: actionPanel.type === 'approve' ? '#ffffff' : INK_DEEP,
-                  fontFamily: MONO,
-                  fontSize: 11,
-                  letterSpacing: '0.22em',
-                  textTransform: 'uppercase',
-                  ['--tw-ring-color' as string]:
-                    actionPanel.type === 'approve' ? CTA_TEAL_RING : 'rgba(255,255,255,0.4)',
-                }}
-              >
-                {actionSubmitting ? 'Sending…' : 'Confirm'}
-              </button>
+              {(() => {
+                // Confirm-button gating mirrors submitAction's
+                // guard. Approve flow with a configured
+                // disclaimer requires the tick box; without a
+                // disclaimer or for Request Changes, the button
+                // is enabled as soon as the modal opens.
+                const disclaimerGate =
+                  actionPanel.type === 'approve' &&
+                  !!publicSettings?.disclaimer_text &&
+                  !actionDisclaimerAcked
+                const confirmDisabled = actionSubmitting || disclaimerGate
+                return (
+                  <button
+                    type="button"
+                    onClick={() => void submitAction()}
+                    disabled={confirmDisabled}
+                    onMouseEnter={(e) => {
+                      if (confirmDisabled) return
+                      if (actionPanel.type === 'approve') {
+                        e.currentTarget.style.background = CTA_TEAL_HOVER
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (actionPanel.type === 'approve') {
+                        e.currentTarget.style.background = CTA_TEAL
+                      }
+                    }}
+                    onMouseDown={(e) => {
+                      if (confirmDisabled) return
+                      if (actionPanel.type === 'approve') {
+                        e.currentTarget.style.background = CTA_TEAL_PRESSED
+                      }
+                    }}
+                    onMouseUp={(e) => {
+                      if (actionPanel.type === 'approve') {
+                        e.currentTarget.style.background = CTA_TEAL_HOVER
+                      }
+                    }}
+                    className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 transition-colors disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2"
+                    style={{
+                      background: actionPanel.type === 'approve' ? CTA_TEAL : '#ffffff',
+                      color: actionPanel.type === 'approve' ? '#ffffff' : INK_DEEP,
+                      fontFamily: MONO,
+                      fontSize: 11,
+                      letterSpacing: '0.22em',
+                      textTransform: 'uppercase',
+                      ['--tw-ring-color' as string]:
+                        actionPanel.type === 'approve' ? CTA_TEAL_RING : 'rgba(255,255,255,0.4)',
+                    }}
+                  >
+                    {actionSubmitting ? 'Sending…' : 'Confirm'}
+                  </button>
+                )
+              })()}
             </div>
+          </div>
           </div>
         </div>
       )}
