@@ -428,7 +428,7 @@ function LatestActivityPanel({
                   aria-hidden
                   className={[
                     'mt-1.5 h-2 w-2 shrink-0 rounded-full',
-                    isView ? 'bg-cyan-500' : isApprove ? 'bg-emerald-500' : 'bg-amber-500',
+                    isView ? 'bg-sky-500' : isApprove ? 'bg-emerald-500' : 'bg-amber-500',
                   ].join(' ')}
                 />
                 <div className="min-w-0 flex-1">
