@@ -97,6 +97,57 @@ export default function CustomerProofPage() {
     return () => document.removeEventListener('keydown', onKey)
   }, [lightboxSrc])
 
+  // Modal: Escape to dismiss + Tab focus trap. Mirrors the lightbox
+  // pattern above. Closes only when not mid-submit so the customer
+  // can't accidentally cancel a request that's already on the wire.
+  // The Tab handler keeps focus inside actionPanelRef — without it,
+  // tabbing past the Confirm button lands on the version-tab buttons
+  // behind the (fixed) modal, which is disorienting on a screen-
+  // reader and a violation of the dialog contract.
+  const actionPanelRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!actionPanel) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        if (!actionSubmitting) closeActionPanel()
+        return
+      }
+      if (e.key !== 'Tab' || !actionPanelRef.current) return
+      const focusables = actionPanelRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+      )
+      if (focusables.length === 0) return
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      if (e.shiftKey && active === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault()
+        first.focus()
+      } else if (active && !actionPanelRef.current.contains(active)) {
+        // Focus escaped (e.g. clicked something outside, then tabbed)
+        // — pull it back in to the first element.
+        e.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [actionPanel, actionSubmitting])
+
+  // Body scroll lock while the action modal is open. Without this the
+  // page underneath scrolls on touch / wheel — the disclaimer block
+  // can be tall enough on mobile that scrolling within the modal
+  // "leaks" into the page. Same pattern as VersionDetailModal.
+  useEffect(() => {
+    if (!actionPanel) return
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previous }
+  }, [actionPanel])
+
   // When active version changes, reset the option switcher to the first option
   // this version exposes.
   useEffect(() => {
@@ -889,14 +940,25 @@ export default function CustomerProofPage() {
   // Derived: options for the currently-viewed version.
   const versionOptions = activeVersion?.material_options ?? []
   const showOptionSwitcher = versionOptions.length >= 2
-  const activeOption = activeOptionCode && activeVersion
-    ? materialOptions.find(o => o.material_id === activeVersion.material_id && o.code === activeOptionCode) ?? null
+  // Validate activeOptionCode against the current version's option set.
+  // The useEffect that resets activeOptionCode on version change runs
+  // after render, so during the transition frame it can hold a stale
+  // code that doesn't exist on the new version. Without this guard the
+  // image filter below would match nothing and the grid would render
+  // empty for one frame. Falling through to versionOptions[0] keeps the
+  // pricing/option/images consistent until the effect catches up.
+  const effectiveOptionCode =
+    activeOptionCode && versionOptions.includes(activeOptionCode)
+      ? activeOptionCode
+      : versionOptions[0] ?? null
+  const activeOption = effectiveOptionCode && activeVersion
+    ? materialOptions.find(o => o.material_id === activeVersion.material_id && o.code === effectiveOptionCode) ?? null
     : null
 
   // Filter images for the active option (if this version is in option mode)
   const allVersionImages = activeVersion ? (versionImages[activeVersion.id] ?? []) : []
-  const displayImages = versionOptions.length > 0 && activeOptionCode
-    ? allVersionImages.filter(img => img.material_option === activeOptionCode || img.material_option == null)
+  const displayImages = versionOptions.length > 0 && effectiveOptionCode
+    ? allVersionImages.filter(img => img.material_option === effectiveOptionCode || img.material_option == null)
     : allVersionImages
 
   // Live pricing snapshot for the active version (Phase 2). Replaces
@@ -1167,17 +1229,18 @@ export default function CustomerProofPage() {
                 viewports the secondary text wraps to 2 lines
                 (partial-approval copy, or approved copy
                 below ~390px) pushing rendered height to
-                ~90px. min-h-[120px] reserves floor above
-                that worst case so the layout stays locked
-                across approved ↔ unapproved flips on phone;
-                a few extra pixels of empty dark ink when
-                unapproved is invisible, whereas
-                under-reserving brings the jump back.
+                ~90px. min-h-[96px] reserves a 6px buffer
+                above that worst case so the layout stays
+                locked across approved ↔ unapproved flips
+                on phone, without burning the extra ~24px
+                of dead dark ink that the prior 120px floor
+                left under in-progress proofs (the most
+                common state).
                 display: flex (not default block) keeps the
                 chip out of line-box formatting so baseline-
                 alignment + ambient line-height don't add
                 half-leading on top of the box. */}
-            <div className="mb-10 flex min-h-[120px] items-start sm:min-h-[46px]">
+            <div className="mb-10 flex min-h-[96px] items-start sm:min-h-[46px]">
               {heroApprovalStrip && activeVersion && (() => {
                 const total = versionImages[activeVersion.id]?.length ?? 0
                 const isApprovedKind = heroApprovalStrip.kind === 'approved'
@@ -1522,7 +1585,7 @@ export default function CustomerProofPage() {
                                 x.material_id === activeVersion.material_id &&
                                 x.code === code,
                             )
-                            const isActive = activeOptionCode === code
+                            const isActive = effectiveOptionCode === code
                             const fromPrice = optionFromPrice(code)
                             return (
                               <button
@@ -2162,10 +2225,13 @@ export default function CustomerProofPage() {
         <div
           className="fixed inset-0 z-50 overflow-y-auto bg-black/80"
           onClick={() => { if (!actionSubmitting) closeActionPanel() }}
+          role="dialog"
+          aria-modal="true"
         >
           <div className="flex min-h-full items-center justify-center px-3 py-6 sm:px-4 sm:py-8">
           <div
-            className="w-full rounded-xl px-5 py-6 text-white sm:px-7 sm:py-8"
+            ref={actionPanelRef}
+            className="relative w-full rounded-xl px-5 py-6 text-white sm:px-7 sm:py-8"
             style={{
               background: INK,
               border: '1px solid rgba(255,255,255,0.12)',
@@ -2175,6 +2241,18 @@ export default function CustomerProofPage() {
             }}
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Close (X) — same pattern as the lightbox above. Hidden
+                while submitting so the customer can't cancel a write
+                that's already in flight. */}
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={closeActionPanel}
+              disabled={actionSubmitting}
+              className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full text-white/60 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40 sm:right-4 sm:top-4"
+            >
+              <span aria-hidden="true" className="text-xl leading-none">×</span>
+            </button>
             <p
               style={{
                 ...REG_A_BASE,
@@ -2440,10 +2518,25 @@ export default function CustomerProofPage() {
                         e.currentTarget.style.background = CTA_TEAL_HOVER
                       }
                     }}
-                    className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 transition-colors disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2"
+                    className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 transition-colors disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2"
                     style={{
-                      background: actionPanel.type === 'approve' ? CTA_TEAL : '#ffffff',
-                      color: actionPanel.type === 'approve' ? '#ffffff' : INK_DEEP,
+                      // Disabled state renders as a ghost outline
+                      // matching the Cancel button rather than a
+                      // faded primary fill. opacity-60 on the deep
+                      // teal still read as "saturated primary, just
+                      // dimmer" — customers were trying to click it.
+                      // Switching to ghost makes the gate visually
+                      // unambiguous: the tick box at the top of the
+                      // modal is what unlocks the primary fill.
+                      background: confirmDisabled
+                        ? 'transparent'
+                        : actionPanel.type === 'approve' ? CTA_TEAL : '#ffffff',
+                      border: confirmDisabled
+                        ? '1px solid rgba(255,255,255,0.15)'
+                        : 'none',
+                      color: confirmDisabled
+                        ? 'rgba(255,255,255,0.35)'
+                        : actionPanel.type === 'approve' ? '#ffffff' : INK_DEEP,
                       fontFamily: MONO,
                       fontSize: 11,
                       letterSpacing: '0.22em',
@@ -2457,6 +2550,23 @@ export default function CustomerProofPage() {
                 )
               })()}
             </div>
+            {/* Helper line — only renders when the Confirm button is
+                gated by the disclaimer tick (not by submit-in-flight),
+                so the customer knows exactly what unlocks the action.
+                Sits below the button row rather than above so it
+                reads as a footnote to "why is Confirm dim?", not
+                another piece of body copy. */}
+            {actionPanel.type === 'approve' &&
+              !!publicSettings?.disclaimer_text &&
+              !actionDisclaimerAcked &&
+              !actionSubmitting && (
+                <p
+                  className="mt-3 text-right text-[12px] text-white/45 sm:text-[13px]"
+                  style={{ fontFamily: SANS }}
+                >
+                  Tick the disclaimer above to enable Confirm.
+                </p>
+              )}
           </div>
           </div>
         </div>
