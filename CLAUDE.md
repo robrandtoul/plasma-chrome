@@ -16,7 +16,7 @@ Global business rules (VAT, Help Scout, Xero, pricing surcharges, British Englis
 
 ## Database state
 
-Migrations 000001–000026 have been applied. Migration 000005 originally installed a single flat `pricing_tables` table that didn't match reality; it was replaced by `000009_rebuild_pricing.sql`, which installs the current five-table pricing model. The `finishes` concept introduced in 000020 was later generalised to `material_options` in 000025.
+Migrations 000001–000126 have been applied. Migration 000005 originally installed a single flat `pricing_tables` table that didn't match reality; it was replaced by `000009_rebuild_pricing.sql`, which installs the current five-table pricing model. The `finishes` concept introduced in 000020 was later generalised to `material_options` in 000025.
 
 Migration summary (post-000009):
 
@@ -34,6 +34,7 @@ Migration summary (post-000009):
 - **000024** — `materials.requires_ink_names` flag (plastic_translucent/tinted/satin + paper_letterpress)
 - **000025** — rename finishes→material_options, finish_surcharges→material_option_surcharges, columns renamed to match; adds `materials.option_label`; seeds five wood species (Black Walnut base, American Cherry, Finnish Birch, Canadian Maple, Bamboo — no surcharges)
 - **000026** — carbon fibre "Cutting" option (Without cutting = base, Optional CNC cutting = 39-tier × 3-currency surcharge)
+- **000126** — `maybe_finalize_proof_status()` trigger on `proof_name_approvals`. After a direct customer approval (state='approved', carried_from_version_id IS NULL), if the proof's current version has every required slot approved (names[] + '__shared__' iff the version has any associated_name=null images), the proof flips to `status='approved'` + `approved_at=now()`. Skips carry-forward writes; never overrides `abandoned` or already-`approved`. Designer's "Mark as approved" button is now belt-and-braces, not the only path.
 
 `seed.sql` (applied via 000009's pricing rebuild) contains roughly 16,000 price-tier rows sourced from the per-currency Pricing CSVs in Rob's Dropbox (`mnt/Pricing`). The generic `add_ons` / `add_on_prices` tables are still present but largely superseded by `material_options` for anything that behaves as a switchable dimension on a proof.
 
