@@ -274,15 +274,33 @@ export default function AdminUsersPage() {
                 const isSelf = u.id === currentUserId
                 const deactivated = !!u.deactivated_at
                 const isLastActiveAdmin = u.role === 'admin' && !deactivated && activeAdminCount <= 1
+                // Deactivated rows used to apply opacity-50 to the
+                // <tr>, but CSS opacity propagates to descendants and
+                // creates a stacking context — so the kebab menu's
+                // bg-white was rendered at α=0.5 (letting rows beneath
+                // bleed through) and disabled vs enabled menu-item
+                // text-greys collapsed into the same washed-out tone.
+                // Replaced with explicit muted text colours on the
+                // text cells; the kebab cell stays at full opacity so
+                // the menu surface is clean. The Status pill still
+                // carries the primary "deactivated" visual signal.
+                const textCellClass = deactivated
+                  ? 'px-5 py-3 text-gray-400'
+                  : 'px-5 py-3 text-gray-600'
+                const subtleCellClass = deactivated
+                  ? 'px-5 py-3 text-gray-300'
+                  : 'px-5 py-3 text-gray-500'
                 return (
-                  <tr key={u.id} className={['border-b border-gray-50 last:border-0', deactivated ? 'opacity-50' : ''].join(' ')}>
-                    <td className="px-5 py-3 font-medium text-gray-900">{u.full_name ?? '—'}{isSelf && <span className="ml-2 text-xs font-normal text-gray-400">(you)</span>}</td>
-                    <td className="px-5 py-3 text-gray-600">{u.email}</td>
-                    <td className="px-5 py-3">
-                      <RolePill role={u.role} />
+                  <tr key={u.id} className="border-b border-gray-50 last:border-0">
+                    <td className={['px-5 py-3 font-medium', deactivated ? 'text-gray-400' : 'text-gray-900'].join(' ')}>
+                      {u.full_name ?? '—'}{isSelf && <span className="ml-2 text-xs font-normal text-gray-400">(you)</span>}
                     </td>
-                    <td className="px-5 py-3 text-gray-500">{formatRelative(u.created_at)}</td>
-                    <td className="px-5 py-3 text-gray-500">{u.last_sign_in_at ? formatRelative(u.last_sign_in_at) : 'Never'}</td>
+                    <td className={textCellClass}>{u.email}</td>
+                    <td className="px-5 py-3">
+                      <RolePill role={u.role} muted={deactivated} />
+                    </td>
+                    <td className={subtleCellClass}>{formatRelative(u.created_at)}</td>
+                    <td className={subtleCellClass}>{u.last_sign_in_at ? formatRelative(u.last_sign_in_at) : 'Never'}</td>
                     <td className="px-5 py-3">
                       {deactivated
                         ? <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">Deactivated</span>
@@ -316,8 +334,14 @@ export default function AdminUsersPage() {
                             <MenuItem
                               label={u.role === 'admin' ? 'Change to Designer' : 'Change to Admin'}
                               onClick={() => openDialog({ kind: 'changeRole', user: u })}
-                              disabled={isSelf && isLastActiveAdmin}
-                              disabledHint={isSelf && isLastActiveAdmin ? 'You are the last admin' : undefined}
+                              disabled={deactivated || (isSelf && isLastActiveAdmin)}
+                              disabledHint={
+                                deactivated
+                                  ? 'Reactivate the user first'
+                                  : isSelf && isLastActiveAdmin
+                                    ? 'You are the last admin'
+                                    : undefined
+                              }
                             />
                             {deactivated ? (
                               <MenuItem
@@ -459,11 +483,21 @@ export default function AdminUsersPage() {
 
 // ── Row-level UI bits ─────────────────────────────────────────────────────────
 
-function RolePill({ role }: { role: 'admin' | 'designer' }) {
+function RolePill({ role, muted }: { role: 'admin' | 'designer'; muted?: boolean }) {
+  // Muted variant for deactivated rows — replaces the previous
+  // opacity-50 propagation. Same shape, faded fill + text so the
+  // pill still reads as a role marker but recedes alongside the
+  // rest of the row's text.
   if (role === 'admin') {
-    return <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">Admin</span>
+    const cls = muted
+      ? 'rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-300'
+      : 'rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700'
+    return <span className={cls}>Admin</span>
   }
-  return <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">Designer</span>
+  const cls = muted
+    ? 'rounded-full bg-gray-50 px-2 py-0.5 text-xs font-semibold text-gray-400'
+    : 'rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600'
+  return <span className={cls}>Designer</span>
 }
 
 function MenuItem({ label, onClick, disabled, disabledHint, danger }: {
