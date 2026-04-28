@@ -354,7 +354,16 @@ export default function AdminUsersPage() {
           <p className="text-gray-400">No users yet.</p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200" ref={menuContainerRef}>
+        // overflow-hidden was originally here to clip table content
+        // to the rounded-2xl corners. Removed because it also clipped
+        // the per-row kebab menus, which extend below their row when
+        // open — for any row past the upper third of the table the
+        // bottom 1-2 menu items would silently disappear under the
+        // wrapper's bottom edge. Cells have no backgrounds + last:
+        // border-0 handles the bottom-row border-bleed, so dropping
+        // the wrapper-level clip has no visible side effect on the
+        // table itself.
+        <div className="rounded-2xl bg-white shadow-sm ring-1 ring-gray-200" ref={menuContainerRef}>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
