@@ -290,6 +290,15 @@ export default function CustomerProofPage() {
           actor_name: name,
           name: actionPanel.name,
           comment: comment || undefined,
+          // Active option-tab code at the moment the customer clicked
+          // Confirm — recorded on proof_events + proof_name_approvals
+          // per migration 000124 so a "(brushed)" suffix can ride
+          // through the dashboard without re-deriving from active
+          // tab state. Null when the version has no option dimension
+          // (empty material_options array). Sending null explicitly
+          // rather than undefined so the edge function's body parser
+          // doesn't have to distinguish absent-vs-null.
+          material_option_code: activeOptionCode ?? null,
         },
       })
       if (error) {

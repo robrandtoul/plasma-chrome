@@ -204,19 +204,49 @@ function buildCustomerThreadText(
   comment: string | null,
   fileNames: string[],
   proofUrl: string | null,
+  // material_options dimension surface for the active option, looked
+  // up from the DB at the call site. Both null when the version has
+  // no option dimension OR the material_options row was not found
+  // (defensive — the in-function trigger validates membership before
+  // we get here, so this should be unreachable in practice).
+  optionDisplayLabel: string | null,
+  optionDimensionLabel: string | null,
 ): string {
   // SHARED_APPROVAL_KEY suppresses the "for {name}" suffix — the
   // shared section IS the whole proof (all-shared / membership /
   // single-design case). Named recipients get the suffix.
   const recipientSuffix =
     recipientName === SHARED_APPROVAL_KEY ? '' : ` for ${recipientName}`
+  // Option suffix reads e.g. " for the Brushed finish" / " for the
+  // Black Walnut species" / " for the Optional CNC cutting"
+  // (dedup case — the display_name already ends with the dimension
+  // noun, so we drop the redundant trailing word). Suppressed when
+  // either piece is missing so we never emit "for the  finish" /
+  // "for the Brushed".
+  //
+  // Dedup rule: if the display_name's trailing whitespace-delimited
+  // word equals the dimension label (case-insensitive, whole-word),
+  // drop the suffix and emit display_name only. Otherwise keep both.
+  // This handles the carbon-fibre "Optional CNC cutting" / "Cutting"
+  // pair without special-casing — same logic would dedup any future
+  // material whose option codes carry the dimension noun in their
+  // display name.
+  const optionSuffix = (() => {
+    if (!optionDisplayLabel || !optionDimensionLabel) return ''
+    const tail = optionDisplayLabel.trim().split(/\s+/).pop() ?? ''
+    const tailMatchesDimension =
+      tail.toLowerCase() === optionDimensionLabel.toLowerCase()
+    return tailMatchesDimension
+      ? ` for the ${optionDisplayLabel}`
+      : ` for the ${optionDisplayLabel} ${optionDimensionLabel.toLowerCase()}`
+  })()
   const fileLine = fileNames.length > 0 ? fileNames.join(', ') : '(no files)'
   const urlLine = proofUrl ? `View the proof: ${proofUrl}\n` : ''
 
   if (eventType === 'approve') {
     const commentBlock = comment ? `"${comment}"\n\n` : ''
     return (
-      `Approved by ${actorName}${recipientSuffix}.\n\n` +
+      `Approved by ${actorName}${recipientSuffix}${optionSuffix}.\n\n` +
       commentBlock +
       `Approved version: ${fileLine}\n` +
       urlLine +
@@ -226,7 +256,7 @@ function buildCustomerThreadText(
 
   // request_changes — comment is required and always present.
   return (
-    `Changes requested by ${actorName}${recipientSuffix}.\n\n` +
+    `Changes requested by ${actorName}${recipientSuffix}${optionSuffix}.\n\n` +
     `"${comment ?? ''}"\n\n` +
     `Version: ${fileLine}\n` +
     urlLine +
@@ -352,6 +382,13 @@ Deno.serve(async (req) => {
   let actorName: string
   let recipientName: string
   let comment: string | null
+  // material_option_code is the active option-tab code at the moment
+  // the customer clicked Confirm (per migration 000124). Null when
+  // the version has no option dimension. Membership in the parent's
+  // material_options array is validated below — same rule the BEFORE
+  // INSERT trigger enforces, surfaced here as a 400 so the client
+  // gets a clean reason instead of a 23514 from the trigger.
+  let materialOptionCode: string | null
   try {
     const parsed = await req.json()
     proofVersionId = typeof parsed?.proof_version_id === 'string' ? parsed.proof_version_id.trim() : ''
@@ -360,6 +397,13 @@ Deno.serve(async (req) => {
     recipientName = typeof parsed?.name === 'string' ? parsed.name.trim() : ''
     comment = typeof parsed?.comment === 'string' ? parsed.comment.trim() : null
     if (comment === '') comment = null
+    // Accept null / undefined / missing as null. A non-string value
+    // (e.g. number, object) is treated as null too — frontend always
+    // sends string-or-null, but we don't trust the wire shape.
+    const rawCode = parsed?.material_option_code
+    materialOptionCode = typeof rawCode === 'string' && rawCode.trim() !== ''
+      ? rawCode.trim()
+      : null
   } catch {
     return failed('validation', 400, 'invalid JSON body')
   }
@@ -406,7 +450,7 @@ Deno.serve(async (req) => {
   const { data: versionRow, error: versionErr } = await admin
     .from('proof_versions')
     .select(
-      'id, proof_id, material_id, currency, displayed_variant_ids, names, ' +
+      'id, proof_id, material_id, currency, displayed_variant_ids, names, material_options, ' +
       'proofs:proof_id ( helpscout_conversation_id ), ' +
       'proof_version_images ( original_filename, sort_order, associated_name )',
     )
@@ -427,6 +471,7 @@ Deno.serve(async (req) => {
     currency: string
     displayed_variant_ids: string[] | null
     names: string[] | null
+    material_options: string[] | null
     proofs: { helpscout_conversation_id: string | null } | null
     proof_version_images: Array<{
       original_filename: string | null
@@ -443,6 +488,22 @@ Deno.serve(async (req) => {
   const allowedNames = new Set<string>([SHARED_APPROVAL_KEY, ...recipientRoster])
   if (!allowedNames.has(recipientName)) {
     return failed('validation', 400, 'unknown recipient name')
+  }
+
+  // ── Validate material_option_code membership ─────────────────────────────
+  // Same rule the BEFORE INSERT trigger enforces (per migration 000124),
+  // surfaced here as a clean 400 so the client gets a structured
+  // 'validation' reason instead of a 23514 errcode wrapped in a 500.
+  // Null is always accepted: versions with no option dimension send
+  // null, and the frontend doesn't need to know the parent's option
+  // shape to make a request.
+  const versionOptions = Array.isArray(v.material_options) ? v.material_options : []
+  if (materialOptionCode !== null && !versionOptions.includes(materialOptionCode)) {
+    return failed(
+      'validation',
+      400,
+      `material_option_code "${materialOptionCode}" is not a member of this version's material_options`,
+    )
   }
 
   const conversationId = v.proofs?.helpscout_conversation_id ?? null
@@ -491,6 +552,10 @@ Deno.serve(async (req) => {
     from_ip: fromIp,
     from_ua: fromUa,
     pricing_snapshot_at_action: pricingSnapshotAtAction,
+    // Migration 000124. Trigger-validated above; sending null when
+    // the version has no option dimension is the documented
+    // "unknown / not applicable" semantic.
+    material_option_code: materialOptionCode,
   }
   const { data: eventRow, error: insertErr } = await admin
     .from('proof_events')
@@ -540,6 +605,12 @@ Deno.serve(async (req) => {
         actor_ip: fromIp,
         actor_ua: fromUa,
         updated_at: nowIso,
+        // Mirrors proof_events.material_option_code per migration
+        // 000124. Best-effort consistency: if the proof_events insert
+        // landed but this upsert fails, the partial-status response
+        // already covers the divergence — same model as every other
+        // mirrored field on this row.
+        material_option_code: materialOptionCode,
       },
       { onConflict: 'proof_version_id,name' },
     )
@@ -579,6 +650,35 @@ Deno.serve(async (req) => {
     ''
   const proofUrl = baseUrl ? `${baseUrl.replace(/\/+$/, '')}/p/${v.proof_id}` : null
 
+  // Look up the human-readable option label + dimension noun for the
+  // HS thread copy. Two cheap reads when materialOptionCode is set;
+  // skipped entirely when null (the no-option-dimension case). Both
+  // failures degrade gracefully — buildCustomerThreadText drops the
+  // "for the … finish" suffix when either label is null. Customer's
+  // intent is already recorded in proof_events so a missing suffix
+  // is purely cosmetic.
+  let optionDisplayLabel: string | null = null
+  let optionDimensionLabel: string | null = null
+  if (materialOptionCode) {
+    const [optResult, matResult] = await Promise.all([
+      admin
+        .from('material_options')
+        .select('display_name')
+        .eq('material_id', v.material_id)
+        .eq('code', materialOptionCode)
+        .maybeSingle(),
+      admin
+        .from('materials')
+        .select('option_label')
+        .eq('id', v.material_id)
+        .maybeSingle(),
+    ])
+    optionDisplayLabel =
+      (optResult.data as { display_name: string } | null)?.display_name ?? null
+    optionDimensionLabel =
+      (matResult.data as { option_label: string | null } | null)?.option_label ?? null
+  }
+
   const text = buildCustomerThreadText(
     eventType,
     actorName,
@@ -586,6 +686,8 @@ Deno.serve(async (req) => {
     comment,
     fileNames,
     proofUrl,
+    optionDisplayLabel,
+    optionDimensionLabel,
   )
 
   let threadId = 0
