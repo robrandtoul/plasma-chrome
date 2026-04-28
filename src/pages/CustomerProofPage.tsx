@@ -377,6 +377,23 @@ export default function CustomerProofPage() {
 
   async function loadProof(proofId: string) {
     setLoading(true)
+    // React Router keeps this component mounted across /p/:id →
+    // /p/:otherId navigations, so without an explicit reset the
+    // conditional setters below leave the previous proof's data in
+    // place when the new proof has no versions / no options / no
+    // variants. Reset every data slot up-front so a partial re-fetch
+    // never bakes the old proof's surcharges into the new proof's
+    // pricing grid.
+    setProof(null)
+    setVersions([])
+    setActiveVersion(null)
+    setVersionImages({})
+    setMaterialOptions([])
+    setOptionSurcharges([])
+    setVariantRows([])
+    setTierRows([])
+    setActiveOptionCode(null)
+    setNotFound(false)
 
     const [proofResult, versionsResult, settingsResult] = await Promise.all([
       supabase.from('public_proofs').select('*').eq('id', proofId).maybeSingle(),
@@ -2146,19 +2163,22 @@ export default function CustomerProofPage() {
           className="fixed inset-0 z-50 overflow-y-auto bg-black/80"
           onClick={() => { if (!actionSubmitting) closeActionPanel() }}
         >
-          <div className="flex min-h-full items-center justify-center px-4 py-8">
+          <div className="flex min-h-full items-center justify-center px-3 py-6 sm:px-4 sm:py-8">
           <div
-            className="w-full max-w-[560px] rounded-xl px-7 py-8 text-white"
+            className="w-full rounded-xl px-5 py-6 text-white sm:px-7 sm:py-8"
             style={{
               background: INK,
               border: '1px solid rgba(255,255,255,0.12)',
               boxShadow: '0 30px 80px rgba(0,0,0,0.6)',
+              maxWidth: 'min(440px, calc(100vw - 24px))',
+              overflowWrap: 'anywhere',
             }}
             onClick={(e) => e.stopPropagation()}
           >
             <p
               style={{
                 ...REG_A_BASE,
+                fontSize: 11,
                 color: actionPanel.type === 'approve' ? APPROVED_GREEN : BRAND_ORDER[1],
               }}
             >
@@ -2171,7 +2191,7 @@ export default function CustomerProofPage() {
                   : `Request changes for ${actionPanel.name}`}
             </p>
             <p
-              className="mt-4 max-w-[60ch] whitespace-pre-line text-[15px] leading-[1.7] text-white/80"
+              className="mt-4 max-w-[60ch] whitespace-pre-line text-[14px] leading-[1.65] text-white/80 sm:text-[15px] sm:leading-[1.7]"
               style={{ fontFamily: SANS }}
             >
               {actionPanel.type === 'approve'
@@ -2284,11 +2304,12 @@ export default function CustomerProofPage() {
                   </div>
                 ) : (
                   <p
-                    className="mt-2 max-w-[60ch] whitespace-pre-line rounded-md px-4 py-3 text-[14px] leading-[1.65] text-white/75"
+                    className="mt-2 max-w-[60ch] whitespace-pre-line rounded-md px-3 py-3 text-[13px] leading-[1.6] text-white/75 sm:px-4 sm:text-[14px] sm:leading-[1.65]"
                     style={{
                       fontFamily: SANS,
                       background: 'rgba(255,255,255,0.04)',
                       border: '1px solid rgba(255,255,255,0.10)',
+                      overflowWrap: 'anywhere',
                     }}
                   >
                     {publicSettings.disclaimer_text}

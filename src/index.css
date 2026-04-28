@@ -5,6 +5,11 @@
   Tailwind v4 uses CSS custom properties for theming — tokens go in @theme {}.
 */
 
+html,
+body {
+  overflow-x: hidden;
+}
+
 @keyframes reveal-row {
   from { opacity: 0; }
   to   { opacity: 1; }
