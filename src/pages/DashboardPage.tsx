@@ -65,7 +65,11 @@ interface ProofItem {
 interface DashboardLatestEvent {
   id: string
   created_at: string
-  event_type: 'approve' | 'request_changes'
+  // 'view' rows are synthesised by the dashboard_latest_events view
+  // from proof_version_views (deduped to first view per version per
+  // day, non-bot only). They are not stored in proof_events — the
+  // table CHECK constraint still allows only 'approve' / 'request_changes'.
+  event_type: 'approve' | 'request_changes' | 'view'
   actor_name: string
   recipient_name: string | null
   helpscout_thread_id: string | null
@@ -382,7 +386,7 @@ function LatestActivityPanel({
     <div className="rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
       <div className="border-b border-gray-100 px-5 py-4">
         <h2 className="text-sm font-semibold text-gray-900">Latest activity</h2>
-        <p className="mt-0.5 text-xs text-gray-400">Last 10 events</p>
+        <p className="mt-0.5 text-xs text-gray-400">Last 20 events</p>
       </div>
       {events.length === 0 ? (
         <p className="px-5 py-8 text-center text-sm text-gray-400">
@@ -391,13 +395,26 @@ function LatestActivityPanel({
       ) : (
         <ul>
           {events.map((e, i) => {
-            const approve = e.event_type === 'approve'
-            const verb = approve ? 'approved' : 'requested changes on'
+            const isView = e.event_type === 'view'
+            const isApprove = e.event_type === 'approve'
+            const verb = isView
+              ? `viewed v${e.version_number}`
+              : isApprove
+                ? 'approved'
+                : 'requested changes on'
             const projectLabel = [e.contact_name, e.company_name].filter(Boolean).join(' · ') || '(no contact)'
             const recipient = e.recipient_name && e.recipient_name !== '__shared__'
               ? e.recipient_name
               : 'shared'
-            const failed = e.helpscout_thread_id == null
+            // Subtext for action events keeps version + recipient; view
+            // events drop the recipient (always anonymous) and the
+            // version (already in the verb) so the line stays clean.
+            const subline = isView
+              ? projectLabel
+              : `${projectLabel} · v${e.version_number} · ${recipient}`
+            // Help Scout failure badge only applies to action events —
+            // views never trigger an HS post.
+            const failed = !isView && e.helpscout_thread_id == null
             return (
               <li
                 key={e.id}
@@ -411,7 +428,7 @@ function LatestActivityPanel({
                   aria-hidden
                   className={[
                     'mt-1.5 h-2 w-2 shrink-0 rounded-full',
-                    approve ? 'bg-emerald-500' : 'bg-amber-500',
+                    isView ? 'bg-cyan-500' : isApprove ? 'bg-emerald-500' : 'bg-amber-500',
                   ].join(' ')}
                 />
                 <div className="min-w-0 flex-1">
@@ -420,7 +437,7 @@ function LatestActivityPanel({
                     <span className="text-gray-500">{verb}</span>
                   </p>
                   <p className="mt-0.5 truncate text-xs text-gray-500">
-                    {projectLabel} · v{e.version_number} · {recipient}
+                    {subline}
                   </p>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
                     <span className="text-[11px] text-gray-400" title={formatAbsoluteDateTime(e.created_at)}>
@@ -516,7 +533,7 @@ export default function DashboardPage() {
       .from('dashboard_latest_events')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(10)
+      .limit(20)
 
     const [{ data: proofs }, { data: versions }, { data: events }] = await Promise.all([
       proofsPromise,
