@@ -30,11 +30,19 @@ interface Settings {
   request_changes_confirmation_copy: string
 }
 
-interface HelpScoutStatus {
-  connected: boolean
-  app_id_set: boolean
-  app_secret_set: boolean
-}
+// Help Scout test-connection result. Component-scoped only — no DB
+// persistence. Resets to "not tested" on page revisit, accepted v1
+// trade-off per the brief.
+type HelpScoutTestState =
+  | { kind: 'untested' }
+  | { kind: 'connected'; verifiedAt: string; mailboxName?: string }
+  | { kind: 'failed'; reason: HelpScoutFailReason; detail?: string }
+
+type HelpScoutFailReason =
+  | 'missing_env_vars'
+  | 'auth_failed'
+  | 'api_unreachable'
+  | 'unexpected_error'
 
 /** Stable audit action string per field. */
 const AUDIT_ACTION: Record<keyof Settings, string> = {
@@ -63,10 +71,10 @@ export default function AdminSettingsPage() {
   // Local drafts so text fields don't round-trip on every keystroke.
   const [drafts, setDrafts] = useState<Partial<Settings>>({})
 
-  // Help Scout connection state.
-  const [hsStatus, setHsStatus] = useState<HelpScoutStatus | null>(null)
+  // Help Scout connection state. No mount-time check — test only
+  // fires when the admin clicks the Test connection button.
+  const [hsTestState, setHsTestState] = useState<HelpScoutTestState>({ kind: 'untested' })
   const [hsTesting, setHsTesting] = useState(false)
-  const [hsTestResult, setHsTestResult] = useState<{ ok: boolean; message: string } | null>(null)
 
   // Materials + selected material for the editor modal. Archived
   // rows are hidden from the main list unless the admin flips the
@@ -82,8 +90,6 @@ export default function AdminSettingsPage() {
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
     setSettings(data as Settings)
     setDrafts({})
-    // Status check in the background
-    void checkHelpScout()
   }
 
   async function loadMaterials() {
@@ -99,26 +105,32 @@ export default function AdminSettingsPage() {
     setMaterials((data ?? []) as MaterialContent[])
   }
 
-  async function checkHelpScout() {
-    const { data, error } = await supabase.functions.invoke('helpscout-status')
-    if (error) { setHsStatus({ connected: false, app_id_set: false, app_secret_set: false }); return }
-    setHsStatus(data as HelpScoutStatus)
-  }
-
+  // Run the end-to-end Help Scout test (OAuth → /v2/mailboxes).
+  // The structured response from admin-test-helpscout maps directly
+  // into HelpScoutTestState, with a defensive 'unexpected_error'
+  // bucket for transport / network failures the function couldn't
+  // catch itself.
   async function testHelpScout() {
+    if (hsTesting) return
     setHsTesting(true)
-    setHsTestResult(null)
-    const { data, error } = await supabase.functions.invoke('match-helpscout-conversation', {
-      body: { email: 'test-connection@example.invalid' },
-    })
+    const { data, error } = await supabase.functions.invoke<
+      | { status: 'connected'; verifiedAt: string; mailboxName?: string }
+      | { status: 'failed'; reason: HelpScoutFailReason; detail?: string }
+    >('admin-test-helpscout')
     setHsTesting(false)
     if (error) {
-      setHsTestResult({ ok: false, message: error.message })
-    } else if ((data as any)?.error) {
-      setHsTestResult({ ok: false, message: (data as any).error })
-    } else {
-      setHsTestResult({ ok: true, message: 'Help Scout responded successfully.' })
+      setHsTestState({ kind: 'failed', reason: 'unexpected_error', detail: error.message })
+      return
     }
+    if (!data) {
+      setHsTestState({ kind: 'failed', reason: 'unexpected_error', detail: 'No response from edge function' })
+      return
+    }
+    if (data.status === 'connected') {
+      setHsTestState({ kind: 'connected', verifiedAt: data.verifiedAt, mailboxName: data.mailboxName })
+      return
+    }
+    setHsTestState({ kind: 'failed', reason: data.reason, detail: data.detail })
   }
 
   /** Persist a single field, with optimistic state + audit log. */
@@ -442,34 +454,27 @@ export default function AdminSettingsPage() {
         </div>
       </section>
 
-      {/* ── Integrations ───────────────────────────────────────── */}
+      {/* ── Integrations ─────────────────────────────────────────
+          Help Scout panel — admin clicks Test connection to run the
+          full OAuth + /v2/mailboxes round trip. Three indicator
+          states (untested amber / connected green / failed red),
+          mailbox name surfaced when available, distinct failure
+          messages keyed off the structured `reason` returned by
+          admin-test-helpscout. State is component-scoped — leaving
+          and returning resets to "Not tested this session". */}
       <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-        <h3 className="mb-4 text-sm font-semibold text-gray-900">Integrations</h3>
+        <h3 className="mb-4 text-sm font-semibold text-gray-900">Help Scout</h3>
 
-        <div className="flex flex-wrap items-center gap-4">
+        <div className="flex flex-wrap items-start gap-4">
           <div className="flex-1 min-w-[15rem]">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-gray-900">Help Scout</span>
-              {hsStatus == null ? (
-                <span className="text-xs text-gray-400">Checking…</span>
-              ) : hsStatus.connected ? (
-                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Connected</span>
-              ) : (
-                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">Not connected</span>
-              )}
-            </div>
-            <p className="mt-1 text-xs text-gray-500">
-              Configured via the HELPSCOUT_APP_ID and HELPSCOUT_APP_SECRET Supabase secrets.
+            <HelpScoutStatusRow state={hsTestState} />
+            <p className="mt-3 text-xs text-gray-500">
+              To update Help Scout credentials, open the Supabase dashboard → Project Settings → Edge Functions → Secrets and update <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">HELPSCOUT_APP_ID</code> and <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">HELPSCOUT_APP_SECRET</code>. After updating, click Test connection to verify.
             </p>
-            {hsTestResult && (
-              <p className={['mt-2 rounded-lg px-3 py-2 text-xs', hsTestResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'].join(' ')}>
-                {hsTestResult.message}
-              </p>
-            )}
           </div>
           <button
             onClick={testHelpScout}
-            disabled={hsTesting || !hsStatus?.connected}
+            disabled={hsTesting}
             className="shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-50"
           >
             {hsTesting ? 'Testing…' : 'Test connection'}
@@ -573,6 +578,84 @@ export default function AdminSettingsPage() {
 }
 
 // ── Shared bits ─────────────────────────────────────────────────────────────
+
+// Help Scout indicator row — three states with distinct colour tokens:
+//   untested   → amber dot, "Not tested this session"
+//   connected  → green dot, "Connected" + optional "Mailbox: {name}"
+//                + "Last verified at HH:MM" footnote
+//   failed     → red dot + a human-readable message keyed off
+//                `reason`, with the optional `detail` rendered as
+//                a muted second line for diagnostic depth.
+function HelpScoutStatusRow({ state }: { state: HelpScoutTestState }) {
+  if (state.kind === 'untested') {
+    return (
+      <div className="flex items-center gap-2">
+        <Dot color="amber" />
+        <span className="text-sm font-medium text-gray-900">Not tested this session</span>
+      </div>
+    )
+  }
+  if (state.kind === 'connected') {
+    const verifiedAt = (() => {
+      try {
+        return new Date(state.verifiedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+      } catch {
+        return null
+      }
+    })()
+    return (
+      <div>
+        <div className="flex items-center gap-2">
+          <Dot color="green" />
+          <span className="text-sm font-medium text-emerald-700">Connected</span>
+        </div>
+        {state.mailboxName && (
+          <p className="mt-1 text-xs text-gray-600">
+            Mailbox: <span className="font-medium text-gray-900">{state.mailboxName}</span>
+          </p>
+        )}
+        {verifiedAt && (
+          <p className="mt-0.5 text-xs text-gray-400">Last verified at {verifiedAt}</p>
+        )}
+      </div>
+    )
+  }
+  // failed
+  const message = helpScoutFailMessage(state.reason)
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <Dot color="red" />
+        <span className="text-sm font-medium text-rose-700">Not connected — {message}</span>
+      </div>
+      {state.detail && (
+        <p className="mt-1 break-all text-xs text-gray-500" title={state.detail}>{state.detail}</p>
+      )}
+    </div>
+  )
+}
+
+function helpScoutFailMessage(reason: HelpScoutFailReason): string {
+  switch (reason) {
+    case 'missing_env_vars':
+      return 'Credentials not set — see Supabase dashboard'
+    case 'auth_failed':
+      return 'Authentication failed — check HELPSCOUT_APP_SECRET'
+    case 'api_unreachable':
+      return 'Help Scout unreachable, try again'
+    case 'unexpected_error':
+      return 'Test failed'
+  }
+}
+
+function Dot({ color }: { color: 'amber' | 'green' | 'red' }) {
+  const cls = color === 'green'
+    ? 'bg-emerald-500'
+    : color === 'red'
+      ? 'bg-rose-500'
+      : 'bg-amber-400'
+  return <span aria-hidden className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${cls}`} />
+}
 
 function FieldRow({ label, help, saved, working, error, children }: {
   label: string
