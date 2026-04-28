@@ -949,7 +949,7 @@ export default function DashboardPage() {
               initial loading spinner is gone so the sidebar doesn't
               flash empty before the events query resolves. */}
           {!loading && (
-            <aside className="lg:sticky lg:top-10 lg:self-start">
+            <aside className="hidden lg:sticky lg:top-10 lg:block lg:self-start">
               <LatestActivityPanel events={latestEvents} navigate={navigate} />
             </aside>
           )}
