@@ -649,10 +649,11 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
-          <div className="min-w-0">
 
-        {/* Page header */}
+        {/* Page header — spans full container width so the nav sits
+            at the far right edge and the Latest Activity sidebar
+            (below) drops to the second row instead of competing for
+            the top-right corner. */}
         <div className="mb-8 flex items-center justify-between">
           <div>
             <p className="text-sm font-medium uppercase tracking-widest text-gray-400">PlasmaDesign</p>
@@ -686,6 +687,9 @@ export default function DashboardPage() {
             </button>
           </div>
         </div>
+
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className="min-w-0">
 
         {/* ── Loading ────────────────────────────────────────────────────────── */}
         {loading ? (
