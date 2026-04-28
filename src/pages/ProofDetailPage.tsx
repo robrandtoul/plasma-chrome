@@ -153,6 +153,15 @@ export default function ProofDetailPage() {
   const [zipPreparing, setZipPreparing] = useState(false)
   const fallbackInputRef = useRef<HTMLInputElement>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Monotonic id for loadProof. Status changes (approve / reopen /
+  // abandon) and modal-driven mutations all fire-and-forget loadProof
+  // afterwards. Without a guard, a rapid second action — or a
+  // double-click — can interleave two concurrent loads and the later
+  // setState calls win arbitrarily, leaving approvals / events /
+  // approved-images out of sync. Bumping the id at the start and
+  // checking it before each setState keeps only the newest load's
+  // results.
+  const loadIdRef = useRef(0)
 
   useEffect(() => {
     if (id) loadProof(id)
@@ -202,6 +211,9 @@ export default function ProofDetailPage() {
   })
 
   async function loadProof(proofId: string) {
+    const myLoadId = ++loadIdRef.current
+    const isStale = () => myLoadId !== loadIdRef.current
+
     const [proofResult, versionsResult] = await Promise.all([
       supabase
         .from('proofs')
@@ -214,6 +226,8 @@ export default function ProofDetailPage() {
         .eq('proof_id', proofId)
         .order('version_number', { ascending: false }),
     ])
+
+    if (isStale()) return
 
     if (proofResult.error || !proofResult.data) {
       navigate('/')
@@ -236,6 +250,7 @@ export default function ProofDetailPage() {
         .eq('is_bot', false)
         .in('proof_version_id', versionIds)
         .order('viewed_at', { ascending: false })
+      if (isStale()) return
       const map = new Map<string, { viewed_at: string; user_agent: string | null }[]>()
       for (const r of (viewRows ?? []) as any[]) {
         const list = map.get(r.proof_version_id) ?? []
@@ -258,6 +273,7 @@ export default function ProofDetailPage() {
         .from('proof_name_approvals')
         .select('*')
         .in('proof_version_id', versionIds)
+      if (isStale()) return
       approvalRowsLoaded = (approvalRows ?? []) as ProofNameApproval[]
       setApprovals(approvalRowsLoaded)
     } else {
@@ -275,6 +291,7 @@ export default function ProofDetailPage() {
         .select('id, proof_version_id, name, event_type, actor_name, comment, from_ip, from_ua, helpscout_thread_id, created_at')
         .in('proof_version_id', versionIds)
         .order('created_at', { ascending: false })
+      if (isStale()) return
       const map = new Map<string, ProofEventAuditDetail>()
       for (const r of (eventRows ?? []) as Array<
         ProofEventAuditDetail & { proof_version_id: string; name: string | null }
@@ -327,6 +344,7 @@ export default function ProofDetailPage() {
           .from('proof_version_images')
           .select('id, image_path, original_filename, associated_name, side, proof_version_id')
           .in('proof_version_id', versionIds)
+        if (isStale()) return
 
         const approvalTuples = new Set(
           approvedApprovals.map(
@@ -381,6 +399,7 @@ export default function ProofDetailPage() {
         .select('proof_version_id')
         .in('proof_version_id', versionIds)
         .is('associated_name', null)
+      if (isStale()) return
       const set = new Set<string>()
       for (const r of (sharedRows ?? []) as { proof_version_id: string }[]) {
         set.add(r.proof_version_id)
@@ -741,17 +760,35 @@ export default function ProofDetailPage() {
 
   async function copyCustomerUrl() {
     const url = `${window.location.origin}${customerProofPath(proof!.id)}`
+    let copiedOk = false
     try {
       await navigator.clipboard.writeText(url)
+      copiedOk = true
     } catch {
+      // Modern API failed (permissions, insecure context). Try the
+      // legacy hidden-input fallback. document.execCommand returns
+      // true on success, false otherwise — only flip copiedOk when
+      // it actually wrote.
       if (fallbackInputRef.current) {
         fallbackInputRef.current.value = url
         fallbackInputRef.current.select()
-        document.execCommand('copy')
+        try {
+          copiedOk = document.execCommand('copy')
+        } catch {
+          copiedOk = false
+        }
       }
     }
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (copiedOk) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } else {
+      // Surface the failure rather than silently lying about success.
+      // Customer URL is the one thing the designer needs to actually
+      // get out of the page; a missed copy with no signal sends them
+      // off thinking it landed.
+      showToast('Couldn\'t copy — please copy the URL from the address bar manually.')
+    }
   }
 
   if (!proof) return null
