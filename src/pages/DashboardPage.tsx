@@ -415,12 +415,22 @@ function LatestActivityPanel({
             // Help Scout failure badge only applies to action events —
             // views never trigger an HS post.
             const failed = !isView && e.helpscout_thread_id == null
+            // Soft tint reinforces the dot colour at row level —
+            // makes scanning the feed by event type easier than the
+            // 8px dot alone. Hover bumps to the 100 shade of the same
+            // family so feedback stays in-palette.
+            const rowTint = isView
+              ? 'bg-sky-50/70 hover:bg-sky-100/70'
+              : isApprove
+                ? 'bg-emerald-50/70 hover:bg-emerald-100/70'
+                : 'bg-amber-50/70 hover:bg-amber-100/70'
             return (
               <li
                 key={e.id}
                 onClick={() => navigate(`/proofs/${e.proof_id}`)}
                 className={[
-                  'flex cursor-pointer gap-3 px-5 py-3 hover:bg-gray-50',
+                  'flex cursor-pointer gap-3 px-5 py-3 transition-colors',
+                  rowTint,
                   i > 0 ? 'border-t border-gray-100' : '',
                 ].join(' ')}
               >
