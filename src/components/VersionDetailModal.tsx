@@ -1,10 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { PricingDisplay } from './PricingDisplay'
 import { ImageGrid } from './ImageGrid'
 import { safeRemoveImagePaths } from '../lib/imageStorage'
-import type { Currency, PricingSnapshot, ProofNameApproval } from '../lib/types'
+import type {
+  Currency,
+  PricingSnapshot,
+  ProofNameApproval,
+  PublicMaterialVariant,
+  PublicPriceTier,
+} from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { DEFAULT_DISPLAY_QUANTITIES } from '../lib/constants'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
@@ -19,9 +25,20 @@ export interface ModalVersion {
   is_current: boolean
   created_at: string
   change_notes: string | null
-  pricing_snapshot: PricingSnapshot
+  // Legacy column. Migration 000117 made this nullable when the
+  // pricing grid moved to live computation from price_tiers; the
+  // modal now rebuilds the snapshot client-side via the
+  // useEffect below and ignores this field for the price grid.
+  // Kept on the type for any downstream consumers that still
+  // care about the historical snapshot (e.g. audit views).
+  pricing_snapshot: PricingSnapshot | null
   shipping_note: string
   custom_quote: boolean
+  // Designer's curated variant subset for this version (000118).
+  // Null = "show every active variant of this material" (the
+  // pre-000118 default). Used to scope the live pricing rebuild
+  // below to the same rows the customer page shows.
+  displayed_variant_ids: string[] | null
   // Recipient names for this version (migration 000070). Drives the
   // per-name approval grouping below. Empty array = single-subject
   // project, approval section collapses to just the shared image
@@ -92,6 +109,14 @@ export default function VersionDetailModal({
   const navigate = useNavigate()
   const [images, setImages] = useState<ModalImage[]>([])
   const [loadingImages, setLoadingImages] = useState(true)
+  // Live pricing rebuild (000117). proof_versions.pricing_snapshot
+  // became nullable when the customer page moved to live pricing
+  // from price_tiers; this modal followed up later. Loaded lazily
+  // when the modal opens — keyed off version.id so re-opening on a
+  // different version refreshes both fetches.
+  const [variantRows, setVariantRows] = useState<PublicMaterialVariant[]>([])
+  const [tierRows, setTierRows] = useState<PublicPriceTier[]>([])
+  const [loadingPricing, setLoadingPricing] = useState(true)
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const [deleteState, setDeleteState] = useState<'idle' | 'confirm' | 'working'>('idle')
   const [settingCurrent, setSettingCurrent] = useState(false)
@@ -133,6 +158,7 @@ export default function VersionDetailModal({
   useEffect(() => {
     loadImages()
     loadApprovals()
+    void loadPricing()
   }, [version.id])
 
   useEffect(() => {
@@ -179,6 +205,43 @@ export default function VersionDetailModal({
     )
     setImages(withUrls as ModalImage[])
     setLoadingImages(false)
+  }
+
+  // Live pricing rebuild for this version (000117). Mirrors the
+  // CustomerProofPage pattern but lazy-loads on modal open rather
+  // than batch-loading at page mount, since the modal is the only
+  // designer-side surface that renders pricing and only one
+  // version is in scope at a time.
+  //
+  // Two queries: variants for the version's material (filtered to
+  // displayed_variant_ids if curated), and price tiers for those
+  // variants in the version's currency. The snapshot shape is then
+  // computed in livePricingSnapshot below.
+  async function loadPricing() {
+    setLoadingPricing(true)
+    try {
+      const { data: variantData } = await supabase
+        .from('public_material_variants')
+        .select('*')
+        .eq('material_id', version.material_id)
+        .order('sort_order')
+      const loadedVariants = (variantData ?? []) as PublicMaterialVariant[]
+      setVariantRows(loadedVariants)
+
+      if (loadedVariants.length > 0) {
+        const variantIds = loadedVariants.map((v) => v.id)
+        const { data: tierData } = await supabase
+          .from('public_price_tiers')
+          .select('*')
+          .in('material_variant_id', variantIds)
+          .eq('currency', version.currency)
+        setTierRows((tierData ?? []) as PublicPriceTier[])
+      } else {
+        setTierRows([])
+      }
+    } finally {
+      setLoadingPricing(false)
+    }
   }
 
   // Load every approval row for this version into a name → row
@@ -319,6 +382,35 @@ export default function VersionDetailModal({
 
   const displayQuantities = version.materials?.display_quantities ?? DEFAULT_DISPLAY_QUANTITIES
   const isOnlyVersion = allVersions.length === 1
+
+  // Live pricing snapshot rebuild (000117). Mirrors
+  // CustomerProofPage.livePricingSnapshot — same filter rules,
+  // same shape, same currency scoping. Memoised on the row sets
+  // + version identity so re-renders during the approval flow
+  // don't recompute. Variants with zero priced tiers in the
+  // active currency drop out, matching the customer page.
+  const livePricingSnapshot: PricingSnapshot = useMemo(() => ({
+    variants: variantRows
+      .filter((v) => v.material_id === version.material_id)
+      .filter((v) =>
+        version.displayed_variant_ids == null ||
+        version.displayed_variant_ids.includes(v.id),
+      )
+      .map((v) => {
+        const prices: Record<string, number> = {}
+        for (const t of tierRows) {
+          if (t.material_variant_id === v.id && t.currency === version.currency) {
+            prices[String(t.quantity)] = t.total_price
+          }
+        }
+        return {
+          variant_id: v.id,
+          display: v.variant_type === 'default' ? 'Default' : v.display_name,
+          prices,
+        }
+      })
+      .filter((v) => Object.keys(v.prices).length > 0),
+  }), [variantRows, tierRows, version.id, version.material_id, version.currency, version.displayed_variant_ids])
   // Resolver for the "Carried from vN" provenance pill on
   // ApprovalStateHeader. Built once per render from the same
   // versions list the parent page already loaded. Returns
@@ -532,9 +624,17 @@ export default function VersionDetailModal({
                 <div className="px-6 py-8 text-center text-sm text-gray-500">
                   Custom quote — price and quantity agreed separately.
                 </div>
+              ) : loadingPricing ? (
+                // Lazy fetch in flight — small spinner to telegraph
+                // the inflight load. ~100ms typical RTT to Supabase
+                // so this rarely flashes; the "Custom quote" path
+                // skips this entirely and renders synchronously.
+                <div className="flex justify-center px-6 py-12">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-200 border-t-gray-700" />
+                </div>
               ) : (
                 <PricingDisplay
-                  snapshot={version.pricing_snapshot}
+                  snapshot={livePricingSnapshot}
                   currency={version.currency as Currency}
                   displayQuantities={displayQuantities}
                 />

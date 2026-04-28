@@ -8,12 +8,21 @@ export function PricingDisplay({
   displayQuantities,
   quantitySurcharges = {},
 }: {
-  snapshot: PricingSnapshot
+  // Nullable snapshot: post-000117, proof_versions.pricing_snapshot
+  // can legitimately be null (the column became nullable when the
+  // pricing grid moved to live computation from price_tiers). The
+  // designer-side modal builds the snapshot client-side and gates
+  // the loading state outside this component, but a defensive
+  // null-guard here protects against any future call site that
+  // forgets — destructuring a null prop without a guard threw a
+  // TypeError that crashed the whole modal in the past.
+  snapshot: PricingSnapshot | null | undefined
   currency: Currency
   displayQuantities: number[]
   quantitySurcharges?: Record<number, number>
 }) {
   const [showAll, setShowAll] = useState(false)
+  if (!snapshot) return null
   const { variants } = snapshot
   if (!variants?.length) return null
 
