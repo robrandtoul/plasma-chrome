@@ -374,8 +374,17 @@ export default function AdminMaterialEditor() {
     setTierError(null)
 
     // Quantity: required, positive integer, unique on this variant.
-    const qty = parseInt(tierQtyDraft.trim(), 10)
-    if (!Number.isFinite(qty) || qty <= 0 || !Number.isInteger(Number(tierQtyDraft.trim()))) {
+    // Strict-digits regex up-front so silent quirks of parseInt /
+    // Number don't sneak through — e.g. "1e3" parses to 1 via
+    // parseInt and to 1000 via Number, both pass the loose check
+    // but neither is what the designer typed.
+    const qtyDraft = tierQtyDraft.trim()
+    if (!/^\d+$/.test(qtyDraft)) {
+      setTierError('Quantity must be a positive whole number.')
+      return
+    }
+    const qty = parseInt(qtyDraft, 10)
+    if (qty <= 0) {
       setTierError('Quantity must be a positive whole number.')
       return
     }

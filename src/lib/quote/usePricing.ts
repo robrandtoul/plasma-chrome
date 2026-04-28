@@ -76,6 +76,12 @@ export function usePricing(
     }
 
     const id = ++requestIdRef.current
+    // Unmount guard. requestIdRef alone protects against stale
+    // results landing in a still-mounted component, but if the
+    // component unmounts mid-fetch, setData would still run on
+    // the unmounted instance. The cleanup below sets `cancelled`
+    // and the resolved-promise handler bails before any setState.
+    let cancelled = false
     setData((prev) => ({ ...prev, loading: true }))
 
     const tiersPromise = supabase
@@ -92,7 +98,7 @@ export function usePricing(
       .order('sort_order')
 
     Promise.all([tiersPromise, optionsPromise]).then(async ([tiersResult, optionsResult]) => {
-      if (id !== requestIdRef.current) return // stale
+      if (cancelled || id !== requestIdRef.current) return // unmounted or stale
 
       const tiersMap = new Map<string, PriceTier[]>()
       for (const row of (tiersResult.data ?? []) as Array<{
@@ -125,7 +131,7 @@ export function usePricing(
           .select('material_option_id, quantity, surcharge')
           .in('material_option_id', options.map((o) => o.id))
           .eq('currency', currency)
-        if (id !== requestIdRef.current) return // stale
+        if (cancelled || id !== requestIdRef.current) return // unmounted or stale
         for (const r of (surchargeRows ?? []) as Array<{
           material_option_id: string
           quantity: number
@@ -146,6 +152,8 @@ export function usePricing(
         loadedMaterialId: materialId,
       })
     })
+
+    return () => { cancelled = true }
   }, [materialId, currency])
 
   return data
