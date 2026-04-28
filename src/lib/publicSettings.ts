@@ -58,6 +58,12 @@ export async function getPublicSettings(): Promise<PublicSettings> {
       }
       cache = { value, fetchedAt: Date.now() }
       return value
+    } catch {
+      // Transport-level failure (network drop, edge runtime crash).
+      // Cache the spec defaults so the page still renders readable
+      // copy and subsequent calls within the TTL don't re-throw.
+      cache = { value: DEFAULTS, fetchedAt: Date.now() }
+      return DEFAULTS
     } finally {
       inFlight = null
     }

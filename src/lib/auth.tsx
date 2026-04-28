@@ -20,11 +20,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false
+    // Monotonic id so a slower in-flight bootstrap can't overwrite the
+    // results of a newer one (sign-in immediately followed by token
+    // refresh). Without this the role for the older session could
+    // win the last-write race.
+    let bootstrapId = 0
 
     async function bootstrap(s: Session | null) {
+      const id = ++bootstrapId
+      // Flip loading on every transition so RequireAuth/RequireAdmin
+      // show the spinner instead of redirecting on the brief window
+      // where session is set but the profile fetch hasn't returned.
+      setLoading(true)
       setSession(s)
       if (!s) {
         setRole(null)
+        if (!cancelled && id === bootstrapId) setLoading(false)
         return
       }
       const { data } = await supabase
@@ -32,19 +43,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .select('role')
         .eq('id', s.user.id)
         .maybeSingle()
-      if (cancelled) return
+      if (cancelled || id !== bootstrapId) return
       // Default to 'designer' for missing rows; keeps the app usable even if
       // the profile trigger somehow failed to fire.
       setRole(((data?.role as UserRole | undefined) ?? 'designer'))
+      setLoading(false)
     }
 
-    supabase.auth.getSession().then(async ({ data }) => {
-      await bootstrap(data.session)
-      if (!cancelled) setLoading(false)
-    })
+    void supabase.auth.getSession().then(({ data }) => bootstrap(data.session))
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
-      bootstrap(s)
+      void bootstrap(s)
     })
 
     return () => {

@@ -44,6 +44,13 @@ export async function getRepliesEnabled(): Promise<boolean> {
       const value = error || !data ? FAIL_SAFE_DEFAULT : !!data.replies_enabled
       cache = { value, fetchedAt: Date.now() }
       return value
+    } catch {
+      // Transport-level failure (network drop, edge runtime crash).
+      // Cache the fail-safe value so subsequent calls within the TTL
+      // don't re-throw on every retry — same behaviour as a returned
+      // `error` from the query, just for a different failure mode.
+      cache = { value: FAIL_SAFE_DEFAULT, fetchedAt: Date.now() }
+      return FAIL_SAFE_DEFAULT
     } finally {
       inFlight = null
     }
