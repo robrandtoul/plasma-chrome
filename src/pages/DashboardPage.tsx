@@ -724,7 +724,7 @@ export default function DashboardPage() {
               <span className="inline-flex items-center gap-1.5"><ViewedDot state="unviewed" />Not viewed</span>
               <span className="inline-flex items-center gap-1.5"><ViewedDot state="viewed_current" />Current version viewed</span>
               <span className="inline-flex items-center gap-1.5"><ViewedDot state="viewed_stale" />Older version viewed</span>
-              <span className="inline-flex items-center gap-1.5"><StatusPill status="approved" />Project approved</span>
+              <span className="inline-flex items-center gap-1.5"><span aria-hidden className="h-2 w-2 rounded-full bg-emerald-500" />Approved</span>
             </div>
 
             {/* ── Recent projects (team-wide) ──────────────────────────────── */}
