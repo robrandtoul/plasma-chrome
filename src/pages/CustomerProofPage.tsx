@@ -983,6 +983,33 @@ export default function CustomerProofPage() {
   const SERIF = "'Cormorant Garamond', Georgia, serif"
   const SANS = "'Inter Tight', system-ui, sans-serif"
   const MONO = "'JetBrains Mono', ui-monospace, monospace"
+  // Customer-page typographic registers. Replace the small
+  // uppercase-mono treatment for short editorial labels (Register
+  // A) and sentence-fragment text (Register B). Mono stays for
+  // CTA buttons, pricing-grid numerals, file names, segmented
+  // pill toggles, the DOWNLOAD chip, and the FRONT/BACK side
+  // label — all locked-in keep-on-mono per the inventory.
+  const REG_A_BASE = {
+    fontFamily: SANS,
+    fontSize: 12,
+    fontWeight: 600,
+    letterSpacing: '0.12em',
+    textTransform: 'uppercase' as const,
+  }
+  const REG_B_BASE = {
+    fontFamily: SANS,
+    letterSpacing: '-0.005em',
+  }
+  // Surface colour palette for the new registers. Dark sections
+  // use #C8C8C8 for primary labels (one stop above the previous
+  // text-white/45 ≈ #737373); light cream sections use #5F564D
+  // for primary, #3F362D for kickers needing more presence.
+  // Coloured highlights (status pills, brand-teal kickers) keep
+  // their existing colour and only swap typography — the brief
+  // is explicit on that.
+  const LABEL_DARK = '#c8c8c8'
+  const LABEL_LIGHT = '#5f564d'
+  const LABEL_DARK_MUTED = 'rgba(255,255,255,0.55)'
 
   // Short customer-facing reference — the proof's Help Scout
   // conversation id, prefixed with PL · for the editorial feel.
@@ -1059,10 +1086,7 @@ export default function CustomerProofPage() {
                   style={{ filter: `drop-shadow(0 0 18px ${ACCENT_GLOW})` }}
                 />
                 <span className="ml-1 h-4 w-px bg-white/20" />
-                <span
-                  className="uppercase tracking-[0.22em] text-white/55"
-                  style={{ fontFamily: MONO, fontSize: 12 }}
-                >
+                <span style={{ ...REG_A_BASE, color: LABEL_DARK }}>
                   Proof Viewer
                 </span>
               </div>
@@ -1074,10 +1098,7 @@ export default function CustomerProofPage() {
                     already carry the same information three
                     times below. */}
                 {proofRef && (
-                  <span
-                    className="uppercase tracking-[0.22em] text-white/45"
-                    style={{ fontFamily: MONO, fontSize: 12 }}
-                  >
+                  <span style={{ ...REG_A_BASE, color: LABEL_DARK }}>
                     {proofRef}
                   </span>
                 )}
@@ -1208,15 +1229,7 @@ export default function CustomerProofPage() {
                           />
                         </svg>
                       </span>
-                      <span
-                        className="uppercase"
-                        style={{
-                          fontFamily: MONO,
-                          fontSize: 12,
-                          color: tone.label,
-                          letterSpacing: '0.3em',
-                        }}
-                      >
+                      <span style={{ ...REG_A_BASE, color: tone.label }}>
                         {isApprovedKind ? 'Approved' : 'Partially approved'}
                       </span>
                     </div>
@@ -1230,10 +1243,7 @@ export default function CustomerProofPage() {
                       className="hidden h-4 w-px shrink-0 sm:inline-block"
                       style={{ background: tone.divider }}
                     />
-                    <span
-                      className="text-white/75"
-                      style={{ fontFamily: MONO, fontSize: 12 }}
-                    >
+                    <span style={{ ...REG_A_BASE, color: LABEL_DARK }}>
                       {isApprovedKind
                         ? `Signed off ${heroApprovalStrip.dateLabel ?? 'today'} · ${total} / ${total} proof${total === 1 ? '' : 's'}`
                         : 'Some proofs already signed off, others awaiting review'}
@@ -1242,10 +1252,7 @@ export default function CustomerProofPage() {
                 )
               })()}
             </div>
-            <p
-              className="uppercase tracking-[0.24em] text-white/45"
-              style={{ fontFamily: MONO, fontSize: 12 }}
-            >
+            <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
               {(activeVersion?.names?.length ?? 0) >= 2 ? 'Proofs for' : 'Proof for'}
             </p>
             {/* Masthead heading rule: when the customer is a
@@ -1290,10 +1297,7 @@ export default function CustomerProofPage() {
             {activeVersion && (
               <div className="mt-10 flex flex-wrap items-start gap-x-10 gap-y-5">
                 <div>
-                  <p
-                    className="uppercase tracking-[0.22em] text-white/40"
-                    style={{ fontFamily: MONO, fontSize: 11 }}
-                  >
+                  <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
                     Material
                   </p>
                   <p className="mt-1.5 flex items-center gap-2 text-[14px] text-white">
@@ -1305,10 +1309,7 @@ export default function CustomerProofPage() {
                   </p>
                 </div>
                 <div>
-                  <p
-                    className="uppercase tracking-[0.22em] text-white/40"
-                    style={{ fontFamily: MONO, fontSize: 11 }}
-                  >
+                  <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
                     Revision
                   </p>
                   <p className="mt-1.5 text-[14px] text-white">
@@ -1318,10 +1319,7 @@ export default function CustomerProofPage() {
                 </div>
                 {activeVersion.names.length > 0 && (
                   <div>
-                    <p
-                      className="uppercase tracking-[0.22em] text-white/40"
-                      style={{ fontFamily: MONO, fontSize: 11 }}
-                    >
+                    <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
                       {activeVersion.names.length >= 2 ? 'Names' : 'Name'}
                     </p>
                     <p className="mt-1.5 text-[14px] text-white">
@@ -1453,8 +1451,8 @@ export default function CustomerProofPage() {
                           only, no named groups). */}
                       {activeVersion.card_type !== 'membership' && (
                         <span
-                          className="mt-3 block uppercase tracking-[0.22em] text-[#1a1612]/55"
-                          style={{ fontFamily: MONO, fontSize: 12 }}
+                          className="mt-3 block"
+                          style={{ ...REG_A_BASE, color: LABEL_LIGHT }}
                         >
                           {plateCount === 1 ? '1 unique proof' : `${plateCount} unique proofs`}
                           {recipientCount > 0 && (
@@ -1482,10 +1480,7 @@ export default function CustomerProofPage() {
                         tighter form. */}
                     {showOptionSwitcher && (
                       <div className="flex flex-wrap items-center gap-3">
-                        <span
-                          className="uppercase tracking-[0.22em] text-[#1a1612]/55"
-                          style={{ fontFamily: MONO, fontSize: 11 }}
-                        >
+                        <span style={{ ...REG_A_BASE, color: LABEL_LIGHT }}>
                           {optionLabelSingular}
                         </span>
                         <div
@@ -1667,10 +1662,9 @@ export default function CustomerProofPage() {
                                 </h3>
                                 {pill && (
                                   <span
-                                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 uppercase tracking-[0.22em]"
+                                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1"
                                     style={{
-                                      fontFamily: MONO,
-                                      fontSize: 12,
+                                      ...REG_A_BASE,
                                       background: 'rgba(74,222,128,0.14)',
                                       color: '#1e7a3e',
                                       border: '1px solid rgba(74,222,128,0.45)',
@@ -1807,8 +1801,8 @@ export default function CustomerProofPage() {
                       <span style={{ color: ACCENT }}>”</span>
                     </p>
                     <p
-                      className="mt-6 uppercase tracking-[0.22em] text-white/45"
-                      style={{ fontFamily: MONO, fontSize: 12 }}
+                      className="mt-6"
+                      style={{ ...REG_A_BASE, color: LABEL_DARK }}
                     >
                       — Plasma Design · v{activeVersion.version_number}
                     </p>
@@ -1843,17 +1837,14 @@ export default function CustomerProofPage() {
                     activeOption &&
                     versionOptions.length > 0 &&
                     materialHasSurcharges && (
-                      <p
-                        className="uppercase tracking-[0.22em] text-white/45"
-                        style={{ fontFamily: MONO, fontSize: 12 }}
-                      >
+                      <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
                         Prices shown for {activeOption.display_name} {optionLabelSingular.toLowerCase()}
                       </p>
                     )}
                   {!activeVersion.custom_quote && (
                     <p
-                      className="mt-1 uppercase tracking-[0.22em] text-white/45"
-                      style={{ fontFamily: MONO, fontSize: 12 }}
+                      className="mt-1"
+                      style={{ ...REG_A_BASE, color: LABEL_DARK }}
                     >
                       {activeVersion.currency}
                       {activeVersion.currency === 'GBP' ? ' · VAT included' : ''}
@@ -1910,10 +1901,7 @@ export default function CustomerProofPage() {
                       activeVersion.split_name_surcharge_snapshot != null &&
                       activeVersion.split_name_surcharge_snapshot > 0 && (
                         <div className="border border-white/10 p-6">
-                          <p
-                            className="uppercase tracking-[0.22em]"
-                            style={{ fontFamily: MONO, fontSize: 12, color: ACCENT }}
-                          >
+                          <p style={{ ...REG_A_BASE, color: ACCENT }}>
                             Split-name tooling
                           </p>
                           <p
@@ -1931,8 +1919,13 @@ export default function CustomerProofPage() {
                             to the prices above
                           </p>
                           <p
-                            className="mt-2 uppercase tracking-[0.22em] text-white/45"
-                            style={{ fontFamily: MONO, fontSize: 12 }}
+                            className="mt-2"
+                            style={{
+                              ...REG_B_BASE,
+                              fontSize: 13,
+                              fontWeight: 400,
+                              color: LABEL_DARK_MUTED,
+                            }}
                           >
                             {activeVersion.names.length} names ×{' '}
                             {formatPrice(
@@ -1945,10 +1938,7 @@ export default function CustomerProofPage() {
                       )}
                     {activeVersion.shipping_note && (
                       <div className="border border-white/10 p-6">
-                        <p
-                          className="uppercase tracking-[0.22em] text-white/45"
-                          style={{ fontFamily: MONO, fontSize: 12 }}
-                        >
+                        <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
                           Shipping
                         </p>
                         <p
@@ -1989,15 +1979,7 @@ export default function CustomerProofPage() {
                     regardless of whether the material has
                     curated key_features, because it's section
                     chrome rather than feature-list chrome. */}
-                <p
-                  className="mb-3 uppercase"
-                  style={{
-                    fontFamily: MONO,
-                    fontSize: 11,
-                    letterSpacing: '0.22em',
-                    color: ACCENT,
-                  }}
-                >
+                <p className="mb-3" style={{ ...REG_A_BASE, color: ACCENT }}>
                   Material notes
                 </p>
                 <h2
@@ -2101,19 +2083,7 @@ export default function CustomerProofPage() {
                     border: '1px solid rgba(255,255,255,0.12)',
                   }}
                 >
-                  <p
-                    className="uppercase tracking-[0.32em]"
-                    style={{
-                      fontFamily: MONO,
-                      fontSize: 10,
-                      // Brand teal — the one from the 4-colour
-                      // signature rule. Ties the section's kicker
-                      // visually to the brand palette without
-                      // using the Plasma indigo (which carries
-                      // the "interactive" signal elsewhere).
-                      color: BRAND_ORDER[3],
-                    }}
-                  >
+                  <p style={{ ...REG_A_BASE, color: BRAND_ORDER[3] }}>
                     Before you approve
                   </p>
                   <h2
@@ -2161,10 +2131,7 @@ export default function CustomerProofPage() {
         <div className="mx-auto flex max-w-[1040px] flex-wrap items-center justify-between gap-3 px-6 py-10 sm:px-8">
           <div className="flex items-center gap-3">
             <img src="/logo-cards.png" alt="Plasma" className="h-8 w-auto opacity-70" />
-            <span
-              className="uppercase tracking-[0.22em] text-white/45"
-              style={{ fontFamily: MONO, fontSize: 12 }}
-            >
+            <span style={{ ...REG_A_BASE, color: LABEL_DARK }}>
               © PlasmaDesign
             </span>
           </div>
@@ -2175,10 +2142,7 @@ export default function CustomerProofPage() {
               are missing so the footer doesn't render an empty
               paragraph. */}
           {(proofRef || activeVersion) && (
-            <p
-              className="uppercase tracking-[0.22em] text-white/45"
-              style={{ fontFamily: MONO, fontSize: 12 }}
-            >
+            <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
               {proofRef}
               {proofRef && activeVersion ? ' · ' : ''}
               {activeVersion ? `v${activeVersion.version_number}` : ''}
@@ -2234,10 +2198,8 @@ export default function CustomerProofPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <p
-              className="uppercase tracking-[0.32em]"
               style={{
-                fontFamily: MONO,
-                fontSize: 10,
+                ...REG_A_BASE,
                 color: actionPanel.type === 'approve' ? APPROVED_GREEN : BRAND_ORDER[1],
               }}
             >
@@ -2260,8 +2222,8 @@ export default function CustomerProofPage() {
 
             <div className="mt-6">
               <label
-                className="block uppercase tracking-[0.22em] text-white/60"
-                style={{ fontFamily: MONO, fontSize: 10 }}
+                className="block"
+                style={{ ...REG_A_BASE, color: LABEL_DARK }}
               >
                 Your name <span className="text-rose-300/90">*</span>
               </label>
@@ -2279,8 +2241,13 @@ export default function CustomerProofPage() {
             {actionPanel.type === 'request_changes' && (
               <div className="mt-5">
                 <label
-                  className="block uppercase tracking-[0.22em] text-white/60"
-                  style={{ fontFamily: MONO, fontSize: 10 }}
+                  className="block"
+                  style={{
+                    ...REG_B_BASE,
+                    fontSize: 14,
+                    fontWeight: 500,
+                    color: LABEL_DARK,
+                  }}
                 >
                   What changes do you need? <span className="text-rose-300/90">*</span>
                 </label>
@@ -2298,10 +2265,18 @@ export default function CustomerProofPage() {
             {actionPanel.type === 'approve' && (
               <div className="mt-5">
                 <label
-                  className="block uppercase tracking-[0.22em] text-white/60"
-                  style={{ fontFamily: MONO, fontSize: 10 }}
+                  className="block"
+                  style={{
+                    ...REG_B_BASE,
+                    fontSize: 14,
+                    fontWeight: 500,
+                    color: LABEL_DARK,
+                  }}
                 >
-                  Anything to add? <span className="text-white/30">(optional)</span>
+                  Anything to add?{' '}
+                  <span style={{ fontWeight: 400, color: 'rgba(255,255,255,0.45)' }}>
+                    (optional)
+                  </span>
                 </label>
                 <textarea
                   value={actionComment}
@@ -2328,10 +2303,7 @@ export default function CustomerProofPage() {
                 subsequent actions in the same page session. */}
             {actionPanel.type === 'approve' && publicSettings?.disclaimer_text && (
               <div className="mt-6">
-                <p
-                  className="uppercase tracking-[0.22em] text-white/60"
-                  style={{ fontFamily: MONO, fontSize: 10 }}
-                >
+                <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
                   Disclaimer
                 </p>
                 {disclaimerAckedThisSession && !actionDisclaimerExpanded ? (
@@ -2345,8 +2317,8 @@ export default function CustomerProofPage() {
                     <button
                       type="button"
                       onClick={() => setActionDisclaimerExpanded(true)}
-                      className="self-start uppercase tracking-[0.22em] text-white/60 underline-offset-4 hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 rounded-sm"
-                      style={{ fontFamily: MONO, fontSize: 10 }}
+                      className="self-start underline-offset-4 hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 rounded-sm"
+                      style={{ ...REG_A_BASE, color: LABEL_DARK }}
                     >
                       Show disclaimer
                     </button>
@@ -2411,8 +2383,12 @@ export default function CustomerProofPage() {
                     )}
                   </span>
                   <span
-                    className="uppercase tracking-[0.24em] text-white/85"
-                    style={{ fontFamily: MONO, fontSize: 11 }}
+                    style={{
+                      ...REG_B_BASE,
+                      fontSize: 14,
+                      fontWeight: 500,
+                      color: 'rgba(255,255,255,0.92)',
+                    }}
                   >
                     I confirm I have read the disclaimer above
                   </span>
