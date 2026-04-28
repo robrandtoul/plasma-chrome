@@ -432,7 +432,12 @@ function LatestActivityPanel({
                 className={[
                   'flex cursor-pointer gap-3 py-3 pl-4 pr-5 transition-colors hover:bg-gray-50',
                   rowAccent,
-                  i > 0 ? 'border-t border-gray-100' : '',
+                  // border-t-gray-100 (side-specific) instead of the
+                  // border-gray-100 shorthand — the shorthand sets all
+                  // four border colours and clobbers the leading-edge
+                  // accent for emerald/amber (which sort before gray
+                  // alphabetically in the compiled stylesheet).
+                  i > 0 ? 'border-t border-t-gray-100' : '',
                 ].join(' ')}
               >
                 <span
