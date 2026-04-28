@@ -228,10 +228,23 @@ function formatRelative(iso: string): string {
 // demands ~580px which busts a 390px viewport, collapsing the 1fr track
 // to 0 and clipping the customer block. Mobile gets a 3-track cut —
 // customer / material / status — with narrower fixed widths. Date,
-// Preview, and Add version are hidden via `hidden sm:block` on each of
-// those three trailing cells at each render site, so they drop out of
-// the grid entirely on mobile rather than wrapping into a second row.
-const ROW_GRID = 'grid items-center gap-3 grid-cols-[minmax(0,1fr)_5.5rem_6.5rem] sm:grid-cols-[minmax(0,1fr)_8rem_7rem_5.5rem_5.5rem_6.5rem]'
+// Preview, and Add version are hidden via `hidden xl:block` on each
+// of those three trailing cells at each render site, so they drop
+// out of the grid entirely below xl rather than crushing the
+// customer-name column.
+//
+// Why xl: rather than sm:: the trailing five fixed columns plus
+// gaps add up to ~580px before the customer-name column gets a
+// pixel. At lg (1024px) the page also gains a 22rem sidebar, which
+// drops the available main-column width to ~536px — too narrow for
+// the 6-col layout, with the result that the customer-name column
+// (1fr) collapsed to ~23px and "LSI Logistic Solutions N.I. Ltd"
+// rendered as "LSI...". xl (1280px) is the first breakpoint where
+// the math actually fits, so the dense layout waits for that. The
+// minmax(180px, 1fr) floor on the customer column is belt-and-
+// braces so any future column width changes can't recreate the
+// collapse.
+const ROW_GRID = 'grid items-center gap-3 grid-cols-[minmax(0,1fr)_5.5rem_6.5rem] xl:grid-cols-[minmax(180px,1fr)_8rem_7rem_5.5rem_5.5rem_6.5rem]'
 
 // ── Recent projects ───────────────────────────────────────────────────────────
 
@@ -719,14 +732,14 @@ export default function DashboardPage() {
                         </div>
                         <span className="truncate text-sm text-gray-400">{r.materialDisplay}</span>
                         <StatusPill status={r.status} />
-                        <span className="hidden text-sm text-gray-400 sm:block">{formatRelative(r.lastWorkedAt)}</span>
+                        <span className="hidden text-sm text-gray-400 xl:block">{formatRelative(r.lastWorkedAt)}</span>
                         {/* Recent list is built from proof_versions, so every row here has at least one version. */}
-                        <div className="hidden sm:block">
+                        <div className="hidden xl:block">
                           <PreviewLink proofId={r.proofId} hasVersions />
                         </div>
                         {locked
-                          ? <span className="hidden sm:block" />
-                          : <div className="hidden sm:block"><AddVersionLink proofId={r.proofId} /></div>}
+                          ? <span className="hidden xl:block" />
+                          : <div className="hidden xl:block"><AddVersionLink proofId={r.proofId} /></div>}
                       </div>
                     )
                   })}
@@ -822,11 +835,20 @@ export default function DashboardPage() {
                             <span className="text-sm font-medium text-gray-600">
                               {cg.contactName}
                             </span>
+                            {/* "+" affordance is always visible on touch
+                                devices — `(hover: hover)` only applies the
+                                opacity-0 / group-hover reveal on pointer-
+                                capable devices. Without this gate, phones
+                                and tablets had no way to discover the
+                                shortcut: there's no hover, so the button
+                                stayed at opacity-0 indefinitely. The
+                                always-visible state still uses the muted
+                                gray-300 colour so it doesn't shout. */}
                             <Link
                               to={`/proofs/new?contactId=${cg.contactId}`}
                               title={`New project for ${cg.contactName}`}
                               aria-label={`New project for ${cg.contactName}`}
-                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-gray-300 opacity-0 transition-opacity hover:bg-gray-100 hover:text-gray-600 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300"
+                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-gray-300 transition-opacity hover:bg-gray-100 hover:text-gray-600 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-300"
                             >
                               <PlusIcon />
                             </Link>
@@ -870,13 +892,13 @@ export default function DashboardPage() {
                                   status={proof.status}
                                   hasChangesRequested={proof.hasChangesRequested}
                                 />
-                                <span className="hidden text-sm text-gray-400 sm:block">{formatRelative(proof.lastActivityAt)}</span>
-                                <div className="hidden sm:block">
+                                <span className="hidden text-sm text-gray-400 xl:block">{formatRelative(proof.lastActivityAt)}</span>
+                                <div className="hidden xl:block">
                                   <PreviewLink proofId={proof.id} hasVersions={proof.current_version != null} />
                                 </div>
                                 {canAddVersion
-                                  ? <div className="hidden sm:block"><AddVersionLink proofId={proof.id} /></div>
-                                  : <span className="hidden sm:block" />}
+                                  ? <div className="hidden xl:block"><AddVersionLink proofId={proof.id} /></div>
+                                  : <span className="hidden xl:block" />}
                               </div>
                             )
                           })}
