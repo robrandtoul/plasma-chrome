@@ -873,6 +873,7 @@ export default function CustomerProofPage() {
               background: CTA_TEAL,
               fontFamily: MONO,
               fontSize: 11,
+              fontWeight: 500,
               letterSpacing: '0.22em',
               textTransform: 'uppercase',
               // Focus ring uses CTA_TEAL_RING (the brighter brand
@@ -892,7 +893,7 @@ export default function CustomerProofPage() {
               e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = 'transparent'
+              e.currentTarget.style.background = CTA_GHOST_BG
               e.currentTarget.style.borderColor = CTA_GHOST_BORDER
             }}
             onMouseDown={(e) => {
@@ -903,11 +904,12 @@ export default function CustomerProofPage() {
             }}
             className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2"
             style={{
-              background: 'transparent',
-              border: `1px solid ${CTA_GHOST_BORDER}`,
+              background: CTA_GHOST_BG,
+              border: `2px solid ${CTA_GHOST_BORDER}`,
               color: CTA_GHOST_TEXT,
               fontFamily: MONO,
               fontSize: 11,
+              fontWeight: 500,
               letterSpacing: '0.22em',
               textTransform: 'uppercase',
               ['--tw-ring-color' as string]: CTA_TEAL_RING,
@@ -1058,14 +1060,17 @@ export default function CustomerProofPage() {
   const CTA_TEAL_HOVER    = '#3D8C72'
   const CTA_TEAL_PRESSED  = '#26644F'
   const CTA_TEAL_RING     = 'rgba(81,180,148,0.5)'
-  // Secondary (Request changes) — firmer than the previous near-
-  // invisible grey so it doesn't disappear next to the new
-  // confident teal primary.
-  const CTA_GHOST_BORDER  = '#B8A99A'
-  const CTA_GHOST_TEXT    = '#5F564D'
-  const CTA_GHOST_HOVER_BG = '#FAF7F2'
-  const CTA_GHOST_PRESSED_BG = '#F2EDE4'
-  const CTA_GHOST_HOVER_BORDER = '#9F8E7E'
+  // Secondary (Request changes) — terracotta border + text on a
+  // faint warm-cream tint so the button reads as a real second
+  // option, not a muted "cancel". Border bumped to 2px below for
+  // additional weight; the warm rust is confident without slipping
+  // into "destructive red" territory.
+  const CTA_GHOST_BORDER  = '#B85C38'
+  const CTA_GHOST_TEXT    = '#9C4A2D'
+  const CTA_GHOST_BG      = '#FCF8F2'
+  const CTA_GHOST_HOVER_BG = '#F5EBE0'
+  const CTA_GHOST_PRESSED_BG = '#ECDDCD'
+  const CTA_GHOST_HOVER_BORDER = '#9C4A2D'
   const APPROVED_GREEN = '#4ade80'
   const BRAND_ORDER = ['#e11735', '#d81c7e', '#4a21a6', '#3ba58a']
   const SERIF = "'Cormorant Garamond', Georgia, serif"
