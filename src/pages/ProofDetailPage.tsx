@@ -12,6 +12,7 @@ import { logAudit } from '../lib/audit'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import type { ProofNameApproval } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
+import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/sharedApproval'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, designerPreviewPath } from '../lib/customerProofUrl'
@@ -1154,35 +1155,63 @@ export default function ProofDetailPage() {
           // name used to match approval rows. Shared goes last per
           // spec — a visual divider at render time sets it apart
           // from the per-name rows above.
-          const rollupEntries: { key: string; heading: string; approval: ProofNameApproval | null }[] =
-            currentVersion.names.map((name) => {
+          type RollupEntry =
+            | { kind: 'name'; key: string; heading: string; approval: ProofNameApproval | null }
+            | {
+                kind: 'shared'
+                key: typeof SHARED_APPROVAL_KEY
+                heading: 'Shared'
+                derived: SharedApprovalState
+                versionNumber: number
+              }
+          const rollupEntries: RollupEntry[] =
+            currentVersion.names.map((name): RollupEntry => {
               const forThisName = approvals.filter((a) => a.name === name)
               const approval = forThisName.length === 0
                 ? null
                 : forThisName.reduce((best, a) =>
                     new Date(a.updated_at).getTime() > new Date(best.updated_at).getTime() ? a : best,
                   )
-              return { key: name, heading: name, approval }
+              return { kind: 'name', key: name, heading: name, approval }
             })
           if (hasShared) {
-            const forShared = approvals.filter((a) => a.name === SHARED_APPROVAL_KEY)
-            const approval = forShared.length === 0
-              ? null
-              : forShared.reduce((best, a) =>
-                  new Date(a.updated_at).getTime() > new Date(best.updated_at).getTime() ? a : best,
-                )
-            rollupEntries.push({ key: SHARED_APPROVAL_KEY, heading: 'Shared', approval })
+            // Shared is implicit-approved when every name on the
+            // current version has an approved row on the current
+            // version. Predicate + max(updated_at) sourced together
+            // from the same scoped slice of proof_name_approvals.
+            // Legacy __shared__ rows are deliberately excluded — the
+            // sentinel still gets written by the all-shared one-off
+            // path on the customer page, but the split-name case
+            // derives Shared instead of reading it.
+            const approvedNames = new Set<string>()
+            const timestampByName = new Map<string, string>()
+            for (const a of approvals) {
+              if (a.proof_version_id !== currentVersion.id) continue
+              if (a.state !== 'approved') continue
+              if (a.name === SHARED_APPROVAL_KEY) continue
+              approvedNames.add(a.name)
+              timestampByName.set(a.name, a.updated_at)
+            }
+            const derived = deriveSharedApprovalState({
+              names: currentVersion.names,
+              approvedNames,
+              timestampByName,
+            })
+            rollupEntries.push({
+              kind: 'shared',
+              key: SHARED_APPROVAL_KEY,
+              heading: 'Shared',
+              derived,
+              versionNumber: currentVersion.version_number,
+            })
           }
 
           return (
             <section className="mb-8">
               <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Names</h2>
               <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-                {rollupEntries.map(({ key, heading, approval }, i) => {
-                  const when = approval ? new Date(approval.updated_at).toLocaleDateString('en-GB') : null
-                  const vNum = approval ? versionNumberById.get(approval.proof_version_id) : null
-                  const vRef = vNum != null ? `v${vNum}` : '—'
-                  const isSharedRow = key === SHARED_APPROVAL_KEY
+                {rollupEntries.map((entry, i) => {
+                  const isSharedRow = entry.kind === 'shared'
                   // Row separator: a stronger border above Shared
                   // than between name rows, mirroring the modal's
                   // visual distinction between per-name cards and
@@ -1192,6 +1221,37 @@ export default function ProofDetailPage() {
                     : isSharedRow
                     ? 'border-t border-gray-200'
                     : 'border-t border-gray-100'
+
+                  if (entry.kind === 'shared') {
+                    // Derived row — no actor name, no carry pill, no
+                    // audit toggle. Shared has no own approval event
+                    // to expand; the per-name rows above already
+                    // surface that detail.
+                    const when = entry.derived.latestApprovedAt
+                      ? new Date(entry.derived.latestApprovedAt).toLocaleDateString('en-GB')
+                      : null
+                    return (
+                      <div key={entry.key} className={['px-5 py-3', separator].join(' ')}>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-gray-900">{entry.heading}</p>
+                          {entry.derived.state === 'pending' && (
+                            <span className="text-xs font-medium text-gray-500">Pending</span>
+                          )}
+                          {entry.derived.state === 'approved' && (
+                            <span className="inline-flex items-center gap-2 text-xs font-medium text-emerald-800">
+                              <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
+                              Approved in v{entry.versionNumber}{when ? `, ${when}` : ''}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  const { key, heading, approval } = entry
+                  const when = approval ? new Date(approval.updated_at).toLocaleDateString('en-GB') : null
+                  const vNum = approval ? versionNumberById.get(approval.proof_version_id) : null
+                  const vRef = vNum != null ? `v${vNum}` : '—'
                   // Phase 2 Prompt 8 audit detail: pull the latest
                   // event for this (version, name) pair if one
                   // exists. Designer-recorded approvals (no event
