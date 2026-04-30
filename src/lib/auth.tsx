@@ -25,6 +25,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // refresh). Without this the role for the older session could
     // win the last-write race.
     let bootstrapId = 0
+    // Last bootstrapped user id — closure-tracked rather than read
+    // from React state so the auth-event callback sees the
+    // up-to-date value without re-subscribing each render.
+    let currentUserId: string | null = null
 
     async function bootstrap(s: Session | null) {
       const id = ++bootstrapId
@@ -33,6 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // where session is set but the profile fetch hasn't returned.
       setLoading(true)
       setSession(s)
+      currentUserId = s?.user.id ?? null
       if (!s) {
         setRole(null)
         if (!cancelled && id === bootstrapId) setLoading(false)
@@ -52,7 +57,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     void supabase.auth.getSession().then(({ data }) => bootstrap(data.session))
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
+      // INITIAL_SESSION fires once on subscribe; getSession() above
+      // already handles that bootstrap, so skip to avoid a redundant
+      // role re-fetch.
+      if (event === 'INITIAL_SESSION') return
+      // Tab-visibility quirk in supabase-js: SIGNED_IN /
+      // TOKEN_REFRESHED re-fire when the tab regains focus even
+      // though the user identity is unchanged. Refresh the session
+      // in state silently (so future calls carry the new access
+      // token) but don't flip loading or re-fetch role — that would
+      // remount auth-gated routes and read as a hard page refresh.
+      // Sign-out (s=null) falls through because null !== currentUserId
+      // unless we're already signed out.
+      if (s?.user.id != null && s.user.id === currentUserId) {
+        setSession(s)
+        return
+      }
       void bootstrap(s)
     })
 
