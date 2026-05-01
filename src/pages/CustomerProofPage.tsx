@@ -1156,6 +1156,34 @@ export default function CustomerProofPage() {
       }
     : { variants: [] }
 
+  // Locked-variant spec surface. When the version's pricing grid has
+  // exactly one variant AND that variant_type is 'finish', the
+  // customer has no other surface signalling which finish they're
+  // being quoted for — the matrix collapses to a single "Price"
+  // column with no variant name in the header (PricingDisplay's th
+  // reads "Price" for the single-variant shape). Surface it on the
+  // Specification sheet so the customer sees "Finish: With Foiling"
+  // alongside Material / Sides / etc.
+  //
+  // Standard Paper is the only material with variant_type='finish'
+  // today (Standard / With UV Spot / With Foiling — three
+  // effectively-different products, picked at order time, not
+  // customer-switchable).
+  //
+  // 'thickness' stays matrix-only — the multi-column grid IS the
+  // surface. 'ink_count' is conveyed by the Ink colours row's count
+  // of listed Pantone codes (adding "Inks: N" would duplicate).
+  // 'default' carries no dimension worth surfacing.
+  const lockedFinishVariant: PublicMaterialVariant | null = (() => {
+    if (!activeVersion) return null
+    if (livePricingSnapshot.variants.length !== 1) return null
+    const v = variantRows.find(
+      (r) => r.id === livePricingSnapshot.variants[0].variant_id,
+    )
+    if (!v) return null
+    return v.variant_type === 'finish' ? v : null
+  })()
+
   // Per-quantity surcharge map for the active option, baked into every
   // pricing cell. Empty for base options or materials with no surcharges
   // (e.g. wood species).
@@ -1920,6 +1948,9 @@ export default function CustomerProofPage() {
                         : 'Front only'
                     }
                   />
+                  {lockedFinishVariant && (
+                    <PaperSpecRow label="Finish" value={lockedFinishVariant.display_name} />
+                  )}
                   {activeOption && (
                     <PaperSpecRow label={optionLabelSingular} value={activeOption.display_name} />
                   )}
