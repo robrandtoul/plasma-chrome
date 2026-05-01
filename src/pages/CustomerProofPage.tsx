@@ -1628,6 +1628,34 @@ export default function CustomerProofPage() {
                 ? { ...sharedGroup, images: sharedStandaloneImages }
                 : null
 
+            // Heading for the standalone Shared section, derived
+            // from the sides actually present rather than hardcoded.
+            // Production data: most standalone Shared sections hold
+            // front-only (the shared-front-with-named-backs pattern
+            // common to split-name proofs); some hold both (membership
+            // cards with shared front + back); back-only is theoretically
+            // possible but unobserved. The fallback bare "Shared" covers
+            // legacy pre-migration-000071 rows without a side label.
+            // Schema (000071) constrains side to ('front' | 'back'), so
+            // no overlay branch is needed; if side ever widens, schema
+            // and render path are coordinated changes that include
+            // updating this derivation.
+            const sharedHeading: string = (() => {
+              if (!sharedStandaloneGroup) return ''
+              const sides = new Set(sharedStandaloneGroup.images.map((i) => i.side))
+              const hasFront = sides.has('front')
+              const hasBack = sides.has('back')
+              const label =
+                hasFront && hasBack
+                  ? 'Front and back'
+                  : hasFront
+                    ? 'Front'
+                    : hasBack
+                      ? 'Back'
+                      : null
+              return label ? `Shared · ${label}` : 'Shared'
+            })()
+
             // Proof-count subtext reads the project's true
             // image count — count each shared image once, not
             // per injected instance. Keeps "N proofs · M
@@ -1741,7 +1769,7 @@ export default function CustomerProofPage() {
                       section-wide image size. */}
                   {sharedStandaloneGroup && (
                     <PaperRecipientBand
-                      heading="Shared · backs and overlays"
+                      heading={sharedHeading}
                       topRule={false}
                     >
                       <div
