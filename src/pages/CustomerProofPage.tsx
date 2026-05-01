@@ -707,14 +707,26 @@ export default function CustomerProofPage() {
     // Audit detail from latest_events_by_name when the customer
     // recorded the action. Shared-section events written by older
     // code paths could carry name=null instead of '__shared__';
-    // both are accepted here for safety. designer_override_approve
-    // events (000129) are filtered out — those are designer-side
-    // audit and have no place on the customer-facing banner; the
-    // approval pill flips via approval.state regardless.
+    // both are accepted here for safety.
+    //
+    // State-aware event_type matching (000130 / PR #6 follow-up):
+    // the lookup must match the event_type to the row's current
+    // state. Without this guard, a partial-failure case where the
+    // row's state flipped to 'approved' via an override but the
+    // matching designer_override_approve event was never written
+    // (e.g. the original PR #6 RLS regression) would fall through
+    // to the older request_changes event and leak the customer's
+    // change-request metadata onto an approved pill.
+    //
+    // designer_override_approve events never appear here regardless
+    // of state — they're designer-side audit only.
+    const expectedEventType = approval.state === 'approved'
+      ? 'approve'
+      : 'request_changes'
     const event: ProofEventState | undefined =
       activeVersion.latest_events_by_name.find(
         (e) =>
-          e.event_type !== 'designer_override_approve' &&
+          e.event_type === expectedEventType &&
           (e.name === name ||
             (name === SHARED_APPROVAL_KEY && e.name == null)),
       )

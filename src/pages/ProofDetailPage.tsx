@@ -537,12 +537,58 @@ export default function ProofDetailPage() {
           // else: existing.state === 'approved' → no-op
         }
 
+        // Write order (PR #7 — re-ordered from PR #6):
+        //
+        //   1. proof_events override rows via the
+        //      log_designer_override_event RPC (000130). Hard-fail
+        //      on first error — nothing has changed in the DB yet,
+        //      so an early abort leaves no inconsistent state.
+        //   2. proof_name_approvals override UPDATEs.
+        //   3. proof_name_approvals fresh INSERTs.
+        //
+        // Pre-PR-#7 the events insert ran last and was tolerant of
+        // failure (toast, continue). That partial-success path masked
+        // the PR-#6 RLS regression — proof_events RLS rejected the
+        // designer-side insert silently, the override row landed
+        // anyway, the toast was clobbered by the success toast within
+        // milliseconds, and the activity feed lost the slate row.
+        // Writing events FIRST through the SECURITY DEFINER RPC
+        // closes that window: actor_name is stamped from
+        // auth.users.email server-side (non-spoofable), RLS isn't
+        // in the picture, and any failure aborts before any state
+        // change.
+        if (overrides.length > 0) {
+          for (const o of overrides) {
+            const { error: rpcErr } = await supabase.rpc(
+              'log_designer_override_event',
+              {
+                p_proof_version_id: currentVersion.id,
+                p_name: o.name,
+              },
+            )
+            if (rpcErr) {
+              setStatusWorking(false)
+              setStatusDialog(null)
+              showToast(
+                `Couldn't record the override audit entry for ${o.name}: ${rpcErr.message}. The project has not been marked as approved. Please retry or contact support.`,
+              )
+              return
+            }
+          }
+        }
+
         // Apply override updates one row at a time. Volume is small
         // (one row per recipient with an open change-request) and
         // Supabase REST doesn't expose a multi-row update with
         // distinct values, so .update().eq('id', …) per row is the
         // cleanest path. Failing fast on the first error mirrors
         // the existing "any DB error aborts the flow" pattern.
+        // Caveat: events have already been inserted at this point
+        // — a failure here leaves orphan event rows. The likelihood
+        // is small (no RLS gate on this table for authenticated
+        // role) and the rollup remains coherent (override row not
+        // updated → still reads as changes_requested, with the
+        // event ignored by the customer-page state-aware filter).
         for (const row of overrides) {
           const { error: upErr } = await supabase
             .from('proof_name_approvals')
@@ -576,38 +622,6 @@ export default function ProofDetailPage() {
             setStatusDialog(null)
             showToast(`Failed to record per-name approvals: ${insErr.message}`)
             return
-          }
-        }
-
-        // proof_events row per overridden slot. Designer identity
-        // goes on actor_name (the table requires text); recipient
-        // name goes on `name`. material_option_code is null — an
-        // override is whole-row, not option-tab-scoped, and 000124
-        // documents null as the "not applicable" semantic.
-        //
-        // Dual-write tolerance: if proof_name_approvals is already
-        // updated and this insert fails, the override audit is
-        // partial — overridden_from_state is recorded on the row
-        // but the activity feed has no entry. Surface the error
-        // via toast without rolling back the approval; mirrors the
-        // partial-failure pattern documented in 000124.
-        if (overrides.length > 0) {
-          const eventRows = overrides.map((o) => ({
-            proof_version_id: currentVersion.id,
-            event_type: 'designer_override_approve' as const,
-            actor_name: designerName,
-            name: o.name,
-            comment: null,
-            from_ip: null,
-            from_ua: null,
-            pricing_snapshot_at_action: null,
-            material_option_code: null,
-          }))
-          const { error: evErr } = await supabase
-            .from('proof_events')
-            .insert(eventRows)
-          if (evErr) {
-            showToast(`Override recorded, but activity feed entry failed: ${evErr.message}`)
           }
         }
       }
