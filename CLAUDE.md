@@ -110,6 +110,16 @@ Designer-facing:
 - `/proofs/:id/versions/new` and `…/edit` — Pricing Display → Specification → Proof Images → Change Notes → Pricing Table, in that order
 - Required fields: pricing display choice, currency (in standard mode), material, variant (when applicable), ink names (when material.requires_ink_names), images per option tab. Validation uses a `submitAttempted` flag + `shouldHighlight(key)` helper — rose borders + "Required" labels appear only after first save click; they clear live as fields become valid. First invalid field scrolls into view; a rose-toned toast ("Please complete all required fields to save") auto-dismisses after 5s.
 
+## Help Scout integration on the New project form
+
+The `/proofs/new` form has two lookup mechanisms for linking a proof to a Help Scout conversation:
+
+1. **URL-paste (primary, designer-initiated)** — designer pastes a conversation URL or numeric id into the "Start from Help Scout" field and clicks **Look up**. Hits the `lookup-helpscout-conversation` edge function with the parsed id. Populates the customer/contact/conversation fields from that specific conversation; the designer disambiguates upstream by copying the URL of the correct one.
+
+2. **Email-driven (secondary, automatic)** — fires whenever `selectedContact.id` changes (whether the contact came from the URL-paste flow, manual contact-picker, or `?contactId=` URL param). Hits the `match-helpscout-conversation` edge function with the contact's email. Surfaces a multi-match picker when the email has multiple HS conversations; auto-applies on a single match; opens the override-reason panel on no matches. Filters out `closed`-status conversations on the HS side, so test fixtures with closed threads return zero matches even when the email has a real conversation history — easy to mistake for a missing feature during synthetic testing.
+
+Both flows write to the same `helpscout_conversation_id` / `helpscout_conversation_url` fields on the proof. RLS keeps the columns designer-only.
+
 ## Frontend patterns
 
 - `src/lib/useImageFileDrop.ts` — hook for zone-level + page-wide drag-and-drop image upload. Ignores internal thumbnail reorder drags by checking `dataTransfer.types.includes('Files')`.
