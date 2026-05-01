@@ -2914,7 +2914,7 @@ function PlateCard({
             of the row; the Download link's invisible 44px tap
             target extends downward without pushing the other
             columns out of vertical register. */}
-        <figcaption className="mt-4 grid grid-cols-1 items-start gap-2 border-t border-[rgba(26,22,18,0.10)] pt-3 lg:grid-cols-[auto_1fr_auto] lg:gap-6">
+        <figcaption className="mt-4 grid grid-cols-1 items-start gap-2 border-t border-[rgba(26,22,18,0.10)] pt-3 text-[12px] leading-[18px] lg:grid-cols-[auto_1fr_auto] lg:gap-6">
           <div className="flex items-start gap-2 min-w-0">
             <span
               aria-hidden
@@ -2935,7 +2935,7 @@ function PlateCard({
               </span>
             )}
           </div>
-          <div className="min-w-0">
+          <div className="flex items-start min-w-0">
             {image.original_filename && (
               <span
                 className="font-paper-mono break-all"
