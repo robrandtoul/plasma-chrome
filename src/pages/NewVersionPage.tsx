@@ -65,6 +65,15 @@ interface ImageEntry {
   side: 'front' | 'back' | null
 }
 
+// Toast variant carrying optional Undo affordance. Used by both
+// the existing validation-fail flow (rose pill, no action) and
+// the soft-delete-with-Undo flow on Remove (slate pill with
+// inline Undo button). Both auto-dismiss at 5s; the undo path's
+// timer also commits the removal (revokes blob URL).
+type Toast =
+  | { kind: 'validation'; text: string }
+  | { kind: 'undo'; text: string; onUndo: () => void }
+
 // One v1 image, loaded on mount to drive carry-forward cards.
 // file_path is the storage key shared across versions when Keep is
 // on — no copy happens. preview is a short-TTL signed URL.
@@ -253,7 +262,7 @@ export default function NewVersionPage() {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitAttempted, setSubmitAttempted] = useState(false)
-  const [validationToast, setValidationToast] = useState('')
+  const [toast, setToast] = useState<Toast | null>(null)
 
   // ── Form collapse state (Tier 2c) ─────────────────────────────────────────
   // The form is collapsed by default on v2+ creation behind a tight
@@ -274,6 +283,19 @@ export default function NewVersionPage() {
   const inkNamesRef         = useRef<HTMLDivElement>(null)
   const namesRef            = useRef<HTMLDivElement>(null)
   const toastTimerRef       = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Stash for undo-after-Remove. Holds the removed entry plus the
+  // option key + array index it was at, so undoRemove() can splice
+  // it back into its original slot. The timerId fires at 5s and
+  // commits the removal (revokes the blob URL, clears the stash).
+  // Cleared on undo (timer cancelled), on a second Remove (previous
+  // commits early via commitPendingRemoval), at handleSubmit (URL
+  // hygiene), and on unmount (prevents URL leak on navigation).
+  const lastRemovedRef = useRef<{
+    entry: ImageEntry
+    optionKey: string
+    index: number
+    timerId: ReturnType<typeof setTimeout>
+  } | null>(null)
   // Hidden file input behind the section-level drop zone's click-
   // to-browse affordance. The zone is keyboard-accessible (Enter /
   // Space activate the click), so the input has to be focusable
@@ -288,6 +310,16 @@ export default function NewVersionPage() {
   // in their drop handlers, so window-level drops only fire for
   // drops outside any per-cell zone.
   const { isZoneDragOver, isPageDragOver, zoneProps } = useImageFileDrop({ onFiles: (f) => addFilesBatch(f) })
+
+  // Commit any pending soft-delete on unmount so the blob URL
+  // doesn't leak across page navigations. See removeImage for
+  // the soft-delete + 5s commit mechanic.
+  useEffect(() => {
+    return () => {
+      commitPendingRemoval()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (!proofId) return
@@ -1313,22 +1345,93 @@ export default function NewVersionPage() {
     handleReplacementUpload(v1RowId, partition.ok[0])
   }
 
+  // Soft remove with a 5s undo window (test-report finding (h)).
+  //
+  // The Remove button on FreshImageCard sits at the bottom-right
+  // of each tile, near where the user expects "Save version" to
+  // sit on the sticky bar. A misclick can silently drop an
+  // uploaded image. Soft-delete + Undo toast forgives that.
+  //
+  // Mechanic:
+  //   1. Find the entry across option tabs (each ImageEntry was
+  //      stamped with a specific option at drop time, so a walk
+  //      is necessary — the active-tab-only approach was wrong
+  //      under the per-slot layout where multiple tabs may hold
+  //      entries).
+  //   2. If a prior Undo is still pending, commit it now — revokes
+  //      the prior entry's URL and clears the stash. Prevents
+  //      stash leak on rapid back-to-back Removes.
+  //   3. Drop the entry from imagesByOption (visual feedback is
+  //      instant) but DO NOT revoke its blob URL yet. The URL
+  //      stays alive in the stash for potential Undo.
+  //   4. Stash the entry + its origin (option key, array index)
+  //      so undoRemove can splice it back at the same position.
+  //   5. Schedule a 5s timer that revokes the URL, clears the
+  //      stash, and dismisses the toast (only if the toast is
+  //      still the undo toast — the functional setter guards
+  //      against a validation toast overwriting it mid-window).
+  //   6. Show the slate Undo toast with the recovery action.
   function removeImage(localId: string) {
-    // removeImage operates on whichever option tab the entry
-    // lives in — each ImageEntry was stamped with a specific
-    // option at drop time. Walk all option keys to locate it;
-    // tiny scan compared to the old active-tab-only approach,
-    // but correct under the per-slot layout where multiple tabs
-    // may hold entries.
-    setImagesByOption((prev) => {
-      const out: Record<string, ImageEntry[]> = {}
-      for (const [key, list] of Object.entries(prev)) {
-        const removed = list.find((e) => e.localId === localId)
-        if (removed) URL.revokeObjectURL(removed.preview)
-        out[key] = list.filter((e) => e.localId !== localId)
+    let foundEntry: ImageEntry | null = null
+    let foundKey = ''
+    let foundIndex = -1
+    for (const [key, list] of Object.entries(imagesByOption)) {
+      const idx = list.findIndex((e) => e.localId === localId)
+      if (idx >= 0) {
+        foundEntry = list[idx]
+        foundKey = key
+        foundIndex = idx
+        break
       }
-      return out
+    }
+    if (!foundEntry) return
+
+    commitPendingRemoval()
+
+    setImagesByOption((prev) => ({
+      ...prev,
+      [foundKey]: (prev[foundKey] ?? []).filter((e) => e.localId !== localId),
+    }))
+
+    const entry = foundEntry
+    const timerId = setTimeout(() => {
+      URL.revokeObjectURL(entry.preview)
+      if (lastRemovedRef.current?.entry.localId === entry.localId) {
+        lastRemovedRef.current = null
+      }
+      setToast((curr) => (curr?.kind === 'undo' ? null : curr))
+    }, 5000)
+
+    lastRemovedRef.current = { entry, optionKey: foundKey, index: foundIndex, timerId }
+    setToast({ kind: 'undo', text: 'Image removed', onUndo: undoRemove })
+  }
+
+  // Splice the stashed entry back into its original slot and
+  // dismiss the toast. No-op if the stash is empty (e.g. user
+  // double-clicked Undo, or the 5s timer already fired).
+  function undoRemove() {
+    const stash = lastRemovedRef.current
+    if (!stash) return
+    clearTimeout(stash.timerId)
+    setImagesByOption((prev) => {
+      const list = [...(prev[stash.optionKey] ?? [])]
+      list.splice(stash.index, 0, stash.entry)
+      return { ...prev, [stash.optionKey]: list }
     })
+    lastRemovedRef.current = null
+    setToast(null)
+  }
+
+  // Finalise any pending removal early. Called by:
+  //   - removeImage (when a second Remove arrives within 5s)
+  //   - handleSubmit (URL hygiene before save)
+  //   - useEffect cleanup on unmount (prevents URL leak)
+  function commitPendingRemoval() {
+    const stash = lastRemovedRef.current
+    if (!stash) return
+    clearTimeout(stash.timerId)
+    URL.revokeObjectURL(stash.entry.preview)
+    lastRemovedRef.current = null
   }
 
   // Single-click side flip on a FreshImageCard. Toggles entry.side
@@ -1632,14 +1735,24 @@ export default function NewVersionPage() {
       first?.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-      setValidationToast('Please complete all required fields to save')
-      toastTimerRef.current = setTimeout(() => setValidationToast(''), 5000)
+      setToast({ kind: 'validation', text: 'Please complete all required fields to save' })
+      toastTimerRef.current = setTimeout(
+        () => setToast((curr) => (curr?.kind === 'validation' ? null : curr)),
+        5000,
+      )
       return
     }
 
     // Button is still a submit-type, so narrow defensively even though
     // isValid guarantees these values.
     if (pricingDisplay === null) return
+
+    // Finalise any pending soft-delete before the network save.
+    // Placed after the validation gate so a validation-fail path
+    // doesn't pre-empt the 5s undo window. Entry is already absent
+    // from state; this is just blob URL hygiene at the natural
+    // commit point of the form.
+    commitPendingRemoval()
 
     setSubmitting(true)
 
@@ -2281,12 +2394,27 @@ export default function NewVersionPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {validationToast && (
+      {toast?.kind === 'validation' && (
         <div
           role="status"
           className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full bg-rose-50 px-5 py-2.5 text-sm font-medium text-rose-700 shadow-lg ring-1 ring-rose-200"
         >
-          {validationToast}
+          {toast.text}
+        </div>
+      )}
+      {toast?.kind === 'undo' && (
+        <div
+          role="status"
+          className="fixed left-1/2 top-6 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full bg-slate-700 px-5 py-2.5 text-sm font-medium text-white shadow-lg"
+        >
+          <span>{toast.text}</span>
+          <button
+            type="button"
+            onClick={() => toast.onUndo()}
+            className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wider hover:bg-white/25"
+          >
+            Undo
+          </button>
         </div>
       )}
       {/* Page-wide drag overlay. Activates while the designer drags

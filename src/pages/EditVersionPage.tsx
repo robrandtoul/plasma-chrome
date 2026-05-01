@@ -21,6 +21,23 @@ type EditImage =
   | { kind: 'existing'; id: string; image_path: string; preview: string; material_option: string | null; original_filename: string | null; associated_name: string | null; side: 'front' | 'back' | null }
   | { kind: 'new';      localId: string; file: File; preview: string; associated_name: string | null; side: 'front' | 'back' | null }
 
+// Stable identifier for an EditImage regardless of variant. Used
+// by the soft-remove + Undo path (lastRemovedRef equality check)
+// and by removeImage's find loop. Keeps the discriminated-union
+// branching out of those call sites.
+const entryId = (e: EditImage): string =>
+  e.kind === 'existing' ? e.id : e.localId
+
+// Toast variant carrying optional Undo affordance. Used by both
+// the existing validation-fail flow (rose pill, no action) and
+// the soft-delete-with-Undo flow on Remove (slate pill with
+// inline Undo button). Both auto-dismiss at 5s; the undo path's
+// timer also commits the removal (revokes blob URL on kind:'new'
+// entries; existing entries have signed URLs, no revoke needed).
+type Toast =
+  | { kind: 'validation'; text: string }
+  | { kind: 'undo'; text: string; onUndo: () => void }
+
 interface MaterialOption {
   id: string
   code: string
@@ -68,7 +85,7 @@ export default function EditVersionPage() {
   const [fileError, setFileError] = useState('')
   const [fileNote, setFileNote] = useState('')
   const [submitAttempted, setSubmitAttempted] = useState(false)
-  const [validationToast, setValidationToast] = useState('')
+  const [toast, setToast] = useState<Toast | null>(null)
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -78,11 +95,31 @@ export default function EditVersionPage() {
   const materialRef     = useRef<HTMLInputElement>(null)
   const inkNamesRef     = useRef<HTMLDivElement>(null)
   const toastTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Stash for undo-after-Remove. See NewVersionPage for the full
+  // mechanic explainer; same shape adjusted for EditImage's
+  // discriminated union. URL revocation only fires for kind:'new'
+  // entries on commit; existing images carry signed URLs.
+  const lastRemovedRef  = useRef<{
+    entry: EditImage
+    optionKey: string
+    index: number
+    timerId: ReturnType<typeof setTimeout>
+  } | null>(null)
 
   useEffect(() => {
     if (!proofId || !versionId) return
     loadAll(proofId, versionId)
   }, [proofId, versionId])
+
+  // Commit any pending soft-delete on unmount so the blob URL
+  // doesn't leak across page navigations. See removeImage for
+  // the soft-delete + 5s commit mechanic.
+  useEffect(() => {
+    return () => {
+      commitPendingRemoval()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function loadAll(pid: string, vid: string) {
     const [proofResult, versionResult, imagesResult] = await Promise.all([
@@ -341,17 +378,74 @@ export default function EditVersionPage() {
 
   const { isZoneDragOver, isPageDragOver, zoneProps } = useImageFileDrop({ onFiles: addFiles })
 
+  // Soft remove with a 5s undo window (test-report finding (h)).
+  // Mirrors NewVersionPage.removeImage; see that explainer for
+  // the full mechanic. Differences here:
+  //   - EditImage is a discriminated union (existing | new); the
+  //     entryId helper lifts the variant branching out of every
+  //     id-equality call site.
+  //   - URL revocation only applies to kind:'new' entries; existing
+  //     images carry signed URLs from Supabase storage and don't
+  //     need a revoke.
+  //   - DB deletion for kind:'existing' is still deferred to Save
+  //     time via the existing diff-against-original logic. Soft
+  //     removal here is purely a local-state operation; if the user
+  //     undoes within 5s the entry is back in state and the diff
+  //     correctly issues no DB delete.
   function removeImage(key: string) {
-    setEditImagesByOption(prev => ({
+    const list = editImagesByOption[activeKey] ?? []
+    let foundEntry: EditImage | null = null
+    let foundIndex = -1
+    for (let i = 0; i < list.length; i++) {
+      if (entryId(list[i]) === key) {
+        foundEntry = list[i]
+        foundIndex = i
+        break
+      }
+    }
+    if (!foundEntry) return
+
+    commitPendingRemoval()
+
+    setEditImagesByOption((prev) => ({
       ...prev,
-      [activeKey]: (prev[activeKey] ?? []).filter(img => {
-        if (img.kind === 'existing') return img.id !== key
-        if (img.kind === 'new') {
-          if (img.localId === key) { URL.revokeObjectURL(img.preview); return false }
-        }
-        return true
-      }),
+      [activeKey]: (prev[activeKey] ?? []).filter((img) => entryId(img) !== key),
     }))
+
+    const entry = foundEntry
+    const targetId = entryId(entry)
+    const timerId = setTimeout(() => {
+      if (entry.kind === 'new') URL.revokeObjectURL(entry.preview)
+      const stash = lastRemovedRef.current
+      if (stash && entryId(stash.entry) === targetId) {
+        lastRemovedRef.current = null
+      }
+      setToast((curr) => (curr?.kind === 'undo' ? null : curr))
+    }, 5000)
+
+    lastRemovedRef.current = { entry, optionKey: activeKey, index: foundIndex, timerId }
+    setToast({ kind: 'undo', text: 'Image removed', onUndo: undoRemove })
+  }
+
+  function undoRemove() {
+    const stash = lastRemovedRef.current
+    if (!stash) return
+    clearTimeout(stash.timerId)
+    setEditImagesByOption((prev) => {
+      const list = [...(prev[stash.optionKey] ?? [])]
+      list.splice(stash.index, 0, stash.entry)
+      return { ...prev, [stash.optionKey]: list }
+    })
+    lastRemovedRef.current = null
+    setToast(null)
+  }
+
+  function commitPendingRemoval() {
+    const stash = lastRemovedRef.current
+    if (!stash) return
+    clearTimeout(stash.timerId)
+    if (stash.entry.kind === 'new') URL.revokeObjectURL(stash.entry.preview)
+    lastRemovedRef.current = null
   }
 
   function updateAssociatedName(key: string, associated_name: string | null) {
@@ -436,10 +530,20 @@ export default function EditVersionPage() {
       first?.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-      setValidationToast('Please complete all required fields to save')
-      toastTimerRef.current = setTimeout(() => setValidationToast(''), 5000)
+      setToast({ kind: 'validation', text: 'Please complete all required fields to save' })
+      toastTimerRef.current = setTimeout(
+        () => setToast((curr) => (curr?.kind === 'validation' ? null : curr)),
+        5000,
+      )
       return
     }
+
+    // Finalise any pending soft-delete before the network save.
+    // Placed after the validation gate so a validation-fail path
+    // doesn't pre-empt the 5s undo window. URL revocation only
+    // applies to kind:'new' entries; existing entries leave no
+    // hygiene work for this hook.
+    commitPendingRemoval()
 
     setSubmitting(true)
 
@@ -629,12 +733,27 @@ export default function EditVersionPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <PageDropOverlay visible={isPageDragOver} />
-      {validationToast && (
+      {toast?.kind === 'validation' && (
         <div
           role="status"
           className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full bg-rose-50 px-5 py-2.5 text-sm font-medium text-rose-700 shadow-lg ring-1 ring-rose-200"
         >
-          {validationToast}
+          {toast.text}
+        </div>
+      )}
+      {toast?.kind === 'undo' && (
+        <div
+          role="status"
+          className="fixed left-1/2 top-6 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full bg-slate-700 px-5 py-2.5 text-sm font-medium text-white shadow-lg"
+        >
+          <span>{toast.text}</span>
+          <button
+            type="button"
+            onClick={() => toast.onUndo()}
+            className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wider hover:bg-white/25"
+          >
+            Undo
+          </button>
         </div>
       )}
       <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6">
