@@ -1628,14 +1628,21 @@ export default function CustomerProofPage() {
                 ? { ...sharedGroup, images: sharedStandaloneImages }
                 : null
 
-            // Heading for the standalone Shared section, derived
-            // from the sides actually present rather than hardcoded.
-            // Production data: most standalone Shared sections hold
-            // front-only (the shared-front-with-named-backs pattern
-            // common to split-name proofs); some hold both (membership
-            // cards with shared front + back); back-only is theoretically
-            // possible but unobserved. The fallback bare "Shared" covers
-            // legacy pre-migration-000071 rows without a side label.
+            // Heading for the standalone Shared section. Two layers:
+            //
+            // 1. Sides label — derived from the sides actually present
+            //    in the standalone Shared group: 'Front and back' /
+            //    'Front' / 'Back', or null when only side=null images
+            //    exist (legacy pre-migration-000071 data, unobserved
+            //    in production today).
+            //
+            // 2. "Shared · " prefix — added only when activeVersion.names
+            //    is non-empty. The prefix earns its place by contrasting
+            //    against the per-name card sections rendered elsewhere
+            //    on the page; on membership-card style proofs (no names)
+            //    the prefix is noise and the heading just describes the
+            //    card faces directly.
+            //
             // Schema (000071) constrains side to ('front' | 'back'), so
             // no overlay branch is needed; if side ever widens, schema
             // and render path are coordinated changes that include
@@ -1653,7 +1660,11 @@ export default function CustomerProofPage() {
                     : hasBack
                       ? 'Back'
                       : null
-              return label ? `Shared · ${label}` : 'Shared'
+              const hasNames = activeVersion.names.length > 0
+              if (hasNames) {
+                return label ? `Shared · ${label}` : 'Shared'
+              }
+              return label ?? 'Card design'
             })()
 
             // Proof-count subtext reads the project's true
