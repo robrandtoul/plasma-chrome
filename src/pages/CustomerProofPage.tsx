@@ -2070,13 +2070,21 @@ export default function CustomerProofPage() {
                       </p>
                     )}
                   {!activeVersion.custom_quote && (
+                    // Currency + VAT label sits at PAPER_INK rather than
+                    // the kicker-family PAPER_TERTIARY because it's
+                    // business-critical disclosure (the customer needs
+                    // to know prices include VAT before placing an
+                    // order), not supplementary context like "Prices
+                    // shown for {finish}". Don't migrate back to
+                    // PAPER_TERTIARY in a consistency sweep — the
+                    // divergence is intentional.
                     <p
                       className="mt-1 font-paper-mono uppercase"
                       style={{
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: 500,
                         letterSpacing: '0.22em',
-                        color: PAPER_TERTIARY,
+                        color: PAPER_INK,
                       }}
                     >
                       {activeVersion.currency}
