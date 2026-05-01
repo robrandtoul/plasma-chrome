@@ -140,7 +140,13 @@ Both flows write to the same `helpscout_conversation_id` / `helpscout_conversati
 
 Commit changes locally as you work. Rob typically pushes manually at the end of a work session, but during this project he's consistently asked for "commit and push" at the end of each task — follow whatever he says. Never skip hooks (`--no-verify`) and never `--amend` a pushed commit without asking.
 
-Local dev: Rob runs `npm run dev` in a separate terminal. Changes hot-reload so no deploy is needed to verify frontend work. For DB changes, `npx supabase db push` applies pending migrations against the remote project.
+Local dev: Rob runs `pnpm dev` in a separate terminal. Changes hot-reload so no deploy is needed to verify frontend work.
+
+For DB migrations, the dry-run reflex applies:
+
+1. **Always run `pnpm db:diff` first.** Read-only; lists every migration that's local-only (file exists in `supabase/migrations/` but hasn't been applied to the linked Supabase project). Quick gut-check before pushing.
+2. **Push via `pnpm db:push:confirm`** rather than `npx supabase db push --include-all` directly. Same end result, but the script bails out if MORE than one migration is pending (a signal that the mixed-naming-convention set has drifted), prints what's about to be pushed, and asks for explicit "yes" confirmation. After pushing, it re-runs the list to confirm both sides are in sync.
+3. The raw `npx supabase db push --include-all` is still available as an escape hatch — for example, when you've genuinely vetted multiple pending migrations and want to push them all. The script is the safety net you'd be bypassing.
 
 ## Working style
 
