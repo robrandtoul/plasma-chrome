@@ -38,20 +38,49 @@
 //                                              project brief, used by
 //                                              send-helpscout-reply).
 //   PROOF_VIEWER_BASE_URL                    — e.g. https://proof-viewer
-//                                              .netlify.app. Falls back
-//                                              to the request's Origin
-//                                              header if unset, then to
-//                                              an empty string (in which
-//                                              case the customer thread
-//                                              omits the proof URL line
-//                                              rather than posting a
-//                                              broken /p/{id} link).
+//                                              .netlify.app. Used as the
+//                                              fallback when the
+//                                              request's Origin header
+//                                              isn't in the allowlist
+//                                              (see ALLOWED_BASE_URL_
+//                                              ORIGINS below). Empty
+//                                              string is the final
+//                                              fallback — customer
+//                                              thread omits the proof
+//                                              URL line rather than
+//                                              posting a broken
+//                                              /p/{id} link.
 //
 // Endpoint shape and discriminated response codes are documented in the
 // Phase 2 prompt 6 spec. This file is the canonical reference; treat the
 // status / reason union as the public contract.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+
+// Allowlist of origins that this edge function trusts to build
+// customer-facing /p/{proof_id} links for the Help Scout thread post.
+// Anything outside this list falls through to PROOF_VIEWER_BASE_URL.
+//
+// Why allowlist (vs trusting Origin outright):
+//   The edge function endpoint accepts any caller, not just browsers.
+//   A direct curl with a forged Origin header would otherwise let an
+//   attacker post a phishing URL into the HS thread (visible to both
+//   designer and customer). The allowlist closes that vector at the
+//   cost of a tiny static list.
+//
+// Members:
+//   - production Netlify domain
+//   - Vite dev default port (5173)
+//   - Vite preview default port (4173)
+//
+// If branch-deploy / Netlify preview origins ever land
+// (e.g. https://deploy-preview-N--proof-viewer.netlify.app), extend
+// this list — likely as a regex entry — at that point.
+const ALLOWED_BASE_URL_ORIGINS = [
+  'https://proof-viewer.netlify.app',
+  'http://localhost:5173',
+  'http://localhost:4173',
+] as const
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -644,9 +673,26 @@ Deno.serve(async (req) => {
     return json({ status: 'partial', event_id: eventId, reason: 'helpscout_post_failed' })
   }
 
+  // Resolution order (inverted from the original env-first shape as
+  // part of Option B / lightweight isolation — localhost dev triggering
+  // an HS post should produce a localhost-pointing link, not a prod-
+  // pointing one):
+  //
+  //   1. Request Origin header IF it's in ALLOWED_BASE_URL_ORIGINS.
+  //      The allowlist protects against an attacker posting a forged
+  //      Origin to steer the HS thread post toward a phishing URL.
+  //   2. PROOF_VIEWER_BASE_URL env var. Configured per deployment;
+  //      today set to the prod Netlify URL on the Supabase function's
+  //      environment.
+  //   3. Empty string. Customer thread omits the proof URL line
+  //      rather than posting a broken /p/{id} link.
+  const rawOrigin = req.headers.get('origin')?.trim() ?? ''
+  const allowedOrigin = (ALLOWED_BASE_URL_ORIGINS as readonly string[]).includes(rawOrigin)
+    ? rawOrigin
+    : ''
   const baseUrl =
+    allowedOrigin ||
     Deno.env.get('PROOF_VIEWER_BASE_URL')?.trim() ||
-    req.headers.get('origin') ||
     ''
   const proofUrl = baseUrl ? `${baseUrl.replace(/\/+$/, '')}/p/${v.proof_id}` : null
 
