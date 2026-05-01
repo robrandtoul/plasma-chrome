@@ -1,11 +1,45 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import type { ProofEventState } from '../lib/types'
+import { deriveSharedApprovalState } from '../lib/sharedApproval'
 import { formatPrice } from '../lib/currency'
 import { type GridImage } from '../components/ImageGrid'
+import { BrandRule } from '../components/BrandRule'
+import { DocketBar } from '../components/DocketBar'
+import { DocketCell } from '../components/DocketCell'
+import { MaterialOptionTabs } from '../components/MaterialOptionTabs'
+import { PaperRecipientBand } from '../components/PaperRecipientBand'
+import { PaperRevisionTimeline } from '../components/PaperRevisionTimeline'
+import { firstName } from '../lib/firstName'
+import {
+  INK,
+  PAPER_CREAM,
+  PAPER_TINT_1,
+  PAPER_TINT_2,
+  PAPER_INK,
+  PAPER_SECONDARY,
+  PAPER_TERTIARY,
+  ACCENT,
+  ACCENT_GLOW,
+  APPROVED_GREEN,
+  BRAND_ORDER,
+  CTA_TEAL,
+  CTA_TEAL_HOVER,
+  CTA_TEAL_PRESSED,
+  CTA_TEAL_RING,
+  CTA_GHOST_BORDER,
+  CTA_GHOST_TEXT,
+  CTA_GHOST_BG,
+  CTA_GHOST_HOVER_BG,
+  CTA_GHOST_PRESSED_BG,
+  CTA_GHOST_HOVER_BORDER,
+  SERIF,
+  SANS,
+  MONO,
+} from '../lib/theme'
 import { getPublicSettings, type PublicSettings } from '../lib/publicSettings'
 import type { PricingSnapshot, PricingVariant, Currency } from '../lib/types'
 
@@ -762,13 +796,13 @@ export default function CustomerProofPage() {
         <div
           className={bannerBase}
           style={{
-            background: approved ? 'rgba(74,222,128,0.14)' : 'rgba(229,114,49,0.12)',
-            border: `1px solid ${approved ? 'rgba(74,222,128,0.45)' : 'rgba(229,114,49,0.45)'}`,
+            background: approved ? 'rgba(81,180,148,0.14)' : 'rgba(58,44,145,0.14)',
+            border: `1px solid ${approved ? 'rgba(81,180,148,0.45)' : 'rgba(58,44,145,0.45)'}`,
           }}
         >
           <span
             className="uppercase"
-            style={{ ...KICKER_STYLE, color: approved ? '#1e7a3e' : '#a04116' }}
+            style={{ ...KICKER_STYLE, color: approved ? '#176b3f' : '#3a2c91' }}
           >
             {(approved ? 'APPROVED' : 'CHANGES REQUESTED') + (named ? ` FOR ${name}` : '')}
           </span>
@@ -799,11 +833,11 @@ export default function CustomerProofPage() {
         <div
           className={bannerBase}
           style={{
-            background: 'rgba(74,222,128,0.08)',
-            border: '1px solid rgba(74,222,128,0.30)',
+            background: 'rgba(81,180,148,0.08)',
+            border: '1px solid rgba(81,180,148,0.30)',
           }}
         >
-          <span className="uppercase" style={{ ...KICKER_STYLE, color: '#1e7a3e' }}>
+          <span className="uppercase" style={{ ...KICKER_STYLE, color: '#176b3f' }}>
             {('Approved' + forSuffix).toUpperCase()}
           </span>
           <span style={{ ...BODY_STYLE, fontSize: 15, color: '#1a1612' }}>
@@ -815,22 +849,38 @@ export default function CustomerProofPage() {
 
     if (state.kind === 'approved' || state.kind === 'changes_requested') {
       const approved = state.kind === 'approved'
+      // Confirmed-state banner. Approve flow's bg/border/text now
+      // match the hero approval chip's pale-tint palette (deviation
+      // #7) — visual continuity from chip to banner across the
+      // approve flow. Typography (16px/600 eyebrow + 22px serif
+      // body) and 18/22 padding keep the banner's standalone
+      // weight, distinct from the chip's inline pill. Coral /
+      // request-changes flow keeps the saturated treatment since
+      // there's no chip equivalent on that side.
+      const confirmedTextColour = approved ? '#176b3f' : '#3a2c91'
       return (
         <div
-          className={bannerBase}
+          className="mt-6 flex flex-col gap-2 rounded-md py-[18px] px-[22px] text-[#1a1612]"
           style={{
-            background: approved ? 'rgba(74,222,128,0.14)' : 'rgba(229,114,49,0.12)',
-            border: `1px solid ${approved ? 'rgba(74,222,128,0.45)' : 'rgba(229,114,49,0.45)'}`,
+            background: approved ? 'rgba(81,180,148,0.18)' : 'rgba(58,44,145,0.18)',
+            border: approved
+              ? '1px solid rgba(81,180,148,0.4)'
+              : '1px solid rgba(58,44,145,0.4)',
           }}
         >
           <span
             className="uppercase"
-            style={{ ...KICKER_STYLE, color: approved ? '#1e7a3e' : '#a04116' }}
+            style={{
+              ...KICKER_STYLE,
+              fontSize: 16,
+              fontWeight: 600,
+              color: confirmedTextColour,
+            }}
           >
-            {(approved ? 'APPROVED' : 'CHANGES REQUESTED') + (named ? ` FOR ${name}` : '')}
+            {approved ? 'APPROVED' : 'CHANGES REQUESTED'}
           </span>
           {(state.actorName || state.createdAt) && (
-            <span style={BODY_STYLE}>
+            <span style={{ ...BODY_STYLE, fontSize: 22, color: confirmedTextColour }}>
               {state.actorName ? `by ${state.actorName}` : ''}
               {state.actorName && formatBandDate(state.createdAt) ? ' ' : ''}
               {formatBandDate(state.createdAt)
@@ -918,6 +968,96 @@ export default function CustomerProofPage() {
             Request changes
           </button>
         </div>
+      </div>
+    )
+  }
+
+  // ── Shared section info band ─────────────────────────────────
+  //
+  // Replaces the action band on the standalone shared block when the
+  // version has named recipients. The shared back/section never gets
+  // its own customer Approve action in that case — it's approved by
+  // implication once every named recipient approves their card. This
+  // band reflects that derived state and never renders buttons.
+  //
+  // Timestamp source per surface (per the shared helper's contract):
+  // customer page reads latest_events_by_name.created_at for approve
+  // events. Carry-forward approvals have no co-located event on this
+  // version, so they satisfy the predicate via approvals[] but
+  // contribute no timestamp; falls back to "Approved" without a date
+  // when no name yields a timestamp.
+  function renderSharedInfoBand(): React.ReactNode {
+    if (!activeVersion) return null
+    if (!activeVersion.approvals_enabled) return null
+
+    const approvedNames = new Set<string>()
+    for (const a of activeVersion.approvals) {
+      if (a.state !== 'approved') continue
+      if (a.name === SHARED_APPROVAL_KEY) continue
+      approvedNames.add(a.name)
+    }
+    const timestampByName = new Map<string, string>()
+    for (const e of activeVersion.latest_events_by_name) {
+      if (e.event_type !== 'approve') continue
+      if (e.name == null) continue
+      if (e.name === SHARED_APPROVAL_KEY) continue
+      timestampByName.set(e.name, e.created_at)
+    }
+    const derived = deriveSharedApprovalState({
+      names: activeVersion.names,
+      approvedNames,
+      timestampByName,
+    })
+
+    const bannerBase =
+      'mt-6 flex flex-col gap-2 rounded-md px-5 py-4 text-[#1a1612]'
+    const KICKER_STYLE = {
+      fontFamily: MONO,
+      fontSize: 11,
+      letterSpacing: '0.22em',
+    } as const
+    const BODY_STYLE = { fontFamily: SERIF, fontWeight: 400, fontSize: 18, lineHeight: 1.35 } as const
+
+    if (derived.state === 'approved') {
+      const dateStr = derived.latestApprovedAt
+        ? new Date(derived.latestApprovedAt).toLocaleDateString('en-GB', {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+          })
+        : null
+      return (
+        <div
+          className={bannerBase}
+          style={{
+            background: 'rgba(81,180,148,0.08)',
+            border: '1px solid rgba(81,180,148,0.30)',
+          }}
+        >
+          <span className="uppercase" style={{ ...KICKER_STYLE, color: '#176b3f' }}>
+            APPROVED
+          </span>
+          <span style={{ ...BODY_STYLE, fontSize: 15, color: '#1a1612' }}>
+            {dateStr ? `Approved on ${dateStr}.` : 'Approved.'}
+          </span>
+        </div>
+      )
+    }
+
+    return (
+      <div
+        className={bannerBase}
+        style={{
+          background: 'rgba(0,0,0,0.04)',
+          border: '1px solid rgba(0,0,0,0.10)',
+        }}
+      >
+        <span className="uppercase" style={{ ...KICKER_STYLE, color: '#1a1612' }}>
+          PENDING REVIEW
+        </span>
+        <span style={{ ...BODY_STYLE, fontSize: 15, color: '#1a1612' }}>
+          Approved automatically once every recipient approves their design.
+        </span>
       </div>
     )
   }
@@ -1036,46 +1176,12 @@ export default function CustomerProofPage() {
   const optionLabelSingular = activeVersion?.option_label ?? 'Finish'
 
   // ── Editorial treatment tokens (Variant B) ────────────────────
-  // Deep ink hero + pricing. Near-white "paper" for plates +
-  // Important info + About sections. Universal indigo accent
-  // (brand-sympathetic — sampled from the Plasma logomark).
-  // Approval semantic owns green. Brand 4-colour motif appears
-  // as a hair-thin signature rule under the masthead, above the
-  // footer, and as rotating dots on plate captions.
-  const INK = '#141210'
-  const INK_DEEP = '#0f0d0b'
-  const PAPER = '#f7f6f2'
-  const PAPER_BORDER = 'rgba(26,22,18,0.12)'
-  const ACCENT = '#7b3ff2'
-  const ACCENT_GLOW = 'rgba(123,63,242,0.55)'
-  // Customer-CTA palette (deep teal). Scoped to the per-recipient
-  // Approve / Request changes action band + the modal Confirm
-  // button — kept separate from the page-wide ACCENT (which is the
-  // editorial purple used on the masthead glow, plate cards,
-  // version dots, blockquote marks, etc) so the brand register on
-  // the rest of the page is untouched. If the designer dashboard
-  // ever wants the same teal CTA, it can opt in to these tokens
-  // explicitly rather than inheriting via a shared name.
-  const CTA_TEAL          = '#2F7A60'
-  const CTA_TEAL_HOVER    = '#3D8C72'
-  const CTA_TEAL_PRESSED  = '#26644F'
-  const CTA_TEAL_RING     = 'rgba(81,180,148,0.5)'
-  // Secondary (Request changes) — terracotta border + text on a
-  // faint warm-cream tint so the button reads as a real second
-  // option, not a muted "cancel". Border bumped to 2px below for
-  // additional weight; the warm rust is confident without slipping
-  // into "destructive red" territory.
-  const CTA_GHOST_BORDER  = '#B85C38'
-  const CTA_GHOST_TEXT    = '#9C4A2D'
-  const CTA_GHOST_BG      = '#FCF8F2'
-  const CTA_GHOST_HOVER_BG = '#F5EBE0'
-  const CTA_GHOST_PRESSED_BG = '#ECDDCD'
-  const CTA_GHOST_HOVER_BORDER = '#9C4A2D'
-  const APPROVED_GREEN = '#4ade80'
-  const BRAND_ORDER = ['#e11735', '#d81c7e', '#4a21a6', '#3ba58a']
-  const SERIF = "'Cormorant Garamond', Georgia, serif"
-  const SANS = "'Inter Tight', system-ui, sans-serif"
-  const MONO = "'JetBrains Mono', ui-monospace, monospace"
+  // All design tokens (surface colours, typography stacks, CTA
+  // palette, brand-rule colours) live in src/lib/theme.ts. This
+  // page imports them at the top of the file. The constants used
+  // to live inline here; they were lifted to a shared module in
+  // the janitor pass so the components can reference the same
+  // values without prop pass-through.
   // Customer-page typographic registers. Replace the small
   // uppercase-mono treatment for short editorial labels (Register
   // A) and sentence-fragment text (Register B). Mono stays for
@@ -1102,7 +1208,6 @@ export default function CustomerProofPage() {
   // is explicit on that.
   const LABEL_DARK = '#c8c8c8'
   const LABEL_LIGHT = '#5f564d'
-  const LABEL_DARK_MUTED = 'rgba(255,255,255,0.55)'
 
   // Short customer-facing reference — the proof's Help Scout
   // conversation id, prefixed with PL · for the editorial feel.
@@ -1150,62 +1255,25 @@ export default function CustomerProofPage() {
   return (
     <div className="antialiased" style={{ fontFamily: SANS, background: INK }}>
 
-      {/* ───── Top: deep ink hero ─────
-          Masthead (logo + brand rule) → approval strip →
-          editorial hero (customer name + facts) → Revisions
-          tabs + option switcher. Flat ink backdrop with a
-          subtle top-down gradient easing from a slightly
-          warmer near-black (#1b1725) at the top into INK at
-          the bottom. Calmer than the earlier dual-glow /
-          conic-brand treatment; lets the hero typography
-          carry the section without chromatic noise behind
-          it. */}
-      <div className="relative overflow-hidden text-white" style={{ background: INK }}>
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0"
-          style={{ background: `linear-gradient(180deg, #1b1725 0%, ${INK} 100%)` }}
+      {/* ───── Top: ink masthead strip ─────
+          DocketBar (logo + caption + proof ref) on INK,
+          followed by the BrandRule's 4-colour signature.
+          The hero used to sit inside this wrapper too, on a
+          tinted gradient over the ink; both the gradient
+          overlay and the hero have moved out (the hero into
+          its own PAPER_CREAM band below). */}
+      <div className="text-white" style={{ background: INK }}>
+        <DocketBar
+          proofRef={proofRef}
+          accentGlow={ACCENT_GLOW}
+          captionStyle={{ ...REG_A_BASE, color: LABEL_DARK }}
         />
-        <div className="relative">
+        <BrandRule />
+      </div>
 
-          {/* Masthead */}
-          <div className="border-b border-white/10">
-            <div className="mx-auto flex max-w-[1040px] flex-wrap items-center justify-between gap-3 px-6 py-5 sm:px-8">
-              <div className="flex items-center gap-3">
-                <img
-                  src="/logo-cards.png"
-                  alt="Plasma"
-                  className="h-10 w-auto"
-                  style={{ filter: `drop-shadow(0 0 18px ${ACCENT_GLOW})` }}
-                />
-                <span className="ml-1 h-4 w-px bg-white/20" />
-                <span style={{ ...REG_A_BASE, color: LABEL_DARK }}>
-                  Proof Viewer
-                </span>
-              </div>
-              <div className="flex items-center gap-5">
-                {/* Masthead right-side = proof reference only.
-                    The material + variant composite that used
-                    to ride here was dropped — the hero facts
-                    row, revisions finish-picker, and spec sheet
-                    already carry the same information three
-                    times below. */}
-                {proofRef && (
-                  <span style={{ ...REG_A_BASE, color: LABEL_DARK }}>
-                    {proofRef}
-                  </span>
-                )}
-              </div>
-            </div>
-            {/* Brand 4-colour signature rule — quiet echo of the
-                Plasma logomark palette. Hair-thin, sits between
-                the masthead and the approval strip below. */}
-            <div className="flex h-[2px] w-full">
-              {BRAND_ORDER.map((c, i) => (
-                <div key={i} className="flex-1" style={{ background: c }} />
-              ))}
-            </div>
-          </div>
+      {/* Hero — paper-first editorial register. Sits in its own
+          PAPER_CREAM band below the dark masthead. */}
+      <div style={{ background: PAPER_CREAM }}>
 
           {/* Hero — approval chip (when applicable) + "Proofs for"
               eyebrow + customer name + italic company + quick-
@@ -1215,7 +1283,7 @@ export default function CustomerProofPage() {
               above the eyebrow, so it's the first thing the
               customer sees on landing — replaces the old
               between-masthead-and-hero banner. */}
-          <div className="mx-auto max-w-[1040px] px-6 py-20 sm:px-8">
+          <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8">
             {/* Approval-chip slot — always rendered as a
                 fixed-height wrapper regardless of approval
                 state, so switching versions via the revisions
@@ -1253,24 +1321,35 @@ export default function CustomerProofPage() {
                 // approval, sky-blue for the carry-forward
                 // partial state — same palette the old banner
                 // used, now in one unified chip pattern.
+                // Paper-register tone palette. The chip used to
+                // sit on INK with translucent fills + outer glows;
+                // on PAPER_CREAM the tints lift to 0.18 opacity for
+                // legibility, glows zero out (cream + halo reads
+                // muddy), and label colours move to deep
+                // green/sky values that hit ≥4.5:1 against PAPER_
+                // CREAM. Sky derivation noted in handoff: README
+                // specifies green-on-paper but defers the partial-
+                // approval sky variant; #0369a1 (Tailwind sky-700)
+                // is the chosen pair, parity with the green pill
+                // border at 0.5 alpha.
                 const tone = isApprovedKind
                   ? {
-                      bg: 'rgba(74,222,128,0.1)',
-                      border: 'rgba(74,222,128,0.4)',
-                      glow: '0 0 32px rgba(74,222,128,0.18)',
+                      bg: 'rgba(81,180,148,0.18)',
+                      border: 'rgba(81,180,148,0.4)',
+                      glow: 'none',
                       dotBg: APPROVED_GREEN,
-                      dotGlow: '0 0 14px rgba(74,222,128,0.5)',
-                      label: APPROVED_GREEN,
-                      divider: 'rgba(74,222,128,0.3)',
+                      dotGlow: 'none',
+                      label: '#176b3f',
+                      divider: 'rgba(26,22,18,0.15)',
                     }
                   : {
-                      bg: 'rgba(125,211,252,0.1)',
-                      border: 'rgba(125,211,252,0.4)',
-                      glow: '0 0 32px rgba(125,211,252,0.18)',
+                      bg: 'rgba(125,211,252,0.18)',
+                      border: 'rgba(125,211,252,0.5)',
+                      glow: 'none',
                       dotBg: '#7dd3fc',
-                      dotGlow: '0 0 14px rgba(125,211,252,0.5)',
-                      label: '#7dd3fc',
-                      divider: 'rgba(125,211,252,0.3)',
+                      dotGlow: 'none',
+                      label: '#0369a1',
+                      divider: 'rgba(26,22,18,0.15)',
                     }
                 return (
                   // Stacks vertically at narrow viewports —
@@ -1337,7 +1416,7 @@ export default function CustomerProofPage() {
                       className="hidden h-4 w-px shrink-0 sm:inline-block"
                       style={{ background: tone.divider }}
                     />
-                    <span style={{ ...REG_A_BASE, color: LABEL_DARK }}>
+                    <span style={{ ...REG_A_BASE, color: PAPER_TERTIARY }}>
                       {isApprovedKind
                         ? `Signed off ${heroApprovalStrip.dateLabel ?? 'today'} · ${total} / ${total} proof${total === 1 ? '' : 's'}`
                         : 'Some proofs already signed off, others awaiting review'}
@@ -1346,7 +1425,10 @@ export default function CustomerProofPage() {
                 )
               })()}
             </div>
-            <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
+            <p
+              className="font-paper-mono uppercase"
+              style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
+            >
               {(activeVersion?.names?.length ?? 0) >= 2 ? 'Proofs for' : 'Proof for'}
             </p>
             {/* Masthead heading rule: when the customer is a
@@ -1370,16 +1452,22 @@ export default function CustomerProofPage() {
                 : null
               return (
                 <>
+                  {/* Hero H1 — deliberate deviation from the
+                      README's 104px spec (paper-first handoff
+                      §"Visual Language → Typography" line 157).
+                      Reduced 20% to 84px after design review;
+                      tracking, line-height, and italic subline
+                      stay at the README values. */}
                   <h1
-                    className="mt-4 leading-[0.98] tracking-[-0.015em] text-white"
-                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 61 }}
+                    className="mt-4 leading-[0.96] tracking-[-0.02em] break-words"
+                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(48px, 12vw, 84px)', color: PAPER_INK }}
                   >
                     {primary}
                   </h1>
                   {subline && (
                     <p
-                      className="mt-3 italic text-white/55"
-                      style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 28 }}
+                      className="mt-3 italic"
+                      style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, color: PAPER_TERTIARY }}
                     >
                       {subline}
                     </p>
@@ -1388,44 +1476,54 @@ export default function CustomerProofPage() {
               )
             })()}
 
-            {activeVersion && (
-              <div className="mt-10 flex flex-wrap items-start gap-x-10 gap-y-5">
-                <div>
-                  <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
-                    Material
-                  </p>
-                  <p className="mt-1.5 flex items-center gap-2 text-[14px] text-white">
-                    <span
-                      className="h-[9px] w-[9px] rounded-full"
-                      style={{ background: ACCENT, boxShadow: `0 0 14px ${ACCENT}` }}
+            {/* Brand 4-band signature rule under the H1. README §2
+                positions it between the italic subline and the
+                docket meta at mt-12, height 3px. Default BrandRule
+                height (2) is undisturbed elsewhere. */}
+            <div className="mt-12">
+              <BrandRule height={3} />
+            </div>
+
+            {activeVersion && (() => {
+              // Cell 2 — adaptive branching. Option-having materials
+              // show the option label + value (Finish / Brushed,
+              // Species / Black Walnut, etc.). No-option materials
+              // fall back to Sides, derived from the image set the
+              // same way the Specs section does (any image with
+              // side='back' → "Front and back").
+              const sidesValue =
+                (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
+                  ? 'Front and back'
+                  : 'Front only'
+              // Cell 4 — first names joined with " + " per README
+              // §2 line 245. Empty array → em-dash placeholder so
+              // the 4-cell grid stays intact.
+              const namesLabel = activeVersion.names.length >= 2 ? 'Names' : 'Name'
+              const namesValue =
+                activeVersion.names.length === 0
+                  ? '—'
+                  : activeVersion.names.map(firstName).join(' + ')
+              return (
+                <dl className="mt-12 grid grid-cols-2 border-b border-[rgba(26,22,18,0.10)] sm:grid-cols-4">
+                  <DocketCell label="Material" value={activeVersion.material_display} />
+                  {activeOption ? (
+                    <DocketCell
+                      label={optionLabelSingular}
+                      value={activeOption.display_name}
                     />
-                    {activeVersion.material_display}
-                  </p>
-                </div>
-                <div>
-                  <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
-                    Revision
-                  </p>
-                  <p className="mt-1.5 text-[14px] text-white">
-                    v{activeVersion.version_number}
-                    {heroRevisionDate ? ` · ${heroRevisionDate}` : ''}
-                  </p>
-                </div>
-                {activeVersion.names.length > 0 && (
-                  <div>
-                    <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
-                      {activeVersion.names.length >= 2 ? 'Names' : 'Name'}
-                    </p>
-                    <p className="mt-1.5 text-[14px] text-white">
-                      {formatNamesList(activeVersion.names)}
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
+                  ) : (
+                    <DocketCell label="Sides" value={sidesValue} />
+                  )}
+                  <DocketCell
+                    label="Revision"
+                    value={`v${activeVersion.version_number}${heroRevisionDate ? ` · ${heroRevisionDate}` : ''}`}
+                  />
+                  <DocketCell label={namesLabel} value={namesValue} />
+                </dl>
+              )
+            })()}
           </div>
 
-        </div>
       </div>
 
       {/* ───── Revision history band ─────
@@ -1440,19 +1538,10 @@ export default function CustomerProofPage() {
           the Plates section header — not grouped with
           time-based revision metadata. */}
       {activeVersion && versions.length > 1 && (
-        <RevisionsBand
+        <PaperRevisionTimeline
           versions={versions}
           activeVersion={activeVersion}
           onSelectVersion={setActiveVersion}
-          tokens={{
-            ink: INK,
-            inkDeep: INK_DEEP,
-            accent: ACCENT,
-            accentGlow: ACCENT_GLOW,
-            approvedGreen: APPROVED_GREEN,
-            serif: SERIF,
-            mono: MONO,
-          }}
         />
       )}
 
@@ -1510,8 +1599,8 @@ export default function CustomerProofPage() {
               g.images.some((i) => i.side === 'back')
 
             return (
-              <section style={{ background: PAPER, color: '#1a1612' }}>
-                <div className="mx-auto max-w-[1040px] px-6 py-20 sm:px-8 sm:py-24">
+              <section style={{ background: PAPER_CREAM, color: PAPER_INK }}>
+                <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
                   {/* Section header — left cluster is the
                       Proofs heading + count subtitle stacked
                       vertically; right cluster is the Finish
@@ -1525,13 +1614,13 @@ export default function CustomerProofPage() {
                       regardless of whether the subtitle
                       renders. */}
                   <div
-                    className="mb-10 flex flex-wrap items-end justify-between gap-4 pb-4"
-                    style={{ borderBottom: `1px solid ${PAPER_BORDER}` }}
+                    className="mb-10 flex flex-wrap items-end justify-between gap-4 border-b-2 pb-4"
+                    style={{ borderColor: 'rgba(26,22,18,0.8)' }}
                   >
                     <div>
                       <h2
-                        className="leading-none text-[#1a1612]"
-                        style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
+                        className="leading-none break-words"
+                        style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(40px, 9vw, 56px)', color: PAPER_INK }}
                       >
                         Proofs
                       </h2>
@@ -1562,71 +1651,34 @@ export default function CustomerProofPage() {
                         </span>
                       )}
                     </div>
-                    {/* Finish selector — segmented pill group
-                        on a faint ink-tinted surface so it
-                        reads as a control rather than
-                        decoration. Active pill swaps to solid
-                        ink with white text; inactive pills
-                        stay ink-at-70% and brighten on hover.
-                        Surcharge suffix ("+£49") is preserved
-                        from the pre-move rendering so customers
-                        still see the cost delta, just in a
-                        tighter form. */}
+                    {/* Material-option tabs — paper-register
+                        underlined tab strip per README §4. The
+                        tabs[] array maps versionOptions through
+                        the existing optionFromPrice derivation;
+                        no new pricing logic. Gate stays at
+                        versionOptions.length >= 2 (showOption-
+                        Switcher), so single-option materials
+                        don't render the strip. */}
                     {showOptionSwitcher && (
-                      <div className="flex flex-wrap items-center gap-3">
-                        <span style={{ ...REG_A_BASE, color: LABEL_LIGHT }}>
-                          {optionLabelSingular}
-                        </span>
-                        <div
-                          className="inline-flex flex-wrap items-center gap-1 rounded-full p-1"
-                          style={{
-                            background: 'rgba(26,22,18,0.05)',
-                            border: `1px solid ${PAPER_BORDER}`,
-                          }}
-                        >
-                          {versionOptions.map((code) => {
-                            const o = materialOptions.find(
-                              (x) =>
-                                x.material_id === activeVersion.material_id &&
-                                x.code === code,
-                            )
-                            const isActive = effectiveOptionCode === code
-                            const fromPrice = optionFromPrice(code)
-                            return (
-                              <button
-                                key={code}
-                                type="button"
-                                onClick={() => setActiveOptionCode(code)}
-                                className={[
-                                  'rounded-full px-3 py-1 uppercase tracking-[0.22em] transition-colors',
-                                  isActive
-                                    ? 'text-white'
-                                    : 'text-[#1a1612]/70 hover:text-[#1a1612]',
-                                ].join(' ')}
-                                style={{
-                                  fontFamily: MONO,
-                                  fontSize: 11,
-                                  ...(isActive ? { background: '#1a1612' } : {}),
-                                }}
-                              >
-                                {o?.display_name ?? code}
-                                {fromPrice != null && !activeVersion.custom_quote && (
-                                  <span
-                                    className="ml-1.5"
-                                    style={{
-                                      color: isActive
-                                        ? 'rgba(255,255,255,0.7)'
-                                        : 'rgba(26,22,18,0.45)',
-                                    }}
-                                  >
-                                    +{formatPrice(fromPrice, activeVersion.currency, 0)}
-                                  </span>
-                                )}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
+                      <MaterialOptionTabs
+                        label={optionLabelSingular}
+                        currency={activeVersion.currency}
+                        showSurcharges={!activeVersion.custom_quote}
+                        onSelect={setActiveOptionCode}
+                        tabs={versionOptions.map((code) => {
+                          const o = materialOptions.find(
+                            (x) =>
+                              x.material_id === activeVersion.material_id &&
+                              x.code === code,
+                          )
+                          return {
+                            code,
+                            displayName: o?.display_name ?? code,
+                            surchargeFromPrice: optionFromPrice(code),
+                            isActive: effectiveOptionCode === code,
+                          }
+                        })}
+                      />
                     )}
                   </div>
 
@@ -1640,11 +1692,9 @@ export default function CustomerProofPage() {
                       named groups below for a consistent
                       section-wide image size. */}
                   {sharedStandaloneGroup && (
-                    <div
-                      className={[
-                        'w-full',
-                        augmentedNamedGroups.length > 0 ? 'mb-14' : '',
-                      ].join(' ')}
+                    <PaperRecipientBand
+                      heading="Shared · backs and overlays"
+                      topRule={false}
                     >
                       <div
                         className={
@@ -1658,28 +1708,32 @@ export default function CustomerProofPage() {
                             key={img.id}
                             image={img}
                             brandColor={BRAND_ORDER[idx % BRAND_ORDER.length]}
-                            accent={ACCENT}
                             alt={`Proof version ${activeVersion.version_number}`}
                             onClick={setLightboxSrc}
+                            recipientLabel="Shared"
                           />
                         ))}
                       </div>
-                      {/* Phase 2.5: shared-section action band, only
-                          rendered when there's no per-recipient list
-                          to attach bands to (membership / single-
-                          design proofs). When named groups are
-                          present, the shared images are virtual-
-                          paired into each named group's card and
-                          their per-recipient band carries the action
-                          surface — a separate shared band would
-                          duplicate. */}
-                      {augmentedNamedGroups.length === 0 &&
-                        renderActionBand(SHARED_APPROVAL_KEY)}
-                    </div>
+                      {/* Shared band routing.
+                          * names.length > 0 → renderSharedInfoBand().
+                            Status-only panel; the shared section is
+                            approved-by-implication when every named
+                            recipient approves. No Approve button on
+                            this surface in the split-name case.
+                          * names.length === 0 → renderActionBand().
+                            All-shared one-off proof — the shared
+                            section IS the proof, so the customer
+                            still hits Approve here and the
+                            approved_* columns get written on the
+                            __shared__ row directly. */}
+                      {(activeVersion?.names.length ?? 0) > 0
+                        ? renderSharedInfoBand()
+                        : renderActionBand(SHARED_APPROVAL_KEY)}
+                    </PaperRecipientBand>
                   )}
 
                   {augmentedNamedGroups.length > 0 && (
-                    <div className="space-y-14">
+                    <div>
                       {(() => {
                         // Running colour-rotation index across
                         // all groups in reading order so each
@@ -1714,54 +1768,35 @@ export default function CustomerProofPage() {
                         // and shouldn't sit behind a rule
                         // (would read as a bracket).
                         const firstNamedGroupSkipsRule = !sharedStandaloneGroup
-                        return augmentedNamedGroups.map((group) => {
+                        return augmentedNamedGroups.map((group, groupIdx) => {
                           const pill =
                             group.heading != null ? approvalPillFor(group.heading) : null
                           const startIdx = colorIdx
                           colorIdx += group.images.length
+                          // Top rule: 2px ink-at-80% per README §4
+                          // line 319. Suppressed on the very first
+                          // named band when no shared block sits
+                          // above it (firstNamedGroupSkipsRule), so
+                          // the list opens flush rather than under a
+                          // floating bracket.
+                          const showTopRule = !(firstNamedGroupSkipsRule && groupIdx === 0)
+                          const heading = group.heading
+                          const bandHeading =
+                            heading != null ? `${firstName(heading)}'s card` : ''
                           return (
-                            <div
+                            <PaperRecipientBand
                               key={group.heading ?? ''}
-                              // Hairline rule + symmetric padding
-                              // between named groups so each
-                              // recipient reads as its own block
-                              // rather than blurring into the
-                              // next via ambient whitespace. The
-                              // rule sits at the top edge of
-                              // each group's box; the surrounding
-                              // space-y-14 on the parent gives
-                              // 56px above the rule (margin) and
-                              // the matching pt-14 here gives
-                              // 56px below it, so the line floats
-                              // centred in a 112px gap.
-                              // first:* reset only applied when
-                              // firstNamedGroupSkipsRule — i.e.
-                              // when no shared block sits above
-                              // the named list. With shared
-                              // present, every named group
-                              // (including the first) keeps the
-                              // rule so shared → named reads as
-                              // a proper section boundary.
-                              className={[
-                                'border-t border-[#1a1612]/20 pt-14',
-                                firstNamedGroupSkipsRule ? 'first:border-t-0 first:pt-0' : '',
-                              ].join(' ')}
-                            >
-                              <div className="mb-5 flex flex-wrap items-baseline justify-between gap-3">
-                                <h3
-                                  className="text-[#1a1612]"
-                                  style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 26 }}
-                                >
-                                  {group.heading}
-                                </h3>
-                                {pill && (
+                              heading={bandHeading}
+                              topRule={showTopRule}
+                              pillSlot={
+                                pill ? (
                                   <span
                                     className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1"
                                     style={{
                                       ...REG_A_BASE,
-                                      background: 'rgba(74,222,128,0.14)',
-                                      color: '#1e7a3e',
-                                      border: '1px solid rgba(74,222,128,0.45)',
+                                      background: 'rgba(81,180,148,0.14)',
+                                      color: '#176b3f',
+                                      border: '1px solid rgba(81,180,148,0.45)',
                                     }}
                                   >
                                     <svg
@@ -1773,7 +1808,7 @@ export default function CustomerProofPage() {
                                     >
                                       <path
                                         d="M2.5 6.5L5 9L9.5 3.5"
-                                        stroke="#1e7a3e"
+                                        stroke="#176b3f"
                                         strokeWidth="1.8"
                                         strokeLinecap="round"
                                         strokeLinejoin="round"
@@ -1781,8 +1816,9 @@ export default function CustomerProofPage() {
                                     </svg>
                                     {pill}
                                   </span>
-                                )}
-                              </div>
+                                ) : null
+                              }
+                            >
                               <div
                                 className={
                                   groupIsPair(group)
@@ -1797,16 +1833,16 @@ export default function CustomerProofPage() {
                                       key={img.id}
                                       image={img}
                                       brandColor={BRAND_ORDER[dotIdx % BRAND_ORDER.length]}
-                                      accent={ACCENT}
                                       alt={`${group.heading} — proof version ${activeVersion.version_number}`}
                                       onClick={setLightboxSrc}
+                                      recipientLabel={group.heading ?? undefined}
                                     />
                                   )
                                 })}
                               </div>
                               {/* Phase 2.5 per-recipient action band. */}
                               {group.heading != null && renderActionBand(group.heading)}
-                            </div>
+                            </PaperRecipientBand>
                           )
                         })
                       })()}
@@ -1823,29 +1859,44 @@ export default function CustomerProofPage() {
               right. Notes block-quote sits below, separated by a
               top-border rule. Notes only render when the version
               has change_notes content. */}
-          <section className="text-white" style={{ background: INK }}>
-            <div className="mx-auto max-w-[1040px] px-6 py-20 sm:px-8 sm:py-24">
+          <section
+            style={{
+              background: PAPER_TINT_2,
+              color: PAPER_INK,
+              borderTop: '1px solid rgba(26,22,18,0.10)',
+            }}
+          >
+            <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
               <div className="grid gap-10 sm:grid-cols-[1fr_2fr] sm:gap-16">
                 <div>
                   <h2
-                    className="leading-[1.02] text-white"
-                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
+                    className="leading-[1.02] border-b-2 pb-4 break-words"
+                    style={{
+                      fontFamily: SERIF,
+                      fontWeight: 400,
+                      fontSize: 'clamp(40px, 9vw, 56px)',
+                      color: PAPER_INK,
+                      borderColor: 'rgba(26,22,18,0.8)',
+                    }}
                   >
                     Specification
                   </h2>
-                  <p className="mt-5 max-w-[30ch] text-[14px] leading-[1.55] text-white/55">
+                  <p
+                    className="mt-5 max-w-[30ch] text-[14px] leading-[1.55]"
+                    style={{ color: PAPER_TERTIARY }}
+                  >
                     The details captured in this proof. Final thickness, options, and quantity are confirmed when you place your order.
                   </p>
                 </div>
-                <dl className="border-t border-white/10">
-                  <InkSpecRow label="Material" value={activeVersion.material_display} />
+                <dl>
+                  <PaperSpecRow label="Material" value={activeVersion.material_display} />
                   {/* Sides — derived from the image set. Two-sided
                       iff any image on the active version carries
                       side='back'; otherwise front only. Pre-
                       migration-000085 data with null sides reads
                       as front only, which matches the historic
                       single-sided proofs' reality. */}
-                  <InkSpecRow
+                  <PaperSpecRow
                     label="Sides"
                     value={
                       (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
@@ -1854,21 +1905,21 @@ export default function CustomerProofPage() {
                     }
                   />
                   {activeOption && (
-                    <InkSpecRow label={optionLabelSingular} value={activeOption.display_name} />
+                    <PaperSpecRow label={optionLabelSingular} value={activeOption.display_name} />
                   )}
                   {activeVersion.ink_names.length > 0 && (
-                    <InkSpecRow
+                    <PaperSpecRow
                       label="Ink colours"
                       value={activeVersion.ink_names.join('\n')}
                     />
                   )}
                   {activeVersion.names.length > 0 && (
-                    <InkSpecRow
+                    <PaperSpecRow
                       label="Names on card"
                       value={activeVersion.names.join('\n')}
                     />
                   )}
-                  <InkSpecRow
+                  <PaperSpecRow
                     label="Revision"
                     value={`v${activeVersion.version_number}${heroRevisionDate ? ` · ${heroRevisionDate}` : ''}`}
                   />
@@ -1876,27 +1927,46 @@ export default function CustomerProofPage() {
               </div>
 
               {activeVersion.change_notes && (
-                <div className="mt-20 grid gap-10 border-t border-white/10 pt-14 sm:grid-cols-[1fr_2fr] sm:gap-16">
+                <div
+                  className="mt-20 grid gap-10 pt-14 sm:grid-cols-[1fr_2fr] sm:gap-16"
+                  style={{ borderTop: '1px solid rgba(26,22,18,0.10)' }}
+                >
                   <div>
                     <h2
-                      className="leading-[1.02] text-white"
-                      style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
+                      className="leading-[1.02] border-b-2 pb-4 break-words"
+                      style={{
+                        fontFamily: SERIF,
+                        fontWeight: 400,
+                        fontSize: 'clamp(40px, 9vw, 56px)',
+                        color: PAPER_INK,
+                        borderColor: 'rgba(26,22,18,0.8)',
+                      }}
                     >
                       Notes
                     </h2>
                   </div>
                   <div>
                     <p
-                      className="text-white"
-                      style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 26, lineHeight: 1.4 }}
+                      style={{
+                        fontFamily: SERIF,
+                        fontWeight: 400,
+                        fontSize: 26,
+                        lineHeight: 1.4,
+                        color: PAPER_INK,
+                      }}
                     >
                       <span style={{ color: ACCENT }}>“</span>
                       <span className="whitespace-pre-line">{activeVersion.change_notes}</span>
                       <span style={{ color: ACCENT }}>”</span>
                     </p>
                     <p
-                      className="mt-6"
-                      style={{ ...REG_A_BASE, color: LABEL_DARK }}
+                      className="mt-6 font-paper-mono uppercase"
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 500,
+                        letterSpacing: '0.32em',
+                        color: PAPER_TERTIARY,
+                      }}
                     >
                       — Plasma Design · v{activeVersion.version_number}
                     </p>
@@ -1915,13 +1985,22 @@ export default function CustomerProofPage() {
               Custom-quote mode collapses the table to a quiet
               message. Split-name tooling callout + shipping
               footer ride along underneath. */}
-          <section className="text-white" style={{ background: INK_DEEP }}>
-            <div className="mx-auto max-w-[1040px] px-6 py-20 sm:px-8 sm:py-24">
-              <div className="mb-10 flex flex-wrap items-baseline justify-between gap-3 border-b border-white/10 pb-4">
+          <section
+            style={{
+              background: PAPER_CREAM,
+              color: PAPER_INK,
+              borderTop: '1px solid rgba(26,22,18,0.10)',
+            }}
+          >
+            <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
+              <div
+                className="mb-10 flex flex-wrap items-baseline justify-between gap-3 border-b-2 pb-4"
+                style={{ borderColor: 'rgba(26,22,18,0.8)' }}
+              >
                 <div>
                   <h2
-                    className="leading-none text-white"
-                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
+                    className="leading-none break-words"
+                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(40px, 9vw, 56px)', color: PAPER_INK }}
                   >
                     Pricing
                   </h2>
@@ -1931,14 +2010,27 @@ export default function CustomerProofPage() {
                     activeOption &&
                     versionOptions.length > 0 &&
                     materialHasSurcharges && (
-                      <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
+                      <p
+                        className="font-paper-mono uppercase"
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 500,
+                          letterSpacing: '0.22em',
+                          color: PAPER_TERTIARY,
+                        }}
+                      >
                         Prices shown for {activeOption.display_name} {optionLabelSingular.toLowerCase()}
                       </p>
                     )}
                   {!activeVersion.custom_quote && (
                     <p
-                      className="mt-1"
-                      style={{ ...REG_A_BASE, color: LABEL_DARK }}
+                      className="mt-1 font-paper-mono uppercase"
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 500,
+                        letterSpacing: '0.22em',
+                        color: PAPER_TERTIARY,
+                      }}
                     >
                       {activeVersion.currency}
                       {activeVersion.currency === 'GBP' ? ' · VAT included' : ''}
@@ -1950,27 +2042,30 @@ export default function CustomerProofPage() {
               {activeVersion.custom_quote ? (
                 <div className="py-6 text-center">
                   <p
-                    className="mx-auto max-w-md text-white/70"
-                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 22 }}
+                    className="mx-auto max-w-md"
+                    style={{
+                      fontFamily: SERIF,
+                      fontWeight: 400,
+                      fontSize: 22,
+                      color: PAPER_SECONDARY,
+                    }}
                   >
                     This proof requires a custom quote. We'll be in touch separately with pricing.
                   </p>
                 </div>
               ) : (
-                <InkPricingTable
+                <PaperPricingTable
                   snapshot={livePricingSnapshot}
                   currency={activeVersion.currency}
                   displayQuantities={activeVersion.display_quantities}
                   quoteMinQuantity={activeVersion.quote_min_quantity}
                   quoteMaxQuantity={activeVersion.quote_max_quantity}
                   quantitySurcharges={quantitySurcharges}
-                  serif={SERIF}
-                  mono={MONO}
                 />
               )}
 
               {/* Split-name + shipping callouts — two side-by-
-                  side cards on the ink. Split-name only renders
+                  side cards on paper. Split-name only renders
                   when there's an extra-name surcharge to apply;
                   shipping renders whenever the version has a
                   shipping_note set. Hidden in custom-quote mode
@@ -1994,16 +2089,33 @@ export default function CustomerProofPage() {
                     {activeVersion.names.length >= 2 &&
                       activeVersion.split_name_surcharge_snapshot != null &&
                       activeVersion.split_name_surcharge_snapshot > 0 && (
-                        <div className="border border-white/10 p-6">
-                          <p style={{ ...REG_A_BASE, color: ACCENT }}>
+                        <div
+                          className="p-6"
+                          style={{ border: '1px solid rgba(26,22,18,0.12)' }}
+                        >
+                          <p
+                            className="font-paper-mono uppercase"
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 500,
+                              letterSpacing: '0.32em',
+                              color: ACCENT,
+                            }}
+                          >
                             Split-name tooling
                           </p>
                           <p
-                            className="mt-3 text-white"
-                            style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 24, lineHeight: 1.25 }}
+                            className="mt-3"
+                            style={{
+                              fontFamily: SERIF,
+                              fontWeight: 400,
+                              fontSize: 26,
+                              lineHeight: 1.25,
+                              color: PAPER_INK,
+                            }}
                           >
                             Add{' '}
-                            <span style={{ fontFamily: MONO, fontSize: 20 }}>
+                            <span style={{ fontFamily: MONO, fontSize: 22 }}>
                               {formatPrice(
                                 (activeVersion.names.length - 1) *
                                   activeVersion.split_name_surcharge_snapshot,
@@ -2013,12 +2125,11 @@ export default function CustomerProofPage() {
                             to the prices above
                           </p>
                           <p
-                            className="mt-2"
+                            className="mt-2 font-body"
                             style={{
-                              ...REG_B_BASE,
                               fontSize: 13,
                               fontWeight: 400,
-                              color: LABEL_DARK_MUTED,
+                              color: PAPER_TERTIARY,
                             }}
                           >
                             {activeVersion.names.length} names ×{' '}
@@ -2031,13 +2142,30 @@ export default function CustomerProofPage() {
                         </div>
                       )}
                     {activeVersion.shipping_note && (
-                      <div className="border border-white/10 p-6">
-                        <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
+                      <div
+                        className="p-6"
+                        style={{ border: '1px solid rgba(26,22,18,0.12)' }}
+                      >
+                        <p
+                          className="font-paper-mono uppercase"
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 500,
+                            letterSpacing: '0.32em',
+                            color: PAPER_TERTIARY,
+                          }}
+                        >
                           Shipping
                         </p>
                         <p
-                          className="mt-3 whitespace-pre-line text-white"
-                          style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 22, lineHeight: 1.3 }}
+                          className="mt-3 whitespace-pre-line"
+                          style={{
+                            fontFamily: SERIF,
+                            fontWeight: 400,
+                            fontSize: 22,
+                            lineHeight: 1.3,
+                            color: PAPER_INK,
+                          }}
                         >
                           {activeVersion.shipping_note}
                         </p>
@@ -2056,29 +2184,40 @@ export default function CustomerProofPage() {
               material has a description configured — if not,
               the section collapses silently. */}
           {activeVersion.material_description && (
-            <section style={{ background: PAPER, color: '#1a1612' }}>
+            <section style={{ background: PAPER_TINT_1, color: PAPER_INK }}>
               {/* Outer padding matches the Plates section's
-                  py-20 sm:py-24 rhythm now that the inner
-                  pt-12 + border-top wrapper has been removed.
-                  The ink-deep Pricing → PAPER About transition
-                  already produces a strong visual break; an
-                  additional hairline rule on top of that was
-                  belt-and-braces and read as redundant. */}
-              <div className="mx-auto max-w-[1040px] px-6 py-20 sm:px-8 sm:py-24">
-                {/* Serif heading at the Plates size — keeps the
-                    three near-white sections reading at equal
-                    typographic weight. */}
+                  py-20 sm:py-24 rhythm. Section sits in the
+                  PAPER_TINT_1 slot just above the footer — same
+                  cream variant the Revision timeline uses, the
+                  README's "tinted bands break visual fatigue"
+                  pattern at the top and bottom of the long-scroll
+                  page. */}
+              <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
                 {/* Mono kicker above the h2 — editorial frame
                     for the About section. Always renders,
                     regardless of whether the material has
                     curated key_features, because it's section
                     chrome rather than feature-list chrome. */}
-                <p className="mb-3" style={{ ...REG_A_BASE, color: ACCENT }}>
+                <p
+                  className="mb-3 font-paper-mono uppercase"
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 500,
+                    letterSpacing: '0.32em',
+                    color: ACCENT,
+                  }}
+                >
                   Material notes
                 </p>
                 <h2
-                  className="leading-none text-[#1a1612]"
-                  style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 46 }}
+                  className="leading-none border-b-2 pb-4 break-words"
+                  style={{
+                    fontFamily: SERIF,
+                    fontWeight: 400,
+                    fontSize: 'clamp(40px, 9vw, 56px)',
+                    color: PAPER_INK,
+                    borderColor: 'rgba(26,22,18,0.8)',
+                  }}
                 >
                   About our {activeVersion.material_display.toLowerCase()} cards
                 </h2>
@@ -2103,7 +2242,10 @@ export default function CustomerProofPage() {
                       right side reads as deliberate breathing
                       room rather than the layout reshaping. */}
                   <div className="grid gap-10 md:grid-cols-2">
-                    <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-[#1a1612]/80">
+                    <p
+                      className="max-w-[62ch] whitespace-pre-line font-body"
+                      style={{ fontSize: 15, lineHeight: 1.7, color: PAPER_SECONDARY }}
+                    >
                       {activeVersion.material_description}
                     </p>
                     <div>
@@ -2129,10 +2271,16 @@ export default function CustomerProofPage() {
                                 {String(i + 1).padStart(2, '0')}
                               </span>
                               <div>
-                                <p className="mb-0.5 text-[14px] font-medium text-[#1a1612]">
+                                <p
+                                  className="mb-0.5 font-body"
+                                  style={{ fontSize: 14, fontWeight: 500, color: PAPER_INK }}
+                                >
                                   {feature.title}
                                 </p>
-                                <p className="text-[13px] leading-[1.55] text-[#1a1612]/70">
+                                <p
+                                  className="font-body"
+                                  style={{ fontSize: 13, lineHeight: 1.55, color: PAPER_TERTIARY }}
+                                >
                                   {feature.body}
                                 </p>
                               </div>
@@ -2152,7 +2300,10 @@ export default function CustomerProofPage() {
                       the reading width sensible within the
                       wider container. */}
                   {activeVersion.material_disclaimer && (
-                    <p className="mt-10 max-w-[62ch] whitespace-pre-line text-[13px] leading-[1.6] text-[#1a1612]/60">
+                    <p
+                      className="mt-10 max-w-[62ch] whitespace-pre-line font-body"
+                      style={{ fontSize: 13, lineHeight: 1.6, color: PAPER_TERTIARY }}
+                    >
                       {activeVersion.material_disclaimer}
                     </p>
                   )}
@@ -2167,12 +2318,8 @@ export default function CustomerProofPage() {
       <footer className="text-white" style={{ background: INK }}>
         {/* Brand rule again on top of the footer — bookends the
             page with the 4-colour signature. */}
-        <div className="flex h-[2px] w-full">
-          {BRAND_ORDER.map((c, i) => (
-            <div key={i} className="flex-1" style={{ background: c }} />
-          ))}
-        </div>
-        <div className="mx-auto flex max-w-[1040px] flex-wrap items-center justify-between gap-3 px-6 py-10 sm:px-8">
+        <BrandRule />
+        <div className="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-3 px-8 py-10 sm:px-8">
           <div className="flex items-center gap-3">
             <img src="/logo-cards.png" alt="Plasma" className="h-8 w-auto opacity-70" />
             <span style={{ ...REG_A_BASE, color: LABEL_DARK }}>
@@ -2236,11 +2383,12 @@ export default function CustomerProofPage() {
           <div className="flex min-h-full items-center justify-center px-3 py-6 sm:px-4 sm:py-8">
           <div
             ref={actionPanelRef}
-            className="relative w-full rounded-xl px-5 py-6 text-white sm:px-7 sm:py-8"
+            className="relative w-full rounded-xl px-5 py-6 sm:px-7 sm:py-8"
             style={{
-              background: INK,
-              border: '1px solid rgba(255,255,255,0.12)',
-              boxShadow: '0 30px 80px rgba(0,0,0,0.6)',
+              background: PAPER_TINT_1,
+              border: '1px solid rgba(26,22,18,0.18)',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+              color: PAPER_INK,
               maxWidth: 'min(440px, calc(100vw - 24px))',
               overflowWrap: 'anywhere',
             }}
@@ -2254,7 +2402,10 @@ export default function CustomerProofPage() {
               aria-label="Close"
               onClick={closeActionPanel}
               disabled={actionSubmitting}
-              className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full text-white/60 transition-colors hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/40 sm:right-4 sm:top-4"
+              className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full transition-colors hover:bg-[rgba(26,22,18,0.06)] disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] sm:right-4 sm:top-4"
+              style={{ color: 'rgba(26,22,18,0.55)' }}
+              onMouseEnter={(e) => { if (!actionSubmitting) e.currentTarget.style.color = PAPER_INK }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(26,22,18,0.55)' }}
             >
               <span aria-hidden="true" className="text-xl leading-none">×</span>
             </button>
@@ -2262,7 +2413,7 @@ export default function CustomerProofPage() {
               style={{
                 ...REG_A_BASE,
                 fontSize: 11,
-                color: actionPanel.type === 'approve' ? APPROVED_GREEN : BRAND_ORDER[1],
+                color: actionPanel.type === 'approve' ? '#1f5640' : '#3a2c91',
               }}
             >
               {actionPanel.type === 'approve'
@@ -2273,21 +2424,21 @@ export default function CustomerProofPage() {
                   ? 'Request changes'
                   : `Request changes for ${actionPanel.name}`}
             </p>
-            <p
-              className="mt-4 max-w-[60ch] whitespace-pre-line text-[14px] leading-[1.65] text-white/80 sm:text-[15px] sm:leading-[1.7]"
-              style={{ fontFamily: SANS }}
-            >
-              {actionPanel.type === 'approve'
-                ? publicSettings?.approve_confirmation_copy ?? ''
-                : publicSettings?.request_changes_confirmation_copy ?? ''}
-            </p>
+            {actionPanel.type === 'request_changes' && (
+              <p
+                className="mt-4 max-w-[60ch] whitespace-pre-line text-[14px] leading-[1.65] sm:text-[15px] sm:leading-[1.7]"
+                style={{ fontFamily: SERIF, color: PAPER_INK }}
+              >
+                {publicSettings?.request_changes_confirmation_copy ?? ''}
+              </p>
+            )}
 
             <div className="mt-6">
               <label
                 className="block"
-                style={{ ...REG_A_BASE, color: LABEL_DARK }}
+                style={{ ...REG_A_BASE, color: PAPER_INK }}
               >
-                Your name <span className="text-rose-300/90">*</span>
+                Your name <span style={{ color: '#3a2c91' }}>*</span>
               </label>
               <input
                 type="text"
@@ -2295,8 +2446,14 @@ export default function CustomerProofPage() {
                 onChange={(e) => setActionName(e.target.value)}
                 disabled={actionSubmitting}
                 autoFocus
-                className="mt-2 w-full rounded-md bg-white/[0.04] px-4 py-3 text-white placeholder-white/30 outline-none ring-1 ring-white/15 transition-colors focus:ring-white/40"
-                style={{ fontFamily: SANS, fontSize: 15 }}
+                className="mt-2 w-full rounded-md px-4 py-3 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] placeholder:text-[rgba(26,22,18,0.45)]"
+                style={{
+                  fontFamily: SANS,
+                  fontSize: 15,
+                  background: '#ffffff',
+                  border: '1px solid rgba(26,22,18,0.18)',
+                  color: PAPER_INK,
+                }}
               />
             </div>
 
@@ -2308,18 +2465,24 @@ export default function CustomerProofPage() {
                     ...REG_B_BASE,
                     fontSize: 14,
                     fontWeight: 500,
-                    color: LABEL_DARK,
+                    color: PAPER_INK,
                   }}
                 >
-                  What changes do you need? <span className="text-rose-300/90">*</span>
+                  What changes do you need? <span style={{ color: '#3a2c91' }}>*</span>
                 </label>
                 <textarea
                   value={actionComment}
                   onChange={(e) => setActionComment(e.target.value)}
                   disabled={actionSubmitting}
                   rows={5}
-                  className="mt-2 w-full rounded-md bg-white/[0.04] px-4 py-3 text-white placeholder-white/30 outline-none ring-1 ring-white/15 transition-colors focus:ring-white/40"
-                  style={{ fontFamily: SANS, fontSize: 15 }}
+                  className="mt-2 w-full rounded-md px-4 py-3 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] placeholder:text-[rgba(26,22,18,0.45)]"
+                  style={{
+                    fontFamily: SANS,
+                    fontSize: 15,
+                    background: '#ffffff',
+                    border: '1px solid rgba(26,22,18,0.18)',
+                    color: PAPER_INK,
+                  }}
                 />
               </div>
             )}
@@ -2332,11 +2495,11 @@ export default function CustomerProofPage() {
                     ...REG_B_BASE,
                     fontSize: 14,
                     fontWeight: 500,
-                    color: LABEL_DARK,
+                    color: PAPER_INK,
                   }}
                 >
                   Anything to add?{' '}
-                  <span style={{ fontWeight: 400, color: 'rgba(255,255,255,0.45)' }}>
+                  <span style={{ fontWeight: 400, color: PAPER_TERTIARY }}>
                     (optional)
                   </span>
                 </label>
@@ -2345,8 +2508,14 @@ export default function CustomerProofPage() {
                   onChange={(e) => setActionComment(e.target.value)}
                   disabled={actionSubmitting}
                   rows={3}
-                  className="mt-2 w-full rounded-md bg-white/[0.04] px-4 py-3 text-white placeholder-white/30 outline-none ring-1 ring-white/15 transition-colors focus:ring-white/40"
-                  style={{ fontFamily: SANS, fontSize: 15 }}
+                  className="mt-2 w-full rounded-md px-4 py-3 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] placeholder:text-[rgba(26,22,18,0.45)]"
+                  style={{
+                    fontFamily: SANS,
+                    fontSize: 15,
+                    background: '#ffffff',
+                    border: '1px solid rgba(26,22,18,0.18)',
+                    color: PAPER_INK,
+                  }}
                 />
               </div>
             )}
@@ -2365,33 +2534,34 @@ export default function CustomerProofPage() {
                 subsequent actions in the same page session. */}
             {actionPanel.type === 'approve' && publicSettings?.disclaimer_text && (
               <div className="mt-6">
-                <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
+                <p style={{ ...REG_A_BASE, color: PAPER_INK }}>
                   Disclaimer
                 </p>
                 {disclaimerAckedThisSession && !actionDisclaimerExpanded ? (
                   <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
                     <p
-                      className="text-[14px] leading-[1.6] text-white/70"
-                      style={{ fontFamily: SANS }}
+                      className="text-[14px] leading-[1.6]"
+                      style={{ fontFamily: SANS, color: PAPER_SECONDARY }}
                     >
                       By confirming, you reaffirm you have read the disclaimer.
                     </p>
                     <button
                       type="button"
                       onClick={() => setActionDisclaimerExpanded(true)}
-                      className="self-start underline-offset-4 hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 rounded-sm"
-                      style={{ ...REG_A_BASE, color: LABEL_DARK }}
+                      className="self-start underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] rounded-sm"
+                      style={{ ...REG_A_BASE, color: PAPER_INK }}
                     >
                       Show disclaimer
                     </button>
                   </div>
                 ) : (
                   <p
-                    className="mt-2 max-w-[60ch] whitespace-pre-line rounded-md px-3 py-3 text-[13px] leading-[1.6] text-white/75 sm:px-4 sm:text-[14px] sm:leading-[1.65]"
+                    className="mt-2 max-w-[60ch] whitespace-pre-line rounded-md px-3 py-3 text-[13px] leading-[1.6] sm:px-4 sm:text-[14px] sm:leading-[1.65]"
                     style={{
                       fontFamily: SANS,
-                      background: 'rgba(255,255,255,0.04)',
-                      border: '1px solid rgba(255,255,255,0.10)',
+                      background: '#ffffff',
+                      border: '0.5px solid rgba(26,22,18,0.18)',
+                      color: PAPER_INK,
                       overflowWrap: 'anywhere',
                     }}
                   >
@@ -2403,12 +2573,12 @@ export default function CustomerProofPage() {
                     'mt-4 flex w-fit items-center gap-3 rounded-lg px-4 py-3 transition-colors',
                     actionSubmitting
                       ? 'cursor-wait'
-                      : 'cursor-pointer hover:border-white/30',
+                      : 'cursor-pointer hover:border-[rgba(26,22,18,0.6)]',
                   ].join(' ')}
                   style={{
                     border: actionDisclaimerAcked
-                      ? '1px solid rgba(74,222,128,0.45)'
-                      : '1px solid rgba(255,255,255,0.15)',
+                      ? `1.5px solid ${PAPER_INK}`
+                      : '1.5px solid rgba(26,22,18,0.4)',
                   }}
                 >
                   <input
@@ -2424,12 +2594,12 @@ export default function CustomerProofPage() {
                     style={
                       actionDisclaimerAcked
                         ? {
-                            background: APPROVED_GREEN,
-                            border: `1.5px solid ${APPROVED_GREEN}`,
+                            background: PAPER_INK,
+                            border: `1.5px solid ${PAPER_INK}`,
                           }
                         : {
-                            background: 'rgba(255,255,255,0.04)',
-                            border: '1.5px solid rgba(255,255,255,0.45)',
+                            background: 'transparent',
+                            border: '1.5px solid rgba(26,22,18,0.4)',
                           }
                     }
                   >
@@ -2437,7 +2607,7 @@ export default function CustomerProofPage() {
                       <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
                         <path
                           d="M2.5 6.5L5 9L9.5 3.5"
-                          stroke="#0f0d0b"
+                          stroke="#ffffff"
                           strokeWidth="2"
                           strokeLinecap="round"
                           strokeLinejoin="round"
@@ -2450,7 +2620,7 @@ export default function CustomerProofPage() {
                       ...REG_B_BASE,
                       fontSize: 14,
                       fontWeight: 500,
-                      color: 'rgba(255,255,255,0.92)',
+                      color: PAPER_INK,
                     }}
                   >
                     I confirm I have read the disclaimer above
@@ -2461,8 +2631,8 @@ export default function CustomerProofPage() {
 
             {actionError && (
               <p
-                className="mt-5 max-w-[60ch] text-[14px] leading-[1.55] text-rose-300/90"
-                style={{ fontFamily: SANS }}
+                className="mt-5 max-w-[60ch] text-[14px] leading-[1.55]"
+                style={{ fontFamily: SANS, color: '#3a2c91' }}
               >
                 {actionError}
               </p>
@@ -2473,10 +2643,28 @@ export default function CustomerProofPage() {
                 type="button"
                 onClick={closeActionPanel}
                 disabled={actionSubmitting}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 text-white/70 transition-colors hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                onMouseEnter={(e) => {
+                  if (actionSubmitting) return
+                  e.currentTarget.style.background = CTA_GHOST_HOVER_BG
+                  e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = CTA_GHOST_BG
+                  e.currentTarget.style.borderColor = CTA_GHOST_BORDER
+                }}
+                onMouseDown={(e) => {
+                  if (actionSubmitting) return
+                  e.currentTarget.style.background = CTA_GHOST_PRESSED_BG
+                }}
+                onMouseUp={(e) => {
+                  if (actionSubmitting) return
+                  e.currentTarget.style.background = CTA_GHOST_HOVER_BG
+                }}
+                className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)]"
                 style={{
-                  background: 'transparent',
-                  border: '1px solid rgba(255,255,255,0.18)',
+                  background: CTA_GHOST_BG,
+                  border: `2px solid ${CTA_GHOST_BORDER}`,
+                  color: CTA_GHOST_TEXT,
                   fontFamily: MONO,
                   fontSize: 11,
                   letterSpacing: '0.22em',
@@ -2505,22 +2693,32 @@ export default function CustomerProofPage() {
                       if (confirmDisabled) return
                       if (actionPanel.type === 'approve') {
                         e.currentTarget.style.background = CTA_TEAL_HOVER
+                      } else if (actionPanel.type === 'request_changes') {
+                        e.currentTarget.style.background = CTA_GHOST_HOVER_BG
+                        e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
                       }
                     }}
                     onMouseLeave={(e) => {
                       if (actionPanel.type === 'approve') {
                         e.currentTarget.style.background = CTA_TEAL
+                      } else if (actionPanel.type === 'request_changes') {
+                        e.currentTarget.style.background = CTA_GHOST_BG
+                        e.currentTarget.style.borderColor = CTA_GHOST_BORDER
                       }
                     }}
                     onMouseDown={(e) => {
                       if (confirmDisabled) return
                       if (actionPanel.type === 'approve') {
                         e.currentTarget.style.background = CTA_TEAL_PRESSED
+                      } else if (actionPanel.type === 'request_changes') {
+                        e.currentTarget.style.background = CTA_GHOST_PRESSED_BG
                       }
                     }}
                     onMouseUp={(e) => {
                       if (actionPanel.type === 'approve') {
                         e.currentTarget.style.background = CTA_TEAL_HOVER
+                      } else if (actionPanel.type === 'request_changes') {
+                        e.currentTarget.style.background = CTA_GHOST_HOVER_BG
                       }
                     }}
                     className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 transition-colors disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2"
@@ -2533,21 +2731,32 @@ export default function CustomerProofPage() {
                       // Switching to ghost makes the gate visually
                       // unambiguous: the tick box at the top of the
                       // modal is what unlocks the primary fill.
+                      //
+                      // Request-changes flow uses the same paper-
+                      // register ghost as Cancel — the modal panel
+                      // is now on PAPER_TINT_1, so the per-recipient
+                      // CTA_GHOST_* tokens carry directly across.
                       background: confirmDisabled
                         ? 'transparent'
-                        : actionPanel.type === 'approve' ? CTA_TEAL : '#ffffff',
+                        : actionPanel.type === 'approve'
+                          ? CTA_TEAL
+                          : CTA_GHOST_BG,
                       border: confirmDisabled
-                        ? '1px solid rgba(255,255,255,0.15)'
-                        : 'none',
+                        ? '2px solid rgba(26,22,18,0.20)'
+                        : actionPanel.type === 'approve'
+                          ? 'none'
+                          : `2px solid ${CTA_GHOST_BORDER}`,
                       color: confirmDisabled
-                        ? 'rgba(255,255,255,0.35)'
-                        : actionPanel.type === 'approve' ? '#ffffff' : INK_DEEP,
+                        ? 'rgba(26,22,18,0.35)'
+                        : actionPanel.type === 'approve'
+                          ? '#ffffff'
+                          : CTA_GHOST_TEXT,
                       fontFamily: MONO,
                       fontSize: 11,
                       letterSpacing: '0.22em',
                       textTransform: 'uppercase',
                       ['--tw-ring-color' as string]:
-                        actionPanel.type === 'approve' ? CTA_TEAL_RING : 'rgba(255,255,255,0.4)',
+                        actionPanel.type === 'approve' ? CTA_TEAL_RING : 'rgba(123,63,242,0.5)',
                     }}
                   >
                     {actionSubmitting ? 'Sending…' : 'Confirm'}
@@ -2566,8 +2775,8 @@ export default function CustomerProofPage() {
               !actionDisclaimerAcked &&
               !actionSubmitting && (
                 <p
-                  className="mt-3 text-right text-[12px] text-white/45 sm:text-[13px]"
-                  style={{ fontFamily: SANS }}
+                  className="mt-3 text-right text-[12px] sm:text-[13px]"
+                  style={{ fontFamily: SANS, color: 'rgba(26,22,18,0.65)' }}
                 >
                   Tick the disclaimer above to enable Confirm.
                 </p>
@@ -2587,813 +2796,6 @@ export default function CustomerProofPage() {
 // single-image groups — applyCaptions stamps image.label with
 // the right value for every case). Secondary line: raw
 // uploaded original_filename (with extension), muted and
-// ── Revisions band ───────────────────────────────────────────
-// Dedicated zone below the hero containing the section header
-// ("Revision history" + "Viewing latest" / "Viewing v{n} of
-// {total}" status), a spotlight column showing the
-// active version as a big serif number with a Latest/History
-// chip + date, and the RevisionsTimeline rail on the right.
-// Lays on a subtle accent-tinted gradient over the ink
-// background so the whole band reads as its own zone
-// separate from the hero above.
-//
-// The band also owns the first-visit coachmark — lifted to
-// band scope (vs the timeline component itself) so wrapping
-// onSelectVersion picks up both "× click dismiss" and "any
-// rail-dot click dismiss" in one place without the timeline
-// needing to know about coach state. localStorage persists
-// dismissal across reloads (key: pv_timeline_coach_seen),
-// scoped globally because it's teaching the interaction,
-// not a per-proof note.
-//
-// Responsive note: the coachmark's DOM query only matches
-// when the timeline is in wide mode (dot rail). In the
-// narrow stepper path the query returns null, the
-// measurement gate stays unset, and the coachmark silently
-// hides — the stepper's prev/next arrows already telegraph
-// the interaction, no tooltip needed.
-function RevisionsBand({
-  versions,
-  activeVersion,
-  onSelectVersion,
-  tokens,
-}: {
-  versions: PublicProofVersion[]
-  activeVersion: PublicProofVersion
-  onSelectVersion: (v: PublicProofVersion) => void
-  tokens: {
-    ink: string
-    inkDeep: string
-    accent: string
-    accentGlow: string
-    approvedGreen: string
-    serif: string
-    mono: string
-  }
-}) {
-  const { ink, accent, accentGlow, approvedGreen, serif, mono } = tokens
-  const railRef = useRef<HTMLDivElement>(null)
-
-  const [coachSeen, setCoachSeen] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return true
-    try {
-      return localStorage.getItem('pv_timeline_coach_seen') === '1'
-    } catch {
-      // Safari private mode — don't nag in that case either.
-      return true
-    }
-  })
-  const dismissCoach = () => {
-    try {
-      localStorage.setItem('pv_timeline_coach_seen', '1')
-    } catch {
-      // storage unavailable — still dismiss in-memory
-    }
-    setCoachSeen(true)
-  }
-  const handleSelectVersion = (v: PublicProofVersion) => {
-    onSelectVersion(v)
-    if (!coachSeen) dismissCoach()
-  }
-
-  const latest = versions[versions.length - 1]
-  const isLatestActive = activeVersion.id === latest.id
-  const activeDate = new Date(activeVersion.created_at)
-    .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-    .toUpperCase()
-
-  const chipBase =
-    'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 uppercase tracking-[0.22em]'
-  const LatestChip = () => (
-    <span
-      className={chipBase}
-      style={{
-        fontFamily: mono,
-        fontSize: 10,
-        background: 'rgba(74,222,128,0.15)',
-        color: approvedGreen,
-        border: '1px solid rgba(74,222,128,0.35)',
-      }}
-    >
-      <span
-        className="h-[5px] w-[5px] rounded-full"
-        style={{ background: approvedGreen }}
-      />
-      Latest
-    </span>
-  )
-  const HistoryChip = () => (
-    <span
-      className={chipBase}
-      style={{
-        fontFamily: mono,
-        fontSize: 10,
-        background: 'rgba(123,63,242,0.15)',
-        color: accent,
-        border: '1px solid rgba(123,63,242,0.35)',
-      }}
-    >
-      <span className="h-[5px] w-[5px] rounded-full" style={{ background: accent }} />
-      History
-    </span>
-  )
-
-  return (
-    <section className="border-t border-white/10" style={{ background: ink }}>
-      <div
-        style={{
-          background:
-            'linear-gradient(180deg, rgba(123,63,242,0.04) 0%, rgba(123,63,242,0) 100%)',
-        }}
-      >
-        <div className="mx-auto max-w-[1040px] px-6 py-8 sm:px-8">
-          {/* Header row — "REVISION HISTORY" mono label on the
-              left; "VIEWING LATEST" / "VIEWING V{n} OF {total}"
-              on the right. Whitespace-nowrap on the label so it
-              doesn't wrap when the band gets narrow. */}
-          <div className="mb-5 flex flex-wrap items-baseline justify-between gap-3">
-            <span
-              className="uppercase whitespace-nowrap text-white/80"
-              style={{ fontFamily: mono, fontSize: 11, letterSpacing: '0.3em' }}
-            >
-              Revision history
-            </span>
-            <span
-              className="uppercase tracking-[0.22em] text-white/45"
-              style={{ fontFamily: mono, fontSize: 11 }}
-            >
-              {isLatestActive
-                ? 'Viewing latest'
-                : `Viewing v${activeVersion.version_number} of ${versions.length}`}
-            </span>
-          </div>
-
-          {/* Grid: stacks vertically below sm: so the rail gets
-              full content width for the narrow / stepper mode
-              on phones; switches to spotlight (auto) + rail
-              (1fr) at sm+, vertically centered so the big serif
-              v-number sits visually aligned with the rail's
-              y-axis. */}
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-[auto_1fr] sm:items-center sm:gap-8">
-            {/* Spotlight — min-width + right-hand hairline only
-                apply at sm+ where the spotlight is a column.
-                Below sm: the spotlight is a stacked row above
-                the rail and neither rule makes sense. */}
-            <div className="sm:min-w-[120px] sm:border-r sm:border-white/10 sm:pr-8">
-              <div className="flex items-baseline gap-3">
-                <span
-                  className="leading-none text-white"
-                  style={{ fontFamily: serif, fontWeight: 400, fontSize: 56 }}
-                >
-                  v{activeVersion.version_number}
-                </span>
-                {isLatestActive ? <LatestChip /> : <HistoryChip />}
-              </div>
-              <p
-                className="mt-2 uppercase text-white/55"
-                style={{ fontFamily: mono, fontSize: 11, letterSpacing: '0.24em' }}
-              >
-                {activeDate}
-              </p>
-            </div>
-
-            {/* Rail column — the timeline renders inside; the
-                coachmark sits absolutely positioned above the
-                active dot, scoped by railRef for the DOM
-                query + parent-relative coords. position:
-                relative on the wrapper is load-bearing for
-                the coachmark's absolute positioning. */}
-            <div ref={railRef} className="relative">
-              <RevisionsTimeline
-                versions={versions}
-                activeVersion={activeVersion}
-                onSelectVersion={handleSelectVersion}
-                tokens={tokens}
-              />
-              {!coachSeen && (
-                <RevisionsCoachmark
-                  parentRef={railRef}
-                  activeVersionNumber={activeVersion.version_number}
-                  isLatestActive={isLatestActive}
-                  onDismiss={dismissCoach}
-                  accent={accent}
-                  accentGlow={accentGlow}
-                  mono={mono}
-                />
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-// ── Revisions coachmark ──────────────────────────────────────
-// First-visit tooltip pointing at the active dot on the
-// revisions rail. Box is edge-clamped to stay inside the
-// parent container; arrow is clamped to stay inside the box's
-// rounded corners but always sits directly above the active
-// dot. Measurement runs aggressively — useEffect + raf x2 +
-// document.fonts.ready + ResizeObserver on both parent and
-// the active button + MutationObserver on the parent subtree
-// + window resize — because any of those can shift the dot's
-// x-position between mount and first paint in practice.
-//
-// Render is gated on `layout !== null` so we don't flash a
-// mispositioned box while the measurement pipeline warms up.
-// In narrow (stepper) mode the active-dot selector returns
-// null, layout never sets, component returns null. No
-// special-case branch needed.
-function RevisionsCoachmark({
-  parentRef,
-  activeVersionNumber,
-  isLatestActive,
-  onDismiss,
-  accent,
-  accentGlow,
-  mono,
-}: {
-  parentRef: React.RefObject<HTMLDivElement | null>
-  activeVersionNumber: number
-  isLatestActive: boolean
-  onDismiss: () => void
-  accent: string
-  accentGlow: string
-  mono: string
-}) {
-  const BOX_W = 260
-  const MARGIN = 6
-  const [layout, setLayout] = useState<{
-    boxLeft: number
-    arrowOffset: number
-  } | null>(null)
-
-  // useEffect (not useLayoutEffect) because ancestor DOM refs
-  // aren't set when a descendant's useLayoutEffect runs — React
-  // commits bottom-up, so the rail wrapper's ref is only assigned
-  // after this component's layout effect would fire, meaning the
-  // effect would bail on parent=null and the whole measurement
-  // pipeline would silently never set up. useEffect fires after
-  // the full commit phase completes, by which point all refs in
-  // the tree are populated. The component gates render on
-  // layout !== null so there's no paint-flash concern from the
-  // slightly later fire timing.
-  useEffect(() => {
-    const parent = parentRef.current
-    if (!parent) return
-
-    const measure = () => {
-      const p = parentRef.current
-      if (!p) return
-      const dot = p.querySelector<HTMLElement>(
-        'button[data-rev-active="1"] span > span',
-      )
-      if (!dot) return
-      const parentRect = p.getBoundingClientRect()
-      const dotRect = dot.getBoundingClientRect()
-      const dotCenterX = dotRect.left + dotRect.width / 2 - parentRect.left
-      const parentW = parentRect.width
-      const boxLeft = Math.max(
-        MARGIN,
-        Math.min(parentW - BOX_W - MARGIN, dotCenterX - BOX_W / 2),
-      )
-      const arrowOffset = Math.max(14, Math.min(BOX_W - 14, dotCenterX - boxLeft))
-      setLayout({ boxLeft, arrowOffset })
-    }
-
-    // Run now, then again on two consecutive animation
-    // frames (first frame lays the rail out, second frame
-    // lets any style recalc settle), then again when fonts
-    // finish loading (serif metrics change dot spacing at
-    // font-swap moment).
-    //
-    // raf2 lives in the outer closure so the rAF1 callback
-    // can assign to it without needing to hang a property
-    // off the rAF1 number primitive (which throws TypeError
-    // in strict mode and silently kills the whole pipeline
-    // on mount — the symptom was the coachmark never
-    // rendering because setLayout never committed).
-    let raf1: number | null = null
-    let raf2: number | null = null
-    measure()
-    raf1 = requestAnimationFrame(() => {
-      measure()
-      raf2 = requestAnimationFrame(measure)
-    })
-    if (typeof document !== 'undefined' && document.fonts?.ready) {
-      document.fonts.ready.then(measure).catch(() => {
-        // document.fonts not implemented / rejected — skip
-      })
-    }
-
-    const ro = new ResizeObserver(() => measure())
-    ro.observe(parent)
-    const activeBtn = parent.querySelector<HTMLElement>('button[data-rev-active="1"]')
-    if (activeBtn) ro.observe(activeBtn)
-    const onWindowResize = () => measure()
-    window.addEventListener('resize', onWindowResize)
-
-    // Belt-and-braces: when the timeline swaps from its
-    // placeholder h-7 div to the real rail (after its own
-    // useLayoutEffect flips width from null to a number),
-    // the rAF chain should catch it — but a MutationObserver
-    // on the parent's subtree gives us a direct signal on
-    // the exact commit that adds the active-dot button, so
-    // the coachmark always measures against real DOM rather
-    // than racing a state update.
-    const mo = new MutationObserver(() => measure())
-    mo.observe(parent, { childList: true, subtree: true })
-
-    return () => {
-      if (raf1 != null) cancelAnimationFrame(raf1)
-      if (raf2 != null) cancelAnimationFrame(raf2)
-      ro.disconnect()
-      mo.disconnect()
-      window.removeEventListener('resize', onWindowResize)
-    }
-  }, [parentRef, activeVersionNumber])
-
-  if (!layout) return null
-
-  return (
-    <div
-      className="pointer-events-none absolute z-30"
-      style={{
-        left: layout.boxLeft,
-        bottom: 'calc(100% + 14px)',
-        width: BOX_W,
-      }}
-    >
-      <div
-        className="pointer-events-auto relative rounded-xl px-4 py-3"
-        style={{
-          background: 'rgba(28,22,48,0.98)',
-          border: `1px solid ${accent}`,
-          boxShadow: `0 10px 30px rgba(0,0,0,0.4), 0 0 40px ${accentGlow}`,
-        }}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p
-              className="uppercase"
-              style={{
-                fontFamily: mono,
-                fontSize: 9,
-                color: accent,
-                letterSpacing: '0.22em',
-              }}
-            >
-              Tip · Revision history
-            </p>
-            <p className="mt-2 text-[13px] leading-[1.5] text-white/85">
-              Click any dot to see how the proof changed. You're on{' '}
-              <span style={{ color: accent }}>v{activeVersionNumber}</span>
-              {isLatestActive ? ' — the latest.' : '.'}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onDismiss}
-            aria-label="Dismiss tip"
-            className="shrink-0 leading-none text-white/40 transition-colors hover:text-white/80"
-            style={{ fontSize: 18 }}
-          >
-            ×
-          </button>
-        </div>
-        {/* Arrow — 12×12 rotated square inheriting the box's
-            bg + the two border edges that face the dot below,
-            so it reads as a continuous diamond arrow on the
-            border. arrowOffset is the x-centre of the arrow
-            within the box; offset by 6 to centre the rotated
-            square. */}
-        <span
-          aria-hidden
-          className="absolute h-3 w-3 rotate-45"
-          style={{
-            bottom: -7,
-            left: layout.arrowOffset - 6,
-            background: 'rgba(28,22,48,0.98)',
-            borderRight: `1px solid ${accent}`,
-            borderBottom: `1px solid ${accent}`,
-          }}
-        />
-      </div>
-    </div>
-  )
-}
-
-// ── Revisions timeline ───────────────────────────────────────
-// Horizontal rail of version markers that replaces the old
-// "v1 v2 v3" button strip. Dots are connected by a faint white
-// base line; a glowing accent-coloured segment runs from v1 up
-// to the active marker. Labelled markers (v1, latest, active,
-// current) render serif v-numbers + mono dates inline; the
-// remaining versions render as small tick dots that tooltip to
-// "v{n} · {date}" on hover. "Current" (green) and "Viewing"
-// (accent) chips ride on the label clusters — Current is
-// always pinned to the latest marker, Viewing renders on the
-// active marker only when active !== latest.
-//
-// Overflow handling: for projects with 20+ versions, the rail
-// would get visually cramped. Always include v1, latest,
-// active, and the is_current marker; fill remaining slots with
-// evenly-sampled intermediates up to a width-derived cap
-// (~12–20 markers at laptop/desktop widths). Sampled
-// intermediates are always unlabelled ticks.
-//
-// Knockout detail: the rail line runs horizontally through the
-// full row at the dots' y-centre. Where a label cluster
-// renders inline with its dot, the cluster carries
-// background: ink so it visually erases the line segment
-// behind the v-number, date, and chip text. Without this,
-// the line would strike through each label.
-//
-// Narrow mode: collapses to a stepper (prev · centre pill ·
-// next) at container widths < 520px. Centre pill opens a
-// dropdown list of all versions; tap selects + closes.
-// Threshold intentionally smaller than Tailwind's sm
-// breakpoint so it only engages on genuinely narrow
-// containers, not just on phone-sized viewports where the
-// timeline could still fit with sampling.
-function RevisionsTimeline({
-  versions,
-  activeVersion,
-  onSelectVersion,
-  tokens,
-}: {
-  versions: PublicProofVersion[]
-  activeVersion: PublicProofVersion
-  onSelectVersion: (v: PublicProofVersion) => void
-  tokens: {
-    ink: string
-    inkDeep: string
-    accent: string
-    accentGlow: string
-    approvedGreen: string
-    serif: string
-    mono: string
-  }
-}) {
-  const wrapperRef = useRef<HTMLDivElement>(null)
-  const dropdownRef = useRef<HTMLDivElement>(null)
-  const [width, setWidth] = useState<number | null>(null)
-  const [open, setOpen] = useState(false)
-
-  // Sync-measure container width before first paint so narrow
-  // viewports don't flash the wide layout. ResizeObserver
-  // handles subsequent width changes (window resize, parent
-  // layout reflow).
-  useLayoutEffect(() => {
-    const el = wrapperRef.current
-    if (!el) return
-    setWidth(el.getBoundingClientRect().width)
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) setWidth(entry.contentRect.width)
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
-
-  // Close the narrow-mode dropdown on outside click. Scoped to
-  // this instance so other dropdowns elsewhere on the page
-  // (if any ever exist) wouldn't interfere.
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: MouseEvent) => {
-      if (!dropdownRef.current) return
-      if (!dropdownRef.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [open])
-
-  const { ink, inkDeep, accent, accentGlow, approvedGreen, serif, mono } = tokens
-
-  const fmtDate = (iso: string) =>
-    new Date(iso)
-      .toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
-      .toUpperCase()
-
-  const latest = versions[versions.length - 1]
-  const current = versions.find((v) => v.is_current) ?? latest
-  const activeIdx = versions.findIndex((v) => v.id === activeVersion.id)
-  const isLatestActive = activeVersion.id === latest.id
-
-  // Green "Current" chip — always pinned to the latest marker,
-  // regardless of the designer's is_current selection. Kept as
-  // a local component so the two renderers (wide timeline +
-  // narrow dropdown + narrow centre pill) share the styling.
-  const CurrentChip = () => (
-    <span
-      className="inline-flex shrink-0 items-center rounded-full px-2 py-[3px] uppercase tracking-[0.2em]"
-      style={{
-        fontFamily: mono,
-        fontSize: 9,
-        background: 'rgba(74,222,128,0.15)',
-        color: approvedGreen,
-        border: `1px solid rgba(74,222,128,0.35)`,
-      }}
-    >
-      Current
-    </span>
-  )
-  // Accent "Viewing" chip — rides on the active marker only
-  // when active !== latest. Leading 5px dot echoes the rail
-  // dot colour so the chip visually ties back to the marker.
-  const ViewingChip = () => (
-    <span
-      className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-[3px] uppercase tracking-[0.2em]"
-      style={{
-        fontFamily: mono,
-        fontSize: 9,
-        background: 'rgba(123,63,242,0.18)',
-        color: accent,
-        border: `1px solid rgba(123,63,242,0.45)`,
-      }}
-    >
-      <span
-        className="h-[5px] w-[5px] shrink-0 rounded-full"
-        style={{ background: accent }}
-      />
-      Viewing
-    </span>
-  )
-
-  // Don't render until we've measured; avoids the wide-mode
-  // flash on narrow viewports. h-7 placeholder reserves the
-  // row height so the surrounding layout doesn't shift when
-  // the timeline lands.
-  if (width === null) {
-    return <div ref={wrapperRef} className="relative h-7" />
-  }
-
-  const NARROW_THRESHOLD = 520
-  const isNarrow = width < NARROW_THRESHOLD
-
-  // ── Narrow / stepper mode ─────────────────────────────────
-  if (isNarrow) {
-    const canPrev = activeIdx > 0
-    const canNext = activeIdx < versions.length - 1
-    return (
-      <div ref={wrapperRef} className="relative">
-        <div className="flex items-stretch gap-2">
-          <button
-            type="button"
-            aria-label="Previous version"
-            disabled={!canPrev}
-            onClick={() => canPrev && onSelectVersion(versions[activeIdx - 1])}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/15 text-white/70 transition-colors hover:border-white/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-white/15 disabled:hover:text-white/70"
-            style={{ fontFamily: mono, fontSize: 18 }}
-          >
-            ‹
-          </button>
-          <div className="relative flex-1" ref={dropdownRef}>
-            <button
-              type="button"
-              onClick={() => setOpen((v) => !v)}
-              aria-expanded={open}
-              className="flex h-11 w-full items-center justify-center gap-3 rounded-full border border-white/15 px-4 hover:border-white/35"
-            >
-              <span
-                className="leading-none text-white"
-                style={{ fontFamily: serif, fontWeight: 400, fontSize: 20 }}
-              >
-                v{activeVersion.version_number}
-              </span>
-              <span
-                className="uppercase tracking-[0.2em] text-white/50"
-                style={{ fontFamily: mono, fontSize: 9 }}
-              >
-                of {versions.length}
-              </span>
-              {isLatestActive ? <CurrentChip /> : <ViewingChip />}
-              <span
-                className="text-white/50"
-                style={{ fontFamily: mono, fontSize: 12 }}
-                aria-hidden
-              >
-                ▾
-              </span>
-            </button>
-            {open && (
-              <div
-                className="absolute left-0 right-0 top-full z-20 mt-2 max-h-[320px] overflow-y-auto overflow-x-hidden rounded-lg shadow-xl ring-1 ring-white/15"
-                style={{ background: inkDeep }}
-              >
-                {[...versions].reverse().map((v, i) => {
-                  const isActiveRow = v.id === activeVersion.id
-                  return (
-                    <button
-                      key={v.id}
-                      type="button"
-                      onClick={() => {
-                        onSelectVersion(v)
-                        setOpen(false)
-                      }}
-                      className={[
-                        'flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors',
-                        i > 0 ? 'border-t border-white/10' : '',
-                        isActiveRow ? 'bg-white/[0.04]' : 'hover:bg-white/[0.03]',
-                      ].join(' ')}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span
-                          className="leading-none text-white"
-                          style={{ fontFamily: serif, fontWeight: 400, fontSize: 20 }}
-                        >
-                          v{v.version_number}
-                        </span>
-                        <span
-                          className="uppercase tracking-[0.2em] text-white/50"
-                          style={{ fontFamily: mono, fontSize: 9 }}
-                        >
-                          {fmtDate(v.created_at)}
-                        </span>
-                      </div>
-                      {v.id === latest.id && <CurrentChip />}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-          <button
-            type="button"
-            aria-label="Next version"
-            disabled={!canNext}
-            onClick={() => canNext && onSelectVersion(versions[activeIdx + 1])}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/15 text-white/70 transition-colors hover:border-white/35 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:border-white/15 disabled:hover:text-white/70"
-            style={{ fontFamily: mono, fontSize: 18 }}
-          >
-            ›
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  // ── Wide / timeline mode ──────────────────────────────────
-  //
-  // Pick the displayed marker set. Always-include set uses a
-  // Set keyed on version id to dedupe the common case where
-  // multiple roles land on the same version (active === latest
-  // === current, active === current, etc.) Remaining slots are
-  // filled from intermediates by even-interval sampling so the
-  // sampled ticks visually space the rail without clustering.
-  const maxMarkers = Math.max(6, Math.min(20, Math.floor((width - 160) / 26)))
-  const alwaysIds = new Set<string>([
-    versions[0].id,
-    latest.id,
-    current.id,
-    activeVersion.id,
-  ])
-  const intermediates = versions.filter((v) => !alwaysIds.has(v.id))
-  const remaining = Math.max(0, maxMarkers - alwaysIds.size)
-  const sampledIds = new Set<string>()
-  if (remaining > 0 && intermediates.length > 0) {
-    const take = Math.min(remaining, intermediates.length)
-    const step = intermediates.length / take
-    for (let i = 0; i < take; i++) {
-      const idx = Math.min(
-        intermediates.length - 1,
-        Math.floor(i * step + step / 2),
-      )
-      sampledIds.add(intermediates[idx].id)
-    }
-  }
-  const displayed = versions.filter(
-    (v) => alwaysIds.has(v.id) || sampledIds.has(v.id),
-  )
-  const displayedActiveIdx = displayed.findIndex((v) => v.id === activeVersion.id)
-  const activePct =
-    displayed.length > 1 ? (displayedActiveIdx / (displayed.length - 1)) * 100 : 0
-
-  return (
-    <div ref={wrapperRef} className="relative">
-      {/* Base rail — faint white baseline running the full row
-          width at the dots' y-centre (top:14 = half of h-7).
-          h-px is 1 physical pixel — reads as a hair-thin track
-          against the ink backdrop. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute left-0 right-0 h-px bg-white/15"
-        style={{ top: 14 }}
-      />
-      {/* Filled rail — accent-coloured segment from the start
-          of the rail up to the active marker. Width is a
-          percentage of the full rail, derived from the
-          active's index within the displayed set. Soft
-          box-shadow glow ties it visually to the active dot's
-          glow. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute left-0 h-px transition-all duration-200"
-        style={{
-          top: 14,
-          width: `${activePct}%`,
-          background: accent,
-          boxShadow: `0 0 8px ${accentGlow}`,
-        }}
-      />
-      {/* Markers — flex-distributed across the full rail. Each
-          marker is h-7 items-center so size-swaps between
-          active / inactive / tick dots happen inside a locked
-          row height rather than pushing the cluster up or
-          down. */}
-      <div className="relative flex h-7 items-center justify-between">
-        {displayed.map((v) => {
-          const isActive = v.id === activeVersion.id
-          const isLabeled = alwaysIds.has(v.id)
-          const isLatestMarker = v.id === latest.id
-
-          if (!isLabeled) {
-            return (
-              <button
-                key={v.id}
-                type="button"
-                onClick={() => onSelectVersion(v)}
-                title={`v${v.version_number} · ${fmtDate(v.created_at)}`}
-                className="flex h-7 items-center"
-                data-rev-active={isActive ? '1' : undefined}
-              >
-                {/* Dot slot is a span (not div) so the coachmark's
-                    DOM query — button[data-rev-active="1"] span > span —
-                    resolves to the real dot element first in
-                    document order. */}
-                <span className="grid h-[22px] w-[22px] place-items-center">
-                  <span className="block h-1.5 w-1.5 rounded-full bg-white/40 transition-colors hover:bg-white/70" />
-                </span>
-              </button>
-            )
-          }
-
-          return (
-            <button
-              key={v.id}
-              type="button"
-              onClick={() => onSelectVersion(v)}
-              className="flex h-7 items-center gap-2"
-              data-rev-active={isActive ? '1' : undefined}
-            >
-              <span className="grid h-[22px] w-[22px] place-items-center">
-                <span
-                  className="block rounded-full transition-all"
-                  style={
-                    isActive
-                      ? {
-                          width: 18,
-                          height: 18,
-                          background: accent,
-                          boxShadow: `0 0 12px ${accentGlow}`,
-                        }
-                      : {
-                          width: 12,
-                          height: 12,
-                          background: 'transparent',
-                          border: `1.5px solid ${accent}`,
-                        }
-                  }
-                />
-              </span>
-              {/* Label cluster — ink background knocks out the
-                  rail line behind the text. h-7 items-center
-                  matches the outer row so the serif size swap
-                  between 22px (active) and 18px (inactive)
-                  happens inside a fixed-height slot and can't
-                  shift the cluster vertically. */}
-              <div
-                className="flex h-7 items-center gap-2 px-2"
-                style={{ background: ink }}
-              >
-                <span
-                  className="leading-none text-white"
-                  style={{
-                    fontFamily: serif,
-                    fontWeight: 400,
-                    fontSize: isActive ? 22 : 18,
-                  }}
-                >
-                  v{v.version_number}
-                </span>
-                <span
-                  className="uppercase tracking-[0.2em] text-white/50"
-                  style={{ fontFamily: mono, fontSize: 9 }}
-                >
-                  {fmtDate(v.created_at)}
-                </span>
-                {isLatestMarker && <CurrentChip />}
-                {isActive && !isLatestActive && <ViewingChip />}
-              </div>
-            </button>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 // truncated with a full-name tooltip on hover. Hidden when
 // original_filename is null (pre-migration-000021 legacy
 // rows). Clicking the image opens the lightbox via the
@@ -3403,19 +2805,28 @@ function RevisionsTimeline({
 function PlateCard({
   image,
   brandColor,
-  accent,
   alt,
   onClick,
+  recipientLabel,
 }: {
   image: GridImage
   brandColor: string
-  accent: string
   alt: string
   onClick: (src: string) => void
+  recipientLabel?: string
 }) {
-  const MONO = "'JetBrains Mono', ui-monospace, monospace"
   const downloadHref = image.signed_url ?? '#'
   const downloadName = image.original_filename ?? 'proof.jpg'
+  // Compose "{RECIPIENT} · {SIDE}" per README §4 screenshot
+  // pattern. Falls back gracefully when either piece is missing:
+  // recipient-only → "{RECIPIENT}", side-only → "{SIDE}",
+  // neither → empty (label cell collapses).
+  const sideText = (image.label ?? '').toUpperCase()
+  const captionLabel = recipientLabel
+    ? sideText
+      ? `${recipientLabel.toUpperCase()} · ${sideText}`
+      : recipientLabel.toUpperCase()
+    : sideText
   return (
     <div className="relative">
       <figure className="relative">
@@ -3423,7 +2834,7 @@ function PlateCard({
           type="button"
           onClick={() => image.signed_url && onClick(image.signed_url)}
           className="block w-full overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-          style={{ outlineColor: accent }}
+          style={{ outlineColor: ACCENT }}
           aria-label={alt}
         >
           {image.signed_url ? (
@@ -3437,76 +2848,99 @@ function PlateCard({
             <div className="aspect-[5/3] w-full" style={{ background: '#f4f1ea' }} />
           )}
         </button>
-        {/* Two-line caption — primary side label on top, raw
-            filename on a muted line below, Download button
-            right-aligned opposite. items-start so the button
-            hugs the top of the caption block and lines up with
-            the primary label; min-w-0 + flex-1 on the left so
-            truncate works on the filename line when it's long. */}
-        <figcaption className="mt-4 flex items-start justify-between gap-4 border-t border-[#1a1612]/15 pt-3">
-          <div className="min-w-0 flex-1">
-            <div
-              className="flex items-center gap-2 uppercase tracking-[0.22em] text-[#1a1612]"
-              style={{ fontFamily: MONO, fontSize: 12 }}
-            >
+        {/* Three-column caption per README §4 screenshot:
+            dot + RECIPIENT · SIDE on the left, filename in muted
+            mono in the middle, plain "Download ↓" link on the
+            right. items-start so each column anchors at the top
+            of the row; the Download link's invisible 44px tap
+            target extends downward without pushing the other
+            columns out of vertical register. */}
+        <figcaption className="mt-4 grid grid-cols-1 items-start gap-2 border-t border-[rgba(26,22,18,0.10)] pt-3 lg:grid-cols-[auto_1fr_auto] lg:gap-6">
+          <div className="flex items-start gap-2 min-w-0">
+            <span
+              aria-hidden
+              className="mt-[6px] h-[6px] w-[6px] shrink-0 rounded-[1px]"
+              style={{ background: brandColor }}
+            />
+            {captionLabel && (
               <span
-                className="h-[6px] w-[6px] shrink-0 rounded-[1px]"
-                style={{ background: brandColor }}
-              />
-              {image.label && <span className="truncate">{image.label}</span>}
-            </div>
+                className="font-paper-mono uppercase break-words"
+                style={{
+                  fontSize: 12,
+                  fontWeight: 500,
+                  letterSpacing: '0.22em',
+                  color: '#1a1612',
+                }}
+              >
+                {captionLabel}
+              </span>
+            )}
+          </div>
+          <div className="min-w-0">
             {image.original_filename && (
-              <div
-                className="mt-1 truncate text-[#1a1612]/50"
-                style={{ fontFamily: MONO, fontSize: 12 }}
+              <span
+                className="font-paper-mono break-all"
+                style={{ fontSize: 12, color: 'rgba(26,22,18,0.45)' }}
                 title={image.original_filename}
               >
                 {image.original_filename}
-              </div>
+              </span>
             )}
           </div>
-          {image.signed_url && (
-            <a
-              href={downloadHref}
-              download={downloadName}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
-              className="inline-flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-full border border-[#1a1612]/25 px-3 py-1 uppercase tracking-[0.22em] text-[#6b6558] transition-colors hover:border-[color:var(--a)] hover:bg-[color:var(--a)] hover:text-white"
-              style={{
-                fontFamily: MONO,
-                fontSize: 12,
-                // CSS variable so the hover styles above pick
-                // up the indigo accent cleanly without inline
-                // hover handlers.
-                ['--a' as string]: accent,
-              }}
-            >
-              Download ↓
-            </a>
-          )}
+          <div className="text-right">
+            {image.signed_url && (
+              <a
+                href={downloadHref}
+                download={downloadName}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                // Plain mono text link — no pill, no border.
+                // min-h-[44px] + items-start gives a 44px tap
+                // target while keeping the visible text aligned
+                // at the top of the column, in register with the
+                // dot/label and filename baselines in cols 1-2.
+                className="inline-flex min-h-[44px] items-start font-paper-mono uppercase transition-colors hover:text-[#1a1612] focus-visible:outline-none focus-visible:underline"
+                style={{
+                  fontSize: 12,
+                  fontWeight: 500,
+                  letterSpacing: '0.22em',
+                  color: PAPER_TERTIARY,
+                }}
+              >
+                Download ↓
+              </a>
+            )}
+          </div>
         </figcaption>
       </figure>
     </div>
   )
 }
 
-// Spec sheet row on the ink section — mono label on the left,
-// mono value on the right. Hairline top border stacks multiple
-// rows as a spec sheet rather than a card grid.
-function InkSpecRow({ label, value }: { label: string; value: string }) {
-  const MONO = "'JetBrains Mono', ui-monospace, monospace"
+// Spec sheet row on the paper-tinted Specs band. Mono label
+// (Red Hat Mono small caps) on the left, sans value (Inter Tight)
+// on the right. Hairline top border stacks multiple rows as a
+// spec sheet rather than a card grid. Type values share the
+// docket-cell tokens from the hero (4c) since both are spec-sheet
+// reads — labels small-caps mono, values body-sans.
+function PaperSpecRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[140px_1fr] items-baseline gap-6 border-t border-white/10 py-5 sm:grid-cols-[200px_1fr] sm:gap-8">
+    <div className="grid grid-cols-[140px_1fr] items-baseline gap-6 border-t border-[rgba(26,22,18,0.12)] py-5 sm:grid-cols-[200px_1fr] sm:gap-8">
       <dt
-        className="uppercase tracking-[0.22em] text-white/45"
-        style={{ fontFamily: MONO, fontSize: 12 }}
+        className="font-paper-mono uppercase"
+        style={{
+          fontSize: 9,
+          fontWeight: 500,
+          letterSpacing: '0.28em',
+          color: 'rgba(26,22,18,0.5)',
+        }}
       >
         {label}
       </dt>
       <dd
-        className="whitespace-pre-line text-white/95"
-        style={{ fontFamily: MONO, fontSize: 14 }}
+        className="whitespace-pre-line font-body"
+        style={{ fontSize: 15, fontWeight: 400, color: '#1a1612' }}
       >
         {value}
       </dd>
@@ -3514,10 +2948,10 @@ function InkSpecRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-// Ink-themed pricing table — large serif quantity on the left,
-// mono price + per-card columns on the right. Drives off the
-// same PricingSnapshot shape as the designer-side
-// PricingDisplay component, but restyled for the dark palette.
+// Paper-register pricing table — large serif quantity on the
+// left, mono price + per-card columns on the right. Drives off
+// the same PricingSnapshot shape as the designer-side
+// PricingDisplay component, restyled for the paper palette.
 // Multi-variant projects fall back to a simpler grid (rare on
 // customer proofs in practice); single-variant — the common
 // case and the one the design mocks — gets the editorial
@@ -3539,15 +2973,13 @@ function InkSpecRow({ label, value }: { label: string; value: string }) {
 //     itself never shows it.
 const DISPLAY_FALLBACK_CAP = 10
 
-function InkPricingTable({
+function PaperPricingTable({
   snapshot,
   currency,
   displayQuantities,
   quoteMinQuantity,
   quoteMaxQuantity,
   quantitySurcharges,
-  serif,
-  mono,
 }: {
   snapshot: PricingSnapshot
   currency: Currency
@@ -3555,8 +2987,6 @@ function InkPricingTable({
   quoteMinQuantity: number | null
   quoteMaxQuantity: number | null
   quantitySurcharges: Record<number, number>
-  serif: string
-  mono: string
 }) {
   const { variants } = snapshot
   if (!variants?.length) return null
@@ -3600,22 +3030,22 @@ function InkPricingTable({
       <>
         <table className="w-full border-collapse">
           <thead>
-            <tr className="border-b border-white/15">
+            <tr style={{ borderBottom: '1px solid rgba(26,22,18,0.15)' }}>
               <th
-                className="py-4 text-left uppercase tracking-[0.22em] text-white/45"
-                style={{ fontFamily: mono, fontSize: 12 }}
+                className="py-4 text-left font-paper-mono uppercase"
+                style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
               >
                 Total quantity
               </th>
               <th
-                className="py-4 text-right uppercase tracking-[0.22em] text-white/45"
-                style={{ fontFamily: mono, fontSize: 12 }}
+                className="py-4 text-right font-paper-mono uppercase"
+                style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
               >
                 Price
               </th>
               <th
-                className="py-4 text-right uppercase tracking-[0.22em] text-white/45"
-                style={{ fontFamily: mono, fontSize: 12 }}
+                className="py-4 text-right font-paper-mono uppercase"
+                style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
               >
                 Per card
               </th>
@@ -3625,24 +3055,23 @@ function InkPricingTable({
             {rows.map(({ qty, price }) => (
               <tr
                 key={qty}
-                className="border-b"
-                style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+                style={{ borderBottom: '1px solid rgba(26,22,18,0.10)' }}
               >
                 <td
-                  className="py-5 leading-none text-white"
-                  style={{ fontFamily: serif, fontWeight: 400, fontSize: 28 }}
+                  className="py-5 leading-none"
+                  style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 28, color: '#1a1612' }}
                 >
                   {qty.toLocaleString()}
                 </td>
                 <td
-                  className="py-5 text-right text-white"
-                  style={{ fontFamily: mono, fontSize: 16 }}
+                  className="py-5 text-right"
+                  style={{ fontFamily: MONO, fontSize: 16, color: '#1a1612' }}
                 >
                   {formatPrice(price, currency)}
                 </td>
                 <td
-                  className="py-5 text-right text-white/50"
-                  style={{ fontFamily: mono, fontSize: 13 }}
+                  className="py-5 text-right"
+                  style={{ fontFamily: MONO, fontSize: 13, color: PAPER_TERTIARY }}
                 >
                   {formatPrice(price / qty, currency, 2)}
                 </td>
@@ -3657,8 +3086,6 @@ function InkPricingTable({
           quoteMinQuantity={quoteMinQuantity}
           quoteMaxQuantity={quoteMaxQuantity}
           quantitySurcharges={quantitySurcharges}
-          serif={serif}
-          mono={mono}
         />
       </>
     )
@@ -3676,18 +3103,18 @@ function InkPricingTable({
     <div className="overflow-x-auto">
       <table className="w-full border-collapse">
         <thead>
-          <tr className="border-b border-white/15">
+          <tr style={{ borderBottom: '1px solid rgba(26,22,18,0.15)' }}>
             <th
-              className="py-4 pr-2 text-left uppercase tracking-[0.22em] text-white/45 sm:pr-4"
-              style={{ fontFamily: mono, fontSize: 12 }}
+              className="py-4 pr-2 text-left font-paper-mono uppercase sm:pr-4"
+              style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
             >
               Total quantity
             </th>
             {variants.map((v) => (
               <th
                 key={v.variant_id}
-                className="py-4 pl-2 text-right uppercase tracking-[0.22em] text-white/45 sm:pl-4"
-                style={{ fontFamily: mono, fontSize: 12 }}
+                className="py-4 pl-2 text-right font-paper-mono uppercase sm:pl-4"
+                style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
               >
                 {v.display}
               </th>
@@ -3700,12 +3127,11 @@ function InkPricingTable({
             return (
               <tr
                 key={qty}
-                className="border-b"
-                style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+                style={{ borderBottom: '1px solid rgba(26,22,18,0.10)' }}
               >
                 <td
-                  className="py-4 pr-2 leading-none text-white sm:pr-4"
-                  style={{ fontFamily: serif, fontWeight: 400, fontSize: 24 }}
+                  className="py-4 pr-2 leading-none sm:pr-4"
+                  style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 24, color: '#1a1612' }}
                 >
                   {qty.toLocaleString()}
                 </td>
@@ -3715,8 +3141,8 @@ function InkPricingTable({
                     return (
                       <td
                         key={v.variant_id}
-                        className="py-4 pl-2 text-right text-white/30 sm:pl-4"
-                        style={{ fontFamily: mono, fontSize: 14 }}
+                        className="py-4 pl-2 text-right sm:pl-4"
+                        style={{ fontFamily: MONO, fontSize: 14, color: 'rgba(26,22,18,0.45)' }}
                       >
                         —
                       </td>
@@ -3725,16 +3151,10 @@ function InkPricingTable({
                   const price = base + surcharge
                   return (
                     <td key={v.variant_id} className="py-4 pl-2 text-right sm:pl-4">
-                      <div
-                        className="text-white"
-                        style={{ fontFamily: mono, fontSize: 15 }}
-                      >
+                      <div style={{ fontFamily: MONO, fontSize: 15, color: '#1a1612' }}>
                         {formatPrice(price, currency)}
                       </div>
-                      <div
-                        className="text-white/45"
-                        style={{ fontFamily: mono, fontSize: 12 }}
-                      >
+                      <div style={{ fontFamily: MONO, fontSize: 12, color: PAPER_TERTIARY }}>
                         {formatPrice(price / qty, currency, 2)} each
                       </div>
                     </td>
@@ -3753,8 +3173,6 @@ function InkPricingTable({
       quoteMinQuantity={quoteMinQuantity}
       quoteMaxQuantity={quoteMaxQuantity}
       quantitySurcharges={quantitySurcharges}
-      serif={serif}
-      mono={mono}
     />
     </>
   )
@@ -3821,8 +3239,6 @@ function QuantityLookup({
   quoteMinQuantity,
   quoteMaxQuantity,
   quantitySurcharges,
-  serif,
-  mono,
 }: {
   variants: PricingVariant[]
   currency: Currency
@@ -3830,8 +3246,6 @@ function QuantityLookup({
   quoteMinQuantity: number | null
   quoteMaxQuantity: number | null
   quantitySurcharges: Record<number, number>
-  serif: string
-  mono: string
 }) {
   const [raw, setRaw] = useState('')
   if (lookupSet.length === 0) return null
@@ -3892,33 +3306,48 @@ function QuantityLookup({
   }
 
   return (
-    <div className="mt-8 border border-white/15 p-8">
+    <div
+      className="mt-8 py-6 px-7 rounded-md"
+      style={{
+        border: '1px solid rgba(26,22,18,0.18)',
+        background: PAPER_TINT_1,
+      }}
+    >
       <h3
         id="quantity-picker-heading"
-        className="text-white"
-        style={{ fontFamily: serif, fontWeight: 400, fontSize: 28, lineHeight: 1.1 }}
+        className="mb-4"
+        style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, lineHeight: 1.1, color: PAPER_INK }}
       >
         Need a price for a specific quantity?
       </h3>
-      <input
-        type="number"
-        inputMode="numeric"
-        pattern="[0-9]*"
-        min={1}
-        value={raw}
-        onChange={(e) => setRaw(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Escape') setRaw('') }}
-        placeholder="Enter quantity"
-        aria-labelledby="quantity-picker-heading"
-        className="mt-5 w-full max-w-sm bg-transparent px-4 py-3 text-white placeholder:text-white/30 focus:outline-none"
-        style={{
-          fontFamily: mono,
-          fontSize: 18,
-          border: '1px solid rgba(255,255,255,0.15)',
-        }}
-        onFocus={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.45)' }}
-        onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)' }}
-      />
+      <div className="flex max-w-sm items-center gap-3">
+        <input
+          type="number"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          min={1}
+          value={raw}
+          onChange={(e) => setRaw(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Escape') setRaw('') }}
+          placeholder="Enter quantity"
+          aria-labelledby="quantity-picker-heading"
+          className="font-paper-mono min-w-0 flex-1 rounded-md px-5 py-3.5 placeholder:text-[rgba(26,22,18,0.45)] focus:outline-none"
+          style={{
+            fontSize: 16,
+            color: PAPER_INK,
+            border: '1px solid rgba(26,22,18,0.25)',
+            background: '#ffffff',
+          }}
+          onFocus={(e) => { e.currentTarget.style.borderColor = 'rgba(26,22,18,0.7)' }}
+          onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(26,22,18,0.25)' }}
+        />
+        <span
+          aria-hidden
+          style={{ fontFamily: SERIF, fontSize: 20, color: 'rgba(26,22,18,0.55)' }}
+        >
+          →
+        </span>
+      </div>
       {/* Result panel — rendered only when the input has
           parsed into a query. The card feels compact at rest
           when the input is empty. aria-live/role=status makes
@@ -3928,8 +3357,13 @@ function QuantityLookup({
       {caption && (
         <div className="mt-8" aria-live="polite" role="status">
           <p
-            className="text-white/80"
-            style={{ fontFamily: serif, fontWeight: 400, fontSize: 16, lineHeight: 1.4 }}
+            style={{
+              fontFamily: SERIF,
+              fontWeight: 400,
+              fontSize: 16,
+              lineHeight: 1.4,
+              color: PAPER_SECONDARY,
+            }}
           >
             {caption}
           </p>
@@ -3937,7 +3371,7 @@ function QuantityLookup({
             <div className="mt-4 overflow-x-auto">
               <table className="w-full border-collapse">
                 <thead>
-                  <tr className="border-b border-white/15">
+                  <tr style={{ borderBottom: '1px solid rgba(26,22,18,0.15)' }}>
                     {/* Blank header above the qty column — the
                         serif quantity in each body row is
                         self-describing, no "Total quantity"
@@ -3946,8 +3380,8 @@ function QuantityLookup({
                     {variants.map((v) => (
                       <th
                         key={v.variant_id}
-                        className="py-3 pl-4 text-right uppercase tracking-[0.22em] text-white/45"
-                        style={{ fontFamily: mono, fontSize: 12 }}
+                        className="py-3 pl-4 text-right font-paper-mono uppercase"
+                        style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
                       >
                         {v.display}
                       </th>
@@ -3958,12 +3392,11 @@ function QuantityLookup({
                   {tiers.map((qty) => (
                     <tr
                       key={qty}
-                      className="border-b"
-                      style={{ borderColor: 'rgba(255,255,255,0.08)' }}
+                      style={{ borderBottom: '1px solid rgba(26,22,18,0.10)' }}
                     >
                       <td
-                        className="py-4 pr-4 leading-none text-white"
-                        style={{ fontFamily: serif, fontWeight: 400, fontSize: 24 }}
+                        className="py-4 pr-4 leading-none"
+                        style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 24, color: '#1a1612' }}
                       >
                         {qty.toLocaleString()}
                       </td>
@@ -3973,8 +3406,8 @@ function QuantityLookup({
                           return (
                             <td
                               key={v.variant_id}
-                              className="py-4 pl-4 text-right text-white/30"
-                              style={{ fontFamily: mono, fontSize: 14 }}
+                              className="py-4 pl-4 text-right"
+                              style={{ fontFamily: MONO, fontSize: 14, color: 'rgba(26,22,18,0.45)' }}
                             >
                               —
                             </td>
@@ -3982,16 +3415,10 @@ function QuantityLookup({
                         }
                         return (
                           <td key={v.variant_id} className="py-4 pl-4 text-right">
-                            <div
-                              className="text-white"
-                              style={{ fontFamily: mono, fontSize: 16 }}
-                            >
+                            <div style={{ fontFamily: MONO, fontSize: 16, color: '#1a1612' }}>
                               {formatPrice(price, currency)}
                             </div>
-                            <div
-                              className="text-white/45"
-                              style={{ fontFamily: mono, fontSize: 12 }}
-                            >
+                            <div style={{ fontFamily: MONO, fontSize: 12, color: PAPER_TERTIARY }}>
                               {formatPrice(price / qty, currency, 2)} each
                             </div>
                           </td>
@@ -4007,16 +3434,6 @@ function QuantityLookup({
       )}
     </div>
   )
-}
-
-// "Alice", "Alice and Bob", "Alice, Bob and Carol". Keeps the
-// reading natural; avoids a comma before "and" — two-name lists
-// don't want the Oxford comma either way.
-function formatNamesList(names: string[]): string {
-  if (names.length === 0) return ''
-  if (names.length === 1) return names[0]
-  if (names.length === 2) return `${names[0]} and ${names[1]}`
-  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
 
 // Turn a flat image list into grouped-by-recipient sections for

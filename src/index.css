@@ -1,9 +1,18 @@
 @import "tailwindcss";
 
 /*
-  Design tokens will be added here once the Claude Design handoff bundle arrives.
-  Tailwind v4 uses CSS custom properties for theming — tokens go in @theme {}.
+  Paper-register font tokens for the customer proof page refresh
+  (Direction B). Defined here so they generate Tailwind utility
+  classes (font-display, font-body, font-paper-mono) for use in
+  the new presentation. Not yet applied at any call site — these
+  are foundation only for the incremental rollout on the
+  proof-viewer-direction-b branch.
 */
+@theme {
+  --font-display: 'Cormorant Garamond', Georgia, serif;
+  --font-body: 'Inter Tight', system-ui, sans-serif;
+  --font-paper-mono: 'Red Hat Mono', ui-monospace, monospace;
+}
 
 html,
 body {
