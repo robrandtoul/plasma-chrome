@@ -1190,12 +1190,28 @@ export default function NewProofPage() {
             <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
           )}
 
+          {/* Disable while either Help Scout lookup is in flight —
+              not just `submitting`. Pre-fix, clicking Create project
+              before the paste lookup resolved triggered the validation
+              path with an empty form, which auto-opened the manual
+              disclosure (failManual → setManualOpen(true)) and showed
+              a "select a company" error before the lookup had a chance
+              to populate fields. Read by the user as a silent form
+              reset. The `hsLookupInFlight` arm covers the secondary
+              email-driven lookup that fires after a contact is
+              selected — same shape of race against unpopulated fields.
+              "Looking up…" mirrors the Look up button's busy copy so
+              the visual language is consistent across both. */}
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || pasteInFlight || hsLookupInFlight}
             className="w-full rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
           >
-            {submitting ? 'Creating…' : 'Create project'}
+            {submitting
+              ? 'Creating…'
+              : (pasteInFlight || hsLookupInFlight)
+                ? 'Looking up…'
+                : 'Create project'}
           </button>
         </form>
       </div>
