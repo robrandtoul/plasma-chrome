@@ -707,12 +707,16 @@ export default function CustomerProofPage() {
     // Audit detail from latest_events_by_name when the customer
     // recorded the action. Shared-section events written by older
     // code paths could carry name=null instead of '__shared__';
-    // both are accepted here for safety.
+    // both are accepted here for safety. designer_override_approve
+    // events (000129) are filtered out — those are designer-side
+    // audit and have no place on the customer-facing banner; the
+    // approval pill flips via approval.state regardless.
     const event: ProofEventState | undefined =
       activeVersion.latest_events_by_name.find(
         (e) =>
-          e.name === name ||
-          (name === SHARED_APPROVAL_KEY && e.name == null),
+          e.event_type !== 'designer_override_approve' &&
+          (e.name === name ||
+            (name === SHARED_APPROVAL_KEY && e.name == null)),
       )
     if (approval.state === 'approved') {
       return {

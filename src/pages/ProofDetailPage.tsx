@@ -60,7 +60,7 @@ function formatLongDate(iso: string): string {
 // row is exactly one image file destined for the production ZIP.
 interface ProofEventAuditDetail {
   id: string
-  event_type: 'approve' | 'request_changes'
+  event_type: 'approve' | 'request_changes' | 'designer_override_approve'
   actor_name: string
   comment: string | null
   from_ip: string | null
@@ -91,7 +91,7 @@ interface ApprovedImageRow {
 export default function ProofDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { role } = useAuth()
+  const { role, session } = useAuth()
   const [proof, setProof] = useState<Proof | null>(null)
   const [versions, setVersions] = useState<ModalVersion[]>([])
   const [loading, setLoading] = useState(true)
@@ -424,21 +424,48 @@ export default function ProofDetailPage() {
 
   async function handleApprove() {
     if (!proof) return
+
+    // Designer identity is required for both the override audit
+    // (overridden_by_user_id) and actor_name attribution. Fail fast
+    // if the session has expired between page load and click —
+    // writing a placeholder string would silently corrupt the audit
+    // trail. handleApprove is gated behind a designer-only route,
+    // so this is a recovery path, not a happy path.
+    if (!session?.user.id || !session.user.email) {
+      showToast('Session expired — please sign in again before approving')
+      setStatusDialog(null)
+      return
+    }
+    const designerName = session.user.email
+    const designerUserId = session.user.id
+
     setStatusWorking(true)
 
-    // Step 1: for the current version, upsert an approval row for
-    // each named recipient plus (if the version has shared images)
-    // one row under the SHARED_APPROVAL_KEY sentinel. Conflict
-    // target (proof_version_id, name) means any existing
-    // changes_requested rows get overwritten to approved. Runs in a
-    // single round-trip. Skipped entirely when the current version
-    // has neither names nor shared images (pure single-subject with
-    // only per-name images, or a version with no images at all —
-    // nothing to record).
+    // Step 1: per-name approval rows on the current version. Each
+    // expected slot key falls into one of three branches:
     //
-    // Shared-presence for the current version is checked via a
-    // fresh SELECT rather than versionsWithShared from state, so a
-    // mid-session image edit doesn't lead to a stale upsert set.
+    //   • already approved   — no-op (skipped, keeps updated_at stable)
+    //   • no existing row    — fresh designer-side approval; insert a
+    //                          row stamped with the designer's email
+    //                          as actor_name (the customer never
+    //                          acted on this slot, so attributing to
+    //                          the customer would be misleading)
+    //   • changes_requested  — OVERRIDE. Flip state to 'approved'
+    //                          via a targeted UPDATE that deliberately
+    //                          does NOT touch actor_name or
+    //                          change_request, preserving the
+    //                          customer's original feedback so the
+    //                          names rollup can render
+    //                          "(originally requested changes by …)".
+    //                          Stamps the three override columns
+    //                          (000129) and emits a proof_events row
+    //                          with event_type='designer_override_
+    //                          approve' so the dashboard activity
+    //                          feed records the override.
+    //
+    // Pre-fetch reads from the DB rather than the in-memory `approvals`
+    // state so a customer action between page load and click is seen.
+    // Shared-presence is checked the same way for the same reason.
     const currentVersion = versions.find((v) => v.is_current)
     if (currentVersion) {
       const { data: sharedRows } = await supabase
@@ -449,29 +476,139 @@ export default function ProofDetailPage() {
         .limit(1)
       const hasShared = (sharedRows?.length ?? 0) > 0
 
-      const now = new Date().toISOString()
       const keys: string[] = [...currentVersion.names]
       if (hasShared) keys.push(SHARED_APPROVAL_KEY)
 
       if (keys.length > 0) {
-        const rows = keys.map((name) => ({
-          proof_version_id: currentVersion.id,
-          name,
-          state: 'approved' as const,
-          change_request: null,
-          actor_name: proof.contacts.full_name,
-          actor_ip: null,
-          actor_ua: null,
-          updated_at: now,
-        }))
-        const { error: approvalErr } = await supabase
+        const { data: existingRows, error: existingErr } = await supabase
           .from('proof_name_approvals')
-          .upsert(rows, { onConflict: 'proof_version_id,name' })
-        if (approvalErr) {
+          .select('id, name, state, actor_name, change_request')
+          .eq('proof_version_id', currentVersion.id)
+          .in('name', keys)
+        if (existingErr) {
           setStatusWorking(false)
           setStatusDialog(null)
-          showToast(`Failed to record per-name approvals: ${approvalErr.message}`)
+          showToast(`Failed to load existing approvals: ${existingErr.message}`)
           return
+        }
+        type ExistingRow = {
+          id: string
+          name: string
+          state: 'approved' | 'changes_requested'
+          actor_name: string
+          change_request: string | null
+        }
+        const existingByName = new Map<string, ExistingRow>()
+        for (const r of (existingRows ?? []) as ExistingRow[]) {
+          existingByName.set(r.name, r)
+        }
+
+        const now = new Date().toISOString()
+
+        // Build override + fresh-insert lists. Already-approved
+        // slots are silently skipped.
+        const overrides: ExistingRow[] = []
+        const freshInserts: Array<{
+          proof_version_id: string
+          name: string
+          state: 'approved'
+          change_request: null
+          actor_name: string
+          actor_ip: null
+          actor_ua: null
+          updated_at: string
+        }> = []
+        for (const key of keys) {
+          const existing = existingByName.get(key)
+          if (!existing) {
+            freshInserts.push({
+              proof_version_id: currentVersion.id,
+              name: key,
+              state: 'approved',
+              change_request: null,
+              actor_name: designerName,
+              actor_ip: null,
+              actor_ua: null,
+              updated_at: now,
+            })
+          } else if (existing.state === 'changes_requested') {
+            overrides.push(existing)
+          }
+          // else: existing.state === 'approved' → no-op
+        }
+
+        // Apply override updates one row at a time. Volume is small
+        // (one row per recipient with an open change-request) and
+        // Supabase REST doesn't expose a multi-row update with
+        // distinct values, so .update().eq('id', …) per row is the
+        // cleanest path. Failing fast on the first error mirrors
+        // the existing "any DB error aborts the flow" pattern.
+        for (const row of overrides) {
+          const { error: upErr } = await supabase
+            .from('proof_name_approvals')
+            .update({
+              state: 'approved',
+              overridden_from_state: 'changes_requested',
+              overridden_by_user_id: designerUserId,
+              overridden_at: now,
+              updated_at: now,
+              // Deliberately NOT touching actor_name or change_request —
+              // those preserve the customer's original feedback so
+              // the names rollup can show
+              // "(originally requested changes by …: …)".
+            })
+            .eq('id', row.id)
+          if (upErr) {
+            setStatusWorking(false)
+            setStatusDialog(null)
+            showToast(`Failed to record override: ${upErr.message}`)
+            return
+          }
+        }
+
+        // Fresh inserts in one round-trip.
+        if (freshInserts.length > 0) {
+          const { error: insErr } = await supabase
+            .from('proof_name_approvals')
+            .insert(freshInserts)
+          if (insErr) {
+            setStatusWorking(false)
+            setStatusDialog(null)
+            showToast(`Failed to record per-name approvals: ${insErr.message}`)
+            return
+          }
+        }
+
+        // proof_events row per overridden slot. Designer identity
+        // goes on actor_name (the table requires text); recipient
+        // name goes on `name`. material_option_code is null — an
+        // override is whole-row, not option-tab-scoped, and 000124
+        // documents null as the "not applicable" semantic.
+        //
+        // Dual-write tolerance: if proof_name_approvals is already
+        // updated and this insert fails, the override audit is
+        // partial — overridden_from_state is recorded on the row
+        // but the activity feed has no entry. Surface the error
+        // via toast without rolling back the approval; mirrors the
+        // partial-failure pattern documented in 000124.
+        if (overrides.length > 0) {
+          const eventRows = overrides.map((o) => ({
+            proof_version_id: currentVersion.id,
+            event_type: 'designer_override_approve' as const,
+            actor_name: designerName,
+            name: o.name,
+            comment: null,
+            from_ip: null,
+            from_ua: null,
+            pricing_snapshot_at_action: null,
+            material_option_code: null,
+          }))
+          const { error: evErr } = await supabase
+            .from('proof_events')
+            .insert(eventRows)
+          if (evErr) {
+            showToast(`Override recorded, but activity feed entry failed: ${evErr.message}`)
+          }
         }
       }
     }
@@ -479,7 +616,9 @@ export default function ProofDetailPage() {
     // Step 2: flip project status to approved and stamp approved_at.
     // Kept identical to the pre-per-name-approval behaviour so
     // nothing downstream (status pill, customer page banner, etc.)
-    // has to change.
+    // has to change. The 000126 trigger may have already done this
+    // pass when the override UPDATE landed; the explicit update is
+    // an idempotent second pass.
     const { error } = await supabase
       .from('proofs')
       .update({ status: 'approved', approved_at: new Date().toISOString() })
@@ -800,6 +939,25 @@ export default function ProofDetailPage() {
 
   const currentVersion = versions.find((v) => v.is_current)
   const currentIsCustomQuote = !!currentVersion?.custom_quote
+
+  // Override-aware Mark-as-approved confirm copy. Counted from the
+  // already-loaded `approvals` state — handleApprove re-fetches
+  // before writing, so a stale count here only affects modal copy,
+  // not behaviour.
+  const pendingChangeRequestsCount = currentVersion
+    ? approvals.filter(
+        (a) =>
+          a.proof_version_id === currentVersion.id &&
+          a.state === 'changes_requested',
+      ).length
+    : 0
+  const isApproveOverride = pendingChangeRequestsCount > 0
+  const approveMessage = isApproveOverride
+    ? `${pendingChangeRequestsCount} recipient${pendingChangeRequestsCount === 1 ? '' : 's'} requested changes on the current version. Mark as approved anyway? This records an override on the timeline. The customer's feedback stays visible in the names rollup.`
+    : 'Mark this project as approved? This locks the project — no more proof versions can be added.'
+  const approveConfirmClass = isApproveOverride
+    ? 'bg-slate-700 hover:bg-slate-800 text-white'
+    : 'bg-emerald-600 hover:bg-emerald-700 text-white'
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1262,7 +1420,29 @@ export default function ProofDetailPage() {
                     : null
                   const auditEvent = auditKey ? eventsByVersionAndName.get(auditKey) : undefined
                   const expanded = expandedAuditKey === auditKey
-                  const hsFailed = auditEvent ? auditEvent.helpscout_thread_id == null : false
+                  // Override events deliberately don't post to Help
+                  // Scout; null thread id is expected for those, not
+                  // a failure. The "!" badge stays suppressed.
+                  const hsFailed = !!(
+                    auditEvent
+                    && auditEvent.event_type !== 'designer_override_approve'
+                    && auditEvent.helpscout_thread_id == null
+                  )
+                  // Override row (000129): state has flipped to
+                  // 'approved' but the row preserves the customer's
+                  // original actor_name and change_request so the
+                  // rollup can surface "(originally requested
+                  // changes by …)".
+                  const isOverride = approval?.overridden_from_state === 'changes_requested'
+                  // Designer who recorded the override comes from the
+                  // matching proof_events row. Falls back to a generic
+                  // label if dual-write partial failure (000124) lost
+                  // the event row, so the pill never reads broken.
+                  const overrideActorName = isOverride
+                    ? (auditEvent?.event_type === 'designer_override_approve'
+                        ? auditEvent.actor_name
+                        : 'designer')
+                    : null
                   return (
                     <div
                       key={key}
@@ -1276,7 +1456,16 @@ export default function ProofDetailPage() {
                         {approval?.state === 'approved' && (
                           <span className="inline-flex items-center gap-2 text-xs font-medium text-emerald-800">
                             <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
-                            Approved in {vRef}, {when} by {approval.actor_name}
+                            {isOverride ? (
+                              <>
+                                Approved in {vRef}, {when} by {overrideActorName}
+                                <span className="font-normal text-gray-500">
+                                  — originally requested changes by {approval.actor_name}
+                                </span>
+                              </>
+                            ) : (
+                              <>Approved in {vRef}, {when} by {approval.actor_name}</>
+                            )}
                             {/* Carry-forward provenance pill
                                 (migration 000083). Only renders
                                 when the approval is a carry-
@@ -1312,7 +1501,12 @@ export default function ProofDetailPage() {
                           </span>
                         )}
                       </div>
-                      {approval?.state === 'changes_requested' && approval.change_request && (
+                      {/* Customer's change_request body. Surfaces
+                          both for active changes_requested rows AND
+                          for override rows where state has flipped
+                          to 'approved' but the customer's original
+                          feedback is preserved on the row. */}
+                      {(approval?.state === 'changes_requested' || isOverride) && approval?.change_request && (
                         <p className="mt-1 text-xs text-gray-500">{approval.change_request}</p>
                       )}
                       {/* Phase 2 Prompt 8 — audit detail toggle.
@@ -1718,9 +1912,9 @@ export default function ProofDetailPage() {
       {/* Approve confirm dialog */}
       {statusDialog === 'approve' && (
         <ConfirmDialog
-          message="Mark this project as approved? This locks the project — no more proof versions can be added."
+          message={approveMessage}
           confirmLabel="Mark as approved"
-          confirmClass="bg-emerald-600 hover:bg-emerald-700 text-white"
+          confirmClass={approveConfirmClass}
           working={statusWorking}
           onConfirm={handleApprove}
           onCancel={() => setStatusDialog(null)}
@@ -1808,20 +2002,31 @@ function AuditPanel({
             <dd className="whitespace-pre-line text-gray-900">{event.comment}</dd>
           </>
         )}
-        <dt className="font-semibold text-gray-700">Help Scout</dt>
-        <dd>
-          {event.helpscout_thread_id ? (
-            <span className="text-gray-900">Thread {event.helpscout_thread_id}</span>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 text-amber-700">
-              <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold">!</span>
-              Notification failed — customer was asked to email
-            </span>
-          )}
-          {!hsFailed && event.helpscout_thread_id && (
-            <span className="ml-2 text-[11px] text-gray-400">(thread id, no public link)</span>
-          )}
-        </dd>
+        {event.event_type === 'designer_override_approve' ? (
+          <>
+            <dt className="font-semibold text-gray-700">Notification</dt>
+            <dd className="text-gray-500">
+              <span className="text-[11px]">n/a — designer override (no customer notification)</span>
+            </dd>
+          </>
+        ) : (
+          <>
+            <dt className="font-semibold text-gray-700">Help Scout</dt>
+            <dd>
+              {event.helpscout_thread_id ? (
+                <span className="text-gray-900">Thread {event.helpscout_thread_id}</span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-amber-700">
+                  <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold">!</span>
+                  Notification failed — customer was asked to email
+                </span>
+              )}
+              {!hsFailed && event.helpscout_thread_id && (
+                <span className="ml-2 text-[11px] text-gray-400">(thread id, no public link)</span>
+              )}
+            </dd>
+          </>
+        )}
       </dl>
       <div className="mt-2 border-t border-gray-200 pt-2">
         <button

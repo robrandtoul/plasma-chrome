@@ -67,9 +67,10 @@ interface DashboardLatestEvent {
   created_at: string
   // 'view' rows are synthesised by the dashboard_latest_events view
   // from proof_version_views (deduped to first view per version per
-  // day, non-bot only). They are not stored in proof_events — the
-  // table CHECK constraint still allows only 'approve' / 'request_changes'.
-  event_type: 'approve' | 'request_changes' | 'view'
+  // day, non-bot only). They are not stored in proof_events. The
+  // proof_events.event_type CHECK constraint admits 'approve',
+  // 'request_changes', and (since 000129) 'designer_override_approve'.
+  event_type: 'approve' | 'request_changes' | 'view' | 'designer_override_approve'
   actor_name: string
   recipient_name: string | null
   helpscout_thread_id: string | null
@@ -397,11 +398,14 @@ function LatestActivityPanel({
           {events.map((e, i) => {
             const isView = e.event_type === 'view'
             const isApprove = e.event_type === 'approve'
+            const isOverride = e.event_type === 'designer_override_approve'
             const verb = isView
               ? `viewed v${e.version_number}`
               : isApprove
                 ? 'approved'
-                : 'requested changes on'
+                : isOverride
+                  ? 'marked as approved (override)'
+                  : 'requested changes on'
             const projectLabel = [e.contact_name, e.company_name].filter(Boolean).join(' · ') || '(no contact)'
             const recipient = e.recipient_name && e.recipient_name !== '__shared__'
               ? e.recipient_name
@@ -412,19 +416,32 @@ function LatestActivityPanel({
             const subline = isView
               ? projectLabel
               : `${projectLabel} · v${e.version_number} · ${recipient}`
-            // Help Scout failure badge only applies to action events —
-            // views never trigger an HS post.
-            const failed = !isView && e.helpscout_thread_id == null
+            // Help Scout failure badge applies only to customer-driven
+            // action events. Views never trigger an HS post; override
+            // events deliberately don't either, so a null thread id is
+            // expected for both, not a failure.
+            const failed = !isView && !isOverride && e.helpscout_thread_id == null
             // Vertical accent bar on the leading edge stands in for
             // the row tint — same colour signal, far less ink on
             // the panel. 4px wide reads at a glance without crowding
             // the content. Hover uses a neutral gray so feedback
-            // stays distinct from the event-type colour.
+            // stays distinct from the event-type colour. Slate for
+            // overrides keeps designer audit actions visually adjacent
+            // to but distinct from green customer approvals.
             const rowAccent = isView
               ? 'border-l-4 border-sky-500'
               : isApprove
                 ? 'border-l-4 border-emerald-500'
-                : 'border-l-4 border-amber-500'
+                : isOverride
+                  ? 'border-l-4 border-slate-600'
+                  : 'border-l-4 border-amber-500'
+            const dotClass = isView
+              ? 'bg-sky-500'
+              : isApprove
+                ? 'bg-emerald-500'
+                : isOverride
+                  ? 'bg-slate-600'
+                  : 'bg-amber-500'
             return (
               <li
                 key={e.id}
@@ -442,10 +459,7 @@ function LatestActivityPanel({
               >
                 <span
                   aria-hidden
-                  className={[
-                    'mt-1.5 h-2 w-2 shrink-0 rounded-full',
-                    isView ? 'bg-sky-500' : isApprove ? 'bg-emerald-500' : 'bg-amber-500',
-                  ].join(' ')}
+                  className={['mt-1.5 h-2 w-2 shrink-0 rounded-full', dotClass].join(' ')}
                 />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm leading-snug text-gray-900">

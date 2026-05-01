@@ -175,7 +175,7 @@ export interface PublicProofVersion {
 // the public contract for the customer page's per-recipient render.
 export interface ProofEventState {
   name: string | null
-  event_type: 'approve' | 'request_changes'
+  event_type: 'approve' | 'request_changes' | 'designer_override_approve'
   actor_name: string
   comment: string | null
   created_at: string
@@ -262,6 +262,17 @@ export type ProofNameApproval = {
   // already-loaded versions array and silently skips the "Carried
   // from vN" pill when the pointer is null or unresolvable.
   carried_from_version_id: string | null
+  // ── Designer override audit (migration 000129) ──────────────────────────
+  // Non-null only when this row was flipped to state='approved' by a
+  // designer "Mark as approved" override on top of an existing
+  // changes_requested row. The three fields are written together in
+  // ProofDetailPage.handleApprove and never separately. CHECK on
+  // overridden_from_state restricts values to 'changes_requested';
+  // widen alongside ProofNameApproval.state if new pre-approval
+  // states are introduced.
+  overridden_from_state: 'changes_requested' | null
+  overridden_by_user_id: string | null
+  overridden_at: string | null
 }
 
 export interface ProofVersionImage {
