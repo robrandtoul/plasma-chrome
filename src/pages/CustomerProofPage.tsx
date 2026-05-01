@@ -1539,14 +1539,18 @@ export default function CustomerProofPage() {
                 (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
                   ? 'Front and back'
                   : 'Front only'
-              // Cell 4 — first names joined with " + " per README
-              // §2 line 245. Empty array → em-dash placeholder so
-              // the 4-cell grid stays intact.
+              // Cell 4 — full names joined with " + ". Mirrors the
+              // Specification section's "Names on card" treatment
+              // a few sections down (no truncation). Empty array →
+              // em-dash placeholder so the 4-cell grid stays intact.
+              // Recipient-band headings ("Marie's card") at line
+              // ~1789 still use firstName() for the possessive form
+              // — separate surface, separate concern.
               const namesLabel = activeVersion.names.length >= 2 ? 'Names' : 'Name'
               const namesValue =
                 activeVersion.names.length === 0
                   ? '—'
-                  : activeVersion.names.map(firstName).join(' + ')
+                  : activeVersion.names.join(' + ')
               return (
                 <dl className="mt-12 grid grid-cols-2 border-b border-[rgba(26,22,18,0.10)] sm:grid-cols-4">
                   <DocketCell label="Material" value={activeVersion.material_display} />
