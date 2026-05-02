@@ -32,7 +32,7 @@ All routes stubbed and functional (placeholder Tailwind, no design system yet):
 Auth is handled by a React context (AuthProvider) with a RequireAuth guard on all designer routes.
 
 ### Netlify
-Site live at https://proof-viewer.netlify.app. Connected to the GitHub repo; auto-deploys on push to `main`. Build command: `pnpm build`, publish directory: `dist`. VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY set in Netlify environment variables. First designer login confirmed working.
+Site live at https://proofs.plasmadesign.co.uk. Connected to the GitHub repo; auto-deploys on push to `main`. Build command: `pnpm build`, publish directory: `dist`. VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY set in Netlify environment variables. First designer login confirmed working.
 
 ## Next session
 

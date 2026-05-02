@@ -1,0 +1,35 @@
+{
+  "breakpoint": "360x640 small phone",
+  "viewport": { "w": 360, "h": 640 },
+  "scroll": { "scrollW": 360, "clientW": 360, "scrollH": 5425 },
+  "overflow_horizontal": false,
+  "overflow_amount": 0,
+  "horizontally_overflowing_elements": [],
+  "touch_targets_visible": 4,
+  "touch_target_violations_44": [
+    {
+      "tag": "a",
+      "text": "Download ↓",
+      "w": 124,
+      "h": 28,
+      "note": "Image download chip is 28px tall — fails the 44px minimum on touch viewports"
+    }
+  ],
+  "touch_target_passes": [
+    { "tag": "button", "text": "(proof image, lightbox trigger)", "w": 312, "h": 269 },
+    { "tag": "input[type=number]", "text": "Quantity lookup input", "w": 246, "h": 53 },
+    { "tag": "label", "text": "I've read this and understand the terms", "w": 254, "h": 59 }
+  ],
+  "visual_observations": [
+    "Pricing table at 360px shows visible truncation in the right-hand column. '800 MICRON' header reads as 'BO MICRO'; price cells under it read as '£29 £5.9 each' / '£32 £3.4 each' — both the £### total and the £#.## unit price look truncated mid-character, suggesting the column is narrower than its content.",
+    "Three columns of prices (300/500/800 MICRON) on a 360px viewport gives ~95-100px per column after the leading 'TOTAL QUANTITY' column — too tight for a £###.## total + £#.## each + 'each' label stacked vertically. P0 risk: customer cannot read prices for the thickest variant.",
+    "Masthead (logo + PROOF VIEWER + PL · 3264463649) fits cleanly with no clipping.",
+    "'PROOF FOR / Matthew Latifi' display heading wraps to two lines, looks intentional and readable.",
+    "Material spec block (MATERIAL / REVISION / NAME rows) is tidy.",
+    "Single proof image fills the column with comfortable padding; Download chip sits under filename caption with appropriate spacing — but the chip itself fails the touch target check.",
+    "Specification table (MATERIAL / SIDES / FINISH / NAMES ON CARD / REVISION) reads cleanly with two-column layout.",
+    "Pricing card 'Need a price for a specific quantity?' lookup input is a tall single-line text input with adequate touch target.",
+    "Disclaimer / 'Please check this proof carefully' section reads well on narrow viewports — the 'I've read this and understand the terms' checkbox label is visible and well-spaced.",
+    "Footer 'M PLASMADESIGN / PL · 3264463649 · V1' fits within viewport."
+  ]
+}

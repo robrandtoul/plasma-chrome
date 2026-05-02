@@ -37,12 +37,16 @@
 //                                              (already configured per
 //                                              project brief, used by
 //                                              send-helpscout-reply).
-//   PROOF_VIEWER_BASE_URL                    — e.g. https://proof-viewer
-//                                              .netlify.app. Used as the
-//                                              fallback when the
-//                                              request's Origin header
-//                                              isn't in the allowlist
-//                                              (see ALLOWED_BASE_URL_
+//   PROOF_VIEWER_BASE_URL                    — e.g. https://proofs
+//                                              .plasmadesign.co.uk
+//                                              (the legacy
+//                                              proof-viewer.netlify.app
+//                                              host is also accepted).
+//                                              Used as the fallback
+//                                              when the request's
+//                                              Origin header isn't in
+//                                              the allowlist (see
+//                                              ALLOWED_BASE_URL_
 //                                              ORIGINS below). Empty
 //                                              string is the final
 //                                              fallback — customer
@@ -69,7 +73,10 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 //   cost of a tiny static list.
 //
 // Members:
-//   - production Netlify domain
+//   - production custom domain (proofs.plasmadesign.co.uk)
+//   - legacy Netlify domain (proof-viewer.netlify.app) — kept as a
+//     transitional safety net while any in-flight links / bookmarks
+//     are still resolving via the old host
 //   - Vite dev default port (5173)
 //   - Vite preview default port (4173)
 //
@@ -77,6 +84,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 // (e.g. https://deploy-preview-N--proof-viewer.netlify.app), extend
 // this list — likely as a regex entry — at that point.
 const ALLOWED_BASE_URL_ORIGINS = [
+  'https://proofs.plasmadesign.co.uk',
   'https://proof-viewer.netlify.app',
   'http://localhost:5173',
   'http://localhost:4173',

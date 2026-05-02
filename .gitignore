@@ -11,8 +11,8 @@ dist-ssr/
 .env.local
 .env.production
 
-# Claude Code local settings
-.claude/settings.local.json
+# Claude Code local settings, plugins, and session scratch
+.claude/
 
 # editor and OS
 .DS_Store
