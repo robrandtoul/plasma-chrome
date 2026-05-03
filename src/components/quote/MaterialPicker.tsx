@@ -176,7 +176,7 @@ export function MaterialPicker({
           placeholder="Type to filter materials…"
           aria-label="Filter materials"
           autoComplete="off"
-          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-base sm:text-sm text-gray-900 placeholder:text-gray-400 focus:border-violet-400 focus:outline-none focus:ring-1 focus:ring-violet-400"
+          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[17px] sm:text-sm text-gray-900 placeholder:text-gray-400 focus:border-violet-400 focus:outline-none focus:ring-1 focus:ring-violet-400"
         />
       </div>
 

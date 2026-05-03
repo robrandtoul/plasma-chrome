@@ -87,7 +87,7 @@ export function QuantityInput({
         placeholder={placeholder}
         aria-label="Quantity"
         className={[
-          'w-40 rounded-lg border px-3 py-2 text-base font-medium tabular-nums',
+          'w-40 rounded-lg border px-3 py-2 text-[17px] sm:text-base font-medium tabular-nums',
           'focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-1',
           disabled || variantTiers.length === 0
             ? 'cursor-not-allowed border-gray-100 bg-gray-50 text-gray-400'
