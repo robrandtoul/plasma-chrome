@@ -1,4 +1,20 @@
+import type { KeyboardEvent } from 'react'
 import { downloadBlob } from '../lib/downloadFile'
+
+// Shared keyboard handler for the click-to-zoom card wrappers.
+// Wrappers are <div role="button"> rather than real <button>
+// elements because they contain a nested <button> for Download
+// (button-in-button is invalid HTML); div + role + tabIndex +
+// keydown is the standard escape hatch and is announced as
+// interactive by screen readers.
+function activateOnEnterOrSpace(onActivate: () => void) {
+  return (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onActivate()
+    }
+  }
+}
 
 export interface GridImage {
   id: string
@@ -33,10 +49,15 @@ export function ImageCard({
   alt: string
   onClick: (src: string) => void
 }) {
+  const activate = () => onClick(image.signed_url)
   return (
     <div
-      className="cursor-zoom-in overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200"
-      onClick={() => onClick(image.signed_url)}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open ${alt} at full size`}
+      className="cursor-zoom-in overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+      onClick={activate}
+      onKeyDown={activateOnEnterOrSpace(activate)}
     >
       <img
         src={image.signed_url}
@@ -97,37 +118,52 @@ export function ImageGrid({
   }
 
   if (images.length === 1) {
+    const only = images[0]
+    const altText = only.label || `Proof version ${versionNumber}`
+    const activate = () => onImageClick(only.signed_url)
     return (
       <div
-        className="cursor-zoom-in overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200"
-        onClick={() => onImageClick(images[0].signed_url)}
+        role="button"
+        tabIndex={0}
+        aria-label={`Open ${altText} at full size`}
+        className="cursor-zoom-in overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+        onClick={activate}
+        onKeyDown={activateOnEnterOrSpace(activate)}
       >
         <img
-          src={images[0].signed_url}
-          alt={`Proof version ${versionNumber}`}
+          src={only.signed_url}
+          alt={altText}
           className="w-full object-contain"
         />
-        <Caption label={images[0].label ?? ''} filename={images[0].original_filename} signedUrl={images[0].signed_url} />
+        <Caption label={only.label ?? ''} filename={only.original_filename} signedUrl={only.signed_url} />
       </div>
     )
   }
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-      {images.map((img) => (
-        <div
-          key={img.id}
-          className="cursor-zoom-in overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200"
-          onClick={() => onImageClick(img.signed_url)}
-        >
-          <img
-            src={img.signed_url}
-            alt={img.label || `Proof version ${versionNumber}`}
-            className="w-full object-contain"
-          />
-          <Caption label={img.label ?? ''} filename={img.original_filename} signedUrl={img.signed_url} />
-        </div>
-      ))}
+      {images.map((img) => {
+        const altText = img.label || `Proof version ${versionNumber}`
+        const activate = () => onImageClick(img.signed_url)
+        return (
+          <div
+            key={img.id}
+            role="button"
+            tabIndex={0}
+            aria-label={`Open ${altText} at full size`}
+            className="cursor-zoom-in overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+            onClick={activate}
+            onKeyDown={activateOnEnterOrSpace(activate)}
+          >
+            <img
+              src={img.signed_url}
+              alt={altText}
+              className="w-full object-contain"
+            />
+            <Caption label={img.label ?? ''} filename={img.original_filename} signedUrl={img.signed_url} />
+          </div>
+        )
+      })}
     </div>
   )
 }

@@ -73,13 +73,17 @@ export default function AdminUsersPage() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const menuContainerRef = useRef<HTMLDivElement>(null)
-  // Per-open placement decision. The menu is custom-positioned via
-  // CSS absolute placement (top-full vs bottom-full); when the
-  // natural-down placement would clip below the viewport, the
-  // useLayoutEffect below flips to up. Reset to 'down' on each open
-  // so a previously-flipped row doesn't carry stale placement to
-  // the next click.
+  // Per-open placement decision. The menu is rendered with
+  // position: fixed and viewport-relative coordinates derived
+  // from the trigger button's bounding rect — so the menu
+  // escapes the table wrapper's overflow clip (necessary now
+  // that the wrapper has overflow-x-auto for narrow viewports).
+  // Default 'down' placement; the useLayoutEffect below flips
+  // to 'up' when the natural-down placement would clip below
+  // the viewport. Reset on each open so a previously-flipped
+  // row doesn't carry stale placement to the next click.
   const [menuPlacement, setMenuPlacement] = useState<'down' | 'up'>('down')
+  const [openTriggerRect, setOpenTriggerRect] = useState<DOMRect | null>(null)
   const openMenuRef = useRef<HTMLDivElement | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   // Set-password modal state — reset every time the dialog opens so a
@@ -98,6 +102,7 @@ export default function AdminUsersPage() {
       if (!openMenuId) return
       if (menuContainerRef.current && !menuContainerRef.current.contains(e.target as Node)) {
         setOpenMenuId(null)
+        setOpenTriggerRect(null)
       }
     }
     document.addEventListener('mousedown', onDocClick)
@@ -110,29 +115,46 @@ export default function AdminUsersPage() {
   // before paint, so the user never sees the down→up jump.
   //
   // Algorithm: every open starts with placement='down' (the kebab
-  // onClick resets it). The effect then measures the menu's
-  // rendered rect; if rect.bottom overflows past a 16px safety
-  // margin, flip to 'up' — but only if there's room above. The
-  // dep array is [openMenuId] only, so the post-flip re-render
-  // doesn't loop the effect.
+  // onClick resets it). The effect measures the menu's rendered
+  // rect; if rect.bottom overflows past a 16px safety margin,
+  // flip to 'up' — but only if there's room above. The dep array
+  // is [openMenuId] only, so the post-flip re-render doesn't
+  // loop the effect.
   useLayoutEffect(() => {
-    if (!openMenuId) return
+    if (!openMenuId || !openTriggerRect) return
     const el = openMenuRef.current
     if (!el) return
     const SAFE_MARGIN = 16
     const rect = el.getBoundingClientRect()
     if (rect.bottom > window.innerHeight - SAFE_MARGIN) {
-      const triggerWrap = el.parentElement
-      const triggerRect = triggerWrap?.getBoundingClientRect()
-      // Room above? If yes, flip up. If no (e.g. the table is
-      // longer than the viewport AND the kebab's wrapper is at
-      // the top), leave it as-is — clipping below is no worse
-      // than clipping above, and the page is naturally scrollable.
-      if (triggerRect && triggerRect.top - rect.height >= SAFE_MARGIN) {
+      // Room above? If yes, flip up. If no (e.g. the page is
+      // longer than the viewport AND the kebab is near the top),
+      // leave it as-is — clipping below is no worse than clipping
+      // above, and the page is naturally scrollable.
+      if (openTriggerRect.top - rect.height - 4 >= SAFE_MARGIN) {
         setMenuPlacement('up')
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openMenuId])
+
+  // Close the menu on any scroll or resize. Fixed-position
+  // coordinates were captured from the trigger's rect at open
+  // time, so a scroll event would visually disconnect the menu
+  // from its trigger. Closing matches the standard dropdown
+  // convention and is cheaper than continuously re-anchoring.
+  useEffect(() => {
+    if (!openMenuId) return
+    const close = () => setOpenMenuId(null)
+    // Capture-phase + passive so we catch scrolls inside any
+    // overflow ancestor (e.g. the table's overflow-x-auto
+    // wrapper) without preventing them.
+    window.addEventListener('scroll', close, { capture: true, passive: true })
+    window.addEventListener('resize', close)
+    return () => {
+      window.removeEventListener('scroll', close, { capture: true } as any)
+      window.removeEventListener('resize', close)
+    }
   }, [openMenuId])
 
   async function load() {
@@ -152,6 +174,7 @@ export default function AdminUsersPage() {
     setActionDialog(d)
     setActionError(null)
     setOpenMenuId(null)
+    setOpenTriggerRect(null)
     // setPassword modal opens with a freshly-generated default. Admin
     // can clear + replace, or click Generate again. Reset every open
     // to avoid leaking the previous target's input.
@@ -354,16 +377,17 @@ export default function AdminUsersPage() {
           <p className="text-gray-400">No users yet.</p>
         </div>
       ) : (
-        // overflow-hidden was originally here to clip table content
-        // to the rounded-2xl corners. Removed because it also clipped
-        // the per-row kebab menus, which extend below their row when
-        // open — for any row past the upper third of the table the
-        // bottom 1-2 menu items would silently disappear under the
-        // wrapper's bottom edge. Cells have no backgrounds + last:
-        // border-0 handles the bottom-row border-bleed, so dropping
-        // the wrapper-level clip has no visible side effect on the
-        // table itself.
-        <div className="rounded-2xl bg-white shadow-sm ring-1 ring-gray-200" ref={menuContainerRef}>
+        // overflow-x-auto so eight columns + a kebab don't squeeze
+        // into illegible 70-90px slivers on a narrow viewport
+        // (laptop with a side panel open). The kebab menu used to
+        // be CSS-absolute-positioned inside this wrapper, which
+        // forced overflow-x: visible to avoid clipping it; the
+        // menu now renders with position: fixed (anchored to its
+        // trigger's bounding rect) so it escapes any overflow
+        // ancestor and the wrapper can clip horizontally without
+        // hiding menu items. overflow-y stays hidden to preserve
+        // the rounded-2xl corner mask on the top + bottom edges.
+        <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200" ref={menuContainerRef}>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100">
@@ -422,17 +446,21 @@ export default function AdminUsersPage() {
                     <td className="px-5 py-3 text-right">
                       <div className="relative inline-block">
                         <button
-                          onClick={() => {
+                          onClick={(e) => {
                             // Opening a different row's menu: reset
                             // placement to 'down' so the layout
                             // effect measures from the natural
-                            // position. Closing (same id): just
-                            // null out openMenuId; placement is
-                            // ignored when closed.
+                            // position. Capture the trigger rect
+                            // so the menu can render with fixed
+                            // positioning anchored to it. Closing
+                            // (same id): just null out openMenuId;
+                            // placement is ignored when closed.
                             if (openMenuId === u.id) {
                               setOpenMenuId(null)
+                              setOpenTriggerRect(null)
                             } else {
                               setMenuPlacement('down')
+                              setOpenTriggerRect(e.currentTarget.getBoundingClientRect())
                               setOpenMenuId(u.id)
                             }
                           }}
@@ -445,13 +473,30 @@ export default function AdminUsersPage() {
                             <circle cx="13" cy="8" r="1.5" />
                           </svg>
                         </button>
-                        {openMenuId === u.id && (
+                        {openMenuId === u.id && openTriggerRect && (
                           <div
                             ref={openMenuRef}
-                            className={[
-                              'absolute right-0 z-10 w-56 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg',
-                              menuPlacement === 'up' ? 'bottom-full mb-1' : 'top-full mt-1',
-                            ].join(' ')}
+                            // Fixed-positioned so the menu escapes
+                            // the table wrapper's overflow-x-auto
+                            // clip. Coordinates are derived from
+                            // the trigger's bounding rect captured
+                            // at open time; the close-on-scroll
+                            // effect above means we never have to
+                            // reposition mid-life.
+                            style={
+                              menuPlacement === 'up'
+                                ? {
+                                    position: 'fixed',
+                                    bottom: window.innerHeight - openTriggerRect.top + 4,
+                                    right: window.innerWidth - openTriggerRect.right,
+                                  }
+                                : {
+                                    position: 'fixed',
+                                    top: openTriggerRect.bottom + 4,
+                                    right: window.innerWidth - openTriggerRect.right,
+                                  }
+                            }
+                            className="z-50 w-56 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg"
                           >
                             {/* Send password reset — primary affordance.
                                 Disabled for deactivated users (their auth
@@ -743,7 +788,7 @@ function SetPasswordDialog({
   onConfirm: () => void
   onCancel: () => void
 }) {
-  const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+  const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
   return (
     <>
       <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !working && onCancel()} />
@@ -826,7 +871,7 @@ function SetHelpscoutUserIdDialog({
   onConfirm: () => void
   onCancel: () => void
 }) {
-  const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+  const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
   // Save label flips between Clear / Save based on whether the input
   // is empty — the empty case sends null to the edge function, which
   // clears the mapping. Distinct labels make the destructive case
@@ -868,8 +913,9 @@ function SetHelpscoutUserIdDialog({
                 onClick={onClear}
                 disabled={working || value === ''}
                 className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                title="Empty the field. Click 'Clear mapping' below to actually save the change."
               >
-                Clear
+                Empty field
               </button>
             </div>
             <p className="mt-1.5 text-xs text-gray-400">
@@ -877,6 +923,11 @@ function SetHelpscoutUserIdDialog({
                 ? <span>using project default (HELPSCOUT_DEFAULT_USER_ID)</span>
                 : <span className="font-mono">{user.helpscout_user_id}</span>}
             </p>
+            {isClearing && user.helpscout_user_id != null && (
+              <p className="mt-1.5 text-xs text-amber-700">
+                Field is empty — click <strong>Clear mapping</strong> below to remove the saved value.
+              </p>
+            )}
           </div>
 
           {errorMsg && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>}

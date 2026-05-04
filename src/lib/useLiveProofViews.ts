@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useId, useRef } from 'react'
 import { supabase } from './supabase'
 
 // Shape of a realtime-delivered proof_version_views row. Matches
@@ -47,6 +47,15 @@ export function useLiveProofViews({ proofId, versionIds, onView }: UseLiveProofV
     onViewRef.current = onView
   })
 
+  // Per-mount channel suffix. Without it, two simultaneous mounts
+  // of the same proof (StrictMode double-mount in dev, fast HMR,
+  // back/forward cache replay) would call .channel() with an
+  // identical name; supabase-js returns the existing channel,
+  // and the first cleanup removes the channel the second mount
+  // is still using — silently breaking realtime updates until
+  // a hard refresh.
+  const channelSuffix = useId()
+
   // Flatten versionIds into a stable key so the effect doesn't
   // fire on array-identity changes that don't actually change
   // the set. Sort for determinism; versionIds order is whatever
@@ -63,7 +72,7 @@ export function useLiveProofViews({ proofId, versionIds, onView }: UseLiveProofV
     const filter = `proof_version_id=in.(${versionIds.join(',')})`
 
     const channel = supabase
-      .channel(`proof-views-${proofId}`)
+      .channel(`proof-views-${proofId}-${channelSuffix}`)
       .on(
         'postgres_changes',
         {
@@ -83,7 +92,15 @@ export function useLiveProofViews({ proofId, versionIds, onView }: UseLiveProofV
           onViewRef.current(row)
         },
       )
-      .subscribe()
+      .subscribe((status, err) => {
+        // Surface CHANNEL_ERROR / TIMED_OUT so a silent failure
+        // (firewall, expired session) doesn't pretend everything
+        // is fine. The page-load fetch is unaffected — this is
+        // diagnostic only.
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          if (err) console.warn('[useLiveProofViews]', status, err)
+        }
+      })
 
     return () => {
       void supabase.removeChannel(channel)
@@ -93,5 +110,5 @@ export function useLiveProofViews({ proofId, versionIds, onView }: UseLiveProofV
     // proofs could theoretically share a proof_version_id if the
     // parent's version list is stale.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [proofId, versionKey])
+  }, [proofId, versionKey, channelSuffix])
 }

@@ -327,7 +327,7 @@ export default function HelpScoutEditModal({
                   }
                 }}
                 placeholder="https://secure.helpscout.net/conversation/…"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
               />
               {hsLookupInFlight && (
                 <p className="mt-1.5 text-xs text-gray-400">Checking Help Scout…</p>
@@ -372,7 +372,7 @@ export default function HelpScoutEditModal({
                   value={overrideReason}
                   onChange={(e) => setOverrideReason(e.target.value)}
                   placeholder={`At least ${MIN_OVERRIDE_REASON_LENGTH} characters.`}
-                  className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-[17px] sm:text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                 />
                 <p className="mt-1 text-xs text-amber-700">
                   {overrideReason.trim().length < MIN_OVERRIDE_REASON_LENGTH

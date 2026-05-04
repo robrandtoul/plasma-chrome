@@ -133,7 +133,7 @@ export default function NameChipInput({
                 if (e.key === 'Enter') { e.preventDefault(); commitEdit() }
                 if (e.key === 'Escape') { e.preventDefault(); cancelEdit() }
               }}
-              className="min-w-[6rem] rounded border border-gray-300 bg-white px-1.5 py-0.5 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              className="min-w-[6rem] rounded border border-gray-300 bg-white px-1.5 py-0.5 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
             />
           )
         }

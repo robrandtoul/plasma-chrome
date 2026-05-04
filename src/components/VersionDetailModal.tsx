@@ -978,7 +978,7 @@ function ApproveDialog({
             type="text"
             value={actor}
             onChange={(e) => setActor(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none"
+            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none"
             autoFocus
           />
         </label>
@@ -1039,7 +1039,7 @@ function RequestChangesDialog({
             value={note}
             onChange={(e) => setNote(e.target.value)}
             rows={4}
-            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none"
+            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none"
             autoFocus
           />
         </label>
@@ -1049,7 +1049,7 @@ function RequestChangesDialog({
             type="text"
             value={actor}
             onChange={(e) => setActor(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none"
+            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none"
           />
         </label>
         <div className="mt-5 flex justify-end gap-2">

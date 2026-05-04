@@ -25,7 +25,16 @@ export function useQuoteShortcut() {
       if (!(e.metaKey || e.ctrlKey)) return
       if (isEditable(document.activeElement)) return
       e.preventDefault()
-      window.open('/quote', '_blank', 'noopener,noreferrer')
+      // Safari occasionally treats programmatic Cmd-K opens as a
+      // popup and blocks the new tab. window.open returns null in
+      // that case; fall back to a same-tab navigation so the
+      // shortcut still goes somewhere useful instead of silently
+      // doing nothing.
+      const w = window.open('/quote', '_blank', 'noopener,noreferrer')
+      if (!w) {
+        console.warn('[useQuoteShortcut] window.open blocked, falling back to same-tab navigation')
+        window.location.assign('/quote')
+      }
     }
 
     window.addEventListener('keydown', onKey)

@@ -685,7 +685,7 @@ export default function EditVersionPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+      <div className="flex min-h-dvh items-center justify-center bg-gray-50">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
       </div>
     )
@@ -731,7 +731,7 @@ export default function EditVersionPage() {
   )
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-dvh bg-gray-50">
       <PageDropOverlay visible={isPageDragOver} />
       {toast?.kind === 'validation' && (
         <div
@@ -1108,4 +1108,4 @@ export default function EditVersionPage() {
   )
 }
 
-const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'

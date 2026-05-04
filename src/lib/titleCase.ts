@@ -15,9 +15,11 @@
 //     .co.uk" stay as "Theluckygoat.co.uk" rather than becoming
 //     "Theluckygoat.Co.Uk". Trailing periods on abbreviations (Ltd.)
 //     are preserved as-is.
-//   * Doesn't try to handle "McDonald" / "MacLeod" specially; title
-//     case produces "Mcdonald" / "Macleod" which the designer can
-//     fix on the review step.
+//   * "Mc" and "Mac" prefixes get the following letter capitalised:
+//     "mcdonald" → "McDonald", "macleod" → "MacLeod". Conservative —
+//     only fires when the prefix is followed by a vowel or another
+//     letter that makes a plausible name (skips "mac" alone, "macy",
+//     etc., to avoid false positives).
 //
 // Only ever called on values freshly arrived from Help Scout. Never
 // re-applied to designer-typed input.
@@ -34,6 +36,13 @@ const CONNECTORS = new Set([
 // don't trigger a capitalise.
 const CAPITALISE_RE = /(^|[-'])(\p{L})/gu
 
+// Mc / Mac prefix uppercase pass. Only fires when the rest of the
+// token is at least 3 letters and starts with a letter — skips
+// "Mac" alone, "Mac1", trailing punctuation. The prefix itself is
+// already title-cased by CAPITALISE_RE; this only fixes the
+// letter that follows.
+const MC_MAC_RE = /^(Ma?c)([a-z])(?=[a-z]{2,})/
+
 export function titleCase(input: string): string {
   if (!input) return input
   // Split on whitespace but keep the separators so we can
@@ -42,8 +51,11 @@ export function titleCase(input: string): string {
     if (/^\s+$/.test(token) || token === '') return token
     const lower = token.toLowerCase()
     if (CONNECTORS.has(lower)) return lower
-    return lower.replace(CAPITALISE_RE, (_m, boundary: string, letter: string) =>
+    const cased = lower.replace(CAPITALISE_RE, (_m, boundary: string, letter: string) =>
       boundary + letter.toUpperCase(),
+    )
+    return cased.replace(MC_MAC_RE, (_m, prefix: string, letter: string) =>
+      prefix + letter.toUpperCase(),
     )
   }).join('')
 }

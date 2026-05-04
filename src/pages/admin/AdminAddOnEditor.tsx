@@ -373,7 +373,7 @@ function SeedQuantitiesDialog({ onSeed, onCancel }: {
               type="text"
               value={raw}
               onChange={(e) => setRaw(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
               placeholder="100, 250, 500, 750, 1000"
             />
           </div>

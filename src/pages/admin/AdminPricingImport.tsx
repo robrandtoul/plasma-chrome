@@ -98,19 +98,24 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
                   Drag a CSV or ZIP here, or click to pick one. Imports update existing prices and create new quantity tiers. They never delete tiers. To remove a tier, use the pricing editor.
                 </p>
                 <div
-                  onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+                  onDragOver={(e) => { if (working) return; e.preventDefault(); setDragOver(true) }}
                   onDragLeave={() => setDragOver(false)}
                   onDrop={(e) => {
                     e.preventDefault()
                     setDragOver(false)
+                    if (working) return
                     const f = e.dataTransfer.files?.[0]
                     if (f) handleFile(f)
                   }}
-                  onClick={() => inputRef.current?.click()}
+                  onClick={() => { if (working) return; inputRef.current?.click() }}
+                  aria-disabled={working || undefined}
                   className={[
-                    'mt-4 flex h-40 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed text-sm text-gray-500 transition-colors',
-                    dragOver ? 'border-gray-900 bg-gray-50' : 'border-gray-300 hover:bg-gray-50',
-                  ].join(' ')}
+                    'mt-4 flex h-40 flex-col items-center justify-center rounded-2xl border-2 border-dashed text-sm text-gray-500 transition-colors',
+                    working
+                      ? 'cursor-not-allowed border-gray-200 bg-gray-50 opacity-70'
+                      : 'cursor-pointer hover:bg-gray-50',
+                    !working && (dragOver ? 'border-gray-900 bg-gray-50' : 'border-gray-300'),
+                  ].filter(Boolean).join(' ')}
                 >
                   {working ? 'Parsing…' : 'Drop a .csv or .zip here, or click to browse'}
                 </div>
@@ -147,7 +152,16 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
           {preview && (
             <div className="flex items-center justify-between gap-3 border-t border-gray-100 px-6 py-4">
               <button
-                onClick={() => { setFile(null); setPreview(null); setError(null) }}
+                onClick={() => {
+                  setFile(null)
+                  setPreview(null)
+                  setError(null)
+                  // Reset the underlying <input>'s value so picking
+                  // the same filename a second time still fires
+                  // onChange. Browsers skip onChange when the value
+                  // is unchanged, which silently no-op'd this path.
+                  if (inputRef.current) inputRef.current.value = ''
+                }}
                 disabled={working}
                 className="text-xs text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline disabled:opacity-50"
               >
@@ -220,7 +234,7 @@ function PreviewView({
           <ul className="space-y-1 rounded-lg bg-rose-50 px-4 py-3 text-xs text-rose-700">
             {preview.errors.map((e, i) => (
               <li key={i}>
-                <span className="font-medium">{e.file}{e.row != null ? ` · Row ${e.row}` : ''}:</span> {e.message}
+                <span className="font-medium">{e.file || fileName || 'CSV'}{e.row != null ? ` · Row ${e.row}` : ''}:</span> {e.message}
               </li>
             ))}
           </ul>

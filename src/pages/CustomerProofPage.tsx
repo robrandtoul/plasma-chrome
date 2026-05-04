@@ -61,13 +61,23 @@ export default function CustomerProofPage() {
   const [variantRows, setVariantRows] = useState<PublicMaterialVariant[]>([])
   const [activeOptionCode, setActiveOptionCode] = useState<string | null>(null)
   const [publicSettings, setPublicSettings] = useState<PublicSettings | null>(null)
-  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
+  // Lightbox carries both src and a per-image alt so the modal
+  // can announce "ALEC · FRONT" rather than the generic "Proof
+  // image" when a screen reader user opens it. The alt is
+  // synthesised by the click site (PlateCard) from recipient +
+  // side, falling back to the page-level descriptor.
+  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
+  const openLightbox = (src: string, alt: string) => setLightbox({ src, alt })
+  const closeLightbox = () => setLightbox(null)
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
-  // Guards the once-per-page-load proof_version_views insert. A
-  // ref survives React strict-mode's double-invoke of effects
-  // whereas state wouldn't.
-  const viewRecordedRef = useRef(false)
+  // Guards the per-version-per-page-load proof_version_views
+  // insert. Keyed on versionId so that if a customer switches
+  // between versions on the same page session, each version
+  // gets exactly one recorded view (instead of only the first
+  // version visited counting). A ref survives React strict-mode's
+  // double-invoke of effects whereas state wouldn't.
+  const viewRecordedVersionsRef = useRef<Set<string>>(new Set())
   // Per-recipient Approve buttons are always live — the disclaimer
   // acknowledgement now lives inside the Approve modal as a tick
   // box on the Confirm action. After the first successful Confirm
@@ -123,13 +133,13 @@ export default function CustomerProofPage() {
   }, [id])
 
   useEffect(() => {
-    if (!lightboxSrc) return
+    if (!lightbox) return
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setLightboxSrc(null)
+      if (e.key === 'Escape') closeLightbox()
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [lightboxSrc])
+  }, [lightbox])
 
   // Modal: Escape to dismiss + Tab focus trap. Mirrors the lightbox
   // pattern above. Closes only when not mid-submit so the customer
@@ -198,10 +208,11 @@ export default function CustomerProofPage() {
   // handles the ones that do. Ref guard prevents double-fire in
   // React strict mode.
   useEffect(() => {
-    if (!activeVersion || viewRecordedRef.current) return
+    if (!activeVersion) return
     const versionId = activeVersion.id
+    if (viewRecordedVersionsRef.current.has(versionId)) return
     const t = window.setTimeout(() => {
-      if (viewRecordedRef.current) return
+      if (viewRecordedVersionsRef.current.has(versionId)) return
       // Designer-preview bypass: the admin "Preview as customer"
       // button opens /p/:id?preview=1 so the RPC doesn't pollute
       // proof_version_views with designer hits. Read the flag at
@@ -213,7 +224,7 @@ export default function CustomerProofPage() {
       // still fires from loadProof — that's a general audit
       // ledger, distinct from the view-tracking table.
       if (new URLSearchParams(window.location.search).get('preview') === '1') return
-      viewRecordedRef.current = true
+      viewRecordedVersionsRef.current.add(versionId)
       // .then() is load-bearing, not cosmetic. supabase.rpc()
       // returns a PostgrestBuilder, a custom thenable — it only
       // dispatches the fetch when something calls .then(),
@@ -1462,7 +1473,19 @@ export default function CustomerProofPage() {
                     />
                     <span style={{ ...REG_A_BASE, color: PAPER_TERTIARY }}>
                       {isApprovedKind
-                        ? `Signed off ${heroApprovalStrip.dateLabel ?? 'today'} · ${total} / ${total} proof${total === 1 ? '' : 's'}`
+                        // Drop the date phrase when dateLabel is
+                        // missing rather than hard-coding "today" —
+                        // approved_at can be null on rare race
+                        // conditions, and a stale visit a week
+                        // later shouldn't read "Signed off today".
+                        // Gate the proof-count phrase on total > 0
+                        // so an empty version doesn't render the
+                        // tautological "0 / 0 proofs".
+                        ? [
+                            'Signed off',
+                            heroApprovalStrip.dateLabel,
+                            total > 0 ? `· ${total} / ${total} proof${total === 1 ? '' : 's'}` : null,
+                          ].filter(Boolean).join(' ')
                         : 'Some proofs already signed off, others awaiting review'}
                     </span>
                   </div>
@@ -1673,7 +1696,18 @@ export default function CustomerProofPage() {
             // recipients" accurate when a single shared front
             // renders inside two named pairs.
             const plateCount = [...(sharedGroup?.images ?? []), ...namedGroups.flatMap((g) => g.images)].length
-            const recipientCount = namedGroups.length || (sharedGroup ? 1 : 0)
+            // Recipient count derives from activeVersion.names —
+            // the canonical list of who the proof is for — rather
+            // than namedGroups (which is filtered by the active
+            // option tab). Without this, switching to an option
+            // tab whose images don't include any per-name plates
+            // dropped the "· N people" subtitle even though the
+            // spec sheet below still listed the names. The shared-
+            // only fallback (no per-name images at all) keeps the
+            // "1 / Shared" copy.
+            const recipientCount = activeVersion.names.length > 0
+              ? activeVersion.names.length
+              : (sharedGroup ? 1 : 0)
 
             // Per-group pairing rule — front + back in the same
             // group render side-by-side at md+. Inherited from
@@ -1796,7 +1830,7 @@ export default function CustomerProofPage() {
                             image={img}
                             brandColor={BRAND_ORDER[idx % BRAND_ORDER.length]}
                             alt={`Proof version ${activeVersion.version_number}`}
-                            onClick={setLightboxSrc}
+                            onClick={openLightbox}
                             recipientLabel="Shared"
                           />
                         ))}
@@ -1921,7 +1955,7 @@ export default function CustomerProofPage() {
                                       image={img}
                                       brandColor={BRAND_ORDER[dotIdx % BRAND_ORDER.length]}
                                       alt={`${group.heading} — proof version ${activeVersion.version_number}`}
-                                      onClick={setLightboxSrc}
+                                      onClick={openLightbox}
                                       recipientLabel={group.heading ?? undefined}
                                     />
                                   )
@@ -2440,24 +2474,31 @@ export default function CustomerProofPage() {
         </div>
       </footer>
 
-      {/* Lightbox */}
-      {lightboxSrc && (
+      {/* Lightbox.
+          Uses h-[100dvh] (dynamic viewport) instead of `inset-0`
+          alone so iOS Safari's URL bar doesn't clip the bottom of
+          tall portrait images. The image's max-h is capped a touch
+          short of the viewport to keep some margin around it. */}
+      {lightbox && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setLightboxSrc(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Image preview: ${lightbox.alt}`}
+          className="fixed inset-x-0 top-0 z-50 flex h-[100dvh] items-center justify-center bg-black/80 p-4"
+          onClick={closeLightbox}
         >
           <button
             type="button"
-            aria-label="Close"
-            onClick={(e) => { e.stopPropagation(); setLightboxSrc(null) }}
+            aria-label="Close image preview"
+            onClick={(e) => { e.stopPropagation(); closeLightbox() }}
             className="absolute right-4 top-4 grid h-11 w-11 place-items-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/20 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
           >
             <span aria-hidden="true" className="text-2xl leading-none">×</span>
           </button>
           <img
-            src={lightboxSrc}
-            alt="Proof image"
-            className="max-h-full max-w-full rounded-lg object-contain"
+            src={lightbox.src}
+            alt={lightbox.alt}
+            className="max-h-[calc(100dvh-2rem)] max-w-full rounded-lg object-contain"
             onClick={(e) => e.stopPropagation()}
           />
         </div>
@@ -2544,10 +2585,9 @@ export default function CustomerProofPage() {
                 onChange={(e) => setActionName(e.target.value)}
                 disabled={actionSubmitting}
                 autoFocus
-                className="mt-2 w-full rounded-md px-4 py-3 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] placeholder:text-[rgba(26,22,18,0.45)]"
+                className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:text-[15px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] placeholder:text-[rgba(26,22,18,0.45)]"
                 style={{
                   fontFamily: SANS,
-                  fontSize: 15,
                   background: '#ffffff',
                   border: '1px solid rgba(26,22,18,0.18)',
                   color: PAPER_INK,
@@ -2573,10 +2613,9 @@ export default function CustomerProofPage() {
                   onChange={(e) => setActionComment(e.target.value)}
                   disabled={actionSubmitting}
                   rows={5}
-                  className="mt-2 w-full rounded-md px-4 py-3 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] placeholder:text-[rgba(26,22,18,0.45)]"
+                  className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:text-[15px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] placeholder:text-[rgba(26,22,18,0.45)]"
                   style={{
                     fontFamily: SANS,
-                    fontSize: 15,
                     background: '#ffffff',
                     border: '1px solid rgba(26,22,18,0.18)',
                     color: PAPER_INK,
@@ -2606,10 +2645,9 @@ export default function CustomerProofPage() {
                   onChange={(e) => setActionComment(e.target.value)}
                   disabled={actionSubmitting}
                   rows={3}
-                  className="mt-2 w-full rounded-md px-4 py-3 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] placeholder:text-[rgba(26,22,18,0.45)]"
+                  className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:text-[15px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] placeholder:text-[rgba(26,22,18,0.45)]"
                   style={{
                     fontFamily: SANS,
-                    fontSize: 15,
                     background: '#ffffff',
                     border: '1px solid rgba(26,22,18,0.18)',
                     color: PAPER_INK,
@@ -2910,7 +2948,7 @@ function PlateCard({
   image: GridImage
   brandColor: string
   alt: string
-  onClick: (src: string) => void
+  onClick: (src: string, alt: string) => void
   recipientLabel?: string
 }) {
   const downloadHref = image.signed_url ?? '#'
@@ -2925,12 +2963,18 @@ function PlateCard({
       ? `${recipientLabel.toUpperCase()} · ${sideText}`
       : recipientLabel.toUpperCase()
     : sideText
+  // Lightbox alt: prefer the captionLabel (which carries
+  // recipient + side context — what the customer was just
+  // looking at) over the page-level descriptor passed in via
+  // the alt prop. Falls back to alt for shared-only proofs that
+  // skip the caption.
+  const lightboxAlt = captionLabel || alt
   return (
     <div className="relative">
       <figure className="relative">
         <button
           type="button"
-          onClick={() => image.signed_url && onClick(image.signed_url)}
+          onClick={() => image.signed_url && onClick(image.signed_url, lightboxAlt)}
           className="block w-full overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
           style={{ outlineColor: ACCENT }}
           aria-label={alt}
@@ -3697,12 +3741,37 @@ function buildImageGroups(images: GridImage[]): ImageGroup[] {
   return groups
 }
 
+// Loading / 404 / abandoned screens. All three share the paper
+// register of the live page so the customer never lands on a
+// surface that looks like a different site. Eyebrow → headline
+// → quiet body, on PAPER_CREAM, with the same SERIF / MONO
+// hierarchy.
+function PlasmaEyebrow() {
+  return (
+    <p
+      className="font-paper-mono uppercase"
+      style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
+    >
+      Plasma Design
+    </p>
+  )
+}
+
 function LoadingScreen() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50">
+    <div className="flex min-h-dvh items-center justify-center" style={{ background: PAPER_CREAM }}>
       <div className="text-center">
-        <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
-        <p className="text-sm text-gray-400">Loading your proof…</p>
+        <PlasmaEyebrow />
+        <div
+          className="mx-auto mt-6 h-7 w-7 animate-spin rounded-full border-2"
+          style={{ borderColor: 'rgba(26,22,18,0.15)', borderTopColor: PAPER_INK }}
+        />
+        <p
+          className="mt-4 font-paper-mono uppercase"
+          style={{ fontSize: 10, letterSpacing: '0.24em', color: PAPER_TERTIARY }}
+        >
+          Loading proof
+        </p>
       </div>
     </div>
   )
@@ -3710,10 +3779,27 @@ function LoadingScreen() {
 
 function NotFoundScreen() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50">
-      <div className="text-center">
-        <p className="text-4xl font-bold text-gray-200">404</p>
-        <p className="mt-2 text-sm text-gray-400">This proof link isn't valid or has expired.</p>
+    <div className="flex min-h-dvh items-center justify-center" style={{ background: PAPER_CREAM }}>
+      <div className="text-center px-6">
+        <PlasmaEyebrow />
+        <h1
+          className="mt-6"
+          style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(48px, 9vw, 72px)', lineHeight: 1, color: PAPER_INK }}
+        >
+          Not found
+        </h1>
+        <p
+          className="mx-auto mt-4 max-w-sm"
+          style={{ fontFamily: SERIF, fontSize: 18, lineHeight: 1.45, color: PAPER_TERTIARY }}
+        >
+          This proof link isn't valid or has expired. If you were sent here recently, please get in touch.
+        </p>
+        <p
+          className="mt-8 font-paper-mono uppercase"
+          style={{ fontSize: 10, letterSpacing: '0.32em', color: 'rgba(26,22,18,0.30)' }}
+        >
+          404
+        </p>
       </div>
     </div>
   )
@@ -3721,10 +3807,15 @@ function NotFoundScreen() {
 
 function AbandonedScreen({ proof }: { proof: PublicProof }) {
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
+    <div className="min-h-dvh" style={{ background: PAPER_CREAM }}>
+      <div className="mx-auto max-w-4xl px-4 py-12 sm:px-6 sm:py-16 lg:px-8">
         <header className="mb-12">
-          <p className="text-sm font-medium uppercase tracking-widest text-gray-400">Proof for</p>
+          <p
+            className="font-paper-mono uppercase"
+            style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
+          >
+            Proof for
+          </p>
           {/* Same masthead rule as the live page: company prominent
               when present (with the contact name as a muted sub-
               line), contact name prominent when no company. Keeps
@@ -3740,17 +3831,44 @@ function AbandonedScreen({ proof }: { proof: PublicProof }) {
               : null
             return (
               <>
-                <h1 className="mt-1 text-3xl font-bold text-gray-900">{primary}</h1>
+                <h1
+                  className="mt-3"
+                  style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(36px, 7vw, 56px)', lineHeight: 1.05, color: PAPER_INK }}
+                >
+                  {primary}
+                </h1>
                 {subline && (
-                  <p className="mt-1 text-lg text-gray-500">{subline}</p>
+                  <p
+                    className="mt-2"
+                    style={{ fontFamily: SERIF, fontSize: 22, color: PAPER_TERTIARY }}
+                  >
+                    {subline}
+                  </p>
                 )}
               </>
             )
           })()}
         </header>
-        <div className="rounded-2xl bg-white p-10 text-center shadow-sm ring-1 ring-gray-200">
-          <h2 className="text-xl font-semibold text-gray-800">This proof is closed</h2>
-          <p className="mx-auto mt-2 max-w-md text-sm text-gray-500">
+        <div
+          className="rounded-2xl p-10 text-center"
+          style={{ background: PAPER_TINT_1, border: '1px solid rgba(26,22,18,0.10)' }}
+        >
+          <p
+            className="font-paper-mono uppercase"
+            style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
+          >
+            Closed
+          </p>
+          <h2
+            className="mt-3"
+            style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, color: PAPER_INK }}
+          >
+            This proof is closed
+          </h2>
+          <p
+            className="mx-auto mt-3 max-w-md"
+            style={{ fontFamily: SERIF, fontSize: 17, lineHeight: 1.5, color: PAPER_TERTIARY }}
+          >
             If you'd like to revisit your business cards, please get in touch.
           </p>
         </div>

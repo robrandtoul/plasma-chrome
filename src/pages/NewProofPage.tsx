@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
@@ -60,6 +60,7 @@ export default function NewProofPage() {
   const [newContactEmail, setNewContactEmail] = useState('')
   const contactRef = useRef<HTMLDivElement>(null)
   const contactInputRef = useRef<HTMLInputElement>(null)
+  const helpscoutSectionRef = useRef<HTMLDivElement>(null)
 
   // Prefill tokens — consumed once so later user edits don't re-apply them.
   // NOTE: pendingContactPrefillRef is consumed on the first effect pass
@@ -277,6 +278,12 @@ export default function NewProofPage() {
       }
     } catch (err) {
       setHsLookupError((err as Error).message)
+      // Clear the per-email dedupe key so a retry against the
+      // same email actually re-hits the edge function. Without
+      // this, a transient network/CORS failure pinned the email
+      // and silently swallowed every subsequent attempt for
+      // the same contact.
+      setHsLookupEmail(null)
     } finally {
       setHsLookupInFlight(false)
     }
@@ -581,28 +588,39 @@ export default function NewProofPage() {
     // designer is being told to fill is actually on screen. The
     // Help Scout lookup flow already calls setManualOpen(true) on
     // success; this mirrors that for the validation-failure path.
-    const failManual = (msg: string) => {
+    //
+    // Scroll target is the section that owns the failing field —
+    // without it, the form-level error banner renders at the top
+    // of the page while the offending field can be far below.
+    // requestAnimationFrame defers until after the manual section
+    // has expanded so the scroll lands on a mounted element.
+    const failManual = (msg: string, target?: RefObject<HTMLElement | null>) => {
       setError(msg)
       setManualOpen(true)
+      if (target) {
+        requestAnimationFrame(() => {
+          target.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        })
+      }
     }
 
     if (!isIndividual && !selectedCompany) {
-      failManual('Please select or add a company, or tick "No company".')
+      failManual('Please select or add a company, or tick "No company".', companyRef)
       return
     }
     if (!isIndividual && selectedCompany && selectedCompany.id === null && !selectedCompany.name.trim()) {
-      failManual('Company name is required.')
+      failManual('Company name is required.', companyRef)
       return
     }
     if (!selectedContact && !addingContact) {
-      failManual('Please select or add a contact.')
+      failManual('Please select or add a contact.', contactRef)
       return
     }
     if (addingContact) {
-      if (!newContactName.trim()) { failManual('Contact full name is required.'); return }
-      if (!newContactEmail.trim()) { failManual('Contact email is required.'); return }
+      if (!newContactName.trim()) { failManual('Contact full name is required.', contactRef); return }
+      if (!newContactEmail.trim()) { failManual('Contact email is required.', contactRef); return }
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newContactEmail.trim())) {
-        failManual('Please enter a valid email address.')
+        failManual('Please enter a valid email address.', contactRef)
         return
       }
     }
@@ -613,12 +631,19 @@ export default function NewProofPage() {
     const typedUrl = helpscoutUrl.trim()
     const parsedUrl = typedUrl ? parseHelpscoutUrl(typedUrl) : null
     const reason = overrideReason.trim()
+    const scrollToHelpscout = () => {
+      requestAnimationFrame(() => {
+        helpscoutSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      })
+    }
     if (typedUrl && !parsedUrl) {
       setError('The Help Scout URL is invalid. Expected https://secure.helpscout.net/conversation/<id>.')
+      scrollToHelpscout()
       return
     }
     if (!parsedUrl && reason.length < MIN_OVERRIDE_REASON_LENGTH) {
       setError(`Pick a Help Scout conversation, or provide an override reason of at least ${MIN_OVERRIDE_REASON_LENGTH} characters.`)
+      scrollToHelpscout()
       return
     }
 
@@ -750,7 +775,7 @@ export default function NewProofPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-dvh bg-gray-50">
       <div className="mx-auto max-w-xl px-4 py-10 sm:px-6">
 
         {/* Back + Quote compiler. QuoteLink lives in the per-page
@@ -888,7 +913,7 @@ export default function NewProofPage() {
                       value={selectedCompany.name}
                       onChange={(e) => setSelectedCompany({ id: null, name: e.target.value })}
                       placeholder="Company name"
-                      className="min-w-0 flex-1 rounded border border-amber-200 bg-white px-2 py-1 text-sm font-medium text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      className="min-w-0 flex-1 rounded border border-amber-200 bg-white px-2 py-1 text-[17px] sm:text-sm font-medium text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                       aria-label="Company name"
                     />
                     <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
@@ -1071,7 +1096,7 @@ export default function NewProofPage() {
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Internal</h2>
 
-            <div className="mb-4">
+            <div ref={helpscoutSectionRef} className="mb-4">
               <label className="mb-1.5 block text-sm font-medium text-gray-700">
                 Help Scout conversation URL{' '}
                 <span className="text-red-500">*</span>
@@ -1106,7 +1131,16 @@ export default function NewProofPage() {
                 onBlur={(e) => {
                   const v = e.target.value.trim()
                   if (v && !parseHelpscoutUrl(v)) {
-                    setUrlFormatError('Must be a Help Scout conversation URL like https://secure.helpscout.net/conversation/12345.')
+                    // Distinguish a bare numeric ID (which the
+                    // paste-from-Help-Scout section accepts) from
+                    // an actual format error so the designer
+                    // doesn't pass it through the URL field
+                    // expecting it to be linkified.
+                    if (/^\d+$/.test(v)) {
+                      setUrlFormatError('That looks like a conversation ID. Paste it into "Start from Help Scout" above instead, or paste the full URL here.')
+                    } else {
+                      setUrlFormatError('Must be a Help Scout conversation URL like https://secure.helpscout.net/conversation/12345.')
+                    }
                   }
                 }}
                 placeholder="https://secure.helpscout.net/conversation/…"
@@ -1162,7 +1196,7 @@ export default function NewProofPage() {
                   value={overrideReason}
                   onChange={(e) => setOverrideReason(e.target.value)}
                   placeholder={`At least ${MIN_OVERRIDE_REASON_LENGTH} characters.`}
-                  className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-[17px] sm:text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
                 />
                 <p className="mt-1 text-xs text-amber-700">
                   {overrideReason.trim().length < MIN_OVERRIDE_REASON_LENGTH
@@ -1312,7 +1346,7 @@ function HelpScoutPicker({
 }
 
 const inputClass =
-  'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+  'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
 
 // Pull a four-digit year out of a Help Scout createdAt timestamp.
 // Returns null for missing input, unparseable strings, or nonsense

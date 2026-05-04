@@ -445,9 +445,17 @@ function LatestActivityPanel({
             return (
               <li
                 key={e.id}
+                role="button"
+                tabIndex={0}
                 onClick={() => navigate(`/proofs/${e.proof_id}`)}
+                onKeyDown={(ev) => {
+                  if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault()
+                    navigate(`/proofs/${e.proof_id}`)
+                  }
+                }}
                 className={[
-                  'flex cursor-pointer gap-3 py-3 pl-4 pr-5 transition-colors hover:bg-gray-50',
+                  'flex cursor-pointer gap-3 py-3 pl-4 pr-5 transition-colors hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900',
                   rowAccent,
                   // border-t-gray-100 (side-specific) instead of the
                   // border-gray-100 shorthand — the shorthand sets all
@@ -667,7 +675,7 @@ export default function DashboardPage() {
   const sections = buildSections(filtered, sort, showDormant, viewedByProofId)
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-dvh bg-gray-50">
       <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
 
         {/* Page header — spans full container width so the nav sits
@@ -757,10 +765,18 @@ export default function DashboardPage() {
                     return (
                       <div
                         key={r.proofId}
+                        role="button"
+                        tabIndex={0}
                         onClick={() => navigate(`/proofs/${r.proofId}`)}
+                        onKeyDown={(ev) => {
+                          if (ev.key === 'Enter' || ev.key === ' ') {
+                            ev.preventDefault()
+                            navigate(`/proofs/${r.proofId}`)
+                          }
+                        }}
                         className={[
                           ROW_GRID,
-                          'cursor-pointer px-5 py-3 hover:bg-gray-50',
+                          'cursor-pointer px-5 py-3 hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900',
                           i > 0 ? 'border-t border-gray-100' : '',
                         ].join(' ')}
                       >

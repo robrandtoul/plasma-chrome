@@ -84,6 +84,13 @@ export default function AdminActivityPage() {
   const [exportError, setExportError] = useState<string | null>(null)
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Clear the in-flight debounce timer on unmount so a delayed
+  // updateFilter call doesn't fire against a stale router context
+  // (and trigger a React state update on an unmounted component).
+  useEffect(() => () => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+  }, [])
+
   // Reload from scratch when filters change.
   useEffect(() => {
     setPageNumber(1)
@@ -318,6 +325,15 @@ export default function AdminActivityPage() {
               </Field>
             </>
           )}
+          {filters.datePreset === 'custom'
+            && filters.from
+            && filters.to
+            && filters.from > filters.to
+            && (
+              <p className="-mt-1 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+                "From" date is after "To" — the table will be empty until the order is fixed.
+              </p>
+            )}
 
           <Field label="Search">
             <input
@@ -379,7 +395,12 @@ export default function AdminActivityPage() {
         </div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+          {/* overflow-x-auto so a long actor email or target label
+              doesn't squeeze the When / Actor / Action / Target
+              columns into illegible 70-90px slivers on narrow
+              viewports (e.g. laptop with a side panel open).
+              Y-axis stays clipped to keep rounded corners. */}
+          <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100">
@@ -393,8 +414,17 @@ export default function AdminActivityPage() {
                 {entries.map((e) => (
                   <tr
                     key={e.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open audit entry for ${e.actor_label ?? 'system'}`}
                     onClick={() => setOpenEntry(e)}
-                    className="cursor-pointer border-b border-gray-50 last:border-0 hover:bg-gray-50"
+                    onKeyDown={(ev) => {
+                      if (ev.key === 'Enter' || ev.key === ' ') {
+                        ev.preventDefault()
+                        setOpenEntry(e)
+                      }
+                    }}
+                    className="cursor-pointer border-b border-gray-50 last:border-0 hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900"
                   >
                     <td className="px-5 py-3 whitespace-nowrap text-gray-500" title={formatAbsolute(e.created_at)}>
                       {formatRelative(e.created_at)}
@@ -457,5 +487,5 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-const selectClass = 'min-w-[10rem] rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
-const inputClass  = 'rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+const selectClass = 'min-w-[10rem] rounded-lg border border-gray-300 bg-white px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+const inputClass  = 'rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'

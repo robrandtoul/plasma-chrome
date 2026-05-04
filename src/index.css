@@ -23,3 +23,22 @@ body {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+/*
+  Honour the OS-level reduced-motion preference. Collapses all
+  animation and transition durations to ~0 so vestibular-sensitive
+  users don't get the row-reveal fade or long colour transitions.
+  Targets every element rather than scoping per-component because
+  the codebase uses Tailwind transition utilities at hundreds of
+  call sites; a global override is the only practical knob.
+*/
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

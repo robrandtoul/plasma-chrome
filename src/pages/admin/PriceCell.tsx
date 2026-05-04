@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 
 // ── Currency symbol helper ───────────────────────────────────────────────────
 
@@ -30,14 +30,20 @@ export default function PriceCell({ value, currency, onSave, placeholder, readOn
   const [saving, setSaving] = useState(false)
   const [justSaved, setJustSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Tracks whether the most recent focus came from a mouse press
+  // (in which case we leave the click-to-position alone) vs Tab
+  // keyboard focus (in which case selecting all matches the
+  // existing convenient overwrite behaviour).
+  const focusFromMouseRef = useRef(false)
+  const inputRef = useRef<HTMLInputElement | null>(null)
 
   // Reset draft if the underlying value changes from a parent refresh.
   useEffect(() => { setDraft(value == null ? '' : String(value)) }, [value])
 
-  async function handleBlur() {
+  async function commit() {
     if (readOnly) return
     const trimmed = draft.trim()
-    // Allow clearing back to the previous value (no-op)
+    // Empty input on a previously-empty cell is a no-op.
     if (trimmed === '' && value == null) return
     const parsed = parseFloat(trimmed)
     if (isNaN(parsed) || parsed < 0) {
@@ -62,6 +68,22 @@ export default function PriceCell({ value, currency, onSave, placeholder, readOn
     }
   }
 
+  function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      // Blur to commit so the focus ring drops; commit() runs via
+      // onBlur. Using blur (not direct commit) keeps the existing
+      // "saved/error pill" timing consistent across both paths.
+      inputRef.current?.blur()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      // Revert the draft to the saved value and bail out without
+      // calling commit on the way out.
+      setDraft(value == null ? '' : String(value))
+      inputRef.current?.blur()
+    }
+  }
+
   return (
     <div className="inline-flex items-center gap-2">
       <div className="relative">
@@ -71,6 +93,7 @@ export default function PriceCell({ value, currency, onSave, placeholder, readOn
           </span>
         )}
         <input
+          ref={inputRef}
           type="number"
           step="0.01"
           min="0"
@@ -78,10 +101,17 @@ export default function PriceCell({ value, currency, onSave, placeholder, readOn
           readOnly={readOnly}
           placeholder={placeholder}
           onChange={(e) => setDraft(e.target.value)}
-          onBlur={handleBlur}
-          onFocus={(e) => e.currentTarget.select()}
+          onBlur={() => { focusFromMouseRef.current = false; void commit() }}
+          onMouseDown={() => { focusFromMouseRef.current = true }}
+          onFocus={(e) => {
+            // Only auto-select when the user tabbed in. Mouse focus
+            // should leave the cursor where they clicked so cents
+            // can be edited without a select-all-on-focus reset.
+            if (!focusFromMouseRef.current) e.currentTarget.select()
+          }}
+          onKeyDown={handleKeyDown}
           className={[
-            'w-24 rounded border px-2 py-1 text-sm tabular-nums',
+            'w-24 rounded border px-2 py-1 text-[17px] sm:text-sm tabular-nums',
             showSymbol ? 'pl-5' : '',
             error
               ? 'border-rose-300 focus:border-rose-500 focus:outline-none'

@@ -73,6 +73,18 @@ export function useImageFileDrop({ onFiles }: Options) {
         setIsPageDragOver(false)
       }
     }
+    // If the user starts a drag and then alt-tabs / cmd-tabs to
+    // another window, the corresponding dragleave can land on the
+    // chrome (or fail to fire at all on certain browsers), leaving
+    // the counter stuck > 0 and the overlay visible until they
+    // either drop, press Escape, or refresh. Resetting on window
+    // blur closes that hole.
+    function handleBlur() {
+      if (dragCounterRef.current === 0) return
+      dragCounterRef.current = 0
+      setIsPageDragOver(false)
+      setIsZoneDragOver(false)
+    }
 
     window.addEventListener('dragenter', handleDragEnter)
     window.addEventListener('dragleave', handleDragLeave)
@@ -80,6 +92,7 @@ export function useImageFileDrop({ onFiles }: Options) {
     window.addEventListener('drop', handleDropCapture, true)
     window.addEventListener('drop', handleDrop)
     window.addEventListener('keydown', handleKey)
+    window.addEventListener('blur', handleBlur)
     return () => {
       window.removeEventListener('dragenter', handleDragEnter)
       window.removeEventListener('dragleave', handleDragLeave)
@@ -87,6 +100,7 @@ export function useImageFileDrop({ onFiles }: Options) {
       window.removeEventListener('drop', handleDropCapture, true)
       window.removeEventListener('drop', handleDrop)
       window.removeEventListener('keydown', handleKey)
+      window.removeEventListener('blur', handleBlur)
     }
   }, [])
 

@@ -286,6 +286,12 @@ export default function AdminMaterialEditor() {
         v.id === editingVariantId ? { ...v, display_name: prev } : v,
       ))
       setVariantError(`Failed to rename: ${err.message}`)
+      // Close the input on failure too — without this, the row
+      // showed the rolled-back name in state but kept the open
+      // input with the user's typed value, which read as "did
+      // my edit save or not?" The error pill makes the failure
+      // explicit; the input doesn't need to stay open.
+      setEditingVariantId(null)
       return
     }
     setEditingVariantId(null)
@@ -669,7 +675,7 @@ export default function AdminMaterialEditor() {
                           }}
                           onBlur={() => { void saveVariantName() }}
                           disabled={variantInFlight}
-                          className="w-full rounded-lg border border-gray-300 px-2.5 py-1 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                          className="w-full rounded-lg border border-gray-300 px-2.5 py-1 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
                         />
                       ) : (
                         <button
@@ -748,7 +754,7 @@ export default function AdminMaterialEditor() {
                     material.variant_type === 'finish' ? 'e.g. Brushed' :
                     'Variant name'
                   }
-                  className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2.5 py-1 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                  className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2.5 py-1 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
                 />
                 <div className="flex justify-end gap-2">
                   <button
@@ -958,7 +964,7 @@ function AddTierForm({
             value={qty}
             onChange={(e) => onQty(e.target.value)}
             disabled={inFlight}
-            className="w-28 rounded border border-gray-200 px-2 py-1 text-sm tabular-nums focus:border-gray-900 focus:outline-none"
+            className="w-28 rounded border border-gray-200 px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-gray-900 focus:outline-none"
             placeholder="e.g. 500"
           />
         </div>

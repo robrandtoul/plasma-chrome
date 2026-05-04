@@ -21,13 +21,18 @@ export function relativeTime(iso: string | null | undefined): string {
 
   if (diffMs < 60_000) return 'just now'
 
-  const min = Math.round(diffMs / 60_000)
+  // Floor (not round) to avoid rollover jitter at the unit
+  // boundaries: a value of 59m30s rounded would jump straight
+  // from "59m ago" to "1h ago" and back as the clock ticked.
+  // Floor lets the next branch pick up exactly when the unit
+  // truly changes.
+  const min = Math.floor(diffMs / 60_000)
   if (min < 60) return `${min}m ago`
 
-  const hr = Math.round(diffMs / 3_600_000)
+  const hr = Math.floor(diffMs / 3_600_000)
   if (hr < 48) return `${hr}h ago`
 
-  const days = Math.round(diffMs / 86_400_000)
+  const days = Math.floor(diffMs / 86_400_000)
   if (days < 8) return `${days}d ago`
 
   return new Date(iso).toLocaleDateString('en-GB', {

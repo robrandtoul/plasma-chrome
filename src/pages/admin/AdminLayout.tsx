@@ -21,7 +21,7 @@ export default function AdminLayout() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-dvh bg-gray-50">
       {/* Header — matches the designer dashboard's branding strip. */}
       <div className="border-b border-gray-200 bg-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-5 sm:px-6 lg:px-8">

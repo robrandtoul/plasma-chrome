@@ -151,7 +151,15 @@ export function PaperRevisionTimeline({
             {versions.length > COLLAPSE_THRESHOLD && (
               <button
                 type="button"
-                onClick={() => setExpanded((e) => !e)}
+                onClick={() => {
+                  setExpanded((e) => !e)
+                  // Toggling the tail is engagement with the
+                  // timeline too — dismiss the coachmark so it
+                  // doesn't linger forever for a customer who
+                  // expands the older versions but never picks
+                  // a row to compare against.
+                  if (!coachSeen) dismissCoach()
+                }}
                 className="block w-full text-center py-3 mt-2 font-paper-mono uppercase transition-colors hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] rounded-sm"
                 style={{
                   fontSize: 11,

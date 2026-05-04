@@ -1732,7 +1732,17 @@ export default function NewVersionPage() {
         { key: 'images',         ref: imageSectionRef },
       ]
       const first = order.find(o => !validations[o.key])
-      first?.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      // Defer the scroll until React has committed the
+      // setFormExpanded(true) state above. Without this, when the
+      // form was collapsed in summary view the target field hadn't
+      // mounted yet — the ref's current was null and the scroll was
+      // a no-op. A double-rAF (commit → layout → next frame) is the
+      // belt-and-braces way to make sure the DOM has the new node.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          first?.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        })
+      })
 
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
       setToast({ kind: 'validation', text: 'Please complete all required fields to save' })
@@ -2393,7 +2403,7 @@ export default function NewVersionPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-dvh bg-gray-50">
       {toast?.kind === 'validation' && (
         <div
           role="status"
@@ -3777,8 +3787,8 @@ function material_display_for(id: string, materials: Material[]) {
   return materials.find((m) => m.id === id)?.display_name ?? ''
 }
 
-const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
-const selectClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white'
+const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+const selectClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white'
 
 // ── Carry-forward visual treatment (D) ──────────────────────────────────────
 // Each carried field on v2+ creation gets a left-border ribbon, a soft

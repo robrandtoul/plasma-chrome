@@ -188,6 +188,13 @@ export default function AdminSettingsPage() {
   // textareas. Trims, rejects empty (so the spec defaults stay
   // populated — admin can't accidentally wipe the modal body),
   // otherwise saves the trimmed value.
+  //
+  // On empty input we keep the draft as-is rather than snapping it
+  // back to the saved value. The user typed (and then deleted) the
+  // text on purpose; reverting silently would lose any partial
+  // wording they were re-working from. The error pill stays up
+  // until they put a non-empty value back, which the next render
+  // will save.
   function onConfirmationCopyBlur(
     field: 'approve_confirmation_copy' | 'request_changes_confirmation_copy',
   ) {
@@ -197,8 +204,6 @@ export default function AdminSettingsPage() {
     const trimmed = (draft as string).trim()
     if (trimmed === '') {
       setErrors((e) => ({ ...e, [field]: 'Confirmation copy cannot be empty.' }))
-      // Snap textarea back to the saved value.
-      setDrafts((d) => ({ ...d, [field]: undefined }))
       return
     }
     void saveField(field, trimmed)
@@ -287,7 +292,16 @@ export default function AdminSettingsPage() {
             <input
               type="email"
               value={drafts.reply_email ?? settings.reply_email}
-              onChange={(e) => setDrafts((d) => ({ ...d, reply_email: e.target.value }))}
+              onChange={(e) => {
+                setDrafts((d) => ({ ...d, reply_email: e.target.value }))
+                // Clear a stale "Invalid email" pill the moment the
+                // user keeps typing — without this, the error stuck
+                // around even after the value was reverted to the
+                // saved one and stayed up against the next save.
+                if (errors.reply_email) {
+                  setErrors((er) => ({ ...er, reply_email: undefined }))
+                }
+              }}
               onBlur={() => {
                 const draft = drafts.reply_email
                 if (draft == null) return
@@ -295,6 +309,12 @@ export default function AdminSettingsPage() {
                   setErrors((e) => ({ ...e, reply_email: 'Invalid email' }))
                   setDrafts((d) => ({ ...d, reply_email: settings.reply_email }))
                   return
+                }
+                // Successful path — clear any prior error pill so the
+                // FieldRow doesn't display "Saved" and "Invalid"
+                // simultaneously after a fix-up edit.
+                if (errors.reply_email) {
+                  setErrors((er) => ({ ...er, reply_email: undefined }))
                 }
                 onTextBlur('reply_email')
               }}
@@ -825,4 +845,4 @@ function renderMaterialRow(
   )
 }
 
-const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'

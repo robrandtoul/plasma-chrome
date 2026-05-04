@@ -127,6 +127,12 @@ export default function ProofDetailPage() {
   const [copied, setCopied] = useState(false)
   const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | 'abandon' | 'delete' | null>(null)
   const [statusWorking, setStatusWorking] = useState(false)
+  // Synchronous guard against double-click on the confirm dialog
+  // buttons. The disabled={working} prop is bound to React state,
+  // so a second click that lands before the state commits would
+  // otherwise fire the destructive handler twice. The ref flips
+  // immediately on entry and is cleared on every exit path.
+  const statusActionInFlightRef = useRef(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [showHelpscoutEdit, setShowHelpscoutEdit] = useState(false)
   // Customer reply re-send modal + confirm-on-resend state. Both
@@ -420,6 +426,21 @@ export default function ProofDetailPage() {
     setSelectedVersion(null)
     showToast(message)
     if (id) loadProof(id)
+  }
+
+  // Wrapper that guards every status action against double-click.
+  // The disabled={statusWorking} prop on the confirm button is
+  // bound to React state, so a second click that lands before the
+  // state commit would otherwise fire the handler twice and create
+  // duplicate audit rows / stale toasts. The ref check is purely
+  // synchronous and clears in finally so a handler that throws
+  // doesn't permanently lock the dialog.
+  function guardStatusAction(fn: () => Promise<void>): () => Promise<void> {
+    return async () => {
+      if (statusActionInFlightRef.current) return
+      statusActionInFlightRef.current = true
+      try { await fn() } finally { statusActionInFlightRef.current = false }
+    }
   }
 
   async function handleApprove() {
@@ -905,7 +926,7 @@ export default function ProofDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+      <div className="flex min-h-dvh items-center justify-center bg-gray-50">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
       </div>
     )
@@ -974,7 +995,7 @@ export default function ProofDetailPage() {
     : 'bg-emerald-600 hover:bg-emerald-700 text-white'
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-dvh bg-gray-50">
       <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
 
         {/* Back + Quote compiler. QuoteLink lives in the per-page
@@ -1613,8 +1634,17 @@ export default function ProofDetailPage() {
                   return (
                   <tr
                     key={v.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open version ${v.version_number}`}
                     onClick={() => setSelectedVersion(v)}
-                    className="cursor-pointer border-b border-gray-50 last:border-0 hover:bg-gray-50"
+                    onKeyDown={(ev) => {
+                      if (ev.key === 'Enter' || ev.key === ' ') {
+                        ev.preventDefault()
+                        setSelectedVersion(v)
+                      }
+                    }}
+                    className="cursor-pointer border-b border-gray-50 last:border-0 hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900"
                   >
                     <td className="truncate px-4 py-4 font-medium text-gray-900">
                       <span className="flex items-center gap-2">
@@ -1930,7 +1960,7 @@ export default function ProofDetailPage() {
           confirmLabel="Mark as approved"
           confirmClass={approveConfirmClass}
           working={statusWorking}
-          onConfirm={handleApprove}
+          onConfirm={guardStatusAction(handleApprove)}
           onCancel={() => setStatusDialog(null)}
         />
       )}
@@ -1942,7 +1972,7 @@ export default function ProofDetailPage() {
           confirmLabel="Abandon project"
           confirmClass="bg-slate-700 hover:bg-slate-800 text-white"
           working={statusWorking}
-          onConfirm={handleAbandon}
+          onConfirm={guardStatusAction(handleAbandon)}
           onCancel={() => setStatusDialog(null)}
         />
       )}
@@ -1955,7 +1985,7 @@ export default function ProofDetailPage() {
           confirmClass="bg-rose-600 hover:bg-rose-700 text-white"
           working={statusWorking}
           errorMsg={deleteError}
-          onConfirm={handleDelete}
+          onConfirm={guardStatusAction(handleDelete)}
           onCancel={() => { setStatusDialog(null); setDeleteError(null) }}
         />
       )}
@@ -1971,7 +2001,7 @@ export default function ProofDetailPage() {
           confirmLabel="Reopen"
           confirmClass="bg-gray-900 hover:bg-gray-700 text-white"
           working={statusWorking}
-          onConfirm={handleReopen}
+          onConfirm={guardStatusAction(handleReopen)}
           onCancel={() => setStatusDialog(null)}
         />
       )}
