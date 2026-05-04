@@ -1556,7 +1556,29 @@ export default function CustomerProofPage() {
                       className="hidden h-4 w-px shrink-0 sm:inline-block"
                       style={{ background: tone.divider }}
                     />
-                    <span style={{ ...REG_A_BASE, color: PAPER_TERTIARY }}>
+                    <span
+                      // aria-label spells out the secondary text in a
+                      // form a screen reader can speak cleanly: middle
+                      // dot becomes a comma, "5 / 5" becomes "5 of 5".
+                      // Visible text is unchanged. Without this the
+                      // chip reads as "Signed off … middle dot 5
+                      // slash 5 proofs" on VoiceOver / NVDA.
+                      aria-label={
+                        isApprovedKind
+                          ? [
+                              'Signed off',
+                              heroApprovalStrip.dateLabel,
+                              total > 0
+                                ? `, ${total} of ${total} proof${total === 1 ? '' : 's'}`
+                                : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' ')
+                              .replace(' ,', ',')
+                          : 'Some proofs already signed off, others awaiting review'
+                      }
+                      style={{ ...REG_A_BASE, color: PAPER_TERTIARY }}
+                    >
                       {isApprovedKind
                         // Drop the date phrase when dateLabel is
                         // missing rather than hard-coding "today" —
@@ -3601,10 +3623,19 @@ function QuantityLookup({
       </h3>
       <div className="flex max-w-sm items-center gap-3">
         <input
-          type="number"
+          // type=text + inputMode=numeric instead of type=number:
+          //   * mobile keyboards still pop the numeric pad via inputMode
+          //   * screen readers announce "edit text" instead of "spin
+          //     button" (no implicit ↑/↓ semantics that this UI doesn't
+          //     support — the parsed regex below already handles
+          //     non-digit input)
+          //   * iOS no longer accepts pasted non-numerics into the
+          //     visible value (type=number silently drops them, leaving
+          //     the field looking empty; type=text shows them and the
+          //     regex rejects them, which is the better UX)
+          type="text"
           inputMode="numeric"
           pattern="[0-9]*"
-          min={1}
           value={raw}
           onChange={(e) => setRaw(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Escape') setRaw('') }}
@@ -3907,7 +3938,16 @@ function LoadingScreen() {
       <div className="text-center">
         <PlasmaEyebrow />
         <div
-          className="mx-auto mt-6 h-7 w-7 animate-spin rounded-full border-2"
+          // motion-reduce:animate-none disables the rotation for users
+          // with `prefers-reduced-motion: reduce`. The static ring still
+          // renders so the layout doesn't collapse — paired with the
+          // visible "Loading proof" text below it the loading state
+          // remains comprehensible without motion. role/aria-label give
+          // SR users an explicit cue that loading is in progress
+          // (the .animate-spin div alone isn't announced).
+          role="status"
+          aria-label="Loading"
+          className="mx-auto mt-6 h-7 w-7 animate-spin motion-reduce:animate-none rounded-full border-2"
           style={{ borderColor: 'rgba(26,22,18,0.15)', borderTopColor: PAPER_INK }}
         />
         <p
