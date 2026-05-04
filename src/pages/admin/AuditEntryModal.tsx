@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import Modal from '../../components/Modal'
 import { ACTION_LABELS } from './auditFilters'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -65,121 +65,116 @@ export default function AuditEntryModal({ entry, onClose }: {
   entry: AuditEntry
   onClose: () => void
 }) {
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
-
   const label = ACTION_LABELS[entry.action] ?? entry.action
   const link = targetUrl(entry)
+  const titleId = `audit-entry-title-${entry.id}`
 
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/50" onClick={onClose} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
-          {/* Header */}
-          <div className="flex items-start justify-between border-b border-gray-100 px-6 py-4">
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900">{label}</h3>
-              <p className="mt-0.5 text-xs text-gray-500" title={absolute(entry.created_at)}>
-                {absolute(entry.created_at)} · {relative(entry.created_at)}
-              </p>
-            </div>
-            <button
-              onClick={onClose}
-              className="ml-4 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-              aria-label="Close"
-            >
-              <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-              </svg>
-            </button>
-          </div>
-
-          {/* Body */}
-          <div className="space-y-5 overflow-y-auto px-6 py-5">
-            {/* Actor */}
-            <section>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Actor</h4>
-              <dl className="rounded-lg bg-gray-50 px-4 py-3 text-sm">
-                <div className="flex justify-between gap-4">
-                  <dt className="text-gray-500">Label</dt>
-                  <dd className="text-right font-medium text-gray-900">{entry.actor_label ?? '—'}</dd>
-                </div>
-                {entry.actor_email && entry.actor_email !== entry.actor_label && (
-                  <div className="mt-1 flex justify-between gap-4">
-                    <dt className="text-gray-500">Email</dt>
-                    <dd className="text-right text-gray-700">{entry.actor_email}</dd>
-                  </div>
-                )}
-                {entry.actor_id && (
-                  <div className="mt-1 flex justify-between gap-4">
-                    <dt className="text-gray-500">ID</dt>
-                    <dd className="text-right">
-                      <Link to="/admin/users" className="font-mono text-xs text-gray-500 hover:underline">
-                        {entry.actor_id.slice(0, 8)}…
-                      </Link>
-                    </dd>
-                  </div>
-                )}
-              </dl>
-            </section>
-
-            {/* Target */}
-            {entry.target_type && (
-              <section>
-                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Target</h4>
-                <dl className="rounded-lg bg-gray-50 px-4 py-3 text-sm">
-                  <div className="flex justify-between gap-4">
-                    <dt className="text-gray-500">Type</dt>
-                    <dd className="text-right font-mono text-xs text-gray-700">{entry.target_type}</dd>
-                  </div>
-                  {entry.target_label && (
-                    <div className="mt-1 flex justify-between gap-4">
-                      <dt className="text-gray-500">Label</dt>
-                      <dd className="text-right font-medium text-gray-900">{entry.target_label}</dd>
-                    </div>
-                  )}
-                  {entry.target_id && (
-                    <div className="mt-1 flex justify-between gap-4">
-                      <dt className="text-gray-500">ID</dt>
-                      <dd className="text-right">
-                        {link
-                          ? <Link to={link} className="font-mono text-xs text-gray-500 hover:underline">{entry.target_id.slice(0, 8)}…</Link>
-                          : <span className="font-mono text-xs text-gray-500">{entry.target_id.slice(0, 8)}…</span>}
-                      </dd>
-                    </div>
-                  )}
-                </dl>
-              </section>
-            )}
-
-            {/* Diff */}
-            <section>
-              <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Change</h4>
-              <DiffView before={entry.before_value} after={entry.after_value} />
-            </section>
-
-            {/* Metadata */}
-            {isObject(entry.metadata) && Object.keys(entry.metadata).length > 0 && (
-              <section>
-                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Metadata</h4>
-                <dl className="rounded-lg bg-gray-50 px-4 py-3 text-sm">
-                  {Object.entries(entry.metadata).map(([k, v]) => (
-                    <div key={k} className="flex items-start justify-between gap-4 py-0.5">
-                      <dt className="font-mono text-xs text-gray-500">{k}</dt>
-                      <dd className="max-w-[60%] break-all text-right text-sm text-gray-700">{formatValue(v)}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </section>
-            )}
-          </div>
+    <Modal
+      open
+      onClose={onClose}
+      ariaLabelledBy={titleId}
+      panelClassName="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between border-b border-gray-100 px-6 py-4">
+        <div>
+          <h3 id={titleId} className="text-lg font-semibold text-gray-900">{label}</h3>
+          <p className="mt-0.5 text-xs text-gray-500" title={absolute(entry.created_at)}>
+            {absolute(entry.created_at)} · {relative(entry.created_at)}
+          </p>
         </div>
+        <button
+          onClick={onClose}
+          className="ml-4 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+          aria-label="Close"
+        >
+          <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+          </svg>
+        </button>
       </div>
-    </>
+
+      {/* Body */}
+      <div className="space-y-5 overflow-y-auto px-6 py-5">
+        {/* Actor */}
+        <section>
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Actor</h4>
+          <dl className="rounded-lg bg-gray-50 px-4 py-3 text-sm">
+            <div className="flex justify-between gap-4">
+              <dt className="text-gray-500">Label</dt>
+              <dd className="text-right font-medium text-gray-900">{entry.actor_label ?? '—'}</dd>
+            </div>
+            {entry.actor_email && entry.actor_email !== entry.actor_label && (
+              <div className="mt-1 flex justify-between gap-4">
+                <dt className="text-gray-500">Email</dt>
+                <dd className="text-right text-gray-700">{entry.actor_email}</dd>
+              </div>
+            )}
+            {entry.actor_id && (
+              <div className="mt-1 flex justify-between gap-4">
+                <dt className="text-gray-500">ID</dt>
+                <dd className="text-right">
+                  <Link to="/admin/users" className="font-mono text-xs text-gray-500 hover:underline">
+                    {entry.actor_id.slice(0, 8)}…
+                  </Link>
+                </dd>
+              </div>
+            )}
+          </dl>
+        </section>
+
+        {/* Target */}
+        {entry.target_type && (
+          <section>
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Target</h4>
+            <dl className="rounded-lg bg-gray-50 px-4 py-3 text-sm">
+              <div className="flex justify-between gap-4">
+                <dt className="text-gray-500">Type</dt>
+                <dd className="text-right font-mono text-xs text-gray-700">{entry.target_type}</dd>
+              </div>
+              {entry.target_label && (
+                <div className="mt-1 flex justify-between gap-4">
+                  <dt className="text-gray-500">Label</dt>
+                  <dd className="text-right font-medium text-gray-900">{entry.target_label}</dd>
+                </div>
+              )}
+              {entry.target_id && (
+                <div className="mt-1 flex justify-between gap-4">
+                  <dt className="text-gray-500">ID</dt>
+                  <dd className="text-right">
+                    {link
+                      ? <Link to={link} className="font-mono text-xs text-gray-500 hover:underline">{entry.target_id.slice(0, 8)}…</Link>
+                      : <span className="font-mono text-xs text-gray-500">{entry.target_id.slice(0, 8)}…</span>}
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </section>
+        )}
+
+        {/* Diff */}
+        <section>
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Change</h4>
+          <DiffView before={entry.before_value} after={entry.after_value} />
+        </section>
+
+        {/* Metadata */}
+        {isObject(entry.metadata) && Object.keys(entry.metadata).length > 0 && (
+          <section>
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Metadata</h4>
+            <dl className="rounded-lg bg-gray-50 px-4 py-3 text-sm">
+              {Object.entries(entry.metadata).map(([k, v]) => (
+                <div key={k} className="flex items-start justify-between gap-4 py-0.5">
+                  <dt className="font-mono text-xs text-gray-500">{k}</dt>
+                  <dd className="max-w-[60%] break-all text-right text-sm text-gray-700">{formatValue(v)}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        )}
+      </div>
+    </Modal>
   )
 }
 

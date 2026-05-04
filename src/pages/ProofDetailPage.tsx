@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import VersionDetailModal, { type ModalVersion } from '../components/VersionDetailModal'
 import HelpScoutEditModal from '../components/HelpScoutEditModal'
+import Modal from '../components/Modal'
 import MessageSendPanel from '../components/MessageSendPanel'
 import { firstName } from '../lib/firstName'
 import { getRepliesEnabled } from '../lib/repliesEnabled'
@@ -2093,6 +2094,12 @@ function AuditPanel({
   )
 }
 
+// Module-level counter so each ConfirmDialog instance gets a stable
+// unique id for the message paragraph (drives aria-describedby on
+// the panel). Counter is fine since ConfirmDialogs are short-lived
+// and there's at most one open at a time on this page.
+let confirmDialogIdCounter = 0
+
 function ConfirmDialog({
   message,
   confirmLabel,
@@ -2110,33 +2117,39 @@ function ConfirmDialog({
   onConfirm: () => void
   onCancel: () => void
 }) {
+  // useState seed runs once per mount — gives a stable id for the
+  // lifetime of this particular dialog without depending on the
+  // global counter changing between renders.
+  const [messageId] = useState(() => `confirm-dialog-msg-${++confirmDialogIdCounter}`)
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !working && onCancel()} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-          <p className="text-sm text-gray-700">{message}</p>
-          {errorMsg && (
-            <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>
-          )}
-          <div className="mt-5 flex justify-end gap-2">
-            <button
-              onClick={onCancel}
-              disabled={working}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={onConfirm}
-              disabled={working}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50 ${confirmClass}`}
-            >
-              {working ? 'Working…' : confirmLabel}
-            </button>
-          </div>
-        </div>
+    <Modal
+      open
+      onClose={onCancel}
+      preventClose={working}
+      ariaLabel="Confirm action"
+      ariaDescribedBy={messageId}
+      panelClassName="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl"
+    >
+      <p id={messageId} className="text-sm text-gray-700">{message}</p>
+      {errorMsg && (
+        <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>
+      )}
+      <div className="mt-5 flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          disabled={working}
+          className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={working}
+          className={`rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50 ${confirmClass}`}
+        >
+          {working ? 'Working…' : confirmLabel}
+        </button>
       </div>
-    </>
+    </Modal>
   )
 }
