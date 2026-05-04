@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
@@ -525,6 +525,22 @@ export default function DashboardPage() {
   const [showDormant, setShowDormant]   = useState(readShowDormant)
 
   useEffect(() => { loadProofs() }, [])
+
+  // Refetch when the tab becomes visible again so designers
+  // who switch tabs (Help Scout, email, etc.) come back to a
+  // current dashboard without a manual reload. The in-flight
+  // ref skips overlapping fetches if visibility flips rapidly.
+  const refetchInFlight = useRef(false)
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState !== 'visible') return
+      if (refetchInFlight.current) return
+      refetchInFlight.current = true
+      loadProofs().finally(() => { refetchInFlight.current = false })
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
 
   async function loadProofs() {
     const proofsPromise = supabase
