@@ -67,8 +67,29 @@ export default function CustomerProofPage() {
   // synthesised by the click site (PlateCard) from recipient +
   // side, falling back to the page-level descriptor.
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
-  const openLightbox = (src: string, alt: string) => setLightbox({ src, alt })
-  const closeLightbox = () => setLightbox(null)
+  // Focus management for the lightbox dialog: capture the element that
+  // had focus before opening so we can restore it on close, refs to the
+  // dialog root + close button so the keydown effect can trap Tab inside
+  // and move focus into the dialog on open. Mirrors the action modal
+  // pattern below.
+  const lightboxTriggerRef = useRef<HTMLElement | null>(null)
+  const lightboxRef = useRef<HTMLDivElement | null>(null)
+  const lightboxCloseButtonRef = useRef<HTMLButtonElement | null>(null)
+  const openLightbox = (src: string, alt: string) => {
+    lightboxTriggerRef.current = document.activeElement as HTMLElement | null
+    setLightbox({ src, alt })
+  }
+  const closeLightbox = () => {
+    setLightbox(null)
+    const trigger = lightboxTriggerRef.current
+    lightboxTriggerRef.current = null
+    if (trigger && typeof trigger.focus === 'function') {
+      // requestAnimationFrame so the focus restore lands after React
+      // unmounts the dialog, otherwise the trigger isn't yet the
+      // document's focus target.
+      requestAnimationFrame(() => trigger.focus())
+    }
+  }
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   // Guards the per-version-per-page-load proof_version_views
@@ -134,11 +155,42 @@ export default function CustomerProofPage() {
 
   useEffect(() => {
     if (!lightbox) return
+    // Move focus into the dialog on open so the customer's first Tab
+    // lands inside the lightbox rather than on the page behind it.
+    // requestAnimationFrame waits one frame for the dialog DOM to
+    // mount before we look up the close button.
+    const focusFrame = requestAnimationFrame(() => {
+      lightboxCloseButtonRef.current?.focus()
+    })
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') closeLightbox()
+      if (e.key === 'Escape') {
+        closeLightbox()
+        return
+      }
+      if (e.key !== 'Tab' || !lightboxRef.current) return
+      const focusables = lightboxRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+      )
+      if (focusables.length === 0) return
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      if (e.shiftKey && active === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault()
+        first.focus()
+      } else if (active && !lightboxRef.current.contains(active)) {
+        e.preventDefault()
+        first.focus()
+      }
     }
     document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+    return () => {
+      cancelAnimationFrame(focusFrame)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [lightbox])
 
   // Modal: Escape to dismiss + Tab focus trap. Mirrors the lightbox
@@ -149,6 +201,11 @@ export default function CustomerProofPage() {
   // behind the (fixed) modal, which is disorienting on a screen-
   // reader and a violation of the dialog contract.
   const actionPanelRef = useRef<HTMLDivElement | null>(null)
+  // Element that had focus when the modal opened — restored on close so
+  // keyboard users land back on the per-recipient Approve / Request
+  // changes button rather than at <body> with the page's tab order
+  // re-set to zero.
+  const actionPanelTriggerRef = useRef<HTMLElement | null>(null)
   useEffect(() => {
     if (!actionPanel) return
     function onKey(e: KeyboardEvent) {
@@ -319,6 +376,7 @@ export default function CustomerProofPage() {
     recipientName: string,
     type: 'approve' | 'request_changes',
   ) {
+    actionPanelTriggerRef.current = document.activeElement as HTMLElement | null
     setActionPanel({ versionId, name: recipientName, type })
     // Pre-fill actor_name with the recipient's name when it's a
     // named band — the actor is most often the recipient
@@ -340,6 +398,11 @@ export default function CustomerProofPage() {
   function closeActionPanel() {
     setActionPanel(null)
     setActionError(null)
+    const trigger = actionPanelTriggerRef.current
+    actionPanelTriggerRef.current = null
+    if (trigger && typeof trigger.focus === 'function') {
+      requestAnimationFrame(() => trigger.focus())
+    }
   }
 
   async function submitAction() {
@@ -821,6 +884,12 @@ export default function CustomerProofPage() {
       const approved = state.type === 'approve'
       return (
         <div
+          // role=status (implicit aria-live=polite, aria-atomic=true) so
+          // screen readers announce the just-recorded approval / change
+          // request when this banner replaces the action buttons. The
+          // non-optimistic states render at initial page load and don't
+          // need to be announced; only this branch is dynamic.
+          role="status"
           className={bannerBase}
           style={{
             background: approved ? 'rgba(81,180,148,0.14)' : 'rgba(58,44,145,0.14)',
@@ -2481,6 +2550,7 @@ export default function CustomerProofPage() {
           short of the viewport to keep some margin around it. */}
       {lightbox && (
         <div
+          ref={lightboxRef}
           role="dialog"
           aria-modal="true"
           aria-label={`Image preview: ${lightbox.alt}`}
@@ -2488,6 +2558,7 @@ export default function CustomerProofPage() {
           onClick={closeLightbox}
         >
           <button
+            ref={lightboxCloseButtonRef}
             type="button"
             aria-label="Close image preview"
             onClick={(e) => { e.stopPropagation(); closeLightbox() }}
@@ -2518,6 +2589,7 @@ export default function CustomerProofPage() {
           onClick={() => { if (!actionSubmitting) closeActionPanel() }}
           role="dialog"
           aria-modal="true"
+          aria-labelledby="action-modal-title"
         >
           <div className="flex min-h-full items-center justify-center px-3 py-6 sm:px-4 sm:py-8">
           <div
@@ -2548,7 +2620,9 @@ export default function CustomerProofPage() {
             >
               <span aria-hidden="true" className="text-xl leading-none">×</span>
             </button>
-            <p
+            <h2
+              id="action-modal-title"
+              className="m-0"
               style={{
                 ...REG_A_BASE,
                 fontSize: 11,
@@ -2562,7 +2636,7 @@ export default function CustomerProofPage() {
                 : actionPanel.name === SHARED_APPROVAL_KEY
                   ? 'Request changes'
                   : `Request changes for ${actionPanel.name}`}
-            </p>
+            </h2>
             {actionPanel.type === 'request_changes' && (
               <p
                 className="mt-4 max-w-[60ch] whitespace-pre-line text-[14px] leading-[1.65] sm:text-[15px] sm:leading-[1.7]"
@@ -2707,6 +2781,11 @@ export default function CustomerProofPage() {
                 <label
                   className={[
                     'mt-4 flex w-fit items-center gap-3 rounded-lg px-4 py-3 transition-colors',
+                    // The real <input> is sr-only so its focus ring is
+                    // invisible; surface keyboard focus on the wrapping
+                    // label so this control isn't a Focus Visible
+                    // (WCAG 2.4.7) failure.
+                    'focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-[rgba(123,63,242,0.55)]',
                     actionSubmitting
                       ? 'cursor-wait'
                       : 'cursor-pointer hover:border-[rgba(26,22,18,0.6)]',
@@ -2977,7 +3056,16 @@ function PlateCard({
           onClick={() => image.signed_url && onClick(image.signed_url, lightboxAlt)}
           className="block w-full overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
           style={{ outlineColor: ACCENT }}
-          aria-label={alt}
+          // captionLabel carries recipient + side ("MARIE · FRONT") so
+          // every plate on the page has a distinct accessible name. The
+          // page-level descriptor (`alt`, e.g. "Marie — proof version 2")
+          // is appended only when it adds information — for shared
+          // single-image groups captionLabel is empty and `alt` already
+          // names the plate. "View larger" tells the user it's a button
+          // that opens a dialog rather than just an image.
+          aria-label={[captionLabel, captionLabel === alt ? null : alt, 'view larger']
+            .filter(Boolean)
+            .join(', ')}
         >
           {image.signed_url ? (
             <img
