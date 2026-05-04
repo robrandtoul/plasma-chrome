@@ -132,11 +132,15 @@ export default function AdminMaterialEditor() {
     }
   }
 
-  async function saveSurcharge(currency: Currency, nextValue: number) {
+  async function saveSurcharge(currency: Currency, nextValue: number | null) {
     if (!material) return
     const col = `split_name_surcharge_${currency.toLowerCase()}` as
       'split_name_surcharge_gbp' | 'split_name_surcharge_eur' | 'split_name_surcharge_usd'
     const prevValue = material[col]
+    // The column is nullable; null = "this material no longer offers
+    // split-name pricing in this currency". Cleared cells write null
+    // rather than 0 so the customer-facing render path can still
+    // distinguish "no surcharge applies" from "surcharge is £0".
     const { error } = await supabase
       .from('materials')
       .update({ [col]: nextValue })
@@ -591,6 +595,7 @@ export default function AdminMaterialEditor() {
                   <PriceCell
                     value={val}
                     currency={currency}
+                    allowClear
                     onSave={(next) => saveSurcharge(currency, next)}
                     placeholder="—"
                   />

@@ -14,18 +14,34 @@ export function currencySymbol(currency: 'GBP' | 'EUR' | 'USD'): string {
 // change immediately, we persist on blur, show a transient "Saved" pill on
 // success, and revert the draft + surface a short error if the server
 // rejects the update.
+//
+// Two modes via discriminated `allowClear`:
+//   * allowClear unset/false (default) — onSave receives a positive number
+//     only. Empty input on a previously-empty cell is a no-op; empty input
+//     when there's a saved value surfaces "Invalid" and reverts. Right for
+//     non-nullable price columns (price_tiers.total_price etc.).
+//   * allowClear: true                  — empty input commits with null.
+//     Caller decides what null means in their domain (write a NULL column
+//     for nullable surcharges, delete the row when the row's existence IS
+//     the surcharge).
 
-interface Props {
+type CommonProps = {
   value: number | null
   currency: 'GBP' | 'EUR' | 'USD'
-  onSave: (next: number) => Promise<void>
   placeholder?: string
   readOnly?: boolean
   /** Always show the currency symbol prefix, even in a read-only cell. */
   showSymbol?: boolean
 }
 
-export default function PriceCell({ value, currency, onSave, placeholder, readOnly, showSymbol = true }: Props) {
+type Props = CommonProps & (
+  | { allowClear?: false; onSave: (next: number) => Promise<void> }
+  | { allowClear: true;   onSave: (next: number | null) => Promise<void> }
+)
+
+export default function PriceCell(props: Props) {
+  const { value, currency, placeholder, readOnly, showSymbol = true } = props
+  const allowClear = props.allowClear === true
   const [draft, setDraft] = useState<string>(value == null ? '' : String(value))
   const [saving, setSaving] = useState(false)
   const [justSaved, setJustSaved] = useState(false)
@@ -43,8 +59,33 @@ export default function PriceCell({ value, currency, onSave, placeholder, readOn
   async function commit() {
     if (readOnly) return
     const trimmed = draft.trim()
-    // Empty input on a previously-empty cell is a no-op.
+    // Empty input on a previously-empty cell is a no-op regardless of mode.
     if (trimmed === '' && value == null) return
+    if (trimmed === '') {
+      // Empty input on a cell that had a value: clear path when allowed,
+      // invalid otherwise.
+      if (!allowClear) {
+        setError('Invalid')
+        setDraft(value == null ? '' : String(value))
+        setTimeout(() => setError(null), 2000)
+        return
+      }
+      setSaving(true)
+      setError(null)
+      try {
+        // The discriminated-union type guarantees this onSave accepts null.
+        await (props.onSave as (next: number | null) => Promise<void>)(null)
+        setSaving(false)
+        setJustSaved(true)
+        setTimeout(() => setJustSaved(false), 1200)
+      } catch (e) {
+        setSaving(false)
+        setError((e as Error).message || 'Save failed')
+        setDraft(value == null ? '' : String(value))
+        setTimeout(() => setError(null), 3000)
+      }
+      return
+    }
     const parsed = parseFloat(trimmed)
     if (isNaN(parsed) || parsed < 0) {
       setError('Invalid')
@@ -56,7 +97,7 @@ export default function PriceCell({ value, currency, onSave, placeholder, readOn
     setSaving(true)
     setError(null)
     try {
-      await onSave(parsed)
+      await props.onSave(parsed)
       setSaving(false)
       setJustSaved(true)
       setTimeout(() => setJustSaved(false), 1200)

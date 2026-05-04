@@ -62,8 +62,29 @@ export default function AdminAddOnEditor() {
     }
   }
 
-  async function saveSurcharge(priceId: string, next: number) {
+  async function saveSurcharge(priceId: string, next: number | null) {
     const existing = prices.find((p) => p.id === priceId)
+    if (next == null) {
+      // add_on_prices.surcharge is NOT NULL, so "clear" means
+      // remove the row — the price grid then shows "—" for that
+      // (qty, currency) combination, matching the natural "no
+      // price configured here" affordance.
+      const { error } = await supabase
+        .from('add_on_prices')
+        .delete()
+        .eq('id', priceId)
+      if (error) throw new Error(error.message)
+      setPrices((prev) => prev.filter((p) => p.id !== priceId))
+      void logAudit({
+        action: 'addon_price.deleted',
+        targetType: 'add_on_price',
+        targetId: priceId,
+        targetLabel: `${addOn?.display_name ?? ''} ${existing?.quantity == null ? 'flat' : `qty ${existing?.quantity}`} ${existing?.currency ?? ''}`,
+        beforeValue: { currency: existing?.currency, quantity: existing?.quantity ?? null, surcharge: existing?.surcharge ?? null },
+        afterValue: null,
+      })
+      return
+    }
     const { error } = await supabase
       .from('add_on_prices')
       .update({ surcharge: next })
@@ -197,7 +218,7 @@ export default function AdminAddOnEditor() {
 
 function FlatEditor({ prices, onSave, onSeed }: {
   prices: Price[]
-  onSave: (priceId: string, next: number) => Promise<void>
+  onSave: (priceId: string, next: number | null) => Promise<void>
   onSeed: () => Promise<void>
 }) {
   const byCurrency = new Map<Currency, Price>()
@@ -234,6 +255,7 @@ function FlatEditor({ prices, onSave, onSeed }: {
                 <PriceCell
                   value={p.surcharge}
                   currency={c}
+                  allowClear
                   onSave={(next) => onSave(p.id, next)}
                 />
               </div>
@@ -249,7 +271,7 @@ function FlatEditor({ prices, onSave, onSeed }: {
 
 function PerTierEditor({ prices, onSave, onOpenSeed }: {
   prices: Price[]
-  onSave: (priceId: string, next: number) => Promise<void>
+  onSave: (priceId: string, next: number | null) => Promise<void>
   onOpenSeed: () => void
 }) {
   const byQty = useMemo(() => {
@@ -291,7 +313,7 @@ function PerTierEditor({ prices, onSave, onOpenSeed }: {
                 return (
                   <td key={`${qty}-${c}`} className="px-4 py-2">
                     {p ? (
-                      <PriceCell value={p.surcharge} currency={c} onSave={(next) => onSave(p.id, next)} />
+                      <PriceCell value={p.surcharge} currency={c} allowClear onSave={(next) => onSave(p.id, next)} />
                     ) : (
                       <span className="text-gray-300">—</span>
                     )}
