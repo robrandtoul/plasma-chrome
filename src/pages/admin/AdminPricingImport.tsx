@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
+import Modal from '../../components/Modal'
 import { commitPricingImport, previewPricingImport, type ImportPreview } from '../../lib/pricingIO'
 
 interface Props {
@@ -24,11 +25,8 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
   const [showUnchanged, setShowUnchanged] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && !working) onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose, working])
+  // Esc handling owned by Modal; preventClose wired to `working`
+  // blocks Esc / backdrop dismissal during preview parsing or apply.
 
   async function handleFile(f: File) {
     setFile(f)
@@ -68,13 +66,16 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
   const totalApplicable = (preview?.creates.length ?? 0) + (preview?.changes.length ?? 0)
 
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !working && onClose()} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
+    <Modal
+      open
+      onClose={onClose}
+      preventClose={working}
+      ariaLabelledBy="pricing-import-title"
+      panelClassName="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+    >
           <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-4">
             <div>
-              <h3 className="text-lg font-semibold text-gray-900">Import pricing</h3>
+              <h3 id="pricing-import-title" className="text-lg font-semibold text-gray-900">Import pricing</h3>
               {scopeLabel && (
                 <p className="mt-0.5 text-xs text-gray-500">Scoped to {scopeLabel}. Rows for other materials will be flagged as errors.</p>
               )}
@@ -187,9 +188,7 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
               </div>
             </div>
           )}
-        </div>
-      </div>
-    </>
+    </Modal>
   )
 }
 

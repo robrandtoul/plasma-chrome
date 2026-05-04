@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import PriceCell from './PriceCell'
+import Modal from '../../components/Modal'
 import { downloadPricingExport } from '../../lib/pricingIO'
 import { logAudit } from '../../lib/audit'
 
@@ -380,45 +381,47 @@ function SeedQuantitiesDialog({ onSeed, onCancel }: {
   }
 
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !working && onCancel()} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <form onSubmit={handleSubmit} className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-          <h3 className="text-lg font-semibold text-gray-900">Add prices</h3>
-          <p className="mt-1 text-xs text-gray-500">
-            Enter the quantity tiers to seed, comma-separated. All three currencies start at £0 / €0 / $0 — edit each cell afterwards.
-          </p>
-          <div className="mt-4">
-            <label className="block text-xs font-medium uppercase tracking-wide text-gray-400">Quantities</label>
-            <input
-              autoFocus
-              type="text"
-              value={raw}
-              onChange={(e) => setRaw(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
-              placeholder="100, 250, 500, 750, 1000"
-            />
-          </div>
-          {error && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
-          <div className="mt-5 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={working}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={working}
-              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
-            >
-              {working ? 'Seeding…' : 'Seed tiers'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </>
+    <Modal
+      open
+      onClose={onCancel}
+      preventClose={working}
+      ariaLabelledBy="addon-seed-title"
+      panelClassName="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl"
+    >
+      <form onSubmit={handleSubmit}>
+        <h3 id="addon-seed-title" className="text-lg font-semibold text-gray-900">Add prices</h3>
+        <p className="mt-1 text-xs text-gray-500">
+          Enter the quantity tiers to seed, comma-separated. All three currencies start at £0 / €0 / $0 — edit each cell afterwards.
+        </p>
+        <div className="mt-4">
+          <label className="block text-xs font-medium uppercase tracking-wide text-gray-400">Quantities</label>
+          <input
+            type="text"
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+            placeholder="100, 250, 500, 750, 1000"
+          />
+        </div>
+        {error && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={working}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={working}
+            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+          >
+            {working ? 'Seeding…' : 'Seed tiers'}
+          </button>
+        </div>
+      </form>
+    </Modal>
   )
 }

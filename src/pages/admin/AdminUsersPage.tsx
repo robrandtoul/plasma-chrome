@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import { logAudit } from '../../lib/audit'
 import AddUserDialog from './AddUserDialog'
+import Modal from '../../components/Modal'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -745,31 +746,32 @@ function ConfirmDialog({ message, confirmLabel, confirmClass, working, errorMsg,
   onCancel: () => void
 }) {
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !working && onCancel()} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-          <p className="text-sm text-gray-700">{message}</p>
-          {errorMsg && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>}
-          <div className="mt-5 flex justify-end gap-2">
-            <button
-              onClick={onCancel}
-              disabled={working}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={onConfirm}
-              disabled={working}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50 ${confirmClass}`}
-            >
-              {working ? 'Working…' : confirmLabel}
-            </button>
-          </div>
-        </div>
+    <Modal
+      open
+      onClose={onCancel}
+      preventClose={working}
+      ariaLabel="Confirm action"
+      panelClassName="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl"
+    >
+      <p className="text-sm text-gray-700">{message}</p>
+      {errorMsg && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>}
+      <div className="mt-5 flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          disabled={working}
+          className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={working}
+          className={`rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50 ${confirmClass}`}
+        >
+          {working ? 'Working…' : confirmLabel}
+        </button>
       </div>
-    </>
+    </Modal>
   )
 }
 
@@ -790,72 +792,71 @@ function SetPasswordDialog({
 }) {
   const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !working && onCancel()} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900">Set new password</h3>
-            <p className="mt-1 text-xs text-gray-500">
-              Override the password for {user.full_name ?? user.email}. Share the new password with them out-of-band — they'll be signed out of any active sessions and need to use this to sign in next time.
-            </p>
-          </div>
+    <Modal
+      open
+      onClose={onCancel}
+      preventClose={working}
+      ariaLabelledBy="set-password-title"
+    >
+      <div>
+        <h3 id="set-password-title" className="text-lg font-semibold text-gray-900">Set new password</h3>
+        <p className="mt-1 text-xs text-gray-500">
+          Override the password for {user.full_name ?? user.email}. Share the new password with them out-of-band — they'll be signed out of any active sessions and need to use this to sign in next time.
+        </p>
+      </div>
 
-          <div className="mt-4">
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">
-              New password <span className="text-rose-500">*</span>
-            </label>
-            <div className="flex gap-2">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={(e) => onPasswordChange(e.target.value)}
-                disabled={working}
-                className={inputClass + ' font-mono'}
-                placeholder="At least 8 characters"
-                autoFocus
-              />
-              <button
-                type="button"
-                onClick={onGenerate}
-                disabled={working}
-                className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-              >
-                Generate
-              </button>
-              <button
-                type="button"
-                onClick={onToggleShow}
-                disabled={working}
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-                className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-              >
-                {showPassword ? 'Hide' : 'Show'}
-              </button>
-            </div>
-          </div>
-
-          {errorMsg && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>}
-
-          <div className="mt-5 flex justify-end gap-2">
-            <button
-              onClick={onCancel}
-              disabled={working}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={onConfirm}
-              disabled={working || password.length < 8}
-              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
-            >
-              {working ? 'Setting…' : 'Set password'}
-            </button>
-          </div>
+      <div className="mt-4">
+        <label className="mb-1.5 block text-sm font-medium text-gray-700">
+          New password <span className="text-rose-500">*</span>
+        </label>
+        <div className="flex gap-2">
+          <input
+            type={showPassword ? 'text' : 'password'}
+            value={password}
+            onChange={(e) => onPasswordChange(e.target.value)}
+            disabled={working}
+            className={inputClass + ' font-mono'}
+            placeholder="At least 8 characters"
+          />
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={working}
+            className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Generate
+          </button>
+          <button
+            type="button"
+            onClick={onToggleShow}
+            disabled={working}
+            aria-label={showPassword ? 'Hide password' : 'Show password'}
+            className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {showPassword ? 'Hide' : 'Show'}
+          </button>
         </div>
       </div>
-    </>
+
+      {errorMsg && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>}
+
+      <div className="mt-5 flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          disabled={working}
+          className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={working || password.length < 8}
+          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+        >
+          {working ? 'Setting…' : 'Set password'}
+        </button>
+      </div>
+    </Modal>
   )
 }
 
@@ -879,77 +880,76 @@ function SetHelpscoutUserIdDialog({
   const trimmed = value.trim()
   const isClearing = trimmed === ''
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !working && onCancel()} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900">
-              Help Scout user ID for {user.full_name ?? user.email}
-            </h3>
-            <p className="mt-1 text-xs text-gray-500">
-              When this designer sends staff replies via the proof viewer, replies will appear in Help Scout under this user ID. Leave empty to use the project default.
-            </p>
-          </div>
-
-          <div className="mt-4">
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">
-              Help Scout user ID
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="number"
-                min="1"
-                step="1"
-                value={value}
-                onChange={(e) => onChange(e.target.value)}
-                disabled={working}
-                className={inputClass + ' font-mono'}
-                placeholder="Leave empty to use project default"
-                autoFocus
-              />
-              <button
-                type="button"
-                onClick={onClear}
-                disabled={working || value === ''}
-                className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-                title="Empty the field. Click 'Clear mapping' below to actually save the change."
-              >
-                Empty field
-              </button>
-            </div>
-            <p className="mt-1.5 text-xs text-gray-400">
-              Current: {user.helpscout_user_id == null
-                ? <span>using project default (HELPSCOUT_DEFAULT_USER_ID)</span>
-                : <span className="font-mono">{user.helpscout_user_id}</span>}
-            </p>
-            {isClearing && user.helpscout_user_id != null && (
-              <p className="mt-1.5 text-xs text-amber-700">
-                Field is empty — click <strong>Clear mapping</strong> below to remove the saved value.
-              </p>
-            )}
-          </div>
-
-          {errorMsg && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>}
-
-          <div className="mt-5 flex justify-end gap-2">
-            <button
-              onClick={onCancel}
-              disabled={working}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={onConfirm}
-              disabled={working}
-              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
-            >
-              {working ? 'Saving…' : isClearing ? 'Clear mapping' : 'Save'}
-            </button>
-          </div>
-        </div>
+    <Modal
+      open
+      onClose={onCancel}
+      preventClose={working}
+      ariaLabelledBy="set-hs-user-title"
+    >
+      <div>
+        <h3 id="set-hs-user-title" className="text-lg font-semibold text-gray-900">
+          Help Scout user ID for {user.full_name ?? user.email}
+        </h3>
+        <p className="mt-1 text-xs text-gray-500">
+          When this designer sends staff replies via the proof viewer, replies will appear in Help Scout under this user ID. Leave empty to use the project default.
+        </p>
       </div>
-    </>
+
+      <div className="mt-4">
+        <label className="mb-1.5 block text-sm font-medium text-gray-700">
+          Help Scout user ID
+        </label>
+        <div className="flex gap-2">
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            disabled={working}
+            className={inputClass + ' font-mono'}
+            placeholder="Leave empty to use project default"
+          />
+          <button
+            type="button"
+            onClick={onClear}
+            disabled={working || value === ''}
+            className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            title="Empty the field. Click 'Clear mapping' below to actually save the change."
+          >
+            Empty field
+          </button>
+        </div>
+        <p className="mt-1.5 text-xs text-gray-400">
+          Current: {user.helpscout_user_id == null
+            ? <span>using project default (HELPSCOUT_DEFAULT_USER_ID)</span>
+            : <span className="font-mono">{user.helpscout_user_id}</span>}
+        </p>
+        {isClearing && user.helpscout_user_id != null && (
+          <p className="mt-1.5 text-xs text-amber-700">
+            Field is empty — click <strong>Clear mapping</strong> below to remove the saved value.
+          </p>
+        )}
+      </div>
+
+      {errorMsg && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>}
+
+      <div className="mt-5 flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          disabled={working}
+          className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={working}
+          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+        >
+          {working ? 'Saving…' : isClearing ? 'Clear mapping' : 'Save'}
+        </button>
+      </div>
+    </Modal>
   )
 }

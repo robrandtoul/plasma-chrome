@@ -6,6 +6,7 @@ import { logAudit } from '../lib/audit'
 import { parseHelpscoutUrl, MIN_OVERRIDE_REASON_LENGTH } from '../lib/helpscout'
 import { titleCase } from '../lib/titleCase'
 import { QuoteLink } from '../components/QuoteLink'
+import Modal from '../components/Modal'
 
 // ── Local types ───────────────────────────────────────────────────────────────
 
@@ -1280,68 +1281,52 @@ function HelpScoutPicker({
   onOverride: () => void
   onClose: () => void
 }) {
-  const firstRef = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    firstRef.current?.focus()
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
-
+  // Esc + first-focusable auto-focus owned by Modal.
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Multiple Help Scout threads found"
-        className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      >
-        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-          <h3 className="text-sm font-semibold text-gray-900">Multiple Help Scout threads found</h3>
-          <p className="mt-1 text-xs text-gray-500">Pick the conversation this proof relates to.</p>
-          <div className="mt-4 max-h-72 space-y-1.5 overflow-y-auto">
-            {matches.map((m, i) => (
-              <button
-                key={m.id}
-                ref={i === 0 ? firstRef : undefined}
-                type="button"
-                onClick={() => onPick(m)}
-                className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left text-sm hover:bg-gray-50 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
-              >
-                <span className="font-medium text-gray-900">{m.subject ?? `Conversation #${m.id}`}</span>
-                <span className="text-xs text-gray-500">
-                  <span className={m.status === 'active' ? 'font-medium text-emerald-600' : 'text-gray-500'}>
-                    {m.status ?? 'unknown'}
-                  </span>
-                  {m.mailboxName && ` · ${m.mailboxName}`}
-                  {m.modifiedAt && ` · ${new Date(m.modifiedAt).toLocaleDateString('en-GB')}`}
-                </span>
-              </button>
-            ))}
-          </div>
-          <div className="mt-4 flex items-center justify-between">
-            <button
-              type="button"
-              onClick={onOverride}
-              className="text-xs text-gray-500 underline hover:text-gray-900"
-            >
-              These aren't right — I'll provide a reason
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100"
-            >
-              Close
-            </button>
-          </div>
-        </div>
+    <Modal
+      open
+      onClose={onClose}
+      ariaLabelledBy="hs-picker-title"
+      backdropClassName="bg-black/40"
+    >
+      <h3 id="hs-picker-title" className="text-sm font-semibold text-gray-900">Multiple Help Scout threads found</h3>
+      <p className="mt-1 text-xs text-gray-500">Pick the conversation this proof relates to.</p>
+      <div className="mt-4 max-h-72 space-y-1.5 overflow-y-auto">
+        {matches.map((m) => (
+          <button
+            key={m.id}
+            type="button"
+            onClick={() => onPick(m)}
+            className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left text-sm hover:bg-gray-50 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+          >
+            <span className="font-medium text-gray-900">{m.subject ?? `Conversation #${m.id}`}</span>
+            <span className="text-xs text-gray-500">
+              <span className={m.status === 'active' ? 'font-medium text-emerald-600' : 'text-gray-500'}>
+                {m.status ?? 'unknown'}
+              </span>
+              {m.mailboxName && ` · ${m.mailboxName}`}
+              {m.modifiedAt && ` · ${new Date(m.modifiedAt).toLocaleDateString('en-GB')}`}
+            </span>
+          </button>
+        ))}
       </div>
-    </>
+      <div className="mt-4 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={onOverride}
+          className="text-xs text-gray-500 underline hover:text-gray-900"
+        >
+          These aren't right — I'll provide a reason
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100"
+        >
+          Close
+        </button>
+      </div>
+    </Modal>
   )
 }
 

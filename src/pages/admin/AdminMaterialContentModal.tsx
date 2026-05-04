@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import Modal from '../../components/Modal'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
@@ -150,11 +151,8 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
     if (input) { input.focus(); setPendingFocusIdx(null) }
   }, [pendingFocusIdx, draftFeatures])
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && !saving) onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose, saving])
+  // Esc handling owned by Modal; preventClose wired to `saving`
+  // to block Esc / backdrop dismissal during in-flight saves.
 
   async function saveName() {
     const trimmed = draftName.trim()
@@ -755,13 +753,17 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !saving && onClose()} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
+      <Modal
+        open
+        onClose={onClose}
+        preventClose={saving}
+        ariaLabelledBy="material-content-title"
+        panelClassName="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+      >
           {/* Header */}
           <div className="flex items-start justify-between border-b border-gray-100 px-6 py-4">
             <div>
-              <h3 className="text-lg font-semibold text-gray-900">{draftName.trim() || material.display_name}</h3>
+              <h3 id="material-content-title" className="text-lg font-semibold text-gray-900">{draftName.trim() || material.display_name}</h3>
               <Link
                 to={`/admin/pricing/materials/${material.code}`}
                 className="text-xs text-gray-500 hover:text-gray-900 hover:underline"
@@ -1218,71 +1220,73 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
               Done
             </button>
           </div>
-        </div>
-      </div>
+      </Modal>
 
-      {/* Soft-confirm modal for publishing a material with nothing in it.
-          Higher z-index so it stacks above the content modal. */}
-      {publishConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-gray-200">
-            <h4 className="text-base font-semibold text-gray-900">Publish anyway?</h4>
-            <p className="mt-2 text-sm text-gray-600">
-              This material has no variants or prices. Designers will see it but won't be able to add versions with it. Publish anyway?
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setPublishConfirm(false)}
-                disabled={publishInFlight}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void applyPublishChange(true)}
-                disabled={publishInFlight}
-                className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
-              >
-                {publishInFlight ? 'Publishing…' : 'Publish anyway'}
-              </button>
-            </div>
-          </div>
+      {/* Soft-confirm modal for publishing a material with nothing in it. */}
+      <Modal
+        open={publishConfirm}
+        onClose={() => setPublishConfirm(false)}
+        preventClose={publishInFlight}
+        ariaLabel="Publish anyway confirmation"
+        panelClassName="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-gray-200"
+      >
+        <h4 className="text-base font-semibold text-gray-900">Publish anyway?</h4>
+        <p className="mt-2 text-sm text-gray-600">
+          This material has no variants or prices. Designers will see it but won't be able to add versions with it. Publish anyway?
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setPublishConfirm(false)}
+            disabled={publishInFlight}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void applyPublishChange(true)}
+            disabled={publishInFlight}
+            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+          >
+            {publishInFlight ? 'Publishing…' : 'Publish anyway'}
+          </button>
         </div>
-      )}
+      </Modal>
 
       {/* Soft-confirm modal for archive. Amber-toned rather than
           outright red — archive is reversible, but still a deliberate
           action worth explicit confirmation. */}
-      {archiveConfirm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-gray-200">
-            <h4 className="text-base font-semibold text-gray-900">Archive {material.display_name}?</h4>
-            <p className="mt-2 text-sm text-gray-600">
-              This hides it from the designer dropdown and unpublishes it. You can unarchive later from the Archived section of Settings.
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setArchiveConfirm(false)}
-                disabled={archiveInFlight}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void applyArchive()}
-                disabled={archiveInFlight}
-                className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:opacity-50"
-              >
-                {archiveInFlight ? 'Archiving…' : 'Archive'}
-              </button>
-            </div>
-          </div>
+      <Modal
+        open={archiveConfirm}
+        onClose={() => setArchiveConfirm(false)}
+        preventClose={archiveInFlight}
+        ariaLabel="Archive material confirmation"
+        panelClassName="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-gray-200"
+      >
+        <h4 className="text-base font-semibold text-gray-900">Archive {material.display_name}?</h4>
+        <p className="mt-2 text-sm text-gray-600">
+          This hides it from the designer dropdown and unpublishes it. You can unarchive later from the Archived section of Settings.
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setArchiveConfirm(false)}
+            disabled={archiveInFlight}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void applyArchive()}
+            disabled={archiveInFlight}
+            className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:opacity-50"
+          >
+            {archiveInFlight ? 'Archiving…' : 'Archive'}
+          </button>
         </div>
-      )}
+      </Modal>
     </>
   )
 }

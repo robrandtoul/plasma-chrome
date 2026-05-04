@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
+import Modal from '../../components/Modal'
 import { supabase } from '../../lib/supabase'
 
 // ── Password helpers ──────────────────────────────────────────────────────────
@@ -39,14 +40,9 @@ export default function AddUserDialog({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [created, setCreated] = useState<CreatedUser | null>(null)
-  const firstFieldRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    firstFieldRef.current?.focus()
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && !submitting) onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose, submitting])
+  // Esc handling + first-field auto-focus owned by Modal.
+  // preventClose wired to `submitting` blocks dismissal during
+  // the in-flight create.
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -83,10 +79,12 @@ export default function AddUserDialog({
   }
 
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !submitting && onClose()} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+    <Modal
+      open
+      onClose={onClose}
+      preventClose={submitting}
+      ariaLabelledBy="add-user-title"
+    >
           {created ? (
             <CredentialsView
               user={created}
@@ -96,7 +94,7 @@ export default function AddUserDialog({
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">Add user</h3>
+                <h3 id="add-user-title" className="text-lg font-semibold text-gray-900">Add user</h3>
                 <p className="mt-1 text-xs text-gray-500">
                   Creates a new Designer account. Share the credentials with the person directly — we'll show them once.
                 </p>
@@ -107,7 +105,6 @@ export default function AddUserDialog({
                   Full name <span className="text-rose-500">*</span>
                 </label>
                 <input
-                  ref={firstFieldRef}
                   type="text"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
@@ -182,9 +179,7 @@ export default function AddUserDialog({
               </div>
             </form>
           )}
-        </div>
-      </div>
-    </>
+    </Modal>
   )
 }
 

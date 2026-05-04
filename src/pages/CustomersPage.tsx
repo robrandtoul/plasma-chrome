@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { logAudit } from '../lib/audit'
+import Modal from '../components/Modal'
 
 interface ContactRow {
   id: string
@@ -281,32 +282,33 @@ function ConfirmDialog({
   onCancel: () => void
 }) {
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !working && onCancel()} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
-          <p className="text-sm text-gray-700">{message}</p>
-          {errorMsg && (
-            <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>
-          )}
-          <div className="mt-5 flex justify-end gap-2">
-            <button
-              onClick={onCancel}
-              disabled={working}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={onConfirm}
-              disabled={working}
-              className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
-            >
-              {working ? 'Deleting…' : 'Delete'}
-            </button>
-          </div>
-        </div>
+    <Modal
+      open
+      onClose={onCancel}
+      preventClose={working}
+      ariaLabel="Confirm delete"
+      panelClassName="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl"
+    >
+      <p className="text-sm text-gray-700">{message}</p>
+      {errorMsg && (
+        <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>
+      )}
+      <div className="mt-5 flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          disabled={working}
+          className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          disabled={working}
+          className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+        >
+          {working ? 'Deleting…' : 'Delete'}
+        </button>
       </div>
-    </>
+    </Modal>
   )
 }

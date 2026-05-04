@@ -1871,13 +1871,12 @@ export default function ProofDetailPage() {
           designer_first_name: '',
         }
         return (
-          <>
-            <div
-              className="fixed inset-0 z-40 bg-black/50"
-              onClick={() => setShowReplyModal(false)}
-            />
-            <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8">
-              <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl">
+          <Modal
+            open
+            onClose={() => setShowReplyModal(false)}
+            ariaLabel="Send customer reply"
+            panelClassName="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl"
+          >
                 <MessageSendPanel
                   proofId={proof.id}
                   versionId={currentVersion.id}
@@ -1904,9 +1903,7 @@ export default function ProofDetailPage() {
                   onSkip={() => setShowReplyModal(false)}
                   skipLabel="Cancel"
                 />
-              </div>
-            </div>
-          </>
+          </Modal>
         )
       })()}
 

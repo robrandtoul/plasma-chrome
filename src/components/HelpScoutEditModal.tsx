@@ -15,6 +15,7 @@
 // override panel, same pattern as the new-proof form.
 
 import { useEffect, useRef, useState } from 'react'
+import Modal from './Modal'
 import { supabase } from '../lib/supabase'
 import { logAudit } from '../lib/audit'
 import { parseHelpscoutUrl, MIN_OVERRIDE_REASON_LENGTH } from '../lib/helpscout'
@@ -68,13 +69,8 @@ export default function HelpScoutEditModal({
   const [saveError, setSaveError] = useState<string | null>(null)
   const lookupRan = useRef(false)
 
-  // Close on Esc so admins can bail quickly mid-lookup without hitting
-  // the mouse.
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && !saving) onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose, saving])
+  // Esc handling is owned by the Modal primitive; preventClose
+  // wired to `saving` blocks it during an in-flight save.
 
   // Run a lookup on mount if we have an email — same trigger as the
   // new-proof form's contact-selection effect.
@@ -255,12 +251,16 @@ export default function HelpScoutEditModal({
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/50" onClick={() => !saving && onClose()} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl">
+      <Modal
+        open
+        onClose={onClose}
+        preventClose={saving}
+        ariaLabelledBy="hs-edit-title"
+        panelClassName="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+      >
           <div className="flex items-start justify-between border-b border-gray-100 px-6 py-4">
             <div>
-              <h3 className="text-lg font-semibold text-gray-900">Change Help Scout conversation</h3>
+              <h3 id="hs-edit-title" className="text-lg font-semibold text-gray-900">Change Help Scout conversation</h3>
               <p className="mt-0.5 text-xs text-gray-500">
                 {contactEmail
                   ? `Looking up conversations for ${contactEmail}.`
@@ -403,8 +403,7 @@ export default function HelpScoutEditModal({
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
-        </div>
-      </div>
+      </Modal>
 
       {hsPickerOpen && (
         <HelpScoutPickerInline
@@ -429,11 +428,13 @@ function HelpScoutPickerInline({
   onClose: () => void
 }) {
   return (
-    <>
-      <div className="fixed inset-0 z-[60] bg-black/40" onClick={onClose} />
-      <div role="dialog" aria-modal="true" className="fixed inset-0 z-[70] flex items-center justify-center p-4">
-        <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-          <h3 className="text-sm font-semibold text-gray-900">Multiple Help Scout threads found</h3>
+    <Modal
+      open
+      onClose={onClose}
+      ariaLabelledBy="hs-picker-title"
+      backdropClassName="bg-black/40"
+    >
+          <h3 id="hs-picker-title" className="text-sm font-semibold text-gray-900">Multiple Help Scout threads found</h3>
           <p className="mt-1 text-xs text-gray-500">Pick the conversation this proof relates to.</p>
           <div className="mt-4 max-h-72 space-y-1.5 overflow-y-auto">
             {matches.map((m) => (
@@ -470,8 +471,6 @@ function HelpScoutPickerInline({
               Close
             </button>
           </div>
-        </div>
-      </div>
-    </>
+    </Modal>
   )
 }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import Modal from './Modal'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { PricingDisplay } from './PricingDisplay'
@@ -161,25 +162,12 @@ export default function VersionDetailModal({
     void loadPricing()
   }, [version.id])
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        if (lightboxSrc) { setLightboxSrc(null); return }
-        if (deleteState !== 'working') handleClose()
-      }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-    // handleClose is defined in render scope; we don't put it in
-    // deps because the effect only cares about the latest reference
-    // at fire time and deleteState already triggers re-registration.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lightboxSrc, deleteState, onClose])
-
-  useEffect(() => {
-    document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = '' }
-  }, [])
+  // Esc handling + body scroll lock are handled by the Modal
+  // primitive (per-instance for the main modal, the lightbox,
+  // and the two approval sub-dialogs). Modal's stack-aware
+  // keydown gate makes sure only the topmost dialog acts on
+  // Esc, so closing the lightbox doesn't also close the main
+  // modal underneath.
 
   async function loadImages() {
     setLoadingImages(true)
@@ -428,20 +416,17 @@ export default function VersionDetailModal({
 
   return (
     <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-40 bg-black/50"
-        onClick={() => deleteState === 'idle' && !lightboxSrc && handleClose()}
-      />
-
-      {/* Panel — full-screen on mobile, centred sheet on desktop */}
-      <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 pointer-events-none">
-        <div className="pointer-events-auto relative flex max-h-full w-full flex-col overflow-hidden bg-white sm:max-h-[90vh] sm:max-w-2xl sm:rounded-2xl">
-
+      <Modal
+        open
+        onClose={handleClose}
+        preventClose={deleteState !== 'idle'}
+        ariaLabelledBy="version-detail-title"
+        panelClassName="relative flex max-h-full w-full flex-col overflow-hidden bg-white sm:max-h-[90vh] sm:max-w-2xl sm:rounded-2xl"
+      >
           {/* Header */}
           <div className="flex shrink-0 items-start justify-between border-b border-gray-100 px-6 py-4">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-bold text-gray-900">
+              <h2 id="version-detail-title" className="text-lg font-bold text-gray-900">
                 v{version.version_number} — {version.material_display}
               </h2>
               <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">
@@ -734,23 +719,27 @@ export default function VersionDetailModal({
               </div>
             )}
           </div>
-        </div>
-      </div>
+      </Modal>
 
-      {/* Lightbox — above the modal */}
-      {lightboxSrc && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setLightboxSrc(null)}
-        >
+      {/* Lightbox — above the main modal. Stack-aware Modal means
+          opening this one suspends the parent's Esc/backdrop close,
+          so closing the lightbox doesn't also close the version
+          detail panel. */}
+      <Modal
+        open={!!lightboxSrc}
+        onClose={() => setLightboxSrc(null)}
+        ariaLabel="Proof image preview"
+        backdropClassName="bg-black/80"
+        panelClassName="bg-transparent"
+      >
+        {lightboxSrc && (
           <img
             src={lightboxSrc}
             alt="Proof image"
-            className="max-h-full max-w-full rounded-lg object-contain"
-            onClick={(e) => e.stopPropagation()}
+            className="max-h-[calc(100dvh-2rem)] max-w-full rounded-lg object-contain"
           />
-        </div>
-      )}
+        )}
+      </Modal>
 
       {/* Approval dialogs — rendered on top of the modal (z-[70] so
           they also sit above the lightbox at z-[60], though the two
@@ -968,39 +957,42 @@ function ApproveDialog({
     existing?.state === 'approved' ? existing.actor_name : prefillActor,
   )
   const trimmed = actor.trim()
+  const titleId = 'approve-dialog-title'
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-base font-semibold text-gray-900">Approve for {name === SHARED_APPROVAL_KEY ? 'Shared' : name}</h3>
-        <label className="mt-4 block">
-          <span className="block text-xs font-medium uppercase tracking-wider text-gray-500">Approved by</span>
-          <input
-            type="text"
-            value={actor}
-            onChange={(e) => setActor(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none"
-            autoFocus
-          />
-        </label>
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => onConfirm(trimmed)}
-            disabled={trimmed.length === 0}
-            className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-          >
-            Confirm
-          </button>
-        </div>
+    <Modal
+      open
+      onClose={onCancel}
+      ariaLabelledBy={titleId}
+      backdropClassName="bg-black/60"
+    >
+      <h3 id={titleId} className="text-base font-semibold text-gray-900">Approve for {name === SHARED_APPROVAL_KEY ? 'Shared' : name}</h3>
+      <label className="mt-4 block">
+        <span className="block text-xs font-medium uppercase tracking-wider text-gray-500">Approved by</span>
+        <input
+          type="text"
+          value={actor}
+          onChange={(e) => setActor(e.target.value)}
+          className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none"
+        />
+      </label>
+      <div className="mt-5 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => onConfirm(trimmed)}
+          disabled={trimmed.length === 0}
+          className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+        >
+          Confirm
+        </button>
       </div>
-    </div>
+    </Modal>
   )
 }
 
@@ -1029,48 +1021,51 @@ function RequestChangesDialog({
   )
   const trimmedActor = actor.trim()
   const trimmedNote = note.trim()
+  const titleId = 'request-changes-dialog-title'
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-base font-semibold text-gray-900">Record change request for {name === SHARED_APPROVAL_KEY ? 'Shared' : name}</h3>
-        <label className="mt-4 block">
-          <span className="block text-xs font-medium uppercase tracking-wider text-gray-500">What needs to change?</span>
-          <textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            rows={4}
-            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none"
-            autoFocus
-          />
-        </label>
-        <label className="mt-4 block">
-          <span className="block text-xs font-medium uppercase tracking-wider text-gray-500">Reported by</span>
-          <input
-            type="text"
-            value={actor}
-            onChange={(e) => setActor(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none"
-          />
-        </label>
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => onSubmit(trimmedActor, trimmedNote === '' ? null : trimmedNote)}
-            disabled={trimmedActor.length === 0}
-            className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
-          >
-            Submit
-          </button>
-        </div>
+    <Modal
+      open
+      onClose={onCancel}
+      ariaLabelledBy={titleId}
+      backdropClassName="bg-black/60"
+    >
+      <h3 id={titleId} className="text-base font-semibold text-gray-900">Record change request for {name === SHARED_APPROVAL_KEY ? 'Shared' : name}</h3>
+      <label className="mt-4 block">
+        <span className="block text-xs font-medium uppercase tracking-wider text-gray-500">What needs to change?</span>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={4}
+          className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none"
+        />
+      </label>
+      <label className="mt-4 block">
+        <span className="block text-xs font-medium uppercase tracking-wider text-gray-500">Reported by</span>
+        <input
+          type="text"
+          value={actor}
+          onChange={(e) => setActor(e.target.value)}
+          className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none"
+        />
+      </label>
+      <div className="mt-5 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={() => onSubmit(trimmedActor, trimmedNote === '' ? null : trimmedNote)}
+          disabled={trimmedActor.length === 0}
+          className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+        >
+          Submit
+        </button>
       </div>
-    </div>
+    </Modal>
   )
 }
 

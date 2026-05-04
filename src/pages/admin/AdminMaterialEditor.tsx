@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import PriceCell, { currencySymbol } from './PriceCell'
 import AdminPricingImport from './AdminPricingImport'
+import Modal from '../../components/Modal'
 import { downloadPricingExport } from '../../lib/pricingIO'
 import { logAudit } from '../../lib/audit'
 
@@ -899,34 +900,37 @@ export default function AdminMaterialEditor() {
 
       {/* Soft-confirm for removing a tier. Destructive button is rose
           so the admin can't click through absent-mindedly. */}
-      {removeConfirmQty != null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-gray-200">
-            <h4 className="text-base font-semibold text-gray-900">Remove this tier?</h4>
-            <p className="mt-2 text-sm text-gray-600">
-              Remove the price tier for {removeConfirmQty.toLocaleString()} units? This removes the GBP, EUR and USD prices for this quantity and cannot be undone.
-            </p>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setRemoveConfirmQty(null)}
-                disabled={tierInFlight}
-                className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => { if (removeConfirmQty != null) void handleDeleteTier(removeConfirmQty) }}
-                disabled={tierInFlight}
-                className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
-              >
-                {tierInFlight ? 'Removing…' : 'Remove tier'}
-              </button>
-            </div>
-          </div>
+      <Modal
+        open={removeConfirmQty != null}
+        onClose={() => setRemoveConfirmQty(null)}
+        preventClose={tierInFlight}
+        ariaLabel="Remove price tier confirmation"
+        backdropClassName="bg-black/40"
+        panelClassName="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-gray-200"
+      >
+        <h4 className="text-base font-semibold text-gray-900">Remove this tier?</h4>
+        <p className="mt-2 text-sm text-gray-600">
+          Remove the price tier for {removeConfirmQty?.toLocaleString()} units? This removes the GBP, EUR and USD prices for this quantity and cannot be undone.
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setRemoveConfirmQty(null)}
+            disabled={tierInFlight}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => { if (removeConfirmQty != null) void handleDeleteTier(removeConfirmQty) }}
+            disabled={tierInFlight}
+            className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
+          >
+            {tierInFlight ? 'Removing…' : 'Remove tier'}
+          </button>
         </div>
-      )}
+      </Modal>
     </div>
   )
 }

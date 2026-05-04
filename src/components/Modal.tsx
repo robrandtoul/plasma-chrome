@@ -1,5 +1,19 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useId, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+
+// ── Modal stack ──────────────────────────────────────────────────────────────
+//
+// Only the topmost open modal handles Tab/Esc. Without this, two stacked
+// modals (e.g. VersionDetailModal + its ApproveDialog) would each register
+// a document-level keydown listener and both fire on every keypress; the
+// outer one's "focus escaped" branch would yank focus back into its own
+// panel even when the inner panel was the legitimate target. Each Modal
+// pushes its useId() onto this stack on open and pops on close; keydown
+// handlers no-op unless their id is at the top.
+let modalStack: string[] = []
+function pushModal(id: string) { modalStack.push(id) }
+function popModal(id: string) { modalStack = modalStack.filter((x) => x !== id) }
+function isTopModal(id: string) { return modalStack[modalStack.length - 1] === id }
 
 // ── Body scroll lock counter ─────────────────────────────────────────────────
 //
@@ -84,10 +98,23 @@ interface ModalProps {
    * ARIA attributes are always applied here.
    */
   panelClassName?: string
+  /**
+   * Override the default backdrop styling. Used by the image lightbox
+   * which wants a darker bg-black/80 instead of the default black/50.
+   * Don't pass position / inset / z classes — those are baked in.
+   */
+  backdropClassName?: string
   children: ReactNode
 }
 
 const DEFAULT_PANEL_CLASS = 'w-full max-w-md rounded-2xl bg-white p-6 shadow-xl'
+// Structural classes that always apply to the backdrop. The visual
+// (bg-*) portion is split out so a caller's backdropClassName can
+// override it cleanly without two `bg-*` utilities racing in the
+// compiled stylesheet.
+const BACKDROP_STRUCTURAL = 'fixed inset-0 z-40'
+const BACKDROP_VISUAL_DEFAULT = 'bg-black/50'
+const CENTRING_BASE_CLASS = 'fixed inset-0 z-50 flex items-center justify-center p-4'
 
 export default function Modal({
   open,
@@ -97,34 +124,42 @@ export default function Modal({
   ariaLabel,
   ariaDescribedBy,
   panelClassName,
+  backdropClassName,
   children,
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement | null>(null)
+  // Stable per-instance id so the modal stack can identify "is this
+  // the topmost modal?" Different from useRef<symbol>() because useId
+  // returns a string that's stable across renders without re-running
+  // a generator on each render.
+  const stackId = useId()
   // Element that had focus the moment the modal opened, so we can
   // return focus to it on close. Stored on first open; cleared on close.
   const previouslyFocusedRef = useRef<HTMLElement | null>(null)
 
-  // Capture the focus origin + lock body scroll on open; restore both
-  // on close. Stored as an effect so React's StrictMode double-mount
-  // also exercises the symmetric lock/unlock pair without leaking.
+  // Capture the focus origin + lock body scroll + push onto the modal
+  // stack on open; reverse all three on close. Order matters: push
+  // before lockBodyScroll so an early throw in one doesn't desync the
+  // stack from the lock counter.
   useEffect(() => {
     if (!open) return
     previouslyFocusedRef.current =
       typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null
+    pushModal(stackId)
     lockBodyScroll()
     return () => {
       unlockBodyScroll()
-      // Restore focus to the trigger. Wrapped in a microtask so the
+      popModal(stackId)
+      // Restore focus to the trigger. Wrapped in rAF so the
       // panel has fully unmounted first; otherwise focus() races
       // against React removing the element it was just on.
       const target = previouslyFocusedRef.current
       previouslyFocusedRef.current = null
       if (target && typeof target.focus === 'function') {
-        // requestAnimationFrame to let React commit the unmount.
         requestAnimationFrame(() => target.focus())
       }
     }
-  }, [open])
+  }, [open, stackId])
 
   // Auto-focus the first focusable element inside the panel on open.
   // Without this, focus stays on the trigger button, which is now
@@ -151,6 +186,11 @@ export default function Modal({
   useEffect(() => {
     if (!open) return
     function onKeyDown(e: KeyboardEvent) {
+      // Only the topmost modal handles keys. Two stacked modals each
+      // register a listener; without this gate the outer one's "focus
+      // escaped" branch would yank focus out of the inner panel back
+      // into itself on every Tab.
+      if (!isTopModal(stackId)) return
       if (e.key === 'Escape') {
         if (preventClose) return
         e.stopPropagation()
@@ -180,7 +220,7 @@ export default function Modal({
     // Esc handler that might also be listening.
     document.addEventListener('keydown', onKeyDown, true)
     return () => document.removeEventListener('keydown', onKeyDown, true)
-  }, [open, preventClose, onClose])
+  }, [open, preventClose, onClose, stackId])
 
   if (!open) return null
 
@@ -192,6 +232,11 @@ export default function Modal({
   function handleBackdropMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (preventClose) return
     if (e.target !== e.currentTarget) return
+    // The outer modal of a stacked pair should NOT close when the
+    // user clicks somewhere outside the inner one — the inner is
+    // the legitimate target of the click. Stack-aware gate matches
+    // the keydown handler above.
+    if (!isTopModal(stackId)) return
     onClose()
   }
 
@@ -201,12 +246,12 @@ export default function Modal({
           mousedown-then-release split cleanly differentiates a real
           backdrop click from a child release. */}
       <div
-        className="fixed inset-0 z-40 bg-black/50"
+        className={`${BACKDROP_STRUCTURAL} ${backdropClassName ?? BACKDROP_VISUAL_DEFAULT}`}
         aria-hidden="true"
         onMouseDown={handleBackdropMouseDown}
       />
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        className={CENTRING_BASE_CLASS}
         onMouseDown={handleBackdropMouseDown}
       >
         <div
