@@ -100,7 +100,18 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
                 </p>
                 <div
                   onDragOver={(e) => { if (working) return; e.preventDefault(); setDragOver(true) }}
-                  onDragLeave={() => setDragOver(false)}
+                  onDragLeave={(e) => {
+                    // dragleave fires every time the cursor crosses an
+                    // inner-element boundary, so a flat setDragOver(false)
+                    // would flicker the dropzone border on every internal
+                    // move. Only reset when the cursor is actually leaving
+                    // the dropzone — relatedTarget is the element the
+                    // cursor moved onto; if that's still inside our
+                    // currentTarget, ignore.
+                    const next = e.relatedTarget as Node | null
+                    if (next && e.currentTarget.contains(next)) return
+                    setDragOver(false)
+                  }}
                   onDrop={(e) => {
                     e.preventDefault()
                     setDragOver(false)

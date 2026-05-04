@@ -1,5 +1,4 @@
 import type { KeyboardEvent } from 'react'
-import { downloadBlob } from '../lib/downloadFile'
 
 // Shared keyboard handler for the click-to-zoom card wrappers.
 // Wrappers are <div role="button"> rather than real <button>
@@ -28,12 +27,6 @@ export interface GridImage {
   original_filename?: string | null
   associated_name?: string | null
   side?: 'front' | 'back' | null
-}
-
-async function downloadImage(url: string, filename: string) {
-  const resp = await fetch(url)
-  const blob = await resp.blob()
-  downloadBlob(blob, filename)
 }
 
 // Single-image card with click-to-zoom + caption. Exported so the
@@ -80,19 +73,27 @@ function Caption({ label, filename, signedUrl }: { label: string; filename?: str
             {filename}
           </div>
         )}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            downloadImage(signedUrl, filename ?? 'proof.jpg')
-          }}
+        {/* Anchor-based download — same pattern as PlateCard on the
+            customer page. Skips the fetch-then-blob round-trip the
+            previous implementation needed for the click handler,
+            which was slow on large proof images and gave no in-flight
+            feedback. As a side-effect this also drops the double-
+            click race the old fetch path could trigger. target="_blank"
+            + rel="noopener" is the graceful fallback when the browser
+            ignores the download attribute on a cross-origin URL. */}
+        <a
+          href={signedUrl}
+          download={filename ?? 'proof.jpg'}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
           className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" className="h-3.5 w-3.5">
             <path fillRule="evenodd" d="M10 3a.75.75 0 0 1 .75.75v8.69l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V3.75A.75.75 0 0 1 10 3Zm-6 12.25a.75.75 0 0 1 .75.75v.25c0 .414.336.75.75.75h9c.414 0 .75-.336.75-.75V16a.75.75 0 0 1 1.5 0v.25A2.25 2.25 0 0 1 14.5 18.5h-9A2.25 2.25 0 0 1 3.25 16.25V16a.75.75 0 0 1 .75-.75Z" clipRule="evenodd" />
           </svg>
           Download
-        </button>
+        </a>
       </div>
     </div>
   )

@@ -14,9 +14,21 @@
   --font-paper-mono: 'Red Hat Mono', ui-monospace, monospace;
 }
 
+/*
+  Block horizontal scrolling caused by transient layout overshoot
+  (e.g. a button with `mr-[-2px]` for an off-grid ring) without
+  breaking `position: sticky` for descendants. `overflow-x: hidden`
+  establishes a new containing block, which silently makes any
+  sticky element below stick to the body's scroll context rather
+  than the viewport. `overflow-x: clip` does NOT establish a
+  containing block, so it's the right choice here. Modern-browser
+  fallback: in the rare case `clip` isn't supported, the rule is
+  ignored and the page scrolls horizontally as if it were
+  `visible` — a graceful degradation.
+*/
 html,
 body {
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 @keyframes reveal-row {
