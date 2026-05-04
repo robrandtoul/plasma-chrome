@@ -91,6 +91,7 @@ export function PaperRevisionTimeline({
 
   return (
     <section
+      aria-label="Revisions"
       className="border-y border-[rgba(26,22,18,0.10)]"
       style={{ background: PAPER_TINT_1 }}
     >

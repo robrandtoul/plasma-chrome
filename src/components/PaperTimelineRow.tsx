@@ -35,7 +35,7 @@ export function PaperTimelineRow({
     <button
       type="button"
       onClick={onSelect}
-      aria-current={isActive ? 'true' : undefined}
+      aria-current={isActive ? 'step' : undefined}
       className={[
         'block w-full text-left py-3 px-4',
         // Active card uses rounded-r-md (square left edge against the

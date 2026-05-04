@@ -153,6 +153,22 @@ export default function CustomerProofPage() {
     loadProof(id)
   }, [id])
 
+  // Per-proof document.title — same primary string the masthead uses
+  // (company when present, otherwise the contact name) so screen-reader
+  // users with multiple tabs open can tell proofs apart instead of
+  // hearing the generic "Proof Viewer" page title for every tab.
+  // Resets to the static title on unmount so navigating away from
+  // /p/:id doesn't leave the customer's name in the tab.
+  useEffect(() => {
+    if (!proof) return
+    const trimmedCompany = proof.company?.trim() ?? ''
+    const trimmedName = proof.customer_name?.trim() ?? ''
+    const primary = trimmedCompany.length > 0 ? trimmedCompany : trimmedName
+    const previous = document.title
+    document.title = primary ? `${primary} — Proof Viewer` : 'Proof Viewer'
+    return () => { document.title = previous }
+  }, [proof])
+
   useEffect(() => {
     if (!lightbox) return
     // Move focus into the dialog on open so the customer's first Tab
@@ -1789,7 +1805,10 @@ export default function CustomerProofPage() {
               g.images.some((i) => i.side === 'back')
 
             return (
-              <section style={{ background: PAPER_CREAM, color: PAPER_INK }}>
+              <section
+                aria-labelledby="section-proofs-heading"
+                style={{ background: PAPER_CREAM, color: PAPER_INK }}
+              >
                 <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
                   {/* Section header — left cluster is the
                       Proofs heading + count subtitle stacked
@@ -1809,6 +1828,7 @@ export default function CustomerProofPage() {
                   >
                     <div>
                       <h2
+                        id="section-proofs-heading"
                         className="leading-none break-words"
                         style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(40px, 9vw, 56px)', color: PAPER_INK }}
                       >
@@ -2050,6 +2070,7 @@ export default function CustomerProofPage() {
               top-border rule. Notes only render when the version
               has change_notes content. */}
           <section
+            aria-labelledby="section-specification-heading"
             style={{
               background: PAPER_TINT_2,
               color: PAPER_INK,
@@ -2060,6 +2081,7 @@ export default function CustomerProofPage() {
               <div className="grid gap-10 sm:grid-cols-[1fr_2fr] sm:gap-16">
                 <div>
                   <h2
+                    id="section-specification-heading"
                     className="leading-[1.02] border-b-2 pb-4 break-words"
                     style={{
                       fontFamily: SERIF,
@@ -2179,6 +2201,7 @@ export default function CustomerProofPage() {
               message. Split-name tooling callout + shipping
               footer ride along underneath. */}
           <section
+            aria-labelledby="section-pricing-heading"
             style={{
               background: PAPER_CREAM,
               color: PAPER_INK,
@@ -2192,6 +2215,7 @@ export default function CustomerProofPage() {
               >
                 <div>
                   <h2
+                    id="section-pricing-heading"
                     className="leading-none break-words"
                     style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(40px, 9vw, 56px)', color: PAPER_INK }}
                   >
@@ -2385,7 +2409,10 @@ export default function CustomerProofPage() {
               material has a description configured — if not,
               the section collapses silently. */}
           {activeVersion.material_description && (
-            <section style={{ background: PAPER_TINT_1, color: PAPER_INK }}>
+            <section
+              aria-labelledby="section-material-heading"
+              style={{ background: PAPER_TINT_1, color: PAPER_INK }}
+            >
               {/* Outer padding matches the Plates section's
                   py-20 sm:py-24 rhythm. Section sits in the
                   PAPER_TINT_1 slot just above the footer — same
@@ -2411,6 +2438,7 @@ export default function CustomerProofPage() {
                   Material notes
                 </p>
                 <h2
+                  id="section-material-heading"
                   className="leading-none border-b-2 pb-4 break-words"
                   style={{
                     fontFamily: SERIF,
@@ -2904,6 +2932,17 @@ export default function CustomerProofPage() {
                     type="button"
                     onClick={() => void submitAction()}
                     disabled={confirmDisabled}
+                    // Visible text stays "Confirm" (no design change),
+                    // but screen-reader users hear the explicit action
+                    // verb so they don't have to infer the verb from
+                    // the dialog title.
+                    aria-label={
+                      actionPanel.type === 'approve'
+                        ? actionPanel.name === SHARED_APPROVAL_KEY
+                          ? 'Approve this proof'
+                          : `Approve ${actionPanel.name}'s design`
+                        : 'Send change request'
+                    }
                     onMouseEnter={(e) => {
                       if (confirmDisabled) return
                       if (actionPanel.type === 'approve') {
@@ -3054,8 +3093,11 @@ function PlateCard({
         <button
           type="button"
           onClick={() => image.signed_url && onClick(image.signed_url, lightboxAlt)}
-          className="block w-full overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-          style={{ outlineColor: ACCENT }}
+          // ring colour set explicitly to the ACCENT-50 token used
+          // across the page; without it Tailwind falls back to its
+          // default blue ring. ring-offset-2 sits against PAPER_CREAM
+          // (default white offset reads correctly on cream).
+          className="block w-full overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[rgba(123,63,242,0.5)]"
           // captionLabel carries recipient + side ("MARIE · FRONT") so
           // every plate on the page has a distinct accessible name. The
           // page-level descriptor (`alt`, e.g. "Marie — proof version 2")
@@ -3259,21 +3301,25 @@ function PaperPricingTable({
     return (
       <>
         <table className="w-full border-collapse">
+          <caption className="sr-only">{`Pricing by quantity in ${currency}`}</caption>
           <thead>
             <tr style={{ borderBottom: '1px solid rgba(26,22,18,0.15)' }}>
               <th
+                scope="col"
                 className="py-4 text-left font-paper-mono uppercase"
                 style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
               >
                 Total quantity
               </th>
               <th
+                scope="col"
                 className="py-4 text-right font-paper-mono uppercase"
                 style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
               >
                 Price
               </th>
               <th
+                scope="col"
                 className="py-4 text-right font-paper-mono uppercase"
                 style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
               >
@@ -3332,9 +3378,11 @@ function PaperPricingTable({
     <>
     <div className="overflow-x-auto">
       <table className="w-full border-collapse">
+        <caption className="sr-only">{`Pricing by quantity in ${currency}`}</caption>
         <thead>
           <tr style={{ borderBottom: '1px solid rgba(26,22,18,0.15)' }}>
             <th
+              scope="col"
               className="py-4 pr-2 text-left font-paper-mono uppercase sm:pr-4"
               style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
             >
@@ -3343,6 +3391,7 @@ function PaperPricingTable({
             {variants.map((v) => (
               <th
                 key={v.variant_id}
+                scope="col"
                 className="py-4 pl-2 text-right font-paper-mono uppercase sm:pl-4"
                 style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
               >
@@ -3580,13 +3629,18 @@ function QuantityLookup({
       </div>
       {/* Result panel — rendered only when the input has
           parsed into a query. The card feels compact at rest
-          when the input is empty. aria-live/role=status makes
-          screen readers announce caption changes as the
-          customer types without re-announcing the rest of
-          the card's chrome. */}
+          when the input is empty. aria-live/role=status sits
+          on the caption <p> only — wrapping the whole panel
+          (including the result table) caused screen readers
+          to re-announce every cell on each keystroke. The
+          caption already contains the human-readable result
+          ("For 1,000", "Below our listed range. Lowest tier:")
+          so announcing just it is sufficient feedback. */}
       {caption && (
-        <div className="mt-8" aria-live="polite" role="status">
+        <div className="mt-8">
           <p
+            aria-live="polite"
+            role="status"
             style={{
               fontFamily: SERIF,
               fontWeight: 400,
@@ -3600,6 +3654,7 @@ function QuantityLookup({
           {tiers.length > 0 && (
             <div className="mt-4 overflow-x-auto">
               <table className="w-full border-collapse">
+                <caption className="sr-only">{`Closest pricing tiers in ${currency}`}</caption>
                 <thead>
                   <tr style={{ borderBottom: '1px solid rgba(26,22,18,0.15)' }}>
                     {/* Blank header above the qty column — the
@@ -3610,6 +3665,7 @@ function QuantityLookup({
                     {variants.map((v) => (
                       <th
                         key={v.variant_id}
+                        scope="col"
                         className="py-3 pl-4 text-right font-paper-mono uppercase"
                         style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
                       >
