@@ -299,7 +299,7 @@ export default function AdminCoreColoursPage() {
   if (loadError) {
     return (
       <div className="rounded-2xl bg-rose-50 p-6 text-sm text-rose-700 ring-1 ring-rose-200">
-        Failed to load core colours: {loadError}
+        Failed to load paper colours: {loadError}
       </div>
     )
   }
@@ -308,10 +308,10 @@ export default function AdminCoreColoursPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">Letterpress core colours</h2>
+          <h2 className="text-xl font-bold text-gray-900">Letterpress paper colours</h2>
           <p className="mt-1 max-w-xl text-sm text-gray-500">
-            The accent colour palette for the middle layer of un-gilded letterpress cards.
-            Designers pick from active colours when creating a letterpress proof.
+            The Colorplan paper palette used for the front, core, and back layers of un-gilded
+            letterpress cards. Designers pick from active colours when creating a letterpress proof.
           </p>
         </div>
         <button
@@ -340,7 +340,7 @@ export default function AdminCoreColoursPage() {
             {colours.length === 0 && !adding && (
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">
-                  No core colours yet. Add the first one above.
+                  No paper colours yet. Add the first one above.
                 </td>
               </tr>
             )}
