@@ -796,15 +796,17 @@ export default function DashboardPage() {
                           i > 0 ? 'border-t border-gray-100' : '',
                         ].join(' ')}
                       >
-                        {/* Customer + company, plus viewed-state dot + "Viewed Xh ago" tail */}
+                        {/* Company (primary) + customer name / viewed tail (secondary) */}
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <ViewedDot state={r.viewedState} />
-                            <span className="truncate text-sm font-medium text-gray-900">{r.customerName}</span>
+                            <span className="truncate text-[15px] font-medium text-gray-900">
+                              {r.companyName || r.customerName}
+                            </span>
                           </div>
                           {(r.companyName || (r.viewedState !== 'unviewed' && r.lastViewedAt)) && (
-                            <div className="truncate text-xs text-gray-400">
-                              {r.companyName}
+                            <div className="truncate text-[13px] text-gray-400">
+                              {r.companyName ? r.customerName : null}
                               {r.companyName && r.viewedState !== 'unviewed' && r.lastViewedAt ? ' · ' : ''}
                               {r.viewedState !== 'unviewed' && r.lastViewedAt && (
                                 <span title={formatAbsoluteDateTime(r.lastViewedAt)}>
