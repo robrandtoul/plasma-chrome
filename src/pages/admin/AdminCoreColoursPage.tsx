@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
+import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
 import { CoreColourSwatch } from '../../components/CoreColourSwatch'
 import type { LetterpressCoreColour } from '../../lib/types'
+import CoreColoursImport from './CoreColoursImport'
 
 // Admin page for the letterpress core-colour palette
 // (migration 000133). Pattern matches the existing admin pricing
@@ -49,6 +51,15 @@ export default function AdminCoreColoursPage() {
   // table. Mirrors the per-row shape so save logic can reuse the
   // hex / name validation helpers.
   const [adding, setAdding] = useState<RowState | null>(null)
+
+  // Import modal visibility (migration 000137). Mounts the
+  // CoreColoursImport component which owns its own file pick →
+  // preview → apply flow and calls onApplied with the server-
+  // returned summary so we can refresh the table + show a toast.
+  const [showImport, setShowImport] = useState(false)
+  // Lightweight summary toast after a successful Apply. 5s
+  // auto-dismiss matches the existing Undo toast cadence elsewhere.
+  const [importToast, setImportToast] = useState<string | null>(null)
 
   useEffect(() => {
     void load()
@@ -288,6 +299,45 @@ export default function AdminCoreColoursPage() {
     })
   }
 
+  // Export the full catalogue (active + inactive) to an XLSX,
+  // ordered by sort_order then name. Columns: ID, Name, Hex, Sort,
+  // Active. Active rendered as TRUE / FALSE so the round-trip
+  // import path (which accepts those literals) works without
+  // post-processing. Filename includes today's date so successive
+  // exports don't overwrite each other in the downloads folder.
+  function handleExport() {
+    if (colours.length === 0) return
+    const sorted = [...colours].sort((a, b) => {
+      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order
+      return a.name.localeCompare(b.name)
+    })
+    const aoa: (string | number | boolean)[][] = [
+      ['ID', 'Name', 'Hex', 'Sort', 'Active'],
+      ...sorted.map((c) => [
+        c.id,
+        c.name,
+        c.hex_value,
+        c.sort_order,
+        c.is_active ? 'TRUE' : 'FALSE',
+      ]),
+    ]
+    const ws = XLSX.utils.aoa_to_sheet(aoa)
+    // Reasonable default column widths so the file is readable
+    // when opened. UUID column is wide; Name moderate; the rest
+    // narrow.
+    ws['!cols'] = [
+      { wch: 38 }, // ID (UUID)
+      { wch: 22 }, // Name
+      { wch: 10 }, // Hex
+      { wch: 8 },  // Sort
+      { wch: 10 }, // Active
+    ]
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Core colours')
+    const today = new Date().toISOString().slice(0, 10)
+    XLSX.writeFile(wb, `letterpress-core-colours-${today}.xlsx`)
+  }
+
   if (loading) {
     return (
       <div className="flex justify-center py-20">
@@ -314,15 +364,44 @@ export default function AdminCoreColoursPage() {
             letterpress cards. Designers pick from active colours when creating a letterpress proof.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openAdd}
-          disabled={!!adding}
-          className="shrink-0 rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          + Add colour
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={colours.length === 0}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            title={colours.length === 0 ? 'Catalogue is empty — nothing to export' : 'Download the full palette as XLSX'}
+          >
+            Export
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowImport(true)}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
+            title="Upload an XLSX to bulk-update the palette"
+          >
+            Import
+          </button>
+          <button
+            type="button"
+            onClick={openAdd}
+            disabled={!!adding}
+            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            + Add colour
+          </button>
+        </div>
       </div>
+
+      {/* Toast: post-apply summary, auto-dismiss after 5s. */}
+      {importToast && (
+        <div
+          role="status"
+          className="rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-800 ring-1 ring-emerald-200"
+        >
+          {importToast}
+        </div>
+      )}
 
       <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
         <table className="w-full text-sm">
@@ -568,6 +647,29 @@ export default function AdminCoreColoursPage() {
         Removing a colour deactivates it but keeps the row, so any existing proofs that use the colour
         keep working. Inactive colours stay listed here. Restore reactivates the colour for designers.
       </p>
+
+      {showImport && (
+        <CoreColoursImport
+          current={colours}
+          onClose={() => setShowImport(false)}
+          onApplied={(summary) => {
+            // Reload from the DB so the table shows the new state
+            // (server may have applied additional rules beyond the
+            // preview's expectations, e.g. RLS-based filters).
+            void load()
+            const parts: string[] = []
+            if (summary.inserted) parts.push(`${summary.inserted} added`)
+            if (summary.updated) parts.push(`${summary.updated} updated`)
+            if (summary.deactivated) parts.push(`${summary.deactivated} deactivated`)
+            setImportToast(
+              parts.length > 0
+                ? `Import applied: ${parts.join(', ')}.`
+                : 'Import applied: no changes.',
+            )
+            setTimeout(() => setImportToast(null), 5000)
+          }}
+        />
+      )}
     </div>
   )
 }
