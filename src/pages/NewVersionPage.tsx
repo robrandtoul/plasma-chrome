@@ -16,11 +16,26 @@ import MessageSendPanel from '../components/MessageSendPanel'
 import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
 import { QuoteLink } from '../components/QuoteLink'
-import type { Currency, ProofNameApproval } from '../lib/types'
+import type { Currency, LetterpressCoreColour, ProofNameApproval } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
+import { CoreColourSwatch } from '../components/CoreColourSwatch'
+
+// Materials whose physical edge construction exposes the core layer
+// (un-gilded letterpress) and therefore want a core-colour pick.
+// Gilded letterpress hides the layer behind the gilded edge; metals,
+// woods, plastics, etc. don't have the three-layer build. Today this
+// is just paper_letterpress; if the catalogue ever adds another
+// un-gilded letterpress SKU (different stock weight, etc.) extend
+// this set rather than duplicating the picker logic at each call site.
+const CORE_COLOUR_MATERIAL_CODES: ReadonlySet<string> = new Set([
+  'paper_letterpress',
+])
 
 interface Material {
   id: string
+  // Stable code used to gate the core-colour picker; without it
+  // the form has nothing to key on (display_name is admin-editable).
+  code: string
   display_name: string
   requires_ink_names: boolean
   option_label: string | null
@@ -240,6 +255,13 @@ export default function NewVersionPage() {
   const [selectedOptions, setSelectedOptions] = useState<string[]>([])
   const [imagesByOption, setImagesByOption] = useState<Record<string, ImageEntry[]>>({ '': [] })
   const [activeImageOption, setActiveImageOption] = useState('')
+  // Letterpress core colour (migration 000133). Catalogue is loaded
+  // once on mount; the picker only renders when the selected
+  // material is in CORE_COLOUR_MATERIAL_CODES (today: paper_letterpress).
+  // Null = no selection — required when the picker is visible,
+  // ignored on save otherwise.
+  const [coreColours, setCoreColours] = useState<LetterpressCoreColour[]>([])
+  const [selectedCoreColourId, setSelectedCoreColourId] = useState<string | null>(null)
 
   // ── Shape B carry-forward state ──────────────────────────────────────────
   // v1Carry is null when creating v1 or when the form can't find an
@@ -282,6 +304,7 @@ export default function NewVersionPage() {
   const currencyRef         = useRef<HTMLDivElement>(null)
   const inkNamesRef         = useRef<HTMLDivElement>(null)
   const namesRef            = useRef<HTMLDivElement>(null)
+  const coreColourRef       = useRef<HTMLDivElement>(null)
   const toastTimerRef       = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Stash for undo-after-Remove. Holds the removed entry plus the
   // option key + array index it was at, so undoRemove() can splice
@@ -350,7 +373,7 @@ export default function NewVersionPage() {
       // so the designer can continue with it.
       const materialsPromise = supabase
         .from('materials')
-        .select('id, display_name, requires_ink_names, option_label, display_quantities, multi_variant, archived_at')
+        .select('id, code, display_name, requires_ink_names, option_label, display_quantities, multi_variant, archived_at')
         .eq('is_active', true)
         .eq('is_published', true)
         .is('archived_at', null)
@@ -368,7 +391,7 @@ export default function NewVersionPage() {
       // default).
       const inheritPromise = supabase
         .from('proof_versions')
-        .select('id, version_number, currency, material_id, displayed_variant_ids, names, ink_names, material_options, card_type, custom_quote')
+        .select('id, version_number, currency, material_id, displayed_variant_ids, names, ink_names, material_options, card_type, custom_quote, core_colour_id')
         .eq('proof_id', proofId!)
         .eq('is_current', true)
         .maybeSingle()
@@ -395,6 +418,7 @@ export default function NewVersionPage() {
         material_options: string[] | null
         card_type: 'business' | 'membership'
         custom_quote: boolean
+        core_colour_id: string | null
       } | null
 
       if (inherited) {
@@ -418,7 +442,7 @@ export default function NewVersionPage() {
         if (!inMain) {
           const { data: archivedMatData } = await supabase
             .from('materials')
-            .select('id, display_name, requires_ink_names, option_label, display_quantities, multi_variant, archived_at')
+            .select('id, code, display_name, requires_ink_names, option_label, display_quantities, multi_variant, archived_at')
             .eq('id', inherited.material_id)
             .maybeSingle()
           if (!cancelled && archivedMatData) {
@@ -495,6 +519,15 @@ export default function NewVersionPage() {
         const inheritedPricingDisplay: PricingDisplayValue = inherited.custom_quote ? 'custom' : 'standard'
         setPricingDisplay(inheritedPricingDisplay)
         pricingDisplayInherited = true
+
+        // Letterpress core colour (migration 000133). Carry forward
+        // the prior version's choice — the visible-only-on-letterpress
+        // gating in the validations object means a non-null value
+        // sticks around safely if the designer keeps the same
+        // material, and is ignored on save if they switch away.
+        if (inherited.core_colour_id) {
+          setSelectedCoreColourId(inherited.core_colour_id)
+        }
 
         // Stash partial snapshot values; sidedness + shared get
         // derived from v1's images in the image-loading block
@@ -671,6 +704,25 @@ export default function NewVersionPage() {
     load()
     return () => { cancelled = true }
   }, [proofId])
+
+  // Letterpress core colour catalogue (migration 000133). Loaded
+  // once on mount and reused by the picker. RLS already filters to
+  // active rows for designers, so no client-side is_active filter
+  // needed here. Sort order matches the admin-set sort_order with a
+  // name tiebreak.
+  useEffect(() => {
+    let cancelled = false
+    supabase
+      .from('letterpress_core_colours')
+      .select('id, name, hex_value, is_active, sort_order')
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true })
+      .then(({ data }) => {
+        if (cancelled) return
+        setCoreColours((data ?? []) as LetterpressCoreColour[])
+      })
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     setVariants([])
@@ -1728,6 +1780,7 @@ export default function NewVersionPage() {
         { key: 'variant',        ref: variantRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'currency',       ref: currencyRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'inkNames',       ref: inkNamesRef as unknown as React.RefObject<HTMLElement | null> },
+        { key: 'coreColour',     ref: coreColourRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'names',          ref: namesRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'images',         ref: imageSectionRef },
       ]
@@ -1913,6 +1966,11 @@ export default function NewVersionPage() {
         // loaded) or admin-inserted rows. Drives downstream
         // analytics and any future "this is a clone of..." UI.
         cloned_from_version_id: v1Carry?.versionId ?? null,
+        // Letterpress core colour (migration 000133). Only stamped
+        // when the picker was visible — non-letterpress saves are
+        // unconditionally null so we never persist a colour against
+        // a material that can't expose it.
+        core_colour_id: requiresCoreColour ? selectedCoreColourId : null,
       })
       .select('id, version_number')
       .single()
@@ -2163,6 +2221,11 @@ export default function NewVersionPage() {
   const selectedMaterial = materials.find(m => m.id === selectedMaterialId)
   const isMultiVariant = selectedMaterial?.multi_variant ?? false
   const requiresInkNames = selectedMaterial?.requires_ink_names ?? false
+  // Letterpress core colour (migration 000133) — required when the
+  // selected material is in the un-gilded letterpress set. The
+  // gilded SKU is a separate material code, so checking the code
+  // is the same thing as "letterpress AND gilding not selected".
+  const requiresCoreColour = !!selectedMaterial && CORE_COLOUR_MATERIAL_CODES.has(selectedMaterial.code)
 
   // Option dimension label — singular ("Finish"/"Species") for in-copy use,
   // plural ("Finishes"/"Species") for the section heading.
@@ -2267,6 +2330,7 @@ export default function NewVersionPage() {
     currency:       isCustomQuote || currency !== null,
     inkNames:       !requiresInkNames || (inkCount > 0 && inkNameValidities.every(Boolean)),
     names:          namesValid,
+    coreColour:     !requiresCoreColour || selectedCoreColourId !== null,
   } as const
   const isValid = Object.values(validations).every(Boolean)
   const shouldHighlight = (k: keyof typeof validations) => submitAttempted && !validations[k]
@@ -2325,6 +2389,13 @@ export default function NewVersionPage() {
     // handles the indicator state via the snapshot comparison.
     setInheritedMaterialArchived(false)
     inheritedVariantIdsRef.current = null
+    // Drop the core-colour selection when leaving a material that
+    // wants one. Keeps state honest so the designer never carries
+    // a stale colour into a non-letterpress save (where it'd be
+    // sent to the DB and stored against a non-letterpress version).
+    if (next && !CORE_COLOUR_MATERIAL_CODES.has(next.code)) {
+      setSelectedCoreColourId(null)
+    }
   }
 
   // ── Per-field carried/edited derivations ───────────────────────
@@ -2885,6 +2956,41 @@ export default function NewVersionPage() {
                     Each {optionLabelSingular.toLowerCase()} becomes a tab on the customer's view, with its own proof images and pricing.
                   </p>
                 </div>
+              </div>
+            )}
+
+            {/* Core colour — only renders for un-gilded letterpress
+                (paper_letterpress). Gilded letterpress hides the
+                core layer behind the gilded edge so no picker is
+                needed. The catalogue is admin-managed at
+                /admin/core-colours; this picker only sees active
+                rows (RLS filters at the DB). Required when visible. */}
+            {requiresCoreColour && (
+              <div ref={coreColourRef} className="mb-8">
+                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                  <span>Core colour</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  {selectedCoreColourId && (() => {
+                    const picked = coreColours.find((c) => c.id === selectedCoreColourId)
+                    if (!picked) return null
+                    return <CoreColourSwatch hex={picked.hex_value} size={28} ariaLabel={`${picked.name} swatch`} />
+                  })()}
+                  <select
+                    value={selectedCoreColourId ?? ''}
+                    onChange={(e) => setSelectedCoreColourId(e.target.value || null)}
+                    className={[selectClass, shouldHighlight('coreColour') ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
+                  >
+                    <option value="">Select a colour…</option>
+                    {coreColours.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <p className="mt-1.5 text-xs text-gray-500">
+                  The accent colour for the middle layer, visible at the card edge.
+                </p>
+                {shouldHighlight('coreColour') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
               </div>
             )}
 

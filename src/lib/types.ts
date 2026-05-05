@@ -167,6 +167,26 @@ export interface PublicProofVersion {
   // Same value on every row — denormalised at the view layer to
   // avoid a separate anon-readable surface on settings.
   approvals_enabled: boolean
+  // ── Letterpress core colour (migration 000133) ────────────────────────────
+  // Populated only for proof_versions whose material is the un-gilded
+  // letterpress (paper_letterpress); both fields are null otherwise.
+  // Customer page renders a swatch + name spec row when both are
+  // non-null. Sourced from a left join on letterpress_core_colours.
+  core_colour_name: string | null
+  core_colour_hex: string | null
+}
+
+// Catalogue row for the letterpress core colour palette
+// (migration 000133). Admin reads include inactive entries; the
+// designer-side picker filters to is_active=true only. hex_value
+// is validated by a CHECK constraint to a 6-digit hex string with
+// leading hash.
+export interface LetterpressCoreColour {
+  id: string
+  name: string
+  hex_value: string
+  is_active: boolean
+  sort_order: number
 }
 
 // One entry in PublicProofVersion.latest_events_by_name. Mirrors

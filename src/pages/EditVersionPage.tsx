@@ -13,7 +13,16 @@ import { PageDropOverlay } from '../components/PageDropOverlay'
 import NameChipInput from '../components/NameChipInput'
 import { matchImageToName } from '../lib/matchImageToName'
 import { safeRemoveImagePaths } from '../lib/imageStorage'
-import type { Currency, PricingSnapshot } from '../lib/types'
+import type { Currency, LetterpressCoreColour, PricingSnapshot } from '../lib/types'
+import { CoreColourSwatch } from '../components/CoreColourSwatch'
+
+// Materials whose physical edge construction exposes the core layer
+// (un-gilded letterpress) and therefore want a core-colour pick.
+// Mirrored from NewVersionPage so the two stay in lockstep — if the
+// catalogue ever adds another un-gilded letterpress SKU, update both.
+const CORE_COLOUR_MATERIAL_CODES: ReadonlySet<string> = new Set([
+  'paper_letterpress',
+])
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -82,6 +91,15 @@ export default function EditVersionPage() {
   const [editImagesByOption, setEditImagesByOption] = useState<Record<string, EditImage[]>>({ '': [] })
   const [activeImageOption, setActiveImageOption] = useState('')
   const [originalImageIds, setOriginalImageIds] = useState<Set<string>>(new Set())
+  // Letterpress core colour (migration 000133). materialCode is the
+  // stable identifier the picker keys on; it gates the field's
+  // visibility and the validation rule. Loaded once from the
+  // version's joined material row in loadAll. coreColours is the
+  // catalogue (RLS-filtered to active rows for designers).
+  // selectedCoreColourId mirrors proof_versions.core_colour_id.
+  const [materialCode, setMaterialCode] = useState<string>('')
+  const [coreColours, setCoreColours] = useState<LetterpressCoreColour[]>([])
+  const [selectedCoreColourId, setSelectedCoreColourId] = useState<string | null>(null)
   const [fileError, setFileError] = useState('')
   const [fileNote, setFileNote] = useState('')
   const [submitAttempted, setSubmitAttempted] = useState(false)
@@ -94,6 +112,7 @@ export default function EditVersionPage() {
   const imageSectionRef = useRef<HTMLElement | null>(null)
   const materialRef     = useRef<HTMLInputElement>(null)
   const inkNamesRef     = useRef<HTMLDivElement>(null)
+  const coreColourRef   = useRef<HTMLDivElement>(null)
   const toastTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Stash for undo-after-Remove. See NewVersionPage for the full
   // mechanic explainer; same shape adjusted for EditImage's
@@ -126,7 +145,7 @@ export default function EditVersionPage() {
       supabase.from('proofs').select('contacts(full_name, companies(name))').eq('id', pid).single(),
       supabase
         .from('proof_versions')
-        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, names, materials(display_quantities, requires_ink_names, option_label, multi_variant)')
+        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, names, core_colour_id, materials(code, display_quantities, requires_ink_names, option_label, multi_variant)')
         .eq('id', vid)
         .single(),
       supabase
@@ -155,6 +174,23 @@ export default function EditVersionPage() {
     const materialRequiresInkNames: boolean = !!materialMeta.requires_ink_names
     setRequiresInkNames(materialRequiresInkNames)
     setOptionLabelSingular(materialMeta.option_label ?? 'Finish')
+    setMaterialCode(materialMeta.code ?? '')
+    setSelectedCoreColourId((v.core_colour_id as string | null) ?? null)
+
+    // Fetch the active core-colour catalogue when this version is on
+    // a material that wants the picker. Skipping the fetch otherwise
+    // saves an unnecessary round trip on the much more common
+    // non-letterpress edit path.
+    if (CORE_COLOUR_MATERIAL_CODES.has(materialMeta.code ?? '')) {
+      void supabase
+        .from('letterpress_core_colours')
+        .select('id, name, hex_value, is_active, sort_order')
+        .order('sort_order', { ascending: true })
+        .order('name', { ascending: true })
+        .then(({ data }) => {
+          setCoreColours((data ?? []) as LetterpressCoreColour[])
+        })
+    }
     if (materialRequiresInkNames) {
       setInkNamesArray(rawInkNames)
     } else {
@@ -266,10 +302,15 @@ export default function EditVersionPage() {
     : []
 
   const imagesFinishKeys = optionMode ? selectedOptions : ['']
+  // Letterpress core colour gate (migration 000133). EditVersionPage
+  // doesn't allow material swaps, so requiresCoreColour resolves to a
+  // stable value once loadAll runs.
+  const requiresCoreColour = CORE_COLOUR_MATERIAL_CODES.has(materialCode)
   const validations = {
-    images:   imagesFinishKeys.every(fk => (editImagesByOption[fk] ?? []).length > 0),
-    material: materialDisplay.trim() !== '',
-    inkNames: !requiresInkNames || (editInkCount > 0 && inkNameValidities.every(Boolean)),
+    images:     imagesFinishKeys.every(fk => (editImagesByOption[fk] ?? []).length > 0),
+    material:   materialDisplay.trim() !== '',
+    inkNames:   !requiresInkNames || (editInkCount > 0 && inkNameValidities.every(Boolean)),
+    coreColour: !requiresCoreColour || selectedCoreColourId !== null,
   } as const
   const isValid = Object.values(validations).every(Boolean)
   const shouldHighlight = (k: keyof typeof validations) => submitAttempted && !validations[k]
@@ -522,9 +563,10 @@ export default function EditVersionPage() {
         key: keyof typeof validations
         ref: React.RefObject<HTMLElement | null>
       }> = [
-        { key: 'material', ref: materialRef as unknown as React.RefObject<HTMLElement | null> },
-        { key: 'inkNames', ref: inkNamesRef as unknown as React.RefObject<HTMLElement | null> },
-        { key: 'images',   ref: imageSectionRef },
+        { key: 'material',   ref: materialRef as unknown as React.RefObject<HTMLElement | null> },
+        { key: 'inkNames',   ref: inkNamesRef as unknown as React.RefObject<HTMLElement | null> },
+        { key: 'coreColour', ref: coreColourRef as unknown as React.RefObject<HTMLElement | null> },
+        { key: 'images',     ref: imageSectionRef },
       ]
       const first = order.find(o => !validations[o.key])
       first?.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -608,6 +650,11 @@ export default function EditVersionPage() {
         // from the version's material + currency, so swapping
         // material or currency here keeps the snapshot in sync.
         names: names.map((n) => n.trim()).filter(Boolean),
+        // Letterpress core colour (migration 000133). Only stamped
+        // when the picker is visible for this version's material;
+        // null otherwise so we never persist a colour against a
+        // material that can't expose it.
+        core_colour_id: requiresCoreColour ? selectedCoreColourId : null,
       })
       .eq('id', versionId!)
 
@@ -845,6 +892,37 @@ export default function EditVersionPage() {
                 <p className="mt-1.5 text-xs text-gray-400">
                   Select which {optionLabelPlural.toLowerCase()} to offer. Each {optionLabelSingular.toLowerCase()} gets its own proof images.
                 </p>
+              </div>
+            )}
+
+            {/* Letterpress core colour (migration 000133). Only renders
+                for un-gilded letterpress (paper_letterpress); gilded
+                letterpress hides the core layer behind the gilded
+                edge. Required when visible. */}
+            {requiresCoreColour && (
+              <div ref={coreColourRef} className="mb-4">
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">Core colour</label>
+                <div className="flex items-center gap-3">
+                  {selectedCoreColourId && (() => {
+                    const picked = coreColours.find((c) => c.id === selectedCoreColourId)
+                    if (!picked) return null
+                    return <CoreColourSwatch hex={picked.hex_value} size={28} ariaLabel={`${picked.name} swatch`} />
+                  })()}
+                  <select
+                    value={selectedCoreColourId ?? ''}
+                    onChange={(e) => setSelectedCoreColourId(e.target.value || null)}
+                    className={[inputClass, shouldHighlight('coreColour') ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
+                  >
+                    <option value="">Select a colour…</option>
+                    {coreColours.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <p className="mt-1.5 text-xs text-gray-500">
+                  The accent colour for the middle layer, visible at the card edge.
+                </p>
+                {shouldHighlight('coreColour') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
               </div>
             )}
 

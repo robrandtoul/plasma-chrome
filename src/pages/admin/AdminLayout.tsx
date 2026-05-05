@@ -8,6 +8,7 @@ const TABS: { to: string; label: string }[] = [
   { to: '/admin/users', label: 'Users' },
   { to: '/admin/customers', label: 'Customers' },
   { to: '/admin/pricing', label: 'Pricing' },
+  { to: '/admin/core-colours', label: 'Core colours' },
   { to: '/admin/activity', label: 'Activity' },
   { to: '/admin/settings', label: 'Settings' },
 ]

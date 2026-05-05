@@ -13,6 +13,7 @@ import { DocketCell } from '../components/DocketCell'
 import { MaterialOptionTabs } from '../components/MaterialOptionTabs'
 import { PaperRecipientBand } from '../components/PaperRecipientBand'
 import { PaperRevisionTimeline } from '../components/PaperRevisionTimeline'
+import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { firstName } from '../lib/firstName'
 import {
   INK,
@@ -2144,6 +2145,19 @@ export default function CustomerProofPage() {
                   {activeOption && (
                     <PaperSpecRow label={optionLabelSingular} value={activeOption.display_name} />
                   )}
+                  {/* Letterpress core colour (migration 000133).
+                      Both fields populate together (left join on
+                      letterpress_core_colours), so we gate on both
+                      being non-null and render swatch + name. Only
+                      ever true for paper_letterpress proof_versions
+                      where the designer picked a colour. */}
+                  {activeVersion.core_colour_name && activeVersion.core_colour_hex && (
+                    <PaperSpecRow
+                      label="Core colour"
+                      value={activeVersion.core_colour_name}
+                      swatchHex={activeVersion.core_colour_hex}
+                    />
+                  )}
                   {activeVersion.ink_names.length > 0 && (
                     <PaperSpecRow
                       label="Ink colours"
@@ -3218,7 +3232,15 @@ function PlateCard({
 // spec sheet rather than a card grid. Type values share the
 // docket-cell tokens from the hero (4c) since both are spec-sheet
 // reads — labels small-caps mono, values body-sans.
-function PaperSpecRow({ label, value }: { label: string; value: string }) {
+function PaperSpecRow({
+  label,
+  value,
+  swatchHex,
+}: {
+  label: string
+  value: string
+  swatchHex?: string
+}) {
   return (
     <div className="grid grid-cols-[140px_1fr] items-baseline gap-6 border-t border-[rgba(26,22,18,0.12)] py-5 sm:grid-cols-[200px_1fr] sm:gap-8">
       <dt
@@ -3236,7 +3258,14 @@ function PaperSpecRow({ label, value }: { label: string; value: string }) {
         className="whitespace-pre-line font-body"
         style={{ fontSize: 15, fontWeight: 400, color: '#1a1612' }}
       >
-        {value}
+        {swatchHex ? (
+          <span className="inline-flex items-center gap-2.5">
+            <CoreColourSwatch hex={swatchHex} size={16} ariaLabel={`${value} swatch`} />
+            <span>{value}</span>
+          </span>
+        ) : (
+          value
+        )}
       </dd>
     </div>
   )
