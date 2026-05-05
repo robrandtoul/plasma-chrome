@@ -30,9 +30,13 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-gray-50 px-4">
+    <div className="flex min-h-dvh items-center justify-center bg-black px-4">
       <div className="w-full max-w-sm">
-        <h1 className="mb-8 text-center text-2xl font-bold text-gray-900">PlasmaDesign</h1>
+        <img
+          src="/plasmadesign-logo.svg"
+          alt="Plasma Design"
+          className="mx-auto mb-8 w-60"
+        />
 
         <form onSubmit={handleSubmit} className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
           <h2 className="mb-6 text-lg font-semibold text-gray-900">Sign in</h2>
