@@ -1,13 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
-import PriceCell from './PriceCell'
+import PriceCell, { currencySymbol } from './PriceCell'
 import Modal from '../../components/Modal'
 import { downloadPricingExport } from '../../lib/pricingIO'
 import { logAudit } from '../../lib/audit'
 
 type Currency = 'GBP' | 'EUR' | 'USD'
 const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
+
+// Add-ons whose tiers must align with their parent materials' price-tier
+// quantities. The "Add tier" inline form constrains its quantity picker to
+// `union(parent qtys) - existing add-on qtys` so we can't write an
+// add_on_prices row at a quantity nobody can order.
+const PARENT_MATERIAL_CODES_BY_ADDON: Record<string, string[]> = {
+  metal_finish_upgrade: ['metal_steel', 'metal_gold'],
+}
 
 interface AddOn {
   id: string
@@ -30,6 +38,7 @@ export default function AdminAddOnEditor() {
   const { code } = useParams<{ code: string }>()
   const [addOn, setAddOn] = useState<AddOn | null>(null)
   const [prices, setPrices] = useState<Price[]>([])
+  const [parentQuantities, setParentQuantities] = useState<number[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [seedDialog, setSeedDialog] = useState(false)
@@ -54,13 +63,57 @@ export default function AdminAddOnEditor() {
         .order('quantity')
       if (priceErr) throw priceErr
 
+      const parentCodes = PARENT_MATERIAL_CODES_BY_ADDON[aoData.code] ?? []
+      let parentQtys: number[] = []
+      if (parentCodes.length > 0) {
+        // Pull every distinct quantity present in price_tiers across all
+        // variants of the parent materials. Steel and Gold ship with
+        // identical 39-tier schedules today, but querying the union is
+        // future-proof if they ever diverge.
+        const { data: parentData, error: parentErr } = await supabase
+          .from('materials')
+          .select('material_variants(price_tiers(quantity))')
+          .in('code', parentCodes)
+        if (parentErr) throw parentErr
+        const set = new Set<number>()
+        for (const m of (parentData ?? []) as Array<{ material_variants: Array<{ price_tiers: Array<{ quantity: number }> }> }>) {
+          for (const v of m.material_variants ?? []) {
+            for (const t of v.price_tiers ?? []) set.add(t.quantity)
+          }
+        }
+        parentQtys = [...set].sort((a, b) => a - b)
+      }
+
       setAddOn(aoData as AddOn)
       setPrices((priceData ?? []) as Price[])
+      setParentQuantities(parentQtys)
     } catch (e) {
       setLoadError((e as Error).message)
     } finally {
       setLoading(false)
     }
+  }
+
+  async function createTier(quantity: number, gbp: number, eur: number, usd: number) {
+    if (!addOn) return
+    const rows = [
+      { add_on_id: addOn.id, currency: 'GBP' as const, quantity, surcharge: gbp },
+      { add_on_id: addOn.id, currency: 'EUR' as const, quantity, surcharge: eur },
+      { add_on_id: addOn.id, currency: 'USD' as const, quantity, surcharge: usd },
+    ]
+    const { data, error } = await supabase
+      .from('add_on_prices')
+      .insert(rows)
+      .select()
+    if (error) throw new Error(error.message)
+    setPrices((prev) => [...prev, ...((data ?? []) as Price[])])
+    void logAudit({
+      action: 'addon_prices.tier_created',
+      targetType: 'add_on',
+      targetId: addOn.id,
+      targetLabel: `${addOn.display_name} qty ${quantity}`,
+      metadata: { quantity, gbp, eur, usd },
+    })
   }
 
   async function saveSurcharge(priceId: string, next: number | null) {
@@ -200,7 +253,9 @@ export default function AdminAddOnEditor() {
       ) : (
         <PerTierEditor
           prices={prices}
+          parentQuantities={parentQuantities}
           onSave={saveSurcharge}
+          onCreate={createTier}
           onOpenSeed={() => setSeedDialog(true)}
         />
       )}
@@ -270,11 +325,15 @@ function FlatEditor({ prices, onSave, onSeed }: {
 
 // ── Per-quantity-tier editor ────────────────────────────────────────────────
 
-function PerTierEditor({ prices, onSave, onOpenSeed }: {
+function PerTierEditor({ prices, parentQuantities, onSave, onCreate, onOpenSeed }: {
   prices: Price[]
+  parentQuantities: number[]
   onSave: (priceId: string, next: number | null) => Promise<void>
+  onCreate: (quantity: number, gbp: number, eur: number, usd: number) => Promise<void>
   onOpenSeed: () => void
 }) {
+  const [adding, setAdding] = useState(false)
+
   const byQty = useMemo(() => {
     const map = new Map<number, Partial<Record<Currency, Price>>>()
     for (const p of prices) {
@@ -285,6 +344,17 @@ function PerTierEditor({ prices, onSave, onOpenSeed }: {
     }
     return [...map.entries()].sort((a, b) => a[0] - b[0])
   }, [prices])
+
+  const availableQuantities = useMemo(() => {
+    const taken = new Set<number>()
+    for (const p of prices) if (p.quantity != null) taken.add(p.quantity)
+    return parentQuantities.filter((q) => !taken.has(q))
+  }, [prices, parentQuantities])
+
+  // The "Add tier" affordance is only meaningful when we know which
+  // quantities the parent materials support. For other add-ons the
+  // editor falls back to seed-then-edit (existing behaviour).
+  const canAddTier = parentQuantities.length > 0
 
   if (byQty.length === 0) {
     return (
@@ -324,8 +394,148 @@ function PerTierEditor({ prices, onSave, onOpenSeed }: {
             </tr>
           ))}
         </tbody>
+        {canAddTier && (
+          <tfoot>
+            {adding ? (
+              <AddTierRow
+                availableQuantities={availableQuantities}
+                onSave={async (q, g, e, u) => { await onCreate(q, g, e, u); setAdding(false) }}
+                onCancel={() => setAdding(false)}
+              />
+            ) : (
+              <tr className="border-t border-gray-100 bg-gray-50/40">
+                <td colSpan={1 + CURRENCIES.length} className="px-4 py-3">
+                  <button
+                    type="button"
+                    onClick={() => setAdding(true)}
+                    disabled={availableQuantities.length === 0}
+                    title={availableQuantities.length === 0 ? 'All parent material quantities already have a surcharge tier' : undefined}
+                    className="text-sm font-medium text-gray-700 hover:text-gray-900 disabled:cursor-not-allowed disabled:text-gray-400"
+                  >
+                    + Add tier
+                  </button>
+                </td>
+              </tr>
+            )}
+          </tfoot>
+        )}
       </table>
     </section>
+  )
+}
+
+// ── Inline "Add tier" row ────────────────────────────────────────────────────
+
+function AddTierRow({ availableQuantities, onSave, onCancel }: {
+  availableQuantities: number[]
+  onSave: (quantity: number, gbp: number, eur: number, usd: number) => Promise<void>
+  onCancel: () => void
+}) {
+  const [quantity, setQuantity] = useState<string>('')
+  const [gbp, setGbp] = useState<string>('')
+  const [eur, setEur] = useState<string>('')
+  const [usd, setUsd] = useState<string>('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function parsePrice(raw: string): number | null {
+    const t = raw.trim()
+    if (t === '') return null
+    const n = parseFloat(t)
+    if (!isFinite(n) || n < 0) return null
+    return n
+  }
+
+  async function handleSave() {
+    setError(null)
+    const q = quantity === '' ? NaN : parseInt(quantity, 10)
+    if (!Number.isInteger(q) || q <= 0) { setError('Pick a quantity'); return }
+    const g = parsePrice(gbp)
+    const e = parsePrice(eur)
+    const u = parsePrice(usd)
+    if (g == null || e == null || u == null) {
+      setError('Enter a non-negative number for every currency')
+      return
+    }
+    setSaving(true)
+    try {
+      await onSave(q, g, e, u)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const priceState: Record<Currency, [string, (v: string) => void]> = {
+    GBP: [gbp, setGbp],
+    EUR: [eur, setEur],
+    USD: [usd, setUsd],
+  }
+
+  return (
+    <>
+      <tr className="border-t border-gray-100 bg-gray-50/40">
+        <td className="px-4 py-2">
+          <select
+            value={quantity}
+            onChange={(ev) => setQuantity(ev.target.value)}
+            disabled={saving}
+            className="rounded border border-gray-200 px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-gray-900 focus:outline-none"
+          >
+            <option value="">Pick a qty</option>
+            {availableQuantities.map((q) => (
+              <option key={q} value={q}>{q.toLocaleString()}</option>
+            ))}
+          </select>
+        </td>
+        {CURRENCIES.map((c) => {
+          const [value, setter] = priceState[c]
+          return (
+            <td key={c} className="px-4 py-2">
+              <div className="relative inline-block">
+                <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">
+                  {currencySymbol(c)}
+                </span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={value}
+                  placeholder="0.00"
+                  onChange={(ev) => setter(ev.target.value)}
+                  disabled={saving}
+                  className="w-24 rounded border border-gray-200 px-2 py-1 pl-5 text-[17px] sm:text-sm tabular-nums focus:border-gray-900 focus:outline-none"
+                />
+              </div>
+            </td>
+          )
+        })}
+      </tr>
+      <tr className="bg-gray-50/40">
+        <td colSpan={1 + CURRENCIES.length} className="px-4 pb-3">
+          <div className="flex items-center justify-end gap-2">
+            {error && <span className="mr-auto text-xs text-rose-600">{error}</span>}
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={saving}
+              className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save tier'}
+            </button>
+          </div>
+        </td>
+      </tr>
+    </>
   )
 }
 
