@@ -1032,18 +1032,14 @@ export default function CustomerProofPage() {
             onMouseUp={(e) => {
               e.currentTarget.style.background = CTA_TEAL_HOVER
             }}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 text-white transition-colors focus-visible:outline-none focus-visible:ring-2"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-7 py-4 text-white transition-colors focus-visible:outline-none focus-visible:ring-2"
             style={{
               background: CTA_TEAL,
               fontFamily: MONO,
-              fontSize: 11,
+              fontSize: 13,
               fontWeight: 500,
-              letterSpacing: '0.22em',
+              letterSpacing: '0.06em',
               textTransform: 'uppercase',
-              // Focus ring uses CTA_TEAL_RING (the brighter brand
-              // teal at 50% alpha) — overrides Tailwind's default
-              // ring colour so the focus state matches the resting
-              // primary fill.
               ['--tw-ring-color' as string]: CTA_TEAL_RING,
             }}
           >
@@ -1066,15 +1062,15 @@ export default function CustomerProofPage() {
             onMouseUp={(e) => {
               e.currentTarget.style.background = CTA_GHOST_HOVER_BG
             }}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2"
+            className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-7 py-4 transition-colors focus-visible:outline-none focus-visible:ring-2"
             style={{
               background: CTA_GHOST_BG,
-              border: `2px solid ${CTA_GHOST_BORDER}`,
+              border: `1.5px solid ${CTA_GHOST_BORDER}`,
               color: CTA_GHOST_TEXT,
               fontFamily: MONO,
-              fontSize: 11,
+              fontSize: 13,
               fontWeight: 500,
-              letterSpacing: '0.22em',
+              letterSpacing: '0.06em',
               textTransform: 'uppercase',
               ['--tw-ring-color' as string]: CTA_TEAL_RING,
             }}
@@ -2800,7 +2796,7 @@ export default function CustomerProofPage() {
                   value={actionComment}
                   onChange={(e) => setActionComment(e.target.value)}
                   disabled={actionSubmitting}
-                  rows={5}
+                  rows={8}
                   className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:text-[15px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] placeholder:text-[rgba(26,22,18,0.45)]"
                   style={{
                     fontFamily: SANS,
@@ -2989,14 +2985,14 @@ export default function CustomerProofPage() {
                   if (actionSubmitting) return
                   e.currentTarget.style.background = CTA_GHOST_HOVER_BG
                 }}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)]"
+                className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-7 py-4 transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)]"
                 style={{
                   background: CTA_GHOST_BG,
-                  border: `2px solid ${CTA_GHOST_BORDER}`,
+                  border: `1.5px solid ${CTA_GHOST_BORDER}`,
                   color: CTA_GHOST_TEXT,
                   fontFamily: MONO,
-                  fontSize: 11,
-                  letterSpacing: '0.22em',
+                  fontSize: 13,
+                  letterSpacing: '0.06em',
                   textTransform: 'uppercase',
                 }}
               >
@@ -3061,7 +3057,7 @@ export default function CustomerProofPage() {
                         e.currentTarget.style.background = CTA_GHOST_HOVER_BG
                       }
                     }}
-                    className="inline-flex min-h-[44px] items-center justify-center rounded-md px-6 py-3 transition-colors disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2"
+                    className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-7 py-4 transition-colors disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2"
                     style={{
                       // Disabled state renders as a ghost outline
                       // matching the Cancel button rather than a
@@ -3082,18 +3078,18 @@ export default function CustomerProofPage() {
                           ? CTA_TEAL
                           : CTA_GHOST_BG,
                       border: confirmDisabled
-                        ? '2px solid rgba(26,22,18,0.20)'
+                        ? '1.5px solid rgba(26,22,18,0.20)'
                         : actionPanel.type === 'approve'
                           ? 'none'
-                          : `2px solid ${CTA_GHOST_BORDER}`,
+                          : `1.5px solid ${CTA_GHOST_BORDER}`,
                       color: confirmDisabled
                         ? 'rgba(26,22,18,0.35)'
                         : actionPanel.type === 'approve'
                           ? '#ffffff'
                           : CTA_GHOST_TEXT,
                       fontFamily: MONO,
-                      fontSize: 11,
-                      letterSpacing: '0.22em',
+                      fontSize: 13,
+                      letterSpacing: '0.06em',
                       textTransform: 'uppercase',
                       ['--tw-ring-color' as string]:
                         actionPanel.type === 'approve' ? CTA_TEAL_RING : 'rgba(123,63,242,0.5)',

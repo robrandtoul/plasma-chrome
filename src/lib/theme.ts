@@ -223,16 +223,16 @@ export const BRAND_ORDER = ['#e11735', '#d81c7e', '#4a21a6', '#3ba58a'] as const
 
 // ── CTA palette ──────────────────────────────────────────────
 // Primary teal + ghost-on-paper variants per Section 6b.
-export const CTA_TEAL = '#0d9488'
-export const CTA_TEAL_HOVER = '#0f766e'
-export const CTA_TEAL_PRESSED = '#115e59'
-export const CTA_TEAL_RING = 'rgba(20,184,166,0.5)'
-export const CTA_GHOST_BORDER = 'rgba(26,22,18,0.45)'
-export const CTA_GHOST_TEXT = '#1a1612'
+export const CTA_TEAL = '#1D9E75'
+export const CTA_TEAL_HOVER = '#0F6E56'
+export const CTA_TEAL_PRESSED = '#0a5244'
+export const CTA_TEAL_RING = 'rgba(29,158,117,0.5)'
+export const CTA_GHOST_BORDER = '#2C2C2A'
+export const CTA_GHOST_TEXT = '#2C2C2A'
 export const CTA_GHOST_BG = 'transparent'
-export const CTA_GHOST_HOVER_BG = 'rgba(26,22,18,0.06)'
-export const CTA_GHOST_PRESSED_BG = 'rgba(26,22,18,0.12)'
-export const CTA_GHOST_HOVER_BORDER = 'rgba(26,22,18,0.7)'
+export const CTA_GHOST_HOVER_BG = 'rgba(0,0,0,0.04)'
+export const CTA_GHOST_PRESSED_BG = 'rgba(0,0,0,0.08)'
+export const CTA_GHOST_HOVER_BORDER = '#2C2C2A'
 
 // ── Type stacks ──────────────────────────────────────────────
 // JetBrains Mono is preserved here as the legacy MONO stack —
