@@ -14,6 +14,7 @@ import { MaterialOptionTabs } from '../components/MaterialOptionTabs'
 import { PaperRecipientBand } from '../components/PaperRecipientBand'
 import { PaperRevisionTimeline } from '../components/PaperRevisionTimeline'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
+import { LayeredConstructionPanel } from '../components/LayeredConstructionPanel'
 import { firstName } from '../lib/firstName'
 import {
   INK,
@@ -2086,6 +2087,62 @@ export default function CustomerProofPage() {
             )
           })()}
 
+          {/* ───── Construction (migration 000135) ─────
+              Mirrors the Specification section's two-column rhythm:
+              big serif heading on the left (1fr), panel on the
+              right (2fr). Sits on its own tinted band
+              (PAPER_TINT_1) between the proof images (PAPER_CREAM)
+              and the Specification (PAPER_TINT_2), giving a gentle
+              cream → tint_1 → tint_2 progression. Renders only when
+              all three layer fields populate, so non-letterpress
+              and gilded versions naturally drop the entire band
+              (heading included — no orphan "Construction" header
+              over an empty space). */}
+          {activeVersion.front_colour_name && activeVersion.core_colour_name && activeVersion.back_colour_name && (
+            <section
+              aria-labelledby="section-construction-heading"
+              style={{
+                background: PAPER_TINT_1,
+                color: PAPER_INK,
+                borderTop: '1px solid rgba(26,22,18,0.10)',
+              }}
+            >
+              <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
+                <div className="grid gap-10 sm:grid-cols-[1fr_2fr] sm:gap-16">
+                  <div>
+                    <h2
+                      id="section-construction-heading"
+                      className="leading-[1.02] border-b-2 pb-4 break-words"
+                      style={{
+                        fontFamily: SERIF,
+                        fontWeight: 400,
+                        fontSize: 'clamp(40px, 9vw, 56px)',
+                        color: PAPER_INK,
+                        borderColor: 'rgba(26,22,18,0.8)',
+                      }}
+                    >
+                      Construction
+                    </h2>
+                    <p
+                      className="mt-5 max-w-[30ch] text-[14px] leading-[1.55]"
+                      style={{ color: PAPER_TERTIARY }}
+                    >
+                      Three layers of genuine Colorplan paper, bonded together and visible along the card's edges, a signature detail of our letterpress cards.
+                    </p>
+                  </div>
+                  <LayeredConstructionPanel
+                    front_name={activeVersion.front_colour_name}
+                    front_hex={activeVersion.front_colour_hex}
+                    core_name={activeVersion.core_colour_name}
+                    core_hex={activeVersion.core_colour_hex}
+                    back_name={activeVersion.back_colour_name}
+                    back_hex={activeVersion.back_colour_hex}
+                  />
+                </div>
+              </div>
+            </section>
+          )}
+
           {/* ───── Specification + Notes on ink ─────
               Spec sheet is a two-column grid with the heading
               intro on the left and a hairline-ruled dl on the
@@ -2145,19 +2202,12 @@ export default function CustomerProofPage() {
                   {activeOption && (
                     <PaperSpecRow label={optionLabelSingular} value={activeOption.display_name} />
                   )}
-                  {/* Letterpress core colour (migration 000133).
-                      Both fields populate together (left join on
-                      letterpress_core_colours), so we gate on both
-                      being non-null and render swatch + name. Only
-                      ever true for paper_letterpress proof_versions
-                      where the designer picked a colour. */}
-                  {activeVersion.core_colour_name && activeVersion.core_colour_hex && (
-                    <PaperSpecRow
-                      label="Core colour"
-                      value={activeVersion.core_colour_name}
-                      swatchHex={activeVersion.core_colour_hex}
-                    />
-                  )}
+                  {/* Core colour was previously surfaced here as a
+                      single spec row (migration 000133). Migration
+                      000135 replaced it with a dedicated
+                      LayeredConstructionPanel that renders above
+                      the Specification section and shows all three
+                      Colorplan layers as a cross-section. */}
                   {activeVersion.ink_names.length > 0 && (
                     <PaperSpecRow
                       label="Ink colours"

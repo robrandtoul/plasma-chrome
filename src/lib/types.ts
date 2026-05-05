@@ -167,13 +167,21 @@ export interface PublicProofVersion {
   // Same value on every row — denormalised at the view layer to
   // avoid a separate anon-readable surface on settings.
   approvals_enabled: boolean
-  // ── Letterpress core colour (migration 000133) ────────────────────────────
-  // Populated only for proof_versions whose material is the un-gilded
-  // letterpress (paper_letterpress); both fields are null otherwise.
-  // Customer page renders a swatch + name spec row when both are
-  // non-null. Sourced from a left join on letterpress_core_colours.
+  // ── Letterpress layer colours (migrations 000133 + 000135) ────────────────
+  // Three-layer Colorplan construction visible at the card edge of
+  // un-gilded letterpress. core_* is the middle layer (000133),
+  // front_* and back_* are the top and bottom layers (000135). All
+  // three pull from the shared letterpress_core_colours catalogue
+  // via left joins, so non-letterpress and gilded versions return
+  // null across the board. Customer page composes them into a
+  // single LayeredConstructionPanel that renders only when all
+  // three pairs are populated.
   core_colour_name: string | null
   core_colour_hex: string | null
+  front_colour_name: string | null
+  front_colour_hex: string | null
+  back_colour_name: string | null
+  back_colour_hex: string | null
 }
 
 // Catalogue row for the letterpress core colour palette
