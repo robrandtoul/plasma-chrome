@@ -1090,15 +1090,44 @@ export default function NewVersionPage() {
 
     // Per-batch alternator for hintless files where the chosen
     // identity has both sides available. Resets per drop so two
-    // consecutive single-file drops both start front. State only
-    // advances when the alternator actually fires, so a batch of
-    // back-only-identity files does not accidentally desync the
-    // front/back rhythm for any later both-sides-available file.
+    // consecutive single-file drops both start front. The
+    // alternator only ticks when pickSideFor enters the both-
+    // sides-no-hint branch, so a batch of single-side-only files
+    // does not desync the rhythm for later both-sides-available
+    // files.
     let nextHintlessSide: 'front' | 'back' = 'front'
     function alternateSide(): 'front' | 'back' {
       const s = nextHintlessSide
       nextHintlessSide = nextHintlessSide === 'front' ? 'back' : 'front'
       return s
+    }
+
+    // Claim tally for the both-sides-no-hint branch of pickSideFor.
+    // Records every (identity, side) that the resolver should treat
+    // as already taken: fresh entries dropped on this option in
+    // earlier batches, plus every file resolved by earlier
+    // iterations of the current batch. When exactly one side of
+    // the chosen identity is taken, the unclaimed side wins and
+    // the alternator's tick is discarded. Stops a hint-driven
+    // Front.jpg from making a sibling hintless file double up on
+    // the same slot, and stops a second drop from piling onto a
+    // slot the first drop already filled.
+    //
+    // v1 carries do not seed the set: smart-replace continues to
+    // behave as today (a hintless file can resolve to a v1-occupied
+    // slot and queue a replacement).
+    const claimedSlots = new Set<string>()
+    const claimKey = (id: string | null, s: 'front' | 'back') =>
+      `${id ?? '__shared__'}|${s}`
+    // Seed from prior-batch fresh entries on the active option.
+    // Entries with a null side (legacy data) are skipped — they
+    // can't be unambiguously bucketed and shouldn't pre-block a
+    // side. Replacement queues for v1 rows are deliberately not
+    // seeded (see scope note above).
+    for (const entry of imagesByOption[optionCode] ?? []) {
+      if (entry.side != null) {
+        claimedSlots.add(claimKey(entry.associated_name, entry.side))
+      }
     }
 
     // Fallback identity preference order when the heuristic has no
@@ -1132,7 +1161,18 @@ export default function NewVersionPage() {
         if (sides.length === 0) return null
         if (hint != null && sides.includes(hint)) return hint
         if (sides.length === 1) return sides[0]
-        return alternateSide()
+        // Both sides available, no hint. Tick the alternator
+        // unconditionally so the front/back rhythm stays in sync
+        // across the batch. Then check the in-batch claim tally:
+        // if exactly one side of this identity is already taken
+        // by an earlier file, take the free side instead. If both
+        // or neither are taken, the alternator's tick wins.
+        const tick = alternateSide()
+        const frontTaken = claimedSlots.has(claimKey(identity, 'front'))
+        const backTaken = claimedSlots.has(claimKey(identity, 'back'))
+        if (frontTaken && !backTaken) return 'back'
+        if (backTaken && !frontTaken) return 'front'
+        return tick
       }
 
       // Try the heuristic identity first when it actually matches
@@ -1209,6 +1249,7 @@ export default function NewVersionPage() {
         orphanFilenames.push(file.name)
         continue
       }
+      claimedSlots.add(claimKey(slot.identity, slot.side))
 
       const v1Match = findV1CarryAt(slot.identity, slot.side)
       if (v1Match && !claimedV1RowIds.has(v1Match.v1RowId)) {
