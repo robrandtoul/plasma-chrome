@@ -11,7 +11,7 @@ export function DocketCell({ label, value }: DocketCellProps) {
       className={[
         'border-r border-[rgba(26,22,18,0.10)]',
         'even:border-r-0 sm:even:border-r sm:last:border-r-0',
-        'py-6 px-1 sm:[&:not(:first-child)]:pl-6',
+        'py-6 px-1 even:pl-4 sm:[&:not(:first-child)]:pl-6',
       ].join(' ')}
     >
       <dt
