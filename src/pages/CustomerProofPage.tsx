@@ -763,6 +763,25 @@ export default function CustomerProofPage() {
   const isApproved = proof.status === 'approved'
   const viewingApprovedVersion = isApproved && activeVersion?.is_current === true
 
+  // Proof-level approval check used by the version-selector logic
+  // below. Reads proof.status directly rather than aliasing
+  // through `isApproved`, so the derivation is self-evident here
+  // and not coupled to whatever else `isApproved` ends up being
+  // used for. True once the parent proof has been approved (000017
+  // / 000126); when false, viewing an earlier version is a soft
+  // state with an amber warning instead of a lockout.
+  //
+  // The original intent here was a per-version approved_at on
+  // proof_versions (added in 000066 for an "Approve this version"
+  // button that never shipped), but those columns were dropped
+  // in 000076 when per-name approvals replaced the version-level
+  // model. proof.status is now the single proof-wide approval
+  // signal: it flips when every required slot on the current
+  // version is approved (000126 trigger or designer override).
+  const proofIsApproved = proof.status === 'approved'
+  const latestVersion =
+    versions.find((v) => v.is_current) ?? versions[versions.length - 1] ?? null
+
   // Per-name approval roll-up for the current version. Drives the
   // muted "partially approved" banner when some slots carry
   // approvals from a prior version but others are still open on
@@ -975,14 +994,17 @@ export default function CustomerProofPage() {
     const key = bandKey(activeVersion.id, name)
     const successMessage = successMessages[key] ?? null
 
-    // Older-version slot — viewing v(N) while v(M) is current. We
-    // suppress every approve / request-changes affordance and offer
-    // a quiet jump back to the current proof in the same horizontal
-    // slot the buttons would otherwise occupy. is_current is the
-    // single source of truth for "latest version" (set by the
-    // supersession trigger in 000068); avoid created_at so a
-    // designer-renumbered version doesn't slip through.
-    if (!activeVersion.is_current) {
+    // Older-version slot — viewing v(N) while v(M) is current. The
+    // lockout (informational message + jump-to-current button) only
+    // fires when the proof has already been approved on some
+    // version. Before any approval, the customer can still approve
+    // an earlier version they prefer; that branch falls through to
+    // the normal pending render with an amber warning prepended
+    // (see below). is_current is the single source of truth for
+    // "latest version" (set by the supersession trigger in 000068);
+    // avoid created_at so a designer-renumbered version doesn't
+    // slip through.
+    if (!activeVersion.is_current && proofIsApproved) {
       const currentVersion = versions.find((v) => v.is_current) ?? null
       return (
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-start">
@@ -1190,10 +1212,49 @@ export default function CustomerProofPage() {
       )
     }
 
-    // pending — render the two buttons
+    // pending — render the two buttons. When the customer is viewing
+    // an earlier version on a not-yet-approved proof, prepend an
+    // amber warning so they know they're not on the most recent
+    // proof but can still approve this one if they prefer it.
     const approveLabel = `Approve ${recipientLabel}${named ? "'s design" : ''}`
+    const showEarlierVersionWarning =
+      !activeVersion.is_current && !proofIsApproved && latestVersion != null
     return (
       <div className="mt-6 flex flex-col gap-3 sm:items-start">
+        {showEarlierVersionWarning && latestVersion && (
+          <div
+            className="flex flex-col gap-1 rounded-md px-5 py-4 text-[#1a1612]"
+            style={{
+              background: 'rgba(217,119,6,0.10)',
+              border: '1px solid rgba(217,119,6,0.45)',
+            }}
+          >
+            <span
+              className="uppercase"
+              style={{
+                fontFamily: MONO,
+                fontSize: 11,
+                letterSpacing: '0.22em',
+                color: '#92400e',
+              }}
+            >
+              Heads up
+            </span>
+            <p
+              style={{
+                fontFamily: SANS,
+                fontSize: 14,
+                lineHeight: 1.55,
+                color: '#1a1612',
+              }}
+            >
+              You're viewing version {activeVersion.version_number} of{' '}
+              {versions.length}. Version {latestVersion.version_number} is
+              the most recent proof. You can still approve this version if
+              you prefer it.
+            </p>
+          </div>
+        )}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <button
             type="button"
