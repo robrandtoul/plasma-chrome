@@ -1679,12 +1679,16 @@ export default function CustomerProofPage() {
                     ? '1 direction'
                     : `${variants.length} directions · pick one`}
                 </p>
-                {/* Mixed-materials pointer (000142). Sits under the
-                    count subtitle so the customer reads it as part
-                    of the section's framing, not as an alert. The
-                    per-variant pricing decisions live in the email
-                    thread; this line is just the signpost. */}
-                {activeVersion.is_mixed_materials && (
+                {/* Per-direction-pricing pointer (000142, renamed 000144).
+                    Sits under the count subtitle so the customer reads
+                    it as part of the section's framing, not as an alert.
+                    The per-direction pricing decisions live in the email
+                    thread; this line is just the signpost. Copy moved
+                    away from "Pricing varies by material…" — per-
+                    direction pricing also fires when directions differ
+                    in thickness or tier within the same material family,
+                    so the by-material framing was sometimes inaccurate. */}
+                {activeVersion.is_per_direction_pricing && (
                   <p
                     className="mt-2"
                     style={{
@@ -1693,7 +1697,7 @@ export default function CustomerProofPage() {
                       color: PAPER_SECONDARY,
                     }}
                   >
-                    Pricing varies by material. Cost details for each direction are in your email.
+                    Each direction is priced individually. See your email for details.
                   </p>
                 )}
               </div>
@@ -1849,11 +1853,11 @@ export default function CustomerProofPage() {
             uses; quantitySurcharges is empty on this branch (no
             option dimension).
 
-            Mixed-materials variant rounds (000142) hide this card
+            Per-direction-pricing variant rounds (000142, renamed 000144) hide this card
             entirely — pricing is per-variant and handled out-of-
             band. The pointer line above the variant grid signposts
             that decision to the customer. */}
-        {!activeVersion.is_mixed_materials && (
+        {!activeVersion.is_per_direction_pricing && (
         <section
           aria-labelledby="section-variant-pricing-heading"
           style={{
@@ -2417,16 +2421,16 @@ export default function CustomerProofPage() {
             </div>
 
             {/* Hero docket — Material / Sides|Option / Revision /
-                Names. Hidden on mixed-materials variant rounds
+                Names. Hidden on per-direction-pricing variant rounds
                 (000142): every per-direction material is decided
-                out-of-band so a single MATERIAL cell on the version
-                row would either be misleading ("Mixed materials"
+                out-of-band so a version-level MATERIAL cell on the
+                row would either be misleading ("Per-direction pricing"
                 read as a real material) or empty. The H1 + italic
                 subline + BrandRule above already read as a complete
                 hero header on their own; the variant grid below
                 supplies its own py-20 / py-24 breathing room when
                 the section starts. */}
-            {activeVersion && !activeVersion.is_mixed_materials && (() => {
+            {activeVersion && !activeVersion.is_per_direction_pricing && (() => {
               // Cell 2 — adaptive branching. Option-having materials
               // show the option label + value (Finish / Brushed,
               // Species / Black Walnut, etc.). No-option materials
@@ -2925,11 +2929,11 @@ export default function CustomerProofPage() {
               top-border rule. Notes only render when the version
               has change_notes content.
 
-              Mixed-materials variant rounds (000142) hide the whole
+              Per-direction-pricing variant rounds (000142, renamed 000144) hide the whole
               section — every per-direction material is a separate
               decision and the version row carries no aggregate
               material/currency to put on the spec sheet. */}
-          {!activeVersion.is_mixed_materials && (
+          {!activeVersion.is_per_direction_pricing && (
           <section
             aria-labelledby="section-specification-heading"
             style={{
@@ -3287,12 +3291,12 @@ export default function CustomerProofPage() {
               material has a description configured — if not,
               the section collapses silently.
 
-              Mixed-materials variant rounds (000142) carry no
+              Per-direction-pricing variant rounds (000142, renamed 000144) carry no
               version-level material so material_description is
               null and this section auto-hides. The defensive
-              !is_mixed_materials gate makes that explicit and
+              !is_per_direction_pricing gate makes that explicit and
               survives any future schema drift. */}
-          {!activeVersion.is_mixed_materials && activeVersion.material_description && (
+          {!activeVersion.is_per_direction_pricing && activeVersion.material_description && (
             <section
               aria-labelledby="section-material-heading"
               style={{ background: PAPER_TINT_1, color: PAPER_INK }}

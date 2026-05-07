@@ -191,13 +191,17 @@ export interface PublicProofVersion {
   // even on variant-round versions.
   is_variant_round: boolean
   round_variants: RoundVariant[]
-  // ── Mixed materials sub-mode (migration 000142) ──────────────────────────
-  // Only true when is_variant_round is also true. Each variant
-  // carries its own material; pricing is handled out-of-band, so
-  // the customer page hides the pricing card, Specification, and
-  // About-material sections. Implies material_id, currency, and
-  // material_options are all null/empty on the version row.
-  is_mixed_materials: boolean
+  // ── Per-direction pricing sub-mode (migration 000142, renamed 000144) ──
+  // Only true when is_variant_round is also true. Each direction is
+  // priced individually (out-of-band) rather than sharing one tier
+  // across the round, so the customer page hides the pricing card,
+  // Specification, and About-material sections. Implies material_id,
+  // currency, and material_options are all null/empty on the version
+  // row. Originally called is_mixed_materials in 000142 — designer
+  // feedback: per-direction pricing also fires when the same material
+  // family is used at different thicknesses with different price
+  // tiers, so framing this around "mixed materials" was misleading.
+  is_per_direction_pricing: boolean
 }
 
 // One parallel design alternative on a variant-round proof_version

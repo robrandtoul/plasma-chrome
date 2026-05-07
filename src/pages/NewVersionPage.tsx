@@ -309,14 +309,14 @@ export default function NewVersionPage() {
   // a proof_version_images row with round_variant_id pointing at the
   // saved variant.
   const [isVariantRound, setIsVariantRound] = useState(false)
-  // Mixed-materials sub-mode (migration 000142). Only meaningful when
-  // isVariantRound is also true. Each variant carries its own
-  // material; pricing is out-of-band, so the form hides the version-
-  // level material / currency / pricing / variant-tier / ink-names
-  // sections. Flipping back to single-material restores them. State
-  // is preserved across mode flips so a designer can switch without
-  // losing their config.
-  const [isMixedMaterials, setIsMixedMaterials] = useState(false)
+  // Per-direction pricing sub-mode (migration 000142, renamed 000144).
+  // Only meaningful when isVariantRound is also true. Each direction
+  // is priced individually rather than sharing one tier across the
+  // round, so the form hides the version-level material / currency /
+  // pricing / variant-tier / ink-names sections. Flipping back to
+  // shared-pricing restores them. State is preserved across mode
+  // flips so a designer can switch without losing their config.
+  const [isPerDirectionPricing, setIsPerDirectionPricing] = useState(false)
   // Per-variant sides. frontFiles is always present (every variant
   // has a Front side). backFiles is null when the designer hasn't
   // opted into a Back side; an empty array when they've added the
@@ -1934,19 +1934,20 @@ export default function NewVersionPage() {
     // order. Save-time enforcement of the empty arrays is belt-and-
     // braces on top of the trigger from migration 000138.
     if (isVariantRound) {
-      // Mixed-materials variant rounds (000142) drop the version-
-      // level material / currency / ink-names / colour / variant-tier
-      // payload — every variant carries its own material out-of-band.
-      // material_display stays a non-null text column, so we write a
-      // sentinel instead of selecting one material; the customer page
-      // never reads it on this branch.
-      const material = isMixedMaterials
+      // Per-direction-pricing variant rounds (000142, renamed 000144)
+      // drop the version-level material / currency / ink-names / colour
+      // / variant-tier payload — every direction is priced individually
+      // out-of-band. material_display stays a non-null text column, so
+      // we write a sentinel instead of selecting one material; the
+      // customer page never reads it on this branch (hero docket is
+      // hidden too).
+      const material = isPerDirectionPricing
         ? null
         : materials.find((m) => m.id === selectedMaterialId)!
-      const currencyForInsert: Currency | null = isMixedMaterials
+      const currencyForInsert: Currency | null = isPerDirectionPricing
         ? null
         : (currency ?? 'GBP')
-      const parsedInkNames: string[] = isMixedMaterials
+      const parsedInkNames: string[] = isPerDirectionPricing
         ? []
         : requiresInkNames
           ? inkNamesArray.slice(0, inkCount).map((s) => s.trim())
@@ -1957,27 +1958,27 @@ export default function NewVersionPage() {
         .from('proof_versions')
         .insert({
           proof_id: proofId,
-          material_id: isMixedMaterials ? null : selectedMaterialId,
-          material_display: material?.display_name ?? 'Mixed materials',
+          material_id: isPerDirectionPricing ? null : selectedMaterialId,
+          material_display: material?.display_name ?? 'Per-direction pricing',
           ink_names: parsedInkNames,
           currency: currencyForInsert,
-          displayed_variant_ids: isMixedMaterials ? [] : selectedVariantIds,
+          displayed_variant_ids: isPerDirectionPricing ? [] : selectedVariantIds,
           change_notes: changeNotes.trim() || null,
           // Variant rounds are single-bucket-only — material_options
           // and names must both be empty (build-plan step 5E + the
-          // 000138 trigger). Mixed materials adds the same constraint
-          // by way of the 000142 trigger. Forced regardless of any
-          // state from a prior mode flip.
+          // 000138 trigger). Per-direction pricing adds the same
+          // constraint via the 000142 trigger (renamed 000144).
+          // Forced regardless of any state from a prior mode flip.
           material_options: [],
-          custom_quote: isMixedMaterials ? false : isCustomQuote,
+          custom_quote: isPerDirectionPricing ? false : isCustomQuote,
           names: [],
           card_type: cardType,
           cloned_from_version_id: v1Carry?.versionId ?? null,
-          front_colour_id: isMixedMaterials ? null : (requiresLayerColours ? selectedFrontColourId : null),
-          core_colour_id:  isMixedMaterials ? null : (requiresLayerColours ? selectedCoreColourId  : null),
-          back_colour_id:  isMixedMaterials ? null : (requiresLayerColours ? selectedBackColourId  : null),
+          front_colour_id: isPerDirectionPricing ? null : (requiresLayerColours ? selectedFrontColourId : null),
+          core_colour_id:  isPerDirectionPricing ? null : (requiresLayerColours ? selectedCoreColourId  : null),
+          back_colour_id:  isPerDirectionPricing ? null : (requiresLayerColours ? selectedBackColourId  : null),
           is_variant_round: true,
-          is_mixed_materials: isMixedMaterials,
+          is_per_direction_pricing: isPerDirectionPricing,
         })
         .select('id, version_number')
         .single()
@@ -2636,24 +2637,24 @@ export default function NewVersionPage() {
         (v.backFiles === null || v.backFiles.length > 0),
     )
 
-  // Mixed-materials variant rounds (build-plan step C / migration 000142)
-  // skip every version-level material decision — the variant editor
-  // is the only thing that matters. mixed === effective when
-  // isVariantRound is also true; otherwise false (the sub-toggle is
-  // hidden in the standard-proof branch).
-  const isMixedRound = isVariantRound && isMixedMaterials
+  // Per-direction-pricing variant rounds (000142, renamed 000144)
+  // skip every version-level material/pricing decision — the variant
+  // editor is the only thing that matters. The flag is effective only
+  // when isVariantRound is also true; otherwise false (the sub-toggle
+  // is hidden in the standard-proof branch).
+  const isPerDirectionRound = isVariantRound && isPerDirectionPricing
 
   const validations = {
     images:         isVariantRound ? true : everySlotHasImage,
-    pricingDisplay: isMixedRound ? true : pricingDisplay !== null,
-    material:       isMixedRound ? true : !!selectedMaterialId,
-    variant:        isMixedRound ? true : (!variantRequired || selectedVariantIds.length > 0),
-    currency:       isMixedRound ? true : (isCustomQuote || currency !== null),
-    inkNames:       isMixedRound ? true : (!requiresInkNames || (inkCount > 0 && inkNameValidities.every(Boolean))),
+    pricingDisplay: isPerDirectionRound ? true : pricingDisplay !== null,
+    material:       isPerDirectionRound ? true : !!selectedMaterialId,
+    variant:        isPerDirectionRound ? true : (!variantRequired || selectedVariantIds.length > 0),
+    currency:       isPerDirectionRound ? true : (isCustomQuote || currency !== null),
+    inkNames:       isPerDirectionRound ? true : (!requiresInkNames || (inkCount > 0 && inkNameValidities.every(Boolean))),
     names:          isVariantRound ? true : namesValid,
-    frontColour:    isMixedRound ? true : (!requiresLayerColours || selectedFrontColourId !== null),
-    coreColour:     isMixedRound ? true : (!requiresLayerColours || selectedCoreColourId !== null),
-    backColour:     isMixedRound ? true : (!requiresLayerColours || selectedBackColourId !== null),
+    frontColour:    isPerDirectionRound ? true : (!requiresLayerColours || selectedFrontColourId !== null),
+    coreColour:     isPerDirectionRound ? true : (!requiresLayerColours || selectedCoreColourId !== null),
+    backColour:     isPerDirectionRound ? true : (!requiresLayerColours || selectedBackColourId !== null),
     variantsCount:  variantsCountValid,
     variantsLabels: variantsLabelsValid,
     variantsImages: variantsImagesValid,
@@ -2900,12 +2901,13 @@ export default function NewVersionPage() {
               the form below is collapsed. "Edit details" expands
               the form for the rest of the page lifecycle (no
               re-collapse). */}
-          {inheritedVersionNumber !== null && !(isVariantRound && isMixedMaterials) && (() => {
-            // Mixed-materials variant rounds (000142) inherit nothing
-            // useful — material_id and currency are forced null,
-            // pricing UI is hidden, and the per-side image grid is
-            // a brand-new shape. Hiding the docket entirely keeps
-            // the form layout clean above the variant editor.
+          {inheritedVersionNumber !== null && !(isVariantRound && isPerDirectionPricing) && (() => {
+            // Per-direction-pricing variant rounds (000142, renamed
+            // 000144) inherit nothing useful — material_id and
+            // currency are forced null, pricing UI is hidden, and
+            // the per-side image grid is a brand-new shape. Hiding
+            // the docket entirely keeps the form layout clean above
+            // the variant editor.
             //
             // Resolve current form state into the entities the
             // summary needs. Reads from current state so each row
@@ -3156,24 +3158,28 @@ export default function NewVersionPage() {
               })}
             </fieldset>
 
-            {/* Mixed-materials sub-toggle (build-plan step C / migration 000142).
-                Only renders inside the variant-round branch. Default
-                Single material; flipping to Mixed materials hides the
-                version-level material / currency / pricing / variant-
-                tier / ink-names sections. State preserved across mode
-                flips. */}
+            {/* Pricing-mode sub-toggle (000142, renamed 000144 after
+                designer feedback that "mixed materials" was the wrong
+                framing). Only renders inside the variant-round
+                branch. Default shared pricing; flipping to per-
+                direction pricing hides the version-level material /
+                currency / pricing / variant-tier / ink-names
+                sections. State preserved across mode flips. */}
             {isVariantRound && (
               <div className="mt-5">
-                <p className="mb-2 text-sm font-medium text-gray-700">
-                  Material choice
+                <p className="mb-1 text-sm font-medium text-gray-700">
+                  Pricing mode
+                </p>
+                <p className="mb-2 text-xs text-gray-500">
+                  Do all directions share one price, or are they priced individually?
                 </p>
                 <fieldset className="grid gap-3 sm:grid-cols-2">
-                  <legend className="sr-only">Material choice</legend>
+                  <legend className="sr-only">Pricing mode</legend>
                   {([
-                    { value: false, label: 'Single material', sub: 'Every direction prints on the same material.' },
-                    { value: true, label: 'Mixed materials', sub: 'Each direction can be a different material; pricing handled by email.' },
+                    { value: false, label: 'Same price across directions', sub: 'One tier covers them all' },
+                    { value: true, label: 'Different prices per direction', sub: 'Quoted by email' },
                   ] as const).map((opt) => {
-                    const selected = isMixedMaterials === opt.value
+                    const selected = isPerDirectionPricing === opt.value
                     return (
                       <label
                         key={String(opt.value)}
@@ -3187,9 +3193,9 @@ export default function NewVersionPage() {
                       >
                         <input
                           type="radio"
-                          name="material-choice"
+                          name="pricing-mode"
                           checked={selected}
-                          onChange={() => setIsMixedMaterials(opt.value)}
+                          onChange={() => setIsPerDirectionPricing(opt.value)}
                           className="sr-only"
                         />
                         <div className="text-sm font-semibold">{opt.label}</div>
@@ -3216,11 +3222,11 @@ export default function NewVersionPage() {
               Specification. Hides Currency in custom-quote mode
               (no price grid means no currency to denominate).
 
-              Mixed-materials variant rounds (000142) hide the whole
+              Per-direction-pricing variant rounds (000142, renamed 000144) hide the whole
               Commercial card — pricing is per-variant and handled
               out-of-band, so there's no version-level currency
               decision to make. */}
-          {!isMixedRound && (
+          {!isPerDirectionRound && (
           <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
             <div className="mb-7">
               <h3 className="text-base font-semibold text-gray-900">Commercial</h3>
@@ -3277,11 +3283,11 @@ export default function NewVersionPage() {
               (names, sides, splits) sub-sections under their own
               bold sans-serif headers.
 
-              Mixed-materials variant rounds (000142) hide the whole
+              Per-direction-pricing variant rounds (000142, renamed 000144) hide the whole
               Specification card — every per-direction material is
               decided out-of-band. The variant editor below carries
               the design info for each direction. */}
-          {!isMixedRound && (
+          {!isPerDirectionRound && (
           <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
             <div className="mb-7">
               <h3 className="text-base font-semibold text-gray-900">Design</h3>
@@ -4394,7 +4400,7 @@ export default function NewVersionPage() {
               previews collapse with the form they verify — no point
               showing pricing tables when the variant/currency
               choices that produce them are hidden. */}
-          {formExpanded && !isMixedRound && !isCustomQuote && selectedVariantIds.length > 0 && currency !== null && selectedVariantIds.map((vid) => {
+          {formExpanded && !isPerDirectionRound && !isCustomQuote && selectedVariantIds.length > 0 && currency !== null && selectedVariantIds.map((vid) => {
             const variant = variants.find((v) => v.id === vid)
             const tiers = variantTiers[vid] ?? []
             if (!variant) return null
