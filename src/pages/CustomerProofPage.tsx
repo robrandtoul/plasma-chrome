@@ -932,6 +932,20 @@ export default function CustomerProofPage() {
     return `${datePart} at ${timePart}`
   }
 
+  // DD MMM YYYY, e.g. "07 May 2026". Used by the approved-state
+  // status line in renderActionBand — quieter than the long-form
+  // "7 May 2026 at 14:32" banner format.
+  function formatApprovedDate(iso: string | null): string {
+    if (!iso) return ''
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return ''
+    return d.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    })
+  }
+
   // ── Per-band action surface ──────────────────────────────────
   //
   // Renders directly under each rendered group's image cluster
@@ -960,6 +974,58 @@ export default function CustomerProofPage() {
     const forSuffix = named ? ` for ${name}` : ''
     const key = bandKey(activeVersion.id, name)
     const successMessage = successMessages[key] ?? null
+
+    // Older-version slot — viewing v(N) while v(M) is current. We
+    // suppress every approve / request-changes affordance and offer
+    // a quiet jump back to the current proof in the same horizontal
+    // slot the buttons would otherwise occupy. is_current is the
+    // single source of truth for "latest version" (set by the
+    // supersession trigger in 000068); avoid created_at so a
+    // designer-renumbered version doesn't slip through.
+    if (!activeVersion.is_current) {
+      const currentVersion = versions.find((v) => v.is_current) ?? null
+      return (
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-start">
+          <span
+            className="text-[#1a1612]/70"
+            style={{ fontFamily: SANS, fontSize: 14, lineHeight: 1.5 }}
+          >
+            You're viewing version {activeVersion.version_number}.
+            {currentVersion
+              ? ` Version ${currentVersion.version_number} is the current proof.`
+              : ''}
+          </span>
+          {currentVersion && (
+            <button
+              type="button"
+              onClick={() => setActiveVersion(currentVersion)}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = CTA_GHOST_HOVER_BG
+                e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent'
+                e.currentTarget.style.borderColor = 'rgba(26,22,18,0.25)'
+              }}
+              className="inline-flex min-h-[36px] items-center justify-center rounded-[2px] px-5 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2"
+              style={{
+                background: 'transparent',
+                border: '1px solid rgba(26,22,18,0.25)',
+                color: 'rgba(26,22,18,0.75)',
+                fontFamily: MONO,
+                fontSize: 12,
+                fontWeight: 500,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                ['--tw-ring-color' as string]: CTA_TEAL_RING,
+              }}
+            >
+              View current version
+            </button>
+          )}
+        </div>
+      )
+    }
 
     // Banner layouts per state. Light theme — sits inside the
     // PAPER-backed proofs section so the editorial register is
@@ -1036,25 +1102,62 @@ export default function CustomerProofPage() {
       )
     }
 
-    if (state.kind === 'approved' || state.kind === 'changes_requested') {
-      const approved = state.kind === 'approved'
-      // Confirmed-state banner. Approve flow's bg/border/text now
-      // match the hero approval chip's pale-tint palette (deviation
-      // #7) — visual continuity from chip to banner across the
-      // approve flow. Typography (16px/600 eyebrow + 22px serif
-      // body) and 18/22 padding keep the banner's standalone
-      // weight, distinct from the chip's inline pill. Coral /
-      // request-changes flow keeps the saturated treatment since
-      // there's no chip equivalent on that side.
-      const confirmedTextColour = approved ? '#176b3f' : '#3a2c91'
+    if (state.kind === 'approved') {
+      // Latest version, approved — minimal status line in the same
+      // horizontal slot the buttons would occupy. Green dot
+      // (APPROVED_GREEN, matched to the Approve CTA accent) +
+      // uppercase tracked label, with a muted DD MMM YYYY secondary
+      // line beneath. No tinted card, no border — keeps the slot
+      // visually quiet so the customer reads it as "done" rather
+      // than as a fresh thing to act on.
+      const approvedDate = formatApprovedDate(state.createdAt)
+      return (
+        <div className="mt-6 flex flex-col gap-1 sm:items-start">
+          <div className="flex items-center gap-2">
+            <span
+              aria-hidden="true"
+              className="inline-block rounded-full"
+              style={{ width: 8, height: 8, background: APPROVED_GREEN }}
+            />
+            <span
+              className="uppercase"
+              style={{
+                fontFamily: MONO,
+                fontSize: 11,
+                letterSpacing: '0.22em',
+                color: '#1a1612',
+              }}
+            >
+              APPROVED
+            </span>
+          </div>
+          {(state.actorName || approvedDate) && (
+            <span
+              className="text-[#1a1612]/70"
+              style={{ fontFamily: SANS, fontSize: 14, lineHeight: 1.5 }}
+            >
+              {state.actorName ? `Approved by ${state.actorName}` : 'Approved'}
+              {approvedDate ? ` on ${approvedDate}` : ''}
+            </span>
+          )}
+          {state.comment && (
+            <p className="text-[14px] leading-[1.55] text-[#1a1612]/80" style={{ fontFamily: SANS }}>
+              "{state.comment}"
+            </p>
+          )}
+        </div>
+      )
+    }
+
+    if (state.kind === 'changes_requested') {
+      // Coral / request-changes banner stays on the saturated
+      // treatment — the spec only reworks the approved state.
       return (
         <div
           className="mt-6 flex flex-col gap-2 rounded-md py-[18px] px-[22px] text-[#1a1612]"
           style={{
-            background: approved ? 'rgba(81,180,148,0.18)' : 'rgba(58,44,145,0.18)',
-            border: approved
-              ? '1px solid rgba(81,180,148,0.4)'
-              : '1px solid rgba(58,44,145,0.4)',
+            background: 'rgba(58,44,145,0.18)',
+            border: '1px solid rgba(58,44,145,0.4)',
           }}
         >
           <span
@@ -1063,13 +1166,13 @@ export default function CustomerProofPage() {
               ...KICKER_STYLE,
               fontSize: 16,
               fontWeight: 600,
-              color: confirmedTextColour,
+              color: '#3a2c91',
             }}
           >
-            {approved ? 'APPROVED' : 'CHANGES REQUESTED'}
+            CHANGES REQUESTED
           </span>
           {(state.actorName || state.createdAt) && (
-            <span style={{ ...BODY_STYLE, fontSize: 22, color: confirmedTextColour }}>
+            <span style={{ ...BODY_STYLE, fontSize: 22, color: '#3a2c91' }}>
               {state.actorName ? `by ${state.actorName}` : ''}
               {state.actorName && formatBandDate(state.createdAt) ? ' ' : ''}
               {formatBandDate(state.createdAt)
