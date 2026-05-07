@@ -182,6 +182,34 @@ export interface PublicProofVersion {
   front_colour_hex: string | null
   back_colour_name: string | null
   back_colour_hex: string | null
+  // ── Variant rounds (migrations 000138 + 000139) ─────────────────────────
+  // is_variant_round flips the customer-page render branch from the
+  // standard per-recipient bands to the side-by-side variant
+  // comparison grid (step 4). round_variants is the ordered list of
+  // parallel variants on the round; empty array on every standard
+  // version and empty until step 5's upload UI starts writing rows
+  // even on variant-round versions.
+  is_variant_round: boolean
+  round_variants: RoundVariant[]
+  // ── Mixed materials sub-mode (migration 000142) ──────────────────────────
+  // Only true when is_variant_round is also true. Each variant
+  // carries its own material; pricing is handled out-of-band, so
+  // the customer page hides the pricing card, Specification, and
+  // About-material sections. Implies material_id, currency, and
+  // material_options are all null/empty on the version row.
+  is_mixed_materials: boolean
+}
+
+// One parallel design alternative on a variant-round proof_version
+// (migration 000138). Designer-managed via the upload UI in step 5.
+// code is slug-derived from display_name on first save and is write-
+// once by application convention so proof_events.round_variant_id
+// references stay stable across designer renames.
+export interface RoundVariant {
+  id: string
+  code: string
+  display_name: string
+  sort_order: number
 }
 
 // Catalogue row for the letterpress core colour palette
@@ -208,6 +236,16 @@ export interface ProofEventState {
   comment: string | null
   created_at: string
   helpscout_thread_id: string | null
+  // Migration 000125 added this column to proof_name_approvals'
+  // projection but deliberately deferred extending the per-event
+  // projection. Migration 000139 closes that gap so step 4's
+  // variant-round render branch can read the active option code
+  // alongside the chosen variant id. Null on events recorded
+  // before 000124 or on versions with no option dimension.
+  material_option_code: string | null
+  // Migration 000139. Variant the customer chose at action time on
+  // a variant-round version. Null on standard-version events.
+  round_variant_id: string | null
 }
 
 export interface PublicMaterialOption {
@@ -315,6 +353,12 @@ export interface ProofVersionImage {
   // side: null = not labelled / not applicable.
   associated_name: string | null
   side: 'front' | 'back' | null
+  // ── Variant rounds (migrations 000138 + 000139) ──────────────────────────
+  // Variant this image belongs to on a variant-round version.
+  // Non-null on every image of a variant-round version; null on
+  // every image of a standard version. Step 4 filters the per-
+  // variant image grid by this id.
+  round_variant_id: string | null
   // Resolved client-side — not a DB column.
   signed_url?: string
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant } from '../lib/types'
+import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import type { ProofEventState } from '../lib/types'
 import { deriveSharedApprovalState } from '../lib/sharedApproval'
@@ -120,8 +120,20 @@ export default function CustomerProofPage() {
   // actionResults / successMessages key on `${versionId}|${name}`
   // so each band's optimistic state is isolated — Alec approving
   // doesn't lock Kyle's band.
+  // roundVariant flips the modal into "Choose this direction" mode for
+  // variant rounds (steps 4 / build plan). When set, name is forced to
+  // SHARED_APPROVAL_KEY and type is forced to 'request_changes' at
+  // open time; the modal swaps its header copy, body label, and
+  // confirm button text to read as a selection rather than a change
+  // request. The Approve disclaimer block is also hidden by virtue of
+  // the type already being 'request_changes' on this path.
   const [actionPanel, setActionPanel] = useState<
-    | { versionId: string; name: string; type: 'approve' | 'request_changes' }
+    | {
+        versionId: string
+        name: string
+        type: 'approve' | 'request_changes'
+        roundVariant?: { id: string; displayName: string } | null
+      }
     | null
   >(null)
   const [actionName, setActionName] = useState('')
@@ -389,6 +401,15 @@ export default function CustomerProofPage() {
     return `${versionId}|${name}`
   }
 
+  // Variant-round optimistic-state key (build-plan step 4). Lives in
+  // a separate namespace from bandKey so a per-recipient band on a
+  // standard version can never collide with a variant card on a
+  // variant-round version. Only the variant-round render path reads
+  // this; the standard path never sees these keys.
+  function variantBandKey(versionId: string, variantId: string): string {
+    return `${versionId}|variant|${variantId}`
+  }
+
   function openActionPanel(
     versionId: string,
     recipientName: string,
@@ -409,6 +430,31 @@ export default function CustomerProofPage() {
     // disclaimer has been acked earlier this session. The
     // session flag only collapses how prominently the text is
     // rendered (full vs one-line reminder + Show disclaimer).
+    setActionDisclaimerAcked(false)
+    setActionDisclaimerExpanded(false)
+  }
+
+  // Variant-round equivalent of openActionPanel (build-plan step 4).
+  // Variant rounds always travel as request_changes server-side, are
+  // always shared (name = SHARED_APPROVAL_KEY), and carry the chosen
+  // variant via roundVariant. The Approve disclaimer doesn't apply on
+  // this path — it's gated by type === 'approve' in the modal which is
+  // never true here — so we don't touch the disclaimer state. Otherwise
+  // mirrors openActionPanel exactly.
+  function openVariantActionPanel(
+    versionId: string,
+    variant: { id: string; display_name: string },
+  ) {
+    actionPanelTriggerRef.current = document.activeElement as HTMLElement | null
+    setActionPanel({
+      versionId,
+      name: SHARED_APPROVAL_KEY,
+      type: 'request_changes',
+      roundVariant: { id: variant.id, displayName: variant.display_name },
+    })
+    setActionName('')
+    setActionComment('')
+    setActionError(null)
     setActionDisclaimerAcked(false)
     setActionDisclaimerExpanded(false)
   }
@@ -474,8 +520,22 @@ export default function CustomerProofPage() {
           // tab state. Null when the version has no option dimension
           // (empty material_options array). Sending null explicitly
           // rather than undefined so the edge function's body parser
-          // doesn't have to distinguish absent-vs-null.
-          material_option_code: activeOptionCode ?? null,
+          // doesn't have to distinguish absent-vs-null. Variant
+          // rounds force null here regardless of activeOptionCode —
+          // the option-tab strip isn't rendered on a variant round
+          // (build-plan step 4) so activeOptionCode is null in
+          // practice, but we belt-and-brace it.
+          material_option_code: actionPanel.roundVariant
+            ? null
+            : (activeOptionCode ?? null),
+          // Variant-round selection (migrations 000138 + 000139). Only
+          // included when the modal was opened via openVariantActionPanel;
+          // the edge function rejects round_variant_id on non-variant
+          // versions, so we omit the key entirely on the standard path
+          // rather than sending null.
+          ...(actionPanel.roundVariant
+            ? { round_variant_id: actionPanel.roundVariant.id }
+            : {}),
         },
       })
       if (error) {
@@ -515,15 +575,30 @@ export default function CustomerProofPage() {
         return
       }
       // ok / partial — both lock this band. Optimistically write
-      // the post-action state keyed on (versionId, name) so other
-      // bands stay independent. The next page load picks the same
-      // shape from approvals[] + latest_events_by_name on the view.
-      const verb = actionPanel.type === 'approve' ? 'approval' : 'change request'
+      // the post-action state keyed on (versionId, name) for the
+      // standard per-recipient path, or on (versionId, variantId)
+      // for the variant-round path (build-plan step 4) so the two
+      // namespaces never collide. The next page load picks the
+      // same shape from approvals[] + latest_events_by_name on the
+      // view; the locked-round detection in getVariantRoundState
+      // reads round_variant_id from latest_events_by_name to
+      // survive a refresh.
+      //
+      // Verb copy: standard path uses "approval" / "change request"
+      // — preserved as-is. Variant rounds always travel as
+      // request_changes server-side but the customer is selecting a
+      // direction, not requesting changes; the success copy switches
+      // to "selection" so the banner reads accurately.
+      const verb = actionPanel.roundVariant
+        ? 'selection'
+        : actionPanel.type === 'approve' ? 'approval' : 'change request'
       const message =
         result.status === 'partial'
           ? `Thanks, ${name}. Your ${verb} has been recorded, but we couldn't notify the team automatically. To make sure they see it, please also reply to the email you received with this proof link.`
           : `Thanks, ${name}. Your ${verb} has been recorded and the team has been notified.`
-      const key = bandKey(actionPanel.versionId, actionPanel.name)
+      const key = actionPanel.roundVariant
+        ? variantBandKey(actionPanel.versionId, actionPanel.roundVariant.id)
+        : bandKey(actionPanel.versionId, actionPanel.name)
       const type = actionPanel.type
       setActionResults((prev) => ({
         ...prev,
@@ -1189,6 +1264,588 @@ export default function CustomerProofPage() {
     return 'Approved'
   }
 
+  // ─── Variant rounds (build-plan step 4) ─────────────────────────────────
+  //
+  // Three helpers grouped together so the variant-round render path is
+  // contained: getVariantRoundState (locked-state derivation),
+  // renderVariantBand (per-variant action band), renderVariantRound
+  // (top-level comparison-grid section). None of these touch the
+  // standard render path — they're only invoked from the variant-round
+  // branch at the top of the proofs IIFE.
+
+  // Derived locked-round state. Reads two sources in priority order:
+  //   1. actionResults — optimistic state from a just-completed POST
+  //      in this page session. Keyed on variantBandKey, so per-recipient
+  //      bands on a standard version can never collide with these.
+  //   2. activeVersion.latest_events_by_name — durable state from the
+  //      DB (migration 000139 surfaced round_variant_id on each entry).
+  //      Variant rounds always carry name='__shared__' so DISTINCT ON
+  //      collapses the append-only event stream to a single entry per
+  //      version, yielding the most recent direction the customer
+  //      selected. Filtered to event_type='request_changes' AND
+  //      round_variant_id != null for safety.
+  // Returning a 'locked' state on any match locks every variant card in
+  // the grid; only the chosen variant gets the green-tinted "Selected"
+  // banner, others render in muted state per the build-plan v1
+  // simplification (no in-page change-of-mind; reply by email).
+  type VariantRoundState =
+    | { kind: 'pending' }
+    | {
+        kind: 'locked'
+        chosenVariantId: string
+        actorName: string | null
+        comment: string | null
+        createdAt: string | null
+      }
+  function getVariantRoundState(): VariantRoundState {
+    if (!activeVersion || !activeVersion.is_variant_round) return { kind: 'pending' }
+    const variants = activeVersion.round_variants ?? []
+
+    // 1. Optimistic — most recent successful selection in this session.
+    let mostRecent:
+      | { variantId: string; createdAt: string; actorName: string; comment: string | null }
+      | null = null
+    for (const variant of variants) {
+      const result = actionResults[variantBandKey(activeVersion.id, variant.id)]
+      if (!result) continue
+      if (!mostRecent || result.createdAt > mostRecent.createdAt) {
+        mostRecent = {
+          variantId: variant.id,
+          createdAt: result.createdAt,
+          actorName: result.actorName,
+          comment: result.comment,
+        }
+      }
+    }
+    if (mostRecent) {
+      return {
+        kind: 'locked',
+        chosenVariantId: mostRecent.variantId,
+        actorName: mostRecent.actorName,
+        comment: mostRecent.comment,
+        createdAt: mostRecent.createdAt,
+      }
+    }
+
+    // 2. Durable — read latest_events_by_name. Variant rounds always
+    //    carry name='__shared__', so any entry with round_variant_id
+    //    set is the customer's locked selection. event_type filter
+    //    excludes a hypothetical future state where we route something
+    //    other than request_changes through this surface.
+    const lockedEvent = activeVersion.latest_events_by_name.find(
+      (e) => e.event_type === 'request_changes' && e.round_variant_id != null,
+    )
+    if (lockedEvent && lockedEvent.round_variant_id) {
+      return {
+        kind: 'locked',
+        chosenVariantId: lockedEvent.round_variant_id,
+        actorName: lockedEvent.actor_name,
+        comment: lockedEvent.comment,
+        createdAt: lockedEvent.created_at,
+      }
+    }
+
+    return { kind: 'pending' }
+  }
+
+  // Per-variant action band. Three states:
+  //   * pending             → "Choose this direction" CTA
+  //   * locked + chosen     → emerald "Selected" banner with actor +
+  //                            date + comment (mirrors the existing
+  //                            approved-banner pattern)
+  //   * locked + not chosen → muted "Not selected" indicator (the card
+  //                            also gets reduced opacity from
+  //                            renderVariantRound's wrapper styling)
+  // Gates on approvals_enabled — same kill switch as renderActionBand,
+  // so flipping the global flag dark hides every CTA across both modes.
+  function renderVariantBand(variant: RoundVariant): React.ReactNode {
+    if (!activeVersion) return null
+    if (!activeVersion.approvals_enabled) return null
+    const lockState = getVariantRoundState()
+    const isLocked = lockState.kind === 'locked'
+    const isChosen = isLocked && lockState.chosenVariantId === variant.id
+
+    const KICKER_STYLE = {
+      fontFamily: MONO,
+      fontSize: 11,
+      letterSpacing: '0.22em',
+      textTransform: 'uppercase' as const,
+    }
+
+    if (isLocked && isChosen) {
+      const actor = lockState.actorName ?? ''
+      const dateStr = formatBandDate(lockState.createdAt)
+      const headlineText = actor && dateStr
+        ? `Chosen by ${actor} on ${dateStr}.`
+        : actor
+          ? `Chosen by ${actor}.`
+          : 'This direction was selected.'
+      return (
+        <div
+          className="mt-6 flex flex-col gap-2 rounded-md py-[18px] px-[22px]"
+          style={{
+            background: 'rgba(81,180,148,0.18)',
+            border: '1px solid rgba(81,180,148,0.45)',
+            color: '#1a1612',
+          }}
+        >
+          <span style={{ ...KICKER_STYLE, color: '#176b3f' }}>
+            Selected
+          </span>
+          <span
+            style={{
+              fontFamily: SERIF,
+              fontWeight: 400,
+              fontSize: 22,
+              lineHeight: 1.35,
+              color: '#1a1612',
+            }}
+          >
+            {headlineText}
+          </span>
+          {lockState.comment && (
+            <p
+              className="mt-1"
+              style={{
+                fontFamily: SANS,
+                fontSize: 14,
+                lineHeight: 1.55,
+                color: '#1a1612',
+              }}
+            >
+              "{lockState.comment}"
+            </p>
+          )}
+        </div>
+      )
+    }
+
+    if (isLocked && !isChosen) {
+      return (
+        <div
+          className="mt-6 flex items-center rounded-md py-[14px] px-[18px]"
+          style={{
+            background: 'rgba(0,0,0,0.04)',
+            border: '1px solid rgba(0,0,0,0.10)',
+          }}
+        >
+          <span style={{ ...KICKER_STYLE, color: 'rgba(26,22,18,0.55)' }}>
+            Not selected
+          </span>
+        </div>
+      )
+    }
+
+    // Pending — render the CTA.
+    return (
+      <div className="mt-6">
+        <button
+          type="button"
+          onClick={() =>
+            openVariantActionPanel(activeVersion.id, {
+              id: variant.id,
+              display_name: variant.display_name,
+            })
+          }
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = CTA_GHOST_HOVER_BG
+            e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = CTA_GHOST_BG
+            e.currentTarget.style.borderColor = CTA_GHOST_BORDER
+          }}
+          onMouseDown={(e) => {
+            e.currentTarget.style.background = CTA_GHOST_PRESSED_BG
+          }}
+          onMouseUp={(e) => {
+            e.currentTarget.style.background = CTA_GHOST_HOVER_BG
+          }}
+          className="inline-flex min-h-[44px] w-full items-center justify-center rounded-[2px] px-7 py-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)]"
+          style={{
+            background: CTA_GHOST_BG,
+            border: `1.5px solid ${CTA_GHOST_BORDER}`,
+            color: CTA_GHOST_TEXT,
+            fontFamily: MONO,
+            fontSize: 13,
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+          }}
+        >
+          Choose this direction
+        </button>
+      </div>
+    )
+  }
+
+  // Top-level variant-round render. Returns a fragment with two
+  // <section>s: pricing card on top, then the variant comparison grid.
+  // Replaces the proofs IIFE entirely on variant-round versions; the
+  // standalone pricing section below is gated off so it doesn't render
+  // a second copy of the price grid. The OptionTabStrip is intentionally
+  // never entered on this branch — variant rounds are single-material
+  // single-option by design.
+  function renderVariantRound(): React.ReactNode {
+    if (!activeVersion || !activeVersion.is_variant_round) return null
+    const variants = [...(activeVersion.round_variants ?? [])].sort(
+      (a, b) => a.sort_order - b.sort_order || a.code.localeCompare(b.code),
+    )
+    if (variants.length === 0) return null
+
+    const allImages = versionImages[activeVersion.id] ?? []
+    const imagesByVariant = new Map<string, GridImage[]>()
+    for (const v of variants) imagesByVariant.set(v.id, [])
+    for (const img of allImages) {
+      if (img.round_variant_id) {
+        imagesByVariant.get(img.round_variant_id)?.push(img)
+      }
+    }
+    for (const list of imagesByVariant.values()) {
+      list.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    }
+
+    // hasAnyTwoSided: any variant in this round carries back images.
+    // When true the grid collapses to a single column on all
+    // viewports — a 2-sided card needs the full container width
+    // for its Front+Back sub-grid to read at a usable size; cramming
+    // it into a half- or third-width slot alongside other variants
+    // produces awkward size disparity (1-sided dominates) or
+    // crushed images (3 × 33% wide front+back). Stacking gives
+    // every card the full width so within-card layouts stay
+    // legible. Round with all variants 1-sided still uses the
+    // 2 / 3 / 4+ comparison grid.
+    const hasAnyTwoSided = variants.some(
+      (v) =>
+        (imagesByVariant.get(v.id) ?? []).some((img) => img.side === 'back'),
+    )
+    const gridClass = (() => {
+      if (hasAnyTwoSided) return 'grid grid-cols-1 gap-6 sm:gap-8'
+      const n = variants.length
+      if (n === 2) return 'grid grid-cols-1 sm:grid-cols-2 gap-6 sm:gap-8'
+      if (n === 3) return 'grid grid-cols-1 sm:grid-cols-3 gap-6 sm:gap-8'
+      return 'grid grid-cols-1 sm:grid-cols-2 gap-6 sm:gap-8'
+    })()
+
+    const lockState = getVariantRoundState()
+    const isLocked = lockState.kind === 'locked'
+
+    return (
+      <>
+        {/* ───── Variant comparison ───────────────────────────────────
+            Side-by-side variant cards. Each card carries its own
+            heading (display_name), image cluster, and action band.
+            Renders ahead of the pricing card so the customer scans
+            and chooses a direction before scrolling to price detail.
+            The whole grid locks once any selection lands; the chosen
+            variant gets the emerald "Selected" banner, others go to
+            muted "Not selected" + reduced opacity. */}
+        <section
+          aria-labelledby="section-variant-grid-heading"
+          style={{
+            background: PAPER_CREAM,
+            color: PAPER_INK,
+          }}
+        >
+          <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
+            <div
+              className="mb-10 flex flex-wrap items-end justify-between gap-4 border-b-2 pb-4"
+              style={{ borderColor: 'rgba(26,22,18,0.8)' }}
+            >
+              <div>
+                <h2
+                  id="section-variant-grid-heading"
+                  className="leading-none break-words"
+                  style={{
+                    fontFamily: SERIF,
+                    fontWeight: 400,
+                    fontSize: 'clamp(40px, 9vw, 56px)',
+                    color: PAPER_INK,
+                  }}
+                >
+                  Choose a direction
+                </h2>
+                <p
+                  className="mt-3 block"
+                  style={{
+                    fontFamily: SANS,
+                    fontSize: 15,
+                    color: PAPER_TERTIARY,
+                  }}
+                >
+                  {variants.length === 1
+                    ? '1 direction'
+                    : `${variants.length} directions · pick one`}
+                </p>
+                {/* Mixed-materials pointer (000142). Sits under the
+                    count subtitle so the customer reads it as part
+                    of the section's framing, not as an alert. The
+                    per-variant pricing decisions live in the email
+                    thread; this line is just the signpost. */}
+                {activeVersion.is_mixed_materials && (
+                  <p
+                    className="mt-2"
+                    style={{
+                      fontFamily: SANS,
+                      fontSize: 14,
+                      color: PAPER_SECONDARY,
+                    }}
+                  >
+                    Pricing varies by material. Cost details for each direction are in your email.
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className={gridClass}>
+              {variants.map((variant) => {
+                const variantImages = imagesByVariant.get(variant.id) ?? []
+                // Per-variant 2-sided support. Front images include
+                // any legacy side=null rows so existing variant
+                // rounds without a side stamp render unchanged
+                // (000143 backfilled production rows to 'front', so
+                // the null-tolerant filter is belt-and-braces for
+                // any future drift). Back images render as a second
+                // cluster below the front, separated by a small
+                // mono kicker — only when the designer actually
+                // uploaded a back side for this variant.
+                const frontImages = variantImages.filter(
+                  (img) => img.side === 'front' || img.side == null,
+                )
+                const backImages = variantImages.filter(
+                  (img) => img.side === 'back',
+                )
+                const hasBack = backImages.length > 0
+                const isChosen =
+                  isLocked && lockState.chosenVariantId === variant.id
+                const dimmed = isLocked && !isChosen
+                let colorIdx = 0
+                return (
+                  <article
+                    key={variant.id}
+                    className="flex flex-col p-6 sm:p-7"
+                    style={{
+                      background: '#ffffff',
+                      border: isChosen
+                        ? '1px solid rgba(81,180,148,0.45)'
+                        : '1px solid rgba(26,22,18,0.12)',
+                      opacity: dimmed ? 0.55 : 1,
+                      transition: 'opacity 200ms ease-out',
+                    }}
+                  >
+                    <h3
+                      className="break-words"
+                      style={{
+                        fontFamily: SERIF,
+                        fontWeight: 400,
+                        fontSize: 'clamp(24px, 5vw, 30px)',
+                        lineHeight: 1.05,
+                        color: PAPER_INK,
+                      }}
+                    >
+                      {variant.display_name}
+                    </h3>
+                    {variantImages.length === 0 ? (
+                      <p
+                        className="mt-6"
+                        style={{
+                          fontFamily: SANS,
+                          fontSize: 14,
+                          color: PAPER_TERTIARY,
+                        }}
+                      >
+                        No images uploaded for this direction yet.
+                      </p>
+                    ) : hasBack ? (
+                      // Two-sided: Front and Back render side-by-side
+                      // at sm+ (≥ 640px) so the variant card stays
+                      // roughly the same height as a single-sided card
+                      // alongside it. Below sm, fall back to vertical
+                      // stacking — side-by-side inside a comparison-
+                      // grid column at <640px would crush each image
+                      // too small to read. Order is fixed Front-Left,
+                      // Back-Right regardless of image sort_order.
+                      <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2">
+                        <div>
+                          <p
+                            className="font-paper-mono uppercase"
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 500,
+                              letterSpacing: '0.32em',
+                              color: PAPER_TERTIARY,
+                            }}
+                          >
+                            Front
+                          </p>
+                          <div className="mt-2 space-y-5">
+                            {frontImages.map((img) => (
+                              <PlateCard
+                                key={img.id}
+                                image={img}
+                                brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
+                                alt={`${variant.display_name} — proof version ${activeVersion.version_number}`}
+                                onClick={openLightbox}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <p
+                            className="font-paper-mono uppercase"
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 500,
+                              letterSpacing: '0.32em',
+                              color: PAPER_TERTIARY,
+                            }}
+                          >
+                            Back
+                          </p>
+                          <div className="mt-2 space-y-5">
+                            {backImages.map((img) => (
+                              <PlateCard
+                                key={img.id}
+                                image={img}
+                                brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
+                                alt={`${variant.display_name} (back) — proof version ${activeVersion.version_number}`}
+                                onClick={openLightbox}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      // Single-sided: full-width Front cluster, no
+                      // kicker. Byte-identical to the pre-2-sided
+                      // render path.
+                      <div className="mt-5 space-y-5">
+                        {frontImages.map((img) => (
+                          <PlateCard
+                            key={img.id}
+                            image={img}
+                            brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
+                            alt={`${variant.display_name} — proof version ${activeVersion.version_number}`}
+                            onClick={openLightbox}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {renderVariantBand(variant)}
+                  </article>
+                )
+              })}
+            </div>
+          </div>
+        </section>
+
+        {/* ───── Pricing (variant-round view) ─────────────────────────
+            Variant rounds are single-material/single-currency so the
+            pricing card is shared across every variant card. Sits
+            below the variant grid — the customer compares directions
+            first, then sees price context once they're ready to act.
+            PaperPricingTable is the same component the standard view
+            uses; quantitySurcharges is empty on this branch (no
+            option dimension).
+
+            Mixed-materials variant rounds (000142) hide this card
+            entirely — pricing is per-variant and handled out-of-
+            band. The pointer line above the variant grid signposts
+            that decision to the customer. */}
+        {!activeVersion.is_mixed_materials && (
+        <section
+          aria-labelledby="section-variant-pricing-heading"
+          style={{
+            background: PAPER_CREAM,
+            color: PAPER_INK,
+            borderTop: '1px solid rgba(26,22,18,0.10)',
+          }}
+        >
+          <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
+            <div
+              className="mb-10 flex flex-wrap items-baseline justify-between gap-3 border-b-2 pb-4"
+              style={{ borderColor: 'rgba(26,22,18,0.8)' }}
+            >
+              <h2
+                id="section-variant-pricing-heading"
+                className="leading-none break-words"
+                style={{
+                  fontFamily: SERIF,
+                  fontWeight: 400,
+                  fontSize: 'clamp(40px, 9vw, 56px)',
+                  color: PAPER_INK,
+                }}
+              >
+                Pricing
+              </h2>
+              {!activeVersion.custom_quote && (
+                <p
+                  className="font-paper-mono uppercase"
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    letterSpacing: '0.22em',
+                    color: PAPER_INK,
+                  }}
+                >
+                  {activeVersion.currency}
+                  {activeVersion.currency === 'GBP' ? ' · VAT included' : ''}
+                </p>
+              )}
+            </div>
+            {activeVersion.custom_quote ? (
+              <div className="py-6 text-center">
+                <p
+                  className="mx-auto max-w-md"
+                  style={{
+                    fontFamily: SERIF,
+                    fontWeight: 400,
+                    fontSize: 22,
+                    color: PAPER_SECONDARY,
+                  }}
+                >
+                  This proof requires a custom quote. We'll be in touch separately with pricing.
+                </p>
+              </div>
+            ) : (
+              <PaperPricingTable
+                snapshot={livePricingSnapshot}
+                currency={activeVersion.currency}
+                displayQuantities={activeVersion.display_quantities}
+                quoteMinQuantity={activeVersion.quote_min_quantity}
+                quoteMaxQuantity={activeVersion.quote_max_quantity}
+                quantitySurcharges={{}}
+              />
+            )}
+            {!activeVersion.custom_quote && activeVersion.shipping_note && (
+              <div
+                className="mt-8 p-6"
+                style={{ border: '1px solid rgba(26,22,18,0.12)' }}
+              >
+                <p
+                  className="font-paper-mono uppercase"
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 500,
+                    letterSpacing: '0.32em',
+                    color: ACCENT,
+                  }}
+                >
+                  Shipping
+                </p>
+                <p
+                  className="mt-2"
+                  style={{ fontFamily: SERIF, fontSize: 18, color: PAPER_INK }}
+                >
+                  {activeVersion.shipping_note}
+                </p>
+              </div>
+            )}
+          </div>
+        </section>
+        )}
+      </>
+    )
+  }
+
   // Derived: options for the currently-viewed version.
   const versionOptions = activeVersion?.material_options ?? []
   const showOptionSwitcher = versionOptions.length >= 2
@@ -1656,7 +2313,17 @@ export default function CustomerProofPage() {
               <BrandRule height={3} />
             </div>
 
-            {activeVersion && (() => {
+            {/* Hero docket — Material / Sides|Option / Revision /
+                Names. Hidden on mixed-materials variant rounds
+                (000142): every per-direction material is decided
+                out-of-band so a single MATERIAL cell on the version
+                row would either be misleading ("Mixed materials"
+                read as a real material) or empty. The H1 + italic
+                subline + BrandRule above already read as a complete
+                hero header on their own; the variant grid below
+                supplies its own py-20 / py-24 breathing room when
+                the section starts. */}
+            {activeVersion && !activeVersion.is_mixed_materials && (() => {
               // Cell 2 — adaptive branching. Option-having materials
               // show the option label + value (Finish / Brushed,
               // Species / Black Walnut, etc.). No-option materials
@@ -1732,6 +2399,15 @@ export default function CustomerProofPage() {
               of the four brand colours in rotation — a quiet
               echo of the logomark across the grid. */}
           {(() => {
+            // Variant-round branch (build-plan step 4). Routes ahead
+            // of every standard derivation below so the existing code
+            // path is byte-identical for every non-variant version.
+            // is_variant_round is false on every row in production
+            // today (000138 default); the branch is dead code until
+            // step 5 produces a real variant-round version.
+            if (activeVersion?.is_variant_round) {
+              return renderVariantRound()
+            }
             const groups = buildImageGroups(displayImages)
             const sharedGroup = groups.find((g) => g.kind === 'shared') ?? null
             const namedGroups = groups.filter((g) => g.kind === 'named')
@@ -2144,7 +2820,13 @@ export default function CustomerProofPage() {
               intro on the left and a hairline-ruled dl on the
               right. Notes block-quote sits below, separated by a
               top-border rule. Notes only render when the version
-              has change_notes content. */}
+              has change_notes content.
+
+              Mixed-materials variant rounds (000142) hide the whole
+              section — every per-direction material is a separate
+              decision and the version row carries no aggregate
+              material/currency to put on the spec sheet. */}
+          {!activeVersion.is_mixed_materials && (
           <section
             aria-labelledby="section-specification-heading"
             style={{
@@ -2272,6 +2954,7 @@ export default function CustomerProofPage() {
               )}
             </div>
           </section>
+          )}
 
           {/* ───── Pricing ─────
               Darker ink section (#0f0d0b) — visually distinct
@@ -2281,7 +2964,16 @@ export default function CustomerProofPage() {
               columns and a large serif quantity on the left.
               Custom-quote mode collapses the table to a quiet
               message. Split-name tooling callout + shipping
-              footer ride along underneath. */}
+              footer ride along underneath.
+
+              Variant-round versions render a copy of this
+              pricing card at the top of renderVariantRound's
+              comparison view (build-plan step 4), so the
+              standalone section here is gated off to avoid a
+              duplicate. is_variant_round is false on every row
+              in production today, so this gate is a no-op for
+              every existing proof. */}
+          {!activeVersion?.is_variant_round && (
           <section
             aria-labelledby="section-pricing-heading"
             style={{
@@ -2482,6 +3174,7 @@ export default function CustomerProofPage() {
                 )}
             </div>
           </section>
+          )}
 
           {/* ───── About {material} ─────
               Two-column layout: copy on the left, swatch orb on
@@ -2489,8 +3182,14 @@ export default function CustomerProofPage() {
               material display name (copper/steel/gold/etc) with
               an indigo fallback. Section only renders when the
               material has a description configured — if not,
-              the section collapses silently. */}
-          {activeVersion.material_description && (
+              the section collapses silently.
+
+              Mixed-materials variant rounds (000142) carry no
+              version-level material so material_description is
+              null and this section auto-hides. The defensive
+              !is_mixed_materials gate makes that explicit and
+              survives any future schema drift. */}
+          {!activeVersion.is_mixed_materials && activeVersion.material_description && (
             <section
               aria-labelledby="section-material-heading"
               style={{ background: PAPER_TINT_1, color: PAPER_INK }}
@@ -2739,15 +3438,17 @@ export default function CustomerProofPage() {
                 color: actionPanel.type === 'approve' ? '#1f5640' : '#3a2c91',
               }}
             >
-              {actionPanel.type === 'approve'
-                ? actionPanel.name === SHARED_APPROVAL_KEY
-                  ? 'Approve this proof'
-                  : `Approve ${actionPanel.name}'s design`
-                : actionPanel.name === SHARED_APPROVAL_KEY
-                  ? 'Request changes'
-                  : `Request changes for ${actionPanel.name}`}
+              {actionPanel.roundVariant
+                ? `Choose this direction — ${actionPanel.roundVariant.displayName}`
+                : actionPanel.type === 'approve'
+                  ? actionPanel.name === SHARED_APPROVAL_KEY
+                    ? 'Approve this proof'
+                    : `Approve ${actionPanel.name}'s design`
+                  : actionPanel.name === SHARED_APPROVAL_KEY
+                    ? 'Request changes'
+                    : `Request changes for ${actionPanel.name}`}
             </h2>
-            {actionPanel.type === 'request_changes' && (
+            {actionPanel.type === 'request_changes' && !actionPanel.roundVariant && (
               <p
                 className="mt-4 max-w-[60ch] whitespace-pre-line text-[14px] leading-[1.65] sm:text-[15px] sm:leading-[1.7]"
                 style={{ fontFamily: SERIF, color: PAPER_INK }}
@@ -2790,7 +3491,9 @@ export default function CustomerProofPage() {
                     color: PAPER_INK,
                   }}
                 >
-                  What changes do you need? <span style={{ color: '#3a2c91' }}>*</span>
+                  {actionPanel.roundVariant
+                    ? <>Notes for the team <span style={{ color: '#3a2c91' }}>(required)</span></>
+                    : <>What changes do you need? <span style={{ color: '#3a2c91' }}>*</span></>}
                 </label>
                 <textarea
                   value={actionComment}
@@ -3019,11 +3722,13 @@ export default function CustomerProofPage() {
                     // verb so they don't have to infer the verb from
                     // the dialog title.
                     aria-label={
-                      actionPanel.type === 'approve'
-                        ? actionPanel.name === SHARED_APPROVAL_KEY
-                          ? 'Approve this proof'
-                          : `Approve ${actionPanel.name}'s design`
-                        : 'Send change request'
+                      actionPanel.roundVariant
+                        ? `Send selection — ${actionPanel.roundVariant.displayName}`
+                        : actionPanel.type === 'approve'
+                          ? actionPanel.name === SHARED_APPROVAL_KEY
+                            ? 'Approve this proof'
+                            : `Approve ${actionPanel.name}'s design`
+                          : 'Send change request'
                     }
                     onMouseEnter={(e) => {
                       if (confirmDisabled) return
@@ -3095,7 +3800,11 @@ export default function CustomerProofPage() {
                         actionPanel.type === 'approve' ? CTA_TEAL_RING : 'rgba(123,63,242,0.5)',
                     }}
                   >
-                    {actionSubmitting ? 'Sending…' : 'Confirm'}
+                    {actionSubmitting
+                      ? 'Sending…'
+                      : actionPanel.roundVariant
+                        ? 'Send selection'
+                        : 'Confirm'}
                   </button>
                 )
               })()}

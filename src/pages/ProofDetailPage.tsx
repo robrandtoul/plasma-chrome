@@ -68,6 +68,11 @@ interface ProofEventAuditDetail {
   from_ua: string | null
   helpscout_thread_id: string | null
   created_at: string
+  // Variant-round event surface (000139): the chosen direction's
+  // display_name when the customer made a "Choose this direction"
+  // selection. Null on standard-proof events. Resolved server-side
+  // via a nested embed on proof_round_variants in the events query.
+  variant_display_name: string | null
 }
 
 interface ApprovedImageRow {
@@ -293,18 +298,48 @@ export default function ProofDetailPage() {
     // tiny (≤ recipients × versions). Designers see all events
     // (proof_events RLS is authenticated read).
     if (versionIds.length > 0) {
+      // Nested embed on proof_round_variants resolves the chosen
+      // direction's display_name (000139) for variant-round events
+      // without a second round-trip. Returns null on standard-
+      // proof events (round_variant_id is null) — no extra rows are
+      // added by the LEFT JOIN.
       const { data: eventRows } = await supabase
         .from('proof_events')
-        .select('id, proof_version_id, name, event_type, actor_name, comment, from_ip, from_ua, helpscout_thread_id, created_at')
+        .select('id, proof_version_id, name, event_type, actor_name, comment, from_ip, from_ua, helpscout_thread_id, created_at, round_variant_id, proof_round_variants(display_name)')
         .in('proof_version_id', versionIds)
         .order('created_at', { ascending: false })
       if (isStale()) return
       const map = new Map<string, ProofEventAuditDetail>()
-      for (const r of (eventRows ?? []) as Array<
-        ProofEventAuditDetail & { proof_version_id: string; name: string | null }
-      >) {
+      // Supabase-js types the nested embed as either an object or an
+      // array depending on the FK shape; the runtime shape for a to-
+      // one FK like proof_events.round_variant_id is a single object
+      // (or null when the FK is null). The cast here unwraps both
+      // possibilities and pulls the display_name off whichever shape
+      // came back.
+      type RawEventRow = {
+        id: string
+        proof_version_id: string
+        name: string | null
+        event_type: ProofEventAuditDetail['event_type']
+        actor_name: string
+        comment: string | null
+        from_ip: string | null
+        from_ua: string | null
+        helpscout_thread_id: string | null
+        created_at: string
+        round_variant_id: string | null
+        proof_round_variants:
+          | { display_name: string }
+          | { display_name: string }[]
+          | null
+      }
+      for (const r of (eventRows ?? []) as unknown as RawEventRow[]) {
         const k = `${r.proof_version_id}|${r.name ?? SHARED_APPROVAL_KEY}`
         if (!map.has(k)) {
+          const embed = r.proof_round_variants
+          const variantDisplayName = Array.isArray(embed)
+            ? (embed[0]?.display_name ?? null)
+            : (embed?.display_name ?? null)
           map.set(k, {
             id: r.id,
             event_type: r.event_type,
@@ -314,6 +349,7 @@ export default function ProofDetailPage() {
             from_ua: r.from_ua,
             helpscout_thread_id: r.helpscout_thread_id,
             created_at: r.created_at,
+            variant_display_name: variantDisplayName,
           })
         }
       }
@@ -1424,20 +1460,68 @@ export default function ProofDetailPage() {
                     const when = entry.derived.latestApprovedAt
                       ? new Date(entry.derived.latestApprovedAt).toLocaleDateString('en-GB')
                       : null
+                    // Variant-round selection (000139). When the
+                    // current version is a variant round, every
+                    // customer "Choose this direction" submission
+                    // lands on proof_name_approvals as a
+                    // (currentVersion, '__shared__', changes_requested)
+                    // row. The derived approved/pending pill above
+                    // doesn't cover that state, so we look it up
+                    // directly here and render a variant-flavoured
+                    // pill instead.
+                    const sharedSelection = approvals.find(
+                      (a) =>
+                        a.proof_version_id === currentVersion.id &&
+                        a.name === SHARED_APPROVAL_KEY &&
+                        a.state === 'changes_requested',
+                    )
+                    const sharedSelectionEvent = sharedSelection
+                      ? eventsByVersionAndName.get(
+                          `${currentVersion.id}|${SHARED_APPROVAL_KEY}`,
+                        )
+                      : undefined
+                    const sharedSelectionWhen = sharedSelection
+                      ? new Date(sharedSelection.updated_at).toLocaleDateString('en-GB')
+                      : null
                     return (
                       <div key={entry.key} className={['px-5 py-3', separator].join(' ')}>
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <p className="text-sm font-semibold text-gray-900">{entry.heading}</p>
-                          {entry.derived.state === 'pending' && (
+                          {!sharedSelection && entry.derived.state === 'pending' && (
                             <span className="text-xs font-medium text-gray-500">Pending</span>
                           )}
-                          {entry.derived.state === 'approved' && (
+                          {!sharedSelection && entry.derived.state === 'approved' && (
                             <span className="inline-flex items-center gap-2 text-xs font-medium text-emerald-800">
                               <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
                               Approved in v{entry.versionNumber}{when ? `, ${when}` : ''}
                             </span>
                           )}
+                          {sharedSelection && (
+                            <span className="inline-flex items-center gap-2 text-xs font-medium text-amber-800">
+                              <span className="inline-block h-2 w-2 rounded-full bg-amber-500" aria-hidden="true" />
+                              {sharedSelectionEvent?.variant_display_name ? (
+                                <>
+                                  Direction selected:{' '}
+                                  <strong className="font-semibold">
+                                    {sharedSelectionEvent.variant_display_name}
+                                  </strong>
+                                  {' '}in v{entry.versionNumber}
+                                  {sharedSelectionWhen ? `, ${sharedSelectionWhen}` : ''}
+                                  {' '}by {sharedSelection.actor_name}
+                                </>
+                              ) : (
+                                <>
+                                  Changes requested in v{entry.versionNumber}
+                                  {sharedSelectionWhen ? `, ${sharedSelectionWhen}` : ''}
+                                  {' '}by {sharedSelection.actor_name}
+                                </>
+                              )}
+                            </span>
+                          )}
                         </div>
+                        {sharedSelection?.change_request && (
+                          <p className="mt-1 text-xs text-gray-500">{sharedSelection.change_request}</p>
+                        )}
                       </div>
                     )
                   }
@@ -1533,7 +1617,26 @@ export default function ProofDetailPage() {
                         {approval?.state === 'changes_requested' && (
                           <span className="inline-flex items-center gap-2 text-xs font-medium text-amber-800">
                             <span className="inline-block h-2 w-2 rounded-full bg-amber-500" aria-hidden="true" />
-                            Changes requested in {vRef}, {when} by {approval.actor_name}
+                            {auditEvent?.variant_display_name ? (
+                              // Variant-round selection (000139). The
+                              // customer "Choose this direction" surface
+                              // routes through request_changes server-
+                              // side, so the approval row reads
+                              // 'changes_requested' — but the load-
+                              // bearing detail for the designer is
+                              // which direction was picked. Surface
+                              // the variant name as the lead, with
+                              // the actor + timing as secondary.
+                              <>
+                                Direction selected:{' '}
+                                <strong className="font-semibold">
+                                  {auditEvent.variant_display_name}
+                                </strong>
+                                {' '}in {vRef}, {when} by {approval.actor_name}
+                              </>
+                            ) : (
+                              <>Changes requested in {vRef}, {when} by {approval.actor_name}</>
+                            )}
                           </span>
                         )}
                       </div>

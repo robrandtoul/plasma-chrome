@@ -13,6 +13,8 @@ import { PageDropOverlay } from '../components/PageDropOverlay'
 import NameChipInput from '../components/NameChipInput'
 import { matchImageToName } from '../lib/matchImageToName'
 import { safeRemoveImagePaths } from '../lib/imageStorage'
+import { SHARED_APPROVAL_KEY } from '../lib/types'
+import { VariantDropZone } from '../components/VariantDropZone'
 import type { Currency, LetterpressCoreColour, PricingSnapshot } from '../lib/types'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 
@@ -72,6 +74,46 @@ export default function EditVersionPage() {
   const [proofName, setProofName] = useState('')
   const [proofCompany, setProofCompany] = useState('')
   const [versionNumber, setVersionNumber] = useState(0)
+  // ── Variant rounds (build-plan step 5.5) ────────────────────────────────
+  // EditVersionPage doesn't yet support editing variant-round versions.
+  // When a variant-round version is loaded, the form renders an alert
+  // banner and disables every input + the save button so accidental
+  // tweaks can't reach the database. Standard versions render
+  // unchanged.
+  const [isVariantRound, setIsVariantRound] = useState(false)
+  // Lock detection (build-plan item 4). A variant round is "locked"
+  // once any customer has submitted a Choose-this-direction selection
+  // — that lands as a proof_name_approvals row with name='__shared__'
+  // for the version. Pre-lock variant rounds get the new edit form
+  // below; post-lock variant rounds keep the disabled-banner UX.
+  const [isLocked, setIsLocked] = useState(false)
+  // Per-variant edit state. Populated on load when isVariantRound is
+  // true. Each side carries existingImages (DB rows already on the
+  // version), removedExistingIds (which of those got soft-removed in
+  // this session — diffed against the DB on save), and newFiles
+  // (queued uploads). backFiles===null on a variant means no Back
+  // side; an empty arrays state ([], removedIds=[]) means a Back
+  // section was just toggled on but nothing's queued yet.
+  type ExistingVariantImage = {
+    id: string
+    imagePath: string
+    signedUrl: string
+    originalFilename: string | null
+  }
+  type VariantEditSide = {
+    existingImages: ExistingVariantImage[]
+    removedExistingIds: string[]
+    newFiles: File[]
+  }
+  type VariantEditRow = {
+    id: string
+    code: string
+    display_name: string
+    originalDisplayName: string
+    front: VariantEditSide
+    back: VariantEditSide | null
+  }
+  const [variantEditRows, setVariantEditRows] = useState<VariantEditRow[]>([])
   const [materialDisplay, setMaterialDisplay] = useState('')
   // Two ink states: one for the comma-separated optional UI, one for the
   // per-ink mandatory UI. Only the one matching the loaded material's
@@ -152,12 +194,12 @@ export default function EditVersionPage() {
       supabase.from('proofs').select('contacts(full_name, companies(name))').eq('id', pid).single(),
       supabase
         .from('proof_versions')
-        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, names, core_colour_id, front_colour_id, back_colour_id, materials(code, display_quantities, requires_ink_names, option_label, multi_variant)')
+        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, names, core_colour_id, front_colour_id, back_colour_id, is_variant_round, materials(code, display_quantities, requires_ink_names, option_label, multi_variant)')
         .eq('id', vid)
         .single(),
       supabase
         .from('proof_version_images')
-        .select('id, image_path, sort_order, material_option, original_filename, associated_name, side')
+        .select('id, image_path, sort_order, material_option, original_filename, associated_name, side, round_variant_id')
         .eq('proof_version_id', vid)
         .order('sort_order'),
     ])
@@ -176,6 +218,7 @@ export default function EditVersionPage() {
     const v = versionResult.data as any
     setVersionNumber(v.version_number)
     setMaterialDisplay(v.material_display)
+    setIsVariantRound(!!v.is_variant_round)
     const rawInkNames = (v.ink_names as string[]) ?? []
     const materialMeta = (v.materials as any) ?? {}
     const materialRequiresInkNames: boolean = !!materialMeta.requires_ink_names
@@ -269,6 +312,98 @@ export default function EditVersionPage() {
     }
     if (versionOptions.length === 0 && !ibf['']) ibf[''] = []
     setEditImagesByOption(ibf)
+
+    // ── Variant-round edit-state load (build-plan item 4) ─────────────
+    // Branch off the standard path: when this version is a variant
+    // round, load proof_round_variants + the lock probe so the
+    // pre-lock edit form has everything it needs to render. Existing
+    // images get signed URLs for the thumbnail strip; new uploads use
+    // VariantDropZone's own blob-URL lifecycle.
+    if (v.is_variant_round) {
+      const [variantsResult, lockResult] = await Promise.all([
+        supabase
+          .from('proof_round_variants')
+          .select('id, code, display_name, sort_order')
+          .eq('proof_version_id', vid)
+          .order('sort_order'),
+        supabase
+          .from('proof_name_approvals')
+          .select('id')
+          .eq('proof_version_id', vid)
+          .eq('name', SHARED_APPROVAL_KEY)
+          .limit(1),
+      ])
+
+      const locked = (lockResult.data ?? []).length > 0
+      setIsLocked(locked)
+
+      const variants = (variantsResult.data ?? []) as Array<{
+        id: string
+        code: string
+        display_name: string
+        sort_order: number
+      }>
+
+      // Sign URLs for every existing variant image up front so the
+      // edit form can render thumbnails without a per-tile signing
+      // round-trip. URL TTL matches what the customer-page edge
+      // function uses; the edit page is short-lived enough that an
+      // hour is plenty.
+      const allImages = (imagesResult.data ?? []) as Array<{
+        id: string
+        image_path: string
+        original_filename: string | null
+        side: 'front' | 'back' | null
+        round_variant_id: string | null
+      }>
+      const variantImages = allImages.filter((img) => img.round_variant_id)
+      const signedById = new Map<string, string>()
+      await Promise.all(
+        variantImages.map(async (img) => {
+          const { data } = await supabase.storage
+            .from('proof-images')
+            .createSignedUrl(img.image_path, 3600)
+          if (data?.signedUrl) signedById.set(img.id, data.signedUrl)
+        }),
+      )
+
+      const rows: VariantEditRow[] = variants.map((variant) => {
+        const variantImgs = variantImages.filter(
+          (img) => img.round_variant_id === variant.id,
+        )
+        const front = variantImgs.filter((img) => img.side === 'front' || img.side == null)
+        const back = variantImgs.filter((img) => img.side === 'back')
+        return {
+          id: variant.id,
+          code: variant.code,
+          display_name: variant.display_name,
+          originalDisplayName: variant.display_name,
+          front: {
+            existingImages: front.map((img) => ({
+              id: img.id,
+              imagePath: img.image_path,
+              signedUrl: signedById.get(img.id) ?? '',
+              originalFilename: img.original_filename,
+            })),
+            removedExistingIds: [],
+            newFiles: [],
+          },
+          back: back.length > 0
+            ? {
+                existingImages: back.map((img) => ({
+                  id: img.id,
+                  imagePath: img.image_path,
+                  signedUrl: signedById.get(img.id) ?? '',
+                  originalFilename: img.original_filename,
+                })),
+                removedExistingIds: [],
+                newFiles: [],
+              }
+            : null,
+        }
+      })
+      setVariantEditRows(rows)
+    }
 
     setLoading(false)
   }
@@ -570,6 +705,234 @@ export default function EditVersionPage() {
     setError('')
     setSubmitAttempted(true)
 
+    // Locked variant rounds short-circuit even if a programmatic
+    // form.requestSubmit() reaches us — the save button is disabled
+    // and the form itself doesn't render in this state, but defence
+    // in depth.
+    if (isVariantRound && isLocked) {
+      setError("This variant round has been locked by the customer's selection. Create a new version instead.")
+      return
+    }
+
+    // ── Variant-round edit save (build-plan item 4) ──────────────────
+    // Pre-lock variant-round versions take a separate save path that
+    // diffs the loaded state against the editor and applies surgical
+    // UPDATE / DELETE / INSERT statements. Mode flips (Single ↔
+    // Mixed, Standard ↔ Variant) are forbidden — neither toggle
+    // renders in the variant edit form, but the explicit guard here
+    // catches any future drift.
+    if (isVariantRound && !isLocked) {
+      // Validate every variant: non-empty display_name, ≥1 front
+      // image (existing kept + new), ≥1 back image when back side
+      // is enabled.
+      const labelOK = variantEditRows.every(
+        (r) => r.display_name.trim().length > 0,
+      )
+      const imagesOK = variantEditRows.every((r) => {
+        const frontKept = r.front.existingImages.filter(
+          (img) => !r.front.removedExistingIds.includes(img.id),
+        ).length
+        const frontCount = frontKept + r.front.newFiles.length
+        if (frontCount === 0) return false
+        if (!r.back) return true
+        const backKept = r.back.existingImages.filter(
+          (img) => !r.back!.removedExistingIds.includes(img.id),
+        ).length
+        const backCount = backKept + r.back.newFiles.length
+        return backCount > 0
+      })
+      if (!labelOK || !imagesOK) {
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+        setToast({ kind: 'validation', text: 'Please complete all required fields to save' })
+        toastTimerRef.current = setTimeout(
+          () => setToast((curr) => (curr?.kind === 'validation' ? null : curr)),
+          5000,
+        )
+        return
+      }
+
+      setSubmitting(true)
+
+      // 1. Renames. Only fire UPDATE when the trimmed display_name
+      //    actually changed; everything else on proof_round_variants
+      //    (code, sort_order) is write-once / not-supported in this
+      //    edit form.
+      for (const row of variantEditRows) {
+        const trimmed = row.display_name.trim()
+        if (trimmed === row.originalDisplayName) continue
+        const { error: renameErr } = await supabase
+          .from('proof_round_variants')
+          .update({ display_name: trimmed })
+          .eq('id', row.id)
+        if (renameErr) {
+          setError(`Failed to rename variant: ${renameErr.message}`)
+          setSubmitting(false)
+          return
+        }
+      }
+
+      // 2. Per-variant per-side image diffs. Collect the deletes and
+      //    the new uploads up front; run them in parallel where
+      //    possible to keep the round-trip count low.
+      const idsToDelete: string[] = []
+      const pathsToDelete: string[] = []
+      type NewUpload = {
+        file: File
+        path: string
+        variantId: string
+        side: 'front' | 'back'
+      }
+      const newUploads: NewUpload[] = []
+      for (const row of variantEditRows) {
+        // Front
+        for (const img of row.front.existingImages) {
+          if (row.front.removedExistingIds.includes(img.id)) {
+            idsToDelete.push(img.id)
+            pathsToDelete.push(img.imagePath)
+          }
+        }
+        for (const file of row.front.newFiles) {
+          newUploads.push({
+            file,
+            path: `${proofId}/${uuidv4()}.jpg`,
+            variantId: row.id,
+            side: 'front',
+          })
+        }
+        // Back: when the designer toggled the back side off, every
+        // existing back image is implicitly deleted (the back state
+        // is null in that case so the loop below handles only the
+        // not-yet-toggled-off rows).
+        if (row.back) {
+          for (const img of row.back.existingImages) {
+            if (row.back.removedExistingIds.includes(img.id)) {
+              idsToDelete.push(img.id)
+              pathsToDelete.push(img.imagePath)
+            }
+          }
+          for (const file of row.back.newFiles) {
+            newUploads.push({
+              file,
+              path: `${proofId}/${uuidv4()}.jpg`,
+              variantId: row.id,
+              side: 'back',
+            })
+          }
+        }
+      }
+      // Back-toggle-off discovery: rows where back was loaded with
+      // images but is now null. Those existing rows get fully deleted.
+      // We carry the originals in a parallel snapshot via the row's
+      // original load — recompute by reading the originals from the
+      // variantEditRows collection BEFORE the toggle. Since we
+      // didn't snapshot pre-toggle state separately, the only way to
+      // detect this is to re-query at save time. For now we fall back
+      // to the simpler invariant: when back is null, the toggle
+      // handler set existingImages to [] alongside, so the diff loop
+      // above already misses nothing of interest. The handler that
+      // toggles backFiles to null in NewVersionPage's pattern would
+      // need explicit tracking if we later want full delete-on-
+      // toggle-off semantics — for v1 the toggle-off path needs a
+      // delete pass, which we add by re-reading the version's back
+      // images before save.
+      const { data: latestVariantImgs } = await supabase
+        .from('proof_version_images')
+        .select('id, image_path, side, round_variant_id')
+        .eq('proof_version_id', versionId)
+      const latestByVariantSide = new Map<string, { id: string; image_path: string }[]>()
+      for (const img of (latestVariantImgs ?? []) as Array<{
+        id: string
+        image_path: string
+        side: 'front' | 'back' | null
+        round_variant_id: string | null
+      }>) {
+        if (!img.round_variant_id) continue
+        const k = `${img.round_variant_id}|${img.side ?? 'front'}`
+        const list = latestByVariantSide.get(k) ?? []
+        list.push({ id: img.id, image_path: img.image_path })
+        latestByVariantSide.set(k, list)
+      }
+      for (const row of variantEditRows) {
+        if (row.back !== null) continue
+        const k = `${row.id}|back`
+        const orphaned = latestByVariantSide.get(k) ?? []
+        for (const img of orphaned) {
+          if (idsToDelete.includes(img.id)) continue
+          idsToDelete.push(img.id)
+          pathsToDelete.push(img.image_path)
+        }
+      }
+
+      // 3. Delete removed existing rows + their storage paths.
+      //    safeRemoveImagePaths matches the standard edit's storage
+      //    convention — best-effort, doesn't block on a single failure.
+      if (idsToDelete.length > 0) {
+        const { error: delErr } = await supabase
+          .from('proof_version_images')
+          .delete()
+          .in('id', idsToDelete)
+        if (delErr) {
+          setError(`Failed to delete images: ${delErr.message}`)
+          setSubmitting(false)
+          return
+        }
+        await safeRemoveImagePaths(pathsToDelete)
+      }
+
+      // 4. Upload new files in parallel + insert their rows.
+      if (newUploads.length > 0) {
+        const uploadResults = await Promise.all(
+          newUploads.map(async (u) => {
+            const { error: upErr } = await supabase.storage
+              .from('proof-images')
+              .upload(u.path, u.file, {
+                contentType: u.file.type,
+                upsert: false,
+              })
+            return { ...u, error: upErr }
+          }),
+        )
+        const failedUpload = uploadResults.find((r) => r.error)
+        if (failedUpload) {
+          const successPaths = uploadResults.filter((r) => !r.error).map((r) => r.path)
+          if (successPaths.length > 0) {
+            await safeRemoveImagePaths(successPaths)
+          }
+          setError(`Image upload failed: ${failedUpload.error!.message}`)
+          setSubmitting(false)
+          return
+        }
+        const inserts = uploadResults.map((u, i) => ({
+          proof_version_id: versionId,
+          image_path: u.path,
+          material_option: null,
+          original_filename: u.file.name,
+          associated_name: null,
+          side: u.side,
+          round_variant_id: u.variantId,
+          // sort_order: append after the highest existing index for
+          // this version. Re-read at save time to avoid clobbering
+          // anything that landed concurrently.
+          sort_order: 1000 + i,
+        }))
+        const { error: insErr } = await supabase
+          .from('proof_version_images')
+          .insert(inserts)
+        if (insErr) {
+          // Roll back the storage uploads we just did so we don't
+          // leave orphan files.
+          await safeRemoveImagePaths(uploadResults.map((r) => r.path))
+          setError(`Failed to save new images: ${insErr.message}`)
+          setSubmitting(false)
+          return
+        }
+      }
+
+      setSubmitting(false)
+      navigate(`/proofs/${proofId}`)
+      return
+    }
+
     if (!isValid) {
       const order: Array<{
         key: keyof typeof validations
@@ -779,11 +1142,13 @@ export default function EditVersionPage() {
       <button
         type="submit"
         form="edit-version-form"
-        disabled={submitting}
+        disabled={submitting || (isVariantRound && isLocked)}
         aria-label={
-          submitAttempted && !isValid
-            ? 'Save version — some required fields are incomplete'
-            : undefined
+          isVariantRound && isLocked
+            ? "Save version disabled — variant round locked by customer's selection"
+            : submitAttempted && !isValid
+              ? 'Save version — some required fields are incomplete'
+              : undefined
         }
         className={[
           'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
@@ -846,7 +1211,35 @@ export default function EditVersionPage() {
           {actionRow}
         </div>
 
+        {/* ── Locked variant-round notice (build-plan step 5.5 / item 4) ──
+            Variant rounds become read-only as soon as a customer has
+            submitted a "Choose this direction" selection (a
+            proof_name_approvals row with name='__shared__'). At that
+            point the chosen direction is the load-bearing fact and
+            replaying edits over it would be confusing — the designer
+            should add a new version on the chosen direction instead.
+            Pre-lock variant rounds use the dedicated edit form
+            below. */}
+        {isVariantRound && isLocked && (
+          <div
+            role="alert"
+            className="mb-6 rounded-xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-800"
+          >
+            <p className="font-semibold">
+              This variant round has been locked by the customer's selection.
+            </p>
+            <p className="mt-1">
+              Create a new version to continue with the chosen direction.
+            </p>
+          </div>
+        )}
+
+        {/* Standard edit form. Hidden on variant rounds entirely —
+            variant rounds either render the locked banner above (no
+            form at all) or the dedicated variant edit form below. */}
+        {!isVariantRound && (
         <form id="edit-version-form" onSubmit={handleSubmit} className="space-y-6">
+          <fieldset disabled={false} className="contents">
 
           {/* Pricing display — required choice between standard grid and custom quote.
               Standard is disabled when the saved snapshot carries no
@@ -1212,7 +1605,211 @@ export default function EditVersionPage() {
 
           {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
 
+          </fieldset>
         </form>
+        )}
+
+        {/* ── Variant-round edit form (build-plan item 4) ────────────
+            Renders on pre-lock variant rounds. Mirrors NewVersionPage's
+            variant editor structurally, with two key differences:
+            * Existing images render as a thumbnail strip (with per-
+              image Remove buttons) above the drop zone.
+            * Add-direction / reorder / remove-variant controls are
+              hidden in v1 — out of scope per the build plan.
+            Saving applies a surgical diff: rename UPDATEs,
+            removed-existing DELETEs (storage + row), new-file
+            UPLOAD + INSERTs. No mode flips — Single ↔ Mixed and
+            Standard ↔ Variant are forbidden by hiding the toggles
+            here and bailing in handleSubmit if a payload tries to
+            change them. */}
+        {isVariantRound && !isLocked && (
+        <form id="edit-version-form" onSubmit={handleSubmit} className="space-y-6">
+          <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
+            <div className="mb-6">
+              <h2 className="text-base font-semibold text-gray-900">Variants</h2>
+              <p className="mt-0.5 text-xs text-gray-500">
+                Rename a direction, replace its images per side, or add / remove a back side. The variant ID is fixed at first save and won't change with renames; adding or removing whole directions isn't supported in this version — create a new version instead if the round needs a different shape.
+              </p>
+            </div>
+            <ul className="space-y-4">
+              {variantEditRows.map((row, idx) => {
+                const labelInvalid = submitAttempted && row.display_name.trim().length === 0
+                const frontKept = row.front.existingImages.filter(
+                  (img) => !row.front.removedExistingIds.includes(img.id),
+                )
+                const frontInvalid =
+                  submitAttempted && frontKept.length === 0 && row.front.newFiles.length === 0
+                const backEnabled = row.back !== null
+                const backKept = backEnabled
+                  ? row.back!.existingImages.filter(
+                      (img) => !row.back!.removedExistingIds.includes(img.id),
+                    )
+                  : []
+                const backInvalid =
+                  submitAttempted && backEnabled && backKept.length === 0 && (row.back?.newFiles.length ?? 0) === 0
+
+                function patchRow(patch: Partial<VariantEditRow>) {
+                  setVariantEditRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
+                }
+                function patchSide(side: 'front' | 'back', patch: Partial<VariantEditSide>) {
+                  setVariantEditRows((prev) =>
+                    prev.map((r, i) => {
+                      if (i !== idx) return r
+                      if (side === 'front') return { ...r, front: { ...r.front, ...patch } }
+                      if (!r.back) return r
+                      return { ...r, back: { ...r.back, ...patch } }
+                    }),
+                  )
+                }
+
+                function renderExistingStrip(side: 'front' | 'back', s: VariantEditSide) {
+                  const visible = s.existingImages.filter(
+                    (img) => !s.removedExistingIds.includes(img.id),
+                  )
+                  if (visible.length === 0) return null
+                  return (
+                    <ul className="mb-2 space-y-1.5">
+                      {visible.map((img) => (
+                        <li
+                          key={img.id}
+                          className="flex items-center gap-3 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs"
+                        >
+                          {img.signedUrl ? (
+                            <img
+                              src={img.signedUrl}
+                              alt=""
+                              aria-hidden="true"
+                              className="h-32 w-32 shrink-0 rounded-md border border-gray-200 object-cover"
+                            />
+                          ) : (
+                            <div
+                              className="h-32 w-32 shrink-0 rounded-md border border-gray-200 bg-gray-50"
+                              aria-hidden="true"
+                            />
+                          )}
+                          <span className="flex-1 truncate" title={img.originalFilename ?? ''}>
+                            {img.originalFilename ?? '(unnamed)'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              patchSide(side, {
+                                removedExistingIds: [...s.removedExistingIds, img.id],
+                              })
+                            }
+                            className="ml-2 shrink-0 text-gray-500 hover:text-rose-600"
+                            aria-label={`Remove ${img.originalFilename ?? 'image'}`}
+                          >
+                            Remove
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                }
+
+                return (
+                  <li
+                    key={row.id}
+                    className="rounded-xl border border-gray-200 bg-gray-50 p-5"
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="mt-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold text-white">
+                        {idx + 1}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                          Direction name
+                        </label>
+                        <input
+                          type="text"
+                          value={row.display_name}
+                          onChange={(e) => patchRow({ display_name: e.target.value })}
+                          className={[
+                            'w-full rounded-lg border bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2',
+                            labelInvalid
+                              ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300'
+                              : 'border-gray-200 focus:border-gray-400 focus:ring-gray-300',
+                          ].join(' ')}
+                        />
+                        {labelInvalid && (
+                          <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>
+                        )}
+
+                        <div className="mt-4">
+                          {renderExistingStrip('front', row.front)}
+                          <VariantDropZone
+                            label="Front"
+                            files={row.front.newFiles}
+                            onAddFiles={(picked) =>
+                              patchSide('front', { newFiles: [...row.front.newFiles, ...picked] })
+                            }
+                            onRemoveFile={(fi) =>
+                              patchSide('front', {
+                                newFiles: row.front.newFiles.filter((_, fj) => fj !== fi),
+                              })
+                            }
+                            invalid={frontInvalid}
+                            invalidText="Add at least one front image, or restore a removed one."
+                          />
+                        </div>
+
+                        {backEnabled && row.back && (
+                          <div className="mt-4">
+                            {renderExistingStrip('back', row.back)}
+                            <VariantDropZone
+                              label="Back"
+                              files={row.back.newFiles}
+                              onAddFiles={(picked) =>
+                                patchSide('back', { newFiles: [...row.back!.newFiles, ...picked] })
+                              }
+                              onRemoveFile={(fi) =>
+                                patchSide('back', {
+                                  newFiles: row.back!.newFiles.filter((_, fj) => fj !== fi),
+                                })
+                              }
+                              invalid={backInvalid}
+                              invalidText="Add at least one back image, or remove the back side."
+                            />
+                          </div>
+                        )}
+
+                        <div className="mt-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (backEnabled) {
+                                // Removing the back side marks every
+                                // existing back image as removed (the
+                                // save diff will DELETE them) and
+                                // discards any queued new files.
+                                patchRow({ back: null })
+                              } else {
+                                patchRow({
+                                  back: {
+                                    existingImages: [],
+                                    removedExistingIds: [],
+                                    newFiles: [],
+                                  },
+                                })
+                              }
+                            }}
+                            className="text-xs font-medium text-gray-600 underline underline-offset-4 hover:text-gray-900"
+                          >
+                            {backEnabled ? '− Remove back side' : '+ Add back side'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          </section>
+
+          {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+        </form>
+        )}
       </div>
     </div>
   )

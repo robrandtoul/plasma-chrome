@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef, Fragment, type ChangeEvent, type CSSProperties } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { v4 as uuidv4 } from 'uuid'
+import { deriveCodes } from '../lib/variantSlug'
+import { VariantDropZone } from '../components/VariantDropZone'
 import { supabase } from '../lib/supabase'
 import { logAudit } from '../lib/audit'
 import { formatPrice } from '../lib/currency'
@@ -291,6 +293,43 @@ export default function NewVersionPage() {
   const [submitting, setSubmitting] = useState(false)
   const [submitAttempted, setSubmitAttempted] = useState(false)
   const [toast, setToast] = useState<Toast | null>(null)
+
+  // ── Variant rounds (build-plan step 5) ──────────────────────────────────
+  // isVariantRound flips the form between standard mode (per-recipient
+  // image buckets, names roster, sidedness/shared) and variant-round
+  // mode (a small N-row variant editor with one image bucket per
+  // variant). Default false; the toggle sits at the top of the form,
+  // above the Pricing display section.
+  //
+  // variantRows is the editor's working state. `key` is a client-side
+  // identifier used to keep React renders stable across rename/reorder
+  // — replaced by the DB-assigned proof_round_variants.id on save.
+  // `display_name` feeds into deriveCodes (slug + dedup) at save time.
+  // `files` is the queued upload set for this variant; each File becomes
+  // a proof_version_images row with round_variant_id pointing at the
+  // saved variant.
+  const [isVariantRound, setIsVariantRound] = useState(false)
+  // Mixed-materials sub-mode (migration 000142). Only meaningful when
+  // isVariantRound is also true. Each variant carries its own
+  // material; pricing is out-of-band, so the form hides the version-
+  // level material / currency / pricing / variant-tier / ink-names
+  // sections. Flipping back to single-material restores them. State
+  // is preserved across mode flips so a designer can switch without
+  // losing their config.
+  const [isMixedMaterials, setIsMixedMaterials] = useState(false)
+  // Per-variant sides. frontFiles is always present (every variant
+  // has a Front side). backFiles is null when the designer hasn't
+  // opted into a Back side; an empty array when they've added the
+  // Back drop zone but haven't uploaded yet (validation forces them
+  // to either upload or remove the zone before save).
+  type VariantDraftRow = {
+    key: string
+    display_name: string
+    frontFiles: File[]
+    backFiles: File[] | null
+  }
+  const [variantRows, setVariantRows] = useState<VariantDraftRow[]>([])
+  const variantEditorRef = useRef<HTMLDivElement>(null)
 
   // ── Form collapse state (Tier 2c) ─────────────────────────────────────────
   // The form is collapsed by default on v2+ creation behind a tight
@@ -1847,6 +1886,11 @@ export default function NewVersionPage() {
         { key: 'inkNames',       ref: inkNamesRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'names',          ref: namesRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'images',         ref: imageSectionRef },
+        // Variant-round validation refs. All three target the same
+        // editor surface; whichever field fails first scrolls there.
+        { key: 'variantsCount',  ref: variantEditorRef as unknown as React.RefObject<HTMLElement | null> },
+        { key: 'variantsLabels', ref: variantEditorRef as unknown as React.RefObject<HTMLElement | null> },
+        { key: 'variantsImages', ref: variantEditorRef as unknown as React.RefObject<HTMLElement | null> },
       ]
       const first = order.find(o => !validations[o.key])
       // Defer the scroll until React has committed the
@@ -1882,6 +1926,189 @@ export default function NewVersionPage() {
     commitPendingRemoval()
 
     setSubmitting(true)
+
+    // ── Variant-round save path (build-plan step 5G) ──────────────────
+    // Three sequential writes: proof_versions (is_variant_round=true,
+    // names=[], material_options=[]) → proof_round_variants → image
+    // uploads + proof_version_images. FK constraints require this
+    // order. Save-time enforcement of the empty arrays is belt-and-
+    // braces on top of the trigger from migration 000138.
+    if (isVariantRound) {
+      // Mixed-materials variant rounds (000142) drop the version-
+      // level material / currency / ink-names / colour / variant-tier
+      // payload — every variant carries its own material out-of-band.
+      // material_display stays a non-null text column, so we write a
+      // sentinel instead of selecting one material; the customer page
+      // never reads it on this branch.
+      const material = isMixedMaterials
+        ? null
+        : materials.find((m) => m.id === selectedMaterialId)!
+      const currencyForInsert: Currency | null = isMixedMaterials
+        ? null
+        : (currency ?? 'GBP')
+      const parsedInkNames: string[] = isMixedMaterials
+        ? []
+        : requiresInkNames
+          ? inkNamesArray.slice(0, inkCount).map((s) => s.trim())
+          : inkNamesText.split(',').map((s) => s.trim()).filter(Boolean)
+
+      // 1. Insert the version row.
+      const { data: versionData, error: versionErr } = await supabase
+        .from('proof_versions')
+        .insert({
+          proof_id: proofId,
+          material_id: isMixedMaterials ? null : selectedMaterialId,
+          material_display: material?.display_name ?? 'Mixed materials',
+          ink_names: parsedInkNames,
+          currency: currencyForInsert,
+          displayed_variant_ids: isMixedMaterials ? [] : selectedVariantIds,
+          change_notes: changeNotes.trim() || null,
+          // Variant rounds are single-bucket-only — material_options
+          // and names must both be empty (build-plan step 5E + the
+          // 000138 trigger). Mixed materials adds the same constraint
+          // by way of the 000142 trigger. Forced regardless of any
+          // state from a prior mode flip.
+          material_options: [],
+          custom_quote: isMixedMaterials ? false : isCustomQuote,
+          names: [],
+          card_type: cardType,
+          cloned_from_version_id: v1Carry?.versionId ?? null,
+          front_colour_id: isMixedMaterials ? null : (requiresLayerColours ? selectedFrontColourId : null),
+          core_colour_id:  isMixedMaterials ? null : (requiresLayerColours ? selectedCoreColourId  : null),
+          back_colour_id:  isMixedMaterials ? null : (requiresLayerColours ? selectedBackColourId  : null),
+          is_variant_round: true,
+          is_mixed_materials: isMixedMaterials,
+        })
+        .select('id, version_number')
+        .single()
+
+      if (versionErr || !versionData) {
+        setError(`Failed to save version: ${versionErr?.message ?? 'Unknown error'}`)
+        setSubmitting(false)
+        return
+      }
+
+      // 2. Insert proof_round_variants. Codes derived from display_name
+      //    via slugify + dedup walk; on collision the second row gets
+      //    a -2 suffix so the unique-violation never reaches the user.
+      const codes = deriveCodes(variantRows)
+      const variantInserts = variantRows.map((row, idx) => ({
+        proof_version_id: versionData.id,
+        code: codes[idx],
+        display_name: row.display_name.trim(),
+        sort_order: idx,
+      }))
+      const { data: insertedVariants, error: variantErr } = await supabase
+        .from('proof_round_variants')
+        .insert(variantInserts)
+        .select('id, code, sort_order')
+        .order('sort_order')
+      if (variantErr || !insertedVariants) {
+        await supabase.from('proof_versions').delete().eq('id', versionData.id)
+        setError(`Failed to save variants: ${variantErr?.message ?? 'Unknown error'}`)
+        setSubmitting(false)
+        return
+      }
+
+      // Map sort_order → DB id for image-row attribution.
+      const variantIdByOrder = new Map<number, string>()
+      for (const v of insertedVariants as Array<{ id: string; sort_order: number }>) {
+        variantIdByOrder.set(v.sort_order, v.id)
+      }
+
+      // 3. Upload all variant files in parallel. Each file carries
+      //    its variantId + side so the proof_version_images insert
+      //    below can stamp side='front' / 'back' correctly. Per-
+      //    variant 2-sided support: frontFiles always present;
+      //    backFiles is null when the designer didn't add a back
+      //    side to that variant.
+      type Upload = {
+        variantId: string
+        side: 'front' | 'back'
+        file: File
+        path: string
+      }
+      const uploadQueue: Upload[] = []
+      variantRows.forEach((row, idx) => {
+        const variantId = variantIdByOrder.get(idx)
+        if (!variantId) return
+        for (const file of row.frontFiles) {
+          uploadQueue.push({
+            variantId,
+            side: 'front',
+            file,
+            path: `${proofId}/${uuidv4()}.jpg`,
+          })
+        }
+        for (const file of row.backFiles ?? []) {
+          uploadQueue.push({
+            variantId,
+            side: 'back',
+            file,
+            path: `${proofId}/${uuidv4()}.jpg`,
+          })
+        }
+      })
+
+      const uploadResults = await Promise.all(
+        uploadQueue.map(async (u) => {
+          const { error: upErr } = await supabase.storage
+            .from('proof-images')
+            .upload(u.path, u.file, { contentType: u.file.type, upsert: false })
+          return { ...u, error: upErr }
+        }),
+      )
+      const failedUpload = uploadResults.find((r) => r.error)
+      if (failedUpload) {
+        const successPaths = uploadResults.filter((r) => !r.error).map((r) => r.path)
+        if (successPaths.length > 0) {
+          await supabase.storage.from('proof-images').remove(successPaths)
+        }
+        // Roll back the variants + version so we don't leave an
+        // image-less variant round behind. ON DELETE CASCADE on
+        // proof_round_variants takes the variants down with the
+        // version delete.
+        await supabase.from('proof_versions').delete().eq('id', versionData.id)
+        setError(`Image upload failed: ${failedUpload.error!.message}`)
+        setSubmitting(false)
+        return
+      }
+
+      // 4. Insert proof_version_images. associated_name is null on
+      //    every variant-round image (000138 trigger enforces). side
+      //    carries 'front' / 'back' per the per-variant 2-sided
+      //    support; the customer page filters by side to render
+      //    Front + Back clusters within each variant card.
+      const imageInserts = uploadResults.map((u, i) => ({
+        proof_version_id: versionData.id,
+        image_path: u.path,
+        material_option: null,
+        original_filename: u.file.name,
+        associated_name: null,
+        side: u.side,
+        round_variant_id: u.variantId,
+        sort_order: i,
+      }))
+      const { error: imgInsertErr } = await supabase
+        .from('proof_version_images')
+        .insert(imageInserts)
+      if (imgInsertErr) {
+        await supabase.storage.from('proof-images').remove(uploadResults.map((r) => r.path))
+        await supabase.from('proof_versions').delete().eq('id', versionData.id)
+        setError(`Failed to save images: ${imgInsertErr.message}`)
+        setSubmitting(false)
+        return
+      }
+
+      // Success — reuse the standard post-save flow. Setting
+      // savedVersion triggers the existing summary card render.
+      setSavedVersion({
+        id: versionData.id,
+        number: versionData.version_number,
+      })
+      setSubmitting(false)
+      return
+    }
 
     // Flatten images across all option tabs (in selectedOptions order)
     const optionKeys = optionMode ? selectedOptions : ['']
@@ -2389,17 +2616,47 @@ export default function NewVersionPage() {
   const namesValid =
     cardType === 'membership' || names.some((n) => n.trim().length > 0)
 
+  // Variant-round validations (build-plan step 5F). When isVariantRound
+  // is on, the standard `images` and `names` checks become irrelevant —
+  // the bucket UI they validate isn't rendered — so they short-circuit
+  // to true and the variant-specific checks take over.
+  const variantsCountValid = !isVariantRound || variantRows.length >= 2
+  const variantsLabelsValid =
+    !isVariantRound ||
+    variantRows.every((v) => v.display_name.trim().length > 0)
+  // Front images are always required. Back images are optional, but
+  // an empty back drop zone (backFiles === [] rather than null) is
+  // an in-between state — the designer toggled it on but uploaded
+  // nothing. Force them to either upload or remove the zone.
+  const variantsImagesValid =
+    !isVariantRound ||
+    variantRows.every(
+      (v) =>
+        v.frontFiles.length > 0 &&
+        (v.backFiles === null || v.backFiles.length > 0),
+    )
+
+  // Mixed-materials variant rounds (build-plan step C / migration 000142)
+  // skip every version-level material decision — the variant editor
+  // is the only thing that matters. mixed === effective when
+  // isVariantRound is also true; otherwise false (the sub-toggle is
+  // hidden in the standard-proof branch).
+  const isMixedRound = isVariantRound && isMixedMaterials
+
   const validations = {
-    images:         everySlotHasImage,
-    pricingDisplay: pricingDisplay !== null,
-    material:       !!selectedMaterialId,
-    variant:        !variantRequired || selectedVariantIds.length > 0,
-    currency:       isCustomQuote || currency !== null,
-    inkNames:       !requiresInkNames || (inkCount > 0 && inkNameValidities.every(Boolean)),
-    names:          namesValid,
-    frontColour:    !requiresLayerColours || selectedFrontColourId !== null,
-    coreColour:     !requiresLayerColours || selectedCoreColourId !== null,
-    backColour:     !requiresLayerColours || selectedBackColourId !== null,
+    images:         isVariantRound ? true : everySlotHasImage,
+    pricingDisplay: isMixedRound ? true : pricingDisplay !== null,
+    material:       isMixedRound ? true : !!selectedMaterialId,
+    variant:        isMixedRound ? true : (!variantRequired || selectedVariantIds.length > 0),
+    currency:       isMixedRound ? true : (isCustomQuote || currency !== null),
+    inkNames:       isMixedRound ? true : (!requiresInkNames || (inkCount > 0 && inkNameValidities.every(Boolean))),
+    names:          isVariantRound ? true : namesValid,
+    frontColour:    isMixedRound ? true : (!requiresLayerColours || selectedFrontColourId !== null),
+    coreColour:     isMixedRound ? true : (!requiresLayerColours || selectedCoreColourId !== null),
+    backColour:     isMixedRound ? true : (!requiresLayerColours || selectedBackColourId !== null),
+    variantsCount:  variantsCountValid,
+    variantsLabels: variantsLabelsValid,
+    variantsImages: variantsImagesValid,
   } as const
   const isValid = Object.values(validations).every(Boolean)
   const shouldHighlight = (k: keyof typeof validations) => submitAttempted && !validations[k]
@@ -2643,7 +2900,13 @@ export default function NewVersionPage() {
               the form below is collapsed. "Edit details" expands
               the form for the rest of the page lifecycle (no
               re-collapse). */}
-          {inheritedVersionNumber !== null && (() => {
+          {inheritedVersionNumber !== null && !(isVariantRound && isMixedMaterials) && (() => {
+            // Mixed-materials variant rounds (000142) inherit nothing
+            // useful — material_id and currency are forced null,
+            // pricing UI is hidden, and the per-side image grid is
+            // a brand-new shape. Hiding the docket entirely keeps
+            // the form layout clean above the variant editor.
+            //
             // Resolve current form state into the entities the
             // summary needs. Reads from current state so each row
             // value updates live in expanded mode.
@@ -2825,12 +3088,139 @@ export default function NewVersionPage() {
               formExpanded effect sets this open immediately. */}
           {formExpanded && (
           <>
+          {/* ── Round mode (build-plan step 5B) ──────────────────────
+              Toggle between a standard proof (existing per-recipient
+              workflow) and a variant round (N parallel directions
+              the customer compares side-by-side). Default Standard;
+              flipping to Variant round seeds an empty 2-row variant
+              editor below and hides the Layout sub-section + image
+              bucket. The two modes are mutually exclusive — variant
+              rounds are single-bucket-only by design. */}
+          <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
+            <div className="mb-5">
+              <h3 className="text-base font-semibold text-gray-900">Round mode</h3>
+              <p className="mt-0.5 text-xs text-gray-500">
+                Standard proof or a variant round (parallel directions for the customer to choose between).
+              </p>
+            </div>
+            <fieldset className="grid gap-3 sm:grid-cols-2">
+              <legend className="sr-only">Round mode</legend>
+              {([
+                { value: false, label: 'Standard proof', sub: 'One design, optionally per recipient.' },
+                { value: true, label: 'Variant round', sub: 'Multiple parallel directions, customer picks one.' },
+              ] as const).map((opt) => {
+                const selected = isVariantRound === opt.value
+                return (
+                  <label
+                    key={String(opt.value)}
+                    className={[
+                      'cursor-pointer rounded-xl border px-4 py-3 transition-colors',
+                      'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
+                      selected
+                        ? 'border-gray-900 bg-gray-900 text-white'
+                        : 'border-gray-200 bg-white text-gray-700 hover:border-gray-400',
+                    ].join(' ')}
+                  >
+                    <input
+                      type="radio"
+                      name="round-mode"
+                      checked={selected}
+                      onChange={() => {
+                        setIsVariantRound(opt.value)
+                        // Seed two empty rows on first flip into
+                        // variant mode so the editor renders with
+                        // something to fill in. Subsequent flips
+                        // preserve whatever rows the designer
+                        // already configured (mirrors the cardType
+                        // flip pattern).
+                        if (opt.value && variantRows.length === 0) {
+                          setVariantRows([
+                            { key: uuidv4(), display_name: '', frontFiles: [], backFiles: null },
+                            { key: uuidv4(), display_name: '', frontFiles: [], backFiles: null },
+                          ])
+                        }
+                      }}
+                      className="sr-only"
+                    />
+                    <div className="text-sm font-semibold">{opt.label}</div>
+                    <div
+                      className={[
+                        'mt-1 text-xs',
+                        selected ? 'text-gray-200' : 'text-gray-500',
+                      ].join(' ')}
+                    >
+                      {opt.sub}
+                    </div>
+                  </label>
+                )
+              })}
+            </fieldset>
+
+            {/* Mixed-materials sub-toggle (build-plan step C / migration 000142).
+                Only renders inside the variant-round branch. Default
+                Single material; flipping to Mixed materials hides the
+                version-level material / currency / pricing / variant-
+                tier / ink-names sections. State preserved across mode
+                flips. */}
+            {isVariantRound && (
+              <div className="mt-5">
+                <p className="mb-2 text-sm font-medium text-gray-700">
+                  Material choice
+                </p>
+                <fieldset className="grid gap-3 sm:grid-cols-2">
+                  <legend className="sr-only">Material choice</legend>
+                  {([
+                    { value: false, label: 'Single material', sub: 'Every direction prints on the same material.' },
+                    { value: true, label: 'Mixed materials', sub: 'Each direction can be a different material; pricing handled by email.' },
+                  ] as const).map((opt) => {
+                    const selected = isMixedMaterials === opt.value
+                    return (
+                      <label
+                        key={String(opt.value)}
+                        className={[
+                          'cursor-pointer rounded-xl border px-4 py-3 transition-colors',
+                          'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
+                          selected
+                            ? 'border-gray-900 bg-gray-900 text-white'
+                            : 'border-gray-200 bg-white text-gray-700 hover:border-gray-400',
+                        ].join(' ')}
+                      >
+                        <input
+                          type="radio"
+                          name="material-choice"
+                          checked={selected}
+                          onChange={() => setIsMixedMaterials(opt.value)}
+                          className="sr-only"
+                        />
+                        <div className="text-sm font-semibold">{opt.label}</div>
+                        <div
+                          className={[
+                            'mt-1 text-xs',
+                            selected ? 'text-gray-200' : 'text-gray-500',
+                          ].join(' ')}
+                        >
+                          {opt.sub}
+                        </div>
+                      </label>
+                    )
+                  })}
+                </fieldset>
+              </div>
+            )}
+          </section>
+
           {/* Pricing display — required choice between standard grid and custom quote */}
           {/* Commercial — pricing display + currency. The two
               monetary decisions live together at the top of the
               form, before the physical card decisions in
               Specification. Hides Currency in custom-quote mode
-              (no price grid means no currency to denominate). */}
+              (no price grid means no currency to denominate).
+
+              Mixed-materials variant rounds (000142) hide the whole
+              Commercial card — pricing is per-variant and handled
+              out-of-band, so there's no version-level currency
+              decision to make. */}
+          {!isMixedRound && (
           <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
             <div className="mb-7">
               <h3 className="text-base font-semibold text-gray-900">Commercial</h3>
@@ -2880,11 +3270,18 @@ export default function NewVersionPage() {
               </div>
             )}
           </section>
+          )}
 
           {/* Specification — physical card decisions. Split into
               Design (material, finish, ink names) and Layout
               (names, sides, splits) sub-sections under their own
-              bold sans-serif headers. */}
+              bold sans-serif headers.
+
+              Mixed-materials variant rounds (000142) hide the whole
+              Specification card — every per-direction material is
+              decided out-of-band. The variant editor below carries
+              the design info for each direction. */}
+          {!isMixedRound && (
           <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
             <div className="mb-7">
               <h3 className="text-base font-semibold text-gray-900">Design</h3>
@@ -3145,7 +3542,16 @@ export default function NewVersionPage() {
                 irrelevant in Membership; shared side by internal
                 convention is always 'front' in Business.
                 Currency lives in the Commercial card above; this
-                card holds the physical layout decisions only. */}
+                card holds the physical layout decisions only.
+
+                Variant rounds (build-plan step 5) hide the entire
+                Layout sub-section — names + sidedness + shared
+                don't apply when the customer is comparing parallel
+                directions. The variant editor below replaces the
+                image bucket too. State is preserved across mode
+                flips so a designer can switch back without losing
+                their layout config. */}
+            {!isVariantRound && (<>
             <div className="mt-10 mb-7">
               <h3 className="text-base font-semibold text-gray-900">Layout</h3>
               <p className="mt-0.5 text-xs text-gray-500">Names, sides, and how the card splits.</p>
@@ -3342,9 +3748,215 @@ export default function NewVersionPage() {
                 </div>
               )}
             </div>
+            </>)}
 
           </section>
+          )}
           </>
+          )}
+
+          {/* ── Variant editor (build-plan step 5C) ──────────────────
+              Variant rounds replace the per-recipient image bucket
+              with one bucket per parallel variant. Each row carries
+              a customer-facing display_name (rendered as the variant
+              card heading on the customer page) and a queued file
+              set (becomes proof_version_images rows on save, each
+              with round_variant_id pointing at this variant's id).
+              Order in this list maps to proof_round_variants.sort_order
+              and drives the customer-page comparison-grid order. */}
+          {isVariantRound && (
+            <section
+              ref={variantEditorRef}
+              className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200"
+            >
+              <div className="mb-6">
+                <h2 className="text-base font-semibold text-gray-900">Variants</h2>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  Each row is a parallel direction. The customer compares them side-by-side and picks one. Names show on the customer page exactly as typed; the variant ID is fixed when you first save and won't change with renames.
+                </p>
+              </div>
+              <ul className="space-y-4">
+                {variantRows.map((row, idx) => {
+                  const placeholder =
+                    idx === 0 ? 'e.g. Charcoal' : idx === 1 ? 'e.g. Ivory' : ''
+                  const labelInvalid =
+                    submitAttempted && row.display_name.trim().length === 0
+                  const frontInvalid = submitAttempted && row.frontFiles.length === 0
+                  const backEnabled = row.backFiles !== null
+                  const backInvalid =
+                    submitAttempted && backEnabled && (row.backFiles?.length ?? 0) === 0
+
+                  function updateRow(patch: Partial<VariantDraftRow>) {
+                    setVariantRows((prev) =>
+                      prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)),
+                    )
+                  }
+
+                  return (
+                    <li
+                      key={row.key}
+                      className="rounded-xl border border-gray-200 bg-gray-50 p-5"
+                    >
+                      <div className="flex items-start gap-3">
+                        <span className="mt-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold text-white">
+                          {idx + 1}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                            Direction name
+                          </label>
+                          <input
+                            type="text"
+                            value={row.display_name}
+                            placeholder={placeholder}
+                            onChange={(e) => updateRow({ display_name: e.target.value })}
+                            className={[
+                              'w-full rounded-lg border bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2',
+                              labelInvalid
+                                ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300'
+                                : 'border-gray-200 focus:border-gray-400 focus:ring-gray-300',
+                            ].join(' ')}
+                          />
+                          {labelInvalid && (
+                            <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>
+                          )}
+
+                          {/* Front drop zone — always visible. */}
+                          <div className="mt-4">
+                            <VariantDropZone
+                              label="Front"
+                              files={row.frontFiles}
+                              onAddFiles={(picked) =>
+                                updateRow({ frontFiles: [...row.frontFiles, ...picked] })
+                              }
+                              onRemoveFile={(fi) =>
+                                updateRow({
+                                  frontFiles: row.frontFiles.filter((_, fj) => fj !== fi),
+                                })
+                              }
+                              invalid={frontInvalid}
+                              invalidText="Add at least one image for this direction."
+                            />
+                          </div>
+
+                          {/* Back drop zone — opt-in per variant. The
+                              "+ Add back side" button reveals the
+                              second VariantDropZone; "Remove back side"
+                              clears any uploaded back files for this
+                              direction. */}
+                          {backEnabled && (
+                            <div className="mt-4">
+                              <VariantDropZone
+                                label="Back"
+                                files={row.backFiles ?? []}
+                                onAddFiles={(picked) =>
+                                  updateRow({
+                                    backFiles: [...(row.backFiles ?? []), ...picked],
+                                  })
+                                }
+                                onRemoveFile={(fi) =>
+                                  updateRow({
+                                    backFiles: (row.backFiles ?? []).filter(
+                                      (_, fj) => fj !== fi,
+                                    ),
+                                  })
+                                }
+                                invalid={backInvalid}
+                                invalidText="Add at least one back image, or remove the back side."
+                              />
+                            </div>
+                          )}
+
+                          <div className="mt-3">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateRow({
+                                  backFiles: backEnabled ? null : [],
+                                })
+                              }
+                              className="text-xs font-medium text-gray-600 underline underline-offset-4 hover:text-gray-900"
+                            >
+                              {backEnabled ? '− Remove back side' : '+ Add back side'}
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 flex-col gap-1">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setVariantRows((prev) => {
+                                if (idx === 0) return prev
+                                const next = [...prev]
+                                ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
+                                return next
+                              })
+                            }
+                            disabled={idx === 0}
+                            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            aria-label="Move up"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setVariantRows((prev) => {
+                                if (idx === prev.length - 1) return prev
+                                const next = [...prev]
+                                ;[next[idx + 1], next[idx]] = [next[idx], next[idx + 1]]
+                                return next
+                              })
+                            }
+                            disabled={idx === variantRows.length - 1}
+                            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            aria-label="Move down"
+                          >
+                            ↓
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setVariantRows((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            disabled={variantRows.length <= 2}
+                            className="rounded-md border border-rose-200 bg-white px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            aria-label={`Remove direction ${idx + 1}`}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+              <div className="mt-4 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setVariantRows((prev) => [
+                      ...prev,
+                      { key: uuidv4(), display_name: '', frontFiles: [], backFiles: null },
+                    ])
+                  }
+                  className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm hover:border-gray-400"
+                >
+                  + Add direction
+                </button>
+                {(shouldHighlight('variantsCount') ||
+                  shouldHighlight('variantsLabels') ||
+                  shouldHighlight('variantsImages')) && (
+                  <p className="text-xs font-medium text-rose-500">
+                    {!variantsCountValid
+                      ? 'Add at least 2 directions.'
+                      : !variantsLabelsValid
+                        ? 'Every direction needs a name.'
+                        : 'Every direction needs at least one image.'}
+                  </p>
+                )}
+              </div>
+            </section>
           )}
 
           {/* Unified image section.
@@ -3356,7 +3968,11 @@ export default function NewVersionPage() {
               bucket below. Drop a file on a carry card to queue a
               replacement; drop or click on an empty slot to
               upload fresh into that slot's (option, name)
-              coordinate. */}
+              coordinate.
+
+              Hidden on variant rounds (build-plan step 5) — the
+              variant editor above handles image attribution there. */}
+          {!isVariantRound && (
           <section ref={imageSectionRef} className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
               {v1Carry ? `Proof images, carrying from v${v1Carry.versionNumber}` : 'Proof images'}
@@ -3753,6 +4369,7 @@ export default function NewVersionPage() {
               <p className="mt-2 text-xs font-medium text-rose-500">{imagesHint}</p>
             )}
           </section>
+          )}
 
           {/* The previous bottom-of-form action row mirror was
               dropped in form polish v2; the sticky action bar
@@ -3777,7 +4394,7 @@ export default function NewVersionPage() {
               previews collapse with the form they verify — no point
               showing pricing tables when the variant/currency
               choices that produce them are hidden. */}
-          {formExpanded && !isCustomQuote && selectedVariantIds.length > 0 && currency !== null && selectedVariantIds.map((vid) => {
+          {formExpanded && !isMixedRound && !isCustomQuote && selectedVariantIds.length > 0 && currency !== null && selectedVariantIds.map((vid) => {
             const variant = variants.find((v) => v.id === vid)
             const tiers = variantTiers[vid] ?? []
             if (!variant) return null

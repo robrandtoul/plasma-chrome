@@ -248,6 +248,11 @@ function buildCustomerThreadText(
   // we get here, so this should be unreachable in practice).
   optionDisplayLabel: string | null,
   optionDimensionLabel: string | null,
+  // Variant-round display name (migrations 000138 + 000139). Non-null
+  // routes the function to the variant-round branch below; null falls
+  // through to the standard approve / request_changes branches with
+  // byte-identical output to the pre-variant-rounds shape.
+  variantDisplayName: string | null,
 ): string {
   // SHARED_APPROVAL_KEY suppresses the "for {name}" suffix — the
   // shared section IS the whole proof (all-shared / membership /
@@ -279,6 +284,27 @@ function buildCustomerThreadText(
   })()
   const fileLine = fileNames.length > 0 ? fileNames.join(', ') : '(no files)'
   const urlLine = proofUrl ? `View the proof: ${proofUrl}\n` : ''
+
+  // ── Variant-round branch ──────────────────────────────────────────────
+  // Routes ahead of the standard approve / request_changes branches so
+  // those return byte-identical output to the pre-variant-rounds shape
+  // when variantDisplayName is null. Variant rounds always travel as
+  // request_changes server-side (the edge function rejects 'approve'),
+  // so eventType here is always request_changes for this branch — but
+  // we don't read it: the copy template is selection-shaped, not
+  // approval-shaped. The recipient suffix is suppressed (variant
+  // rounds always use SHARED_APPROVAL_KEY) and the file list block
+  // is dropped — the proof URL is the visual reference. Comment is
+  // required server-side for variant rounds, so the quoted block is
+  // always populated.
+  if (variantDisplayName != null) {
+    return (
+      `${actorName} chose: ${variantDisplayName}.\n\n` +
+      `"${comment ?? ''}"\n\n` +
+      urlLine +
+      `— Posted via the proof viewer`
+    )
+  }
 
   if (eventType === 'approve') {
     const commentBlock = comment ? `"${comment}"\n\n` : ''
@@ -426,6 +452,13 @@ Deno.serve(async (req) => {
   // INSERT trigger enforces, surfaced here as a 400 so the client
   // gets a clean reason instead of a 23514 from the trigger.
   let materialOptionCode: string | null
+  // round_variant_id is the variant the customer chose at action time
+  // on a variant-round version (migration 000138). Null on standard-
+  // version requests. Membership in proof_round_variants for this
+  // version is validated below — symmetric with the option-code
+  // membership check, except this one is required when the parent
+  // version is_variant_round = true.
+  let roundVariantId: string | null
   try {
     const parsed = await req.json()
     proofVersionId = typeof parsed?.proof_version_id === 'string' ? parsed.proof_version_id.trim() : ''
@@ -440,6 +473,10 @@ Deno.serve(async (req) => {
     const rawCode = parsed?.material_option_code
     materialOptionCode = typeof rawCode === 'string' && rawCode.trim() !== ''
       ? rawCode.trim()
+      : null
+    const rawVariantId = parsed?.round_variant_id
+    roundVariantId = typeof rawVariantId === 'string' && rawVariantId.trim() !== ''
+      ? rawVariantId.trim()
       : null
   } catch {
     return failed('validation', 400, 'invalid JSON body')
@@ -487,7 +524,7 @@ Deno.serve(async (req) => {
   const { data: versionRow, error: versionErr } = await admin
     .from('proof_versions')
     .select(
-      'id, proof_id, material_id, currency, displayed_variant_ids, names, material_options, ' +
+      'id, proof_id, material_id, currency, displayed_variant_ids, names, material_options, is_variant_round, ' +
       'proofs:proof_id ( helpscout_conversation_id ), ' +
       'proof_version_images ( original_filename, sort_order, associated_name )',
     )
@@ -509,6 +546,7 @@ Deno.serve(async (req) => {
     displayed_variant_ids: string[] | null
     names: string[] | null
     material_options: string[] | null
+    is_variant_round: boolean
     proofs: { helpscout_conversation_id: string | null } | null
     proof_version_images: Array<{
       original_filename: string | null
@@ -525,6 +563,61 @@ Deno.serve(async (req) => {
   const allowedNames = new Set<string>([SHARED_APPROVAL_KEY, ...recipientRoster])
   if (!allowedNames.has(recipientName)) {
     return failed('validation', 400, 'unknown recipient name')
+  }
+
+  // ── Validate variant-round constraints (migrations 000138 + 000139) ──────
+  //
+  // When the parent version is a variant round (is_variant_round = true),
+  // four extra rules apply on top of the standard validation:
+  //
+  //   * approve is not available — variant rounds are a "pick a
+  //     direction" moment, not an approval moment. Customer-side UI
+  //     hides the Approve button; this is the server-side enforcement.
+  //   * recipient name must be SHARED_APPROVAL_KEY — variant rounds
+  //     have no recipient roster (validate_variant_round_proof_version
+  //     trigger from 000138 enforces this at the DB level).
+  //   * round_variant_id is required — the customer's chosen direction.
+  //   * round_variant_id must reference an existing variant on this
+  //     version — same membership shape as the option-code check below,
+  //     but required-when-variant-round rather than optional.
+  //
+  // When the parent version is NOT a variant round, round_variant_id
+  // must be absent — symmetric defence so a request can't smuggle a
+  // variant id onto a standard version's event row.
+  //
+  // variantDisplayName is captured here so the Help Scout thread copy
+  // ("Alec chose: Charcoal") can read the human-readable label without
+  // a second lookup. Null on the standard path.
+  let variantDisplayName: string | null = null
+  if (v.is_variant_round) {
+    if (eventType === 'approve') {
+      return failed('validation', 400, 'approve is not available on variant rounds')
+    }
+    if (recipientName !== SHARED_APPROVAL_KEY) {
+      return failed('validation', 400, 'variant rounds must use the shared recipient (__shared__)')
+    }
+    if (!roundVariantId) {
+      return failed('validation', 400, 'round_variant_id is required on variant rounds')
+    }
+    if (!UUID_RE.test(roundVariantId)) {
+      return failed('validation', 400, 'round_variant_id must be a UUID')
+    }
+    const { data: rvRow, error: rvErr } = await admin
+      .from('proof_round_variants')
+      .select('id, display_name')
+      .eq('id', roundVariantId)
+      .eq('proof_version_id', proofVersionId)
+      .maybeSingle()
+    if (rvErr) {
+      console.error('[proof-action] variant lookup failed', rvErr)
+      return failed('unknown', 500, rvErr.message)
+    }
+    if (!rvRow) {
+      return failed('validation', 400, 'unknown round_variant_id for this version')
+    }
+    variantDisplayName = (rvRow as { display_name: string }).display_name
+  } else if (roundVariantId !== null) {
+    return failed('validation', 400, 'round_variant_id only valid on variant rounds')
   }
 
   // ── Validate material_option_code membership ─────────────────────────────
@@ -593,6 +686,12 @@ Deno.serve(async (req) => {
     // the version has no option dimension is the documented
     // "unknown / not applicable" semantic.
     material_option_code: materialOptionCode,
+    // Migration 000138/000139. Customer's chosen variant on a
+    // variant-round version; null on every standard-version event.
+    // Validated above against proof_round_variants membership for
+    // this version. The FK on proof_events.round_variant_id catches
+    // any client that bypasses edge-function validation.
+    round_variant_id: roundVariantId,
   }
   const { data: eventRow, error: insertErr } = await admin
     .from('proof_events')
@@ -742,6 +841,7 @@ Deno.serve(async (req) => {
     proofUrl,
     optionDisplayLabel,
     optionDimensionLabel,
+    variantDisplayName,
   )
 
   let threadId = 0

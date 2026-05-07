@@ -27,6 +27,17 @@ export interface GridImage {
   original_filename?: string | null
   associated_name?: string | null
   side?: 'front' | 'back' | null
+  // Migration 000139: variant a customer-page image belongs to on a
+  // variant-round version. customer-proof-images returns the row
+  // verbatim (select *), so this is already populated when the
+  // parent version has is_variant_round = true. Null on every image
+  // of a standard version.
+  round_variant_id?: string | null
+  // public_proof_version_images exposes sort_order (000014); the
+  // edge function passes it through. Optional because not every
+  // call site reads it — the customer-page variant-round render
+  // path uses it to order images within a variant card.
+  sort_order?: number
 }
 
 // Single-image card with click-to-zoom + caption. Exported so the
