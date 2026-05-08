@@ -10,6 +10,7 @@ import {
   type ViewedState,
 } from '../lib/viewedState'
 import { designerPreviewPath } from '../lib/customerProofUrl'
+import { logAudit } from '../lib/audit'
 import { QuoteLink } from '../components/QuoteLink'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -294,9 +295,20 @@ function StatTile({ label, count, active, tone, onClick }: StatTileProps) {
 interface OverflowMenuProps {
   proof: DashboardProject
   canAddVersion: boolean
+  minePinned: boolean
+  teamPinned: boolean
+  onToggleMinePin: (proofId: string) => void
+  onToggleTeamPin: (proofId: string) => void
 }
 
-function OverflowMenu({ proof, canAddVersion }: OverflowMenuProps) {
+function OverflowMenu({
+  proof,
+  canAddVersion,
+  minePinned,
+  teamPinned,
+  onToggleMinePin,
+  onToggleTeamPin,
+}: OverflowMenuProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -331,7 +343,7 @@ function OverflowMenu({ proof, canAddVersion }: OverflowMenuProps) {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-9 z-10 w-52 overflow-hidden rounded-lg bg-white py-1 text-sm shadow-lg ring-1 ring-gray-200"
+          className="absolute right-0 top-9 z-10 w-56 overflow-hidden rounded-lg bg-white py-1 text-sm shadow-lg ring-1 ring-gray-200"
           onClick={(e) => e.stopPropagation()}
         >
           {proof.current_version_id ? (
@@ -366,12 +378,22 @@ function OverflowMenu({ proof, canAddVersion }: OverflowMenuProps) {
               onClick={() => setOpen(false)}
             >Open in Help Scout</a>
           )}
-          <span
+          <button
             role="menuitem"
-            aria-disabled
-            title="Pinning lands in Phase 2"
-            className="block cursor-not-allowed border-t border-gray-100 px-3 py-2 text-gray-300"
-          >Pin</span>
+            type="button"
+            onClick={() => { setOpen(false); onToggleMinePin(proof.proof_id) }}
+            className="block w-full border-t border-gray-100 px-3 py-2 text-left text-gray-700 hover:bg-gray-100"
+          >
+            {minePinned ? 'Unpin from your list' : 'Pin to your list'}
+          </button>
+          <button
+            role="menuitem"
+            type="button"
+            onClick={() => { setOpen(false); onToggleTeamPin(proof.proof_id) }}
+            className="block w-full px-3 py-2 text-left text-gray-700 hover:bg-gray-100"
+          >
+            {teamPinned ? 'Unpin from the team list' : 'Pin for the team'}
+          </button>
         </div>
       )}
     </div>
@@ -382,9 +404,19 @@ function OverflowMenu({ proof, canAddVersion }: OverflowMenuProps) {
 
 interface ProjectRowProps {
   project: DashboardProject
+  minePinned: boolean
+  teamPinned: boolean
+  onToggleMinePin: (proofId: string) => void
+  onToggleTeamPin: (proofId: string) => void
 }
 
-function ProjectRow({ project }: ProjectRowProps) {
+function ProjectRow({
+  project,
+  minePinned,
+  teamPinned,
+  onToggleMinePin,
+  onToggleTeamPin,
+}: ProjectRowProps) {
   const navigate = useNavigate()
   const canAddVersion = project.status === 'in_progress' || project.status === 'dormant'
   const { verb, ts } = activityVerb(project)
@@ -446,16 +478,52 @@ function ProjectRow({ project }: ProjectRowProps) {
       <span className="hidden w-32 shrink-0 text-right text-xs text-gray-400 xl:block" title={ts ? formatAbsoluteDateTime(ts) : undefined}>
         {verb}{ts ? ` ${relativeTime(ts)}` : ''}
       </span>
-      <OverflowMenu proof={project} canAddVersion={canAddVersion} />
+      <OverflowMenu
+        proof={project}
+        canAddVersion={canAddVersion}
+        minePinned={minePinned}
+        teamPinned={teamPinned}
+        onToggleMinePin={onToggleMinePin}
+        onToggleTeamPin={onToggleTeamPin}
+      />
     </div>
+  )
+}
+
+// ── Pin icons ────────────────────────────────────────────────────────────────
+//
+// The brief originally called for Tabler Icons (`ti ti-pin`,
+// `ti ti-users`) but Tabler isn't loaded in this project — every
+// other icon on the dashboard is an inline SVG. Matching the existing
+// pattern keeps the bundle lean and the visual idiom consistent.
+
+function PinIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9.5 1.5l5 5-2 2-1-.5-3 3 .5 1.5-2 2-2.5-2.5L1 13l3.5-3.5-2.5-2.5 2-2 1.5.5 3-3-.5-1z" />
+    </svg>
+  )
+}
+
+function UsersIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="6" cy="5.5" r="2.25" />
+      <path d="M2 13.5c0-2 1.8-3.5 4-3.5s4 1.5 4 3.5" />
+      <circle cx="11" cy="6" r="1.75" />
+      <path d="M9.5 10.2c.4-.13.97-.2 1.5-.2 2 0 3.5 1.3 3.5 3" />
+    </svg>
   )
 }
 
 // ── Section grouping ─────────────────────────────────────────────────────────
 
+type SectionKind = 'pinned' | 'team' | 'time' | 'company'
+
 interface ProjectSection {
   key: string
   title: string
+  kind: SectionKind
   projects: DashboardProject[]
 }
 
@@ -470,9 +538,9 @@ function groupByTime(projects: DashboardProject[]): ProjectSection[] {
     else                     older.push(p)
   }
   const out: ProjectSection[] = []
-  if (today.length) out.push({ key: 'today',  title: 'Today',     projects: today })
-  if (week.length)  out.push({ key: 'week',   title: 'This week', projects: week })
-  if (older.length) out.push({ key: 'older',  title: 'Older',     projects: older })
+  if (today.length) out.push({ key: 'today',  title: 'Today',     kind: 'time', projects: today })
+  if (week.length)  out.push({ key: 'week',   title: 'This week', kind: 'time', projects: week })
+  if (older.length) out.push({ key: 'older',  title: 'Older',     kind: 'time', projects: older })
   return out
 }
 
@@ -481,7 +549,7 @@ function groupByCompany(projects: DashboardProject[]): ProjectSection[] {
   for (const p of projects) {
     const key   = p.company_id ?? '__individual__'
     const title = p.company_name ?? 'No company'
-    if (!map.has(key)) map.set(key, { key, title, projects: [] })
+    if (!map.has(key)) map.set(key, { key, title, kind: 'company', projects: [] })
     map.get(key)!.projects.push(p)
   }
   const sections = [...map.values()]
@@ -489,6 +557,31 @@ function groupByCompany(projects: DashboardProject[]): ProjectSection[] {
   const named = sections.filter((s) => s.key !== '__individual__')
   named.sort((a, b) => a.title.localeCompare(b.title, 'en', { sensitivity: 'base' }))
   return individual ? [...named, individual] : named
+}
+
+// Build the Pinned and Team sections from a sorted projects list and
+// the two pin maps. Returns whichever sections have entries; either or
+// both may be empty. Projects pinned to both lists only show in
+// Pinned — the Team section explicitly excludes those.
+function buildPinSections(
+  projects: DashboardProject[],
+  minePinAt: Map<string, string>,
+  teamPinAt: Map<string, string>,
+): ProjectSection[] {
+  const out: ProjectSection[] = []
+  const minePinned = projects
+    .filter((p) => minePinAt.has(p.proof_id))
+    .sort((a, b) => (minePinAt.get(b.proof_id) ?? '').localeCompare(minePinAt.get(a.proof_id) ?? ''))
+  if (minePinned.length) {
+    out.push({ key: '__pinned__', title: 'Pinned', kind: 'pinned', projects: minePinned })
+  }
+  const teamPinned = projects
+    .filter((p) => teamPinAt.has(p.proof_id) && !minePinAt.has(p.proof_id))
+    .sort((a, b) => (teamPinAt.get(b.proof_id) ?? '').localeCompare(teamPinAt.get(a.proof_id) ?? ''))
+  if (teamPinned.length) {
+    out.push({ key: '__team__', title: 'Team', kind: 'team', projects: teamPinned })
+  }
+  return out
 }
 
 // ── Latest activity sidebar ──────────────────────────────────────────────────
@@ -591,10 +684,18 @@ function LatestActivityPanel({
 
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const { role } = useAuth()
+  const { session, role } = useAuth()
+  const userId = session?.user.id ?? null
   const [projects, setProjects]           = useState<DashboardProject[]>([])
   const [tileCounts, setTileCounts]       = useState<TileCounts | null>(null)
   const [latestEvents, setLatestEvents]   = useState<DashboardLatestEvent[]>([])
+  // Pin state — proof_id → pinned_at ISO. Two maps because the
+  // dashboard cares about each scope independently (mine drives the
+  // Pinned section, team drives the Team section, and both feed the
+  // overflow menu's toggle labels). pinned_at is preserved so the
+  // sections can sort by recency.
+  const [minePinAt, setMinePinAt]         = useState<Map<string, string>>(new Map())
+  const [teamPinAt, setTeamPinAt]         = useState<Map<string, string>>(new Map())
   const [loading, setLoading]             = useState(true)
   const [search, setSearch]               = useState('')
   const [statusFilter, setStatusFilter]   = useState<Set<ProofStatus>>(new Set())
@@ -619,12 +720,13 @@ export default function DashboardPage() {
   }, [])
 
   async function loadDashboard() {
-    // Note: the three queries below depend on migration 000152
+    // Note: the four queries below depend on migration 000152
     // (public_dashboard_projects view + dashboard_tile_counts() +
-    // designer presentation columns on profiles) and migration 000154
-    // which extends the view with rule_code / rule_meta columns. The
-    // page will throw / render the empty state until both migrations
-    // have been pushed to the linked Supabase project.
+    // designer presentation columns on profiles), migration 000154
+    // (rule_code / rule_meta on the view), and migration 000155
+    // (proof_pins table). The page will throw / render the empty
+    // state until all three migrations have been pushed to the
+    // linked Supabase project.
     const projectsPromise = supabase
       .from('public_dashboard_projects')
       .select('*')
@@ -637,12 +739,16 @@ export default function DashboardPage() {
       .select('*')
       .order('created_at', { ascending: false })
       .limit(20)
+    const pinsPromise = supabase
+      .from('proof_pins')
+      .select('proof_id, scope, user_id, pinned_at')
 
     const [
       { data: projectRows },
       { data: tileRows },
       { data: events },
-    ] = await Promise.all([projectsPromise, tilesPromise, eventsPromise])
+      { data: pinRows },
+    ] = await Promise.all([projectsPromise, tilesPromise, eventsPromise, pinsPromise])
 
     setProjects((projectRows ?? []) as DashboardProject[])
 
@@ -652,7 +758,81 @@ export default function DashboardPage() {
     setTileCounts((tile ?? null) as TileCounts | null)
 
     setLatestEvents((events ?? []) as DashboardLatestEvent[])
+
+    // Split pins into the two scope-specific maps. Mine pins are
+    // filtered to the current user (RLS lets every authenticated user
+    // read every pin row, including other designers' mine pins, but
+    // the Pinned section is per-user).
+    const mine = new Map<string, string>()
+    const team = new Map<string, string>()
+    for (const r of (pinRows ?? []) as Array<{ proof_id: string; scope: 'mine' | 'team'; user_id: string | null; pinned_at: string }>) {
+      if (r.scope === 'team') {
+        team.set(r.proof_id, r.pinned_at)
+      } else if (r.scope === 'mine' && r.user_id && r.user_id === userId) {
+        mine.set(r.proof_id, r.pinned_at)
+      }
+    }
+    setMinePinAt(mine)
+    setTeamPinAt(team)
+
     setLoading(false)
+  }
+
+  // ── Pin / unpin handlers ──────────────────────────────────────────────────
+  //
+  // Both refresh the dashboard after the write so the sections re-bucket
+  // immediately. No optimistic UI — the data is small and refetches are
+  // fast enough that the trip is invisible. Audit logging on team
+  // pin/unpin is wired in the same place; mine pins are personal
+  // organisation and deliberately don't write to audit_log.
+  async function toggleMinePin(proofId: string) {
+    if (!userId) return
+    if (minePinAt.has(proofId)) {
+      await supabase
+        .from('proof_pins')
+        .delete()
+        .eq('proof_id', proofId)
+        .eq('scope', 'mine')
+        .eq('user_id', userId)
+    } else {
+      await supabase
+        .from('proof_pins')
+        .insert({
+          proof_id: proofId,
+          scope: 'mine',
+          user_id: userId,
+          pinned_by: userId,
+        })
+    }
+    await loadDashboard()
+  }
+
+  async function toggleTeamPin(proofId: string) {
+    if (!userId) return
+    const wasPinned = teamPinAt.has(proofId)
+    if (wasPinned) {
+      await supabase
+        .from('proof_pins')
+        .delete()
+        .eq('proof_id', proofId)
+        .eq('scope', 'team')
+    } else {
+      await supabase
+        .from('proof_pins')
+        .insert({
+          proof_id: proofId,
+          scope: 'team',
+          user_id: null,
+          pinned_by: userId,
+        })
+    }
+    void logAudit({
+      action: wasPinned ? 'setting.team_pin_removed' : 'setting.team_pin_added',
+      targetType: 'proof',
+      targetId: proofId,
+      metadata: { proof_id: proofId },
+    })
+    await loadDashboard()
   }
 
   function handleSortChange(s: SortMode) {
@@ -742,8 +922,20 @@ export default function DashboardPage() {
   }, [filteredProjects, sort])
 
   const sections: ProjectSection[] = useMemo(() => {
-    return group === 'company' ? groupByCompany(sortedProjects) : groupByTime(sortedProjects)
-  }, [sortedProjects, group])
+    // Pinned + Team sections sit above the time/company list. Any
+    // project surfaced in either is removed from the bucket below
+    // so it never appears twice on the page. minePinAt and teamPinAt
+    // hold the pinned_at timestamps used by buildPinSections() to
+    // sort by recency.
+    const pinSections = buildPinSections(sortedProjects, minePinAt, teamPinAt)
+    const pinnedIds = new Set<string>()
+    for (const s of pinSections) for (const p of s.projects) pinnedIds.add(p.proof_id)
+    const remaining = sortedProjects.filter((p) => !pinnedIds.has(p.proof_id))
+    const tailSections = group === 'company'
+      ? groupByCompany(remaining)
+      : groupByTime(remaining)
+    return [...pinSections, ...tailSections]
+  }, [sortedProjects, group, minePinAt, teamPinAt])
 
   const noResults = !loading && sections.every((s) => s.projects.length === 0)
 
@@ -905,12 +1097,20 @@ export default function DashboardPage() {
                     {sections.map((section, si) => (
                       <div key={section.key} className={si > 0 ? 'border-t border-gray-100' : ''}>
                         <div className="flex items-center gap-3 bg-gray-50/80 px-5 py-1.5">
+                          {section.kind === 'pinned' && <PinIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
+                          {section.kind === 'team'   && <UsersIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
                           <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">{section.title}</span>
                           <span className="text-xs text-gray-400 tabular-nums">{section.projects.length}</span>
                         </div>
                         {section.projects.map((p, ri) => (
                           <div key={p.proof_id} className={ri > 0 ? 'border-t border-gray-100' : ''}>
-                            <ProjectRow project={p} />
+                            <ProjectRow
+                              project={p}
+                              minePinned={minePinAt.has(p.proof_id)}
+                              teamPinned={teamPinAt.has(p.proof_id)}
+                              onToggleMinePin={toggleMinePin}
+                              onToggleTeamPin={toggleTeamPin}
+                            />
                           </div>
                         ))}
                       </div>
