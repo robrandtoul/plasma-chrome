@@ -52,6 +52,44 @@ interface DashboardProject {
     | null
   latest_event_actor: string | null
   current_version_viewed_at: string | null
+  // Needs-attention rule annotation (migration 000154). Null when
+  // the proof isn't currently flagged. rule_code identifies which
+  // rule fired (request_changes_no_version / helpscout_follow_up_tag /
+  // sent_never_viewed / viewed_not_actioned / approaching_dormant /
+  // stuck_in_progress); rule_meta carries `{ days: N }` for any rule
+  // with a threshold so the chip can render "Sent N working days
+  // ago" without re-deriving.
+  rule_code: NeedsAttentionRule | null
+  rule_meta: { days?: number } | null
+}
+
+type NeedsAttentionRule =
+  | 'request_changes_no_version'
+  | 'helpscout_follow_up_tag'
+  | 'sent_never_viewed'
+  | 'viewed_not_actioned'
+  | 'approaching_dormant'
+  | 'stuck_in_progress'
+
+// Reason chip text per rule. Templated against rule_meta.days where
+// the rule has a threshold. Kept here rather than in a shared lib
+// because the dashboard is the only renderer; the admin editor uses
+// its own humanised labels (rule name + description) for the cards.
+function reasonChipText(code: NeedsAttentionRule, days: number | undefined): string {
+  switch (code) {
+    case 'request_changes_no_version':
+      return `Customer requested changes ${days ?? '—'} working days ago, no new version`
+    case 'helpscout_follow_up_tag':
+      return 'Help Scout conversation tagged "follow up"'
+    case 'sent_never_viewed':
+      return `Sent ${days ?? '—'} working days ago, never opened`
+    case 'viewed_not_actioned':
+      return `Last viewed ${days ?? '—'} working days ago, no action since`
+    case 'approaching_dormant':
+      return `Approaching dormant — ${days ?? '—'} days since last activity`
+    case 'stuck_in_progress':
+      return `Stuck in progress — no activity for ${days ?? '—'} working days`
+  }
 }
 
 interface TileCounts {
@@ -392,6 +430,16 @@ function ProjectRow({ project }: ProjectRowProps) {
           )}
         </div>
         {subline && <div className="truncate text-xs text-gray-500">{subline}</div>}
+        {project.rule_code && (
+          // Reason chip — same FAEEDA / 854F0B amber ramp as the
+          // Needs-attention tile and the In-progress status pill,
+          // so the visual cue carries through from tile to row.
+          <div className="mt-1">
+            <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200">
+              {reasonChipText(project.rule_code, project.rule_meta?.days)}
+            </span>
+          </div>
+        )}
       </div>
       <span className="hidden truncate text-sm text-gray-500 lg:block lg:w-32">{project.material_display ?? '—'}</span>
       <StatusPill status={project.status} />
