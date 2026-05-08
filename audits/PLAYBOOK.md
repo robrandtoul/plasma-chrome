@@ -8,21 +8,21 @@ Global business rules and voice rules live in `~/.claude/CLAUDE.md`. Repo-specif
 
 Each run dispatches seven parallel subagents, one per area. Each subagent returns a structured findings list. The orchestrator then:
 
-1. Checks for a stale `.git/index.lock`. If the lock exists, no live `git` process holds it, and it's older than 5 minutes, removes it. If a live process holds the lock, aborts the run cleanly with `run_status: "aborted_lock_held"` so the user sees it on the dashboard.
-2. Creates a fresh branch from `main`: `bug-audit/YYYY-MM-DD`. If a same-day branch already exists, suffixes `-2`, `-3`.
-3. Auto-applies fixes that match the safe-list below. One commit per fix on the bug-audit branch, message format: `fix(audit): <title> [PV-YYYYWww-NNN]`.
-4. Stages all other proposed fixes as commits on the same branch with `[proposed]` prefixes, so each diff is reviewable independently.
-5. Updates `audits/latest-findings.json` with the full triage.
-6. Updates the Cowork dashboard artifact with the latest results.
-7. Stops. Does not push. Does not open a PR. Does not post a Help Scout note.
+1. Applies fixes that match the safe-list below to the working tree as file edits. No commit.
+2. Applies all other proposed fixes to the working tree as file edits. No commit.
+3. Writes the full triaged findings to `audits/latest-findings.json`. Each finding includes a `files` array listing exactly which paths it touched, so the ship prompt can commit each finding's files as its own commit.
+4. Updates the Cowork dashboard artifact with the latest results.
+5. Stops. The audit performs no git operations: no branch creation, no commits, no push, no PR.
 
-The audit's job ends at "branch ready for review on local disk". Pushing the branch and opening a PR is a separate step the user runs Monday morning via Code (see "Shipping the audit" below). This split exists because the Cowork sandbox doesn't have GitHub credentials and adding them isn't worth the friction.
+The audit deliberately leaves the working tree dirty. The user runs a separate Monday-morning Code prompt (see "Shipping the audit") that reads the findings JSON and turns each finding's file list into its own commit on a fresh `bug-audit/YYYY-MM-DD` branch, then pushes and opens a PR.
 
-If no findings are produced, the run still updates `latest-findings.json` with a timestamped empty result and refreshes the dashboard. No branch is created on a clean run.
+This split exists because the Cowork sandbox can't reliably manage git locks: it creates `.git/index.lock` files during commits and the sandbox's own permissions sometimes prevent clearing them, leaving runs wedged. Two consecutive runs hit this failure mode (PV-2026W19 first attempt and PV-2026W19-R2). Moving git out of the sandbox eliminates the failure entirely.
 
-The audit always runs against `main`. Worktrees under `.claude/worktrees/` are ignored, since they may contain in-progress code that doesn't reflect shipped state. Per the worktree-trap memory, `pwd` can lie about which worktree is current; the task verifies it's on `main` before dispatching subagents.
+If no findings are produced, the run still updates `latest-findings.json` with a timestamped empty result and refreshes the dashboard. No working-tree changes happen on a clean run.
 
-If subagent dispatch errors at the platform level, the orchestrator falls back to inline area-by-area analysis in the same session and notes the fallback in the run metadata. Coverage is narrower than parallel dispatch, but the run still produces real findings.
+The audit always reads from the state of `main`. If `main` isn't checked out at run start, the audit reports the wrong-branch state in the findings JSON and aborts cleanly without touching anything. Worktrees under `.claude/worktrees/` are ignored, since they may contain in-progress code that doesn't reflect shipped state.
+
+If subagent dispatch errors at the platform level, the orchestrator falls back to inline area-by-area analysis in the same session and notes the fallback in the run metadata as `dispatch_mode: "inline_fallback"`. Coverage is narrower than parallel dispatch, but the run still produces real findings.
 
 ## Areas
 
@@ -46,6 +46,7 @@ Rules to check:
   - Translucent / tinted / satin plastic: £25 / €39 / $39
   - Full colour plastic: £15 / €25 / $25
   - Letterpress: £25 / €39 / $39
+  - Acrylic / paper standard / carbon fibre / carbon fibre CNC: enabled in 000146; check live values per currency
 - CMYK is included at no extra charge. Any reference to a CMYK upcharge is a bug.
 - Satin and Translucent Plastic share one pricing schedule; divergence between them in the database is a bug.
 - USD Copper is seeded from Gun Metal USD pricing.
@@ -122,13 +123,13 @@ Files:
 
 Rules to check:
 - Mixed numbering: migrations use both `000xxx` and `20260419xxx` styles. `db push` requires `--include-all`. Any docs or scripts that say to run plain `db push` are stale.
-- View ownership leak: any new view over an RLS-protected table needs `REVOKE FROM anon, public`.
+- View ownership leak: any new view over an RLS-protected table needs `REVOKE FROM anon, public`. (PV-2026W19-002 surfaced 000148 missing this; 000151 retroactively closed it.)
 - Schema state lives in seed + migrations together. Never reason about whether a code/column/row exists from seed.sql alone; migrations add changes after the seed and are authoritative.
 - Supabase RPC return values are thenable. `void` on `supabase.rpc(...)` silently drops the fetch. Always `.then()` or `await`.
 - Postgres UPDATE-FROM scoping: target table can't be referenced in a JOIN's ON clause inside FROM. Single-table FROM with a pre-joined CTE, or cross-join with predicate in WHERE.
 - Placeholder variants can be `is_active=true` with zero `price_tiers` rows as a forward-compat hook. New surfaces must decide how to handle the empty case.
 - Letterpress paper stock is Colorplan (GF Smith). Customer-facing copy should say "Colorplan paper" not generic descriptors.
-- When writing a migration that updates existing rows, query live DB state first to confirm the WHERE clause matches what's actually there. Strict equality checks are good for sparing admin-edited rows, but only after verifying the original-seed pattern still matches at least one live row. Migration 000149 (PV-2026W19-001) shipped with strict equality and matched zero live rows because the bodies had drifted, so loose follow-up 000150 had to ship as a separate PR. Avoid the round-trip: read the live data, write the WHERE clause to match.
+- When proposing a migration that updates existing rows, query live DB state first (via service-role key from `.env` if available) to confirm the WHERE clause matches at least one row. If the strict-equality pattern matches zero live rows, write a loose pattern (LIKE / regex_replace) instead. Migration 000149 (PV-2026W19-001) shipped with strict equality and matched zero live rows because the bodies had drifted, so loose follow-up 000150 had to ship as a separate PR. Avoid the round-trip: read the live data, write the WHERE clause to match.
 
 ### Area 7: Source-of-truth coherence
 
@@ -136,20 +137,22 @@ This area runs without source-tree access, so it always succeeds even if the rep
 
 Files:
 - This repo's `CLAUDE.md`
+- `~/.claude/CLAUDE.md` (global business rules; check for drift against project-level rules)
 - `~/Library/.../memory/MEMORY.md` and the memory files it indexes
 - `audits/latest-findings.json` from the previous run
 
 Rules to check:
 - `CLAUDE.md` lists current migration head. Compare against the real head: `ls supabase/migrations/ | sort -r | head -1`. If they disagree, flag.
+- Global `~/.claude/CLAUDE.md` pricing rules should enumerate all materials with split-name surcharges (per the Area 1 list). Missing material families are drift; flag.
 - Memory entries that reference specific migration numbers, material codes, or table columns. Each one should still be true on the live schema. Sample-check by grepping the migrations folder.
 - Memory entries describing decisions or rules. Each should still match what `CLAUDE.md` says, or `CLAUDE.md` should be updated. The two are meant to agree on intent.
 - The previous run's findings list. Any P1/P2 finding marked `proposed` from the prior run that hasn't been merged or dismissed is stale and should be re-flagged.
 
 ## Auto-fix safe-list
 
-Only these categories are eligible for auto-commit. Everything else is staged as a `[proposed]` commit on the same branch for human review.
+Findings flagged `auto_applied: true` are safe enough that the user can ship them with minimal review. Findings flagged `auto_applied: false` are proposed and should be reviewed carefully. Both end up as commits on the bug-audit branch via the ship-audit prompt; the distinction is purely about review depth, not git mechanics.
 
-Safe to auto-apply:
+Eligible for `auto_applied: true`:
 - British English typos in user-facing strings (`color` to `colour`, `customize` to `customise` in copy).
 - Unused imports (no other code references the symbol in the file).
 - Unreferenced exports with no external consumers (verify via repo-wide grep first).
@@ -159,7 +162,7 @@ Safe to auto-apply:
 - Comment typos (no semantic content).
 - Dead `console.log` left from debugging (not structured logging).
 
-NOT safe to auto-apply (always becomes a `[proposed]` commit):
+NOT eligible for `auto_applied: true` (always `auto_applied: false`):
 - Anything in `supabase/migrations/` or `supabase/seed.sql`.
 - Anything touching pricing logic, surcharges, VAT, currency.
 - RLS policies, view definitions, grants.
@@ -173,7 +176,7 @@ NOT safe to auto-apply (always becomes a `[proposed]` commit):
 - Type definitions in `src/lib/types.ts`.
 - Edits to `CLAUDE.md` or memory files (these are reasoning surfaces; humans confirm).
 
-When in doubt, propose. The cost of a missed auto-fix is one extra click on a PR. The cost of a wrong auto-fix to a pricing surcharge is a real-money customer issue.
+When in doubt, flag `auto_applied: false`. The cost of a missed safe flag is a slightly more careful review. The cost of a wrong safe flag on a pricing surcharge is a real-money customer issue.
 
 ## Severity classification
 
@@ -196,17 +199,18 @@ Each finding is a JSON object:
   "lines": [142, 158],
   "proposed_fix": "...",
   "auto_applied": false,
-  "fix_safety": "propose",
   "rule_violated": "No interpolation between listed quantity tiers",
   "rule_source": "CLAUDE.md / pricing schema"
 }
 ```
 
-The `id` format is `PV-YYYYWww-NNN` where `ww` is the ISO week number. This makes findings sortable and uniquely traceable across runs.
+The `id` format is `PV-YYYYWww-NNN` where `ww` is the ISO week number. This makes findings sortable and uniquely traceable across runs. Re-runs in the same week use the suffix `-Rn` (e.g. `PV-2026W19-R2`) on the run ID itself; finding IDs continue numbering from the previous week's last index.
+
+The `files` array is what the ship-audit prompt uses to construct per-finding commits. Each finding's listed files become one commit.
 
 ## Shipping the audit
 
-After each weekly run, the audit leaves a `bug-audit/YYYY-MM-DD` branch on local disk with all proposed and auto-applied changes already committed. Pushing the branch and opening a PR is a separate human-driven step.
+After each weekly run, the audit leaves a dirty working tree on `main` with edits matching the findings in `audits/latest-findings.json`. Pushing those changes upstream is a human-driven Code session.
 
 The standard Monday-morning Code prompt:
 
@@ -214,22 +218,35 @@ The standard Monday-morning Code prompt:
 Ship the latest weekly bug audit findings.
 
 1. cd /Users/robrandtoul/proof-viewer
-2. Read audits/latest-findings.json. Report the run_id, total findings, severity counts, branch name, and the next_action field.
-3. Run git log main..bug-audit/YYYY-MM-DD --oneline (use the branch from the findings file). Report the commits.
-4. For each commit, show me the diff. I'll tell you which to keep and which to drop. If I want to drop a commit, drop it via git rebase -i or cherry-pick the keepers onto a fresh branch.
-5. Push the branch: git push -u origin bug-audit/YYYY-MM-DD.
-6. Open a PR:
-   gh pr create --base main --head bug-audit/YYYY-MM-DD --title "Bug audit: PV-YYYYWww" --body "<summary from the findings JSON, with severity counts and one line per finding>"
-7. Report the PR URL. I'll merge via gh pr merge --merge or via the browser.
+2. Read audits/latest-findings.json. Report the run_id, total findings, severity counts, and the next_action field.
+3. git status. The status should show modified or new files matching the union of all findings' `files` arrays in the JSON. If anything's missing or any unexpected file is dirty (other than the known untracked logo file), stop and tell me before proceeding.
+4. Show me the diff for the entire working tree. I'll review.
+5. Once I confirm, create a fresh bug-audit branch from main:
+   git checkout -b bug-audit/YYYY-MM-DD
+   (Use today's date. If a same-day branch already exists, suffix with -2, -3.)
+6. For each finding in the JSON, commit its files separately:
+   - For findings with auto_applied=true:
+       git add <files for that finding>
+       git commit -m "fix(audit): <title> [<id>]"
+   - For findings with auto_applied=false:
+       git add <files for that finding>
+       git commit -m "[proposed] <title> [<id>]"
+7. Push the branch:
+   git push -u origin bug-audit/YYYY-MM-DD
+8. Open the PR:
+   gh pr create --base main --head bug-audit/YYYY-MM-DD \
+     --title "Bug audit: <run_id>" \
+     --body "<summary from the findings JSON: severity counts and one line per finding>"
+9. Report the PR URL. I'll merge via gh pr merge --merge or via the browser.
 
-For any migration commits, do not apply via pnpm db:push:confirm until after the PR merges and main is updated.
+For migration commits, do not apply via pnpm db:diff / pnpm db:push:confirm until after the PR merges and main is updated.
 
-Stop after step 7.
+Stop after step 9.
 ```
 
-Save this prompt somewhere convenient (e.g. as a Code slash command if you have one configured) so it's a one-paste action each Monday.
+Save this prompt as a Code slash command if you have a way to do that, otherwise just keep this section open Monday morning and copy from here.
 
-Never push to `main` directly. The repo guardrail blocks it and that's by design. Always go through a PR.
+Never push to `main` directly. The repo guardrail blocks it; that's by design. Always go through a PR.
 
 ## Updating the playbook
 
