@@ -350,11 +350,18 @@ function ProjectRow({ project }: ProjectRowProps) {
   const navigate = useNavigate()
   const canAddVersion = project.status === 'in_progress' || project.status === 'dormant'
   const { verb, ts } = activityVerb(project)
-  const subline = [project.contact_name, project.company_name].filter(Boolean).join(' · ')
   // Project name: prefer company name (matches the existing Recent
   // projects card), fall back to contact name. There's no separate
   // proof_name column in Phase 1; surfacing one is Phase 2+.
   const projectName = project.company_name || project.contact_name || '(no contact)'
+  // Sub-line: contact + company joined by " · ", but suppress
+  // whichever half duplicates the project name. Sole-trader rows
+  // (company_name === contact_name, e.g. "Jali Mumcu / Jali Mumcu")
+  // collapse to no sub-line at all.
+  const sublineParts: string[] = []
+  if (project.contact_name && project.contact_name !== projectName) sublineParts.push(project.contact_name)
+  if (project.company_name && project.company_name !== projectName) sublineParts.push(project.company_name)
+  const subline = sublineParts.join(' · ')
   return (
     <div
       role="button"
