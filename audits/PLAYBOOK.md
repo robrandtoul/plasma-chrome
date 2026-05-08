@@ -8,15 +8,21 @@ Global business rules and voice rules live in `~/.claude/CLAUDE.md`. Repo-specif
 
 Each run dispatches seven parallel subagents, one per area. Each subagent returns a structured findings list. The orchestrator then:
 
-1. Auto-applies fixes that match the safe-list below to a branch named `bug-audit/YYYY-MM-DD`.
-2. Stages all other proposed fixes as commits on the same branch with `[proposed]` prefixes.
-3. Opens a draft PR with a triaged summary.
-4. Updates `audits/latest-findings.json` with the full triage.
-5. Updates the Cowork dashboard artifact with the latest results.
+1. Checks for a stale `.git/index.lock`. If the lock exists, no live `git` process holds it, and it's older than 5 minutes, removes it. If a live process holds the lock, aborts the run cleanly with `run_status: "aborted_lock_held"` so the user sees it on the dashboard.
+2. Creates a fresh branch from `main`: `bug-audit/YYYY-MM-DD`. If a same-day branch already exists, suffixes `-2`, `-3`.
+3. Auto-applies fixes that match the safe-list below. One commit per fix on the bug-audit branch, message format: `fix(audit): <title> [PV-YYYYWww-NNN]`.
+4. Stages all other proposed fixes as commits on the same branch with `[proposed]` prefixes, so each diff is reviewable independently.
+5. Updates `audits/latest-findings.json` with the full triage.
+6. Updates the Cowork dashboard artifact with the latest results.
+7. Stops. Does not push. Does not open a PR. Does not post a Help Scout note.
 
-If no findings are produced, the run still updates `latest-findings.json` with a timestamped empty result and refreshes the dashboard. No PR is opened on a clean run.
+The audit's job ends at "branch ready for review on local disk". Pushing the branch and opening a PR is a separate step the user runs Monday morning via Code (see "Shipping the audit" below). This split exists because the Cowork sandbox doesn't have GitHub credentials and adding them isn't worth the friction.
+
+If no findings are produced, the run still updates `latest-findings.json` with a timestamped empty result and refreshes the dashboard. No branch is created on a clean run.
 
 The audit always runs against `main`. Worktrees under `.claude/worktrees/` are ignored, since they may contain in-progress code that doesn't reflect shipped state. Per the worktree-trap memory, `pwd` can lie about which worktree is current; the task verifies it's on `main` before dispatching subagents.
+
+If subagent dispatch errors at the platform level, the orchestrator falls back to inline area-by-area analysis in the same session and notes the fallback in the run metadata. Coverage is narrower than parallel dispatch, but the run still produces real findings.
 
 ## Areas
 
@@ -72,7 +78,7 @@ Files:
 
 Rules to check:
 - Use `helpscout-busybee` MCP tools for replies, notes, creating conversations. Do not fall back to the Zapier-based Help Scout tools.
-- Help Scout signature is appended automatically. Replies must not include a sign-off.
+- Help Scout signature is appended automatically. Replies must not include a sign-off. This applies to seeded reply templates as well as ad-hoc messages, including any default body text seeded via migration. (PV-2026W19-001 surfaced templates that violated this rule and reached production.)
 - Use `<br><br>` between paragraphs in Help Scout HTML, not `<p>` alone. `<p>` renders with no visible gap.
 - Bullet lists with `<ul><li>` render fine.
 - `POST /v2/conversations/{id}/customer` returns the new thread ID in the `Resource-Id` header, not `Location`. The both-header parser is the safe shape; any code reading only one header is a bug.
@@ -122,6 +128,7 @@ Rules to check:
 - Postgres UPDATE-FROM scoping: target table can't be referenced in a JOIN's ON clause inside FROM. Single-table FROM with a pre-joined CTE, or cross-join with predicate in WHERE.
 - Placeholder variants can be `is_active=true` with zero `price_tiers` rows as a forward-compat hook. New surfaces must decide how to handle the empty case.
 - Letterpress paper stock is Colorplan (GF Smith). Customer-facing copy should say "Colorplan paper" not generic descriptors.
+- When writing a migration that updates existing rows, query live DB state first to confirm the WHERE clause matches what's actually there. Strict equality checks are good for sparing admin-edited rows, but only after verifying the original-seed pattern still matches at least one live row. Migration 000149 (PV-2026W19-001) shipped with strict equality and matched zero live rows because the bodies had drifted, so loose follow-up 000150 had to ship as a separate PR. Avoid the round-trip: read the live data, write the WHERE clause to match.
 
 ### Area 7: Source-of-truth coherence
 
@@ -196,6 +203,33 @@ Each finding is a JSON object:
 ```
 
 The `id` format is `PV-YYYYWww-NNN` where `ww` is the ISO week number. This makes findings sortable and uniquely traceable across runs.
+
+## Shipping the audit
+
+After each weekly run, the audit leaves a `bug-audit/YYYY-MM-DD` branch on local disk with all proposed and auto-applied changes already committed. Pushing the branch and opening a PR is a separate human-driven step.
+
+The standard Monday-morning Code prompt:
+
+```
+Ship the latest weekly bug audit findings.
+
+1. cd /Users/robrandtoul/proof-viewer
+2. Read audits/latest-findings.json. Report the run_id, total findings, severity counts, branch name, and the next_action field.
+3. Run git log main..bug-audit/YYYY-MM-DD --oneline (use the branch from the findings file). Report the commits.
+4. For each commit, show me the diff. I'll tell you which to keep and which to drop. If I want to drop a commit, drop it via git rebase -i or cherry-pick the keepers onto a fresh branch.
+5. Push the branch: git push -u origin bug-audit/YYYY-MM-DD.
+6. Open a PR:
+   gh pr create --base main --head bug-audit/YYYY-MM-DD --title "Bug audit: PV-YYYYWww" --body "<summary from the findings JSON, with severity counts and one line per finding>"
+7. Report the PR URL. I'll merge via gh pr merge --merge or via the browser.
+
+For any migration commits, do not apply via pnpm db:push:confirm until after the PR merges and main is updated.
+
+Stop after step 7.
+```
+
+Save this prompt somewhere convenient (e.g. as a Code slash command if you have one configured) so it's a one-paste action each Monday.
+
+Never push to `main` directly. The repo guardrail blocks it and that's by design. Always go through a PR.
 
 ## Updating the playbook
 
