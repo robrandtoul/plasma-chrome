@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { downloadPricingExport } from '../../lib/pricingIO'
 import AdminPricingImport from './AdminPricingImport'
+import { MATERIAL_OPTION_BACKED_ADDONS, resolveBackingOptionIds } from './backedAddons'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -83,7 +84,13 @@ export default function AdminPricingPage() {
     setLoading(true)
     setError(null)
     try {
-      const [matResult, varResult, tierResult, aoResult, apResult] = await Promise.all([
+      // Tier counts come from the database-side aggregate view
+      // (migration 000148). Previously we fetched every row in
+      // price_tiers and rolled up client-side, which silently
+      // truncated to supabase-js's 1000-row default cap and made
+      // every material past the first three look like it had zero
+      // tiers. The view returns one row per material — cheap.
+      const [matResult, varResult, tierCountResult, aoResult, apResult] = await Promise.all([
         supabase.from('materials')
           .select('id, code, display_name, category, sort_order')
           .eq('is_active', true)
@@ -91,7 +98,7 @@ export default function AdminPricingPage() {
         supabase.from('material_variants')
           .select('id, material_id, variant_type')
           .eq('is_active', true),
-        supabase.from('price_tiers').select('id, material_variant_id'),
+        supabase.from('material_price_tier_counts').select('material_id, tier_count'),
         supabase.from('add_ons')
           .select('id, code, display_name, pricing_model')
           .eq('is_active', true)
@@ -101,11 +108,12 @@ export default function AdminPricingPage() {
 
       if (matResult.error) throw matResult.error
       if (varResult.error) throw varResult.error
-      if (tierResult.error) throw tierResult.error
+      if (tierCountResult.error) throw tierCountResult.error
       if (aoResult.error) throw aoResult.error
       if (apResult.error) throw apResult.error
 
-      // Roll up per-material variant + tier counts.
+      // Roll up per-material variant counts (still client-side; the
+      // material_variants table is small).
       const variantsByMaterial = new Map<string, { count: number; type: string }>()
       for (const v of (varResult.data ?? []) as any[]) {
         const existing = variantsByMaterial.get(v.material_id)
@@ -113,17 +121,33 @@ export default function AdminPricingPage() {
         else variantsByMaterial.set(v.material_id, { count: 1, type: v.variant_type })
       }
 
-      const variantIdToMaterial = new Map<string, string>()
-      for (const v of (varResult.data ?? []) as any[]) variantIdToMaterial.set(v.id, v.material_id)
-
       const tiersByMaterial = new Map<string, number>()
-      for (const t of (tierResult.data ?? []) as any[]) {
-        const matId = variantIdToMaterial.get(t.material_variant_id)
-        if (matId) tiersByMaterial.set(matId, (tiersByMaterial.get(matId) ?? 0) + 1)
+      for (const r of (tierCountResult.data ?? []) as Array<{ material_id: string; tier_count: number }>) {
+        tiersByMaterial.set(r.material_id, Number(r.tier_count))
       }
 
       const addOnsWithPrices = new Set<string>()
       for (const ap of (apResult.data ?? []) as any[]) addOnsWithPrices.add(ap.add_on_id)
+
+      // Backed add-ons (e.g. metal_finish_upgrade) are priced in
+      // material_option_surcharges, not add_on_prices, so the
+      // `addOnsWithPrices` check above always fails for them and
+      // would falsely fire the "Needs pricing" badge. Resolve each
+      // backed add-on's option_ids and check whether ANY surcharge
+      // row exists. We only need a "has rows" yes/no; the count
+      // header keeps the query cheap.
+      const backedHasPrices = new Set<string>()
+      const backedAddOns = ((aoResult.data ?? []) as any[]).filter((a) => a.code in MATERIAL_OPTION_BACKED_ADDONS)
+      await Promise.all(backedAddOns.map(async (a) => {
+        const optIds = await resolveBackingOptionIds(a.code)
+        if (optIds.length === 0) return
+        const { count, error } = await supabase
+          .from('material_option_surcharges')
+          .select('*', { count: 'exact', head: true })
+          .in('material_option_id', optIds)
+        if (error) throw error
+        if ((count ?? 0) > 0) backedHasPrices.add(a.id)
+      }))
 
       const matRows: MaterialRow[] = ((matResult.data ?? []) as any[]).map((m) => {
         const info = variantsByMaterial.get(m.id) ?? { count: 0, type: 'default' }
@@ -144,7 +168,12 @@ export default function AdminPricingPage() {
         code: a.code,
         display_name: a.display_name,
         pricing_model: a.pricing_model,
-        has_prices: addOnsWithPrices.has(a.id),
+        // Backed add-ons read their "has prices" flag from
+        // material_option_surcharges; everything else falls back to
+        // the add_on_prices presence check.
+        has_prices: a.code in MATERIAL_OPTION_BACKED_ADDONS
+          ? backedHasPrices.has(a.id)
+          : addOnsWithPrices.has(a.id),
       }))
 
       setMaterials(matRows)
