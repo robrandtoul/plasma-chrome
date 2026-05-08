@@ -189,15 +189,18 @@ async function hsPrimaryCustomerId(token: string, conversationId: string): Promi
   return id
 }
 
-// Returns the new thread id parsed from the Resource-Id header, or 0
-// if HS responded successfully but the header was missing.
+// Returns the new thread id parsed from the response headers, or 0
+// if HS responded successfully but neither header carried an id.
 //
-// Header contract for the customer endpoint differs from /reply: the
-// reply endpoint returns Location with the thread URL and an empty
-// Resource-Id; the customer endpoint returns the thread id directly
-// in Resource-Id with an empty Location. Verified empirically against
-// the live HS API on 2026-04-27 — Access-Control-Expose-Headers came
-// back as "Location, Resource-Id" with content-length 0.
+// Header contract for the customer endpoint as observed on the live
+// HS API on 2026-04-27: Resource-Id holds the thread id directly,
+// Location is empty. The /reply endpoint inverts that pairing —
+// Location carries the thread URL, Resource-Id is empty. Reading
+// both, with Resource-Id preferred and Location as a path-tail
+// fallback, is the safe shape across both endpoints and across
+// any future HS API change that swaps which header carries the id
+// (memory:proof_viewer_helpscout_customer_endpoint.md). Mirrors the
+// Location parser at hsPostReply (~line 194) for symmetry.
 async function hsPostCustomerThread(
   token: string,
   conversationId: string,
@@ -224,9 +227,24 @@ async function hsPostCustomerThread(
     const upstream = await resp.text().catch(() => '<body read failed>')
     throw new HsError(resp.status, `HS customer thread (${resp.status}): ${upstream}`)
   }
+
+  // Prefer Resource-Id; this is the empirically-observed location of
+  // the new thread id on the customer endpoint today.
   const resourceId = resp.headers.get('Resource-Id') ?? ''
-  const parsed = Number(resourceId)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+  const fromResource = Number(resourceId)
+  if (Number.isFinite(fromResource) && fromResource > 0) return fromResource
+
+  // Fallback: parse the trailing /threads/{id} from Location, mirroring
+  // the /reply parser. Defends against an HS API tweak that starts
+  // returning the id via Location on the customer endpoint too.
+  const location = resp.headers.get('Location') ?? ''
+  const match = location.match(/\/threads\/(\d+)\b/)
+  if (match) {
+    const fromLocation = Number(match[1])
+    if (Number.isFinite(fromLocation) && fromLocation > 0) return fromLocation
+  }
+
+  return 0
 }
 
 // ── Customer thread copy ──────────────────────────────────────────────────────
