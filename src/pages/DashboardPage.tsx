@@ -1007,124 +1007,146 @@ export default function DashboardPage() {
                   />
                 </div>
 
-                {/* Search + Filters */}
-                <div className="mb-4 flex items-center gap-3">
-                  <input
-                    type="search"
-                    placeholder="Search project, contact, company, email, or Help Scout id"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
-                  />
-                  <button
-                    type="button"
-                    disabled
-                    title="Material and Date-range filters land in Phase 2"
-                    className="shrink-0 cursor-not-allowed rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-300"
-                  >Filters</button>
-                </div>
-
-                {/* Status filter chips */}
-                <div className="mb-4 flex flex-wrap gap-2">
-                  <Chip
-                    label="All"
-                    count={projects.length}
-                    active={statusFilter.size === 0}
-                    onClick={() => setStatusFilter(new Set())}
-                  />
-                  <Chip
-                    label="In progress"
-                    count={statusCounts.in_progress}
-                    active={statusFilter.has('in_progress')}
-                    onClick={() => toggleStatus('in_progress')}
-                  />
-                  <Chip
-                    label="Approved"
-                    count={statusCounts.approved}
-                    active={statusFilter.has('approved')}
-                    onClick={() => toggleStatus('approved')}
-                  />
-                  <Chip
-                    label="Dormant"
-                    count={statusCounts.dormant}
-                    active={statusFilter.has('dormant')}
-                    onClick={() => toggleStatus('dormant')}
-                  />
-                  <Chip
-                    label="Abandoned"
-                    count={statusCounts.abandoned}
-                    active={statusFilter.has('abandoned')}
-                    onClick={() => toggleStatus('abandoned')}
-                  />
-                </div>
-
-                {/* Sort + Group-by */}
-                <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Sort</span>
-                    <Segmented
-                      options={[
-                        { value: 'activity', label: 'Activity' },
-                        { value: 'date',     label: 'Date' },
-                        { value: 'name',     label: 'Name' },
-                      ]}
-                      value={sort}
-                      onChange={(v) => handleSortChange(v as SortMode)}
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Group</span>
-                    <Segmented
-                      options={[
-                        { value: 'time',    label: 'Time' },
-                        { value: 'company', label: 'Company' },
-                      ]}
-                      value={group}
-                      onChange={(v) => handleGroupChange(v as GroupMode)}
-                    />
-                  </div>
-                </div>
-
-                {/* List */}
+                {/* List card. Search, status chips and sort/group toggles
+                    sit inside the same card as the project list so they
+                    visibly belong to the list rather than floating in the
+                    page margin. The truly-empty state (no projects yet)
+                    keeps its own standalone card since the controls would
+                    have nothing to act on. */}
                 {projects.length === 0 ? (
                   <div className="rounded-2xl bg-white py-20 text-center shadow-sm ring-1 ring-gray-200">
                     <p className="text-gray-400">No projects yet.</p>
                     <Link to="/proofs/new" className="mt-3 inline-block text-sm font-medium text-gray-900 underline">Create the first one</Link>
                   </div>
-                ) : noResults ? (
-                  <div className="rounded-2xl bg-white py-16 text-center shadow-sm ring-1 ring-gray-200">
-                    <p className="text-gray-400">No projects match the current filters.</p>
-                    <button
-                      onClick={() => { setSearch(''); setStatusFilter(new Set()); setTileFilter(null) }}
-                      className="mt-2 text-sm text-gray-500 underline underline-offset-2 hover:text-gray-900"
-                    >Clear filters</button>
-                  </div>
                 ) : (
                   <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-                    {sections.map((section, si) => {
-                      // Virtualise the Older drawer only — Today /
-                      // This week / Pinned / Team / Company sections
-                      // are bounded in size and don't need it. The
-                      // virtualised renderer reuses the same
-                      // ProjectRow component so chips, menus, and
-                      // keyboard interaction behave identically.
-                      const virtualise = section.kind === 'time' && section.key === 'older'
-                      return (
-                        <div key={section.key} className={si > 0 ? 'border-t border-gray-100' : ''}>
-                          <div className="flex items-center gap-3 bg-gray-50/80 px-5 py-1.5">
-                            {section.kind === 'pinned' && <PinIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
-                            {section.kind === 'team'   && <UsersIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
-                            <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">{section.title}</span>
-                            <span className="text-xs text-gray-400 tabular-nums">{section.projects.length}</span>
-                          </div>
-                          {virtualise ? (
-                            <Virtuoso
-                              useWindowScroll
-                              data={section.projects}
-                              overscan={400}
-                              computeItemKey={(_, p) => p.proof_id}
-                              itemContent={(ri, p) => (
-                                <div className={ri > 0 ? 'border-t border-gray-100' : ''}>
+                    {/* Controls block — divider below separates it from the list. */}
+                    <div className="border-b border-gray-100 px-5 py-4">
+                      {/* Search + Filters */}
+                      <div className="mb-4 flex items-center gap-3">
+                        <input
+                          type="search"
+                          placeholder="Search project, contact, company, email, or Help Scout id"
+                          value={search}
+                          onChange={(e) => setSearch(e.target.value)}
+                          className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                        />
+                        <button
+                          type="button"
+                          disabled
+                          title="Material and Date-range filters land in Phase 2"
+                          className="shrink-0 cursor-not-allowed rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-300"
+                        >Filters</button>
+                      </div>
+
+                      {/* Status filter chips */}
+                      <div className="mb-4 flex flex-wrap gap-2">
+                        <Chip
+                          label="All"
+                          count={projects.length}
+                          active={statusFilter.size === 0}
+                          onClick={() => setStatusFilter(new Set())}
+                        />
+                        <Chip
+                          label="In progress"
+                          count={statusCounts.in_progress}
+                          active={statusFilter.has('in_progress')}
+                          onClick={() => toggleStatus('in_progress')}
+                        />
+                        <Chip
+                          label="Approved"
+                          count={statusCounts.approved}
+                          active={statusFilter.has('approved')}
+                          onClick={() => toggleStatus('approved')}
+                        />
+                        <Chip
+                          label="Dormant"
+                          count={statusCounts.dormant}
+                          active={statusFilter.has('dormant')}
+                          onClick={() => toggleStatus('dormant')}
+                        />
+                        <Chip
+                          label="Abandoned"
+                          count={statusCounts.abandoned}
+                          active={statusFilter.has('abandoned')}
+                          onClick={() => toggleStatus('abandoned')}
+                        />
+                      </div>
+
+                      {/* Sort + Group-by */}
+                      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Sort</span>
+                          <Segmented
+                            options={[
+                              { value: 'activity', label: 'Activity' },
+                              { value: 'date',     label: 'Date' },
+                              { value: 'name',     label: 'Name' },
+                            ]}
+                            value={sort}
+                            onChange={(v) => handleSortChange(v as SortMode)}
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Group</span>
+                          <Segmented
+                            options={[
+                              { value: 'time',    label: 'Time' },
+                              { value: 'company', label: 'Company' },
+                            ]}
+                            value={group}
+                            onChange={(v) => handleGroupChange(v as GroupMode)}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {noResults ? (
+                      <div className="py-16 text-center">
+                        <p className="text-gray-400">No projects match the current filters.</p>
+                        <button
+                          onClick={() => { setSearch(''); setStatusFilter(new Set()); setTileFilter(null) }}
+                          className="mt-2 text-sm text-gray-500 underline underline-offset-2 hover:text-gray-900"
+                        >Clear filters</button>
+                      </div>
+                    ) : (
+                      sections.map((section, si) => {
+                        // Virtualise the Older drawer only — Today /
+                        // This week / Pinned / Team / Company sections
+                        // are bounded in size and don't need it. The
+                        // virtualised renderer reuses the same
+                        // ProjectRow component so chips, menus, and
+                        // keyboard interaction behave identically.
+                        const virtualise = section.kind === 'time' && section.key === 'older'
+                        return (
+                          <div key={section.key} className={si > 0 ? 'border-t border-gray-100' : ''}>
+                            <div className="flex items-center gap-3 bg-gray-50/80 px-5 py-1.5">
+                              {section.kind === 'pinned' && <PinIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
+                              {section.kind === 'team'   && <UsersIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
+                              <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">{section.title}</span>
+                              <span className="text-xs text-gray-400 tabular-nums">{section.projects.length}</span>
+                            </div>
+                            {virtualise ? (
+                              <Virtuoso
+                                useWindowScroll
+                                data={section.projects}
+                                overscan={400}
+                                computeItemKey={(_, p) => p.proof_id}
+                                itemContent={(ri, p) => (
+                                  <div className={ri > 0 ? 'border-t border-gray-100' : ''}>
+                                    <ProjectRow
+                                      project={p}
+                                      minePinned={minePinAt.has(p.proof_id)}
+                                      teamPinned={teamPinAt.has(p.proof_id)}
+                                      onToggleMinePin={toggleMinePin}
+                                      onToggleTeamPin={toggleTeamPin}
+                                    />
+                                  </div>
+                                )}
+                              />
+                            ) : (
+                              section.projects.map((p, ri) => (
+                                <div key={p.proof_id} className={ri > 0 ? 'border-t border-gray-100' : ''}>
                                   <ProjectRow
                                     project={p}
                                     minePinned={minePinAt.has(p.proof_id)}
@@ -1133,24 +1155,12 @@ export default function DashboardPage() {
                                     onToggleTeamPin={toggleTeamPin}
                                   />
                                 </div>
-                              )}
-                            />
-                          ) : (
-                            section.projects.map((p, ri) => (
-                              <div key={p.proof_id} className={ri > 0 ? 'border-t border-gray-100' : ''}>
-                                <ProjectRow
-                                  project={p}
-                                  minePinned={minePinAt.has(p.proof_id)}
-                                  teamPinned={teamPinAt.has(p.proof_id)}
-                                  onToggleMinePin={toggleMinePin}
-                                  onToggleTeamPin={toggleTeamPin}
-                                />
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      )
-                    })}
+                              ))
+                            )}
+                          </div>
+                        )
+                      })
+                    )}
                   </div>
                 )}
               </>
@@ -1189,12 +1199,12 @@ function Chip({
       className={[
         'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
         active
-          ? 'bg-gray-900 text-white ring-gray-900'
-          : 'bg-white text-gray-600 ring-gray-200 hover:bg-gray-50',
+          ? 'bg-gray-100 text-gray-900 ring-gray-200'
+          : 'bg-transparent text-gray-500 ring-transparent hover:bg-gray-50 hover:text-gray-900',
       ].join(' ')}
     >
       <span>{label}</span>
-      <span className={['tabular-nums', active ? 'text-gray-300' : 'text-gray-400'].join(' ')}>· {count}</span>
+      <span className="tabular-nums text-gray-400">· {count}</span>
     </button>
   )
 }
