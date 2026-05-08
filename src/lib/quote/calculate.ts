@@ -21,8 +21,9 @@ export interface QuoteSelection {
   // Currency-resolved per-extra-name surcharge from
   // materials.split_name_surcharge_{gbp,eur,usd}. Null when the
   // material has no surcharge configured for the active currency
-  // (wood, acrylic, paper standard, carbon fibre, etc.) — extra
-  // names are simply included.
+  // (today: wood species). Acrylic, carbon fibre, and standard
+  // paper joined the surcharging set in migration 000146 — extra
+  // names on those materials now bill the configured rate.
   perExtraNameSurcharge: number | null
   // Finish (or other material_option) surcharge resolved at the
   // chosen quantity, in major currency units. Zero for the base
