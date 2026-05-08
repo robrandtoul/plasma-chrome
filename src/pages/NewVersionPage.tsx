@@ -1228,8 +1228,20 @@ export default function NewVersionPage() {
       // identity that supports the heuristic side hint (if any).
       // This keeps the side-hint signal informative even for
       // files with no name token: a "Front.jpg" drop biases
-      // towards a front-supporting identity.
+      // towards a front-supporting identity. Two-pass: prefer a
+      // candidate whose hinted slot is not already claimed by an
+      // earlier file in this batch, then fall back to any
+      // candidate that supports the hint so a hint can still
+      // resolve when every candidate slot is claimed.
       if (heuristicSide != null) {
+        for (const candidate of fallbackOrder) {
+          const sides = availableSidesForIdentity(candidate)
+          if (sides.length === 0) continue
+          if (!sides.includes(heuristicSide)) continue
+          if (!claimedSlots.has(claimKey(candidate, heuristicSide))) {
+            return { identity: candidate, side: heuristicSide }
+          }
+        }
         for (const candidate of fallbackOrder) {
           const sides = availableSidesForIdentity(candidate)
           if (sides.length === 0) continue
@@ -1282,7 +1294,31 @@ export default function NewVersionPage() {
     // replacement (matches CarryCard's per-card drop semantics).
     const claimedV1RowIds = new Set<string>()
 
+    // Hint-first scheduling. Files whose filename surfaces a side
+    // hint (Front/Back token, or one-sided mode where every file
+    // is implicitly front-hinted) are processed before hintless
+    // files so their slot claims seed claimedSlots before the
+    // alternator runs for hintless files. Without this, a hintless
+    // name-matched file (e.g. "DavidFindel.jpg") can pick the same
+    // side the alternator points at, then a later hint-bearing
+    // file (e.g. "Front.jpg") with no name match falls through to
+    // the same (identity, side) — replacing one v1 carry while
+    // leaving the other unfilled and stamping a duplicate fresh
+    // card on the already-claimed slot. resolveSlot still re-runs
+    // matchImageToName once per file; the partition pass only
+    // reads .side and discards the rest.
+    const hintedFirst: File[] = []
+    const hintless: File[] = []
     for (const file of dedupedOk) {
+      const sideHint = sidedness === 'one-sided'
+        ? 'front'
+        : matchImageToName(file.name, names).side
+      if (sideHint != null) hintedFirst.push(file)
+      else hintless.push(file)
+    }
+    const orderedFiles = [...hintedFirst, ...hintless]
+
+    for (const file of orderedFiles) {
       const slot = resolveSlot(file)
       if (slot == null) {
         orphanFilenames.push(file.name)
