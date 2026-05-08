@@ -1039,63 +1039,62 @@ export default function DashboardPage() {
                         >Filters</button>
                       </div>
 
-                      {/* Status filter chips */}
-                      <div className="mb-4 flex flex-wrap gap-2">
-                        <Chip
-                          label="All"
-                          count={projects.length}
-                          active={statusFilter.size === 0}
-                          onClick={() => setStatusFilter(new Set())}
-                        />
-                        <Chip
-                          label="In progress"
-                          count={statusCounts.in_progress}
-                          active={statusFilter.has('in_progress')}
-                          onClick={() => toggleStatus('in_progress')}
-                        />
-                        <Chip
-                          label="Approved"
-                          count={statusCounts.approved}
-                          active={statusFilter.has('approved')}
-                          onClick={() => toggleStatus('approved')}
-                        />
-                        <Chip
-                          label="Dormant"
-                          count={statusCounts.dormant}
-                          active={statusFilter.has('dormant')}
-                          onClick={() => toggleStatus('dormant')}
-                        />
-                        <Chip
-                          label="Abandoned"
-                          count={statusCounts.abandoned}
-                          active={statusFilter.has('abandoned')}
-                          onClick={() => toggleStatus('abandoned')}
-                        />
-                      </div>
-
-                      {/* Sort + Group-by */}
-                      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Sort</span>
-                          <Segmented
-                            options={[
-                              { value: 'activity', label: 'Activity' },
-                              { value: 'date',     label: 'Date' },
-                              { value: 'name',     label: 'Name' },
-                            ]}
-                            value={sort}
-                            onChange={(v) => handleSortChange(v as SortMode)}
+                      {/* Status chips and Sort/Group dropdowns share a
+                          row. Sort and Group are "set once, forget"
+                          controls, so they live as compact dropdowns on
+                          the right rather than as a permanent segmented
+                          strip on their own row. flex-wrap means they
+                          stack on narrow viewports rather than overflow. */}
+                      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                        <div className="flex flex-wrap gap-2">
+                          <Chip
+                            label="All"
+                            count={projects.length}
+                            active={statusFilter.size === 0}
+                            onClick={() => setStatusFilter(new Set())}
+                          />
+                          <Chip
+                            label="In progress"
+                            count={statusCounts.in_progress}
+                            active={statusFilter.has('in_progress')}
+                            onClick={() => toggleStatus('in_progress')}
+                          />
+                          <Chip
+                            label="Approved"
+                            count={statusCounts.approved}
+                            active={statusFilter.has('approved')}
+                            onClick={() => toggleStatus('approved')}
+                          />
+                          <Chip
+                            label="Dormant"
+                            count={statusCounts.dormant}
+                            active={statusFilter.has('dormant')}
+                            onClick={() => toggleStatus('dormant')}
+                          />
+                          <Chip
+                            label="Abandoned"
+                            count={statusCounts.abandoned}
+                            active={statusFilter.has('abandoned')}
+                            onClick={() => toggleStatus('abandoned')}
                           />
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-semibold uppercase tracking-wider text-gray-400">Group</span>
-                          <Segmented
+                          <SelectField
+                            value={sort}
+                            onChange={(v) => handleSortChange(v as SortMode)}
                             options={[
-                              { value: 'time',    label: 'Time' },
-                              { value: 'company', label: 'Company' },
+                              { value: 'activity', label: 'Sort: Activity' },
+                              { value: 'date',     label: 'Sort: Date' },
+                              { value: 'name',     label: 'Sort: Name' },
                             ]}
+                          />
+                          <SelectField
                             value={group}
                             onChange={(v) => handleGroupChange(v as GroupMode)}
+                            options={[
+                              { value: 'time',    label: 'Group: Time' },
+                              { value: 'company', label: 'Group: Company' },
+                            ]}
                           />
                         </div>
                       </div>
@@ -1209,7 +1208,11 @@ function Chip({
   )
 }
 
-function Segmented<T extends string>({
+// Compact native-select dropdown with a chevron. Used by the Sort and
+// Group controls. Native <select> gets keyboard accessibility, the OS
+// picker on mobile, and screen-reader semantics for free; the wrapper
+// just adds the chevron and the muted-pill styling.
+function SelectField<T extends string>({
   options,
   value,
   onChange,
@@ -1219,21 +1222,28 @@ function Segmented<T extends string>({
   onChange: (v: T) => void
 }) {
   return (
-    <div className="flex rounded-lg border border-gray-200 bg-white p-0.5">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          onClick={() => onChange(o.value)}
-          aria-pressed={value === o.value}
-          className={[
-            'rounded-md px-3 py-1 text-sm font-medium transition-colors',
-            value === o.value
-              ? 'bg-gray-100 text-gray-900'
-              : 'text-gray-500 hover:text-gray-900',
-          ].join(' ')}
-        >{o.label}</button>
-      ))}
+    <div className="relative">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as T)}
+        className="cursor-pointer appearance-none rounded-md border border-gray-200 bg-white py-1 pl-2.5 pr-7 text-xs font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-900"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+      <svg
+        aria-hidden
+        viewBox="0 0 16 16"
+        className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-gray-400"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <polyline points="4 6 8 10 12 6" />
+      </svg>
     </div>
   )
 }
