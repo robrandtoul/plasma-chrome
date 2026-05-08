@@ -4,9 +4,10 @@
 //
 //   under a minute     → "just now"
 //   under an hour      → "Nm ago"
-//   under 48 hours     → "Nh ago"
-//   under a week       → "Nd ago"
-//   older              → absolute date ("12 Mar 2025")
+//   under 24 hours     → "Nh ago"
+//   under 7 days       → "Nd ago"
+//   under 4 weeks      → "Nw ago"
+//   older              → short absolute date ("8 May" / "8 May 2025")
 //
 // No i18n pluralisation — "1m ago" / "2m ago" reads fine in the
 // contexts this is used, and British-English summarising ("half
@@ -30,15 +31,23 @@ export function relativeTime(iso: string | null | undefined): string {
   if (min < 60) return `${min}m ago`
 
   const hr = Math.floor(diffMs / 3_600_000)
-  if (hr < 48) return `${hr}h ago`
+  if (hr < 24) return `${hr}h ago`
 
   const days = Math.floor(diffMs / 86_400_000)
-  if (days < 8) return `${days}d ago`
+  if (days < 7) return `${days}d ago`
 
-  return new Date(iso).toLocaleDateString('en-GB', {
+  const weeks = Math.floor(days / 7)
+  if (weeks < 4) return `${weeks}w ago`
+
+  // Short absolute date matches the dashboard's existing chrome:
+  // current-year values drop the year ("8 May"), older values
+  // include it ("8 May 2025") so the reader can disambiguate.
+  const then_d = new Date(iso)
+  const includeYear = then_d.getFullYear() !== new Date().getFullYear()
+  return then_d.toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'short',
-    year: 'numeric',
+    ...(includeYear ? { year: 'numeric' } : {}),
   })
 }
 
