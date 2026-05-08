@@ -27,6 +27,9 @@ import { AdjacentTiers } from '../components/quote/AdjacentTiers'
 import { AdjacentVariants } from '../components/quote/AdjacentVariants'
 import { CopyQuoteButton } from '../components/quote/CopyQuoteButton'
 import { formatQuoteForCopy } from '../lib/quote/formatQuoteForCopy'
+import { SpreadQuoteToggle } from '../components/quote/SpreadQuoteToggle'
+import { SpreadQuantityInput } from '../components/quote/SpreadQuantityInput'
+import { SpreadQuoteResults } from '../components/quote/SpreadQuoteResults'
 
 // Quote compiler — v1 read-only.
 //
@@ -71,6 +74,13 @@ export default function QuotePage() {
   // level state, not per-pricing-context — persists across
   // material and currency switches.
   const [customFlags, setCustomFlags] = useState<CustomQuoteFlagsState>(EMPTY_CUSTOM_QUOTE_FLAGS)
+  // Spread quote mode: presentation switch over the same
+  // per-quantity calculation. Internal-only — used when a
+  // customer asks for prices across multiple quantities at
+  // once. When ON, the quantity input swaps for a multi-entry
+  // chip field and the price column renders a results table.
+  const [spreadMode, setSpreadMode] = useState(false)
+  const [spreadQuantities, setSpreadQuantities] = useState<number[]>([])
 
   // Material picker auto-collapses once a material is selected so
   // the spec controls below sit closer to the top of the viewport
@@ -422,17 +432,43 @@ export default function QuotePage() {
                   currency is the worst possible bug. */}
               <CurrencyToggle value={currency} onChange={setCurrency} />
 
+              {/* Spread quote toggle — presentation switch over
+                  the same per-quantity calculation. Sits flush
+                  above the quantity input so the swap reads as
+                  one mode change rather than two fields. */}
+              <SpreadQuoteToggle
+                value={spreadMode}
+                onChange={setSpreadMode}
+                disabled={!selectedMaterialId || !currency}
+              />
+
               {/* Quantity renders too, but disabled until BOTH
                   material AND currency are picked. The disabled
                   state shows a "Pick a material and currency to
                   enable" hint. */}
-              <QuantityInput
-                value={quantity}
-                onChange={setQuantity}
-                variantTiers={variantTiers}
-                currency={currency}
-                disabled={!selectedMaterialId || !currency}
-              />
+              {spreadMode ? (
+                <SpreadQuantityInput
+                  values={spreadQuantities}
+                  onChange={setSpreadQuantities}
+                  variantTiers={variantTiers}
+                  currency={currency}
+                  disabled={!selectedMaterialId || !currency}
+                />
+              ) : (
+                <QuantityInput
+                  value={quantity}
+                  onChange={setQuantity}
+                  variantTiers={variantTiers}
+                  currency={currency}
+                  disabled={!selectedMaterialId || !currency}
+                  // Live preview reuses the same calculate() result
+                  // the headline + CopyQuoteButton already use, so
+                  // the preview can never drift from those.
+                  previewTotal={result.total}
+                  previewUnitPrice={result.unitPrice}
+                  previewValidTier={result.validTier}
+                />
+              )}
 
               {/* Names input — only renders when the active
                   (material × currency) actually bills extra names.
@@ -478,7 +514,47 @@ export default function QuotePage() {
 
           {/* ── Price column ─────────────────────────────────────────────── */}
           <div className="space-y-4">
-            {customQuote ? (
+            {spreadMode ? (
+              /* Spread quote mode — table-shaped results card
+                 replaces the headline + adjacent strips + snap
+                 chips entirely. Custom-quote flags still flow
+                 through to the bottom of the spread card so a
+                 mixed scenario (multi-quantity + NFC) is
+                 obvious. The above-max bailout doesn't apply to
+                 spread mode — invalid quantities surface as
+                 inline manual-swap prompts inside
+                 SpreadQuantityInput rather than collapsing the
+                 whole column. */
+              <SpreadQuoteResults
+                quantities={spreadQuantities}
+                onChangeQuantities={setSpreadQuantities}
+                variantTiers={variantTiers}
+                finishSurchargesByQty={
+                  activeOption ? pricing.surchargesByOptionId.get(activeOption.id) ?? null : null
+                }
+                currency={currency}
+                materialDisplayName={selectedMaterial?.display_name ?? null}
+                variantDisplayName={
+                  selectedVariantId && variants[0]?.variant_type !== 'default'
+                    ? variants.find((v) => v.id === selectedVariantId)?.display_name ?? null
+                    : null
+                }
+                finishOption={
+                  showFinishToggle && activeOption
+                    ? { displayName: activeOption.display_name, isBase: activeOption.is_base }
+                    : null
+                }
+                splitNameSurcharge={
+                  perExtraNameSurcharge != null && names > 1
+                    ? (names - 1) * perExtraNameSurcharge
+                    : 0
+                }
+                names={names}
+                perExtraNameSurcharge={perExtraNameSurcharge}
+                customFlags={customFlags}
+                loading={pricing.loading && !tiersFresh}
+              />
+            ) : customQuote ? (
               /* Custom-quote bailout. Replaces the entire pricing
                  area — no partial number, no fall-through to base.
                  SpecSummary still renders below so the designer can
@@ -535,8 +611,10 @@ export default function QuotePage() {
                 confirming the quote. Mirrors the form order so
                 the eye can pair input and summary. Stays visible
                 in the bailout state — the spec is still the
-                spec, the panel just replaces the price. */}
-            {selectedMaterialId && (
+                spec, the panel just replaces the price. Hidden
+                in spread mode — the spread results card carries
+                its own header. */}
+            {!spreadMode && selectedMaterialId && (
               <SpecSummary
                 materialName={selectedMaterial?.display_name ?? null}
                 variantType={variants[0]?.variant_type ?? null}
@@ -563,7 +641,7 @@ export default function QuotePage() {
                 snap chips own the resolution path there). The
                 formatter is pure and runs on every render of the
                 price column; cheap. */}
-            {!customQuote && !noVariantsAvailable && tiersFresh && result.validTier
+            {!spreadMode && !customQuote && !noVariantsAvailable && tiersFresh && result.validTier
               && selectedMaterial && (() => {
                 const formatted = formatQuoteForCopy({
                   selection: {
@@ -614,7 +692,7 @@ export default function QuotePage() {
                 custom-quote bailout is active. AdjacentVariants
                 additionally suppresses for default-variant
                 materials. */}
-            {!customQuote && tiersFresh && result.validTier && (
+            {!spreadMode && !customQuote && tiersFresh && result.validTier && (
               <AdjacentTiers
                 tiers={variantTiers}
                 materialCode={selectedMaterial?.code ?? null}
@@ -623,7 +701,7 @@ export default function QuotePage() {
                 extraTotalAt={extraTotalAt}
               />
             )}
-            {!customQuote && tiersFresh && result.validTier && (
+            {!spreadMode && !customQuote && tiersFresh && result.validTier && (
               <AdjacentVariants
                 variants={variants}
                 currentVariantId={selectedVariantId}
@@ -638,7 +716,7 @@ export default function QuotePage() {
                 isn't a valid tier and tiers have loaded. Click to
                 jump to the suggested quantity. Suppressed in the
                 bailout state. */}
-            {!customQuote && tiersFresh && quantity != null && !result.validTier && (result.snap.lower || result.snap.upper) && (
+            {!spreadMode && !customQuote && tiersFresh && quantity != null && !result.validTier && (result.snap.lower || result.snap.upper) && (
               <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-amber-200">
                 <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
                   No tier at {quantity.toLocaleString()}
