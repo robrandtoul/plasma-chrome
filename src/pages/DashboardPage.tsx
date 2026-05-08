@@ -379,7 +379,11 @@ function ProjectRow({ project }: ProjectRowProps) {
       ].join(' ')}
     >
       <ViewedDot state={viewedStateFor(project)} />
-      <DesignerAvatar p={project} />
+      {/* No version yet → no designer to attribute → no avatar.
+          Rendering an empty initials circle on shell rows reads as
+          a missing-data bug. Status dot still renders so the row
+          isn't visually shorter than its siblings. */}
+      {project.current_version_id && <DesignerAvatar p={project} />}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-[15px] font-medium text-gray-900">{projectName}</span>
