@@ -594,7 +594,6 @@ export default function DashboardPage() {
   const { role } = useAuth()
   const [projects, setProjects]           = useState<DashboardProject[]>([])
   const [tileCounts, setTileCounts]       = useState<TileCounts | null>(null)
-  const [needsAttention, setNeedsAttention] = useState<Set<string>>(new Set())
   const [latestEvents, setLatestEvents]   = useState<DashboardLatestEvent[]>([])
   const [loading, setLoading]             = useState(true)
   const [search, setSearch]               = useState('')
@@ -620,13 +619,12 @@ export default function DashboardPage() {
   }, [])
 
   async function loadDashboard() {
-    // Note: the four queries below depend on migration 000152
+    // Note: the three queries below depend on migration 000152
     // (public_dashboard_projects view + dashboard_tile_counts() +
-    // proofs_needing_attention() RPC + designer presentation columns
-    // on profiles). The page will throw / render the empty state until
-    // that migration has been pushed to the linked Supabase project.
-    // Until you run `pnpm db:push:confirm` for 000152 the dashboard
-    // will fail to load — expected.
+    // designer presentation columns on profiles) and migration 000154
+    // which extends the view with rule_code / rule_meta columns. The
+    // page will throw / render the empty state until both migrations
+    // have been pushed to the linked Supabase project.
     const projectsPromise = supabase
       .from('public_dashboard_projects')
       .select('*')
@@ -634,7 +632,6 @@ export default function DashboardPage() {
       .limit(2000)
 
     const tilesPromise = supabase.rpc('dashboard_tile_counts')
-    const naPromise    = supabase.rpc('proofs_needing_attention')
     const eventsPromise = supabase
       .from('dashboard_latest_events')
       .select('*')
@@ -644,9 +641,8 @@ export default function DashboardPage() {
     const [
       { data: projectRows },
       { data: tileRows },
-      { data: naIds },
       { data: events },
-    ] = await Promise.all([projectsPromise, tilesPromise, naPromise, eventsPromise])
+    ] = await Promise.all([projectsPromise, tilesPromise, eventsPromise])
 
     setProjects((projectRows ?? []) as DashboardProject[])
 
@@ -654,10 +650,6 @@ export default function DashboardPage() {
     // as an array even though the function emits exactly one row.
     const tile = Array.isArray(tileRows) ? tileRows[0] : tileRows
     setTileCounts((tile ?? null) as TileCounts | null)
-
-    // proofs_needing_attention() returns uuid[]. supabase-js returns
-    // the array directly as `data`.
-    setNeedsAttention(new Set<string>(((naIds ?? []) as string[]).filter(Boolean)))
 
     setLatestEvents((events ?? []) as DashboardLatestEvent[])
     setLoading(false)
@@ -712,7 +704,7 @@ export default function DashboardPage() {
         ].filter(Boolean).join(' ').toLowerCase()
         if (!hay.includes(q)) return false
       }
-      if (tileFilter === 'needs_attention'    && !needsAttention.has(p.proof_id)) return false
+      if (tileFilter === 'needs_attention'    && !p.rule_code) return false
       if (tileFilter === 'awaiting_customer'  && !(p.status === 'in_progress' && p.current_version_viewed_at == null)) return false
       if (tileFilter === 'dormant'            && p.status !== 'dormant') return false
       if (tileFilter === 'approved_this_week') {
@@ -722,7 +714,7 @@ export default function DashboardPage() {
       if (statusFilter.size > 0 && !statusFilter.has(p.status)) return false
       return true
     })
-  }, [projects, search, tileFilter, statusFilter, needsAttention])
+  }, [projects, search, tileFilter, statusFilter])
 
   // Sort
   const sortedProjects = useMemo(() => {
