@@ -115,9 +115,13 @@ export const TEMPLATE_VARIABLES: TemplateVariableMeta[] = [
 // in the seeded copy so admins see a working example before touching
 // anything.
 
+// Bodies do not include a sign-off: Help Scout auto-appends the
+// configured signature to every outgoing reply, so a manual
+// "Many thanks, Plasma Design" duplicates it for the customer.
+// Bug audit PV-2026W19-001 flagged the original drift.
 export const DEFAULT_BODIES: Record<string, string> = {
   first_proof:
-    `Hi {first_name},\n\nHere's the first proof of your cards{? company} for {company}{/?}. Have a look and let us know what you think.\n\n{url}\n\nMany thanks,\nPlasma Design`,
+    `Hi {first_name},\n\nHere's the first proof of your cards{? company} for {company}{/?}. Have a look and let us know what you think.\n\n{url}`,
   revision:
-    `Hi {first_name},\n\nHere's v{version_number} of your cards{? company} for {company}{/?} with the changes you asked for. Take another look when you have a moment.\n\n{url}\n\nMany thanks,\nPlasma Design`,
+    `Hi {first_name},\n\nHere's v{version_number} of your cards{? company} for {company}{/?} with the changes you asked for. Take another look when you have a moment.\n\n{url}`,
 }
