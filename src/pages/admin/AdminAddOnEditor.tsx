@@ -5,17 +5,23 @@ import PriceCell, { currencySymbol } from './PriceCell'
 import Modal from '../../components/Modal'
 import { downloadPricingExport } from '../../lib/pricingIO'
 import { logAudit } from '../../lib/audit'
+import { MATERIAL_OPTION_BACKED_ADDONS, resolveBackingOptionIds } from './backedAddons'
 
 type Currency = 'GBP' | 'EUR' | 'USD'
 const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
 
 // Add-ons whose tiers must align with their parent materials' price-tier
 // quantities. The "Add tier" inline form constrains its quantity picker to
-// `union(parent qtys) - existing add-on qtys` so we can't write an
-// add_on_prices row at a quantity nobody can order.
+// `union(parent qtys) - existing add-on qtys` so we can't write a
+// surcharge row at a quantity nobody can order.
 const PARENT_MATERIAL_CODES_BY_ADDON: Record<string, string[]> = {
   metal_finish_upgrade: ['metal_steel', 'metal_gold'],
 }
+
+// Note: MATERIAL_OPTION_BACKED_ADDONS and resolveBackingOptionIds
+// live in ./backedAddons.ts so the admin pricing index can share
+// the same source of truth when computing the "Needs pricing"
+// badge.
 
 interface AddOn {
   id: string
@@ -56,12 +62,51 @@ export default function AdminAddOnEditor() {
         .single()
       if (aoErr || !aoData) throw aoErr ?? new Error('Add-on not found')
 
-      const { data: priceData, error: priceErr } = await supabase
-        .from('add_on_prices')
-        .select('id, add_on_id, currency, quantity, surcharge')
-        .eq('add_on_id', aoData.id)
-        .order('quantity')
-      if (priceErr) throw priceErr
+      // Branch the data layer for material-option-backed add-ons.
+      // For those, we read material_option_surcharges and synthesize
+      // a Price[] keyed by (currency, quantity) — one synthetic row
+      // per cell rather than per underlying option_id. Caller edits
+      // one cell; the save fans out to every backing option_id.
+      let priceData: Price[] = []
+      if (MATERIAL_OPTION_BACKED_ADDONS[aoData.code]) {
+        const optIds = await resolveBackingOptionIds(aoData.code)
+        if (optIds.length === 0) {
+          throw new Error(`No material_option rows found for add-on ${aoData.code}`)
+        }
+        const { data: rows, error: rowErr } = await supabase
+          .from('material_option_surcharges')
+          .select('material_option_id, currency, quantity, surcharge')
+          .in('material_option_id', optIds)
+          .order('quantity')
+        if (rowErr) throw rowErr
+        // Group by (currency, quantity) and surface one synthetic
+        // Price per group. The four backing rows are identically
+        // priced (verified in the pre-implementation audit), so we
+        // pick the first row's surcharge as canonical.
+        const byKey = new Map<string, number>()
+        for (const r of (rows ?? []) as Array<{ currency: string; quantity: number; surcharge: number }>) {
+          const k = `${r.currency}|${r.quantity}`
+          if (!byKey.has(k)) byKey.set(k, Number(r.surcharge))
+        }
+        priceData = [...byKey.entries()].map(([k, surcharge]) => {
+          const [currency, qty] = k.split('|')
+          return {
+            id: `mos:${k}`,
+            add_on_id: aoData.id,
+            currency: currency as Currency,
+            quantity: Number(qty),
+            surcharge,
+          }
+        }).sort((a, b) => (a.quantity ?? 0) - (b.quantity ?? 0))
+      } else {
+        const { data, error } = await supabase
+          .from('add_on_prices')
+          .select('id, add_on_id, currency, quantity, surcharge')
+          .eq('add_on_id', aoData.id)
+          .order('quantity')
+        if (error) throw error
+        priceData = (data ?? []) as Price[]
+      }
 
       const parentCodes = PARENT_MATERIAL_CODES_BY_ADDON[aoData.code] ?? []
       let parentQtys: number[] = []
@@ -85,7 +130,7 @@ export default function AdminAddOnEditor() {
       }
 
       setAddOn(aoData as AddOn)
-      setPrices((priceData ?? []) as Price[])
+      setPrices(priceData)
       setParentQuantities(parentQtys)
     } catch (e) {
       setLoadError((e as Error).message)
@@ -96,6 +141,36 @@ export default function AdminAddOnEditor() {
 
   async function createTier(quantity: number, gbp: number, eur: number, usd: number) {
     if (!addOn) return
+    if (MATERIAL_OPTION_BACKED_ADDONS[addOn.code]) {
+      // Fan out to every backing option_id × 3 currencies — 12 rows
+      // for Mirror/Brushed (Steel + Gold). Editing the synthesised
+      // single cell keeps all four schedules in lockstep.
+      const optIds = await resolveBackingOptionIds(addOn.code)
+      const rows = optIds.flatMap((oid) => [
+        { material_option_id: oid, currency: 'GBP' as const, quantity, surcharge: gbp },
+        { material_option_id: oid, currency: 'EUR' as const, quantity, surcharge: eur },
+        { material_option_id: oid, currency: 'USD' as const, quantity, surcharge: usd },
+      ])
+      const { error } = await supabase.from('material_option_surcharges').insert(rows)
+      if (error) throw new Error(error.message)
+      // Append synthetic UI rows — one per (currency, quantity).
+      const synthetic: Price[] = (['GBP', 'EUR', 'USD'] as const).map((c, i) => ({
+        id: `mos:${c}|${quantity}`,
+        add_on_id: addOn.id,
+        currency: c,
+        quantity,
+        surcharge: i === 0 ? gbp : i === 1 ? eur : usd,
+      }))
+      setPrices((prev) => [...prev, ...synthetic])
+      void logAudit({
+        action: 'option_surcharges.metal_finish.tier_created',
+        targetType: 'add_on',
+        targetId: addOn.id,
+        targetLabel: `${addOn.display_name} qty ${quantity}`,
+        metadata: { quantity, gbp, eur, usd, applies_to_options: optIds.length, rows_created: rows.length },
+      })
+      return
+    }
     const rows = [
       { add_on_id: addOn.id, currency: 'GBP' as const, quantity, surcharge: gbp },
       { add_on_id: addOn.id, currency: 'EUR' as const, quantity, surcharge: eur },
@@ -118,6 +193,51 @@ export default function AdminAddOnEditor() {
 
   async function saveSurcharge(priceId: string, next: number | null) {
     const existing = prices.find((p) => p.id === priceId)
+    // Synthetic row from the material-option-backed branch. Save
+    // fans out to every backing option_id at the matching (currency,
+    // quantity); delete fans out the same way.
+    if (priceId.startsWith('mos:') && addOn) {
+      const [, coord] = priceId.split(':')
+      const [currency, qtyStr] = coord.split('|')
+      const quantity = Number(qtyStr)
+      const optIds = await resolveBackingOptionIds(addOn.code)
+      if (next == null) {
+        const { error } = await supabase
+          .from('material_option_surcharges')
+          .delete()
+          .in('material_option_id', optIds)
+          .eq('currency', currency)
+          .eq('quantity', quantity)
+        if (error) throw new Error(error.message)
+        setPrices((prev) => prev.filter((p) => p.id !== priceId))
+        void logAudit({
+          action: 'option_surcharge.metal_finish.deleted',
+          targetType: 'add_on_price',
+          targetId: priceId,
+          targetLabel: `${addOn.display_name} ${currency} qty ${quantity}`,
+          beforeValue: { currency, quantity, surcharge: existing?.surcharge ?? null, applies_to_options: optIds.length },
+          afterValue: null,
+        })
+        return
+      }
+      const { error } = await supabase
+        .from('material_option_surcharges')
+        .update({ surcharge: next })
+        .in('material_option_id', optIds)
+        .eq('currency', currency)
+        .eq('quantity', quantity)
+      if (error) throw new Error(error.message)
+      setPrices((prev) => prev.map((p) => p.id === priceId ? { ...p, surcharge: next } : p))
+      void logAudit({
+        action: 'option_surcharge.metal_finish.updated',
+        targetType: 'add_on_price',
+        targetId: priceId,
+        targetLabel: `${addOn.display_name} ${currency} qty ${quantity}`,
+        beforeValue: { currency, quantity, surcharge: existing?.surcharge ?? null, applies_to_options: optIds.length },
+        afterValue: { currency, quantity, surcharge: next, applies_to_options: optIds.length },
+      })
+      return
+    }
     if (next == null) {
       // add_on_prices.surcharge is NOT NULL, so "clear" means
       // remove the row — the price grid then shows "—" for that
@@ -157,6 +277,38 @@ export default function AdminAddOnEditor() {
 
   async function seedQuantities(quantities: number[]) {
     if (!addOn) return
+    if (MATERIAL_OPTION_BACKED_ADDONS[addOn.code]) {
+      // Fan out: 12 rows per quantity (4 option_ids × 3 currencies),
+      // all starting at zero. Mirrors the existing seed-then-edit
+      // ergonomic for the add_on_prices path.
+      const optIds = await resolveBackingOptionIds(addOn.code)
+      const rows = quantities.flatMap((qty) =>
+        optIds.flatMap((oid) => CURRENCIES.map((currency) => ({
+          material_option_id: oid, currency, quantity: qty, surcharge: 0,
+        }))),
+      )
+      const { error } = await supabase.from('material_option_surcharges').insert(rows)
+      if (error) throw new Error(error.message)
+      const synthetic: Price[] = quantities.flatMap((qty) =>
+        CURRENCIES.map((c) => ({
+          id: `mos:${c}|${qty}`,
+          add_on_id: addOn.id,
+          currency: c,
+          quantity: qty,
+          surcharge: 0,
+        })),
+      )
+      setPrices((prev) => [...prev, ...synthetic])
+      setSeedDialog(false)
+      void logAudit({
+        action: 'option_surcharges.metal_finish.seeded',
+        targetType: 'add_on',
+        targetId: addOn.id,
+        targetLabel: addOn.display_name,
+        metadata: { quantities, rows_created: rows.length, pricing_model: 'per_quantity_tier', applies_to_options: optIds.length },
+      })
+      return
+    }
     const rows = quantities.flatMap((qty) => CURRENCIES.map((currency) => ({
       add_on_id: addOn.id,
       currency,
@@ -225,6 +377,11 @@ export default function AdminAddOnEditor() {
           <Link to="/admin/pricing" className="text-xs text-gray-400 hover:text-gray-700">← Back to pricing</Link>
           <h2 className="mt-2 text-xl font-bold text-gray-900">{addOn.display_name}</h2>
           {addOn.notes && <p className="mt-1 max-w-xl text-xs text-gray-500">{addOn.notes}</p>}
+          {MATERIAL_OPTION_BACKED_ADDONS[addOn.code] && (
+            <p className="mt-2 max-w-xl text-xs text-violet-700">
+              Prices apply to Mirror and Brushed across Steel and Gold. Editing one tier updates all four schedules in lockstep.
+            </p>
+          )}
           <p className="mt-2 text-sm text-gray-500">
             Changes save automatically. Customer-facing prices update immediately.
           </p>
