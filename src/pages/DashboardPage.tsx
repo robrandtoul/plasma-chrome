@@ -852,15 +852,6 @@ export default function DashboardPage() {
     try { localStorage.setItem(GROUP_KEY, g) } catch { /* */ }
   }
 
-  function toggleStatus(s: ProofStatus) {
-    setStatusFilter((prev) => {
-      const next = new Set(prev)
-      if (next.has(s)) next.delete(s)
-      else next.add(s)
-      return next
-    })
-  }
-
   function toggleTile(t: TileKey) {
     setTileFilter((prev) => (prev === t ? null : t))
   }
@@ -1020,83 +1011,57 @@ export default function DashboardPage() {
                   </div>
                 ) : (
                   <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-                    {/* Controls block — divider below separates it from the list. */}
+                    {/* Controls block — divider below separates it from
+                        the list. Search on row 1, three matching
+                        dropdowns (Status, Sort, Group) on row 2. The
+                        Status dropdown replaced a row of five chips —
+                        identical visual treatment to Sort/Group means
+                        the row reads as a single unit rather than two
+                        competing styles. Per-status counts live in the
+                        dropdown options so they appear when the menu
+                        opens without crowding the closed control. */}
                     <div className="border-b border-gray-100 px-5 py-4">
-                      {/* Search + Filters */}
-                      <div className="mb-4 flex items-center gap-3">
+                      <div className="mb-3">
                         <input
                           type="search"
                           placeholder="Search project, contact, company, email, or Help Scout id"
                           value={search}
                           onChange={(e) => setSearch(e.target.value)}
-                          className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
                         />
-                        <button
-                          type="button"
-                          disabled
-                          title="Material and Date-range filters land in Phase 2"
-                          className="shrink-0 cursor-not-allowed rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-300"
-                        >Filters</button>
                       </div>
-
-                      {/* Status chips and Sort/Group dropdowns share a
-                          row. Sort and Group are "set once, forget"
-                          controls, so they live as compact dropdowns on
-                          the right rather than as a permanent segmented
-                          strip on their own row. flex-wrap means they
-                          stack on narrow viewports rather than overflow. */}
-                      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-                        <div className="flex flex-wrap gap-2">
-                          <Chip
-                            label="All"
-                            count={projects.length}
-                            active={statusFilter.size === 0}
-                            onClick={() => setStatusFilter(new Set())}
-                          />
-                          <Chip
-                            label="In progress"
-                            count={statusCounts.in_progress}
-                            active={statusFilter.has('in_progress')}
-                            onClick={() => toggleStatus('in_progress')}
-                          />
-                          <Chip
-                            label="Approved"
-                            count={statusCounts.approved}
-                            active={statusFilter.has('approved')}
-                            onClick={() => toggleStatus('approved')}
-                          />
-                          <Chip
-                            label="Dormant"
-                            count={statusCounts.dormant}
-                            active={statusFilter.has('dormant')}
-                            onClick={() => toggleStatus('dormant')}
-                          />
-                          <Chip
-                            label="Abandoned"
-                            count={statusCounts.abandoned}
-                            active={statusFilter.has('abandoned')}
-                            onClick={() => toggleStatus('abandoned')}
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <SelectField
-                            value={sort}
-                            onChange={(v) => handleSortChange(v as SortMode)}
-                            options={[
-                              { value: 'activity', label: 'Sort: Activity' },
-                              { value: 'date',     label: 'Sort: Date' },
-                              { value: 'name',     label: 'Sort: Name' },
-                            ]}
-                          />
-                          <SelectField
-                            value={group}
-                            onChange={(v) => handleGroupChange(v as GroupMode)}
-                            options={[
-                              { value: 'time',    label: 'Group: Time' },
-                              { value: 'company', label: 'Group: Company' },
-                            ]}
-                          />
-                        </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <SelectField
+                          value={statusFilter.size === 0 ? 'all' : Array.from(statusFilter)[0] as ProofStatus}
+                          onChange={(v) => {
+                            if (v === 'all') setStatusFilter(new Set())
+                            else setStatusFilter(new Set([v]))
+                          }}
+                          options={[
+                            { value: 'all',         label: `Status: All (${projects.length})` },
+                            { value: 'in_progress', label: `Status: In progress (${statusCounts.in_progress})` },
+                            { value: 'approved',    label: `Status: Approved (${statusCounts.approved})` },
+                            { value: 'dormant',     label: `Status: Dormant (${statusCounts.dormant})` },
+                            { value: 'abandoned',   label: `Status: Abandoned (${statusCounts.abandoned})` },
+                          ]}
+                        />
+                        <SelectField
+                          value={sort}
+                          onChange={(v) => handleSortChange(v as SortMode)}
+                          options={[
+                            { value: 'activity', label: 'Sort: Activity' },
+                            { value: 'date',     label: 'Sort: Date' },
+                            { value: 'name',     label: 'Sort: Name' },
+                          ]}
+                        />
+                        <SelectField
+                          value={group}
+                          onChange={(v) => handleGroupChange(v as GroupMode)}
+                          options={[
+                            { value: 'time',    label: 'Group: Time' },
+                            { value: 'company', label: 'Group: Company' },
+                          ]}
+                        />
                       </div>
                     </div>
 
@@ -1178,35 +1143,6 @@ export default function DashboardPage() {
 }
 
 // ── Small UI primitives ──────────────────────────────────────────────────────
-
-function Chip({
-  label,
-  count,
-  active,
-  onClick,
-}: {
-  label: string
-  count: number
-  active: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={[
-        'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
-        active
-          ? 'bg-gray-100 text-gray-900 ring-gray-200'
-          : 'bg-transparent text-gray-500 ring-transparent hover:bg-gray-50 hover:text-gray-900',
-      ].join(' ')}
-    >
-      <span>{label}</span>
-      <span className="tabular-nums text-gray-400">· {count}</span>
-    </button>
-  )
-}
 
 // Compact native-select dropdown with a chevron. Used by the Sort and
 // Group controls. Native <select> gets keyboard accessibility, the OS
