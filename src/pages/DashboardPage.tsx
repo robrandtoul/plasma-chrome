@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+// react-virtuoso for the Older drawer's row virtualisation. Picked
+// over react-window because its useWindowScroll mode preserves the
+// existing UX where Older grows inline as part of the page rather
+// than becoming a fixed-height inner-scrolling pane. ~30KB gzipped
+// vs react-window's ~6KB; the bundle hit is worth not having to add
+// react-virtualized-auto-sizer + a fixed pixel height on top.
+import { Virtuoso } from 'react-virtuoso'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import type { ProofStatus } from '../lib/types'
@@ -1094,27 +1101,56 @@ export default function DashboardPage() {
                   </div>
                 ) : (
                   <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-                    {sections.map((section, si) => (
-                      <div key={section.key} className={si > 0 ? 'border-t border-gray-100' : ''}>
-                        <div className="flex items-center gap-3 bg-gray-50/80 px-5 py-1.5">
-                          {section.kind === 'pinned' && <PinIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
-                          {section.kind === 'team'   && <UsersIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
-                          <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">{section.title}</span>
-                          <span className="text-xs text-gray-400 tabular-nums">{section.projects.length}</span>
-                        </div>
-                        {section.projects.map((p, ri) => (
-                          <div key={p.proof_id} className={ri > 0 ? 'border-t border-gray-100' : ''}>
-                            <ProjectRow
-                              project={p}
-                              minePinned={minePinAt.has(p.proof_id)}
-                              teamPinned={teamPinAt.has(p.proof_id)}
-                              onToggleMinePin={toggleMinePin}
-                              onToggleTeamPin={toggleTeamPin}
-                            />
+                    {sections.map((section, si) => {
+                      // Virtualise the Older drawer only — Today /
+                      // This week / Pinned / Team / Company sections
+                      // are bounded in size and don't need it. The
+                      // virtualised renderer reuses the same
+                      // ProjectRow component so chips, menus, and
+                      // keyboard interaction behave identically.
+                      const virtualise = section.kind === 'time' && section.key === 'older'
+                      return (
+                        <div key={section.key} className={si > 0 ? 'border-t border-gray-100' : ''}>
+                          <div className="flex items-center gap-3 bg-gray-50/80 px-5 py-1.5">
+                            {section.kind === 'pinned' && <PinIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
+                            {section.kind === 'team'   && <UsersIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
+                            <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">{section.title}</span>
+                            <span className="text-xs text-gray-400 tabular-nums">{section.projects.length}</span>
                           </div>
-                        ))}
-                      </div>
-                    ))}
+                          {virtualise ? (
+                            <Virtuoso
+                              useWindowScroll
+                              data={section.projects}
+                              overscan={400}
+                              computeItemKey={(_, p) => p.proof_id}
+                              itemContent={(ri, p) => (
+                                <div className={ri > 0 ? 'border-t border-gray-100' : ''}>
+                                  <ProjectRow
+                                    project={p}
+                                    minePinned={minePinAt.has(p.proof_id)}
+                                    teamPinned={teamPinAt.has(p.proof_id)}
+                                    onToggleMinePin={toggleMinePin}
+                                    onToggleTeamPin={toggleTeamPin}
+                                  />
+                                </div>
+                              )}
+                            />
+                          ) : (
+                            section.projects.map((p, ri) => (
+                              <div key={p.proof_id} className={ri > 0 ? 'border-t border-gray-100' : ''}>
+                                <ProjectRow
+                                  project={p}
+                                  minePinned={minePinAt.has(p.proof_id)}
+                                  teamPinned={teamPinAt.has(p.proof_id)}
+                                  onToggleMinePin={toggleMinePin}
+                                  onToggleTeamPin={toggleTeamPin}
+                                />
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </>
