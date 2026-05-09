@@ -60,6 +60,7 @@
 // status / reason union as the public contract.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { fetchConversation, getAccessToken, HsError } from '../_shared/helpscout.ts'
 
 // Allowlist of origins that this edge function trusts to build
 // customer-facing /p/{proof_id} links for the Help Scout thread post.
@@ -136,54 +137,23 @@ function failed(reason: FailedReason, status: number, detail?: string) {
 
 // ── Help Scout client ─────────────────────────────────────────────────────────
 //
-// Mirrors the auth + customer-id lookup pattern in send-helpscout-reply
-// (the existing reply endpoint). Differences:
-//   * POSTs to /v2/conversations/{id}/customer (not /reply) — creates a
-//     thread attributed to the customer, not the staff agent.
-//   * No `user` field in the body (customer threads aren't staff-attributed).
-//   * No status flip — the proof's status is managed in app code; the HS
-//     conversation status is left to the designer to manage from HS itself.
-
-class HsError extends Error {
-  constructor(public hsStatus: number, message: string) {
-    super(message)
-    this.name = 'HsError'
-  }
-}
-
-async function hsAccessToken(appId: string, appSecret: string): Promise<string> {
-  const body = new URLSearchParams({
-    grant_type: 'client_credentials',
-    client_id: appId,
-    client_secret: appSecret,
-  })
-  const resp = await fetch('https://api.helpscout.net/v2/oauth2/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  })
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '<body read failed>')
-    throw new HsError(resp.status, `HS token (${resp.status}): ${text}`)
-  }
-  const data = await resp.json()
-  if (!data?.access_token) throw new HsError(500, 'HS token response missing access_token')
-  return data.access_token as string
-}
+// OAuth token + conversation fetch live in ../_shared/helpscout.ts.
+// The customer-thread POST stays here because it has a single caller
+// and the Help Scout endpoint shape (no `user` field, no status flip)
+// is specific to "speak as the customer". Differences vs send-helpscout-
+// reply's POST /reply path:
+//   * /customer endpoint creates a thread attributed to the customer,
+//     not the staff agent.
+//   * No `user` field in the body.
+//   * No status flip — the proof's status is managed in app code; the
+//     HS conversation status is left to the designer to manage from HS
+//     itself.
 
 async function hsPrimaryCustomerId(token: string, conversationId: string): Promise<number> {
-  const resp = await fetch(
-    `https://api.helpscout.net/v2/conversations/${conversationId}`,
-    { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
-  )
-  if (resp.status === 404) throw new HsError(404, 'HS conversation not found')
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '<body read failed>')
-    throw new HsError(resp.status, `HS conversation fetch (${resp.status}): ${text}`)
-  }
-  const data = await resp.json().catch(() => null)
-  const id = (data as { primaryCustomer?: { id?: number } } | null)?.primaryCustomer?.id
-  if (!id || typeof id !== 'number') {
+  const conv = await fetchConversation(token, conversationId)
+  if (!conv) throw new HsError(404, 'HS conversation not found')
+  const id = conv.primaryCustomer?.id
+  if (typeof id !== 'number') {
     throw new HsError(502, 'HS conversation has no primary customer')
   }
   return id
@@ -864,7 +834,7 @@ Deno.serve(async (req) => {
 
   let threadId = 0
   try {
-    const token = await hsAccessToken(appId, appSecret)
+    const token = await getAccessToken(appId, appSecret)
     const customerId = await hsPrimaryCustomerId(token, conversationId)
     threadId = await hsPostCustomerThread(token, conversationId, customerId, text)
   } catch (hsErr) {

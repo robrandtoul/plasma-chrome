@@ -12,14 +12,8 @@
 // the admin confirms not just "API reachable" but "API connected to
 // the project we expect".
 //
-// OAuth duplicate (deliberate): proof-action has the same OAuth
-// helper inline (~15 lines). The brief asks for the OAuth path to be
-// extracted to _shared if self-contained — it is — but explicitly
-// flags that touching proof-action carries deployment risk and
-// shouldn't be bundled with this feature. So this function carries a
-// near-duplicate copy. Extraction can be a separate refactor commit.
-
 import { CORS_HEADERS, json, requireAdmin } from '../_shared/admin.ts'
+import { getAccessToken, HsError } from '../_shared/helpscout.ts'
 
 type SuccessResult = {
   status: 'connected'
@@ -44,27 +38,6 @@ function fail(reason: FailureReason, detail?: string): Response {
   return json(body)
 }
 
-async function fetchHsToken(appId: string, appSecret: string): Promise<string> {
-  const body = new URLSearchParams({
-    grant_type: 'client_credentials',
-    client_id: appId,
-    client_secret: appSecret,
-  })
-  const resp = await fetch('https://api.helpscout.net/v2/oauth2/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  })
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '<body read failed>')
-    throw new Error(`token (${resp.status}): ${text.slice(0, 240)}`)
-  }
-  const data = await resp.json().catch(() => null)
-  const token = (data as { access_token?: string } | null)?.access_token
-  if (!token) throw new Error('token response missing access_token')
-  return token
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
   if (req.method !== 'GET' && req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
@@ -82,16 +55,18 @@ Deno.serve(async (req) => {
   // can point the admin at HELPSCOUT_APP_SECRET specifically.
   let token: string
   try {
-    token = await fetchHsToken(appId, appSecret)
+    token = await getAccessToken(appId, appSecret)
   } catch (err) {
     const msg = (err as Error).message
     // Help Scout returns 400/401 from the token endpoint when the
     // client_id/secret pair is wrong; treat anything <500 as auth
-    // failure, anything else as transport/api unreachable.
-    const looksAuth = /^token \((4\d\d)\)/.test(msg)
-    return looksAuth
-      ? fail('auth_failed', msg)
-      : fail('api_unreachable', msg)
+    // failure, anything else as transport/api unreachable. The shared
+    // helper throws HsError with the upstream status, so we can branch
+    // on err.status directly rather than regex-matching the message.
+    if (err instanceof HsError && err.status >= 400 && err.status < 500) {
+      return fail('auth_failed', msg)
+    }
+    return fail('api_unreachable', msg)
   }
 
   // Mailboxes endpoint — confirms the token works and surfaces a

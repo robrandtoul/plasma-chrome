@@ -24,6 +24,12 @@
 //     `customer` is null and the client surfaces a dedicated error.
 
 import { requireDesigner } from '../_shared/admin.ts'
+import {
+  fetchConversation,
+  fetchCustomer,
+  getAccessToken,
+  type HsCustomer,
+} from '../_shared/helpscout.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -36,26 +42,6 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
   })
-}
-
-async function getAccessToken(appId: string, appSecret: string): Promise<string> {
-  const body = new URLSearchParams({
-    grant_type: 'client_credentials',
-    client_id: appId,
-    client_secret: appSecret,
-  })
-  const resp = await fetch('https://api.helpscout.net/v2/oauth2/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  })
-  if (!resp.ok) {
-    const text = await resp.text()
-    throw new Error(`Help Scout token error (${resp.status}): ${text}`)
-  }
-  const data = await resp.json()
-  if (!data.access_token) throw new Error('Help Scout token response missing access_token')
-  return data.access_token as string
 }
 
 // Resolve a short conversation number (the one in the HS UI) to the
@@ -81,51 +67,6 @@ async function resolveNumberToId(token: string, conversationNumber: string): Pro
   // first match. If multiple legitimately exist we'd need a newer
   // disambiguation UI, which we don't want to build here.
   return convs[0].id
-}
-
-interface HsConversation {
-  id: number
-  number: number
-  subject?: string | null
-  primaryCustomer?: {
-    id: number
-    first?: string | null
-    last?: string | null
-    email?: string | null
-  } | null
-}
-
-async function fetchConversation(token: string, id: number): Promise<HsConversation | null> {
-  const resp = await fetch(`https://api.helpscout.net/v2/conversations/${id}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-  })
-  if (resp.status === 404) return null
-  if (!resp.ok) {
-    const text = await resp.text()
-    throw new Error(`Help Scout conversation fetch (${resp.status}): ${text}`)
-  }
-  return await resp.json() as HsConversation
-}
-
-interface HsCustomer {
-  id: number
-  firstName?: string | null
-  lastName?: string | null
-  organization?: string | null
-  createdAt?: string | null
-  emails?: Array<{ value: string; type?: string }>
-}
-
-async function fetchCustomer(token: string, id: number): Promise<HsCustomer | null> {
-  const resp = await fetch(`https://api.helpscout.net/v2/customers/${id}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-  })
-  if (resp.status === 404) return null
-  if (!resp.ok) {
-    const text = await resp.text()
-    throw new Error(`Help Scout customer fetch (${resp.status}): ${text}`)
-  }
-  return await resp.json() as HsCustomer
 }
 
 Deno.serve(async (req) => {

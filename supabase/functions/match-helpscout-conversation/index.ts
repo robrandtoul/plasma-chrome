@@ -12,6 +12,7 @@
 // Response: { matches: Array<{ id, subject, status, modifiedAt, url }> }
 
 import { requireDesigner } from '../_shared/admin.ts'
+import { getAccessToken } from '../_shared/helpscout.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -42,26 +43,6 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
   })
-}
-
-async function getAccessToken(appId: string, appSecret: string): Promise<string> {
-  const body = new URLSearchParams({
-    grant_type: 'client_credentials',
-    client_id: appId,
-    client_secret: appSecret,
-  })
-  const resp = await fetch('https://api.helpscout.net/v2/oauth2/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  })
-  if (!resp.ok) {
-    const text = await resp.text()
-    throw new Error(`Help Scout token error (${resp.status}): ${text}`)
-  }
-  const data = await resp.json()
-  if (!data.access_token) throw new Error('Help Scout token response missing access_token')
-  return data.access_token as string
 }
 
 async function fetchMailboxes(token: string): Promise<Map<number, string>> {

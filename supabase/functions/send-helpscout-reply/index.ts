@@ -40,6 +40,7 @@
 // Keep this verbose until the send pipeline is proven stable.
 
 import { requireDesigner } from '../_shared/admin.ts'
+import { fetchConversation, getAccessToken, HsError } from '../_shared/helpscout.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -65,37 +66,6 @@ function debugFromError(err: unknown): { name: string; message: string; stack: s
   }
 }
 
-class HsError extends Error {
-  constructor(public status: number, message: string) {
-    super(message)
-    this.name = 'HsError'
-  }
-}
-
-async function getAccessToken(appId: string, appSecret: string): Promise<string> {
-  const body = new URLSearchParams({
-    grant_type: 'client_credentials',
-    client_id: appId,
-    client_secret: appSecret,
-  })
-  console.log('[send-helpscout-reply] requesting access token')
-  const resp = await fetch('https://api.helpscout.net/v2/oauth2/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  })
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '<body read failed>')
-    throw new HsError(resp.status, `Help Scout token error (${resp.status}): ${text}`)
-  }
-  const data = await resp.json()
-  if (!data.access_token) {
-    throw new HsError(500, 'Help Scout token response missing access_token')
-  }
-  console.log('[send-helpscout-reply] got access token')
-  return data.access_token as string
-}
-
 interface SendReplyResult {
   thread_id: number
 }
@@ -114,21 +84,11 @@ async function fetchPrimaryCustomerId(
   conversationId: string,
 ): Promise<number> {
   console.log('[send-helpscout-reply] GET conversation for primary customer')
-  const resp = await fetch(
-    `https://api.helpscout.net/v2/conversations/${conversationId}`,
-    {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    },
-  )
-  if (resp.status === 404) {
+  const conv = await fetchConversation(token, conversationId)
+  if (!conv) {
     throw new HsError(404, 'Help Scout conversation not found')
   }
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '<body read failed>')
-    throw new HsError(resp.status, `Help Scout conversation fetch error (${resp.status}): ${text}`)
-  }
-  const data = await resp.json().catch(() => null)
-  const customerId = (data as { primaryCustomer?: { id?: number } } | null)?.primaryCustomer?.id
+  const customerId = conv.primaryCustomer?.id
   if (!customerId || typeof customerId !== 'number') {
     throw new HsError(
       502,
@@ -336,7 +296,9 @@ Deno.serve(async (req) => {
     // throws fall through to the outer catch.
     let result: SendReplyResult
     try {
+      console.log('[send-helpscout-reply] requesting access token')
       const token = await getAccessToken(appId, appSecret)
+      console.log('[send-helpscout-reply] got access token')
       const customerId = await fetchPrimaryCustomerId(token, conversationId)
       result = await postReply(token, conversationId, body, userIdNum, customerId)
     } catch (hsErr) {
