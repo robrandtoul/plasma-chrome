@@ -2174,6 +2174,27 @@ export default function NewVersionPage() {
         return
       }
 
+      // Mirror the standard save path's audit hook (the call at
+      // ~2532). Without this, variant-round version creates were
+      // silent in the audit log and "who added this round" had to
+      // be reconstructed from proof_events. Metadata captures the
+      // shape signals that distinguish this row from a standard
+      // version.added entry: is_variant_round (always true on
+      // this branch), is_per_direction_pricing (sub-mode), and
+      // variant_count (round size).
+      void logAudit({
+        action: 'version.added',
+        targetType: 'version',
+        targetId: versionData.id,
+        targetLabel: `${proofName || 'project'} — variant round`,
+        metadata: {
+          proof_id: proofId,
+          is_variant_round: true,
+          is_per_direction_pricing: isPerDirectionPricing,
+          variant_count: variantRows.length,
+        },
+      })
+
       // Success — reuse the standard post-save flow. Setting
       // savedVersion triggers the existing summary card render.
       setSavedVersion({
