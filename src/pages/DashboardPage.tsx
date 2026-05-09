@@ -69,6 +69,12 @@ interface DashboardProject {
   // ago" without re-deriving.
   rule_code: NeedsAttentionRule | null
   rule_meta: { days?: number } | null
+  // Migration 000161. Mirrors dashboard_tile_counts.awaiting CTE
+  // exactly so the "Awaiting customer" tile count and the
+  // tile-filtered list share one predicate. True when the proof
+  // is in_progress with a current version that has neither a
+  // non-bot view nor an approve / request_changes event.
+  awaiting_customer: boolean
 }
 
 type NeedsAttentionRule =
@@ -883,7 +889,7 @@ export default function DashboardPage() {
         if (!hay.includes(q)) return false
       }
       if (tileFilter === 'needs_attention'    && !p.rule_code) return false
-      if (tileFilter === 'awaiting_customer'  && !(p.status === 'in_progress' && p.current_version_viewed_at == null)) return false
+      if (tileFilter === 'awaiting_customer'  && !p.awaiting_customer) return false
       if (tileFilter === 'dormant'            && p.status !== 'dormant') return false
       if (tileFilter === 'approved_this_week') {
         const cutoff = Date.now() - 7 * 86_400_000
