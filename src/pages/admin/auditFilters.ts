@@ -151,6 +151,7 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'version.added',                   label: 'Proof version added' },
     { code: 'proof.approved',                  label: 'Project approved' },
     { code: 'proof.abandoned',                 label: 'Project abandoned' },
+    { code: 'proof.reopened',                  label: 'Project reopened' },
     { code: 'proof.deleted',                   label: 'Project deleted' },
     { code: 'proof.helpscout_link_set',        label: 'Help Scout link set' },
     { code: 'proof.helpscout_link_changed',    label: 'Help Scout link changed' },

@@ -714,14 +714,34 @@ export default function ProofDetailPage() {
   async function handleReopen() {
     if (!proof) return
     setStatusWorking(true)
-    // Clear both terminal timestamps so the same flow works for approved and abandoned.
-    const { error } = await supabase
-      .from('proofs')
-      .update({ status: 'in_progress', approved_at: null, abandoned_at: null })
-      .eq('id', proof.id)
+    // Atomic status flip + clear of every per-recipient approval row
+    // across every version of this proof. The DELETE is critical:
+    // without it, v1's approved rows survive the reopen and the
+    // carry-forward block in NewVersionPage picks them up when a
+    // designer adds v2, leaving the customer page treating v2 as
+    // pre-approved (no Approve / Request changes buttons). See
+    // 000158 migration header for the full rationale.
+    //
+    // RPC returns the count of cleared approvals. Surfaces in the
+    // audit row as a structured signal of what reopen actually did.
+    const { data, error } = await supabase.rpc('reopen_proof', {
+      p_proof_id: proof.id,
+    })
     setStatusWorking(false)
     setStatusDialog(null)
     if (!error) {
+      const approvalsCleared = typeof data === 'number' ? data : 0
+      void logAudit({
+        action: 'proof.reopened',
+        targetType: 'proof',
+        targetId: proof.id,
+        targetLabel: proof.contacts.full_name,
+        beforeValue: { status: proof.status },
+        afterValue: {
+          status: 'in_progress',
+          approvals_cleared: approvalsCleared,
+        },
+      })
       showToast('Project reopened')
       if (id) loadProof(id)
     }
