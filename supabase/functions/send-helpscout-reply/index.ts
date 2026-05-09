@@ -40,7 +40,7 @@
 // Keep this verbose until the send pipeline is proven stable.
 
 import { requireDesigner } from '../_shared/admin.ts'
-import { fetchConversation, getAccessToken, HsError } from '../_shared/helpscout.ts'
+import { fetchConversation, getAccessToken, HsError, postStaffReply } from '../_shared/helpscout.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -99,11 +99,12 @@ async function fetchPrimaryCustomerId(
   return customerId
 }
 
-// Help Scout's reply endpoint returns 201 Created with no body and a
-// Location header pointing at the new thread:
-//   Location: https://api.helpscout.net/v2/conversations/{conv}/threads/{thread}
-// Parse the trailing thread id off the Location header so the caller
-// can store provenance.
+// Wrapper around the shared postStaffReply helper. Adds the
+// diagnostic console.log breadcrumbs this file relies on (see the
+// header docstring) and shapes the result as { thread_id } for the
+// existing call site. Status flips to 'pending' here — the designer
+// is asking the customer to review a proof, so the conversation
+// belongs in the customer's queue.
 async function postReply(
   token: string,
   conversationId: string,
@@ -111,53 +112,27 @@ async function postReply(
   userId: number,
   customerId: number,
 ): Promise<SendReplyResult> {
-  const requestBody = JSON.stringify({
-    text,
-    user: userId,
-    // customer.id is required by Help Scout's reply endpoint; the
-    // earlier "omit and HS uses primaryCustomer by default" claim
-    // turned out to be false (HS returns 400 with path:"customer",
-    // message:"must not be null"). fetchPrimaryCustomerId resolves
-    // it from a quick GET before this call.
-    customer: { id: customerId },
-    draft: false,
-    // Transition the conversation to Pending as part of the reply
-    // action: the customer is being asked to review the proof, so
-    // it's waiting on them, not on us. Without this the thread
-    // stays Active in HS's queue and looks unhandled. The reply
-    // endpoint accepts status as an optional field that updates
-    // the parent conversation atomically with the new thread.
-    status: 'pending',
-  })
   console.log('[send-helpscout-reply] POST reply', { conversationId, userId, bodyLen: text.length })
-  const resp = await fetch(
-    `https://api.helpscout.net/v2/conversations/${conversationId}/reply`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: requestBody,
-    },
-  )
-  console.log('[send-helpscout-reply] HS responded', { status: resp.status, ok: resp.ok })
-  if (resp.status === 404) {
-    throw new HsError(404, 'Help Scout conversation not found')
+  let threadId = 0
+  try {
+    threadId = await postStaffReply(token, conversationId, {
+      text,
+      userId,
+      customerId,
+      status: 'pending',
+    })
+  } catch (err) {
+    // Surface the HS response details in the breadcrumb stream
+    // before re-throwing, matching the pre-extraction "HS responded"
+    // / "parsed thread id" log granularity. The outer handler's
+    // catch will format the error response for the client.
+    if (err instanceof HsError) {
+      console.log('[send-helpscout-reply] HS responded', { status: err.status, ok: false })
+    }
+    throw err
   }
-  if (!resp.ok) {
-    const upstream = await resp.text().catch(() => '<body read failed>')
-    throw new HsError(resp.status, `Help Scout reply error (${resp.status}): ${upstream}`)
-  }
-  // Parse thread id from Location header.
-  const location = resp.headers.get('Location') ?? ''
-  const match = location.match(/\/threads\/(\d+)$/)
-  const threadId = match ? Number(match[1]) : NaN
-  console.log('[send-helpscout-reply] parsed thread id', { location, threadId })
-  if (!Number.isFinite(threadId)) {
-    return { thread_id: 0 }
-  }
+  console.log('[send-helpscout-reply] HS responded', { status: 201, ok: true })
+  console.log('[send-helpscout-reply] parsed thread id', { threadId })
   return { thread_id: threadId }
 }
 

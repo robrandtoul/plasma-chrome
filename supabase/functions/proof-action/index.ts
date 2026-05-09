@@ -60,7 +60,12 @@
 // status / reason union as the public contract.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { fetchConversation, getAccessToken, HsError } from '../_shared/helpscout.ts'
+import {
+  fetchConversationOwnership,
+  getAccessToken,
+  HsError,
+  postStaffReply,
+} from '../_shared/helpscout.ts'
 
 // Allowlist of origins that this edge function trusts to build
 // customer-facing /p/{proof_id} links for the Help Scout thread post.
@@ -124,6 +129,48 @@ type Response_ =
 // with no import path back into src/.
 const SHARED_APPROVAL_KEY = '__shared__'
 
+// ── Reply template renderer (verbatim copy of src/lib/replyTemplates.ts) ─────
+//
+// Edge functions are Deno modules with no import path back into src/,
+// so we carry a small copy of the template renderer here. The two
+// must stay in sync — same as SHARED_APPROVAL_KEY above. The renderer
+// is small and the substitution syntax is unlikely to change; if a
+// second server-side renderer ever appears, extract then.
+//
+// Syntax matches the admin template editor:
+//   {variable}             — substitute ctx[variable], empty if null/undefined
+//   {? variable}body{/?}   — render body iff ctx[variable] is non-empty
+//                            (after .trim() for strings; null/undefined
+//                            collapse the block). No nesting.
+
+type TemplateContext = Record<string, string | number | null | undefined>
+
+function renderTemplate(template: string, ctx: TemplateContext): string {
+  // Pass 1: conditional blocks. Match {? var}body{/?} non-greedily so
+  // multiple blocks in one template resolve independently. The body
+  // recurses through substituteVariables so {var} tokens inside a
+  // surviving block render correctly. Empty / whitespace / null /
+  // undefined ctx values trim the whole block.
+  let s = template.replace(
+    /\{\?\s*(\w+)\s*\}([\s\S]*?)\{\/\?\}/g,
+    (_match, varName: string, body: string) => {
+      const v = ctx[varName]
+      const empty = v == null || (typeof v === 'string' && v.trim() === '')
+      return empty ? '' : substituteVariables(body, ctx)
+    },
+  )
+  // Pass 2: bare variables outside conditional blocks.
+  s = substituteVariables(s, ctx)
+  return s
+}
+
+function substituteVariables(text: string, ctx: TemplateContext): string {
+  return text.replace(/\{(\w+)\}/g, (_match, v: string) => {
+    const val = ctx[v]
+    return val == null ? '' : String(val)
+  })
+}
+
 function json(body: Response_ | { error: string }, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -137,27 +184,17 @@ function failed(reason: FailedReason, status: number, detail?: string) {
 
 // ── Help Scout client ─────────────────────────────────────────────────────────
 //
-// OAuth token + conversation fetch live in ../_shared/helpscout.ts.
-// The customer-thread POST stays here because it has a single caller
-// and the Help Scout endpoint shape (no `user` field, no status flip)
-// is specific to "speak as the customer". Differences vs send-helpscout-
-// reply's POST /reply path:
+// OAuth token + conversation fetch + staff-reply POST live in
+// ../_shared/helpscout.ts. The customer-thread POST stays here
+// because it has a single caller and the Help Scout endpoint shape
+// (no `user` field, no status flip) is specific to "speak as the
+// customer". Differences vs send-helpscout-reply's POST /reply path:
 //   * /customer endpoint creates a thread attributed to the customer,
 //     not the staff agent.
 //   * No `user` field in the body.
 //   * No status flip — the proof's status is managed in app code; the
 //     HS conversation status is left to the designer to manage from HS
 //     itself.
-
-async function hsPrimaryCustomerId(token: string, conversationId: string): Promise<number> {
-  const conv = await fetchConversation(token, conversationId)
-  if (!conv) throw new HsError(404, 'HS conversation not found')
-  const id = conv.primaryCustomer?.id
-  if (typeof id !== 'number') {
-    throw new HsError(502, 'HS conversation has no primary customer')
-  }
-  return id
-}
 
 // Returns the new thread id parsed from the response headers, or 0
 // if HS responded successfully but neither header carried an id.
@@ -512,8 +549,8 @@ Deno.serve(async (req) => {
   const { data: versionRow, error: versionErr } = await admin
     .from('proof_versions')
     .select(
-      'id, proof_id, material_id, currency, displayed_variant_ids, names, material_options, is_variant_round, ' +
-      'proofs:proof_id ( helpscout_conversation_id ), ' +
+      'id, proof_id, material_id, currency, displayed_variant_ids, names, material_options, is_variant_round, version_number, ' +
+      'proofs:proof_id ( helpscout_conversation_id, created_by ), ' +
       'proof_version_images ( original_filename, sort_order, associated_name )',
     )
     .eq('id', proofVersionId)
@@ -535,7 +572,11 @@ Deno.serve(async (req) => {
     names: string[] | null
     material_options: string[] | null
     is_variant_round: boolean
-    proofs: { helpscout_conversation_id: string | null } | null
+    version_number: number
+    proofs: {
+      helpscout_conversation_id: string | null
+      created_by: string | null
+    } | null
     proof_version_images: Array<{
       original_filename: string | null
       sort_order: number
@@ -832,11 +873,26 @@ Deno.serve(async (req) => {
     variantDisplayName,
   )
 
+  // Token + ownership ids carry forward into the confirmation-reply
+  // block below, so they're declared with `let` outside this try
+  // block and assigned inside. fetchConversationOwnership is a
+  // single GET that returns both primaryCustomerId (consumed by the
+  // customer-thread post) and assigneeId (consumed by the reply's
+  // sender resolution).
   let threadId = 0
+  let token: string | null = null
+  let primaryCustomerId: number | null = null
+  let assigneeId: number | null = null
   try {
-    const token = await getAccessToken(appId, appSecret)
-    const customerId = await hsPrimaryCustomerId(token, conversationId)
-    threadId = await hsPostCustomerThread(token, conversationId, customerId, text)
+    token = await getAccessToken(appId, appSecret)
+    const ownership = await fetchConversationOwnership(token, conversationId)
+    if (!ownership) throw new HsError(404, 'HS conversation not found')
+    if (ownership.primaryCustomerId == null) {
+      throw new HsError(502, 'HS conversation has no primary customer')
+    }
+    primaryCustomerId = ownership.primaryCustomerId
+    assigneeId = ownership.assigneeId
+    threadId = await hsPostCustomerThread(token, conversationId, primaryCustomerId, text)
   } catch (hsErr) {
     console.error('[proof-action] HS post failed', hsErr)
     return json({ status: 'partial', event_id: eventId, reason: 'helpscout_post_failed' })
@@ -854,6 +910,130 @@ Deno.serve(async (req) => {
     if (updateErr) {
       console.error('[proof-action] thread-id update failed', updateErr)
     }
+  }
+
+  // ── Designer confirmation reply (best-effort, isolated try/catch) ────────
+  //
+  // Layered on top of the customer-thread post: a staff reply that
+  // Help Scout WILL email out to the customer, so the customer sees
+  // a confirmation in the same email thread as the original proof
+  // email. Help Scout doesn't email customer-thread messages back to
+  // the customer who sent them, so without this they have no record
+  // of their own action in their inbox.
+  //
+  // Boundary discipline:
+  //   * Wrapped in its own try/catch — fully isolated from the
+  //     customer's success path. The customer-thread post and DB
+  //     writes are already durable by this point; a confirmation-
+  //     reply failure is a courtesy gap, not a partial outcome.
+  //   * Never returns 'partial'. 'partial' is reserved for "step 3
+  //     broke"; a reply failure here flows into the unconditional
+  //     `return json({ status: 'ok' })` below.
+  //   * console.warn for skip / failure (this is a courtesy that
+  //     didn't land); console.error reserved for the customer-thread
+  //     post's real failures above.
+  //
+  // Sender resolution (no cascading on HS API failure — a tier-1
+  // mapping that HS rejects should surface in logs as a real signal
+  // to fix the mapping, not get papered over by tier 2):
+  //   1. proofs.created_by → profiles.helpscout_user_id, if non-null
+  //   2. assigneeId from the conversation, if non-null
+  //   3. skip with console.warn
+  //
+  // Template routing mirrors the buildCustomerThreadText branching
+  // above: variantDisplayName != null → variant_selection;
+  // eventType === 'approve' → approval; else → change_request.
+  try {
+    if (token == null || primaryCustomerId == null) {
+      // Defensive — both are assigned in the step-3 try block on the
+      // success path, so this is unreachable in practice. The early-
+      // return on step-3 failure means we never reach this block when
+      // they're null. But TypeScript doesn't track that across the
+      // try/catch, and a future refactor could subtly break the
+      // invariant — log + skip rather than rely on a non-null
+      // assertion.
+      console.warn('[proof-action] reply skipped: token/customer missing on success path')
+    } else {
+      // Tier 1: proof's assigned designer.
+      let senderId: number | null = null
+      const createdBy = v.proofs?.created_by ?? null
+      if (createdBy) {
+        const { data: profileRow, error: profileErr } = await admin
+          .from('profiles')
+          .select('helpscout_user_id')
+          .eq('id', createdBy)
+          .maybeSingle()
+        if (profileErr) {
+          console.warn('[proof-action] reply: designer profile lookup failed', profileErr.message)
+        } else {
+          const value = (profileRow as { helpscout_user_id: number | null } | null)?.helpscout_user_id ?? null
+          if (typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) && value > 0) {
+            senderId = value
+          }
+        }
+      }
+      // Tier 2: HS conversation assignee.
+      if (senderId == null && assigneeId != null) {
+        senderId = assigneeId
+      }
+      // Tier 3: skip + warn.
+      if (senderId == null) {
+        console.warn('[proof-action] reply skipped: no sender resolvable', {
+          proofVersionId,
+          createdBy,
+          assigneeId,
+        })
+      } else {
+        // Route to the template that matches the action shape.
+        const templateCode =
+          variantDisplayName != null
+            ? 'proof_variant_selection_confirmation'
+            : eventType === 'approve'
+              ? 'proof_approval_confirmation'
+              : 'proof_change_request_confirmation'
+
+        const { data: templateRow, error: templateErr } = await admin
+          .from('reply_templates')
+          .select('body')
+          .eq('id', templateCode)
+          .maybeSingle()
+        if (templateErr || !templateRow) {
+          console.warn('[proof-action] reply skipped: template fetch failed', {
+            templateCode,
+            error: templateErr?.message ?? 'row missing',
+          })
+        } else {
+          const body = renderTemplate((templateRow as { body: string }).body, {
+            // Variables explicitly named in the seed defaults:
+            version_label: `version ${v.version_number}`,
+            change_notes: comment ?? '',
+            chosen_variant: variantDisplayName ?? '',
+            // Surfaced for admin customisation (not in the defaults
+            // but documented in the admin template editor):
+            actor_name: actorName,
+            recipient_name: recipientName === SHARED_APPROVAL_KEY ? '' : recipientName,
+          })
+          const replyThreadId = await postStaffReply(token, conversationId, {
+            text: body,
+            userId: senderId,
+            customerId: primaryCustomerId,
+            // No status flip — this is a confirmation, not a
+            // designer asking the customer for input.
+          })
+          console.log('[proof-action] confirmation reply sent', {
+            templateCode,
+            senderId,
+            replyThreadId,
+          })
+        }
+      }
+    }
+  } catch (replyErr) {
+    // Anything from the sender-resolution / template / postStaffReply
+    // path lands here. console.warn (not error) — the customer's
+    // action is already durable and posted; the missing confirmation
+    // is a courtesy gap.
+    console.warn('[proof-action] confirmation reply failed', replyErr)
   }
 
   return json({ status: 'ok', event_id: eventId })

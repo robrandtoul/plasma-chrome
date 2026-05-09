@@ -14,14 +14,20 @@
 //                                     assigneeId } from a single GET. Use this
 //                                     when a caller needs both ids for sender
 //                                     resolution and customer attribution.
+//   * postStaffReply                — POST /v2/conversations/{id}/reply with
+//                                     optional `status` flip. Two callers:
+//                                     send-helpscout-reply passes
+//                                     status:'pending' (designer asking
+//                                     customer for input); proof-action's
+//                                     confirmation reply passes no status
+//                                     (the conversation status doesn't
+//                                     change on a system-generated
+//                                     confirmation).
 //   * fetchCustomer                 — GET /v2/customers/{id}, same null-on-404
 //                                     shape
 //
 // What stays in callers (deliberately not extracted):
-//   * POST /v2/conversations/{id}/customer  — proof-action only, will
-//     gain a sibling caller in commit 5 of the proof-action confirmation
-//     work; revisit extraction at that point.
-//   * POST /v2/conversations/{id}/reply     — send-helpscout-reply only.
+//   * POST /v2/conversations/{id}/customer  — proof-action only.
 //   * Mailbox listing (/v2/mailboxes)       — match-helpscout-conversation
 //     and admin-test-helpscout each use it for different purposes.
 //   * Conversation search by email or number — single-caller utilities.
@@ -180,4 +186,69 @@ export async function fetchCustomer(
     throw new HsError(resp.status, `Help Scout customer fetch (${resp.status}): ${text}`)
   }
   return await resp.json() as HsCustomer
+}
+
+// POST /v2/conversations/{id}/reply.
+//
+// Help Scout's reply endpoint requires customer.id explicitly (a 400
+// with `path:"customer", message:"must not be null"` is the symptom
+// when missing). The earlier "omit and HS uses primaryCustomer by
+// default" claim from the docs turned out to be false. Callers
+// resolve customer.id via fetchConversationOwnership / fetchConversation
+// before this call.
+//
+// Returns the new thread id parsed from the Location header
+// (`/threads/{id}` at the end), or 0 if the header is missing or
+// unparseable. The HS API responds 201 with no body on success.
+//
+// Two callers with slightly different status semantics:
+//   * send-helpscout-reply  — passes status:'pending'. The designer
+//     is asking the customer to review a proof, so the conversation
+//     belongs in the customer's queue, not the team's.
+//   * proof-action's confirmation reply — omits status. The reply is
+//     a system-generated confirmation of the customer's just-recorded
+//     action; the conversation status reflects whatever HS already
+//     decided in response to the customer-thread post that fired
+//     immediately before, which is correct as-is.
+export async function postStaffReply(
+  token: string,
+  conversationId: string,
+  body: {
+    text: string
+    userId: number
+    customerId: number
+    status?: 'pending'
+  },
+): Promise<number> {
+  const requestBody: Record<string, unknown> = {
+    text: body.text,
+    user: body.userId,
+    customer: { id: body.customerId },
+    draft: false,
+  }
+  if (body.status) requestBody.status = body.status
+
+  const resp = await fetch(
+    `https://api.helpscout.net/v2/conversations/${conversationId}/reply`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    },
+  )
+  if (resp.status === 404) {
+    throw new HsError(404, 'Help Scout conversation not found')
+  }
+  if (!resp.ok) {
+    const upstream = await resp.text().catch(() => '<body read failed>')
+    throw new HsError(resp.status, `Help Scout reply error (${resp.status}): ${upstream}`)
+  }
+  const location = resp.headers.get('Location') ?? ''
+  const match = location.match(/\/threads\/(\d+)$/)
+  const threadId = match ? Number(match[1]) : NaN
+  return Number.isFinite(threadId) ? threadId : 0
 }
