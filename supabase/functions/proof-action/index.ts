@@ -645,6 +645,40 @@ Deno.serve(async (req) => {
       return failed('validation', 400, 'unknown round_variant_id for this version')
     }
     variantDisplayName = (rvRow as { display_name: string }).display_name
+
+    // ── Lock-on-selection: variant rounds reject a second customer choice ─
+    // Build-plan contract: once a customer has selected a variant,
+    // the variant set is locked ("no in-page change-of-mind; reply
+    // by email" — CustomerProofPage 1453). The customer page hides
+    // the CTA on locked rounds, but a stale link or direct API
+    // call could bypass that. The proof_name_approvals upsert
+    // below uses onConflict: (proof_version_id, name), which would
+    // silently overwrite the existing __shared__ row, breaking the
+    // lock contract.
+    //
+    // Fast-path pre-check first — common case is the lock was
+    // already taken before the request landed (e.g. a stale tab
+    // re-submitted after the round was decided). Returning 400
+    // here keeps proof_events clean of the rejected attempt.
+    // Belt-and-braces via ignoreDuplicates: true on the upsert
+    // below (the SELECT-then-UPSERT pattern races in the microsecond
+    // window between the two calls; the unique index on
+    // (proof_version_id, name) serialises concurrent writes at
+    // the DB level so the do-nothing pattern is correct under
+    // contention).
+    const { data: lockRow, error: lockErr } = await admin
+      .from('proof_name_approvals')
+      .select('id')
+      .eq('proof_version_id', proofVersionId)
+      .eq('name', SHARED_APPROVAL_KEY)
+      .maybeSingle()
+    if (lockErr) {
+      console.error('[proof-action] lock-check failed', lockErr)
+      return failed('unknown', 500, lockErr.message)
+    }
+    if (lockRow) {
+      return failed('validation', 400, 'this variant round has already been locked by a customer selection')
+    }
   } else if (roundVariantId !== null) {
     return failed('validation', 400, 'round_variant_id only valid on variant rounds')
   }
@@ -758,27 +792,57 @@ Deno.serve(async (req) => {
   // pill on a row that has a proof_events entry.
   const approvalState = eventType === 'approve' ? 'approved' : 'changes_requested'
   const nowIso = new Date().toISOString()
-  const { error: approvalErr } = await admin
-    .from('proof_name_approvals')
-    .upsert(
-      {
-        proof_version_id: proofVersionId,
-        name: recipientName,
-        state: approvalState,
-        change_request: approvalState === 'approved' ? null : comment,
-        actor_name: actorName,
-        actor_ip: fromIp,
-        actor_ua: fromUa,
-        updated_at: nowIso,
-        // Mirrors proof_events.material_option_code per migration
-        // 000124. Best-effort consistency: if the proof_events insert
-        // landed but this upsert fails, the partial-status response
-        // already covers the divergence — same model as every other
-        // mirrored field on this row.
-        material_option_code: materialOptionCode,
-      },
-      { onConflict: 'proof_version_id,name' },
-    )
+  const approvalRow = {
+    proof_version_id: proofVersionId,
+    name: recipientName,
+    state: approvalState,
+    change_request: approvalState === 'approved' ? null : comment,
+    actor_name: actorName,
+    actor_ip: fromIp,
+    actor_ua: fromUa,
+    updated_at: nowIso,
+    // Mirrors proof_events.material_option_code per migration
+    // 000124. Best-effort consistency: if the proof_events insert
+    // landed but this upsert fails, the partial-status response
+    // already covers the divergence — same model as every other
+    // mirrored field on this row.
+    material_option_code: materialOptionCode,
+  }
+
+  // Branch on is_variant_round: standard versions allow the
+  // customer to change their mind (re-approve, re-request changes
+  // with a new comment) so the upsert overwrites; variant rounds
+  // are lock-on-selection so use ignoreDuplicates (ON CONFLICT DO
+  // NOTHING) and inspect the returned row count. The pre-check
+  // earlier in the variant-round validation block catches the
+  // common case; this is the race-safe fallback for two
+  // near-simultaneous selections.
+  let approvalErr: { message: string } | null = null
+  if (v.is_variant_round) {
+    const { data: insertedApproval, error } = await admin
+      .from('proof_name_approvals')
+      .upsert(approvalRow, {
+        onConflict: 'proof_version_id,name',
+        ignoreDuplicates: true,
+      })
+      .select('id')
+    approvalErr = error
+    if (!error && (insertedApproval?.length ?? 0) === 0) {
+      // Pre-check said "no lock yet" but a concurrent request
+      // landed first. The unique index returned no rows for our
+      // insert; the lock is held by the other request. Same
+      // 400 the pre-check returns, so the customer sees a
+      // consistent message regardless of which path detected it.
+      // The proof_events row recording this attempt is left in
+      // place as audit signal of the rejected selection.
+      return failed('validation', 400, 'this variant round has already been locked by a customer selection')
+    }
+  } else {
+    const { error } = await admin
+      .from('proof_name_approvals')
+      .upsert(approvalRow, { onConflict: 'proof_version_id,name' })
+    approvalErr = error
+  }
   if (approvalErr) {
     console.error('[proof-action] proof_name_approvals upsert failed', approvalErr)
     return json({
