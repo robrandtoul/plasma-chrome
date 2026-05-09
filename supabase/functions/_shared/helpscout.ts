@@ -247,8 +247,20 @@ export async function postStaffReply(
     const upstream = await resp.text().catch(() => '<body read failed>')
     throw new HsError(resp.status, `Help Scout reply error (${resp.status}): ${upstream}`)
   }
+  // Both-header parser: prefer Resource-Id (the documented canonical
+  // header for newly-created subresources), fall back to Location's
+  // /threads/{id} suffix. /reply currently emits the new thread id in
+  // Location, but /customer ships it in Resource-Id (per the
+  // proof_viewer_helpscout_customer_endpoint memory note); writing
+  // the both-header shape here matches the hardened parser already
+  // in proof-action's hsPostCustomerThread and is defence in depth
+  // against Help Scout swapping which header carries the id on the
+  // /reply endpoint in a future API change.
+  const resourceId = resp.headers.get('Resource-Id') ?? ''
+  const directId = resourceId.match(/^\d+$/)?.[0]
   const location = resp.headers.get('Location') ?? ''
-  const match = location.match(/\/threads\/(\d+)$/)
-  const threadId = match ? Number(match[1]) : NaN
+  const locationId = location.match(/\/threads\/(\d+)$/)?.[1]
+  const threadIdRaw = directId ?? locationId
+  const threadId = threadIdRaw ? Number(threadIdRaw) : NaN
   return Number.isFinite(threadId) ? threadId : 0
 }

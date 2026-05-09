@@ -438,7 +438,7 @@ export default function NewVersionPage() {
       // default).
       const inheritPromise = supabase
         .from('proof_versions')
-        .select('id, version_number, currency, material_id, displayed_variant_ids, names, ink_names, material_options, card_type, custom_quote, core_colour_id, front_colour_id, back_colour_id')
+        .select('id, version_number, currency, material_id, displayed_variant_ids, names, ink_names, material_options, card_type, custom_quote, core_colour_id, front_colour_id, back_colour_id, is_variant_round, is_per_direction_pricing')
         .eq('proof_id', proofId!)
         .eq('is_current', true)
         .maybeSingle()
@@ -457,8 +457,14 @@ export default function NewVersionPage() {
       const inherited = inheritResult.data as {
         id: string
         version_number: number
-        currency: string
-        material_id: string
+        // Per migration 000142/000144 the per-direction-pricing variant
+        // round leaves currency + material_id NULL; the previous
+        // designer-form contract that they're always strings is
+        // therefore unsafe to assume. Typed as string | null below
+        // so the inheritance branch can short-circuit before stomping
+        // the form with nulls.
+        currency: string | null
+        material_id: string | null
         displayed_variant_ids: string[] | null
         names: string[] | null
         ink_names: string[] | null
@@ -468,6 +474,8 @@ export default function NewVersionPage() {
         core_colour_id: string | null
         front_colour_id: string | null
         back_colour_id: string | null
+        is_variant_round: boolean | null
+        is_per_direction_pricing: boolean | null
       } | null
 
       if (inherited) {
@@ -479,28 +487,45 @@ export default function NewVersionPage() {
           setNames(inheritedNames)
         }
 
-        // Currency — always inheritable.
-        setCurrency(inherited.currency as Currency)
-        currencyInherited = true
+        // Per-direction-pricing variant rounds carry NULL currency +
+        // material_id (000142/000144). Inheriting those nulls into a
+        // form that types both as required strings shows a confusing
+        // empty state to the designer ("where did the currency go?")
+        // and forces them to re-pick before save validation passes.
+        // Skip the inheritance for both fields when v(N-1) was per-
+        // direction-pricing; the settings-defaults fetch downstream
+        // will hydrate the currency from the admin-configured default.
+        const inheritStandardPricing = !inherited.is_per_direction_pricing
+        if (inheritStandardPricing && inherited.currency) {
+          // Currency — always inheritable from a standard-pricing
+          // source version.
+          setCurrency(inherited.currency as Currency)
+          currencyInherited = true
+        }
 
         // Material — if the inherited material is archived, it
         // won't appear in the filtered list above. Fetch it
         // unfiltered and prepend so the picker can still show it
-        // as the selected value.
-        const inMain = materialsList.some((m) => m.id === inherited.material_id)
-        if (!inMain) {
-          const { data: archivedMatData } = await supabase
-            .from('materials')
-            .select('id, code, display_name, requires_ink_names, option_label, display_quantities, multi_variant, archived_at')
-            .eq('id', inherited.material_id)
-            .maybeSingle()
-          if (!cancelled && archivedMatData) {
-            materialsList = [archivedMatData as Material, ...materialsList]
-            setInheritedMaterialArchived(true)
+        // as the selected value. Skipped entirely for per-direction-
+        // pricing rounds since material_id is NULL there.
+        if (inheritStandardPricing && inherited.material_id) {
+          const inMain = materialsList.some((m) => m.id === inherited.material_id)
+          if (!inMain) {
+            const { data: archivedMatData } = await supabase
+              .from('materials')
+              .select('id, code, display_name, requires_ink_names, option_label, display_quantities, multi_variant, archived_at')
+              .eq('id', inherited.material_id)
+              .maybeSingle()
+            if (!cancelled && archivedMatData) {
+              materialsList = [archivedMatData as Material, ...materialsList]
+              setInheritedMaterialArchived(true)
+            }
           }
+          setMaterials(materialsList)
+          setSelectedMaterialId(inherited.material_id)
+        } else {
+          setMaterials(materialsList)
         }
-        setMaterials(materialsList)
-        setSelectedMaterialId(inherited.material_id)
 
         // Variants — stash in a ref for the variants-loading
         // effect to consume once the material's variants finish
@@ -589,18 +614,30 @@ export default function NewVersionPage() {
         // derived from v1's images in the image-loading block
         // below, where the snapshot is finalised and committed to
         // state.
-        partialSnapshot = {
-          versionNumber: inherited.version_number,
-          materialId: inherited.material_id,
-          variantIds,
-          currency: inherited.currency as Currency,
-          cardType: inherited.card_type,
-          pricingDisplay: inheritedPricingDisplay,
-          names: inheritedNames,
-          inkNamesArray: snapshotInkNamesArray,
-          inkNamesText: snapshotInkNamesText,
-          materialOptions:
-            Array.isArray(inherited.material_options) ? inherited.material_options : [],
+        //
+        // Gated on inheritStandardPricing for the same reason the
+        // currency/material setters are: a per-direction-pricing
+        // parent has NULL material_id and NULL currency (000142 /
+        // 000144), so the snapshot's non-nullable scalar fields
+        // can't be populated honestly. Skipping the snapshot
+        // entirely on per-direction-pricing parents means v2 from
+        // a variant-round v1 renders without carry-forward
+        // ribbons, which is the right call: there is nothing
+        // standard-pricing-shaped to carry forward.
+        if (inheritStandardPricing && inherited.material_id && inherited.currency) {
+          partialSnapshot = {
+            versionNumber: inherited.version_number,
+            materialId: inherited.material_id,
+            variantIds,
+            currency: inherited.currency as Currency,
+            cardType: inherited.card_type,
+            pricingDisplay: inheritedPricingDisplay,
+            names: inheritedNames,
+            inkNamesArray: snapshotInkNamesArray,
+            inkNamesText: snapshotInkNamesText,
+            materialOptions:
+              Array.isArray(inherited.material_options) ? inherited.material_options : [],
+          }
         }
       } else {
         // v1 — no inheritance, just hydrate the picker with the
@@ -2136,6 +2173,27 @@ export default function NewVersionPage() {
         setSubmitting(false)
         return
       }
+
+      // Mirror the standard save path's audit hook (the call at
+      // ~2532). Without this, variant-round version creates were
+      // silent in the audit log and "who added this round" had to
+      // be reconstructed from proof_events. Metadata captures the
+      // shape signals that distinguish this row from a standard
+      // version.added entry: is_variant_round (always true on
+      // this branch), is_per_direction_pricing (sub-mode), and
+      // variant_count (round size).
+      void logAudit({
+        action: 'version.added',
+        targetType: 'version',
+        targetId: versionData.id,
+        targetLabel: `${proofName || 'project'} — variant round`,
+        metadata: {
+          proof_id: proofId,
+          is_variant_round: true,
+          is_per_direction_pricing: isPerDirectionPricing,
+          variant_count: variantRows.length,
+        },
+      })
 
       // Success — reuse the standard post-save flow. Setting
       // savedVersion triggers the existing summary card render.

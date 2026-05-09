@@ -161,6 +161,21 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'version.viewed',                label: 'Proof viewed' },
     { code: 'version.approved_by_customer',  label: 'Approved by customer' },
   ]},
+  { name: 'Settings', actions: [
+    { code: 'setting.disclaimer_updated',                       label: 'Disclaimer copy updated' },
+    { code: 'setting.company_name_updated',                     label: 'Company name updated' },
+    { code: 'setting.reply_email_updated',                      label: 'Reply email updated' },
+    { code: 'setting.default_pricing_display_updated',          label: 'Default pricing display updated' },
+    { code: 'setting.default_currency_updated',                 label: 'Default currency updated' },
+    { code: 'setting.vat_rate_gbp_updated',                     label: 'GBP VAT rate updated' },
+    { code: 'setting.approvals_enabled_updated',                label: 'Approvals toggle changed' },
+    { code: 'setting.approve_confirmation_copy_updated',        label: 'Approve confirmation copy updated' },
+    { code: 'setting.request_changes_confirmation_copy_updated', label: 'Request-changes confirmation copy updated' },
+    { code: 'setting.replies_enabled_updated',                  label: 'Reply templates toggle changed' },
+    { code: 'setting.team_pin_added',                           label: 'Team pin added' },
+    { code: 'setting.team_pin_removed',                         label: 'Team pin removed' },
+    { code: 'setting.needs_attention_rules_updated',            label: 'Needs-attention rules updated' },
+  ]},
 ]
 
 export const TARGET_TYPE_OPTIONS: ActionDef[] = [
@@ -174,6 +189,7 @@ export const TARGET_TYPE_OPTIONS: ActionDef[] = [
   { code: 'company',       label: 'Company' },
   { code: 'contact',       label: 'Contact' },
   { code: 'pricing',       label: 'Pricing import' },
+  { code: 'setting',       label: 'Setting' },
 ]
 
 /** Flat lookup: action code → human label. Falls back to the raw code. */
