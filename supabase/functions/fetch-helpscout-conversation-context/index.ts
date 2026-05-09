@@ -34,6 +34,15 @@
 //   { error: 'Help Scout fetch failed: ...' }
 
 import { requireDesigner } from '../_shared/admin.ts'
+// Shared OAuth helper consolidated in 55a94fc. The threads-embed
+// shape this function reads is intentionally not extracted (only
+// caller), but the token-fetch helper has no per-function shape
+// and was the original consolidation target. Throws HsError
+// (resp.status preserved on .status) on 4xx / 5xx; the catch
+// block at the call site reads .message and surfaces as 502 to
+// the client, which is unchanged behaviour vs the previous local
+// helper that threw plain Error.
+import { getAccessToken } from '../_shared/helpscout.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -46,26 +55,6 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
   })
-}
-
-async function getAccessToken(appId: string, appSecret: string): Promise<string> {
-  const body = new URLSearchParams({
-    grant_type: 'client_credentials',
-    client_id: appId,
-    client_secret: appSecret,
-  })
-  const resp = await fetch('https://api.helpscout.net/v2/oauth2/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  })
-  if (!resp.ok) {
-    const text = await resp.text()
-    throw new Error(`Help Scout token error (${resp.status}): ${text}`)
-  }
-  const data = await resp.json()
-  if (!data.access_token) throw new Error('Help Scout token response missing access_token')
-  return data.access_token as string
 }
 
 interface HsThread {
