@@ -729,22 +729,32 @@ export default function ProofDetailPage() {
     })
     setStatusWorking(false)
     setStatusDialog(null)
-    if (!error) {
-      const approvalsCleared = typeof data === 'number' ? data : 0
-      void logAudit({
-        action: 'proof.reopened',
-        targetType: 'proof',
-        targetId: proof.id,
-        targetLabel: proof.contacts.full_name,
-        beforeValue: { status: proof.status },
-        afterValue: {
-          status: 'in_progress',
-          approvals_cleared: approvalsCleared,
-        },
-      })
-      showToast('Project reopened')
-      if (id) loadProof(id)
+    if (error) {
+      // Surface the failure to the designer rather than silently
+      // returning to the proof view: the previous "if (!error)" with
+      // no else made a failed reopen look identical to a successful
+      // one (no toast, status unchanged), which on its own is a
+      // confusing UX and on top of that meant the audit log carried
+      // no signal of the attempt at all. With this branch we still
+      // skip the audit row on failure (no state actually changed),
+      // but the designer sees what went wrong and can retry.
+      showToast(`Could not reopen project: ${error.message}`)
+      return
     }
+    const approvalsCleared = typeof data === 'number' ? data : 0
+    void logAudit({
+      action: 'proof.reopened',
+      targetType: 'proof',
+      targetId: proof.id,
+      targetLabel: proof.contacts.full_name,
+      beforeValue: { status: proof.status },
+      afterValue: {
+        status: 'in_progress',
+        approvals_cleared: approvalsCleared,
+      },
+    })
+    showToast('Project reopened')
+    if (id) loadProof(id)
   }
 
   async function handleDelete() {
