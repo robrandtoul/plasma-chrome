@@ -4,13 +4,18 @@
 // conversation, match-helpscout-conversation, and admin-test-helpscout.
 //
 // What lives here:
-//   * HsError                — single canonical exception type
-//   * getAccessToken         — OAuth client_credentials flow against
-//                              HELPSCOUT_APP_ID + HELPSCOUT_APP_SECRET
-//   * fetchConversation      — GET /v2/conversations/{id}, returns
-//                              null on 404, throws HsError otherwise
-//   * fetchCustomer          — GET /v2/customers/{id}, same null-on-404
-//                              shape
+//   * HsError                       — single canonical exception type
+//   * getAccessToken                — OAuth client_credentials flow against
+//                                     HELPSCOUT_APP_ID + HELPSCOUT_APP_SECRET
+//   * fetchConversation             — GET /v2/conversations/{id}, returns
+//                                     null on 404, throws HsError otherwise
+//   * fetchConversationOwnership    — convenience wrapper over fetchConversation
+//                                     that returns { primaryCustomerId,
+//                                     assigneeId } from a single GET. Use this
+//                                     when a caller needs both ids for sender
+//                                     resolution and customer attribution.
+//   * fetchCustomer                 — GET /v2/customers/{id}, same null-on-404
+//                                     shape
 //
 // What stays in callers (deliberately not extracted):
 //   * POST /v2/conversations/{id}/customer  — proof-action only, will
@@ -77,9 +82,10 @@ export async function getAccessToken(appId: string, appSecret: string): Promise<
 // existing call sites only read primaryCustomer.id and ignore the
 // rest. lookup-helpscout-conversation reads first / last / email off
 // primaryCustomer to populate the new-proof form. The assignee block
-// is typed here so callers can navigate to it without a cast — but
-// no helper extracts assignee.id yet (that lands in commit 4 of the
-// proof-action confirmation work).
+// is typed here so callers can navigate to it without a cast.
+// fetchConversationOwnership below extracts the ids for sender
+// resolution; fetchConversation itself returns the full block for
+// callers that need first / last / email too.
 export interface HsConversation {
   id: number
   number: number
@@ -117,6 +123,34 @@ export async function fetchConversation(
     throw new HsError(resp.status, `Help Scout conversation fetch (${resp.status}): ${text}`)
   }
   return await resp.json() as HsConversation
+}
+
+// Convenience wrapper for the proof-action confirmation reply flow:
+// fetch the conversation once and return only the two ids needed for
+// sender resolution + customer attribution, dropping every other
+// field. Returns null on 404 (same shape as fetchConversation), so a
+// caller can skip the reply when the linked HS conversation has been
+// deleted without separate try/catch.
+//
+// Each id is independently nullable:
+//   * primaryCustomerId — null when the conversation has no primary
+//     customer (rare; would need designer intervention in HS).
+//     Callers writing to /v2/conversations/{id}/customer or /reply
+//     should treat null as a hard skip.
+//   * assigneeId        — null when the conversation isn't assigned
+//     to a staff user in HS. Used as the second-tier sender fallback
+//     after profiles.helpscout_user_id; null here means continue to
+//     the third-tier (skip-and-warn) branch.
+export async function fetchConversationOwnership(
+  token: string,
+  id: number | string,
+): Promise<{ primaryCustomerId: number | null; assigneeId: number | null } | null> {
+  const conv = await fetchConversation(token, id)
+  if (!conv) return null
+  return {
+    primaryCustomerId: conv.primaryCustomer?.id ?? null,
+    assigneeId: conv.assignee?.id ?? null,
+  }
 }
 
 // Subset of the Help Scout customer resource the project currently
