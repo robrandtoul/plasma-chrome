@@ -35,12 +35,19 @@
 // extending TEMPLATE_VARIABLES without changing the renderer.
 
 export interface TemplateContext {
+  // Pre-send (designer-picked: first_proof, revision)
   first_name?: string
   full_name?: string
   company?: string | null
   version_number?: number | string
   url?: string
   designer_first_name?: string
+  // Post-action confirmation (proof-viewer: proof_*)
+  version_label?: string
+  change_notes?: string
+  chosen_variant?: string
+  actor_name?: string
+  recipient_name?: string
   [key: string]: string | number | null | undefined
 }
 
@@ -81,6 +88,28 @@ export function substituteVariables(text: string, ctx: TemplateContext): string 
 // {? var}…{/?} if you reference it from a template". Doesn't affect
 // renderer behaviour — the renderer treats empty/undefined identically
 // for every variable.
+//
+// scope partitions variables by which template family they're used in:
+//
+//   * 'designer_picked' — populated by the designer-facing flow that
+//     sends first_proof / revision messages from the new-version
+//     editor. Variables come from the proof + customer + version row
+//     at compose time.
+//
+//   * 'proof_viewer'    — populated by the proof-action edge function
+//     when posting the system-triggered confirmation reply (one of
+//     proof_approval_confirmation / proof_change_request_confirmation
+//     / proof_variant_selection_confirmation). Variables come from
+//     the customer's just-recorded action.
+//
+// Convention: reply template IDs prefixed `proof_*` are system-
+// triggered confirmations sent automatically by the proof-action
+// edge function. They render in the "Post-action confirmations"
+// sub-section of the admin editor, with their own variable scope.
+// Designer-picked templates (first_proof, revision) use unprefixed
+// IDs and render in the "Pre-send messages" sub-section.
+
+export type TemplateVariableScope = 'designer_picked' | 'proof_viewer'
 
 export interface TemplateVariableMeta {
   // Variable name as it appears between braces in templates. Plain
@@ -90,38 +119,59 @@ export interface TemplateVariableMeta {
   // The TEMPLATE_VARIABLES array below is the source of truth for
   // which names render in the toolbar.
   name: string
+  scope: TemplateVariableScope
   description: string
   conditional: boolean
 }
 
 export const TEMPLATE_VARIABLES: TemplateVariableMeta[] = [
-  { name: 'first_name',          description: "Customer's first name",                                                            conditional: false },
-  { name: 'full_name',           description: "Customer's full name",                                                             conditional: false },
-  { name: 'company',             description: 'Company name (when set)',                                                          conditional: true  },
-  { name: 'version_number',      description: 'Proof version number',                                                             conditional: false },
-  { name: 'url',                 description: 'Customer-facing proof URL',                                                        conditional: false },
-  { name: 'designer_first_name', description: "Designer's first name (deferred, resolves to empty until designer accounts ship)", conditional: true  },
+  // Pre-send messages (first_proof, revision)
+  { name: 'first_name',          scope: 'designer_picked', description: "Customer's first name",                                                            conditional: false },
+  { name: 'full_name',           scope: 'designer_picked', description: "Customer's full name",                                                             conditional: false },
+  { name: 'company',             scope: 'designer_picked', description: 'Company name (when set)',                                                          conditional: true  },
+  { name: 'version_number',      scope: 'designer_picked', description: 'Proof version number',                                                             conditional: false },
+  { name: 'url',                 scope: 'designer_picked', description: 'Customer-facing proof URL',                                                        conditional: false },
+  { name: 'designer_first_name', scope: 'designer_picked', description: "Designer's first name (deferred, resolves to empty until designer accounts ship)", conditional: true  },
+  // Post-action confirmations (proof_approval_confirmation, proof_change_request_confirmation, proof_variant_selection_confirmation)
+  { name: 'version_label',       scope: 'proof_viewer',    description: 'Version label as shown to the customer (e.g. "version 3")',                       conditional: false },
+  { name: 'change_notes',        scope: 'proof_viewer',    description: "What the customer typed in the change-notes box. Empty for plain approvals — wrap in {? change_notes}…{/?} when used.", conditional: true },
+  { name: 'chosen_variant',      scope: 'proof_viewer',    description: 'Variant the customer picked (variant round only; empty otherwise)',               conditional: true  },
+  { name: 'actor_name',          scope: 'proof_viewer',    description: 'Name the customer typed when confirming their action',                            conditional: false },
+  { name: 'recipient_name',      scope: 'proof_viewer',    description: "Per-recipient slot on multi-recipient proofs; empty on shared/all-shared proofs — wrap in {? recipient_name}…{/?} when used.", conditional: true },
 ]
 
 // ── Default bodies ───────────────────────────────────────────────────────────
 //
 // Source-of-truth defaults for the Reset button. Must stay in sync
-// with the seed inserts in supabase/migrations/000102_add_reply_
-// templates.sql. The migration seeds these once on first apply;
-// subsequent edits are admin-driven through the Settings page. Reset
-// reads from this constant rather than re-fetching the migration.
+// with the seed inserts in two migrations:
+//   * supabase/migrations/000102_add_reply_templates.sql
+//     (first_proof, revision)
+//   * supabase/migrations/000157_seed_proof_viewer_reply_templates.sql
+//     (proof_approval_confirmation, proof_change_request_confirmation,
+//      proof_variant_selection_confirmation)
+// The migrations seed these once on first apply; subsequent edits
+// are admin-driven through the Settings page. Reset reads from this
+// constant rather than re-fetching the migrations.
 //
-// Both bodies use {? company} to demonstrate the conditional syntax
-// in the seeded copy so admins see a working example before touching
-// anything.
+// The first_proof / revision bodies use {? company} to demonstrate
+// the conditional syntax in the seeded copy so admins see a working
+// example before touching anything.
 
 // Bodies do not include a sign-off: Help Scout auto-appends the
 // configured signature to every outgoing reply, so a manual
 // "Many thanks, Plasma Design" duplicates it for the customer.
 // Bug audit PV-2026W19-001 flagged the original drift.
 export const DEFAULT_BODIES: Record<string, string> = {
+  // Pre-send messages
   first_proof:
     `Hi {first_name},\n\nHere's the first proof of your cards{? company} for {company}{/?}. Have a look and let us know what you think.\n\n{url}`,
   revision:
     `Hi {first_name},\n\nHere's v{version_number} of your cards{? company} for {company}{/?} with the changes you asked for. Take another look when you have a moment.\n\n{url}`,
+  // Post-action confirmations
+  proof_approval_confirmation:
+    `Thanks for approving {version_label}. We'll be in touch shortly about next steps.`,
+  proof_change_request_confirmation:
+    `Thanks, we've recorded your changes for {version_label}:<br><br>{? change_notes}{change_notes}<br><br>{/?}We'll get an updated proof over to you shortly.`,
+  proof_variant_selection_confirmation:
+    `Thanks, we've recorded your selection for {version_label}: {chosen_variant}.<br><br>{? change_notes}{change_notes}<br><br>{/?}We'll incorporate this and get an updated proof over to you shortly.`,
 }

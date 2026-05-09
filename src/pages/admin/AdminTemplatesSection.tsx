@@ -1,12 +1,23 @@
 // Admin section for editing customer-reply templates. Lives inside
-// AdminSettingsPage between Integrations and Materials. Foundation for
-// the customer-reply pipeline (Ship 1 of intervention 3); Ship 2 wires
-// the rendered template into the new-version flow's designer-facing
-// message editor, and Ship 3 routes it through the Help Scout API.
+// AdminSettingsPage between Integrations and Materials.
 //
-// Per template: insert toolbar (variable chips + if-block button),
-// blur-saving textarea, live preview pane with sample data, and a
-// Reset button. Audit log fires on every save and on Reset.
+// Two template families, rendered in their own sub-sections:
+//   * Pre-send messages — first_proof, revision. Composed by the
+//     designer in the new-version flow before they hit Send. Routed
+//     through the send-helpscout-reply edge function.
+//   * Post-action confirmations — proof_approval_confirmation,
+//     proof_change_request_confirmation, proof_variant_selection_
+//     confirmation. Sent automatically by the proof-action edge
+//     function when a customer approves, requests changes, or picks
+//     a variant on a variant round. Edits affect every customer's
+//     confirmation email.
+//
+// Per template: insert toolbar (variable chips filtered by scope +
+// if-block button), blur-saving textarea, live preview pane with
+// sample data, and a Reset button. The preview substitutes <br>
+// tags for newlines so post-action templates (which use <br><br>
+// for paragraph breaks per the Help Scout convention) render
+// honestly. Audit log fires on every save and on Reset.
 
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { supabase } from '../../lib/supabase'
@@ -16,6 +27,7 @@ import {
   TEMPLATE_VARIABLES,
   DEFAULT_BODIES,
   type TemplateContext,
+  type TemplateVariableScope,
 } from '../../lib/replyTemplates'
 import { invalidateRepliesEnabled } from '../../lib/repliesEnabled'
 
@@ -44,11 +56,32 @@ const SAMPLE_BASE = {
 }
 
 function buildSampleContext(company: CompanyMode, version: VersionMode): TemplateContext {
+  const versionN = version === 'v1' ? 1 : 2
   return {
     ...SAMPLE_BASE,
     company: company === 'with' ? 'Plasma Design' : null,
-    version_number: version === 'v1' ? 1 : 2,
+    version_number: versionN,
+    // Sample values for the proof-viewer (post-action) templates.
+    // The version toggle drives version_label too so the two stay
+    // visually consistent when the same toggle is on screen for a
+    // proof-viewer card. The other proof-viewer fields are baked-in
+    // representative values so admins see what each variable
+    // resolves to. recipient_name defaults to empty (shared / all-
+    // shared proof) — the more common case.
+    version_label: `version ${versionN}`,
+    change_notes: 'Please make the logo larger.',
+    chosen_variant: 'Charcoal',
+    actor_name: 'Kevin',
+    recipient_name: '',
   }
+}
+
+// System-triggered templates have ids prefixed `proof_*` and are
+// rendered into their own sub-section of the editor with a different
+// variable scope. See the convention comment in
+// src/lib/replyTemplates.ts for the rule.
+function templateScope(id: string): TemplateVariableScope {
+  return id.startsWith('proof_') ? 'proof_viewer' : 'designer_picked'
 }
 
 // ── Section ──────────────────────────────────────────────────────────────────
@@ -172,18 +205,58 @@ export default function AdminTemplatesSection() {
         </div>
       </div>
 
-      <div className="space-y-6">
-        {templates.length === 0 ? (
-          <p className="text-sm text-gray-400">Loading…</p>
-        ) : (
-          templates.map((t) => (
-            <TemplateCard key={t.id} template={t} onSaved={handleSaved} />
-          ))
-        )}
-      </div>
-
-      {templates.length > 0 && <VariableHelpPanel />}
+      {templates.length === 0 ? (
+        <p className="text-sm text-gray-400">Loading…</p>
+      ) : (
+        <>
+          <TemplateGroup
+            heading="Pre-send messages"
+            blurb="Composed by the designer in the new-version flow before they hit Send."
+            templates={templates.filter((t) => templateScope(t.id) === 'designer_picked')}
+            onSaved={handleSaved}
+          />
+          <TemplateGroup
+            heading="Post-action confirmations"
+            blurb="Sent automatically by the proof viewer when a customer approves, requests changes, or picks a variant. Edits affect every customer's confirmation email."
+            templates={templates.filter((t) => templateScope(t.id) === 'proof_viewer')}
+            onSaved={handleSaved}
+          />
+          <VariableHelpPanel />
+        </>
+      )}
     </section>
+  )
+}
+
+// ── Template group (sub-section) ────────────────────────────────────────────
+//
+// Splits the editor into two visually-distinct groups so admins can
+// see at a glance which templates are designer-composed vs system-
+// triggered. The "Post-action confirmations" blurb spells out the
+// "edits affect every customer's confirmation email" warning so the
+// difference in editing impact is obvious before any change is made.
+
+function TemplateGroup({
+  heading, blurb, templates, onSaved,
+}: {
+  heading: string
+  blurb: string
+  templates: ReplyTemplate[]
+  onSaved: (t: ReplyTemplate) => void
+}) {
+  if (templates.length === 0) return null
+  return (
+    <div className="mb-6 last:mb-0">
+      <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">
+        {heading}
+      </h4>
+      <p className="mb-3 text-xs text-gray-500">{blurb}</p>
+      <div className="space-y-6">
+        {templates.map((t) => (
+          <TemplateCard key={t.id} template={t} onSaved={onSaved} />
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -316,8 +389,20 @@ function TemplateCard({
 
   const recentlySaved = savedAt != null && Date.now() - savedAt < 2000
 
+  const cardScope = templateScope(template.id)
+  const cardVariables = TEMPLATE_VARIABLES.filter((v) => v.scope === cardScope)
+
   const previewCtx = buildSampleContext(companyMode, versionMode)
-  const previewText = renderTemplate(draft, previewCtx)
+  // Render the template, then convert <br> / <br/> tags to real
+  // newlines for the preview so the whitespace-pre-wrap div shows
+  // paragraph breaks instead of literal "<br><br>" text. Help Scout's
+  // text-mode reply renders <br> as a line break in the customer's
+  // email, so this substitution makes the preview honest about what
+  // the customer actually sees. Other HTML tags (e.g. <ul><li>)
+  // would still render literally — none of the seed defaults use
+  // them, and admins who introduce them are signalling a more
+  // advanced template that warrants a closer look at the live email.
+  const previewText = renderTemplate(draft, previewCtx).replace(/<br\s*\/?>/gi, '\n')
 
   return (
     <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-4">
@@ -329,10 +414,13 @@ function TemplateCard({
       </div>
       <p className="mb-3 text-xs text-gray-500">{template.description}</p>
 
-      {/* Insert toolbar */}
+      {/* Insert toolbar — variables filtered by template scope so each
+          card only shows the chips that are meaningful inside its
+          template's runtime context. Pre-send and post-action templates
+          have disjoint variable sets. */}
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
         <span className="mr-1 text-xs font-medium text-gray-500">Insert:</span>
-        {TEMPLATE_VARIABLES.map((v) => (
+        {cardVariables.map((v) => (
           <button
             key={v.name}
             type="button"
@@ -410,11 +498,30 @@ function TemplateCard({
 // ── Help panel ───────────────────────────────────────────────────────────────
 
 function VariableHelpPanel() {
+  // Variables grouped by scope so the help panel mirrors the
+  // sub-section split above. Each scope renders the same dl shape.
+  const designerPicked = TEMPLATE_VARIABLES.filter((v) => v.scope === 'designer_picked')
+  const proofViewer = TEMPLATE_VARIABLES.filter((v) => v.scope === 'proof_viewer')
+
   return (
     <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50/40 p-4">
-      <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400">Variables</h4>
+      <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+        Pre-send variables
+      </h4>
       <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
-        {TEMPLATE_VARIABLES.map((v) => (
+        {designerPicked.map((v) => (
+          <div key={v.name} className="contents">
+            <dt className="font-mono text-gray-700">{`{${v.name}}`}</dt>
+            <dd className="text-gray-500">{v.description}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <h4 className="mt-4 text-xs font-semibold uppercase tracking-wider text-gray-400">
+        Post-action variables
+      </h4>
+      <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
+        {proofViewer.map((v) => (
           <div key={v.name} className="contents">
             <dt className="font-mono text-gray-700">{`{${v.name}}`}</dt>
             <dd className="text-gray-500">{v.description}</dd>
