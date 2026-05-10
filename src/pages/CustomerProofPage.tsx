@@ -3283,12 +3283,27 @@ export default function CustomerProofPage() {
                               color: PAPER_TERTIARY,
                             }}
                           >
-                            {activeVersion.names.length} names ×{' '}
+                            {/*
+                              Multiplier semantics: the surcharge
+                              applies to each name *beyond the first*,
+                              so the multiplier is names.length - 1
+                              not names.length. The earlier copy
+                              ("{N} names × £15 tooling each beyond
+                              the first") read as N × £15 to anyone
+                              not parsing the trailing clause —
+                              e.g. for 2 names it scanned as £30
+                              even though the +£X total above is £15.
+                              This phrasing puts the count of *extra*
+                              names in the multiplier slot so the
+                              math reads right at a glance.
+                            */}
+                            {activeVersion.names.length - 1} extra{' '}
+                            {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
                             {formatPrice(
                               activeVersion.split_name_surcharge_snapshot,
                               activeVersion.currency,
                             )}{' '}
-                            tooling each beyond the first
+                            tooling
                           </p>
                         </div>
                       )}
