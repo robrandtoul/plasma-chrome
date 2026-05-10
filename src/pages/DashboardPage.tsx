@@ -382,9 +382,13 @@ function OverflowMenu({
 interface SnoozeButtonProps {
   proof: DashboardProject
   onSnooze: (proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) => Promise<void>
+  // stripStyle: renders a larger, grey-toned button sized to match the
+  // action strip. Default (false) renders the smaller amber button used
+  // next to the attention chip on narrow screens.
+  stripStyle?: boolean
 }
 
-function SnoozeButton({ proof, onSnooze }: SnoozeButtonProps) {
+function SnoozeButton({ proof, onSnooze, stripStyle = false }: SnoozeButtonProps) {
   const [open, setOpen]       = useState(false)
   const [note, setNote]       = useState('')
   const [saving, setSaving]   = useState(false)
@@ -461,15 +465,22 @@ function SnoozeButton({ proof, onSnooze }: SnoozeButtonProps) {
         aria-label="Snooze this alert"
         title="Snooze this alert"
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
-        className="flex h-5 w-5 items-center justify-center rounded-full text-amber-600 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+        className={
+          stripStyle
+            ? 'flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900'
+            : 'flex h-5 w-5 items-center justify-center rounded-full text-amber-600 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500'
+        }
       >
-        <ClockIcon className="h-3 w-3" />
+        <ClockIcon className={stripStyle ? 'h-4 w-4' : 'h-3 w-3'} />
       </button>
       {open && (
         <div
           role="dialog"
           aria-label="Snooze options"
-          className="absolute left-0 top-6 z-20 w-56 overflow-hidden rounded-lg bg-white py-2 shadow-lg ring-1 ring-gray-200"
+          className={[
+            'absolute z-20 w-56 overflow-hidden rounded-lg bg-white py-2 shadow-lg ring-1 ring-gray-200',
+            stripStyle ? 'right-0 top-8' : 'left-0 top-6',
+          ].join(' ')}
           onClick={(e) => e.stopPropagation()}
         >
           {customMode ? (
@@ -609,12 +620,15 @@ function ProjectRow({
           // Reason chip — same FAEEDA / 854F0B amber ramp as the
           // Needs-attention tile and the In-progress status pill,
           // so the visual cue carries through from tile to row.
-          // The clock button to the right opens the snooze popover.
+          // The clock button is hidden on sm+ (snooze lives in the
+          // action strip on wider screens).
           <div className="mt-1 flex items-center gap-1.5">
             <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200">
               {reasonChipText(project.rule_code, project.rule_meta?.days)}
             </span>
-            <SnoozeButton proof={project} onSnooze={onSnooze} />
+            <span className="sm:hidden">
+              <SnoozeButton proof={project} onSnooze={onSnooze} />
+            </span>
           </div>
         )}
         {/* Snoozed indicator — shown when no rule fires (snooze is
@@ -642,30 +656,17 @@ function ProjectRow({
           </div>
         )}
       </div>
-      <span className="hidden truncate text-sm text-gray-500 lg:block lg:w-32">{project.material_display ?? '—'}</span>
       <StatusPill status={project.status} />
       <span className="hidden w-32 shrink-0 text-right text-xs text-gray-400 xl:block" title={ts ? formatAbsoluteDateTime(ts) : undefined}>
         {verb}{ts ? ` ${relativeTime(ts)}` : ''}
       </span>
-      {project.helpscout_conversation_url ? (
-        <a
-          href={project.helpscout_conversation_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="Open in Help Scout"
-          title="Open in Help Scout"
-          onClick={(e) => e.stopPropagation()}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
-        >
-          <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M7 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9" />
-            <path d="M9.5 1.5h5v5" />
-            <path d="M7.5 8.5l6-6" />
-          </svg>
-        </a>
-      ) : (
-        <span className="w-8 shrink-0" />
-      )}
+      <ActionStrip
+        proof={project}
+        canAddVersion={canAddVersion}
+        minePinned={minePinned}
+        onToggleMinePin={onToggleMinePin}
+        onSnooze={onSnooze}
+      />
       <OverflowMenu
         proof={project}
         canAddVersion={canAddVersion}
@@ -718,6 +719,142 @@ function XIcon({ className }: { className?: string }) {
     <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
       <path d="M4 4l8 8M12 4l-8 8" />
     </svg>
+  )
+}
+
+function PlusIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <path d="M8 3v10M3 8h10" />
+    </svg>
+  )
+}
+
+function EyeIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z" />
+      <circle cx="8" cy="8" r="2" />
+    </svg>
+  )
+}
+
+// ── Row action button ─────────────────────────────────────────────────────────
+//
+// Shared button shell for the action strip. Renders as an <a>, <Link>,
+// or <button> depending on what's passed. Always stops propagation so
+// the parent row's navigate handler is not triggered.
+
+interface RowActionButtonProps {
+  label: string
+  children: React.ReactNode
+  href?: string
+  to?: string
+  onClick?: (e: React.MouseEvent) => void
+  active?: boolean
+}
+
+function RowActionButton({ label, children, href, to, onClick, active }: RowActionButtonProps) {
+  const cls = [
+    'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
+    'focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
+    active
+      ? 'text-violet-600 hover:bg-violet-50'
+      : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700',
+  ].join(' ')
+
+  if (href) {
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={label}
+        title={label}
+        onClick={(e) => { e.stopPropagation(); onClick?.(e) }}
+        className={cls}
+      >{children}</a>
+    )
+  }
+  if (to) {
+    return (
+      <Link
+        to={to}
+        aria-label={label}
+        title={label}
+        onClick={(e) => { e.stopPropagation(); onClick?.(e) }}
+        className={cls}
+      >{children}</Link>
+    )
+  }
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={(e) => { e.stopPropagation(); onClick?.(e) }}
+      className={cls}
+    >{children}</button>
+  )
+}
+
+// ── Action strip ──────────────────────────────────────────────────────────────
+//
+// Visible on sm+ screens only. On narrow screens the existing ⋯
+// overflow menu covers the same actions. Each button hides itself when
+// the action doesn't apply (no version yet → no preview, etc.) so the
+// strip stays uncluttered.
+
+interface ActionStripProps {
+  proof: DashboardProject
+  canAddVersion: boolean
+  minePinned: boolean
+  onToggleMinePin: (proofId: string) => void
+  onSnooze: (proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) => Promise<void>
+}
+
+function ActionStrip({ proof, canAddVersion, minePinned, onToggleMinePin, onSnooze }: ActionStripProps) {
+  return (
+    <div className="hidden sm:flex shrink-0 items-center gap-0.5">
+      {canAddVersion && (
+        <RowActionButton
+          label="Add version"
+          to={`/proofs/${proof.proof_id}/versions/new`}
+        >
+          <PlusIcon className="h-4 w-4" />
+        </RowActionButton>
+      )}
+      {proof.current_version_id && (
+        <RowActionButton
+          label="Preview"
+          href={designerPreviewPath(proof.proof_id)}
+        >
+          <EyeIcon className="h-4 w-4" />
+        </RowActionButton>
+      )}
+      {proof.helpscout_conversation_url && (
+        <RowActionButton
+          label="Open in Help Scout"
+          href={proof.helpscout_conversation_url}
+        >
+          {/* Inline external-link icon matching the existing row icon */}
+          <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M7 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9" />
+            <path d="M9.5 1.5h5v5" /><path d="M7.5 8.5l6-6" />
+          </svg>
+        </RowActionButton>
+      )}
+      <RowActionButton
+        label={minePinned ? 'Unpin from your list' : 'Pin to your list'}
+        onClick={() => onToggleMinePin(proof.proof_id)}
+        active={minePinned}
+      >
+        <PinIcon className="h-4 w-4" />
+      </RowActionButton>
+      {proof.rule_code && (
+        <SnoozeButton proof={proof} onSnooze={onSnooze} stripStyle />
+      )}
+    </div>
   )
 }
 
