@@ -19,6 +19,7 @@ import {
 import { designerPreviewPath } from '../lib/customerProofUrl'
 import { logAudit } from '../lib/audit'
 import { QuoteLink } from '../components/QuoteLink'
+import EditProfileModal, { type EditProfileSavedPayload } from '../components/EditProfileModal'
 import {
   groupByTime,
   groupByCompany,
@@ -171,11 +172,14 @@ function DesignerAvatar({ p }: { p: DashboardProject }) {
       title={tooltip}
       aria-label={tooltip}
       className={[
-        'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ring-1',
-        COLOUR_CLASSES[colour],
+        'flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold ring-1',
+        p.designer_avatar_url ? 'bg-transparent ring-gray-200' : COLOUR_CLASSES[colour],
       ].join(' ')}
     >
-      {initials}
+      {p.designer_avatar_url
+        ? <img src={p.designer_avatar_url} alt="" className="h-full w-full object-cover" />
+        : initials
+      }
     </span>
   )
 }
@@ -185,20 +189,7 @@ function DesignerAvatar({ p }: { p: DashboardProject }) {
 // Fixed width keeps all status pills the same size so the action strip
 // starts at the same x position on every row. "In progress" is the
 // widest label, so min-w is sized to fit it without wrapping.
-const PILL_BASE = 'inline-block min-w-[5.5rem] shrink-0 rounded-full px-2 py-0.5 text-center text-xs font-semibold'
-
-function StatusPill({ status }: { status: ProofStatus }) {
-  if (status === 'approved') {
-    return <span className={`${PILL_BASE} bg-emerald-100 text-emerald-700`}>Approved</span>
-  }
-  if (status === 'abandoned') {
-    return <span className={`${PILL_BASE} bg-slate-200 text-slate-700`}>Abandoned</span>
-  }
-  if (status === 'dormant') {
-    return <span className={`${PILL_BASE} bg-gray-100 text-gray-500`}>Dormant</span>
-  }
-  return <span className={`${PILL_BASE} bg-amber-100 text-amber-700`}>In progress</span>
-}
+const PILL_BASE = 'inline-block min-w-[5.5rem] shrink-0 rounded-md px-2 py-0.5 text-center text-xs font-semibold'
 
 function ViewedDot({ state }: { state: ViewedState }) {
   return (
@@ -208,6 +199,13 @@ function ViewedDot({ state }: { state: ViewedState }) {
       className={['inline-block h-2.5 w-2.5 shrink-0 rounded-full', viewedStateDotClass(state)].join(' ')}
     />
   )
+}
+
+function statusLabel(status: ProofStatus): string {
+  if (status === 'approved')  return 'Approved'
+  if (status === 'dormant')   return 'Dormant'
+  if (status === 'abandoned') return 'Abandoned'
+  return 'In progress'
 }
 
 // ── Stat tile ────────────────────────────────────────────────────────────────
@@ -222,43 +220,46 @@ interface StatTileProps {
 }
 
 function StatTile({ label, count, active, tone, description, onClick }: StatTileProps) {
-  const base =
-    tone === 'rose'    ? 'bg-rose-50 ring-rose-200 text-rose-900 hover:bg-rose-100'
-    : tone === 'amber' ? 'bg-amber-50 ring-amber-200 text-amber-900 hover:bg-amber-100'
-    : tone === 'sky'   ? 'bg-sky-50 ring-sky-200 text-sky-900 hover:bg-sky-100'
-    : tone === 'green' ? 'bg-green-50 ring-green-200 text-green-900 hover:bg-green-100'
-    : tone === 'violet'? 'bg-violet-50 ring-violet-200 text-violet-900 hover:bg-violet-100'
-    :                    'bg-white ring-gray-200 text-gray-900 hover:bg-gray-50'
-  const activeRing = active
-    ? tone === 'rose'    ? 'ring-2 ring-rose-500 shadow-sm'
-      : tone === 'amber' ? 'ring-2 ring-amber-500 shadow-sm'
-      : tone === 'sky'   ? 'ring-2 ring-sky-500 shadow-sm'
-      : tone === 'green' ? 'ring-2 ring-green-500 shadow-sm'
-      : tone === 'violet'? 'ring-2 ring-violet-500 shadow-sm'
-      :                    'ring-2 ring-gray-900 shadow-sm'
-    : 'ring-1'
-  const labelColour =
-    tone === 'rose'    ? 'text-rose-700'
-    : tone === 'amber' ? 'text-amber-700'
-    : tone === 'sky'   ? 'text-sky-700'
-    : tone === 'green' ? 'text-green-700'
-    : tone === 'violet'? 'text-violet-700'
+  // Top accent border colour — saturated, no fill on the card body
+  const accentBorder =
+    tone === 'rose'    ? 'border-t-rose-500'
+    : tone === 'amber' ? 'border-t-amber-500'
+    : tone === 'sky'   ? 'border-t-sky-500'
+    : tone === 'green' ? 'border-t-emerald-500'
+    : tone === 'violet'? 'border-t-violet-500'
+    :                    'border-t-gray-400'
+  // Count colour matches the accent
+  const countColour =
+    tone === 'rose'    ? 'text-rose-600'
+    : tone === 'amber' ? 'text-amber-500'
+    : tone === 'sky'   ? 'text-sky-500'
+    : tone === 'green' ? 'text-emerald-600'
+    : tone === 'violet'? 'text-violet-600'
     :                    'text-gray-500'
+  // Active state: thicker ring in the matching tone; inactive: quiet border
+  const activeRing = active
+    ? tone === 'rose'    ? 'ring-2 ring-rose-400'
+      : tone === 'amber' ? 'ring-2 ring-amber-400'
+      : tone === 'sky'   ? 'ring-2 ring-sky-400'
+      : tone === 'green' ? 'ring-2 ring-emerald-500'
+      : tone === 'violet'? 'ring-2 ring-violet-400'
+      :                    'ring-2 ring-gray-400'
+    : 'ring-1 ring-gray-200'
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
       className={[
-        'flex flex-col items-start gap-1 rounded-2xl px-5 py-4 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
-        base,
+        'flex flex-col items-start gap-1 rounded-xl border-t-4 bg-white px-5 py-4 text-left transition-colors hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
+        accentBorder,
         activeRing,
       ].join(' ')}
     >
-      <span className={['min-h-8 text-xs font-semibold uppercase tracking-wider', labelColour].join(' ')}>{label}</span>
-      <span className="text-2xl font-bold tabular-nums">{count}</span>
+      <span className="min-h-8 text-xs font-semibold uppercase tracking-wider text-gray-500">{label}</span>
+      <span className={['text-2xl font-bold tabular-nums', countColour].join(' ')}>{count}</span>
       {description && (
-        <span className="text-xs text-current opacity-50">{description}</span>
+        <span className="text-xs text-gray-400">{description}</span>
       )}
     </button>
   )
@@ -601,16 +602,27 @@ function ProjectRow({
           navigate(`/proofs/${project.proof_id}`)
         }
       }}
+      title={[
+        statusLabel(project.status),
+        project.current_version_viewed_at
+          ? `Viewed ${relativeTime(project.current_version_viewed_at)}`
+          : viewedStateTitle(viewedStateFor(project)),
+        project.rule_code ? reasonChipText(project.rule_code, project.rule_meta?.days) : null,
+        !project.rule_code && project.snoozed_until ? `Snoozed until ${formatSnoozeUntil(project.snoozed_until)}` : null,
+      ].filter(Boolean).join(' · ')}
       className={[
-        'flex cursor-pointer items-center gap-3 px-5 py-3 transition-colors hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900',
+        'flex cursor-pointer items-center gap-3 border-l-[6px] pl-4 pr-5 py-3 transition-colors hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900',
+        project.snoozed_until                                                          ? 'border-l-violet-400'  :
+        project.rule_code                                                              ? 'border-l-rose-500'    :
+        project.status === 'approved'                                                  ? 'border-l-emerald-500' :
+        project.status === 'dormant'                                                   ? 'border-l-gray-300'    :
+        project.status === 'abandoned'                                                 ? 'border-l-slate-400'   :
+        project.current_version_id && project.current_version_viewed_at               ? 'border-l-sky-500'     :
+                                                                                         'border-l-amber-400',
         project.status === 'dormant' ? 'opacity-60' : '',
       ].join(' ')}
     >
-      <ViewedDot state={viewedStateFor(project)} />
-      {/* No version yet → no designer to attribute → no avatar.
-          Rendering an empty initials circle on shell rows reads as
-          a missing-data bug. Status dot still renders so the row
-          isn't visually shorter than its siblings. */}
+      {/* No version yet → no designer to attribute → no avatar. */}
       {project.current_version_id && <DesignerAvatar p={project} />}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -620,47 +632,7 @@ function ProjectRow({
           )}
         </div>
         {subline && <div className="truncate text-xs text-gray-500">{subline}</div>}
-        {project.rule_code && (
-          // Reason chip — same FAEEDA / 854F0B amber ramp as the
-          // Needs-attention tile and the In-progress status pill,
-          // so the visual cue carries through from tile to row.
-          // The clock button is hidden on sm+ (snooze lives in the
-          // action strip on wider screens).
-          <div className="mt-1 flex items-center gap-1.5">
-            <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-800 ring-1 ring-rose-200">
-              {reasonChipText(project.rule_code, project.rule_meta?.days)}
-            </span>
-            <span className="sm:hidden">
-              <SnoozeButton proof={project} onSnooze={onSnooze} />
-            </span>
-          </div>
-        )}
-        {/* Snoozed indicator — shown when no rule fires (snooze is
-            active) but the proof carries snooze metadata. Lets the
-            designer see at a glance why the attention chip is absent,
-            and provides a one-click unsnooze escape. */}
-        {!project.rule_code && project.snoozed_until && project.snooze_rule_code && (
-          <div className="mt-1 flex items-center gap-1.5">
-            <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 ring-1 ring-violet-200">
-              <ClockIcon className="h-2.5 w-2.5 shrink-0" />
-              Snoozed until {formatSnoozeUntil(project.snoozed_until)}
-              {project.snooze_note && (
-                <span className="ml-0.5 text-violet-500" title={project.snooze_note}>· "{project.snooze_note}"</span>
-              )}
-            </span>
-            <button
-              type="button"
-              aria-label="Unsnooze"
-              title="Unsnooze"
-              onClick={(e) => { e.stopPropagation(); void onUnsnooze(project.proof_id, project.snooze_rule_code!) }}
-              className="flex h-5 w-5 items-center justify-center rounded-full text-violet-500 hover:bg-violet-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
-            >
-              <XIcon className="h-3 w-3" />
-            </button>
-          </div>
-        )}
       </div>
-      <StatusPill status={project.status} />
       <span className="hidden w-32 shrink-0 text-right text-xs text-gray-400 xl:block" title={ts ? formatAbsoluteDateTime(ts) : undefined}>
         {verb}{ts ? ` ${relativeTime(ts)}` : ''}
       </span>
@@ -996,7 +968,7 @@ function LatestActivityPanel({
                     </span>
                     {failed && (
                       <span
-                        className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
+                        className="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
                         title="Help Scout notification failed — customer was asked to email."
                       >notification failed</span>
                     )}
@@ -1020,6 +992,10 @@ export default function DashboardPage() {
   const [projects, setProjects]           = useState<DashboardProject[]>([])
   const [tileCounts, setTileCounts]       = useState<TileCounts | null>(null)
   const [latestEvents, setLatestEvents]   = useState<DashboardLatestEvent[]>([])
+  const [myProfile, setMyProfile]         = useState<{ initials: string; colour: DesignerColour; avatarUrl: string | null } | null>(null)
+  const [avatarOpen, setAvatarOpen]       = useState(false)
+  const [editProfileOpen, setEditProfileOpen] = useState(false)
+  const avatarRef                         = useRef<HTMLDivElement>(null)
   // Pin state — proof_id → pinned_at ISO. Two maps because the
   // dashboard cares about each scope independently (mine drives the
   // Pinned section, team drives the Team section, and both feed the
@@ -1041,6 +1017,35 @@ export default function DashboardPage() {
   const [snoozedOnly,   setSnoozedOnly]   = useState(false)
 
   useEffect(() => { loadDashboard() }, [])
+
+  // Fetch the signed-in designer's own profile for the header avatar
+  useEffect(() => {
+    if (!userId) return
+    supabase
+      .from('profiles')
+      .select('designer_initials, designer_colour, full_name, avatar_url')
+      .eq('id', userId)
+      .single()
+      .then(({ data }) => {
+        if (!data) return
+        setMyProfile({
+          initials: (data.designer_initials ?? data.full_name?.split(' ').map((n: string) => n[0]).join('') ?? '?').slice(0, 2),
+          colour: (data.designer_colour ?? 'blue') as DesignerColour,
+          avatarUrl: data.avatar_url ?? null,
+        })
+      })
+  }, [userId])
+
+  // Close avatar popover on outside click
+  useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      if (avatarRef.current && !avatarRef.current.contains(e.target as Node)) {
+        setAvatarOpen(false)
+      }
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [])
 
   // Refetch when the tab becomes visible — designers context-switching
   // (Help Scout, email) come back to a fresh page without a manual reload.
@@ -1233,6 +1238,9 @@ export default function DashboardPage() {
   }
 
   function toggleTile(t: TileKey) {
+    setSnoozedOnly(false)
+    setShowSnoozed(false)
+    try { localStorage.setItem(SNOOZED_KEY, 'false') } catch { /* */ }
     setTileFilter((prev) => (prev === t ? null : t))
   }
 
@@ -1248,13 +1256,40 @@ export default function DashboardPage() {
     return c
   }, [projects])
 
-  // Proofs with a current version the customer hasn't opened yet.
-  // Computed client-side from the full project list — no extra query needed.
+  // Tile counts — all computed client-side so counts and filters use exactly
+  // the same predicates. Snoozed projects are always excluded: they live in
+  // the dedicated Snoozed section regardless of their other state.
+  // Needs-attention projects are excluded from every other tile so each
+  // project belongs to exactly one tile.
+  const needsAttentionCount = useMemo(() =>
+    projects.filter((p) =>
+      p.rule_code != null &&
+      p.snoozed_until == null &&
+      (showAbandoned || p.status !== 'abandoned')
+    ).length,
+  [projects, showAbandoned])
+
   const notViewedCount = useMemo(() =>
     projects.filter((p) => {
       const isActive = p.status === 'in_progress' || p.status === 'dormant'
-      return isActive && p.current_version_id !== null && p.current_version_viewed_at === null
+      return (
+        p.rule_code == null &&
+        p.snoozed_until == null &&
+        isActive &&
+        p.current_version_id !== null &&
+        p.current_version_viewed_at === null
+      )
     }).length,
+  [projects])
+
+  const awaitingCustomerCount = useMemo(() =>
+    projects.filter((p) =>
+      p.rule_code == null &&
+      p.snoozed_until == null &&
+      p.status === 'in_progress' &&
+      p.current_version_id !== null &&
+      p.current_version_viewed_at !== null
+    ).length,
   [projects])
 
   // Filter pipeline: search → tile → status. All AND-combined.
@@ -1271,8 +1306,11 @@ export default function DashboardPage() {
         ].filter(Boolean).join(' ').toLowerCase()
         if (!hay.includes(q)) return false
       }
-      if (tileFilter === 'needs_attention'    && !p.rule_code) return false
-      if (tileFilter === 'awaiting_customer'  && !p.awaiting_customer) return false
+      // Snoozed projects always belong to the Snoozed section — exclude from
+      // every tile filter so they don't appear in the main list when a tile is active.
+      if (tileFilter && p.snoozed_until != null) return false
+      if (tileFilter === 'needs_attention'    && p.rule_code == null) return false
+      if (tileFilter === 'awaiting_customer'  && !(p.rule_code == null && p.status === 'in_progress' && p.current_version_id !== null && p.current_version_viewed_at !== null)) return false
       if (tileFilter === 'dormant'            && p.status !== 'dormant') return false
       if (tileFilter === 'approved_this_week') {
         const cutoff = Date.now() - 7 * 86_400_000
@@ -1280,8 +1318,9 @@ export default function DashboardPage() {
       }
       if (tileFilter === 'not_viewed') {
         // Active proofs with a current version the customer hasn't opened yet.
+        // Needs-attention projects are excluded — they belong to the rose tile only.
         const isActive = p.status === 'in_progress' || p.status === 'dormant'
-        if (!isActive || !p.current_version_id || p.current_version_viewed_at !== null) return false
+        if (p.rule_code != null || !isActive || !p.current_version_id || p.current_version_viewed_at !== null) return false
       }
       // Hide abandoned proofs unless the designer has toggled them on,
       // or has explicitly selected "Abandoned" from the status filter.
@@ -1356,20 +1395,91 @@ export default function DashboardPage() {
       <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
 
         {/* Header */}
-        <div className="mb-8 flex items-center justify-between">
+        <div className="mb-8 flex items-center justify-between gap-4">
+
+          {/* Identity */}
           <div>
-            <p className="text-sm font-medium uppercase tracking-widest text-gray-400">PlasmaDesign</p>
-            <h1 className="mt-1 text-2xl font-bold text-gray-900">Projects</h1>
+            <p className="text-xs font-medium uppercase tracking-widest text-gray-400">Proof viewer</p>
+            <h1 className="text-xl font-semibold text-gray-900">Projects</h1>
           </div>
-          <div className="flex items-center gap-3">
+
+          {/* Nav actions */}
+          <div className="flex items-center gap-1">
+
+            {/* Utility tools */}
             <QuoteLink />
             {role === 'admin' && (
-              <Link to="/admin/users" className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100">Admin</Link>
+              <Link
+                to="/admin/users"
+                className="rounded-lg px-3 py-2 text-sm font-medium text-gray-900 ring-1 ring-gray-300 hover:bg-white"
+              >
+                Admin
+              </Link>
             )}
-            <Link to="/proofs/new" className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700">New project</Link>
-            <button onClick={handleSignOut} className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100">Sign out</button>
+
+            {/* Divider */}
+            <span className="mx-2 h-5 w-px bg-gray-200" aria-hidden="true" />
+
+            {/* Primary action */}
+            <Link
+              to="/proofs/new"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-gray-700 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-600"
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M7 1v12M1 7h12"/></svg>
+              New project
+            </Link>
+
+            {/* Divider */}
+            <span className="mx-2 h-5 w-px bg-gray-200" aria-hidden="true" />
+
+            {/* Avatar — sign-out popover */}
+            <div ref={avatarRef} className="relative">
+              <button
+                onClick={() => setAvatarOpen((v) => !v)}
+                aria-label="Account menu"
+                aria-expanded={avatarOpen}
+                className={[
+                  'flex h-8 w-8 items-center justify-center overflow-hidden rounded-full text-xs font-semibold ring-1 transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
+                  myProfile && !myProfile.avatarUrl ? COLOUR_CLASSES[myProfile.colour] : 'bg-gray-100 text-gray-500 ring-gray-200',
+                ].join(' ')}
+              >
+                {myProfile?.avatarUrl
+                  ? <img src={myProfile.avatarUrl} alt="Profile" className="h-full w-full object-cover" />
+                  : (myProfile?.initials ?? '…')
+                }
+              </button>
+              {avatarOpen && (
+                <div className="absolute right-0 top-10 z-20 min-w-[10rem] rounded-xl bg-white py-1 shadow-md ring-1 ring-gray-200">
+                  <button
+                    onClick={() => { setAvatarOpen(false); setEditProfileOpen(true) }}
+                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    Edit profile
+                  </button>
+                  <div className="mx-3 my-1 border-t border-gray-100" />
+                  <button
+                    onClick={handleSignOut}
+                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    Sign out
+                  </button>
+                </div>
+              )}
+            </div>
+
           </div>
         </div>
+
+        {/* Edit profile modal */}
+        {editProfileOpen && userId && (
+          <EditProfileModal
+            userId={userId}
+            onClose={() => setEditProfileOpen(false)}
+            onSaved={(payload: EditProfileSavedPayload) =>
+              setMyProfile({ initials: payload.initials, colour: payload.colour, avatarUrl: payload.avatarUrl })
+            }
+          />
+        )}
 
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
           <div className="min-w-0">
@@ -1387,23 +1497,23 @@ export default function DashboardPage() {
 
                 {/* Section labels — xl only, one label per group aligned to
                     the matching tile column(s) via the same 6-col grid */}
-                <div className="mb-1 hidden xl:grid xl:grid-cols-6 xl:gap-3">
+                <div className="mb-1.5 hidden xl:grid xl:grid-cols-6 xl:gap-3">
                   {/* Alert group — spans column 1 */}
-                  <div className="flex items-center gap-1.5 px-0.5">
-                    <span className="text-[10px] font-medium uppercase tracking-widest text-rose-400">Alert</span>
-                    <span className="h-px flex-1 bg-rose-200" aria-hidden="true" />
+                  <div className="flex items-center gap-2 px-0.5">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-rose-500">Alert</span>
+                    <span className="h-px flex-1 bg-rose-300" aria-hidden="true" />
                   </div>
                   {/* Workflow group — spans columns 2–6 */}
-                  <div className="col-span-5 flex items-center gap-1.5 px-0.5">
-                    <span className="text-[10px] font-medium uppercase tracking-widest text-gray-400">Workflow</span>
-                    <span className="h-px flex-1 bg-gray-200" aria-hidden="true" />
+                  <div className="col-span-5 flex items-center gap-2 px-0.5">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">Workflow</span>
+                    <span className="h-px flex-1 bg-gray-300" aria-hidden="true" />
                   </div>
                 </div>
 
                 <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
                   <StatTile
                     label="Needs attention"
-                    count={tileCounts?.needs_attention ?? 0}
+                    count={needsAttentionCount}
                     active={tileFilter === 'needs_attention'}
                     tone="rose"
                     description="action required from you"
@@ -1419,7 +1529,7 @@ export default function DashboardPage() {
                   />
                   <StatTile
                     label="Awaiting customer"
-                    count={tileCounts?.awaiting_customer ?? 0}
+                    count={awaitingCustomerCount}
                     active={tileFilter === 'awaiting_customer'}
                     tone="sky"
                     description="viewed, no response yet"
@@ -1443,6 +1553,7 @@ export default function DashboardPage() {
                       setShowSnoozed((v) => {
                         const next = !v
                         setSnoozedOnly(next)
+                        if (next) setTileFilter(null)
                         try { localStorage.setItem(SNOOZED_KEY, String(next)) } catch { /* */ }
                         return next
                       })
@@ -1487,11 +1598,13 @@ export default function DashboardPage() {
                           placeholder="Search project, contact, company, email, or Help Scout id"
                           value={search}
                           onChange={(e) => setSearch(e.target.value)}
-                          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                          className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900"
                         />
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
+                        {/* Status filter */}
                         <SelectField
+                          label="Status"
                           value={
                             statusFilter.size === 0 && showSnoozed
                               ? 'snoozed'
@@ -1515,31 +1628,41 @@ export default function DashboardPage() {
                             }
                           }}
                           options={[
-                            { value: 'all',         label: `Status: All (${projects.length})` },
-                            { value: 'in_progress', label: `Status: In progress (${statusCounts.in_progress})` },
-                            { value: 'approved',    label: `Status: Approved (${statusCounts.approved})` },
-                            { value: 'dormant',     label: `Status: Dormant (${statusCounts.dormant})` },
-                            { value: 'abandoned',   label: `Status: Abandoned (${statusCounts.abandoned})` },
-                            { value: 'snoozed',     label: `Status: Snoozed (${snoozedSections[0]?.projects.length ?? 0})` },
+                            { value: 'all',         label: `All (${projects.length})` },
+                            { value: 'in_progress', label: `In progress (${statusCounts.in_progress})` },
+                            { value: 'approved',    label: `Approved (${statusCounts.approved})` },
+                            { value: 'dormant',     label: `Dormant (${statusCounts.dormant})` },
+                            { value: 'abandoned',   label: `Abandoned (${statusCounts.abandoned})` },
+                            { value: 'snoozed',     label: `Snoozed (${snoozedSections[0]?.projects.length ?? 0})` },
                           ]}
                         />
+
+                        {/* Divider — separates filter from view controls */}
+                        <span className="h-4 w-px bg-gray-200" aria-hidden="true" />
+
+                        {/* Sort + Group */}
                         <SelectField
+                          label="Sort"
                           value={sort}
                           onChange={(v) => handleSortChange(v as SortMode)}
                           options={[
-                            { value: 'activity', label: 'Sort: Activity' },
-                            { value: 'date',     label: 'Sort: Date' },
-                            { value: 'name',     label: 'Sort: Name' },
+                            { value: 'activity', label: 'Activity' },
+                            { value: 'date',     label: 'Date' },
+                            { value: 'name',     label: 'Name' },
                           ]}
                         />
                         <SelectField
+                          label="Group"
                           value={group}
                           onChange={(v) => handleGroupChange(v as GroupMode)}
                           options={[
-                            { value: 'time',    label: 'Group: Time' },
-                            { value: 'company', label: 'Group: Company' },
+                            { value: 'time',    label: 'Time' },
+                            { value: 'company', label: 'Company' },
                           ]}
                         />
+
+                        {/* Abandoned checkbox toggle — pushed to far right */}
+                        <span className="flex-1" aria-hidden="true" />
                         <button
                           onClick={() => {
                             setShowAbandoned((v) => {
@@ -1548,19 +1671,21 @@ export default function DashboardPage() {
                               return next
                             })
                           }}
-                          className={`relative inline-flex items-center justify-center rounded-md border px-2.5 py-1.5 text-sm font-medium transition-colors ${
+                          className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${
                             showAbandoned
-                              ? 'border-gray-900 bg-gray-900 text-white'
-                              : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400 hover:text-gray-900'
+                              ? 'border-gray-400 bg-gray-100 text-gray-800'
+                              : 'border-gray-300 bg-white text-gray-500 shadow-sm hover:bg-gray-50 hover:text-gray-700'
                           }`}
                         >
-                          {/* Both strings rendered at all times; the inactive
-                              one is invisible so the button always reserves the
-                              width of its wider state and never shifts siblings. */}
-                          <span aria-hidden className="invisible select-none">Hide abandoned</span>
-                          <span className="absolute inset-0 flex items-center justify-center">
-                            {showAbandoned ? 'Hide abandoned' : 'Show abandoned'}
+                          {/* Checkbox indicator */}
+                          <span className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border ${showAbandoned ? 'border-gray-600 bg-gray-700' : 'border-gray-300'}`}>
+                            {showAbandoned && (
+                              <svg viewBox="0 0 10 10" className="h-2.5 w-2.5 text-white" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="1.5 5 4 7.5 8.5 2.5" />
+                              </svg>
+                            )}
                           </span>
+                          Abandoned
                         </button>
                       </div>
                     </div>
@@ -1590,15 +1715,15 @@ export default function DashboardPage() {
                         // virtualised renderer reuses the same
                         // ProjectRow component so chips, menus, and
                         // keyboard interaction behave identically.
-                        const virtualise = section.kind === 'time' && section.key === 'older'
+                        const virtualise = section.kind === 'time' && section.key === 'older' && section.projects.length > 30
                         return (
                           <div key={section.key} className={si > 0 ? 'border-t border-gray-100' : ''}>
-                            <div className="flex items-center gap-3 bg-gray-50/80 px-5 py-1.5">
-                              {section.kind === 'pinned'  && <PinIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
-                              {section.kind === 'team'    && <UsersIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
-                              {section.kind === 'snoozed' && <ClockIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
-                              <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">{section.title}</span>
-                              <span className="text-xs text-gray-400 tabular-nums">{section.projects.length}</span>
+                            <div className="flex items-center gap-3 bg-gray-50/80 px-5 py-2 pt-12">
+                              {section.kind === 'pinned'  && <PinIcon className="h-3.5 w-3.5 shrink-0 text-gray-600" />}
+                              {section.kind === 'team'    && <UsersIcon className="h-3.5 w-3.5 shrink-0 text-gray-600" />}
+                              {section.kind === 'snoozed' && <ClockIcon className="h-3.5 w-3.5 shrink-0 text-gray-600" />}
+                              <span className="text-sm font-bold uppercase tracking-wider text-gray-700">{section.title}</span>
+                              <span className="text-xs font-medium text-gray-500 tabular-nums">{section.projects.length}</span>
                             </div>
                             {virtualise ? (
                               <Virtuoso
@@ -1646,7 +1771,7 @@ export default function DashboardPage() {
           </div>
 
           {!loading && (
-            <aside className="hidden lg:sticky lg:top-10 lg:block lg:self-start">
+            <aside className="hidden lg:sticky lg:top-10 lg:block lg:self-start xl:pt-4">
               <LatestActivityPanel events={latestEvents} navigate={navigate} />
             </aside>
           )}
@@ -1666,17 +1791,24 @@ function SelectField<T extends string>({
   options,
   value,
   onChange,
+  label,
 }: {
   options: Array<{ value: T; label: string }>
   value: T
   onChange: (v: T) => void
+  label?: string
 }) {
   return (
-    <div className="relative">
+    <div className="relative inline-flex items-center rounded-md border border-gray-300 bg-white shadow-sm hover:bg-gray-50 focus-within:ring-2 focus-within:ring-gray-900">
+      {label && (
+        <span className="pointer-events-none select-none pl-2.5 text-xs font-medium text-gray-400">
+          {label}
+        </span>
+      )}
       <select
         value={value}
         onChange={(e) => onChange(e.target.value as T)}
-        className="cursor-pointer appearance-none rounded-md border border-gray-200 bg-white py-1 pl-2.5 pr-7 text-xs font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-900"
+        className="cursor-pointer appearance-none bg-transparent py-1.5 pl-1 pr-7 text-xs font-medium text-gray-800 focus:outline-none"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>

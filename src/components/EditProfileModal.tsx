@@ -1,0 +1,439 @@
+import { useEffect, useId, useRef, useState } from 'react'
+import Modal from './Modal'
+import { supabase } from '../lib/supabase'
+import type { DesignerColour } from '../lib/dashboardGrouping'
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Derive up-to-2 uppercase initials from a full name. "Rob Randtoul" → "RR" */
+function initialsFromName(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase()
+}
+
+// ── Colour catalogue ─────────────────────────────────────────────────────────
+
+const COLOURS: {
+  value: DesignerColour
+  label: string
+  bg: string
+  text: string
+  ring: string
+}[] = [
+  { value: 'blue',   label: 'Blue',   bg: 'bg-sky-100',    text: 'text-sky-800',    ring: 'ring-sky-400' },
+  { value: 'teal',   label: 'Teal',   bg: 'bg-teal-100',   text: 'text-teal-800',   ring: 'ring-teal-400' },
+  { value: 'coral',  label: 'Coral',  bg: 'bg-orange-100', text: 'text-orange-800', ring: 'ring-orange-400' },
+  { value: 'purple', label: 'Purple', bg: 'bg-violet-100', text: 'text-violet-800', ring: 'ring-violet-400' },
+]
+
+function colourMeta(c: DesignerColour) {
+  return COLOURS.find((x) => x.value === c) ?? COLOURS[0]
+}
+
+const ACCEPTED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+const MAX_BYTES = 2 * 1024 * 1024 // 2 MB
+
+// ── Shared input style (matches AddUserDialog) ────────────────────────────────
+
+const inputClass =
+  'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export interface EditProfileSavedPayload {
+  initials: string
+  colour: DesignerColour
+  fullName: string
+  avatarUrl: string | null
+}
+
+interface EditProfileModalProps {
+  userId: string
+  onClose: () => void
+  onSaved: (payload: EditProfileSavedPayload) => void
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
+
+export default function EditProfileModal({
+  userId,
+  onClose,
+  onSaved,
+}: EditProfileModalProps) {
+  const titleId   = useId()
+  const fileRef   = useRef<HTMLInputElement>(null)
+
+  const [fullName, setFullName]                     = useState('')
+  const [initials, setInitials]                     = useState('')
+  const [colour, setColour]                         = useState<DesignerColour>('blue')
+  const [initialsUserEdited, setInitialsUserEdited] = useState(false)
+  const [avatarUrl, setAvatarUrl]                   = useState<string | null>(null)
+
+  const [loading,         setLoading]         = useState(true)
+  const [saving,          setSaving]          = useState(false)
+  const [uploading,       setUploading]       = useState(false)
+  const [uploadError,     setUploadError]     = useState<string | null>(null)
+  const [formError,       setFormError]       = useState<string | null>(null)
+
+  // ── Load current profile ─────────────────────────────────────────────────
+
+  useEffect(() => {
+    supabase
+      .from('profiles')
+      .select('full_name, designer_initials, designer_colour, avatar_url')
+      .eq('id', userId)
+      .single()
+      .then(({ data }) => {
+        if (data) {
+          setFullName(data.full_name ?? '')
+          setInitials((data.designer_initials ?? '').slice(0, 2))
+          setColour((data.designer_colour ?? 'blue') as DesignerColour)
+          setAvatarUrl(data.avatar_url ?? null)
+          // If the stored initials match what we'd auto-derive, treat them
+          // as not manually edited so auto-derive keeps working as they type.
+          const stored  = (data.designer_initials ?? '').slice(0, 2).toUpperCase()
+          const derived = initialsFromName(data.full_name ?? '')
+          setInitialsUserEdited(stored !== '' && stored !== derived)
+        }
+        setLoading(false)
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId])
+
+  // ── Avatar upload ────────────────────────────────────────────────────────
+  //
+  // Upload is applied immediately on file select — same UX as Slack,
+  // GitHub, etc. The user doesn't need to hit Save; if they cancel the
+  // rest of the form the picture is still saved (which is fine and
+  // expected). The stored path is always `{userId}/avatar` so previous
+  // uploads are silently overwritten rather than accumulating.
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    // Reset input so re-selecting the same file fires onChange again.
+    e.target.value = ''
+
+    setUploadError(null)
+
+    if (!ACCEPTED_TYPES.includes(file.type)) {
+      setUploadError('Please choose a JPEG, PNG, or WebP image.')
+      return
+    }
+    if (file.size > MAX_BYTES) {
+      setUploadError('Image must be 2 MB or smaller.')
+      return
+    }
+
+    setUploading(true)
+    const storagePath = `${userId}/avatar`
+
+    const { error: upErr } = await supabase.storage
+      .from('avatars')
+      .upload(storagePath, file, { upsert: true, contentType: file.type })
+
+    if (upErr) {
+      setUploading(false)
+      setUploadError(upErr.message || 'Upload failed. Please try again.')
+      return
+    }
+
+    // Get the public URL and append a cache-buster so browsers always
+    // fetch the latest version rather than serving a stale cached copy.
+    const { data: { publicUrl } } = supabase.storage
+      .from('avatars')
+      .getPublicUrl(storagePath)
+
+    const urlWithBuster = `${publicUrl}?t=${Date.now()}`
+
+    // Persist immediately to profiles.avatar_url.
+    const { error: dbErr } = await supabase
+      .from('profiles')
+      .update({ avatar_url: urlWithBuster })
+      .eq('id', userId)
+
+    setUploading(false)
+
+    if (dbErr) {
+      setUploadError(dbErr.message || 'Could not save avatar. Please try again.')
+      return
+    }
+
+    setAvatarUrl(urlWithBuster)
+  }
+
+  // ── Name / initials handlers ─────────────────────────────────────────────
+
+  function handleNameChange(name: string) {
+    setFullName(name)
+    if (!initialsUserEdited) {
+      setInitials(initialsFromName(name))
+    }
+  }
+
+  function handleInitialsChange(raw: string) {
+    setInitialsUserEdited(true)
+    setInitials(raw.slice(0, 2).toUpperCase())
+  }
+
+  // ── Save ─────────────────────────────────────────────────────────────────
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setFormError(null)
+
+    const cleanName = fullName.trim()
+    if (!cleanName) {
+      setFormError('Full name is required.')
+      return
+    }
+
+    const finalInitials = (initials.trim() || initialsFromName(cleanName) || '?').slice(0, 2)
+
+    setSaving(true)
+    const { error: updateErr } = await supabase
+      .from('profiles')
+      .update({
+        full_name:         cleanName,
+        designer_initials: finalInitials,
+        designer_colour:   colour,
+        // avatar_url is already written in handleFileChange; re-writing
+        // it here keeps the row consistent if the user uploaded and then
+        // also changed their name in the same session.
+        avatar_url:        avatarUrl,
+      })
+      .eq('id', userId)
+    setSaving(false)
+
+    if (updateErr) {
+      setFormError(updateErr.message || 'Failed to save profile.')
+      return
+    }
+
+    onSaved({ initials: finalInitials, colour, fullName: cleanName, avatarUrl })
+    onClose()
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────
+
+  const cm = colourMeta(colour)
+
+  return (
+    <Modal open onClose={onClose} preventClose={saving || uploading} ariaLabelledBy={titleId}>
+      {loading ? (
+        <div className="flex justify-center py-8">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-5">
+
+          <h3 id={titleId} className="text-lg font-semibold text-gray-900">
+            Edit profile
+          </h3>
+
+          {/* Avatar upload ──────────────────────────────────────────────── */}
+          <div>
+            <p className="mb-2 text-sm font-medium text-gray-700">Profile picture</p>
+            <div className="flex items-center gap-4">
+              {/* Clickable avatar — shows photo if uploaded, initials otherwise */}
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={uploading}
+                aria-label="Upload profile picture"
+                className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900 focus-visible:ring-offset-2"
+              >
+                {avatarUrl ? (
+                  <img
+                    src={avatarUrl}
+                    alt="Profile"
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <span
+                    className={[
+                      'flex h-full w-full items-center justify-center text-lg font-semibold',
+                      cm.bg,
+                      cm.text,
+                    ].join(' ')}
+                    aria-hidden
+                  >
+                    {initials || '?'}
+                  </span>
+                )}
+
+                {/* Hover/focus overlay */}
+                {uploading ? (
+                  <span className="absolute inset-0 flex items-center justify-center bg-black/40">
+                    <span className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  </span>
+                ) : (
+                  <span className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/30 group-focus-visible:bg-black/30">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      className="h-5 w-5 text-white opacity-0 drop-shadow transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                      aria-hidden
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M1 8a2 2 0 0 1 2-2h.93a2 2 0 0 0 1.664-.89l.812-1.22A2 2 0 0 1 8.07 3h3.86a2 2 0 0 1 1.664.89l.812 1.22A2 2 0 0 0 16.07 6H17a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8Zm13.5 3a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM10 14a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </span>
+                )}
+              </button>
+
+              <div className="text-xs text-gray-500 leading-relaxed">
+                <p>Click to upload a photo.</p>
+                <p>JPEG, PNG, or WebP. Max 2 MB.</p>
+                {avatarUrl && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const { error } = await supabase
+                        .from('profiles')
+                        .update({ avatar_url: null })
+                        .eq('id', userId)
+                      if (!error) setAvatarUrl(null)
+                    }}
+                    className="mt-1 text-rose-600 hover:underline"
+                  >
+                    Remove photo
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="sr-only"
+              onChange={handleFileChange}
+              tabIndex={-1}
+              aria-hidden
+            />
+
+            {uploadError && (
+              <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                {uploadError}
+              </p>
+            )}
+          </div>
+
+          {/* Full name ─────────────────────────────────────────────────── */}
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-gray-700">
+              Full name <span className="text-rose-500" aria-hidden>*</span>
+            </label>
+            <input
+              type="text"
+              value={fullName}
+              onChange={(e) => handleNameChange(e.target.value)}
+              className={inputClass}
+              placeholder="e.g. Rob Randtoul"
+              autoComplete="name"
+            />
+          </div>
+
+          {/* Initials + live preview ────────────────────────────────────── */}
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-gray-700">
+              Initials
+            </label>
+            <div className="flex items-center gap-3">
+              <input
+                type="text"
+                value={initials}
+                onChange={(e) => handleInitialsChange(e.target.value)}
+                maxLength={2}
+                className={[inputClass, 'w-20 text-center font-semibold uppercase tracking-widest'].join(' ')}
+                placeholder="RR"
+                aria-label="Initials, up to two characters"
+              />
+              {/* Live avatar preview — shows photo if uploaded, initials otherwise */}
+              <span
+                aria-hidden
+                className={[
+                  'flex h-9 w-9 shrink-0 select-none items-center justify-center rounded-full text-sm font-semibold ring-1 ring-gray-200 overflow-hidden',
+                  !avatarUrl ? `${cm.bg} ${cm.text}` : '',
+                ].join(' ')}
+              >
+                {avatarUrl
+                  ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
+                  : (initials || '?')
+                }
+              </span>
+            </div>
+            <p className="mt-1.5 text-xs text-gray-400">
+              Shown when no photo is uploaded. Auto-derived from your name — edit to override.
+            </p>
+          </div>
+
+          {/* Colour picker ──────────────────────────────────────────────── */}
+          <div>
+            <p className="mb-2 text-sm font-medium text-gray-700">Avatar colour</p>
+            <p className="mb-2 text-xs text-gray-400">Used as the background for your initials when no photo is set.</p>
+            <div className="flex gap-3" role="radiogroup" aria-label="Avatar colour">
+              {COLOURS.map((c) => (
+                <button
+                  key={c.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={colour === c.value}
+                  aria-label={c.label}
+                  onClick={() => setColour(c.value)}
+                  className={[
+                    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
+                    c.bg,
+                    c.text,
+                    colour === c.value
+                      ? `scale-110 ring-2 ring-offset-2 ${c.ring}`
+                      : 'ring-1 ring-gray-200 hover:scale-105',
+                  ].join(' ')}
+                >
+                  {initials || '?'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {formError && (
+            <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              {formError}
+            </p>
+          )}
+
+          {/* Actions ────────────────────────────────────────────────────── */}
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving || uploading}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving || uploading}
+              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+
+        </form>
+      )}
+    </Modal>
+  )
+}
