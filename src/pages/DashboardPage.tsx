@@ -1344,13 +1344,19 @@ export default function DashboardPage() {
                               return next
                             })
                           }}
-                          className={`inline-flex items-center rounded-md border px-2.5 py-1.5 text-sm font-medium transition-colors ${
+                          className={`relative inline-flex items-center justify-center rounded-md border px-2.5 py-1.5 text-sm font-medium transition-colors ${
                             showAbandoned
                               ? 'border-gray-900 bg-gray-900 text-white'
                               : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400 hover:text-gray-900'
                           }`}
                         >
-                          {showAbandoned ? 'Hide abandoned' : 'Show abandoned'}
+                          {/* Both strings rendered at all times; the inactive
+                              one is invisible so the button always reserves the
+                              width of its wider state and never shifts siblings. */}
+                          <span aria-hidden className="invisible select-none">Hide abandoned</span>
+                          <span className="absolute inset-0 flex items-center justify-center">
+                            {showAbandoned ? 'Hide abandoned' : 'Show abandoned'}
+                          </span>
                         </button>
                         {snoozedSections.length > 0 && (
                           <button
