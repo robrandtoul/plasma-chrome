@@ -145,6 +145,7 @@ interface DashboardLatestEvent {
 const SORT_KEY      = 'proofViewer.dashboard.sort'
 const GROUP_KEY     = 'proofViewer.dashboard.group'
 const ABANDONED_KEY = 'proofViewer.dashboard.showAbandoned'
+const SNOOZED_KEY   = 'proofViewer.dashboard.showSnoozed'
 
 function readSort(): SortMode {
   try {
@@ -164,6 +165,11 @@ function readGroup(): GroupMode {
 
 function readShowAbandoned(): boolean {
   try { return localStorage.getItem(ABANDONED_KEY) === 'true' } catch { /* */ }
+  return false
+}
+
+function readShowSnoozed(): boolean {
+  try { return localStorage.getItem(SNOOZED_KEY) === 'true' } catch { /* */ }
   return false
 }
 
@@ -914,6 +920,7 @@ export default function DashboardPage() {
   const [sort, setSort]                   = useState<SortMode>(readSort)
   const [group, setGroup]                 = useState<GroupMode>(readGroup)
   const [showAbandoned, setShowAbandoned] = useState<boolean>(readShowAbandoned)
+  const [showSnoozed,   setShowSnoozed]   = useState<boolean>(readShowSnoozed)
 
   useEffect(() => { loadDashboard() }, [])
 
@@ -1177,20 +1184,30 @@ export default function DashboardPage() {
     return arr
   }, [filteredProjects, sort])
 
+  // Snoozed projects are always excluded from the tail sections so
+  // they don't appear twice. Whether the dedicated Snoozed section
+  // itself is rendered is controlled by showSnoozed.
+  const snoozedSections = useMemo(
+    () => buildSnoozedSection(sortedProjects),
+    [sortedProjects],
+  )
+
   const sections: ProjectSection[] = useMemo(() => {
-    // Pinned → Snoozed → time/company. Each layer removes its members
-    // from the pool so no proof appears twice on the page.
-    const pinSections     = buildPinSections(sortedProjects, minePinAt, teamPinAt)
-    const snoozedSections = buildSnoozedSection(sortedProjects)
+    // Pinned → (Snoozed if toggled on) → time/company.
+    const pinSections = buildPinSections(sortedProjects, minePinAt, teamPinAt)
     const reservedIds = new Set<string>()
     for (const s of pinSections)     for (const p of s.projects) reservedIds.add(p.proof_id)
+    // Always exclude snoozed from the tail regardless of showSnoozed —
+    // we don't want snoozed proofs appearing in the normal time/company
+    // buckets even when the Snoozed section is hidden.
     for (const s of snoozedSections) for (const p of s.projects) reservedIds.add(p.proof_id)
     const remaining = sortedProjects.filter((p) => !reservedIds.has(p.proof_id))
     const tailSections = group === 'company'
       ? groupByCompany(remaining)
       : groupByTime(remaining)
-    return [...pinSections, ...snoozedSections, ...tailSections]
-  }, [sortedProjects, group, minePinAt, teamPinAt])
+    const visibleSnoozed = showSnoozed ? snoozedSections : []
+    return [...pinSections, ...visibleSnoozed, ...tailSections]
+  }, [sortedProjects, group, minePinAt, teamPinAt, snoozedSections, showSnoozed])
 
   const noResults = !loading && sections.every((s) => s.projects.length === 0)
 
@@ -1335,6 +1352,25 @@ export default function DashboardPage() {
                         >
                           {showAbandoned ? 'Hide abandoned' : 'Show abandoned'}
                         </button>
+                        {snoozedSections.length > 0 && (
+                          <button
+                            onClick={() => {
+                              setShowSnoozed((v) => {
+                                const next = !v
+                                try { localStorage.setItem(SNOOZED_KEY, String(next)) } catch { /* */ }
+                                return next
+                              })
+                            }}
+                            className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm font-medium transition-colors ${
+                              showSnoozed
+                                ? 'border-violet-700 bg-violet-700 text-white'
+                                : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400 hover:text-gray-900'
+                            }`}
+                          >
+                            <ClockIcon className="h-3.5 w-3.5" />
+                            {showSnoozed ? 'Hide snoozed' : `Show snoozed (${snoozedSections[0].projects.length})`}
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -1347,7 +1383,9 @@ export default function DashboardPage() {
                             setStatusFilter(new Set())
                             setTileFilter(null)
                             setShowAbandoned(false)
+                            setShowSnoozed(false)
                             try { localStorage.setItem(ABANDONED_KEY, 'false') } catch { /* */ }
+                            try { localStorage.setItem(SNOOZED_KEY, 'false') } catch { /* */ }
                           }}
                           className="mt-2 text-sm text-gray-500 underline underline-offset-2 hover:text-gray-900"
                         >Clear filters</button>
