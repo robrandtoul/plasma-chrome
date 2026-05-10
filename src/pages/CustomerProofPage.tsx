@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant } from '../lib/types'
+import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import type { ProofEventState } from '../lib/types'
 import { deriveSharedApprovalState } from '../lib/sharedApproval'
@@ -647,26 +647,41 @@ export default function CustomerProofPage() {
     setActiveOptionCode(null)
     setNotFound(false)
 
-    const [proofResult, versionsResult, settingsResult] = await Promise.all([
-      supabase.from('public_proofs').select('*').eq('id', proofId).maybeSingle(),
-      supabase.from('public_proof_versions').select('*').eq('proof_id', proofId).order('version_number', { ascending: true }),
+    // One SECURITY DEFINER RPC replaces the previous fan-out across
+    // public_proofs / public_proof_versions / public_material_options /
+    // public_material_option_surcharges / public_material_variants /
+    // public_price_tiers. The function (migration 000162) scopes every
+    // catalogue lookup to the material_ids and currencies referenced by
+    // this proof's versions, so anon can only ever see the slice
+    // relevant to the proof UUID it already knows. The views
+    // themselves are no longer anon-readable; this is the only
+    // customer-page entry point now.
+    const [graphResult, settingsResult] = await Promise.all([
+      supabase.rpc('public_get_customer_proof', { p_proof_id: proofId }),
       getPublicSettings(),
     ])
 
-    if (proofResult.error || !proofResult.data) {
+    if (graphResult.error || graphResult.data == null) {
+      // SQL NULL from the RPC (proof not found) lands here as
+      // data === null, matching the previous .maybeSingle() shape.
       setNotFound(true)
       setLoading(false)
       return
     }
 
-    const freshProof = proofResult.data as PublicProof
-    setProof(freshProof)
+    const graph = graphResult.data as CustomerProofGraph
+    setProof(graph.proof)
     setPublicSettings(settingsResult)
 
-    const rawVersions = (versionsResult.data ?? []) as PublicProofVersion[]
+    const rawVersions = graph.versions ?? []
     setVersions(rawVersions)
     const initialVersion = rawVersions.find((v) => v.is_current) ?? rawVersions[rawVersions.length - 1] ?? null
     setActiveVersion(initialVersion)
+
+    setMaterialOptions(graph.material_options ?? [])
+    setOptionSurcharges(graph.material_option_surcharges ?? [])
+    setVariantRows(graph.material_variants ?? [])
+    setTierRows(graph.price_tiers ?? [])
 
     // Customer view tracking happens in the proof_version_views
     // table via the record_proof_view RPC fired below (after a
@@ -675,23 +690,17 @@ export default function CustomerProofPage() {
     // the dropped log_customer_event RPC (audit finding H2).
 
     if (rawVersions.length > 0) {
-      // Load images for every version of this proof. Images come
-      // from the customer-proof-images edge function (anon-callable)
-      // which validates the proof exists and signs URLs server-side
-      // using service-role. Replaces the previous direct
-      // storage.from('proof-images').createSignedUrl(...) loop;
-      // closes audit finding H1 (anon storage path enumeration)
-      // by removing the customer-side need for an anon SELECT
-      // policy on storage.objects.
+      // Images stay on a dedicated edge function (service-role,
+      // signs storage URLs) rather than folding into the RPC — the
+      // RPC keeps to a pure SQL surface and the function handles
+      // per-image graceful degradation around the storage signer.
       const { data: imgData, error: imgError } = await supabase.functions.invoke<{ images: GridImage[] }>(
         'customer-proof-images',
         { body: { proofId } },
       )
       if (imgError || !imgData?.images) {
         // Graceful failure: render the page without images rather
-        // than blocking the whole load. The function itself does
-        // per-image graceful degradation; this branch covers
-        // hard failures (network, function error).
+        // than blocking the whole load.
         setVersionImages({})
       } else {
         const byVersion: Record<string, GridImage[]> = {}
@@ -704,52 +713,6 @@ export default function CustomerProofPage() {
           byVersion[pvid].push(img)
         })
         setVersionImages(byVersion)
-      }
-
-      // Load material options for every material referenced by these versions
-      const materialIds = [...new Set(rawVersions.map(v => v.material_id))]
-      const { data: optionRows } = await supabase
-        .from('public_material_options')
-        .select('*')
-        .in('material_id', materialIds)
-        .order('sort_order')
-
-      const loadedOptions = (optionRows ?? []) as PublicMaterialOption[]
-      setMaterialOptions(loadedOptions)
-
-      if (loadedOptions.length > 0) {
-        const optionIds = loadedOptions.map(o => o.id)
-        const { data: surchargeRows } = await supabase
-          .from('public_material_option_surcharges')
-          .select('*')
-          .in('material_option_id', optionIds)
-        setOptionSurcharges((surchargeRows ?? []) as PublicMaterialOptionSurcharge[])
-      }
-
-      // Live pricing (Phase 2, migration 000117). Mirrors the
-      // material_options + option_surcharges sequential pattern
-      // above: variants first, then tier rows scoped to those
-      // variant IDs and the currencies this proof's versions use.
-      // The per-version PricingSnapshot shape is rebuilt on the fly
-      // in livePricingSnapshot below, so InkPricingTable's render
-      // code stays unchanged.
-      const { data: variantData } = await supabase
-        .from('public_material_variants')
-        .select('*')
-        .in('material_id', materialIds)
-        .order('sort_order')
-      const loadedVariants = (variantData ?? []) as PublicMaterialVariant[]
-      setVariantRows(loadedVariants)
-
-      if (loadedVariants.length > 0) {
-        const currencies = [...new Set(rawVersions.map(v => v.currency))]
-        const variantIds = loadedVariants.map(v => v.id)
-        const { data: tierData } = await supabase
-          .from('public_price_tiers')
-          .select('*')
-          .in('material_variant_id', variantIds)
-          .in('currency', currencies)
-        setTierRows((tierData ?? []) as PublicPriceTier[])
       }
     }
 
@@ -2175,13 +2138,14 @@ export default function CustomerProofPage() {
   // Short customer-facing reference — the proof's Help Scout
   // conversation id, prefixed with PL · for the editorial feel.
   // Exposed on public_proofs by migration 000089. Hidden
-  // entirely when null (override proofs with no linked HS
-  // thread, per migration 000067) rather than falling back to
-  // a synthesised value — mixed formats in the same badge
-  // spot read worse than just not rendering.
-  const proofRef = proof.helpscout_conversation_id
-    ? `PL · ${proof.helpscout_conversation_id}`
-    : null
+  // helpscout_conversation_id was dropped from the customer-side
+  // payload by migration 000162 (field hygiene — anon shouldn't
+  // need it to render the page). The masthead/footer "PL · {id}"
+  // badge now always collapses to null; DocketBar and the footer
+  // already gate on (proofRef || activeVersion) so nothing else
+  // changes. Reserved as a typed null to keep DocketBar's existing
+  // string | null prop wiring intact.
+  const proofRef: string | null = null
 
   // Hero approval strip — green when the version is fully
   // approved + the designer has flipped proof.status; blue for
