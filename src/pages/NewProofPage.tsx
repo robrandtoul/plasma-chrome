@@ -110,6 +110,12 @@ export default function NewProofPage() {
   const [pasteInFlight, setPasteInFlight] = useState(false)
   const [pasteError, setPasteError] = useState<string | null>(null)
   const [pasteSubject, setPasteSubject] = useState<string | null>(null)
+  // True when the paste box was the mechanism that populated the current
+  // HS link. Used to set source='paste' in the helpscout_link_set audit
+  // event even when the conversation has no subject (pasteSubject would
+  // be null in that case, which previously caused the source to evaluate
+  // as 'auto' or 'picker' — PV-2026W20-001).
+  const [pasteWasUsed, setPasteWasUsed] = useState(false)
   // Manual-details disclosure. Collapsed by default; opens
   // automatically on paste success so the designer reviews what
   // got auto-filled.
@@ -307,6 +313,7 @@ export default function NewProofPage() {
     // Don't wipe helpscoutUrl — it may contain a manually-pasted value.
     setHsPickerOpen(false)
     setHsPickerMatches([])
+    setPasteWasUsed(false)
   }
 
   // Designer picked the "these aren't right" escape hatch on the
@@ -412,6 +419,7 @@ export default function NewProofPage() {
     setOverrideReason('')
     setUrlFormatError(null)
     setPasteSubject(result.subject ?? null)
+    setPasteWasUsed(true)
     setCustomerCreatedAt(result.customer.createdAt)
 
     // Auto-expand the manual details disclosure so the designer can
@@ -796,7 +804,7 @@ export default function NewProofPage() {
           metadata: {
             helpscout_conversation_id:  resolvedConvoId,
             helpscout_conversation_url: resolvedConvoUrl,
-            source: pasteSubject != null
+            source: pasteWasUsed
               ? 'paste'
               : hsPickerMatches.length > 0
                 ? 'picker'
