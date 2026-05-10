@@ -19,83 +19,24 @@ import {
 import { designerPreviewPath } from '../lib/customerProofUrl'
 import { logAudit } from '../lib/audit'
 import { QuoteLink } from '../components/QuoteLink'
+import {
+  groupByTime,
+  groupByCompany,
+  buildSnoozedSection,
+  type DashboardProject,
+  type DesignerColour,
+  type NeedsAttentionRule,
+  type ProjectSection,
+} from '../lib/dashboardGrouping'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+// DashboardProject, NeedsAttentionRule, DesignerColour, and ProjectSection are
+// imported from ../lib/dashboardGrouping so they can be unit-tested
+// independently of this React component tree.
 
 type SortMode  = 'activity' | 'date' | 'name'
 type GroupMode = 'time' | 'company'
 type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week'
-
-type DesignerColour = 'blue' | 'teal' | 'coral' | 'purple'
-
-interface DashboardProject {
-  proof_id: string
-  created_at: string
-  last_activity_at: string
-  status: ProofStatus
-  approved_at: string | null
-  abandoned_at: string | null
-  disclaimer_acknowledged_at: string | null
-  helpscout_conversation_url: string | null
-  helpscout_conversation_id: string | null
-  contact_id: string | null
-  contact_name: string | null
-  contact_email: string | null
-  company_id: string | null
-  company_name: string | null
-  current_version_id: string | null
-  current_version_number: number | null
-  material_display: string | null
-  version_created_at: string | null
-  designer_user_id: string | null
-  designer_name: string | null
-  designer_initials: string | null
-  designer_colour: DesignerColour | null
-  latest_event_at: string | null
-  latest_event_type:
-    | 'approve'
-    | 'request_changes'
-    | 'view'
-    | 'designer_override_approve'
-    | null
-  latest_event_actor: string | null
-  current_version_viewed_at: string | null
-  // Needs-attention rule annotation (migration 000154). Null when
-  // the proof isn't currently flagged. rule_code identifies which
-  // rule fired (request_changes_no_version / helpscout_follow_up_tag /
-  // sent_never_viewed / viewed_not_actioned / approaching_dormant /
-  // stuck_in_progress); rule_meta carries `{ days: N }` for any rule
-  // with a threshold so the chip can render "Sent N working days
-  // ago" without re-deriving.
-  rule_code: NeedsAttentionRule | null
-  rule_meta: { days?: number } | null
-  // Migration 000161. Mirrors dashboard_tile_counts.awaiting CTE
-  // exactly so the "Awaiting customer" tile count and the
-  // tile-filtered list share one predicate. True when the proof
-  // is in_progress with a current version that has neither a
-  // non-bot view nor an approve / request_changes event.
-  awaiting_customer: boolean
-  // Migration 000164. Snooze columns from public_dashboard_projects
-  // lateral join. All null when no active snooze exists. When a
-  // snooze IS active, rule_code becomes null (proof dropped from
-  // proofs_needing_attention) and these fields carry the snooze
-  // context so the Snoozed section and per-row indicators have
-  // everything they need without a second query.
-  snooze_rule_code: NeedsAttentionRule | null
-  snoozed_until: string | null
-  snooze_note: string | null
-  snoozed_by_name: string | null
-  snoozed_by_initials: string | null
-  snoozed_by_colour: DesignerColour | null
-}
-
-type NeedsAttentionRule =
-  | 'request_changes_no_version'
-  | 'helpscout_follow_up_tag'
-  | 'sent_never_viewed'
-  | 'viewed_not_actioned'
-  | 'approaching_dormant'
-  | 'stuck_in_progress'
 
 // Reason chip text per rule. Templated against rule_meta.days where
 // the rule has a threshold. Kept here rather than in a shared lib
@@ -173,27 +114,6 @@ function readShowSnoozed(): boolean {
   return false
 }
 
-// ── Date / time helpers ──────────────────────────────────────────────────────
-
-function startOfToday(): Date {
-  const n = new Date()
-  return new Date(n.getFullYear(), n.getMonth(), n.getDate())
-}
-
-function isSameDay(iso: string): boolean {
-  const t = new Date(iso)
-  const s = startOfToday()
-  return t.getFullYear() === s.getFullYear()
-      && t.getMonth() === s.getMonth()
-      && t.getDate() === s.getDate()
-}
-
-function isThisWeek(iso: string): boolean {
-  const t = new Date(iso)
-  const s = startOfToday()
-  const diffDays = Math.floor((s.getTime() - new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime()) / 86_400_000)
-  return diffDays > 0 && diffDays < 7
-}
 
 // Derive the relative verb shown on each row from the latest event +
 // the current view state. "Sent today" / "Sent yesterday" / "Sent
@@ -292,10 +212,11 @@ interface StatTileProps {
   count: number
   active: boolean
   tone: 'amber' | 'neutral' | 'green' | 'violet'
+  description?: string
   onClick: () => void
 }
 
-function StatTile({ label, count, active, tone, onClick }: StatTileProps) {
+function StatTile({ label, count, active, tone, description, onClick }: StatTileProps) {
   const base = tone === 'amber'
     ? 'bg-amber-50 ring-amber-200 text-amber-900 hover:bg-amber-100'
     : tone === 'green'
@@ -332,6 +253,9 @@ function StatTile({ label, count, active, tone, onClick }: StatTileProps) {
     >
       <span className={['min-h-8 text-xs font-semibold uppercase tracking-wider', labelColour].join(' ')}>{label}</span>
       <span className="text-2xl font-bold tabular-nums">{count}</span>
+      {description && (
+        <span className="text-xs text-current opacity-50">{description}</span>
+      )}
     </button>
   )
 }
@@ -461,9 +385,28 @@ interface SnoozeButtonProps {
 }
 
 function SnoozeButton({ proof, onSnooze }: SnoozeButtonProps) {
-  const [open, setOpen]   = useState(false)
-  const [note, setNote]   = useState('')
-  const [saving, setSaving] = useState(false)
+  const [open, setOpen]       = useState(false)
+  const [note, setNote]       = useState('')
+  const [saving, setSaving]   = useState(false)
+  const [customMode, setCustomMode] = useState(false)
+  const [customDate, setCustomDate] = useState('')
+
+  // Returns the minimum date string (tomorrow in YYYY-MM-DD) for the date input.
+  function minDate() {
+    const d = new Date()
+    d.setDate(d.getDate() + 1)
+    return d.toISOString().slice(0, 10)
+  }
+
+  // Convert a YYYY-MM-DD date string into hours from now until the end of
+  // that day (i.e. midnight at the start of the following day), so "snooze
+  // until Friday" means the proof reappears first thing on Saturday.
+  function hoursUntilEndOfDate(dateStr: string): number {
+    const target = new Date(dateStr)
+    target.setDate(target.getDate() + 1)
+    target.setHours(0, 0, 0, 0)
+    return Math.max(1, Math.ceil((target.getTime() - Date.now()) / 3_600_000))
+  }
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -500,7 +443,16 @@ function SnoozeButton({ proof, onSnooze }: SnoozeButtonProps) {
     { label: '24 hours', hours: 24 },
     { label: '48 hours', hours: 48 },
     { label: '1 week',   hours: 168 },
+    { label: '2 weeks',  hours: 336 },
+    { label: '1 month',  hours: 720 },
   ] as const
+
+  function handleClose(e: React.MouseEvent) {
+    e.stopPropagation()
+    setOpen(false)
+    setCustomMode(false)
+    setCustomDate('')
+  }
 
   return (
     <div className="relative" ref={ref}>
@@ -520,16 +472,52 @@ function SnoozeButton({ proof, onSnooze }: SnoozeButtonProps) {
           className="absolute left-0 top-6 z-20 w-56 overflow-hidden rounded-lg bg-white py-2 shadow-lg ring-1 ring-gray-200"
           onClick={(e) => e.stopPropagation()}
         >
-          <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Snooze for</p>
-          {PRESETS.map(({ label, hours }) => (
-            <button
-              key={hours}
-              type="button"
-              disabled={saving}
-              onClick={() => handleSnooze(hours)}
-              className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
-            >{label}</button>
-          ))}
+          {customMode ? (
+            /* ── Custom date picker ── */
+            <div className="px-3 py-2">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Snooze until</p>
+              <input
+                type="date"
+                min={minDate()}
+                value={customDate}
+                onChange={(e) => setCustomDate(e.target.value)}
+                className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-gray-700 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                onClick={(e) => e.stopPropagation()}
+              />
+              <button
+                type="button"
+                disabled={saving || !customDate}
+                onClick={() => handleSnooze(hoursUntilEndOfDate(customDate))}
+                className="mt-2 w-full rounded bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-40"
+              >{saving ? 'Saving…' : 'Snooze'}</button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setCustomMode(false); setCustomDate('') }}
+                className="mt-1 w-full py-1 text-xs text-gray-400 hover:text-gray-700"
+              >← Back</button>
+            </div>
+          ) : (
+            /* ── Preset list ── */
+            <>
+              <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Snooze for</p>
+              {PRESETS.map(({ label, hours }) => (
+                <button
+                  key={hours}
+                  type="button"
+                  disabled={saving}
+                  onClick={() => handleSnooze(hours)}
+                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                >{label}</button>
+              ))}
+              <button
+                type="button"
+                disabled={saving}
+                onClick={(e) => { e.stopPropagation(); setCustomMode(true) }}
+                className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+              >Custom date…</button>
+            </>
+          )}
+          {/* Note + cancel — shown in both modes */}
           <div className="mt-1 border-t border-gray-100 px-3 pt-2">
             <textarea
               value={note}
@@ -541,7 +529,7 @@ function SnoozeButton({ proof, onSnooze }: SnoozeButtonProps) {
             />
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); setOpen(false) }}
+              onClick={handleClose}
               className="mt-1 w-full py-1 text-xs text-gray-400 hover:text-gray-700"
             >Cancel</button>
           </div>
@@ -747,47 +735,8 @@ function formatSnoozeUntil(iso: string): string {
 }
 
 // ── Section grouping ─────────────────────────────────────────────────────────
-
-type SectionKind = 'pinned' | 'team' | 'snoozed' | 'time' | 'company'
-
-interface ProjectSection {
-  key: string
-  title: string
-  kind: SectionKind
-  projects: DashboardProject[]
-}
-
-function groupByTime(projects: DashboardProject[]): ProjectSection[] {
-  const today: DashboardProject[] = []
-  const week:  DashboardProject[] = []
-  const older: DashboardProject[] = []
-  for (const p of projects) {
-    const ts = p.last_activity_at
-    if (isSameDay(ts))      today.push(p)
-    else if (isThisWeek(ts)) week.push(p)
-    else                     older.push(p)
-  }
-  const out: ProjectSection[] = []
-  if (today.length) out.push({ key: 'today',  title: 'Today',     kind: 'time', projects: today })
-  if (week.length)  out.push({ key: 'week',   title: 'This week', kind: 'time', projects: week })
-  if (older.length) out.push({ key: 'older',  title: 'Older',     kind: 'time', projects: older })
-  return out
-}
-
-function groupByCompany(projects: DashboardProject[]): ProjectSection[] {
-  const map = new Map<string, ProjectSection>()
-  for (const p of projects) {
-    const key   = p.company_id ?? '__individual__'
-    const title = p.company_name ?? 'No company'
-    if (!map.has(key)) map.set(key, { key, title, kind: 'company', projects: [] })
-    map.get(key)!.projects.push(p)
-  }
-  const sections = [...map.values()]
-  const individual = sections.find((s) => s.key === '__individual__')
-  const named = sections.filter((s) => s.key !== '__individual__')
-  named.sort((a, b) => a.title.localeCompare(b.title, 'en', { sensitivity: 'base' }))
-  return individual ? [...named, individual] : named
-}
+// groupByTime, groupByCompany, buildSnoozedSection, recentlyAwakened,
+// SectionKind, and ProjectSection are imported from ../lib/dashboardGrouping.
 
 // Build the Pinned and Team sections from a sorted projects list and
 // the two pin maps. Returns whichever sections have entries; either or
@@ -812,17 +761,6 @@ function buildPinSections(
     out.push({ key: '__team__', title: 'Team', kind: 'team', projects: teamPinned })
   }
   return out
-}
-
-// Build the Snoozed section from the sorted project list. Any proof
-// with a currently-active snooze (snoozed_until IS NOT NULL in the
-// view — meaning the lateral found a row with snoozed_until > now())
-// surfaces here. These proofs are removed from the tail sections so
-// they only appear once on the page.
-function buildSnoozedSection(projects: DashboardProject[]): ProjectSection[] {
-  const snoozed = projects.filter((p) => p.snoozed_until != null)
-  if (!snoozed.length) return []
-  return [{ key: '__snoozed__', title: 'Snoozed', kind: 'snoozed', projects: snoozed }]
 }
 
 // ── Latest activity sidebar ──────────────────────────────────────────────────
@@ -1287,6 +1225,7 @@ export default function DashboardPage() {
                     count={tileCounts?.needs_attention ?? 0}
                     active={tileFilter === 'needs_attention'}
                     tone="amber"
+                    description="action required from you"
                     onClick={() => toggleTile('needs_attention')}
                   />
                   <StatTile
@@ -1294,6 +1233,7 @@ export default function DashboardPage() {
                     count={tileCounts?.awaiting_customer ?? 0}
                     active={tileFilter === 'awaiting_customer'}
                     tone="neutral"
+                    description="sent, no response yet"
                     onClick={() => toggleTile('awaiting_customer')}
                   />
                   <StatTile
@@ -1301,6 +1241,7 @@ export default function DashboardPage() {
                     count={tileCounts?.dormant ?? 0}
                     active={tileFilter === 'dormant'}
                     tone="neutral"
+                    description="no activity for 30+ days"
                     onClick={() => toggleTile('dormant')}
                   />
                   <StatTile
@@ -1308,6 +1249,7 @@ export default function DashboardPage() {
                     count={tileCounts?.approved_this_week ?? 0}
                     active={tileFilter === 'approved_this_week'}
                     tone="green"
+                    description="approved in last 7 days"
                     onClick={() => toggleTile('approved_this_week')}
                   />
                   <StatTile
@@ -1315,6 +1257,7 @@ export default function DashboardPage() {
                     count={snoozedSections[0]?.projects.length ?? 0}
                     active={showSnoozed}
                     tone="violet"
+                    description="temporarily hidden"
                     onClick={() => {
                       setShowSnoozed((v) => {
                         const next = !v
