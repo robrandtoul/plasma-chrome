@@ -18,6 +18,11 @@
 
 begin;
 
+-- Drop the view first — it depends on proofs_needing_attention() and
+-- Postgres won't let us replace the function while the dependency exists.
+-- The view is recreated in section 2 below.
+drop view if exists public_dashboard_projects;
+
 -- ── 1. proofs_needing_attention() ───────────────────────────────────────────
 
 drop function if exists proofs_needing_attention();
