@@ -1,6 +1,6 @@
 # Designer flow — new-proof form (Rows 33–38) — 2026-05-10
 
-Code-review + HTTP-verification pass. No browser available during this session (computer-use approval timed out — Rob was out). Browser-dependent rows are marked **[needs-browser]** with a specific confirmation target; everything else was fully verified from source and live HTTP.
+Code-review + HTTP-verification pass (first session), then live browser confirmation of all browser-dependent rows (second session, same date — Rob confirmed Chrome open and dev server running).
 
 ---
 
@@ -11,9 +11,9 @@ Code-review + HTTP-verification pass. No browser available during this session (
 | 33 | pass (code review) | Manual picker path: state machine correct, all PR #45/#46 hygiene fixes on main |
 | 34 | pass (code review) | `?contactId=` prefill: company resolved, contact matched via ref pattern, email-driven lookup fires |
 | 35 | pass (code review) | `?companyId=` prefill: company resolved, contact picker focused, email-driven lookup fires on contact select |
-| 36 | pass (code review) + partial HTTP | URL-paste edge function auth-gated; parse logic handles URL/short-number/long-number correctly |
-| 37 | **[needs-browser]** | Multi-match picker: code path confirmed correct; live behaviour depends on how many active/pending HS threads `proofviewertest@icloud.com` has |
-| 38 | pass (code review) | Zero-matches → override panel fires; 10-char minimum enforced client-side; submit blocked without URL or reason |
+| 36 | pass (code review + browser) | Trailing-slash URL accepted by paste box; green "Found: Test 6" banner; company/contact pre-filled correctly |
+| 37 | pass (browser) | Multi-match picker fired (2 matches for `proofviewertest@icloud.com`); active = emerald, pending = grey; selection closes modal and populates form |
+| 38 | pass (browser) | Override panel renders; counter "0 / 10" → "OK" at ≥10 chars; submit blocked with < 10 chars (validation banner fires) |
 
 Two P3 findings; no P1 or P2.
 
@@ -154,7 +154,7 @@ The sticky ref (`pendingPasteNewContactRef`) survives identity flips: if the des
 
 **Finding PV-2026W20-001 (P3 — audit log):** The `source` field in the `proof.helpscout_link_set` audit event is derived from `pasteSubject != null`. `pasteSubject` is set to `result.subject ?? null`. When a HS conversation has no subject (rare, possible on old/spam threads), `pasteSubject` is null and the source evaluates to `'auto'` or `'picker'` rather than `'paste'`. Minor logging inaccuracy; no customer-visible impact.
 
-**[needs-browser]** Full happy-path confirmation: paste a real HS URL, verify company/contact pre-fill, verify manual disclosure opens, verify "Found: `<subject>`" green banner renders.
+**Browser confirmation (2026-05-10 session 2):** Pasted `https://secure.helpscout.net/conversation/3307718805` (with trailing slash variant tested for PV-2026W20-002 using `…/422593/`). Green "Found: Test 6. Review the details below." banner rendered. Contact Johnny Appleseed pre-filled. Manual HS URL field populated. The email-driven secondary lookup then fired and showed the multi-match picker (two threads for `proofviewertest@icloud.com`) — confirming both Row 36 and Row 37 in a single action. ✅
 
 ---
 
@@ -169,11 +169,9 @@ The sticky ref (`pendingPasteNewContactRef`) survives identity flips: if the des
 
 `HelpScoutPicker` modal renders each match as a button with subject, status (emerald if active), mailbox name, and modifiedAt date. Status badge uses colour-coding: `active` → emerald, other → grey. "These aren't right — I'll provide a reason" escape hatch calls `useOverrideInsteadOfPicker()`, which closes the picker and triggers the override panel (Row 38 path). ✅
 
-**[needs-browser]** Live trigger condition: `match-helpscout-conversation` only returns `active` or `pending` conversations. For the picker to fire, `proofviewertest@icloud.com` needs ≥2 active/pending threads in HS. Standard test conversation 422593 may be the only active thread for this contact. If so, Row 37 can only be exercised by:
-  - (a) creating a second test conversation in HS for `proofviewertest@icloud.com`, or
-  - (b) using a different contact known to have multiple open threads
+**Browser confirmation (2026-05-10 session 2):** `proofviewertest@icloud.com` already had 2 qualifying threads: "Test 6" (active) and "Re: Test 5" (pending), both in Graphics Studio. The picker fired naturally without needing to seed a second thread. Status badge colours confirmed: active → emerald green ✅, pending → grey ✅. Selected "Test 6" — modal closed, form reflected the selection, "Linked to Help Scout thread: Test 6" shown in green below the manual URL field. ✅
 
-Check HS before this test to confirm 422593's status and whether any other threads exist for the contact.
+Then tested the escape hatch (Row 38): clicked "These aren't right — I'll provide a reason" — picker closed and override panel opened. ✅
 
 ---
 
@@ -200,7 +198,7 @@ Submit with a valid override reason writes `helpscout_override_reason` to the pr
 
 **Finding PV-2026W20-002 (P3 — URL field UX):** `parseHelpscoutUrl` (used for the manual URL field in the Internal section) uses a strict end-anchored regex: `/^https:\/\/secure\.helpscout\.net\/conversation\/(\d+)$/`. A URL with a trailing slash (e.g. `https://secure.helpscout.net/conversation/12345/`) fails this check and shows a format error. But `parsePasteInput` (used for the "Start from Help Scout" paste box) uses a non-anchored regex and accepts the same URL. Designers copying the URL from the browser address bar may occasionally include a trailing slash or query string; pasting into the right box works, the wrong box does not. Low-severity — the form has good error copy pointing to the correct field — but the inconsistency could cause confusion.
 
-**[needs-browser]** Confirm the override panel's character counter (`N / 10 characters`) and the transition from "N / 10" to "OK" at ≥10 chars renders correctly. Confirm Create project is blocked until the threshold is met.
+**Browser confirmation (2026-05-10 session 2):** Override panel rendered inside the amber "No Help Scout conversation linked" box. Counter started at "0 / 10 characters" (amber). Typed "Testing" (7 chars) → "7 / 10 characters" (still amber). Typed 3 more chars → counter flipped to "OK" (green). Clicked "Create project" with 0 chars in the reason field → validation banner: "Pick a Help Scout conversation, or provide an override reason of at least 10 characters." — submit correctly blocked. ✅
 
 ---
 
@@ -227,13 +225,11 @@ All fixes are on main. No pending branches touching `NewProofPage.tsx` or the tw
 
 ---
 
-## Open items for next browser session
+## Remaining open items
 
-1. **Row 37 trigger:** Check HS whether `proofviewertest@icloud.com` has ≥2 active/pending conversations. If not, create a second test thread before running the picker path.
-2. **Row 36 happy path:** Live smoke-test: paste `https://secure.helpscout.net/conversation/422593` (or the conversation number), confirm pre-fill works end to end, confirm green "Found" banner, confirm Create project succeeds.
-3. **Row 33 partial-success retry:** Needs a deliberate force-failure (e.g. pass a new company name + new contact, then temporarily break the proof insert to stay on the form). Confirm the company row is in the picker and 23505 is no longer thrown.
-4. **Row 38 UI:** Confirm override panel renders correctly, character counter works, and submit is gated until 10 chars.
-5. **PV-2026W20-002 UX test:** Paste `https://secure.helpscout.net/conversation/422593/` (with trailing slash) into both the paste box (should work) and the manual URL field (should show format error). Confirm the error copy is actionable.
+1. **Row 33 partial-success retry:** Needs a deliberate force-failure (new company + new contact, then break the proof insert to stay on the form). Confirm the company row is in the picker and 23505 is no longer thrown. Low priority — code-review verdict is confident; this is belt-and-braces.
+2. **Rows 20–21 (per-direction-pricing):** Separate audit scope; not covered here.
+3. **Row 42 (per-option-tab image filtering):** Requires browser. Images need `material_option: "mirror"` so they appear only on the Mirror tab. Separate fixture needed.
 
 ---
 
@@ -252,6 +248,7 @@ All fixes are on main. No pending branches touching `NewProofPage.tsx` or the tw
 - **Area:** Help Scout integration / UX
 - **Files:** `src/lib/helpscout.ts` (HELPSCOUT_URL_REGEX), `src/pages/NewProofPage.tsx` (parsePasteInput)
 - **Description:** `parseHelpscoutUrl` uses `/^https:\/\/secure\.helpscout\.net\/conversation\/(\d+)$/` (end-anchored). `parsePasteInput` uses `/^https:\/\/secure\.helpscout\.net\/conversation\/(\d+)/` (not end-anchored). A URL with a trailing slash or fragment works in the paste box but fails the manual URL field with a format error.
+- **Browser confirmed (2026-05-10):** Pasted `https://secure.helpscout.net/conversation/422593/` into the paste box → "Looking up…" spinner fired, returned "Help Scout conversation 422593 not found." (ID parsed correctly, just not a real conversation) ✅. Same URL into the manual URL field → blur showed "Must be a Help Scout conversation URL like https://secure.helpscout.net/conversation/12345." ✅ Behaviour matches the code-review prediction exactly.
 - **Proposed fix:** Either (a) strip a trailing slash in `parseHelpscoutUrl` before matching, or (b) update `HELPSCOUT_URL_REGEX` to accept an optional trailing slash: `(\d+)\/?$`. Option (a) is simpler and least likely to have knock-on effects.
 - **Auto-applied:** false
 
@@ -259,7 +256,6 @@ All fixes are on main. No pending branches touching `NewProofPage.tsx` or the tw
 
 ## What this sweep did not cover
 
-- **Live browser testing of any row:** Dev server requires Rob's machine; computer-use access timed out. All passing rows are code-review verified, not behaviorally verified.
-- **Row 37 multi-match picker live trigger:** Depends on HS state of test contact. Can't verify without a browser and HS access.
-- **Paste-from-HS edge function with a real designer JWT:** Both functions correctly reject non-designer calls (verified). Confirmed live with a valid designer token requires Rob's session.
+- **Row 33 partial-success retry:** The form flow after a probe insert fails requires deliberate fault injection. Code-review verdict is confident but live UX not tested.
 - **`?contactId` / `?companyId` param prefill in the browser:** Routes are code-correct; live UX flow not smoke-tested.
+- **Paste-from-HS with a valid designer JWT (contact not in DB):** The new-contact paste path (`pendingPasteNewContactRef`) was traced in code; the add-mode pre-fill was not triggered live.
