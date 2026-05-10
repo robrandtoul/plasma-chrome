@@ -75,6 +75,18 @@ interface DashboardProject {
   // is in_progress with a current version that has neither a
   // non-bot view nor an approve / request_changes event.
   awaiting_customer: boolean
+  // Migration 000164. Snooze columns from public_dashboard_projects
+  // lateral join. All null when no active snooze exists. When a
+  // snooze IS active, rule_code becomes null (proof dropped from
+  // proofs_needing_attention) and these fields carry the snooze
+  // context so the Snoozed section and per-row indicators have
+  // everything they need without a second query.
+  snooze_rule_code: NeedsAttentionRule | null
+  snoozed_until: string | null
+  snooze_note: string | null
+  snoozed_by_name: string | null
+  snoozed_by_initials: string | null
+  snoozed_by_colour: DesignerColour | null
 }
 
 type NeedsAttentionRule =
@@ -419,6 +431,106 @@ function OverflowMenu({
   )
 }
 
+// ── Snooze button + popover ──────────────────────────────────────────────────
+//
+// Rendered inline next to the reason chip when a proof has an active
+// needs-attention rule_code. Clicking the clock icon opens a small
+// popover with three preset durations and an optional note field.
+// Pattern mirrors OverflowMenu: click-outside + Escape dismiss, and
+// e.stopPropagation() throughout so the parent ProjectRow's navigate
+// handler is not triggered.
+
+interface SnoozeButtonProps {
+  proof: DashboardProject
+  onSnooze: (proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) => Promise<void>
+}
+
+function SnoozeButton({ proof, onSnooze }: SnoozeButtonProps) {
+  const [open, setOpen]   = useState(false)
+  const [note, setNote]   = useState('')
+  const [saving, setSaving] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDocClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  async function handleSnooze(hours: number) {
+    if (!proof.rule_code || saving) return
+    setSaving(true)
+    await onSnooze(proof.proof_id, proof.rule_code, hours, note)
+    setSaving(false)
+    setNote('')
+    setOpen(false)
+  }
+
+  const PRESETS = [
+    { label: '24 hours', hours: 24 },
+    { label: '48 hours', hours: 48 },
+    { label: '1 week',   hours: 168 },
+  ] as const
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        aria-label="Snooze this alert"
+        title="Snooze this alert"
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
+        className="flex h-5 w-5 items-center justify-center rounded-full text-amber-600 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+      >
+        <ClockIcon className="h-3 w-3" />
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label="Snooze options"
+          className="absolute left-0 top-6 z-20 w-56 overflow-hidden rounded-lg bg-white py-2 shadow-lg ring-1 ring-gray-200"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Snooze for</p>
+          {PRESETS.map(({ label, hours }) => (
+            <button
+              key={hours}
+              type="button"
+              disabled={saving}
+              onClick={() => handleSnooze(hours)}
+              className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+            >{label}</button>
+          ))}
+          <div className="mt-1 border-t border-gray-100 px-3 pt-2">
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Add a note (optional)"
+              rows={2}
+              className="w-full resize-none rounded border border-gray-200 px-2 py-1.5 text-xs text-gray-700 placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setOpen(false) }}
+              className="mt-1 w-full py-1 text-xs text-gray-400 hover:text-gray-700"
+            >Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Project row ──────────────────────────────────────────────────────────────
 
 interface ProjectRowProps {
@@ -427,6 +539,8 @@ interface ProjectRowProps {
   teamPinned: boolean
   onToggleMinePin: (proofId: string) => void
   onToggleTeamPin: (proofId: string) => void
+  onSnooze: (proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) => Promise<void>
+  onUnsnooze: (proofId: string, ruleCode: NeedsAttentionRule) => Promise<void>
 }
 
 function ProjectRow({
@@ -435,6 +549,8 @@ function ProjectRow({
   teamPinned,
   onToggleMinePin,
   onToggleTeamPin,
+  onSnooze,
+  onUnsnooze,
 }: ProjectRowProps) {
   const navigate = useNavigate()
   const canAddVersion = project.status === 'in_progress' || project.status === 'dormant'
@@ -485,10 +601,36 @@ function ProjectRow({
           // Reason chip — same FAEEDA / 854F0B amber ramp as the
           // Needs-attention tile and the In-progress status pill,
           // so the visual cue carries through from tile to row.
-          <div className="mt-1">
+          // The clock button to the right opens the snooze popover.
+          <div className="mt-1 flex items-center gap-1.5">
             <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200">
               {reasonChipText(project.rule_code, project.rule_meta?.days)}
             </span>
+            <SnoozeButton proof={project} onSnooze={onSnooze} />
+          </div>
+        )}
+        {/* Snoozed indicator — shown when no rule fires (snooze is
+            active) but the proof carries snooze metadata. Lets the
+            designer see at a glance why the attention chip is absent,
+            and provides a one-click unsnooze escape. */}
+        {!project.rule_code && project.snoozed_until && project.snooze_rule_code && (
+          <div className="mt-1 flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 ring-1 ring-violet-200">
+              <ClockIcon className="h-2.5 w-2.5 shrink-0" />
+              Snoozed until {formatSnoozeUntil(project.snoozed_until)}
+              {project.snooze_note && (
+                <span className="ml-0.5 text-violet-500" title={project.snooze_note}>· "{project.snooze_note}"</span>
+              )}
+            </span>
+            <button
+              type="button"
+              aria-label="Unsnooze"
+              title="Unsnooze"
+              onClick={(e) => { e.stopPropagation(); void onUnsnooze(project.proof_id, project.snooze_rule_code!) }}
+              className="flex h-5 w-5 items-center justify-center rounded-full text-violet-500 hover:bg-violet-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+            >
+              <XIcon className="h-3 w-3" />
+            </button>
           </div>
         )}
       </div>
@@ -535,9 +677,39 @@ function UsersIcon({ className }: { className?: string }) {
   )
 }
 
+function ClockIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="6.25" />
+      <path d="M8 4.5v3.75l2.5 1.5" />
+    </svg>
+  )
+}
+
+function XIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <path d="M4 4l8 8M12 4l-8 8" />
+    </svg>
+  )
+}
+
+// Human-readable "until" label for the snooze chip. Shows relative
+// time for short snoozes (within 24 h) and a short date otherwise.
+function formatSnoozeUntil(iso: string): string {
+  const d = new Date(iso)
+  const diffMs = d.getTime() - Date.now()
+  const diffH = Math.round(diffMs / 3_600_000)
+  if (diffH <= 1) return 'soon'
+  if (diffH < 24) return `in ${diffH}h`
+  const diffDays = Math.round(diffH / 24)
+  if (diffDays === 1) return 'tomorrow'
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+}
+
 // ── Section grouping ─────────────────────────────────────────────────────────
 
-type SectionKind = 'pinned' | 'team' | 'time' | 'company'
+type SectionKind = 'pinned' | 'team' | 'snoozed' | 'time' | 'company'
 
 interface ProjectSection {
   key: string
@@ -601,6 +773,17 @@ function buildPinSections(
     out.push({ key: '__team__', title: 'Team', kind: 'team', projects: teamPinned })
   }
   return out
+}
+
+// Build the Snoozed section from the sorted project list. Any proof
+// with a currently-active snooze (snoozed_until IS NOT NULL in the
+// view — meaning the lateral found a row with snoozed_until > now())
+// surfaces here. These proofs are removed from the tail sections so
+// they only appear once on the page.
+function buildSnoozedSection(projects: DashboardProject[]): ProjectSection[] {
+  const snoozed = projects.filter((p) => p.snoozed_until != null)
+  if (!snoozed.length) return []
+  return [{ key: '__snoozed__', title: 'Snoozed', kind: 'snoozed', projects: snoozed }]
 }
 
 // ── Latest activity sidebar ──────────────────────────────────────────────────
@@ -859,6 +1042,52 @@ export default function DashboardPage() {
     await loadDashboard()
   }
 
+  // ── Snooze handlers ───────────────────────────────────────────────────────
+  //
+  // Upsert on (proof_id, rule_code) so re-snoozing replaces the
+  // previous record (e.g. extending from 24 h to 1 week). The view
+  // picks up the change on the next loadDashboard() call. No
+  // optimistic UI — the list is small and refetches are fast enough
+  // that the round-trip is imperceptible.
+  async function handleSnooze(proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) {
+    if (!userId) return
+    const snoozedUntil = new Date(Date.now() + hours * 3_600_000).toISOString()
+    await supabase
+      .from('proof_attention_snoozes')
+      .upsert(
+        {
+          proof_id:      proofId,
+          rule_code:     ruleCode,
+          snoozed_by:    userId,
+          snoozed_until: snoozedUntil,
+          note:          note.trim() || null,
+        },
+        { onConflict: 'proof_id,rule_code' },
+      )
+    void logAudit({
+      action: 'proof.snoozed',
+      targetType: 'proof',
+      targetId: proofId,
+      metadata: { rule_code: ruleCode, hours, note: note.trim() || null },
+    })
+    await loadDashboard()
+  }
+
+  async function handleUnsnooze(proofId: string, ruleCode: NeedsAttentionRule) {
+    await supabase
+      .from('proof_attention_snoozes')
+      .delete()
+      .eq('proof_id', proofId)
+      .eq('rule_code', ruleCode)
+    void logAudit({
+      action: 'proof.unsnoozed',
+      targetType: 'proof',
+      targetId: proofId,
+      metadata: { rule_code: ruleCode },
+    })
+    await loadDashboard()
+  }
+
   function handleSortChange(s: SortMode) {
     setSort(s)
     try { localStorage.setItem(SORT_KEY, s) } catch { /* */ }
@@ -940,19 +1169,18 @@ export default function DashboardPage() {
   }, [filteredProjects, sort])
 
   const sections: ProjectSection[] = useMemo(() => {
-    // Pinned + Team sections sit above the time/company list. Any
-    // project surfaced in either is removed from the bucket below
-    // so it never appears twice on the page. minePinAt and teamPinAt
-    // hold the pinned_at timestamps used by buildPinSections() to
-    // sort by recency.
-    const pinSections = buildPinSections(sortedProjects, minePinAt, teamPinAt)
-    const pinnedIds = new Set<string>()
-    for (const s of pinSections) for (const p of s.projects) pinnedIds.add(p.proof_id)
-    const remaining = sortedProjects.filter((p) => !pinnedIds.has(p.proof_id))
+    // Pinned → Snoozed → time/company. Each layer removes its members
+    // from the pool so no proof appears twice on the page.
+    const pinSections     = buildPinSections(sortedProjects, minePinAt, teamPinAt)
+    const snoozedSections = buildSnoozedSection(sortedProjects)
+    const reservedIds = new Set<string>()
+    for (const s of pinSections)     for (const p of s.projects) reservedIds.add(p.proof_id)
+    for (const s of snoozedSections) for (const p of s.projects) reservedIds.add(p.proof_id)
+    const remaining = sortedProjects.filter((p) => !reservedIds.has(p.proof_id))
     const tailSections = group === 'company'
       ? groupByCompany(remaining)
       : groupByTime(remaining)
-    return [...pinSections, ...tailSections]
+    return [...pinSections, ...snoozedSections, ...tailSections]
   }, [sortedProjects, group, minePinAt, teamPinAt])
 
   const noResults = !loading && sections.every((s) => s.projects.length === 0)
@@ -1127,8 +1355,9 @@ export default function DashboardPage() {
                         return (
                           <div key={section.key} className={si > 0 ? 'border-t border-gray-100' : ''}>
                             <div className="flex items-center gap-3 bg-gray-50/80 px-5 py-1.5">
-                              {section.kind === 'pinned' && <PinIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
-                              {section.kind === 'team'   && <UsersIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
+                              {section.kind === 'pinned'  && <PinIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
+                              {section.kind === 'team'    && <UsersIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
+                              {section.kind === 'snoozed' && <ClockIcon className="h-3.5 w-3.5 shrink-0 text-gray-500" />}
                               <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">{section.title}</span>
                               <span className="text-xs text-gray-400 tabular-nums">{section.projects.length}</span>
                             </div>
@@ -1146,6 +1375,8 @@ export default function DashboardPage() {
                                       teamPinned={teamPinAt.has(p.proof_id)}
                                       onToggleMinePin={toggleMinePin}
                                       onToggleTeamPin={toggleTeamPin}
+                                      onSnooze={handleSnooze}
+                                      onUnsnooze={handleUnsnooze}
                                     />
                                   </div>
                                 )}
