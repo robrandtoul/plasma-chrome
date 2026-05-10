@@ -667,6 +667,15 @@ export default function NewProofPage() {
             throw new Error(`Failed to create company: ${error.message}`)
           }
           companyId = data.id
+          // Promote selectedCompany from { id: null, name } (staged) to
+          // the DB-backed { id, name } pair. Without this, a partial-
+          // success retry (e.g. the contact insert below fails and the
+          // designer fixes a field and re-submits) re-enters the
+          // company-insert branch with the same name and hits 23505 —
+          // the row already exists in the DB even though the React
+          // state still says id=null. Pairs with the setAllCompanies
+          // append from #45.
+          setSelectedCompany({ id: data.id, name: insertedName })
           // Append to the locally-cached company list so the picker
           // reflects reality if the designer stays on the form (e.g.
           // a downstream contact / proof insert fails and they retry).
@@ -695,12 +704,14 @@ export default function NewProofPage() {
       if (selectedContact) {
         contactId = selectedContact.id
       } else {
+        const insertedFullName = newContactName.trim()
+        const insertedEmail = newContactEmail.trim().toLowerCase()
         const { data, error } = await supabase
           .from('contacts')
           .insert({
             company_id: companyId,
-            full_name: newContactName.trim(),
-            email: newContactEmail.trim().toLowerCase(),
+            full_name: insertedFullName,
+            email: insertedEmail,
           })
           .select('id')
           .single()
@@ -711,12 +722,39 @@ export default function NewProofPage() {
           throw new Error(`Failed to create contact: ${error.message}`)
         }
         contactId = data.id
+        // Append to the locally-cached contact list so the picker
+        // reflects reality if the designer stays on the form (e.g.
+        // the downstream proof insert fails and they retry). Mirror
+        // the company append from #45: the on-load effect uses
+        // .order('full_name'), so insert sorted by full_name.
+        // Like the company append, this is a no-op on the happy
+        // path (navigate() unmounts the form), but it keeps the
+        // state honest in the partial-success retry window.
+        //
+        // selectedContact is intentionally *not* promoted here.
+        // Unlike the company branch, the form is in add-mode at
+        // this point (selectedContact === null, addingContact ===
+        // true). On retry, the submit handler's `if (selectedContact)`
+        // short-circuit doesn't engage; the insert branch re-fires
+        // with the same email and hits 23505 deterministically. To
+        // make retries idempotent we'd also need to flip the form
+        // out of add-mode and call selectContact(...) — that's a
+        // larger UX change (the add-mode form fields would
+        // collapse mid-edit) and warrants its own design pass.
+        // The append below at least prevents the retry from picking
+        // a *different* duplicate-email row by surfacing the new
+        // contact as a real picker option, which is the
+        // companion-to-fix-1 hygiene this PR is scoped to.
+        setAllContacts(prev =>
+          [...prev, { id: data.id, full_name: insertedFullName, email: insertedEmail }]
+            .sort((a, b) => a.full_name.localeCompare(b.full_name)),
+        )
         void logAudit({
           action: 'contact.created',
           targetType: 'contact',
           targetId: contactId,
-          targetLabel: newContactName.trim(),
-          metadata: { email: newContactEmail.trim().toLowerCase(), company_id: companyId },
+          targetLabel: insertedFullName,
+          metadata: { email: insertedEmail, company_id: companyId },
         })
       }
 
