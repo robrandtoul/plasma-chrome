@@ -2076,17 +2076,37 @@ export default function CustomerProofPage() {
       .forEach(s => { quantitySurcharges[s.quantity] = s.surcharge })
   }
 
-  // Smallest-quantity surcharge for a given option in the active currency,
-  // or null if this option carries no surcharge (base/Natural, or wood).
+  // Smallest surcharge a customer would actually see in the displayed
+  // pricing grid for a given option, or null if this option carries no
+  // visible surcharge (base/Natural, wood, or surcharge schedule that
+  // doesn't intersect display_quantities).
+  //
+  // Scoped to activeVersion.display_quantities so the "From +£X" tab
+  // pill matches the collapsed grid the customer reads. The metal
+  // schedule, for example, has a qty 25 row (000145) with the
+  // smallest absolute surcharge in the table, but qty 25 isn't in
+  // any metal material's display_quantities — the customer would see
+  // "+£20" on the tab and "+£30 at qty 50" in the grid, which read as
+  // a contradiction. Filtering here makes the two consistent.
+  //
+  // Falls back to "smallest across all tiers" when display_quantities
+  // is null (uncurated material — customer-side falls back to the
+  // first 10 ascending snapshot tiers, which we can't precisely
+  // reproduce here without re-deriving the snapshot, but those
+  // materials are rare enough that the legacy behaviour is fine).
   function optionFromPrice(code: string): number | null {
     if (!activeVersion) return null
     const o = materialOptions.find(x => x.material_id === activeVersion.material_id && x.code === code)
     if (!o) return null
-    const sorted = optionSurcharges
-      .filter(s => s.material_option_id === o.id && s.currency === activeVersion.currency)
-      .sort((a, b) => a.quantity - b.quantity)
-    const first = sorted[0]
-    return first && first.surcharge > 0 ? first.surcharge : null
+    const displayedQuantities = activeVersion.display_quantities
+    const matching = optionSurcharges.filter(s =>
+      s.material_option_id === o.id
+      && s.currency === activeVersion.currency
+      && s.surcharge > 0
+      && (displayedQuantities == null || displayedQuantities.includes(s.quantity)),
+    )
+    if (matching.length === 0) return null
+    return Math.min(...matching.map(s => s.surcharge))
   }
 
   // Does this material carry any surcharges at all? Drives whether we show
@@ -3263,12 +3283,27 @@ export default function CustomerProofPage() {
                               color: PAPER_TERTIARY,
                             }}
                           >
-                            {activeVersion.names.length} names ×{' '}
+                            {/*
+                              Multiplier semantics: the surcharge
+                              applies to each name *beyond the first*,
+                              so the multiplier is names.length - 1
+                              not names.length. The earlier copy
+                              ("{N} names × £15 tooling each beyond
+                              the first") read as N × £15 to anyone
+                              not parsing the trailing clause —
+                              e.g. for 2 names it scanned as £30
+                              even though the +£X total above is £15.
+                              This phrasing puts the count of *extra*
+                              names in the multiplier slot so the
+                              math reads right at a glance.
+                            */}
+                            {activeVersion.names.length - 1} extra{' '}
+                            {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
                             {formatPrice(
                               activeVersion.split_name_surcharge_snapshot,
                               activeVersion.currency,
                             )}{' '}
-                            tooling each beyond the first
+                            tooling
                           </p>
                         </div>
                       )}
