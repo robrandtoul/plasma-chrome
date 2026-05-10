@@ -653,6 +653,9 @@ function LatestActivityPanel({
                 : isOverride
                   ? 'bg-slate-600'
                   : 'bg-amber-500'
+            const rowBg = (isApprove || isOverride)
+              ? 'bg-emerald-50 hover:bg-emerald-100 focus-visible:bg-emerald-100'
+              : 'hover:bg-gray-50 focus-visible:bg-gray-50'
             return (
               <li
                 key={e.id}
@@ -666,7 +669,8 @@ function LatestActivityPanel({
                   }
                 }}
                 className={[
-                  'flex cursor-pointer gap-3 py-3 pl-4 pr-5 transition-colors hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900',
+                  'flex cursor-pointer gap-3 py-3 pl-4 pr-5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900',
+                  rowBg,
                   accent,
                   i > 0 ? 'border-t border-t-gray-100' : '',
                 ].join(' ')}
