@@ -103,6 +103,12 @@ const SURFACES: SurfaceSpec[] = [
   { name: 'public_site_settings', type: 'view' },
   { name: 'public_material_options', type: 'view' },
   { name: 'public_material_option_surcharges', type: 'view' },
+  // Live-pricing views added by migration 000117 — used by both the
+  // customer page (until 000162 routes it through the RPC) and the
+  // designer-side VersionDetailModal. After 000162 anon should hit
+  // 401 / permission denied on both.
+  { name: 'public_material_variants', type: 'view' },
+  { name: 'public_price_tiers', type: 'view' },
   { name: 'dashboard_latest_events', type: 'view', filter: { column: 'proof_id', value: QA_PROOF_ID } },
   { name: 'material_price_tier_counts', type: 'view' },
 ]
@@ -257,6 +263,85 @@ function classify(r: ProbeResult): { priority: 'P1' | 'P2' | 'clean'; reason: st
   return { priority: 'P2', reason: `HTTP ${r.status} (unexpected)` }
 }
 
+// Probe the public_get_customer_proof RPC (migration 000162). Recon
+// pre-fix: the RPC doesn't exist yet, expect 404 / 42883 — the script
+// still completes and the result lands in the report as context. Post-
+// fix: anon should be able to invoke it with the QA proof_id and get
+// back a jsonb object containing { proof, versions, material_options,
+// material_option_surcharges, material_variants, price_tiers }. This
+// is the regression test's positive signal — the leaks above all drop
+// to "clean" AND the RPC keeps working for the legitimate path.
+interface RpcProbeResult {
+  status: number
+  bodyText: string
+  hasProof: boolean
+  versionCount: number | null
+  variantCount: number | null
+  tierCount: number | null
+  error: string | null
+}
+
+async function probeCustomerProofRpc(): Promise<RpcProbeResult> {
+  const url = `${SUPABASE_URL}/rest/v1/rpc/public_get_customer_proof`
+  let status = 0
+  let bodyText = ''
+  let parsed: unknown = null
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {
+        apikey: ANON_KEY!,
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify({ p_proof_id: QA_PROOF_ID }),
+    })
+    status = r.status
+    bodyText = await r.text()
+    try {
+      parsed = JSON.parse(bodyText)
+    } catch {
+      parsed = null
+    }
+  } catch (e) {
+    return {
+      status: 0,
+      bodyText: `fetch error: ${(e as Error).message}`,
+      hasProof: false,
+      versionCount: null,
+      variantCount: null,
+      tierCount: null,
+      error: (e as Error).message,
+    }
+  }
+  if (status < 200 || status >= 300 || !parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {
+      status,
+      bodyText,
+      hasProof: false,
+      versionCount: null,
+      variantCount: null,
+      tierCount: null,
+      error:
+        status === 404
+          ? 'RPC not deployed yet (404)'
+          : status >= 400
+          ? `HTTP ${status}`
+          : 'Unexpected body shape',
+    }
+  }
+  const obj = parsed as Record<string, unknown>
+  return {
+    status,
+    bodyText: bodyText.length > 500 ? bodyText.substring(0, 500) + '…' : bodyText,
+    hasProof: typeof obj.proof === 'object' && obj.proof !== null,
+    versionCount: Array.isArray(obj.versions) ? obj.versions.length : null,
+    variantCount: Array.isArray(obj.material_variants) ? obj.material_variants.length : null,
+    tierCount: Array.isArray(obj.price_tiers) ? obj.price_tiers.length : null,
+    error: null,
+  }
+}
+
 async function discoverExtraSurfaces(known: Set<string>): Promise<string[]> {
   // PostgREST exposes an OpenAPI spec at /rest/v1/. Anon can usually fetch
   // it. The "definitions" section keys are the table/view names exposed.
@@ -279,7 +364,33 @@ function priorityLabel(label: 'P1' | 'P2' | 'clean'): string {
   return 'clean — locked down'
 }
 
-function renderReport(results: SurfaceResult[], extra: string[]): string {
+function renderRpcSection(lines: string[], rpc: RpcProbeResult): void {
+  lines.push('## RPC probe — `public_get_customer_proof` (migration 000162)')
+  lines.push('')
+  if (rpc.error) {
+    lines.push(`**Status:** HTTP ${rpc.status} — ${rpc.error}`)
+    lines.push('')
+    lines.push('Pre-migration this is expected (the function doesn\'t exist yet). Post-migration this should be HTTP 200 with a populated payload. Body excerpt:')
+    lines.push('')
+    lines.push('```')
+    lines.push(rpc.bodyText)
+    lines.push('```')
+    lines.push('')
+    return
+  }
+  lines.push(`**Status:** HTTP ${rpc.status} — proof object present: ${rpc.hasProof}`)
+  lines.push('')
+  lines.push('| Field | Count |')
+  lines.push('|---|---|')
+  lines.push(`| versions | ${rpc.versionCount ?? '—'} |`)
+  lines.push(`| material_variants | ${rpc.variantCount ?? '—'} |`)
+  lines.push(`| price_tiers | ${rpc.tierCount ?? '—'} |`)
+  lines.push('')
+  lines.push('The RPC is the only customer-side read of the proof graph after migration 000162. Non-zero counts here are the positive signal that legitimate customer URLs still resolve.')
+  lines.push('')
+}
+
+function renderReport(results: SurfaceResult[], extra: string[], rpc: RpcProbeResult): string {
   const ts = new Date().toISOString()
   const groups: Record<'P1' | 'P2' | 'clean', SurfaceResult[]> = {
     P1: results.filter((r) => r.priority === 'P1'),
@@ -328,6 +439,8 @@ function renderReport(results: SurfaceResult[], extra: string[]): string {
     )
     lines.push('')
   }
+
+  renderRpcSection(lines, rpc)
 
   for (const key of ['P1', 'P2', 'clean'] as const) {
     lines.push(`## ${priorityLabel(key)}`)
@@ -478,7 +591,11 @@ async function main(): Promise<void> {
     for (const e of extra) console.error('  -', e)
   }
 
-  const md = renderReport(results, extra)
+  process.stderr.write('  rpc public_get_customer_proof          ')
+  const rpc = await probeCustomerProofRpc()
+  process.stderr.write(`${rpc.status} → ${rpc.error ?? `proof=${rpc.hasProof}, versions=${rpc.versionCount ?? 0}`}\n`)
+
+  const md = renderReport(results, extra, rpc)
 
   const today = new Date().toISOString().slice(0, 10)
   const reportsDir = resolve(REPO_ROOT, 'audits', 'test-runs')
