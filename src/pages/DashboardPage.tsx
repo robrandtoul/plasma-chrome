@@ -36,7 +36,7 @@ import {
 
 type SortMode  = 'activity' | 'date' | 'name'
 type GroupMode = 'time' | 'company'
-type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week'
+type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week' | 'not_viewed'
 
 // Reason chip text per rule. Templated against rule_meta.days where
 // the rule has a threshold. Kept here rather than in a shared lib
@@ -216,35 +216,34 @@ interface StatTileProps {
   label: string
   count: number
   active: boolean
-  tone: 'amber' | 'neutral' | 'green' | 'violet'
+  tone: 'rose' | 'amber' | 'sky' | 'neutral' | 'violet' | 'green'
   description?: string
   onClick: () => void
 }
 
 function StatTile({ label, count, active, tone, description, onClick }: StatTileProps) {
-  const base = tone === 'amber'
-    ? 'bg-amber-50 ring-amber-200 text-amber-900 hover:bg-amber-100'
-    : tone === 'green'
-      ? 'bg-green-50 ring-green-200 text-green-900 hover:bg-green-100'
-      : tone === 'violet'
-        ? 'bg-violet-50 ring-violet-200 text-violet-900 hover:bg-violet-100'
-        : 'bg-white ring-gray-200 text-gray-900 hover:bg-gray-50'
+  const base =
+    tone === 'rose'    ? 'bg-rose-50 ring-rose-200 text-rose-900 hover:bg-rose-100'
+    : tone === 'amber' ? 'bg-amber-50 ring-amber-200 text-amber-900 hover:bg-amber-100'
+    : tone === 'sky'   ? 'bg-sky-50 ring-sky-200 text-sky-900 hover:bg-sky-100'
+    : tone === 'green' ? 'bg-green-50 ring-green-200 text-green-900 hover:bg-green-100'
+    : tone === 'violet'? 'bg-violet-50 ring-violet-200 text-violet-900 hover:bg-violet-100'
+    :                    'bg-white ring-gray-200 text-gray-900 hover:bg-gray-50'
   const activeRing = active
-    ? tone === 'amber'
-      ? 'ring-2 ring-amber-500 shadow-sm'
-      : tone === 'green'
-        ? 'ring-2 ring-green-500 shadow-sm'
-        : tone === 'violet'
-          ? 'ring-2 ring-violet-500 shadow-sm'
-          : 'ring-2 ring-gray-900 shadow-sm'
+    ? tone === 'rose'    ? 'ring-2 ring-rose-500 shadow-sm'
+      : tone === 'amber' ? 'ring-2 ring-amber-500 shadow-sm'
+      : tone === 'sky'   ? 'ring-2 ring-sky-500 shadow-sm'
+      : tone === 'green' ? 'ring-2 ring-green-500 shadow-sm'
+      : tone === 'violet'? 'ring-2 ring-violet-500 shadow-sm'
+      :                    'ring-2 ring-gray-900 shadow-sm'
     : 'ring-1'
-  const labelColour = tone === 'amber'
-    ? 'text-amber-700'
-    : tone === 'green'
-      ? 'text-green-700'
-      : tone === 'violet'
-        ? 'text-violet-700'
-        : 'text-gray-500'
+  const labelColour =
+    tone === 'rose'    ? 'text-rose-700'
+    : tone === 'amber' ? 'text-amber-700'
+    : tone === 'sky'   ? 'text-sky-700'
+    : tone === 'green' ? 'text-green-700'
+    : tone === 'violet'? 'text-violet-700'
+    :                    'text-gray-500'
   return (
     <button
       type="button"
@@ -628,7 +627,7 @@ function ProjectRow({
           // The clock button is hidden on sm+ (snooze lives in the
           // action strip on wider screens).
           <div className="mt-1 flex items-center gap-1.5">
-            <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800 ring-1 ring-amber-200">
+            <span className="inline-flex items-center rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-800 ring-1 ring-rose-200">
               {reasonChipText(project.rule_code, project.rule_meta?.days)}
             </span>
             <span className="sm:hidden">
@@ -1249,6 +1248,15 @@ export default function DashboardPage() {
     return c
   }, [projects])
 
+  // Proofs with a current version the customer hasn't opened yet.
+  // Computed client-side from the full project list — no extra query needed.
+  const notViewedCount = useMemo(() =>
+    projects.filter((p) => {
+      const isActive = p.status === 'in_progress' || p.status === 'dormant'
+      return isActive && p.current_version_id !== null && p.current_version_viewed_at === null
+    }).length,
+  [projects])
+
   // Filter pipeline: search → tile → status. All AND-combined.
   const filteredProjects = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -1269,6 +1277,11 @@ export default function DashboardPage() {
       if (tileFilter === 'approved_this_week') {
         const cutoff = Date.now() - 7 * 86_400_000
         if (p.status !== 'approved' || !p.approved_at || new Date(p.approved_at).getTime() < cutoff) return false
+      }
+      if (tileFilter === 'not_viewed') {
+        // Active proofs with a current version the customer hasn't opened yet.
+        const isActive = p.status === 'in_progress' || p.status === 'dormant'
+        if (!isActive || !p.current_version_id || p.current_version_viewed_at !== null) return false
       }
       // Hide abandoned proofs unless the designer has toggled them on,
       // or has explicitly selected "Abandoned" from the status filter.
@@ -1368,21 +1381,48 @@ export default function DashboardPage() {
             ) : (
               <>
                 {/* Stat tile row */}
-                <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
+                {/* Tiles ordered by urgency: act now → pending engagement →
+                    customer waiting → gone quiet → parked → won.
+                    Palette: rose → amber → sky → gray → violet → green */}
+
+                {/* Section labels — xl only, one label per group aligned to
+                    the matching tile column(s) via the same 6-col grid */}
+                <div className="mb-1 hidden xl:grid xl:grid-cols-6 xl:gap-3">
+                  {/* Alert group — spans column 1 */}
+                  <div className="flex items-center gap-1.5 px-0.5">
+                    <span className="text-[10px] font-medium uppercase tracking-widest text-rose-400">Alert</span>
+                    <span className="h-px flex-1 bg-rose-200" aria-hidden="true" />
+                  </div>
+                  {/* Workflow group — spans columns 2–6 */}
+                  <div className="col-span-5 flex items-center gap-1.5 px-0.5">
+                    <span className="text-[10px] font-medium uppercase tracking-widest text-gray-400">Workflow</span>
+                    <span className="h-px flex-1 bg-gray-200" aria-hidden="true" />
+                  </div>
+                </div>
+
+                <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
                   <StatTile
                     label="Needs attention"
                     count={tileCounts?.needs_attention ?? 0}
                     active={tileFilter === 'needs_attention'}
-                    tone="amber"
+                    tone="rose"
                     description="action required from you"
                     onClick={() => toggleTile('needs_attention')}
+                  />
+                  <StatTile
+                    label="Not viewed"
+                    count={notViewedCount}
+                    active={tileFilter === 'not_viewed'}
+                    tone="amber"
+                    description="current version unopened"
+                    onClick={() => toggleTile('not_viewed')}
                   />
                   <StatTile
                     label="Awaiting customer"
                     count={tileCounts?.awaiting_customer ?? 0}
                     active={tileFilter === 'awaiting_customer'}
-                    tone="neutral"
-                    description="sent, no response yet"
+                    tone="sky"
+                    description="viewed, no response yet"
                     onClick={() => toggleTile('awaiting_customer')}
                   />
                   <StatTile
@@ -1394,14 +1434,6 @@ export default function DashboardPage() {
                     onClick={() => toggleTile('dormant')}
                   />
                   <StatTile
-                    label="Approved this week"
-                    count={tileCounts?.approved_this_week ?? 0}
-                    active={tileFilter === 'approved_this_week'}
-                    tone="green"
-                    description="approved in last 7 days"
-                    onClick={() => toggleTile('approved_this_week')}
-                  />
-                  <StatTile
                     label="Snoozed"
                     count={snoozedSections[0]?.projects.length ?? 0}
                     active={showSnoozed}
@@ -1410,11 +1442,19 @@ export default function DashboardPage() {
                     onClick={() => {
                       setShowSnoozed((v) => {
                         const next = !v
-                        setSnoozedOnly(next) // filter to snoozed-only when on, restore main list when off
+                        setSnoozedOnly(next)
                         try { localStorage.setItem(SNOOZED_KEY, String(next)) } catch { /* */ }
                         return next
                       })
                     }}
+                  />
+                  <StatTile
+                    label="Approved this week"
+                    count={tileCounts?.approved_this_week ?? 0}
+                    active={tileFilter === 'approved_this_week'}
+                    tone="green"
+                    description="approved in last 7 days"
+                    onClick={() => toggleTile('approved_this_week')}
                   />
                 </div>
 
