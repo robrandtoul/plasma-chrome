@@ -182,17 +182,22 @@ function DesignerAvatar({ p }: { p: DashboardProject }) {
 
 // ── Status pill (existing — kept identical to pre-redesign) ──────────────────
 
+// Fixed width keeps all status pills the same size so the action strip
+// starts at the same x position on every row. "In progress" is the
+// widest label, so min-w is sized to fit it without wrapping.
+const PILL_BASE = 'inline-block min-w-[5.5rem] shrink-0 rounded-full px-2 py-0.5 text-center text-xs font-semibold'
+
 function StatusPill({ status }: { status: ProofStatus }) {
   if (status === 'approved') {
-    return <span className="w-fit shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Approved</span>
+    return <span className={`${PILL_BASE} bg-emerald-100 text-emerald-700`}>Approved</span>
   }
   if (status === 'abandoned') {
-    return <span className="w-fit shrink-0 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">Abandoned</span>
+    return <span className={`${PILL_BASE} bg-slate-200 text-slate-700`}>Abandoned</span>
   }
   if (status === 'dormant') {
-    return <span className="w-fit shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">Dormant</span>
+    return <span className={`${PILL_BASE} bg-gray-100 text-gray-500`}>Dormant</span>
   }
-  return <span className="w-fit shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">In progress</span>
+  return <span className={`${PILL_BASE} bg-amber-100 text-amber-700`}>In progress</span>
 }
 
 function ViewedDot({ state }: { state: ViewedState }) {
@@ -686,9 +691,9 @@ function ProjectRow({
 // other icon on the dashboard is an inline SVG. Matching the existing
 // pattern keeps the bundle lean and the visual idiom consistent.
 
-function PinIcon({ className }: { className?: string }) {
+function PinIcon({ className, filled }: { className?: string; filled?: boolean }) {
   return (
-    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg viewBox="0 0 16 16" className={className} fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9.5 1.5l5 5-2 2-1-.5-3 3 .5 1.5-2 2-2.5-2.5L1 13l3.5-3.5-2.5-2.5 2-2 1.5.5 3-3-.5-1z" />
     </svg>
   )
@@ -759,7 +764,7 @@ function RowActionButton({ label, children, href, to, onClick, active }: RowActi
     'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
     'focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
     active
-      ? 'text-violet-600 hover:bg-violet-50'
+      ? 'bg-violet-100 text-violet-600 hover:bg-violet-200'
       : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700',
   ].join(' ')
 
@@ -800,10 +805,13 @@ function RowActionButton({ label, children, href, to, onClick, active }: RowActi
 
 // ── Action strip ──────────────────────────────────────────────────────────────
 //
-// Visible on sm+ screens only. On narrow screens the existing ⋯
-// overflow menu covers the same actions. Each button hides itself when
-// the action doesn't apply (no version yet → no preview, etc.) so the
-// strip stays uncluttered.
+// Visible on sm+ screens only. On narrow screens the existing ⋯ overflow
+// menu covers the same actions.
+//
+// All five slots are always rendered so every row occupies the same
+// horizontal width — buttons that don't apply to a given proof become
+// invisible spacers. This keeps the columns aligned when scanning down
+// the list.
 
 interface ActionStripProps {
   proof: DashboardProject
@@ -813,47 +821,51 @@ interface ActionStripProps {
   onSnooze: (proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) => Promise<void>
 }
 
+// Invisible fixed-width spacer — holds the slot open without showing anything.
+function StripSpacer() {
+  return <span className="h-7 w-7 shrink-0" aria-hidden />
+}
+
 function ActionStrip({ proof, canAddVersion, minePinned, onToggleMinePin, onSnooze }: ActionStripProps) {
   return (
     <div className="hidden sm:flex shrink-0 items-center gap-0.5">
-      {canAddVersion && (
-        <RowActionButton
-          label="Add version"
-          to={`/proofs/${proof.proof_id}/versions/new`}
-        >
+      {/* Add version */}
+      {canAddVersion ? (
+        <RowActionButton label="Add version" to={`/proofs/${proof.proof_id}/versions/new`}>
           <PlusIcon className="h-4 w-4" />
         </RowActionButton>
-      )}
-      {proof.current_version_id && (
-        <RowActionButton
-          label="Preview"
-          href={designerPreviewPath(proof.proof_id)}
-        >
+      ) : <StripSpacer />}
+
+      {/* Preview */}
+      {proof.current_version_id ? (
+        <RowActionButton label="Preview" href={designerPreviewPath(proof.proof_id)}>
           <EyeIcon className="h-4 w-4" />
         </RowActionButton>
-      )}
-      {proof.helpscout_conversation_url && (
-        <RowActionButton
-          label="Open in Help Scout"
-          href={proof.helpscout_conversation_url}
-        >
-          {/* Inline external-link icon matching the existing row icon */}
+      ) : <StripSpacer />}
+
+      {/* Help Scout */}
+      {proof.helpscout_conversation_url ? (
+        <RowActionButton label="Open in Help Scout" href={proof.helpscout_conversation_url}>
           <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M7 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9" />
             <path d="M9.5 1.5h5v5" /><path d="M7.5 8.5l6-6" />
           </svg>
         </RowActionButton>
-      )}
+      ) : <StripSpacer />}
+
+      {/* Pin — always visible; filled when active */}
       <RowActionButton
         label={minePinned ? 'Unpin from your list' : 'Pin to your list'}
         onClick={() => onToggleMinePin(proof.proof_id)}
         active={minePinned}
       >
-        <PinIcon className="h-4 w-4" />
+        <PinIcon className="h-4 w-4" filled={minePinned} />
       </RowActionButton>
-      {proof.rule_code && (
+
+      {/* Snooze */}
+      {proof.rule_code ? (
         <SnoozeButton proof={proof} onSnooze={onSnooze} stripStyle />
-      )}
+      ) : <StripSpacer />}
     </div>
   )
 }
