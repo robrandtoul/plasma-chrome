@@ -654,9 +654,10 @@ export default function NewProofPage() {
       let companyId: string | null = null
       if (!isIndividual) {
         if (selectedCompany!.id === null) {
+          const insertedName = selectedCompany!.name.trim()
           const { data, error } = await supabase
             .from('companies')
-            .insert({ name: selectedCompany!.name.trim() })
+            .insert({ name: insertedName })
             .select('id')
             .single()
           if (error) {
@@ -666,11 +667,23 @@ export default function NewProofPage() {
             throw new Error(`Failed to create company: ${error.message}`)
           }
           companyId = data.id
+          // Append to the locally-cached company list so the picker
+          // reflects reality if the designer stays on the form (e.g.
+          // a downstream contact / proof insert fails and they retry).
+          // The on-mount fetch loads .order('name'); preserve the same
+          // order on local insert. setAllCompanies is a no-op for the
+          // happy path since navigate() unmounts the form, but the
+          // cost is negligible and keeps the state honest if the
+          // happy path ever changes.
+          setAllCompanies(prev =>
+            [...prev, { id: data.id, name: insertedName }]
+              .sort((a, b) => a.name.localeCompare(b.name)),
+          )
           void logAudit({
             action: 'company.created',
             targetType: 'company',
             targetId: companyId,
-            targetLabel: selectedCompany!.name.trim(),
+            targetLabel: insertedName,
           })
         } else {
           companyId = selectedCompany!.id
