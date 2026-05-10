@@ -60,7 +60,7 @@ Each material gets at least one core row. Add edge rows where the material has k
 | # | Material | Variant | Currency | Mode | Recipients | Notes |
 |---|----------|---------|----------|------|-----------|-------|
 | 1 | Metal Steel | 800um, Mirror | GBP | Standard | Single | Surcharge bakes into grid; "+from £X" suffix on Mirror tab |
-| 2 | Metal Steel | 400um, Brushed | EUR | Standard | Split (2 names) | Tooling surcharge €39 per extra name |
+| 2 | Metal Steel | 500um, Brushed | EUR | Standard | Split (2 names) | Tooling surcharge €39 per extra name |
 | 3 | Metal Gold | 800um, Mirror | USD | Standard | Single | Confirms USD surcharge schedule matches GBP/EUR |
 | 4 | Metal Copper | 800um, Natural | GBP | Custom quote | Single | Custom-quote panel replaces grid; check copy |
 | 5 | Metal Gun Metal | 800um, Natural | GBP | Standard | Single | qty 750 row check (000146 reconciled this) |
