@@ -311,22 +311,39 @@ export default function CustomerProofPage() {
       // still fires from loadProof — that's a general audit
       // ledger, distinct from the view-tracking table.
       if (new URLSearchParams(window.location.search).get('preview') === '1') return
+      // Mark the version as evaluated up front so a re-run of this
+      // effect (React strict mode, an auth-state flip mid-view)
+      // doesn't race the async session check below and double-fire.
       viewRecordedVersionsRef.current.add(versionId)
-      // .then() is load-bearing, not cosmetic. supabase.rpc()
-      // returns a PostgrestBuilder, a custom thenable — it only
-      // dispatches the fetch when something calls .then(),
-      // awaits, or iterates. `void supabase.rpc(…)` drops the
-      // reference without triggering execution, so the RPC
-      // silently never runs. Attaching .then() is the minimal
-      // way to force the request; the body is only there to
-      // surface server-side errors to the console.
-      supabase.rpc('record_proof_view', {
-        p_version_id: versionId,
-        p_user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
-        p_ip: null, // server reads from request headers
-      }).then(({ error }) => {
-        if (error) console.error('[proof-viewer] record_proof_view failed:', error)
-      })
+      // Designer-as-viewer bypass. Designers loading /p/:id directly
+      // (no ?preview=1) used to land here with no gate, polluting the
+      // dashboard's customer-activity timeline (000127 attributes
+      // every non-bot proof_version_views row to the proof's contact
+      // name on the assumption that anon = customer). Skip the RPC
+      // when a Supabase session exists. getSession is async because
+      // it returns the in-memory session synchronously after the
+      // initial bootstrap; the await is a single microtask hop on
+      // the warm path. Forward-only — historical designer-as-viewer
+      // rows are intentionally not backfilled.
+      void (async () => {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session) return
+        // .then() is load-bearing, not cosmetic. supabase.rpc()
+        // returns a PostgrestBuilder, a custom thenable — it only
+        // dispatches the fetch when something calls .then(),
+        // awaits, or iterates. `void supabase.rpc(…)` drops the
+        // reference without triggering execution, so the RPC
+        // silently never runs. Attaching .then() is the minimal
+        // way to force the request; the body is only there to
+        // surface server-side errors to the console.
+        supabase.rpc('record_proof_view', {
+          p_version_id: versionId,
+          p_user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+          p_ip: null, // server reads from request headers
+        }).then(({ error }) => {
+          if (error) console.error('[proof-viewer] record_proof_view failed:', error)
+        })
+      })()
     }, 2500)
     return () => window.clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
