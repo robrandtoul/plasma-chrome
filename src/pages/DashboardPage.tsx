@@ -470,10 +470,15 @@ function SnoozeButton({ proof, onSnooze }: SnoozeButtonProps) {
   async function handleSnooze(hours: number) {
     if (!proof.rule_code || saving) return
     setSaving(true)
-    await onSnooze(proof.proof_id, proof.rule_code, hours, note)
-    setSaving(false)
-    setNote('')
-    setOpen(false)
+    try {
+      await onSnooze(proof.proof_id, proof.rule_code, hours, note)
+      setNote('')
+      setOpen(false)
+    } catch (err) {
+      console.error('[SnoozeButton] onSnooze failed:', err)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const PRESETS = [
@@ -1052,7 +1057,7 @@ export default function DashboardPage() {
   async function handleSnooze(proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) {
     if (!userId) return
     const snoozedUntil = new Date(Date.now() + hours * 3_600_000).toISOString()
-    await supabase
+    const { error } = await supabase
       .from('proof_attention_snoozes')
       .upsert(
         {
@@ -1064,6 +1069,10 @@ export default function DashboardPage() {
         },
         { onConflict: 'proof_id,rule_code' },
       )
+    if (error) {
+      console.error('[handleSnooze] upsert error:', error)
+      throw error
+    }
     void logAudit({
       action: 'proof.snoozed',
       targetType: 'proof',
