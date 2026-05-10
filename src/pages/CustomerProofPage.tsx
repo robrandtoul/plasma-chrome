@@ -2076,17 +2076,37 @@ export default function CustomerProofPage() {
       .forEach(s => { quantitySurcharges[s.quantity] = s.surcharge })
   }
 
-  // Smallest-quantity surcharge for a given option in the active currency,
-  // or null if this option carries no surcharge (base/Natural, or wood).
+  // Smallest surcharge a customer would actually see in the displayed
+  // pricing grid for a given option, or null if this option carries no
+  // visible surcharge (base/Natural, wood, or surcharge schedule that
+  // doesn't intersect display_quantities).
+  //
+  // Scoped to activeVersion.display_quantities so the "From +£X" tab
+  // pill matches the collapsed grid the customer reads. The metal
+  // schedule, for example, has a qty 25 row (000145) with the
+  // smallest absolute surcharge in the table, but qty 25 isn't in
+  // any metal material's display_quantities — the customer would see
+  // "+£20" on the tab and "+£30 at qty 50" in the grid, which read as
+  // a contradiction. Filtering here makes the two consistent.
+  //
+  // Falls back to "smallest across all tiers" when display_quantities
+  // is null (uncurated material — customer-side falls back to the
+  // first 10 ascending snapshot tiers, which we can't precisely
+  // reproduce here without re-deriving the snapshot, but those
+  // materials are rare enough that the legacy behaviour is fine).
   function optionFromPrice(code: string): number | null {
     if (!activeVersion) return null
     const o = materialOptions.find(x => x.material_id === activeVersion.material_id && x.code === code)
     if (!o) return null
-    const sorted = optionSurcharges
-      .filter(s => s.material_option_id === o.id && s.currency === activeVersion.currency)
-      .sort((a, b) => a.quantity - b.quantity)
-    const first = sorted[0]
-    return first && first.surcharge > 0 ? first.surcharge : null
+    const displayedQuantities = activeVersion.display_quantities
+    const matching = optionSurcharges.filter(s =>
+      s.material_option_id === o.id
+      && s.currency === activeVersion.currency
+      && s.surcharge > 0
+      && (displayedQuantities == null || displayedQuantities.includes(s.quantity)),
+    )
+    if (matching.length === 0) return null
+    return Math.min(...matching.map(s => s.surcharge))
   }
 
   // Does this material carry any surcharges at all? Drives whether we show
