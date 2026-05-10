@@ -667,6 +667,15 @@ export default function NewProofPage() {
             throw new Error(`Failed to create company: ${error.message}`)
           }
           companyId = data.id
+          // Promote selectedCompany from { id: null, name } (staged) to
+          // the DB-backed { id, name } pair. Without this, a partial-
+          // success retry (e.g. the contact insert below fails and the
+          // designer fixes a field and re-submits) re-enters the
+          // company-insert branch with the same name and hits 23505 —
+          // the row already exists in the DB even though the React
+          // state still says id=null. Pairs with the setAllCompanies
+          // append from #45.
+          setSelectedCompany({ id: data.id, name: insertedName })
           // Append to the locally-cached company list so the picker
           // reflects reality if the designer stays on the form (e.g.
           // a downstream contact / proof insert fails and they retry).
