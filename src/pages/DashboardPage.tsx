@@ -291,22 +291,34 @@ interface StatTileProps {
   label: string
   count: number
   active: boolean
-  tone: 'amber' | 'neutral'
+  tone: 'amber' | 'neutral' | 'green' | 'violet'
   onClick: () => void
 }
 
 function StatTile({ label, count, active, tone, onClick }: StatTileProps) {
-  // Amber tone: FAEEDA / 854F0B / 412402 ramp from the In-progress
-  // pill family — matched approximately to amber-100 / amber-700 /
-  // amber-900 so the tile reads as a sibling of the existing pill.
   const base = tone === 'amber'
     ? 'bg-amber-50 ring-amber-200 text-amber-900 hover:bg-amber-100'
-    : 'bg-white ring-gray-200 text-gray-900 hover:bg-gray-50'
+    : tone === 'green'
+      ? 'bg-green-50 ring-green-200 text-green-900 hover:bg-green-100'
+      : tone === 'violet'
+        ? 'bg-violet-50 ring-violet-200 text-violet-900 hover:bg-violet-100'
+        : 'bg-white ring-gray-200 text-gray-900 hover:bg-gray-50'
   const activeRing = active
     ? tone === 'amber'
       ? 'ring-2 ring-amber-500 shadow-sm'
-      : 'ring-2 ring-gray-900 shadow-sm'
+      : tone === 'green'
+        ? 'ring-2 ring-green-500 shadow-sm'
+        : tone === 'violet'
+          ? 'ring-2 ring-violet-500 shadow-sm'
+          : 'ring-2 ring-gray-900 shadow-sm'
     : 'ring-1'
+  const labelColour = tone === 'amber'
+    ? 'text-amber-700'
+    : tone === 'green'
+      ? 'text-green-700'
+      : tone === 'violet'
+        ? 'text-violet-700'
+        : 'text-gray-500'
   return (
     <button
       type="button"
@@ -318,10 +330,7 @@ function StatTile({ label, count, active, tone, onClick }: StatTileProps) {
         activeRing,
       ].join(' ')}
     >
-      <span className={[
-        'min-h-8 text-xs font-semibold uppercase tracking-wider',
-        tone === 'amber' ? 'text-amber-700' : 'text-gray-500',
-      ].join(' ')}>{label}</span>
+      <span className={['min-h-8 text-xs font-semibold uppercase tracking-wider', labelColour].join(' ')}>{label}</span>
       <span className="text-2xl font-bold tabular-nums">{count}</span>
     </button>
   )
@@ -940,6 +949,10 @@ export default function DashboardPage() {
   const [group, setGroup]                 = useState<GroupMode>(readGroup)
   const [showAbandoned, setShowAbandoned] = useState<boolean>(readShowAbandoned)
   const [showSnoozed,   setShowSnoozed]   = useState<boolean>(readShowSnoozed)
+  // When the user picks "Snoozed" from the status dropdown we want to show
+  // only the Snoozed section and hide the main list. This is distinct from
+  // clicking the tile, which shows the Snoozed section alongside the rest.
+  const [snoozedOnly,   setSnoozedOnly]   = useState(false)
 
   useEffect(() => { loadDashboard() }, [])
 
@@ -1206,9 +1219,14 @@ export default function DashboardPage() {
   // Snoozed projects are always excluded from the tail sections so
   // they don't appear twice. Whether the dedicated Snoozed section
   // itself is rendered is controlled by showSnoozed.
+  //
+  // Derived from the raw projects list (not filteredProjects / sortedProjects)
+  // so that tile and status filters don't affect the snoozed count or section
+  // content — a snoozed project stays in the Snoozed section regardless of
+  // which tile filter is currently active.
   const snoozedSections = useMemo(
-    () => buildSnoozedSection(sortedProjects),
-    [sortedProjects],
+    () => buildSnoozedSection(projects),
+    [projects],
   )
 
   const sections: ProjectSection[] = useMemo(() => {
@@ -1225,8 +1243,11 @@ export default function DashboardPage() {
       ? groupByCompany(remaining)
       : groupByTime(remaining)
     const visibleSnoozed = showSnoozed ? snoozedSections : []
+    // "Snoozed" selected in the status dropdown — suppress pins + tail so only
+    // the Snoozed section is visible (same as a status filter for other statuses).
+    if (snoozedOnly) return visibleSnoozed
     return [...pinSections, ...visibleSnoozed, ...tailSections]
-  }, [sortedProjects, group, minePinAt, teamPinAt, snoozedSections, showSnoozed])
+  }, [sortedProjects, group, minePinAt, teamPinAt, snoozedSections, showSnoozed, snoozedOnly])
 
   const noResults = !loading && sections.every((s) => s.projects.length === 0)
 
@@ -1260,7 +1281,7 @@ export default function DashboardPage() {
             ) : (
               <>
                 {/* Stat tile row */}
-                <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-5">
                   <StatTile
                     label="Needs attention"
                     count={tileCounts?.needs_attention ?? 0}
@@ -1286,8 +1307,22 @@ export default function DashboardPage() {
                     label="Approved this week"
                     count={tileCounts?.approved_this_week ?? 0}
                     active={tileFilter === 'approved_this_week'}
-                    tone="neutral"
+                    tone="green"
                     onClick={() => toggleTile('approved_this_week')}
+                  />
+                  <StatTile
+                    label="Snoozed"
+                    count={snoozedSections[0]?.projects.length ?? 0}
+                    active={showSnoozed}
+                    tone="violet"
+                    onClick={() => {
+                      setShowSnoozed((v) => {
+                        const next = !v
+                        setSnoozedOnly(next) // filter to snoozed-only when on, restore main list when off
+                        try { localStorage.setItem(SNOOZED_KEY, String(next)) } catch { /* */ }
+                        return next
+                      })
+                    }}
                   />
                 </div>
 
@@ -1325,10 +1360,27 @@ export default function DashboardPage() {
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <SelectField
-                          value={statusFilter.size === 0 ? 'all' : Array.from(statusFilter)[0] as ProofStatus}
+                          value={
+                            statusFilter.size === 0 && showSnoozed
+                              ? 'snoozed'
+                              : statusFilter.size === 0
+                                ? 'all'
+                                : Array.from(statusFilter)[0] as ProofStatus
+                          }
                           onChange={(v) => {
-                            if (v === 'all') setStatusFilter(new Set())
-                            else setStatusFilter(new Set([v]))
+                            if (v === 'snoozed') {
+                              setSnoozedOnly(true)
+                              setStatusFilter(new Set())
+                              setShowSnoozed((prev) => {
+                                if (prev) return prev
+                                try { localStorage.setItem(SNOOZED_KEY, 'true') } catch { /* */ }
+                                return true
+                              })
+                            } else {
+                              setSnoozedOnly(false)
+                              if (v === 'all') setStatusFilter(new Set())
+                              else setStatusFilter(new Set([v as ProofStatus]))
+                            }
                           }}
                           options={[
                             { value: 'all',         label: `Status: All (${projects.length})` },
@@ -1336,6 +1388,7 @@ export default function DashboardPage() {
                             { value: 'approved',    label: `Status: Approved (${statusCounts.approved})` },
                             { value: 'dormant',     label: `Status: Dormant (${statusCounts.dormant})` },
                             { value: 'abandoned',   label: `Status: Abandoned (${statusCounts.abandoned})` },
+                            { value: 'snoozed',     label: `Status: Snoozed (${snoozedSections[0]?.projects.length ?? 0})` },
                           ]}
                         />
                         <SelectField
@@ -1377,25 +1430,6 @@ export default function DashboardPage() {
                             {showAbandoned ? 'Hide abandoned' : 'Show abandoned'}
                           </span>
                         </button>
-                        {snoozedSections.length > 0 && (
-                          <button
-                            onClick={() => {
-                              setShowSnoozed((v) => {
-                                const next = !v
-                                try { localStorage.setItem(SNOOZED_KEY, String(next)) } catch { /* */ }
-                                return next
-                              })
-                            }}
-                            className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm font-medium transition-colors ${
-                              showSnoozed
-                                ? 'border-violet-700 bg-violet-700 text-white'
-                                : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400 hover:text-gray-900'
-                            }`}
-                          >
-                            <ClockIcon className="h-3.5 w-3.5" />
-                            {showSnoozed ? 'Hide snoozed' : `Show snoozed (${snoozedSections[0].projects.length})`}
-                          </button>
-                        )}
                       </div>
                     </div>
 
@@ -1409,6 +1443,7 @@ export default function DashboardPage() {
                             setTileFilter(null)
                             setShowAbandoned(false)
                             setShowSnoozed(false)
+                            setSnoozedOnly(false)
                             try { localStorage.setItem(ABANDONED_KEY, 'false') } catch { /* */ }
                             try { localStorage.setItem(SNOOZED_KEY, 'false') } catch { /* */ }
                           }}
