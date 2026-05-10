@@ -650,6 +650,25 @@ function ProjectRow({
       <span className="hidden w-32 shrink-0 text-right text-xs text-gray-400 xl:block" title={ts ? formatAbsoluteDateTime(ts) : undefined}>
         {verb}{ts ? ` ${relativeTime(ts)}` : ''}
       </span>
+      {project.helpscout_conversation_url ? (
+        <a
+          href={project.helpscout_conversation_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Open in Help Scout"
+          title="Open in Help Scout"
+          onClick={(e) => e.stopPropagation()}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+        >
+          <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M7 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9" />
+            <path d="M9.5 1.5h5v5" />
+            <path d="M7.5 8.5l6-6" />
+          </svg>
+        </a>
+      ) : (
+        <span className="w-8 shrink-0" />
+      )}
       <OverflowMenu
         proof={project}
         canAddVersion={canAddVersion}
