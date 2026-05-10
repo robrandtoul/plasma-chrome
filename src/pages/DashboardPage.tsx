@@ -130,8 +130,9 @@ interface DashboardLatestEvent {
   company_name: string | null
 }
 
-const SORT_KEY  = 'proofViewer.dashboard.sort'
-const GROUP_KEY = 'proofViewer.dashboard.group'
+const SORT_KEY      = 'proofViewer.dashboard.sort'
+const GROUP_KEY     = 'proofViewer.dashboard.group'
+const ABANDONED_KEY = 'proofViewer.dashboard.showAbandoned'
 
 function readSort(): SortMode {
   try {
@@ -147,6 +148,11 @@ function readGroup(): GroupMode {
     if (v === 'company' || v === 'time') return v
   } catch { /* */ }
   return 'time'
+}
+
+function readShowAbandoned(): boolean {
+  try { return localStorage.getItem(ABANDONED_KEY) === 'true' } catch { /* */ }
+  return false
 }
 
 // ── Date / time helpers ──────────────────────────────────────────────────────
@@ -715,6 +721,7 @@ export default function DashboardPage() {
   const [tileFilter, setTileFilter]       = useState<TileKey | null>(null)
   const [sort, setSort]                   = useState<SortMode>(readSort)
   const [group, setGroup]                 = useState<GroupMode>(readGroup)
+  const [showAbandoned, setShowAbandoned] = useState<boolean>(readShowAbandoned)
 
   useEffect(() => { loadDashboard() }, [])
 
@@ -895,10 +902,13 @@ export default function DashboardPage() {
         const cutoff = Date.now() - 7 * 86_400_000
         if (p.status !== 'approved' || !p.approved_at || new Date(p.approved_at).getTime() < cutoff) return false
       }
+      // Hide abandoned proofs unless the designer has toggled them on,
+      // or has explicitly selected "Abandoned" from the status filter.
+      if (!showAbandoned && p.status === 'abandoned' && statusFilter.size === 0) return false
       if (statusFilter.size > 0 && !statusFilter.has(p.status)) return false
       return true
     })
-  }, [projects, search, tileFilter, statusFilter])
+  }, [projects, search, tileFilter, statusFilter, showAbandoned])
 
   // Sort
   const sortedProjects = useMemo(() => {
@@ -1068,6 +1078,22 @@ export default function DashboardPage() {
                             { value: 'company', label: 'Group: Company' },
                           ]}
                         />
+                        <button
+                          onClick={() => {
+                            setShowAbandoned((v) => {
+                              const next = !v
+                              try { localStorage.setItem(ABANDONED_KEY, String(next)) } catch { /* */ }
+                              return next
+                            })
+                          }}
+                          className={`inline-flex items-center rounded-md border px-2.5 py-1.5 text-sm font-medium transition-colors ${
+                            showAbandoned
+                              ? 'border-gray-900 bg-gray-900 text-white'
+                              : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400 hover:text-gray-900'
+                          }`}
+                        >
+                          {showAbandoned ? 'Hide abandoned' : `Abandoned (${statusCounts.abandoned})`}
+                        </button>
                       </div>
                     </div>
 
@@ -1075,7 +1101,13 @@ export default function DashboardPage() {
                       <div className="py-16 text-center">
                         <p className="text-gray-400">No projects match the current filters.</p>
                         <button
-                          onClick={() => { setSearch(''); setStatusFilter(new Set()); setTileFilter(null) }}
+                          onClick={() => {
+                            setSearch('')
+                            setStatusFilter(new Set())
+                            setTileFilter(null)
+                            setShowAbandoned(false)
+                            try { localStorage.setItem(ABANDONED_KEY, 'false') } catch { /* */ }
+                          }}
                           className="mt-2 text-sm text-gray-500 underline underline-offset-2 hover:text-gray-900"
                         >Clear filters</button>
                       </div>
