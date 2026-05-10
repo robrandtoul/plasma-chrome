@@ -1399,6 +1399,8 @@ export default function DashboardPage() {
                                     teamPinned={teamPinAt.has(p.proof_id)}
                                     onToggleMinePin={toggleMinePin}
                                     onToggleTeamPin={toggleTeamPin}
+                                    onSnooze={handleSnooze}
+                                    onUnsnooze={handleUnsnooze}
                                   />
                                 </div>
                               ))
