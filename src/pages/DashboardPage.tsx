@@ -301,7 +301,7 @@ function StatTile({ label, count, active, tone, onClick }: StatTileProps) {
       ].join(' ')}
     >
       <span className={[
-        'text-xs font-semibold uppercase tracking-wider',
+        'min-h-8 text-xs font-semibold uppercase tracking-wider',
         tone === 'amber' ? 'text-amber-700' : 'text-gray-500',
       ].join(' ')}>{label}</span>
       <span className="text-2xl font-bold tabular-nums">{count}</span>
@@ -1092,7 +1092,7 @@ export default function DashboardPage() {
                               : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400 hover:text-gray-900'
                           }`}
                         >
-                          {showAbandoned ? 'Hide abandoned' : `Abandoned (${statusCounts.abandoned})`}
+                          {showAbandoned ? 'Hide abandoned' : 'Show abandoned'}
                         </button>
                       </div>
                     </div>
