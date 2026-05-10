@@ -12,30 +12,23 @@ export type ProofStatus = 'in_progress' | 'approved' | 'dormant' | 'abandoned'
 // designer-side only.
 export type CardType = 'business' | 'membership'
 
+// Customer-page proof header. The shape mirrors the "proof" object
+// inside the public_get_customer_proof(uuid) RPC return (migration
+// 000162), which is the single source of truth on the anon side now
+// that public_proofs is no longer anon-readable. id, created_at, and
+// helpscout_conversation_id are dropped from the payload (the page
+// doesn't consume them and the HS conv id is enumeration-sensitive).
+// abandoned_at and disclaimer_acknowledged_at are included even
+// though CustomerProofPage doesn't read them today — defensive cover
+// for the abandoned-screen and disclaimer-banner code paths so a
+// future render branch on those fields doesn't silently regress.
+// Single-row response, no enumeration risk on the extras.
 export interface PublicProof {
-  id: string
   customer_name: string
   company: string | null
-  created_at: string
   status: ProofStatus
   approved_at: string | null
   abandoned_at: string | null
-  // Help Scout conversation id — exposed on public_proofs by
-  // migration 000089. Used on the customer page to render a
-  // small "PL · {id}" reference badge in the masthead/footer
-  // so the customer has something short to quote back when
-  // they reply. Null for proofs created via the override
-  // flow (designer set helpscout_override_reason instead of
-  // linking a conversation, per migration 000067) — render
-  // paths hide the badge when null rather than falling back.
-  helpscout_conversation_id: string | null
-  // Customer's disclaimer acknowledgement timestamp (migration
-  // 000091 + 000092). Null when the customer hasn't ticked
-  // "I've read this" yet. Written once per proof (not per
-  // version) — the terms apply to the Plasma↔customer
-  // relationship, not to each revision. The audit columns
-  // (ip / ua / by_name) stay on the base table and are
-  // designer-only.
   disclaimer_acknowledged_at: string | null
 }
 
@@ -290,6 +283,22 @@ export interface PublicMaterialVariant {
   display_name: string
   variant_type: 'thickness' | 'ink_count' | 'finish' | 'default'
   sort_order: number
+}
+
+// Single-round-trip return shape for the public_get_customer_proof
+// RPC (migration 000162). The RPC is the only customer-side read of
+// the proof graph now that public_proofs / public_proof_versions /
+// the catalogue views are no longer anon-readable. Aggregates are
+// always arrays (the SQL uses coalesce(jsonb_agg(...), '[]')) so the
+// client never has to null-guard them. Returns SQL NULL when the
+// proof doesn't exist; the page's `data === null` 404 branch fires.
+export interface CustomerProofGraph {
+  proof: PublicProof
+  versions: PublicProofVersion[]
+  material_options: PublicMaterialOption[]
+  material_option_surcharges: PublicMaterialOptionSurcharge[]
+  material_variants: PublicMaterialVariant[]
+  price_tiers: PublicPriceTier[]
 }
 
 export interface SiteSettings {
