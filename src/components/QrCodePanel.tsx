@@ -35,11 +35,11 @@ import {
 import {
   MONO,
   PAPER_BORDER,
-  PAPER_CREAM,
   PAPER_HAIRLINE,
   PAPER_INK,
   PAPER_SECONDARY,
   PAPER_TERTIARY,
+  PAPER_TINT_1,
   SANS,
   SERIF,
 } from '../lib/theme'
@@ -167,7 +167,12 @@ function QrSection({ children }: { children: React.ReactNode }) {
     <section
       aria-labelledby="section-qr-heading"
       style={{
-        background: PAPER_CREAM,
+        // PAPER_TINT_1 distinguishes the QR verification section
+        // from the artwork band above (PAPER_CREAM). Matches the
+        // tonal rhythm Construction uses; for non-letterpress
+        // proofs the band-progression reads cream → tint_1 (QR) →
+        // tint_2 (Spec) → cream (Pricing).
+        background: PAPER_TINT_1,
         color: PAPER_INK,
         borderTop: `1px solid ${PAPER_HAIRLINE}`,
       }}
