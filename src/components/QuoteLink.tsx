@@ -31,7 +31,7 @@ export function QuoteLink({ variant = 'header' }: { variant?: 'header' | 'inline
       href="/quote"
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
+      className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-900 ring-1 ring-gray-300 hover:bg-white"
     >
       <span>Quote compiler</span>
       <kbd className="rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 font-mono text-[10px] text-gray-500">⌘K</kbd>
