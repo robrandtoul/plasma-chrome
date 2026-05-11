@@ -293,7 +293,16 @@ export function QrCodeUploadSection({
                     <div className="aspect-square w-full max-w-[120px] rounded-md border border-dashed border-gray-300 bg-white" />
                   )}
                 </div>
-                <div className={['min-w-0 transition-opacity', ghosted ? 'opacity-50' : ''].join(' ')}>
+                {/*
+                  Content column stays at full opacity even when the
+                  entry is ghosted — the amber re-verify notice is the
+                  highest-priority signal in this state and needs to
+                  be legible. The thumbnail above handles the "this
+                  QR won't be carried" visual cue via its own dim
+                  state; replicating the dim across the warning copy
+                  made the alert read as if it had been dismissed.
+                */}
+                <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-emerald-800">
                       <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
