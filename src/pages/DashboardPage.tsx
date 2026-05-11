@@ -36,7 +36,7 @@ import {
 
 type SortMode  = 'activity' | 'date' | 'name'
 type GroupMode = 'time' | 'company'
-type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week' | 'not_viewed'
+type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week' | 'not_viewed' | 'changes_requested'
 
 // Reason chip text per rule. Templated against rule_meta.days where
 // the rule has a threshold. Kept here rather than in a shared lib
@@ -191,36 +191,43 @@ interface StatTileProps {
   label: string
   count: number
   active: boolean
-  tone: 'rose' | 'amber' | 'sky' | 'neutral' | 'violet' | 'green'
+  tone: 'rose' | 'amber' | 'sky' | 'neutral' | 'violet' | 'green' | 'turquoise'
   description?: string
   onClick: () => void
 }
 
 function StatTile({ label, count, active, tone, description, onClick }: StatTileProps) {
-  // Top accent border colour — saturated, no fill on the card body
+  // Top accent border colour — saturated, no fill on the card body.
+  // 'turquoise' maps to Tailwind teal-500 (#14b8a6) — Tailwind doesn't ship a
+  // literal turquoise utility, and teal-500 reads as visibly distinct from
+  // sky-500 (the Awaiting customer neighbour) thanks to its green tint, where
+  // cyan-500 would sit too close to sky.
   const accentBorder =
-    tone === 'rose'    ? 'border-t-rose-500'
-    : tone === 'amber' ? 'border-t-amber-500'
-    : tone === 'sky'   ? 'border-t-sky-500'
-    : tone === 'green' ? 'border-t-emerald-500'
-    : tone === 'violet'? 'border-t-violet-500'
-    :                    'border-t-gray-400'
+    tone === 'rose'      ? 'border-t-rose-500'
+    : tone === 'amber'   ? 'border-t-amber-500'
+    : tone === 'sky'     ? 'border-t-sky-500'
+    : tone === 'turquoise' ? 'border-t-teal-500'
+    : tone === 'green'   ? 'border-t-emerald-500'
+    : tone === 'violet'  ? 'border-t-violet-500'
+    :                      'border-t-gray-400'
   // Count colour matches the accent
   const countColour =
-    tone === 'rose'    ? 'text-rose-600'
-    : tone === 'amber' ? 'text-amber-500'
-    : tone === 'sky'   ? 'text-sky-500'
-    : tone === 'green' ? 'text-emerald-600'
-    : tone === 'violet'? 'text-violet-600'
-    :                    'text-gray-500'
+    tone === 'rose'      ? 'text-rose-600'
+    : tone === 'amber'   ? 'text-amber-500'
+    : tone === 'sky'     ? 'text-sky-500'
+    : tone === 'turquoise' ? 'text-teal-500'
+    : tone === 'green'   ? 'text-emerald-600'
+    : tone === 'violet'  ? 'text-violet-600'
+    :                      'text-gray-500'
   // Active state: thicker ring in the matching tone; inactive: quiet border
   const activeRing = active
-    ? tone === 'rose'    ? 'ring-2 ring-rose-400'
-      : tone === 'amber' ? 'ring-2 ring-amber-400'
-      : tone === 'sky'   ? 'ring-2 ring-sky-400'
-      : tone === 'green' ? 'ring-2 ring-emerald-500'
-      : tone === 'violet'? 'ring-2 ring-violet-400'
-      :                    'ring-2 ring-gray-400'
+    ? tone === 'rose'      ? 'ring-2 ring-rose-400'
+      : tone === 'amber'   ? 'ring-2 ring-amber-400'
+      : tone === 'sky'     ? 'ring-2 ring-sky-400'
+      : tone === 'turquoise' ? 'ring-2 ring-teal-400'
+      : tone === 'green'   ? 'ring-2 ring-emerald-500'
+      : tone === 'violet'  ? 'ring-2 ring-violet-400'
+      :                      'ring-2 ring-gray-400'
     : 'ring-1 ring-gray-200'
   return (
     <button
@@ -1262,6 +1269,25 @@ export default function DashboardPage() {
     ).length,
   [projects])
 
+  // Changes requested — proofs where the customer's most recent action on the
+  // current version was a change request and no newer version has been shipped
+  // since. Detection: latest_event_type='request_changes' AND latest_event_at
+  // is after version_created_at (which would be later if the designer had
+  // uploaded a revision in response). Needs-attention proofs (the overdue
+  // subset, captured by the request_changes_no_version rule) are excluded so
+  // each proof belongs to exactly one tile — overdue change requests escalate
+  // to the Needs attention tile.
+  const changesRequestedCount = useMemo(() =>
+    projects.filter((p) => {
+      if (p.rule_code != null) return false
+      if (p.snoozed_until != null) return false
+      if (p.status !== 'in_progress') return false
+      if (p.latest_event_type !== 'request_changes') return false
+      if (!p.latest_event_at || !p.version_created_at) return false
+      return new Date(p.latest_event_at).getTime() > new Date(p.version_created_at).getTime()
+    }).length,
+  [projects])
+
   // Dormant / Approved-this-week counts. Migration 000152's
   // dashboard_tile_counts() returns server-side counts that do not
   // filter snoozed proofs (the snooze filter is applied in 000164's
@@ -1317,6 +1343,17 @@ export default function DashboardPage() {
         // Needs-attention projects are excluded — they belong to the rose tile only.
         const isActive = p.status === 'in_progress' || p.status === 'dormant'
         if (p.rule_code != null || !isActive || !p.current_version_id || p.current_version_viewed_at !== null) return false
+      }
+      if (tileFilter === 'changes_requested') {
+        // Mirror of changesRequestedCount: latest customer event on the proof is
+        // a change request, with no newer version uploaded since. The overdue
+        // subset is captured by the request_changes_no_version needs-attention
+        // rule and shown there instead — rule_code != null excludes them here.
+        if (p.rule_code != null) return false
+        if (p.status !== 'in_progress') return false
+        if (p.latest_event_type !== 'request_changes') return false
+        if (!p.latest_event_at || !p.version_created_at) return false
+        if (new Date(p.latest_event_at).getTime() <= new Date(p.version_created_at).getTime()) return false
       }
       // Hide abandoned proofs unless the designer has toggled them on,
       // or has explicitly selected "Abandoned" from the status filter.
@@ -1487,26 +1524,36 @@ export default function DashboardPage() {
             ) : (
               <>
                 {/* Stat tile row */}
-                {/* Tiles ordered by urgency: act now → pending engagement →
-                    customer waiting → gone quiet → parked → won.
-                    Palette: rose → amber → sky → gray → violet → green */}
+                {/* Three groups, left to right:
+                    • Alert    — Needs attention (col 1)
+                    • Workflow — the happy path the proof travels through:
+                                 Not viewed → Awaiting customer →
+                                 Changes requested → Approved this week (cols 2–5)
+                    • On hold  — proofs not currently moving through the
+                                 workflow: Snoozed, Dormant (cols 6–7)
+                    Palette: rose → amber → sky → turquoise → green → violet → gray */}
 
                 {/* Section labels — xl only, one label per group aligned to
-                    the matching tile column(s) via the same 6-col grid */}
-                <div className="mb-1.5 hidden xl:grid xl:grid-cols-6 xl:gap-3">
+                    the matching tile column(s) via the same 7-col grid */}
+                <div className="mb-1.5 hidden xl:grid xl:grid-cols-7 xl:gap-3">
                   {/* Alert group — spans column 1 */}
                   <div className="flex items-center gap-2 px-0.5">
                     <span className="text-xs font-semibold uppercase tracking-wider text-rose-500">Alert</span>
                     <span className="h-px flex-1 bg-rose-300" aria-hidden="true" />
                   </div>
-                  {/* Workflow group — spans columns 2–6 */}
-                  <div className="col-span-5 flex items-center gap-2 px-0.5">
+                  {/* Workflow group — spans columns 2–5 */}
+                  <div className="col-span-4 flex items-center gap-2 px-0.5">
                     <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">Workflow</span>
+                    <span className="h-px flex-1 bg-gray-300" aria-hidden="true" />
+                  </div>
+                  {/* On hold group — spans columns 6–7 */}
+                  <div className="col-span-2 flex items-center gap-2 px-0.5">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">On hold</span>
                     <span className="h-px flex-1 bg-gray-300" aria-hidden="true" />
                   </div>
                 </div>
 
-                <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+                <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-7">
                   <StatTile
                     label="Needs attention"
                     count={needsAttentionCount}
@@ -1532,12 +1579,20 @@ export default function DashboardPage() {
                     onClick={() => toggleTile('awaiting_customer')}
                   />
                   <StatTile
-                    label="Dormant"
-                    count={dormantCount}
-                    active={tileFilter === 'dormant'}
-                    tone="neutral"
-                    description="no activity for 30+ days"
-                    onClick={() => toggleTile('dormant')}
+                    label="Changes requested"
+                    count={changesRequestedCount}
+                    active={tileFilter === 'changes_requested'}
+                    tone="turquoise"
+                    description="awaiting new version from you"
+                    onClick={() => toggleTile('changes_requested')}
+                  />
+                  <StatTile
+                    label="Approved"
+                    count={approvedThisWeekCount}
+                    active={tileFilter === 'approved_this_week'}
+                    tone="green"
+                    description="approved in last 7 days"
+                    onClick={() => toggleTile('approved_this_week')}
                   />
                   <StatTile
                     label="Snoozed"
@@ -1556,12 +1611,12 @@ export default function DashboardPage() {
                     }}
                   />
                   <StatTile
-                    label="Approved this week"
-                    count={approvedThisWeekCount}
-                    active={tileFilter === 'approved_this_week'}
-                    tone="green"
-                    description="approved in last 7 days"
-                    onClick={() => toggleTile('approved_this_week')}
+                    label="Dormant"
+                    count={dormantCount}
+                    active={tileFilter === 'dormant'}
+                    tone="neutral"
+                    description="no activity for 30+ days"
+                    onClick={() => toggleTile('dormant')}
                   />
                 </div>
 
