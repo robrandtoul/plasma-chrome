@@ -4138,7 +4138,7 @@ function PlateCard({
           <div className="flex items-start min-w-0">
             {image.original_filename && (
               <span
-                className="font-paper-mono break-all"
+                className="font-paper-mono truncate min-w-0"
                 style={{ fontSize: 12, color: 'rgba(26,22,18,0.45)' }}
                 title={image.original_filename}
               >
