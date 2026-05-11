@@ -8,6 +8,7 @@
 
 import {
   computeQrArtworkChangedSlots,
+  isQrSlotFlagged,
   resolveQrEffectiveKeep,
   type QrCarryContext,
   type QrCarryV1Image,
@@ -215,10 +216,12 @@ test('multi-slot change tracked independently', () => {
   assertSetEquals(result, ['Bill', 'Carol'], "Bob's slot should remain unflagged")
 })
 
-test('Bill named slot change does NOT flag the shared slot', () => {
-  // The named-slot rule is intentionally focused: a change to Bill's
-  // card doesn't auto-prompt re-verify on a shared QR (which is by
-  // definition not Bill-specific). Verify the rule holds.
+test('Bill named slot change adds only Bill to the changed-slot set', () => {
+  // computeQrArtworkChangedSlots is the slot-level signal; it adds
+  // exactly the slots whose underlying images moved. The per-QR
+  // expansion (a shared QR is impacted by a named-slot change
+  // because it sits on every card) lives in isQrSlotFlagged, tested
+  // below.
   const v1 = v1CarryWith(['Bob', 'Bill'], [
     v1Image('img-bill', 'Bill'),
     v1Image('img-shared', null),
@@ -232,15 +235,16 @@ test('Bill named slot change does NOT flag the shared slot', () => {
   )
   assert(
     !result.has(SHARED_APPROVAL_KEY),
-    'shared slot should NOT be flagged when only Bill changes',
+    'set should not include the shared sentinel when only Bill changes',
   )
   assert(result.has('Bill'), 'Bill slot should be flagged')
 })
 
-test('shared slot change does NOT auto-flag named slots', () => {
-  // Symmetric to the above. A shared-artwork change doesn't bleed
-  // into named slots' auto-unkeep — designer can still reconsider
-  // via per-slot decisions.
+test('shared slot change adds only the shared sentinel to the changed-slot set', () => {
+  // Same separation as above. The set carries which slot moved; the
+  // per-QR expansion (a named QR is impacted by a shared-slot
+  // change because the shared artwork prints on its card) lives in
+  // isQrSlotFlagged.
   const v1 = v1CarryWith(['Bob', 'Bill'], [
     v1Image('img-bob', 'Bob'),
     v1Image('img-shared', null),
@@ -254,10 +258,10 @@ test('shared slot change does NOT auto-flag named slots', () => {
   )
   assert(
     result.has(SHARED_APPROVAL_KEY),
-    'shared slot should be flagged',
+    'shared sentinel should be flagged',
   )
-  assert(!result.has('Bob'), "Bob's slot should not be flagged")
-  assert(!result.has('Bill'), "Bill's slot should not be flagged")
+  assert(!result.has('Bob'), "Bob's slot should not be flagged at the set level")
+  assert(!result.has('Bill'), "Bill's slot should not be flagged at the set level")
 })
 
 test('multiple option tabs combine into one flag set', () => {
@@ -286,6 +290,75 @@ test('whitespace name in v2 roster still flags the v1 name', () => {
   const v1 = v1CarryWith(['Bill'], [v1Image('img-bill', 'Bill')])
   const result = computeQrArtworkChangedSlots(v1, {}, {}, { '': [] }, ['  Bill  '])
   assertSetEquals(result, ['Bill'])
+})
+
+// ── isQrSlotFlagged ───────────────────────────────────────────────────────────
+
+console.log('\nisQrSlotFlagged')
+
+test('empty changed set → never flagged (named)', () => {
+  assert(!isQrSlotFlagged('Bill', new Set()), 'named QR with no changes')
+})
+
+test('empty changed set → never flagged (shared)', () => {
+  assert(!isQrSlotFlagged(null, new Set()), 'shared QR with no changes')
+})
+
+test("named QR flags when its own named slot is in the set", () => {
+  assert(isQrSlotFlagged('Bill', new Set(['Bill'])), 'Bill QR + Bill change')
+})
+
+test("named QR does NOT flag when only an unrelated named slot changed", () => {
+  assert(!isQrSlotFlagged('Bill', new Set(['Bob'])), "Bill's QR + Bob's change")
+})
+
+test('named QR flags when only the SHARED sentinel changed (shared artwork prints on its card)', () => {
+  // Bill's card carries both Bill's own artwork AND the shared
+  // artwork printed across every card. A shared-artwork change is
+  // a change to the surface Bill's QR appears on.
+  assert(
+    isQrSlotFlagged('Bill', new Set([SHARED_APPROVAL_KEY])),
+    "Bill's QR should flag on shared-slot change",
+  )
+})
+
+test('named QR flags when both its named slot AND shared changed', () => {
+  assert(
+    isQrSlotFlagged('Bill', new Set(['Bill', SHARED_APPROVAL_KEY])),
+    'Bill QR + (Bill + shared) changes should flag',
+  )
+})
+
+test('shared QR flags on any named-slot change (regression for the single-recipient bug)', () => {
+  // Repro of the live bug: single-recipient proof, QR stored at
+  // assoc=null (because the recipient dropdown is suppressed for
+  // single-recipient versions), designer replaces the recipient's
+  // artwork. The named slot moves; the shared sentinel doesn't.
+  // Under the corrected surface-membership rule the shared QR
+  // still flags because its surface (every card, including this
+  // one) has changed.
+  assert(
+    isQrSlotFlagged(null, new Set(['Rob'])),
+    'shared QR + named-slot change should flag',
+  )
+})
+
+test('shared QR flags on a shared-slot change', () => {
+  assert(
+    isQrSlotFlagged(null, new Set([SHARED_APPROVAL_KEY])),
+    'shared QR + shared-slot change should flag',
+  )
+})
+
+test('shared QR flags when any combination of slots changed', () => {
+  assert(
+    isQrSlotFlagged(null, new Set(['Bob', SHARED_APPROVAL_KEY])),
+    'shared QR + (Bob + shared) changes should flag',
+  )
+  assert(
+    isQrSlotFlagged(null, new Set(['Alice', 'Bob', 'Carol'])),
+    'shared QR + three named-slot changes should flag',
+  )
 })
 
 // ── resolveQrEffectiveKeep ────────────────────────────────────────────────────
@@ -317,10 +390,29 @@ test('null associatedName resolves to SHARED_APPROVAL_KEY', () => {
   assert(r === false, 'shared QR with shared-slot changed should auto-unkeep')
 })
 
-test('null associatedName, named slot changed, shared unchanged → keep=true', () => {
-  // Bill's change shouldn't drag the shared QR with it.
+test('null associatedName, named slot changed → keep=false (shared QR on every card)', () => {
+  // Bill's change DOES drag the shared QR with it, because the
+  // shared QR sits on every printed card including Bill's. This
+  // is the live bug-fix: previously the rule only matched the QR's
+  // own slot key, leaving null-assoc QRs unflagged on named-slot
+  // changes (including the single-recipient case, where the
+  // recipient dropdown is suppressed and QR assoc stays at null).
   const r = resolveQrEffectiveKeep('e1', null, {}, new Set(['Bill']))
-  assert(r === true, 'shared QR should not auto-unkeep on a named-slot change')
+  assert(r === false, 'shared QR should auto-unkeep on a named-slot change')
+})
+
+test('named QR, only shared slot changed → keep=false', () => {
+  // Symmetric to the above. Bill's card carries the shared
+  // artwork, so a shared-slot change is a change to Bill's
+  // surface; his named QR auto-unkeeps.
+  const r = resolveQrEffectiveKeep('e1', 'Bill', {}, new Set([SHARED_APPROVAL_KEY]))
+  assert(r === false, "named QR should auto-unkeep on shared-slot change")
+})
+
+test('named QR, unrelated named slot changed → keep=true', () => {
+  // Bob's slot change doesn't touch Bill's card.
+  const r = resolveQrEffectiveKeep('e1', 'Bill', {}, new Set(['Bob']))
+  assert(r === true, 'Bill QR should stay kept when only Bob changes')
 })
 
 test('override key isolates by entry id', () => {

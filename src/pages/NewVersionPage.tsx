@@ -22,7 +22,7 @@ import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSec
 import type { QrKind } from '../lib/qrCodes'
 import type { Currency, LetterpressCoreColour, ProofNameApproval } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
-import { computeQrArtworkChangedSlots, resolveQrEffectiveKeep } from '../lib/qrCarryForward'
+import { computeQrArtworkChangedSlots, isQrSlotFlagged, resolveQrEffectiveKeep } from '../lib/qrCarryForward'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 
 // Materials whose physical edge construction exposes the three-
@@ -3160,8 +3160,13 @@ export default function NewVersionPage() {
 
   const displayQrEntries: QrEntry[] = qrEntries.map((entry) => {
     if (entry.source !== 'existing') return entry
-    const slotKey = entry.associatedName ?? SHARED_APPROVAL_KEY
-    const artworkChanged = artworkChangedSlots.has(slotKey)
+    // Surface-membership flag: a shared QR (assoc=null) sits on
+    // every printed card, so any change anywhere flags it; a named
+    // QR sits on that recipient's card, which carries both the
+    // recipient's own artwork AND the shared artwork, so either
+    // type of change flags it. See isQrSlotFlagged for the full
+    // rule.
+    const artworkChanged = isQrSlotFlagged(entry.associatedName, artworkChangedSlots)
     const effectiveKeep = resolveQrEffectiveKeep(
       entry.id,
       entry.associatedName,
