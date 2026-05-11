@@ -1072,7 +1072,20 @@ Deno.serve(async (req) => {
   // to fix the mapping, not get papered over by tier 2):
   //   1. proofs.created_by → profiles.helpscout_user_id, if non-null
   //   2. assigneeId from the conversation, if non-null
-  //   3. skip with console.warn
+  //   3. HELPSCOUT_DEFAULT_USER_ID env, if set and numeric. Mirrors the
+  //      tier-3 fallback in send-helpscout-reply so confirmation replies
+  //      and manual designer replies share the same resolution shape
+  //      (PV-2026W20-007). A confirmation that posts under the default
+  //      account is recoverable; a confirmation that silently doesn't
+  //      post leaves the customer wondering whether their approval
+  //      registered.
+  //   4. skip with console.warn. Reached when none of the three tiers
+  //      can produce a valid sender — typically only on environments
+  //      where the default-user env var hasn't been configured. The
+  //      env-missing case is logged as a warn rather than an error
+  //      because the customer's action is already durable and posted
+  //      on the customer thread above; the confirmation reply is a
+  //      courtesy, not a partial outcome.
   //
   // Template routing mirrors the buildCustomerThreadText branching
   // above: variantDisplayName != null → variant_selection;
@@ -1110,7 +1123,25 @@ Deno.serve(async (req) => {
       if (senderId == null && assigneeId != null) {
         senderId = assigneeId
       }
-      // Tier 3: skip + warn.
+      // Tier 3: HELPSCOUT_DEFAULT_USER_ID env. Same gate shape used by
+      // send-helpscout-reply for parity (PV-2026W20-007). Trim guards
+      // against secrets configured with stray whitespace.
+      let defaultUserIdSource: 'env' | null = null
+      if (senderId == null) {
+        const raw = Deno.env.get('HELPSCOUT_DEFAULT_USER_ID')?.trim()
+        if (raw) {
+          const parsed = Number(raw)
+          if (Number.isFinite(parsed) && Number.isInteger(parsed) && parsed > 0) {
+            senderId = parsed
+            defaultUserIdSource = 'env'
+          } else {
+            console.warn('[proof-action] reply: HELPSCOUT_DEFAULT_USER_ID is not a positive integer', { raw })
+          }
+        }
+      }
+      // Tier 4: skip + warn. Reached only when the env-var fallback
+      // was unset or invalid; the customer's action is already durable,
+      // so this is a courtesy gap, not a failure path.
       if (senderId == null) {
         console.warn('[proof-action] reply skipped: no sender resolvable', {
           proofVersionId,
@@ -1118,6 +1149,9 @@ Deno.serve(async (req) => {
           assigneeId,
         })
       } else {
+        if (defaultUserIdSource === 'env') {
+          console.log('[proof-action] reply using default HS id', { senderId })
+        }
         // Route to the template that matches the action shape.
         const templateCode =
           variantDisplayName != null

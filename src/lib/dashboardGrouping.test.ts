@@ -66,7 +66,6 @@ function makeProject(overrides: Partial<DashboardProject> = {}): DashboardProjec
     current_version_viewed_at:  null,
     rule_code:                  null,
     rule_meta:                  null,
-    awaiting_customer:          false,
     snooze_rule_code:           null,
     snoozed_until:              null,
     snooze_note:                null,

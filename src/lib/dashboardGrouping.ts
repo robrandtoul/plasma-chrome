@@ -43,7 +43,6 @@ export interface DashboardProject {
   current_version_viewed_at: string | null
   rule_code: NeedsAttentionRule | null
   rule_meta: { days?: number } | null
-  awaiting_customer: boolean
   snooze_rule_code: NeedsAttentionRule | null
   snoozed_until: string | null
   snooze_note: string | null
