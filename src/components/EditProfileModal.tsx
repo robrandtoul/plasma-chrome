@@ -303,7 +303,20 @@ export default function EditProfileModal({
                         .from('profiles')
                         .update({ avatar_url: null })
                         .eq('id', userId)
-                      if (!error) setAvatarUrl(null)
+                      if (!error) {
+                        setAvatarUrl(null)
+                        // Mirror the immediate DB write to the parent so the
+                        // dashboard header re-renders with initials right
+                        // away. Without this, closing via Cancel after a
+                        // Remove photo leaves the stale avatar visible in
+                        // the header until the next dashboard refetch.
+                        onSaved({
+                          initials,
+                          colour,
+                          fullName,
+                          avatarUrl: null,
+                        })
+                      }
                     }}
                     className="mt-1 text-rose-600 hover:underline"
                   >

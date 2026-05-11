@@ -56,10 +56,19 @@ export interface PublicProofVersion {
   id: string
   proof_id: string
   version_number: number
-  material_id: string
+  // ── Nullable on per-direction-pricing variant rounds ─────────────────────
+  // Migration 000142 (renamed in 000144) dropped NOT NULL from
+  // proof_versions.material_id and proof_versions.currency when
+  // is_per_direction_pricing is true. The public_get_customer_proof
+  // RPC (000162) and public_proof_versions view (000139) emit these
+  // columns verbatim, so consumers must guard reads behind an
+  // is_per_direction_pricing check. CustomerProofPage's existing
+  // is_per_direction_pricing branches handle this; new reads in
+  // other surfaces must do the same.
+  material_id: string | null
   material_display: string
   ink_names: string[]
-  currency: Currency
+  currency: Currency | null
   pricing_snapshot: PricingSnapshot
   shipping_note: string
   change_notes: string | null
@@ -129,6 +138,13 @@ export interface PublicProofVersion {
     name: string
     state: 'approved' | 'changes_requested'
     carried_from_version_id: string | null
+    // Migration 000139 / 000162: the public_get_customer_proof RPC and the
+    // public_proof_versions view both emit material_option_code on each
+    // approval row so per-option attribution survives the read path. Not
+    // consumed by the customer page today (per-option attribution flows
+    // through latest_events_by_name instead) but kept on the type so future
+    // readers don't add an unneeded null-guard.
+    material_option_code: string | null
   }>
   // ── Card type (migration 000090 — customer-side view) ─────────────────────
   // Was a designer-only concept while the customer page rendered

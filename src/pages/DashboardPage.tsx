@@ -59,13 +59,6 @@ function reasonChipText(code: NeedsAttentionRule, days: number | undefined): str
   }
 }
 
-interface TileCounts {
-  needs_attention: number
-  awaiting_customer: number
-  dormant: number
-  approved_this_week: number
-}
-
 interface DashboardLatestEvent {
   id: string
   created_at: string
@@ -424,6 +417,8 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false }: SnoozeButtonProps
     try {
       await onSnooze(proof.proof_id, proof.rule_code, hours, note)
       setNote('')
+      setCustomMode(false)
+      setCustomDate('')
       setOpen(false)
     } catch (err) {
       console.error('[SnoozeButton] onSnooze failed:', err)
@@ -966,7 +961,6 @@ export default function DashboardPage() {
   const { session, role } = useAuth()
   const userId = session?.user.id ?? null
   const [projects, setProjects]           = useState<DashboardProject[]>([])
-  const [tileCounts, setTileCounts]       = useState<TileCounts | null>(null)
   const [latestEvents, setLatestEvents]   = useState<DashboardLatestEvent[]>([])
   const [myProfile, setMyProfile]         = useState<{ initials: string; colour: DesignerColour; avatarUrl: string | null } | null>(null)
   const [avatarOpen, setAvatarOpen]       = useState(false)
@@ -1051,7 +1045,13 @@ export default function DashboardPage() {
       .order('last_activity_at', { ascending: false, nullsFirst: false })
       .limit(2000)
 
-    const tilesPromise = supabase.rpc('dashboard_tile_counts')
+    // Note: dashboard_tile_counts() RPC used to be fetched here, but
+    // every tile now sources its count client-side from `projects`
+    // so the round-trip is dead weight. The SQL function is still
+    // emitted by migration 000152 and unchanged on the server; the
+    // dropping of the read here is purely a frontend cleanup. See
+    // PV-2026W19-015 (awaiting_customer) and PV-2026W20-014
+    // (dormant / approved_this_week) for the alignment history.
     const eventsPromise = supabase
       .from('dashboard_latest_events')
       .select('*')
@@ -1063,17 +1063,11 @@ export default function DashboardPage() {
 
     const [
       { data: projectRows },
-      { data: tileRows },
       { data: events },
       { data: pinRows },
-    ] = await Promise.all([projectsPromise, tilesPromise, eventsPromise, pinsPromise])
+    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise])
 
     setProjects((projectRows ?? []) as DashboardProject[])
-
-    // dashboard_tile_counts() returns SETOF — supabase-js delivers it
-    // as an array even though the function emits exactly one row.
-    const tile = Array.isArray(tileRows) ? tileRows[0] : tileRows
-    setTileCounts((tile ?? null) as TileCounts | null)
 
     setLatestEvents((events ?? []) as DashboardLatestEvent[])
 
@@ -1267,6 +1261,32 @@ export default function DashboardPage() {
       p.current_version_viewed_at !== null
     ).length,
   [projects])
+
+  // Dormant / Approved-this-week counts. Migration 000152's
+  // dashboard_tile_counts() returns server-side counts that do not
+  // filter snoozed proofs (the snooze filter is applied in 000164's
+  // proofs_needing_attention() only). Computing these client-side
+  // with the same p.snoozed_until == null guard ensures the tile
+  // count matches the number of rows shown when the tile is clicked
+  // (the click-through filter on line 1289 drops snoozed proofs
+  // when any tile filter is active). Mirrors the alignment fix from
+  // PV-2026W19-015 (awaiting_customer) for the remaining two tiles.
+  const dormantCount = useMemo(() =>
+    projects.filter((p) =>
+      p.snoozed_until == null &&
+      p.status === 'dormant'
+    ).length,
+  [projects])
+
+  const approvedThisWeekCount = useMemo(() => {
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
+    return projects.filter((p) => {
+      if (p.snoozed_until != null) return false
+      if (p.status !== 'approved') return false
+      if (!p.approved_at) return false
+      return new Date(p.approved_at).getTime() >= sevenDaysAgo
+    }).length
+  }, [projects])
 
   // Filter pipeline: search → tile → status. All AND-combined.
   const filteredProjects = useMemo(() => {
@@ -1513,7 +1533,7 @@ export default function DashboardPage() {
                   />
                   <StatTile
                     label="Dormant"
-                    count={tileCounts?.dormant ?? 0}
+                    count={dormantCount}
                     active={tileFilter === 'dormant'}
                     tone="neutral"
                     description="no activity for 30+ days"
@@ -1537,7 +1557,7 @@ export default function DashboardPage() {
                   />
                   <StatTile
                     label="Approved this week"
-                    count={tileCounts?.approved_this_week ?? 0}
+                    count={approvedThisWeekCount}
                     active={tileFilter === 'approved_this_week'}
                     tone="green"
                     description="approved in last 7 days"

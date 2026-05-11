@@ -1956,7 +1956,11 @@ export default function CustomerProofPage() {
             ) : (
               <PaperPricingTable
                 snapshot={livePricingSnapshot}
-                currency={activeVersion.currency}
+                // Non-null assertion: this block is inside the
+                // !is_per_direction_pricing gate at the parent
+                // conditional, where activeVersion.currency is
+                // guaranteed non-null per migration 000142.
+                currency={activeVersion.currency!}
                 displayQuantities={activeVersion.display_quantities}
                 quoteMinQuantity={activeVersion.quote_min_quantity}
                 quoteMaxQuantity={activeVersion.quote_max_quantity}
@@ -2737,7 +2741,10 @@ export default function CustomerProofPage() {
                     {showOptionSwitcher && (
                       <MaterialOptionTabs
                         label={optionLabelSingular}
-                        currency={activeVersion.currency}
+                        // Inside the !is_per_direction_pricing gate; null
+                        // currency only reaches code that this branch
+                        // never renders (per migration 000142).
+                        currency={activeVersion.currency!}
                         showSurcharges={!activeVersion.custom_quote}
                         onSelect={setActiveOptionCode}
                         tabs={versionOptions.map((code) => {
@@ -3224,7 +3231,9 @@ export default function CustomerProofPage() {
               ) : (
                 <PaperPricingTable
                   snapshot={livePricingSnapshot}
-                  currency={activeVersion.currency}
+                  // Inside the !is_per_direction_pricing gate; see
+                  // sibling call above for the migration 000142 reference.
+                  currency={activeVersion.currency!}
                   displayQuantities={activeVersion.display_quantities}
                   quoteMinQuantity={activeVersion.quote_min_quantity}
                   quoteMaxQuantity={activeVersion.quote_max_quantity}
@@ -3287,7 +3296,9 @@ export default function CustomerProofPage() {
                               {formatPrice(
                                 (activeVersion.names.length - 1) *
                                   activeVersion.split_name_surcharge_snapshot,
-                                activeVersion.currency,
+                                // !is_per_direction_pricing gate; null
+                                // unreachable here (migration 000142).
+                                activeVersion.currency!,
                               )}
                             </span>{' '}
                             to the prices above
@@ -3318,7 +3329,8 @@ export default function CustomerProofPage() {
                             {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
                             {formatPrice(
                               activeVersion.split_name_surcharge_snapshot,
-                              activeVersion.currency,
+                              // Same gate as the parent formatPrice call.
+                              activeVersion.currency!,
                             )}{' '}
                             tooling
                           </p>

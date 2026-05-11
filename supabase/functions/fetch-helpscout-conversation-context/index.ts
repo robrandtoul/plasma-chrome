@@ -42,7 +42,7 @@ import { requireDesigner } from '../_shared/admin.ts'
 // block at the call site reads .message and surfaces as 502 to
 // the client, which is unchanged behaviour vs the previous local
 // helper that threw plain Error.
-import { getAccessToken } from '../_shared/helpscout.ts'
+import { getAccessToken, HsError } from '../_shared/helpscout.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -93,7 +93,10 @@ async function fetchConversationWithThreads(
   if (resp.status === 404) return null
   if (!resp.ok) {
     const text = await resp.text()
-    throw new Error(`Help Scout conversation fetch (${resp.status}): ${text}`)
+    // Use the shared HsError class so the outer catch (and any future
+    // status-aware branching) can `instanceof HsError` and read .status,
+    // matching the rest of _shared/helpscout.ts's helpers.
+    throw new HsError(resp.status, `Help Scout conversation fetch (${resp.status}): ${text}`)
   }
   return await resp.json() as HsConversationWithThreads
 }

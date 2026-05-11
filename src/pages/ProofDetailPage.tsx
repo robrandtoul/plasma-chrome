@@ -1794,7 +1794,7 @@ export default function ProofDetailPage() {
                       </span>
                     </td>
                     <td className="truncate px-4 py-4 text-gray-700" title={v.material_display}>{v.material_display}</td>
-                    <td className="truncate px-4 py-4 text-gray-500">{v.currency}</td>
+                    <td className="truncate px-4 py-4 text-gray-500">{v.currency ?? '—'}</td>
                     <td className="truncate px-4 py-4 text-gray-500" title={v.change_notes ?? undefined}>{v.change_notes ?? '—'}</td>
                     <td className="truncate px-4 py-4 text-gray-500">
                       {new Date(v.created_at).toLocaleDateString('en-GB')}
