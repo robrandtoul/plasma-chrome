@@ -19,10 +19,16 @@ import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 export interface ModalVersion {
   id: string
   version_number: number
-  material_id: string
+  // Nullable on per-direction-pricing variant rounds (migration
+  // 000142 / renamed in 000144). The version-detail modal currently
+  // renders the docket regardless (see finding PV-2026W20-010); once
+  // that lands the per-direction-pricing branch will short-circuit
+  // before these are read. Until then the loadPricing useEffect
+  // tolerates a null currency by returning no rows.
+  material_id: string | null
   material_display: string
   ink_names: string[]
-  currency: string
+  currency: string | null
   is_current: boolean
   created_at: string
   change_notes: string | null
@@ -620,7 +626,7 @@ export default function VersionDetailModal({
               ) : (
                 <PricingDisplay
                   snapshot={livePricingSnapshot}
-                  currency={version.currency as Currency}
+                  currency={(version.currency ?? 'GBP') as Currency}
                   displayQuantities={displayQuantities}
                 />
               )}
