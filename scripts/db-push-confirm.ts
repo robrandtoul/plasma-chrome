@@ -28,10 +28,57 @@
 // Run via: pnpm db:push:confirm
 
 import { spawnSync } from 'node:child_process'
+import { readdirSync } from 'node:fs'
 import { config as loadEnv } from 'dotenv'
 import { createInterface } from 'node:readline'
 
 loadEnv()
+
+// Pre-flight: two migration files sharing the same numeric prefix
+// would break `supabase db push --include-all` non-obviously — the
+// CLI picks one alphabetically, the other never runs, and a
+// re-push attempt typically errors with schema-already-exists
+// because the picked one applied half its DDL before someone
+// noticed. Catch the collision in source before we touch the
+// remote at all. (PV-2026W20 collisions, twice in one session.)
+function assertNoDuplicateMigrationPrefixes(): void {
+  let entries: string[]
+  try {
+    entries = readdirSync('supabase/migrations')
+  } catch {
+    // No migrations dir, or unreadable. Nothing to check; let the
+    // CLI surface the real problem when it runs.
+    return
+  }
+  const sqlFiles = entries.filter((f) => f.endsWith('.sql'))
+  const prefixToFiles = new Map<string, string[]>()
+  for (const f of sqlFiles) {
+    const prefix = f.split('_')[0] ?? f
+    const list = prefixToFiles.get(prefix) ?? []
+    list.push(f)
+    prefixToFiles.set(prefix, list)
+  }
+  const duplicates: Array<{ prefix: string; files: string[] }> = []
+  for (const [prefix, files] of prefixToFiles) {
+    if (files.length > 1) duplicates.push({ prefix, files })
+  }
+  if (duplicates.length === 0) return
+  console.error('')
+  console.error('Refusing to push: duplicate migration prefixes in supabase/migrations/.')
+  console.error('')
+  for (const { prefix, files } of duplicates) {
+    console.error(`  Prefix ${prefix}:`)
+    for (const f of files) console.error(`    - ${f}`)
+  }
+  console.error('')
+  console.error(
+    '`supabase db push --include-all` cannot disambiguate two files sharing ' +
+      'a numeric prefix. Renumber one of them (and update its internal ' +
+      'self-references) before re-running this script.',
+  )
+  console.error('')
+  process.exit(1)
+}
 
 const url = process.env.VITE_SUPABASE_URL ?? ''
 
@@ -89,6 +136,10 @@ async function main() {
   console.log('')
   if (url) console.log(`Project URL: ${url}`)
   console.log('')
+
+  // Step 0: refuse to proceed if two migrations share a numeric
+  // prefix. Local-only check so it fires before any network call.
+  assertNoDuplicateMigrationPrefixes()
 
   // Step 1 + 2: list pending.
   const pending = listLocalOnly()

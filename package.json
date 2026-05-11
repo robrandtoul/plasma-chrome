@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "db:diff": "tsx scripts/db-diff.ts",
     "db:push:confirm": "tsx scripts/db-push-confirm.ts",
+    "db:status": "npx supabase migration list --linked",
     "db:clean-fixtures": "tsx scripts/clean-test-fixtures.ts"
   },
   "dependencies": {

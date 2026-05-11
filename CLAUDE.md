@@ -16,6 +16,8 @@ Global business rules (VAT, Help Scout, Xero, pricing surcharges, British Englis
 
 ## Database state
 
+> ⚠️ **Drift warning.** The migration summary in this section is hand-curated and lags reality. The QR codes feature (PR #55) shipped 000168 and 000169 without anyone updating the doc; today's W20-005 work shipped 000170. Treat this section as orienting context only — for what is actually in source and on the live DB, run `pnpm db:status` (lists the linked project's migration history) and `ls supabase/migrations/0001*` (shows everything in source). Picking a new migration number from this doc has caused two collisions in one session; don't.
+
 Migrations 000001–000166 have been applied. Migration 000005 originally installed a single flat `pricing_tables` table that didn't match reality; it was replaced by `000009_rebuild_pricing.sql`, which installs the current five-table pricing model. The `finishes` concept introduced in 000020 was later generalised to `material_options` in 000025. A second batch (000128–000150) shipped the per-recipient approval flow, letterpress core/front/back colours, variant rounds with the per-direction-pricing sub-mode, and several pricing reconciles. 000151 closed the previously-pending follow-up by adding the missing REVOKE on the 000148 view. A third batch (000152–000155) shipped the redesigned designer dashboard: tile-counts + needs-attention scaffolding, a designer-profile cleanup, the configurable Needs-attention rules engine, and the `proof_pins` table for Pinned and Team sections. A fourth batch (000156–000158) reconciled live `profiles.helpscout_user_id` values into source, seeded the three customer-confirmation reply templates the proof-action edge function resolves by code, and added the `reopen_proof` RPC that flips status and clears stale per-recipient approvals atomically. The follow-up batch 000159–000162 tightened `proof_pins` audit attribution, redefined `business_days_between` as inclusive at end, added the `awaiting_customer` column to `public_dashboard_projects` for tile/list parity, and closed the anon enumeration leak by routing customer reads through the SECURITY DEFINER `public_get_customer_proof` RPC plus `REVOKE FROM anon` on every `public_*` view and underlying table (see memory:proof_viewer_anon_rpc_pattern.md). A fifth batch (000163–000164) shipped the snooze feature: the `proof_attention_snoozes` table and the updated rules engine + dashboard view that exclude snoozed (proof_id, rule_code) pairs from needs-attention results. Two further migrations (000165–000166) shipped self-service profile editing: an owner-update RLS policy with role-immutability `WITH CHECK`, plus `profiles.avatar_url`, the public `avatars` storage bucket, and `designer_avatar_url` on `public_dashboard_projects`.
 
 Migration summary (post-000009):
@@ -173,6 +175,20 @@ For DB migrations, the dry-run reflex applies:
 1. **Always run `pnpm db:diff` first.** Read-only; lists every migration that's local-only (file exists in `supabase/migrations/` but hasn't been applied to the linked Supabase project). Quick gut-check before pushing.
 2. **Push via `pnpm db:push:confirm`** rather than `npx supabase db push --include-all` directly. Same end result, but the script bails out if MORE than one migration is pending (a signal that the mixed-naming-convention set has drifted), prints what's about to be pushed, and asks for explicit "yes" confirmation. After pushing, it re-runs the list to confirm both sides are in sync.
 3. The raw `npx supabase db push --include-all` is still available as an escape hatch — for example, when you've genuinely vetted multiple pending migrations and want to push them all. The script is the safety net you'd be bypassing.
+
+## Claude operating discipline
+
+The patterns below come from real friction in PV-2026W20. Each one cost a round trip with Rob; they're worth investing the few extra keystrokes upfront.
+
+**Picking a migration number.** Always run `ls supabase/migrations/0001*` (or Glob) before writing a new migration. Never pick the next number from the migration summary in this doc — it's curated and lags reality. The duplicate-prefix check in `db-push-confirm.ts` is a backstop, not a substitute. The collisions cost two extra PRs in PV-2026W20.
+
+**Staging files for a commit.** Never use `git add -A` in the proof-viewer repo. Stray `_tmp_*` files and untracked assets sit in the working tree and a wildcard add sweeps them into otherwise-clean commits, forcing amend + force-push to clean up. Always pass explicit paths: `git add path/to/file1 path/to/file2`.
+
+**Working around sandbox git lock files.** Cowork sandbox cannot `unlink` files in `.git/`, so the workaround is to `mv` the lock out of the way. Always `mv` to `/tmp/`, never to a sibling name in-tree. Renaming `.git/refs/heads/<branch>.lock` to `.git/refs/heads/<branch>.lock.cleanup.<pid>` leaves an artefact that git treats as a broken ref and breaks the user's next `git pull` with `fatal: bad object refs/heads/...`. Sibling-rename inside `.git/worktrees/<wt>/` is fine — git only walks `refs/`.
+
+**Pre-handoff state check.** Before saying "ready to merge" or "push it now", run a quick state pass: `git status`, `git log -1 --oneline`, `pnpm db:status` if migrations were touched. Catches drift between what you think shipped and what actually shipped. The dashboard-artefact step in PV-2026W20 was based on stale assumptions twice; both could have been caught by this check.
+
+**Trusting curated docs.** Treat the migration summary in this file, and Rob's global `~/.claude/CLAUDE.md`, as orientation only. Both have been the source of "trusted information that turned out to be wrong" in the recent past. Verify against source / the live system before acting on anything from either.
 
 ## Working style
 

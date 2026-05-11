@@ -22,3 +22,7 @@ dist-ssr/
 
 # Vite
 *.tsbuildinfo
+
+# Stray temp files left behind by other tools (Cowork sandbox, occasional
+# editor swap files). Never anything we want in source.
+_tmp_*
