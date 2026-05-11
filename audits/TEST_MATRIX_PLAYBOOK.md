@@ -6,6 +6,8 @@ Global business rules and voice rules live in `~/.claude/CLAUDE.md`. Repo-specif
 
 > **Schema reminder (post-000098):** CNC cutting and gilded letterpress are distinct materials (`carbon_fibre_cnc`, `paper_letterpress_gilded`), not per-material option dimensions. Rows below reflect the post-supersession shape. When the schema shifts again, update the rows here so the playbook starts from live state, not historical state.
 
+> **Coverage refresh — 2026-05-11.** Snooze rows (63–66), profile + avatar rows (67–70), and QR-code rows (71–78) added to cover migrations 000163–000170. The action rows (23–32) were also extended with a per-recipient QR approval scenario (24a–24c).
+
 ## When to run
 
 A test pass is appropriate when:
@@ -95,6 +97,9 @@ For each, start from a fixture in row 1–18 and exercise the action.
 |---|--------|----------|------------|
 | 23 | View as customer (no auth) | View event logged in dashboard sidebar (000127) | RLS leak check: anon must not see other proofs (covered by `audits/scripts/anon-surface-audit.ts` post-000162) |
 | 24 | Single-recipient approve | Status flips to approved; HS confirmation reply via 000157 template | proof_approval_confirmation template body |
+| 24a | Approve with QR present, tick verified | Approval lands with `qr_confirmed_at` set; status flips on full set | 000169 gate — slot has at least one QR row |
+| 24b | Approve with QR present, tick NOT verified (direct API) | Edge function rejects with 400; no approval row written | Server-side gate mirrors disabled-button UI |
+| 24c | Approve on version with no QRs | Tick is not shown; approval lands with null `qr_confirmed_at`; finalize works | "QRs exist" short-circuit collapses to pre-QR rule |
 | 25 | Per-recipient approve, partial | Some names approved, status stays in_progress | maybe_finalize_proof_status only fires on full set |
 | 26 | Per-recipient approve, full | All slots filled (names + __shared__ if applicable), status flips | 000126 trigger |
 | 27 | Request changes | Status stays in_progress; HS confirmation via change_request template | |
@@ -148,6 +153,39 @@ For each, start from a fixture in row 1–18 and exercise the action.
 | 60 | Reply template editor | Reset to default restores body for all three confirmation codes |
 | 61 | Needs-attention rules editor | Threshold change reflects in dashboard on next refetch |
 | 62 | Site settings: dormancy threshold | Cron job picks up new value |
+
+## Snooze flow rows
+
+| # | Surface | Notes |
+|---|---------|-------|
+| 63 | Snooze a needs-attention row, preset hours | Row leaves the Needs attention tile immediately; Snoozed tile count increments; `snoozed_by_initials` chip on the row matches actor |
+| 64 | Snooze with custom date picker | `hoursUntilEndOfDate` math sets `snoozed_until` to midnight at end of date; row reappears on the chosen day |
+| 65 | Unsnooze from the row's action strip | `proof_attention_snoozes` row deleted; needs-attention rule re-fires on next refetch |
+| 66 | Spoof `snoozed_by` via direct REST upsert | RLS `WITH CHECK snoozed_by = auth.uid()` rejects (000167); UI never shows another designer's initials on a snooze you actually created |
+
+## Profile + avatars rows
+
+| # | Surface | Notes |
+|---|---------|-------|
+| 67 | Edit own name + initials | Initials auto-derive from name unless user-edited; manual edits stick |
+| 68 | Change designer colour | Selection persists; dashboard chip + row left-border accent update on next refetch |
+| 69 | Upload avatar (JPEG/PNG/WebP under 2 MB) | Storage path is `{user_id}/avatar`; `avatar_url` carries `?t=<epoch>` cache-buster; dashboard header reflects new avatar without hard refresh |
+| 70 | Reject path: oversize / wrong type / role-flip via API | Client rejects >2 MB or non-allow-listed mime; direct PATCH against `/rest/v1/profiles` trying to flip `role` to `'admin'` fails the WITH CHECK (000165). Critical — any pass here is a P1 |
+
+## QR code rows
+
+For each QR row, use a fresh proof. Reuse fixtures from the artwork matrix where the material supports QR overlay (metal, letterpress, full-colour plastic).
+
+| # | Surface | Notes |
+|---|---------|-------|
+| 71 | Upload a vCard QR | Decode succeeds; `qr_kind = 'vcard'`; customer page renders the contact card panel |
+| 72 | Upload a URL QR | `qr_kind = 'url'`; customer page renders link text verbatim (no URL expansion or normalisation) |
+| 73 | Upload a wifi QR | `qr_kind = 'wifi'`; SSID + auth type displayed in plain English |
+| 74 | Upload a non-QR JPEG | `QrDecodeError` surfaces as a rose-toned "Couldn't read a QR code" toast; nothing persists |
+| 75 | Approve gate: tick required | Approve button stays disabled until the tick fires; ticking and unticking does NOT clear the rest of the form |
+| 76 | Carry-forward: unchanged QRs on v2 | `qr_confirmed_at` carried from v1 into v2's approval rows; customer doesn't have to re-tick |
+| 77 | Carry-forward: changed QR on v2 | New storage path breaks carry; customer sees a fresh tick + must re-confirm |
+| 78 | Designer "Mark as approved" override on a QR proof | Approval row carries `qr_confirmed_at = now()` server-stamped; finalize completes |
 
 ## What to record per row
 
