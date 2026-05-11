@@ -22,6 +22,7 @@ import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSec
 import type { QrKind } from '../lib/qrCodes'
 import type { Currency, LetterpressCoreColour, ProofNameApproval } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
+import { computeQrArtworkChangedSlots, resolveQrEffectiveKeep } from '../lib/qrCarryForward'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 
 // Materials whose physical edge construction exposes the three-
@@ -262,13 +263,26 @@ export default function NewVersionPage() {
   const [sidedness, setSidedness] = useState<'one-sided' | 'two-sided'>('two-sided')
   const [shared, setShared] = useState(false)
   const [changeNotes, setChangeNotes] = useState('')
-  // Migration 000168. QR codes uploaded for this version. Empty by
-  // default; each entry carries its file + jsQR-decoded contents +
-  // recipient assignment. The save flow uploads files and inserts
-  // proof_version_images rows with is_qr_code = true. v1-carry of
-  // QR entries from the cloned version is deferred to a follow-up;
-  // designers re-attach QRs on each new version for now.
+  // Migration 000168. QR codes uploaded for this version. On v1
+  // creation this starts empty; on v(N>1) creation the v1-carry
+  // loader (~line 740) seeds it from v(N-1)'s is_qr_code rows so
+  // the designer sees the prior QRs alongside the artwork carry
+  // cards. Each entry carries its file (new) or imagePath (existing)
+  // plus jsQR-decoded contents + recipient assignment. The save
+  // flow uploads new files, then inserts proof_version_images rows
+  // with is_qr_code = true; existing entries re-use v1's image_path
+  // unless the designer has unkept them via the Keep toggle.
   const [qrEntries, setQrEntries] = useState<QrEntry[]>([])
+  // Designer's explicit Keep choices for existing QR entries on
+  // this new-version form. Keyed by entry id (which mirrors the
+  // v1 proof_version_images row id for source='existing'). Absent
+  // entries fall back to the auto-rule: keep=true unless the QR's
+  // slot has artwork changes, in which case keep=false to force a
+  // deliberate re-verify. Once the designer touches the toggle the
+  // map records their choice and the auto-rule stops overriding it.
+  // See artworkChangedSlots derivation in render and the displayQrEntries
+  // memo a few lines below.
+  const [qrKeepOverrides, setQrKeepOverrides] = useState<Record<string, boolean>>({})
   const [pricingDisplay, setPricingDisplay] = useState<PricingDisplayValue | null>(null)
   const [availableOptions, setAvailableOptions] = useState<MaterialOption[]>([])
   const [selectedOptions, setSelectedOptions] = useState<string[]>([])
@@ -2503,15 +2517,42 @@ export default function NewVersionPage() {
 
     // ── QR code uploads + inserts (migration 000168) ───────────────
     // New QR entries get a storage path each; existing entries
-    // (v1-carried — not yet wired but supported by the entry
-    // shape) re-use their previous image_path. proof_version_images
-    // rows are inserted with is_qr_code = true and the decoded
-    // payload alongside. Sort order continues from where the
-    // artwork rows ended so the customer-page filter on
-    // is_qr_code stays clean.
+    // (v1-carried) re-use their previous image_path UNLESS the
+    // designer has unkept them via the QR section's Keep toggle.
+    // Unkeeping is the save-time mechanism that maps Bill's
+    // changed-artwork-on-v2 to "drop Bill's stale QR", whether the
+    // designer flipped the toggle explicitly or accepted the
+    // auto-rule that flagged the slot. proof_version_images rows
+    // are inserted with is_qr_code = true and the decoded payload
+    // alongside. Sort order continues from where the artwork rows
+    // ended so the customer-page filter on is_qr_code stays clean.
+    //
+    // Filtering identity matches the displayQrEntries derivation
+    // in the render body — same artworkChangedSlots set fed from
+    // the same helper so save and UI agree exactly. New entries
+    // are always kept (designer added them deliberately on this
+    // version); the auto-rule only governs existing entries.
+    const artworkChangedSlotsForSave = computeQrArtworkChangedSlots(
+      v1Carry,
+      keepByV1RowId,
+      replacementByV1RowId,
+      imagesByOption,
+      names.map((n) => n.trim()).filter(Boolean),
+    )
+    const isQrEntryKept = (entry: QrEntry): boolean => {
+      if (entry.source !== 'existing') return true
+      return resolveQrEffectiveKeep(
+        entry.id,
+        entry.associatedName,
+        qrKeepOverrides,
+        artworkChangedSlotsForSave,
+      )
+    }
+    const keptQrEntries = qrEntries.filter(isQrEntryKept)
+
     const qrUploadedPaths: string[] = []
-    if (qrEntries.length > 0) {
-      const qrUploadQueue = qrEntries
+    if (keptQrEntries.length > 0) {
+      const qrUploadQueue = keptQrEntries
         .filter((e) => e.source === 'new' && e.file)
         .map((e) => ({
           entry: e,
@@ -2538,7 +2579,7 @@ export default function NewVersionPage() {
       }
 
       const pathByEntryId = new Map(qrUploadQueue.map((u) => [u.entry.id, u.path]))
-      const qrInserts = qrEntries.map((entry, i) => ({
+      const qrInserts = keptQrEntries.map((entry, i) => ({
         proof_version_id: versionData.id,
         image_path:
           entry.source === 'new'
@@ -2636,7 +2677,20 @@ export default function NewVersionPage() {
             .map((r) => r.decoded_data)
             .sort()
         }
-        const v2QrRowsForCompare = qrEntries.map((e) => ({
+        // Use keptQrEntries (computed above), not qrEntries —
+        // entries the designer unkept aren't actually being inserted
+        // on v2, so they must not count in v2's QR multiset. If we
+        // compared against the full list, an unkept-but-still-in-form
+        // entry could spuriously balance v1's set and cause
+        // qr_confirmed_at to carry for a QR that's no longer on the
+        // version. Belt-and-braces: even when keptQrEntries differs
+        // from qrEntries, the underlying approval-carry guard
+        // (allCarried below) already fails for any slot whose artwork
+        // changed, so qr_confirmed_at on those slots never reaches
+        // this comparison anyway. The filter here keeps the
+        // byte-identity check honest on the surviving slots where
+        // artwork was unchanged but the designer chose to drop a QR.
+        const v2QrRowsForCompare = keptQrEntries.map((e) => ({
           associated_name: e.associatedName,
           decoded_data: e.decodedData,
         }))
@@ -2680,6 +2734,18 @@ export default function NewVersionPage() {
             ({ entry }) => entry.associated_name === assocFilter,
           )
           if (anyFreshForSlot) continue
+
+          // Note on QR auto-unkeep interaction: the allCarried +
+          // anyFreshForSlot gates above are the same predicates that
+          // feed computeQrArtworkChangedSlots. So any slot whose
+          // artwork has changed in v2 is filtered out here BEFORE we
+          // reach the byte-identity check below, which means the
+          // structural belt against "Bill's artwork changed but his
+          // qr_confirmed_at still carried" is already in place — no
+          // explicit "if artworkChanged then null qr_confirmed_at"
+          // line is needed. The byte-identity check below is the
+          // remaining safety, governing slots whose artwork was
+          // unchanged but whose QR multiset shifted.
 
           // Migration 000169 — preserve qr_confirmed_at only when
           // the slot's QR set is byte-identical between v1 and v2.
@@ -3073,6 +3139,40 @@ export default function NewVersionPage() {
         && inh.materialOptions.length > 0
         && !setEquals(inh.materialOptions, selectedOptions),
     },
+  }
+
+  // ── QR carry-forward derivations ─────────────────────────────────
+  // displayQrEntries decorates each existing QR entry with effective
+  // `keep` + `artworkChanged` flags driven by the artwork carry state.
+  // The qrEntries / qrKeepOverrides state pair remains the source of
+  // truth; displayQrEntries is rebuilt every render. Effective keep =
+  // designer override (qrKeepOverrides) if set, otherwise the
+  // auto-rule (keep=true unless the entry's slot is in
+  // artworkChangedSlots). Both inputs feed handleSubmit through the
+  // same helper, so save-time filtering can't drift from the UI.
+  const artworkChangedSlots = computeQrArtworkChangedSlots(
+    v1Carry,
+    keepByV1RowId,
+    replacementByV1RowId,
+    imagesByOption,
+    names.map((n) => n.trim()).filter(Boolean),
+  )
+
+  const displayQrEntries: QrEntry[] = qrEntries.map((entry) => {
+    if (entry.source !== 'existing') return entry
+    const slotKey = entry.associatedName ?? SHARED_APPROVAL_KEY
+    const artworkChanged = artworkChangedSlots.has(slotKey)
+    const effectiveKeep = resolveQrEffectiveKeep(
+      entry.id,
+      entry.associatedName,
+      qrKeepOverrides,
+      artworkChangedSlots,
+    )
+    return { ...entry, keep: effectiveKeep, artworkChanged }
+  })
+
+  function handleQrKeepChange(entryId: string, keep: boolean) {
+    setQrKeepOverrides((prev) => ({ ...prev, [entryId]: keep }))
   }
 
   return (
@@ -4664,10 +4764,27 @@ export default function NewVersionPage() {
               concern. */}
           {!isVariantRound && (
             <QrCodeUploadSection
-              value={qrEntries}
-              onChange={setQrEntries}
+              // displayQrEntries decorates each existing entry with
+              // the page-derived effective keep + artworkChanged
+              // flags. qrEntries (the underlying source of truth)
+              // doesn't carry those — they're per-render
+              // derivations driven by the artwork carry state.
+              value={displayQrEntries}
+              // The section's onChange path (associated-name
+              // changes, Remove) hands back the displayQrEntries
+              // shape with keep + artworkChanged still set. Strip
+              // them on the way into qrEntries so the source of
+              // truth doesn't accumulate stale derived fields. The
+              // Keep toggle has its own dedicated path
+              // (onKeepChange) and never round-trips through here.
+              onChange={(next) =>
+                setQrEntries(
+                  next.map(({ keep: _k, artworkChanged: _a, ...rest }) => rest),
+                )
+              }
               names={names.map((n) => n.trim()).filter(Boolean)}
               disabled={submitting}
+              onKeepChange={handleQrKeepChange}
             />
           )}
 

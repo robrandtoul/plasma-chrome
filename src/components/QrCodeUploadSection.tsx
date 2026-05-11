@@ -57,6 +57,26 @@ export interface QrEntry {
   associatedName: string | null
   /** Original filename for audit, populated from file.name on new entries. */
   originalFilename: string | null
+  /**
+   * Effective Keep state for existing entries on the new-version
+   * form. When false, the entry is ghosted in the UI and the parent
+   * skips it at save time so v1's QR is dropped from v2. Computed by
+   * the parent from its qrKeepOverrides + per-slot artwork-changed
+   * detection — the component just renders what it's given. Undefined
+   * for new entries and for callers (like EditVersionPage) that
+   * aren't doing carry-forward; the component treats undefined as
+   * "no toggle, behave like the entry is being kept".
+   */
+  keep?: boolean
+  /**
+   * True when the printed surface this QR appears on has had its
+   * artwork modified between v1 and v2 (image dropped, replaced, or
+   * a fresh image added to the slot, or the slot itself disappeared
+   * via a names/shape change). Drives the amber re-verify notice and
+   * the auto-default of `keep` to false — the parent sets both
+   * together. Always false / undefined for new entries.
+   */
+  artworkChanged?: boolean
 }
 
 interface QrCodeUploadSectionProps {
@@ -68,6 +88,16 @@ interface QrCodeUploadSectionProps {
   defaultRecipient?: string | null
   /** Disabled while the parent is saving. */
   disabled?: boolean
+  /**
+   * Opt-in for the per-entry Keep toggle on the new-version form.
+   * When provided, existing entries render a Keep switch and the
+   * component routes toggle clicks here instead of mutating
+   * `value`; the parent's qrKeepOverrides + slot-changed
+   * derivations remain the single source of truth for effective
+   * keep state. Omitted everywhere else (EditVersionPage etc.), in
+   * which case no toggle is rendered and behaviour is unchanged.
+   */
+  onKeepChange?: (entryId: string, keep: boolean) => void
 }
 
 const KIND_LABELS: Record<QrKind, string> = {
@@ -87,6 +117,7 @@ export function QrCodeUploadSection({
   names,
   defaultRecipient = null,
   disabled = false,
+  onKeepChange,
 }: QrCodeUploadSectionProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const inputId = useId()
@@ -227,10 +258,24 @@ export function QrCodeUploadSection({
         <ul className="mt-6 space-y-4">
           {value.map((entry) => {
             const thumbnail = entry.previewUrl ?? entry.signedUrl ?? ''
+            // showKeepToggle is the carry-forward UI opt-in. Present
+            // only when the parent passed onKeepChange (i.e. the
+            // new-version form) AND the entry is an existing v1
+            // carry. New entries always upload if they're in the
+            // list; Remove is their disposal route.
+            const showKeepToggle = !!onKeepChange && entry.source === 'existing'
+            const effectiveKeep = entry.keep ?? true
+            const ghosted = showKeepToggle && !effectiveKeep
+            const showArtworkChangedNotice = entry.artworkChanged === true
             return (
               <li
                 key={entry.id}
-                className="grid gap-4 rounded-xl border border-gray-200 bg-gray-50 p-4 sm:grid-cols-[120px_1fr_auto]"
+                className={[
+                  'grid gap-4 rounded-xl border p-4 sm:grid-cols-[120px_1fr_auto] transition-colors',
+                  showArtworkChangedNotice
+                    ? 'border-amber-200 bg-amber-50/60'
+                    : 'border-gray-200 bg-gray-50',
+                ].join(' ')}
               >
                 <div className="grid place-items-center">
                   {thumbnail ? (
@@ -239,13 +284,16 @@ export function QrCodeUploadSection({
                       alt="QR preview"
                       width={120}
                       height={120}
-                      className="aspect-square w-full max-w-[120px] rounded-md border border-gray-200 bg-white object-contain"
+                      className={[
+                        'aspect-square w-full max-w-[120px] rounded-md border border-gray-200 bg-white object-contain transition-opacity',
+                        ghosted ? 'opacity-40' : '',
+                      ].join(' ')}
                     />
                   ) : (
                     <div className="aspect-square w-full max-w-[120px] rounded-md border border-dashed border-gray-300 bg-white" />
                   )}
                 </div>
-                <div className="min-w-0">
+                <div className={['min-w-0 transition-opacity', ghosted ? 'opacity-50' : ''].join(' ')}>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-emerald-800">
                       <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
@@ -268,6 +316,33 @@ export function QrCodeUploadSection({
                       </span>
                     )}
                   </div>
+                  {/*
+                    Artwork-changed notice. Renders when the parent has
+                    flagged this QR's printed surface as modified
+                    between v1 and v2 (image dropped, replaced, fresh
+                    image added, or slot vanished via names/shape
+                    change). Wording shifts based on whether the
+                    designer has re-ticked Keep: pre-re-tick we ask
+                    them to upload or confirm; post-re-tick we reflect
+                    their explicit choice. Either way the customer
+                    still has to re-tick the on-page confirmation
+                    because their slot's approval doesn't carry when
+                    the artwork changed (NewVersionPage allCarried
+                    gate), so this is a designer-side prompt, not a
+                    structural safety on its own.
+                  */}
+                  {showArtworkChangedNotice && (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-snug text-amber-900">
+                      <p className="font-medium">
+                        Artwork has changed on the card this QR appears on.
+                      </p>
+                      <p className="mt-0.5">
+                        {effectiveKeep
+                          ? 'You\'ve ticked Keep — this QR will carry to the new version. Make sure the encoded data is still correct.'
+                          : 'Upload a refreshed QR above, or tick Keep below if you\'re certain the encoded data is unchanged.'}
+                      </p>
+                    </div>
+                  )}
                   <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-white p-2 text-[12px] text-gray-800 ring-1 ring-gray-200">
                     {entry.decodedData}
                   </pre>
@@ -305,7 +380,44 @@ export function QrCodeUploadSection({
                     </label>
                   )}
                 </div>
-                <div className="flex items-start sm:flex-col sm:items-end sm:justify-between">
+                <div className="flex items-start gap-2 sm:flex-col sm:items-end sm:justify-between sm:gap-3">
+                  {/*
+                    Keep toggle — only rendered on existing entries in
+                    the new-version form. Mirrors the artwork
+                    CarryCard toggle so the two carry-forward
+                    surfaces feel consistent. Toggling routes through
+                    onKeepChange so the parent's qrKeepOverrides map
+                    stays the source of truth (the entry object the
+                    component receives is a per-render derivation,
+                    not committed state).
+                  */}
+                  {showKeepToggle && (
+                    <label className="inline-flex items-center gap-2 text-[12px] text-gray-700">
+                      <span>Keep</span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={effectiveKeep}
+                        aria-label="Keep this QR on the new version"
+                        disabled={disabled}
+                        onClick={() => onKeepChange!(entry.id, !effectiveKeep)}
+                        className={[
+                          'relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors',
+                          effectiveKeep ? 'bg-gray-900' : 'bg-gray-300',
+                          disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer',
+                        ].join(' ')}
+                      >
+                        <span
+                          className={[
+                            'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+                            effectiveKeep
+                              ? 'translate-x-[1.125rem] translate-y-0.5'
+                              : 'translate-x-0.5 translate-y-0.5',
+                          ].join(' ')}
+                        />
+                      </button>
+                    </label>
+                  )}
                   <button
                     type="button"
                     onClick={() => removeEntry(entry.id)}
