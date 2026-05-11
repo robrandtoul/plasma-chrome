@@ -157,12 +157,25 @@ export function QrCodeUploadSection({
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes('Files')) return
           e.preventDefault()
+          // Stop the native event too so the page-wide
+          // useImageFileDrop window listener doesn't also flag
+          // its overlay as drag-over for this QR drop.
+          e.nativeEvent.stopPropagation()
           if (!disabled) setDragOver(true)
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => {
           if (!e.dataTransfer.types.includes('Files')) return
           e.preventDefault()
+          // Critical: stop the NATIVE event from bubbling to
+          // window. useImageFileDrop attaches its drop handler
+          // at the window level (bubble phase), so a React
+          // stopPropagation alone leaves the window listener
+          // intact and the QR file gets routed into the artwork
+          // bucket too. Mirrors the same fix the cell-level
+          // drop targets (CarryCard, EmptySlot) use to avoid
+          // double-routing into addFilesBatch.
+          e.nativeEvent.stopPropagation()
           setDragOver(false)
           if (disabled) return
           void handleFiles(e.dataTransfer.files)
@@ -258,7 +271,17 @@ export function QrCodeUploadSection({
                   <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-white p-2 text-[12px] text-gray-800 ring-1 ring-gray-200">
                     {entry.decodedData}
                   </pre>
-                  {names.length > 0 && (
+                  {names.length > 1 && (
+                    // Only render the dropdown when there are
+                    // 2+ recipients. For single-recipient proofs,
+                    // shared vs that one recipient resolves to the
+                    // same customer-page placement and the same
+                    // approval-slot QR coordinates, so offering the
+                    // choice is confusing rather than informative.
+                    // The entry keeps associatedName at its default
+                    // (null / shared) on single-recipient versions;
+                    // the customer page still renders the QR under
+                    // the recipient's section via the shared branch.
                     <label className="mt-3 flex flex-col gap-1 text-[12px] text-gray-600 sm:flex-row sm:items-center sm:gap-2">
                       Applies to
                       <select
