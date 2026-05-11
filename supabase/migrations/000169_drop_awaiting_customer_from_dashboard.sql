@@ -1,4 +1,4 @@
--- Migration 000168: drop the awaiting_customer column from
+-- Migration 000169: drop the awaiting_customer column from
 -- public_dashboard_projects and the awaiting_customer field from
 -- dashboard_tile_counts() (PV-2026W20-005).
 --
@@ -136,7 +136,7 @@ comment on view public_dashboard_projects is
   'rule from proofs_needing_attention() (snooze-excluded since 000164), '
   'and the longest-remaining active snooze from proof_attention_snoozes. '
   'View runs as owner so it bypasses admin-only RLS on profiles. '
-  'awaiting_customer column dropped in 000168 — the dashboard now '
+  'awaiting_customer column dropped in 000169 — the dashboard now '
   'computes that tile count and its filter predicate client-side.';
 
 -- ── 2. dashboard_tile_counts() without awaiting_customer ────────────────────
@@ -175,7 +175,7 @@ grant execute on function dashboard_tile_counts() to authenticated;
 comment on function dashboard_tile_counts() is
   'Aggregate counts for the three remaining dashboard tiles served '
   'server-side (needs_attention, dormant, approved_this_week). The '
-  'awaiting_customer count was dropped in 000168 — the dashboard '
+  'awaiting_customer count was dropped in 000169 — the dashboard '
   'computes it (and its filter predicate) client-side from the '
   'public_dashboard_projects rows it already loads.';
 
