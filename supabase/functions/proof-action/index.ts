@@ -237,21 +237,17 @@ async function hsPostCustomerThread(
 
   // Prefer Resource-Id; this is the empirically-observed location of
   // the new thread id on the customer endpoint today.
+  //
+  // Regex shapes deliberately mirror the parser in _shared/helpscout.ts
+  // postStaffReply so both POST helpers parse identically: digits-only
+  // anchored on Resource-Id, end-anchored /threads/{id} on Location.
   const resourceId = resp.headers.get('Resource-Id') ?? ''
-  const fromResource = Number(resourceId)
-  if (Number.isFinite(fromResource) && fromResource > 0) return fromResource
-
-  // Fallback: parse the trailing /threads/{id} from Location, mirroring
-  // the /reply parser. Defends against an HS API tweak that starts
-  // returning the id via Location on the customer endpoint too.
+  const directId = resourceId.match(/^\d+$/)?.[0]
   const location = resp.headers.get('Location') ?? ''
-  const match = location.match(/\/threads\/(\d+)\b/)
-  if (match) {
-    const fromLocation = Number(match[1])
-    if (Number.isFinite(fromLocation) && fromLocation > 0) return fromLocation
-  }
-
-  return 0
+  const locationId = location.match(/\/threads\/(\d+)$/)?.[1]
+  const threadIdRaw = directId ?? locationId
+  const threadId = threadIdRaw ? Number(threadIdRaw) : NaN
+  return Number.isFinite(threadId) && threadId > 0 ? threadId : 0
 }
 
 // ── Customer thread copy ──────────────────────────────────────────────────────
