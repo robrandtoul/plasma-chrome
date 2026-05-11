@@ -547,6 +547,12 @@ interface ProjectRowProps {
   project: DashboardProject
   minePinned: boolean
   teamPinned: boolean
+  // Render the inline rule-reason chip as a third row line. Set true only
+  // while the Needs attention tile filter is active — outside that view
+  // the row stays at its two-line height, and the reason remains visible
+  // on hover via the `title` attribute (kept for keyboard / screen-reader
+  // parity).
+  showReason: boolean
   onToggleMinePin: (proofId: string) => void
   onToggleTeamPin: (proofId: string) => void
   onSnooze: (proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) => Promise<void>
@@ -557,6 +563,7 @@ function ProjectRow({
   project,
   minePinned,
   teamPinned,
+  showReason,
   onToggleMinePin,
   onToggleTeamPin,
   onSnooze,
@@ -618,6 +625,18 @@ function ProjectRow({
           )}
         </div>
         {subline && <div className="truncate text-xs text-gray-500">{subline}</div>}
+        {/* Reason chip — third row line, visible only when the
+            Needs attention tile filter is active. Rose dot ties the
+            chip back to the rose left-border and the rose tile that
+            triggered the filter. Truncates to keep the row to three
+            lines on narrow widths; full text remains in the row's
+            `title` attribute. */}
+        {showReason && project.rule_code && (
+          <div className="mt-1 flex items-center gap-1.5 text-xs text-rose-700">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-500" aria-hidden="true" />
+            <span className="truncate">{reasonChipText(project.rule_code, project.rule_meta?.days)}</span>
+          </div>
+        )}
       </div>
       <span className="hidden w-32 shrink-0 text-right text-xs text-gray-400 xl:block" title={ts ? formatAbsoluteDateTime(ts) : undefined}>
         {verb}{ts ? ` ${relativeTime(ts)}` : ''}
@@ -1792,6 +1811,7 @@ export default function DashboardPage() {
                                       onToggleTeamPin={toggleTeamPin}
                                       onSnooze={handleSnooze}
                                       onUnsnooze={handleUnsnooze}
+                                      showReason={tileFilter === 'needs_attention'}
                                     />
                                   </div>
                                 )}
@@ -1807,6 +1827,7 @@ export default function DashboardPage() {
                                     onToggleTeamPin={toggleTeamPin}
                                     onSnooze={handleSnooze}
                                     onUnsnooze={handleUnsnooze}
+                                    showReason={tileFilter === 'needs_attention'}
                                   />
                                 </div>
                               ))
