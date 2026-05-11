@@ -59,13 +59,6 @@ function reasonChipText(code: NeedsAttentionRule, days: number | undefined): str
   }
 }
 
-interface TileCounts {
-  needs_attention: number
-  awaiting_customer: number
-  dormant: number
-  approved_this_week: number
-}
-
 interface DashboardLatestEvent {
   id: string
   created_at: string
@@ -968,7 +961,6 @@ export default function DashboardPage() {
   const { session, role } = useAuth()
   const userId = session?.user.id ?? null
   const [projects, setProjects]           = useState<DashboardProject[]>([])
-  const [tileCounts, setTileCounts]       = useState<TileCounts | null>(null)
   const [latestEvents, setLatestEvents]   = useState<DashboardLatestEvent[]>([])
   const [myProfile, setMyProfile]         = useState<{ initials: string; colour: DesignerColour; avatarUrl: string | null } | null>(null)
   const [avatarOpen, setAvatarOpen]       = useState(false)
@@ -1053,7 +1045,13 @@ export default function DashboardPage() {
       .order('last_activity_at', { ascending: false, nullsFirst: false })
       .limit(2000)
 
-    const tilesPromise = supabase.rpc('dashboard_tile_counts')
+    // Note: dashboard_tile_counts() RPC used to be fetched here, but
+    // every tile now sources its count client-side from `projects`
+    // so the round-trip is dead weight. The SQL function is still
+    // emitted by migration 000152 and unchanged on the server; the
+    // dropping of the read here is purely a frontend cleanup. See
+    // PV-2026W19-015 (awaiting_customer) and PV-2026W20-014
+    // (dormant / approved_this_week) for the alignment history.
     const eventsPromise = supabase
       .from('dashboard_latest_events')
       .select('*')
@@ -1065,17 +1063,11 @@ export default function DashboardPage() {
 
     const [
       { data: projectRows },
-      { data: tileRows },
       { data: events },
       { data: pinRows },
-    ] = await Promise.all([projectsPromise, tilesPromise, eventsPromise, pinsPromise])
+    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise])
 
     setProjects((projectRows ?? []) as DashboardProject[])
-
-    // dashboard_tile_counts() returns SETOF — supabase-js delivers it
-    // as an array even though the function emits exactly one row.
-    const tile = Array.isArray(tileRows) ? tileRows[0] : tileRows
-    setTileCounts((tile ?? null) as TileCounts | null)
 
     setLatestEvents((events ?? []) as DashboardLatestEvent[])
 
