@@ -348,7 +348,7 @@ export function QrCodeUploadSection({
                       <p className="mt-0.5">
                         {effectiveKeep
                           ? 'You\'ve ticked Keep — this QR will carry to the new version. Make sure the encoded data is still correct.'
-                          : 'Upload a refreshed QR above, or tick Keep below if you\'re certain the encoded data is unchanged.'}
+                          : 'Upload a refreshed QR above, or tick Keep if you\'re certain the encoded data is unchanged.'}
                       </p>
                     </div>
                   )}
