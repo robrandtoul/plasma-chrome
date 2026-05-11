@@ -20,11 +20,11 @@ export interface ModalVersion {
   id: string
   version_number: number
   // Nullable on per-direction-pricing variant rounds (migration
-  // 000142 / renamed in 000144). The version-detail modal currently
-  // renders the docket regardless (see finding PV-2026W20-010); once
-  // that lands the per-direction-pricing branch will short-circuit
-  // before these are read. Until then the loadPricing useEffect
-  // tolerates a null currency by returning no rows.
+  // 000142 / renamed in 000144). The modal's render path now
+  // short-circuits on is_per_direction_pricing below before any
+  // surface reads these, so the null branch is a hard guarantee
+  // rather than something the pricing card has to tolerate
+  // (PV-2026W20-010 fix).
   material_id: string | null
   material_display: string
   ink_names: string[]
@@ -57,6 +57,14 @@ export interface ModalVersion {
   // in approved-artwork + variant-vs-name framing. Customer-
   // facing surfaces don't distinguish.
   card_type: 'business' | 'membership'
+  // Variant-round flags (migrations 000138 / 000142, renamed in
+  // 000144). Pulled into the modal so the docket (currency pill,
+  // Specification, Pricing card) hides when each direction is
+  // priced out-of-band. is_per_direction_pricing implies
+  // is_variant_round; the latter exists separately because
+  // standard variant rounds keep the docket as-is.
+  is_variant_round: boolean
+  is_per_direction_pricing: boolean
   materials: { display_quantities: number[] } | null
   // Denormalised hot-path indicator (migration 000103) populated
   // by the send-helpscout-reply edge function on a successful HS
@@ -165,7 +173,22 @@ export default function VersionDetailModal({
   useEffect(() => {
     loadImages()
     loadApprovals()
-    void loadPricing()
+    // Per-direction-pricing versions don't have a docket — material_id
+    // and currency are null on the row, and each direction is priced
+    // out-of-band. Calling loadPricing would query
+    // public_material_variants on `material_id = null` which returns
+    // zero rows, and the Pricing card never renders below, so the
+    // round-trip is dead weight. Mirrors the CustomerProofPage gate
+    // on the same flag.
+    if (!version.is_per_direction_pricing) {
+      void loadPricing()
+    } else {
+      // Leave loadingPricing at its initial true on first mount would
+      // briefly flash a spinner on a section we're about to hide; flip
+      // to false synchronously so the modal renders its final shape on
+      // the first paint.
+      setLoadingPricing(false)
+    }
   }, [version.id])
 
   // Esc handling + body scroll lock are handled by the Modal
@@ -444,9 +467,14 @@ export default function VersionDetailModal({
               <h2 id="version-detail-title" className="text-lg font-bold text-gray-900">
                 v{version.version_number} — {version.material_display}
               </h2>
-              <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">
-                {version.currency}
-              </span>
+              {/* Currency pill hides on per-direction-pricing rounds —
+                  there's no single version-level currency to display.
+                  Mirrors the customer page's docket gate. */}
+              {!version.is_per_direction_pricing && version.currency && (
+                <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">
+                  {version.currency}
+                </span>
+              )}
               {version.is_current && (
                 <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
                   Current
@@ -502,27 +530,54 @@ export default function VersionDetailModal({
               </div>
             )}
 
-            {/* Specification */}
+            {/* Specification.
+                On a per-direction-pricing variant round (migration
+                000142 / renamed 000144) the version row has no
+                version-level material, currency, or ink names, so the
+                normal Material / Inks / Added dl has nothing
+                meaningful to put in two of its three cells. We swap
+                in a single-line badge + helper line that mirrors the
+                customer page's wording, with the Added date kept on
+                the right as the one cell that still applies. */}
             <div className="rounded-2xl bg-white p-5 ring-1 ring-gray-200">
               <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">Specification</p>
-              <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-                <div>
-                  <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Material</dt>
-                  <dd className="mt-1 text-sm font-medium text-gray-900">{version.material_display}</dd>
-                </div>
-                {version.ink_names.length > 0 && (
+              {version.is_per_direction_pricing ? (
+                <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
-                    <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Inks</dt>
-                    <dd className="mt-1 text-sm font-medium text-gray-900">{version.ink_names.join(', ')}</dd>
+                    <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700">
+                      Per-direction pricing
+                    </span>
+                    <p className="mt-2 text-sm text-gray-600">
+                      Each direction is priced individually. See the customer's email for details.
+                    </p>
                   </div>
-                )}
-                <div>
-                  <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Added</dt>
-                  <dd className="mt-1 text-sm font-medium text-gray-900">
-                    {new Date(version.created_at).toLocaleDateString('en-GB')}
-                  </dd>
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Added</dt>
+                    <dd className="mt-1 text-sm font-medium text-gray-900">
+                      {new Date(version.created_at).toLocaleDateString('en-GB')}
+                    </dd>
+                  </div>
                 </div>
-              </dl>
+              ) : (
+                <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Material</dt>
+                    <dd className="mt-1 text-sm font-medium text-gray-900">{version.material_display}</dd>
+                  </div>
+                  {version.ink_names.length > 0 && (
+                    <div>
+                      <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Inks</dt>
+                      <dd className="mt-1 text-sm font-medium text-gray-900">{version.ink_names.join(', ')}</dd>
+                    </div>
+                  )}
+                  <div>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Added</dt>
+                    <dd className="mt-1 text-sm font-medium text-gray-900">
+                      {new Date(version.created_at).toLocaleDateString('en-GB')}
+                    </dd>
+                  </div>
+                </dl>
+              )}
             </div>
 
             {/* Images + per-name approvals.
@@ -608,44 +663,57 @@ export default function VersionDetailModal({
               )}
             </div>
 
-            {/* Pricing */}
-            <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-gray-200">
-              <div className="border-b border-gray-100 px-6 py-4">
-                <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Pricing</p>
-              </div>
-              {version.custom_quote ? (
-                // Custom-quote path — triggered either by the
-                // designer explicitly choosing Custom quote in the
-                // PricingDisplayField radio, or automatically when
-                // a 5+ ink variant (which has no price_tiers rows)
-                // is selected. Either way, the underlying column
-                // is proof_versions.custom_quote and the UI here
-                // doesn't need to know which trigger fired.
-                <div className="px-6 py-8 text-center text-sm text-gray-500">
-                  Custom quote — price and quantity agreed separately.
+            {/* Pricing.
+                Hidden entirely on per-direction-pricing variant
+                rounds — each direction is priced out-of-band so
+                there's no single version-level grid to show, and
+                no version-level currency to caption the VAT line
+                with. Matches the customer page's docket gate
+                (CustomerProofPage, !is_per_direction_pricing). */}
+            {!version.is_per_direction_pricing && (
+              <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-gray-200">
+                <div className="border-b border-gray-100 px-6 py-4">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Pricing</p>
                 </div>
-              ) : loadingPricing ? (
-                // Lazy fetch in flight — small spinner to telegraph
-                // the inflight load. ~100ms typical RTT to Supabase
-                // so this rarely flashes; the "Custom quote" path
-                // skips this entirely and renders synchronously.
-                <div className="flex justify-center px-6 py-12">
-                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-200 border-t-gray-700" />
+                {version.custom_quote ? (
+                  // Custom-quote path — triggered either by the
+                  // designer explicitly choosing Custom quote in the
+                  // PricingDisplayField radio, or automatically when
+                  // a 5+ ink variant (which has no price_tiers rows)
+                  // is selected. Either way, the underlying column
+                  // is proof_versions.custom_quote and the UI here
+                  // doesn't need to know which trigger fired.
+                  <div className="px-6 py-8 text-center text-sm text-gray-500">
+                    Custom quote — price and quantity agreed separately.
+                  </div>
+                ) : loadingPricing ? (
+                  // Lazy fetch in flight — small spinner to telegraph
+                  // the inflight load. ~100ms typical RTT to Supabase
+                  // so this rarely flashes; the "Custom quote" path
+                  // skips this entirely and renders synchronously.
+                  <div className="flex justify-center px-6 py-12">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-200 border-t-gray-700" />
+                  </div>
+                ) : (
+                  <PricingDisplay
+                    snapshot={livePricingSnapshot}
+                    // Inside the !is_per_direction_pricing gate, so
+                    // version.currency is guaranteed non-null per
+                    // migration 000142 (renamed 000144). The ??
+                    // fallback is belt-and-braces for any legacy
+                    // rows that somehow predate the trigger.
+                    currency={(version.currency ?? 'GBP') as Currency}
+                    displayQuantities={displayQuantities}
+                  />
+                )}
+                <div className="border-t border-gray-100 px-6 py-3">
+                  <p className="text-xs text-gray-400">
+                    {!version.custom_quote && version.currency === 'GBP' ? 'Prices include VAT. ' : ''}
+                    {version.shipping_note}
+                  </p>
                 </div>
-              ) : (
-                <PricingDisplay
-                  snapshot={livePricingSnapshot}
-                  currency={(version.currency ?? 'GBP') as Currency}
-                  displayQuantities={displayQuantities}
-                />
-              )}
-              <div className="border-t border-gray-100 px-6 py-3">
-                <p className="text-xs text-gray-400">
-                  {!version.custom_quote && version.currency === 'GBP' ? 'Prices include VAT. ' : ''}
-                  {version.shipping_note}
-                </p>
               </div>
-            </div>
+            )}
 
             {error && (
               <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
