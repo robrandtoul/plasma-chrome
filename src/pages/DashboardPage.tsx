@@ -424,6 +424,8 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false }: SnoozeButtonProps
     try {
       await onSnooze(proof.proof_id, proof.rule_code, hours, note)
       setNote('')
+      setCustomMode(false)
+      setCustomDate('')
       setOpen(false)
     } catch (err) {
       console.error('[SnoozeButton] onSnooze failed:', err)
@@ -1268,6 +1270,32 @@ export default function DashboardPage() {
     ).length,
   [projects])
 
+  // Dormant / Approved-this-week counts. Migration 000152's
+  // dashboard_tile_counts() returns server-side counts that do not
+  // filter snoozed proofs (the snooze filter is applied in 000164's
+  // proofs_needing_attention() only). Computing these client-side
+  // with the same p.snoozed_until == null guard ensures the tile
+  // count matches the number of rows shown when the tile is clicked
+  // (the click-through filter on line 1289 drops snoozed proofs
+  // when any tile filter is active). Mirrors the alignment fix from
+  // PV-2026W19-015 (awaiting_customer) for the remaining two tiles.
+  const dormantCount = useMemo(() =>
+    projects.filter((p) =>
+      p.snoozed_until == null &&
+      p.status === 'dormant'
+    ).length,
+  [projects])
+
+  const approvedThisWeekCount = useMemo(() => {
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
+    return projects.filter((p) => {
+      if (p.snoozed_until != null) return false
+      if (p.status !== 'approved') return false
+      if (!p.approved_at) return false
+      return new Date(p.approved_at).getTime() >= sevenDaysAgo
+    }).length
+  }, [projects])
+
   // Filter pipeline: search → tile → status. All AND-combined.
   const filteredProjects = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -1513,7 +1541,7 @@ export default function DashboardPage() {
                   />
                   <StatTile
                     label="Dormant"
-                    count={tileCounts?.dormant ?? 0}
+                    count={dormantCount}
                     active={tileFilter === 'dormant'}
                     tone="neutral"
                     description="no activity for 30+ days"
@@ -1537,7 +1565,7 @@ export default function DashboardPage() {
                   />
                   <StatTile
                     label="Approved this week"
-                    count={tileCounts?.approved_this_week ?? 0}
+                    count={approvedThisWeekCount}
                     active={tileFilter === 'approved_this_week'}
                     tone="green"
                     description="approved in last 7 days"
