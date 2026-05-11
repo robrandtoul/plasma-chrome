@@ -2046,8 +2046,12 @@ export default function NewVersionPage() {
     }
 
     // Button is still a submit-type, so narrow defensively even though
-    // isValid guarantees these values.
-    if (pricingDisplay === null) return
+    // isValid guarantees these values. Per-direction-pricing variant
+    // rounds hide the Commercial section entirely, so pricingDisplay
+    // legitimately stays null on that branch — the variant-round save
+    // path below doesn't read it. Skip the narrow in that case so the
+    // save isn't silently dropped.
+    if (!isPerDirectionRound && pricingDisplay === null) return
 
     // Finalise any pending soft-delete before the network save.
     // Placed after the validation gate so a validation-fail path
