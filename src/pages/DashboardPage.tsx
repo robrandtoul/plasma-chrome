@@ -258,6 +258,7 @@ interface OverflowMenuProps {
   teamPinned: boolean
   onToggleMinePin: (proofId: string) => void
   onToggleTeamPin: (proofId: string) => void
+  onUnsnooze: (proofId: string, ruleCode: NeedsAttentionRule) => Promise<void>
 }
 
 function OverflowMenu({
@@ -267,6 +268,7 @@ function OverflowMenu({
   teamPinned,
   onToggleMinePin,
   onToggleTeamPin,
+  onUnsnooze,
 }: OverflowMenuProps) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -353,6 +355,21 @@ function OverflowMenu({
           >
             {teamPinned ? 'Unpin from the team list' : 'Pin for the team'}
           </button>
+          {proof.snoozed_until && proof.snooze_rule_code && (
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                if (proof.snooze_rule_code) {
+                  void onUnsnooze(proof.proof_id, proof.snooze_rule_code)
+                }
+              }}
+              className="block w-full border-t border-gray-100 px-3 py-2 text-left text-violet-700 hover:bg-violet-50"
+            >
+              Unsnooze
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -567,7 +584,7 @@ function ProjectRow({
   onToggleMinePin,
   onToggleTeamPin,
   onSnooze,
-  onUnsnooze: _onUnsnooze,
+  onUnsnooze,
 }: ProjectRowProps) {
   const navigate = useNavigate()
   const canAddVersion = project.status === 'in_progress' || project.status === 'dormant'
@@ -647,6 +664,7 @@ function ProjectRow({
         minePinned={minePinned}
         onToggleMinePin={onToggleMinePin}
         onSnooze={onSnooze}
+        onUnsnooze={onUnsnooze}
       />
       <OverflowMenu
         proof={project}
@@ -655,6 +673,7 @@ function ProjectRow({
         teamPinned={teamPinned}
         onToggleMinePin={onToggleMinePin}
         onToggleTeamPin={onToggleTeamPin}
+        onUnsnooze={onUnsnooze}
       />
     </div>
   )
@@ -787,6 +806,7 @@ interface ActionStripProps {
   minePinned: boolean
   onToggleMinePin: (proofId: string) => void
   onSnooze: (proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) => Promise<void>
+  onUnsnooze: (proofId: string, ruleCode: NeedsAttentionRule) => Promise<void>
 }
 
 // Invisible fixed-width spacer — holds the slot open without showing anything.
@@ -794,7 +814,7 @@ function StripSpacer() {
   return <span className="h-7 w-7 shrink-0" aria-hidden />
 }
 
-function ActionStrip({ proof, canAddVersion, minePinned, onToggleMinePin, onSnooze }: ActionStripProps) {
+function ActionStrip({ proof, canAddVersion, minePinned, onToggleMinePin, onSnooze, onUnsnooze }: ActionStripProps) {
   return (
     <div className="hidden sm:flex shrink-0 items-center gap-0.5">
       {/* Add version */}
@@ -830,11 +850,69 @@ function ActionStrip({ proof, canAddVersion, minePinned, onToggleMinePin, onSnoo
         <PinIcon className="h-4 w-4" filled={minePinned} />
       </RowActionButton>
 
-      {/* Snooze */}
-      {proof.rule_code ? (
+      {/* Snooze / Unsnooze — show Unsnooze when the proof is currently
+          snoozed (rule_code is cleared by the rules engine while a snooze
+          is active), otherwise show Snooze when there's a live attention
+          rule_code to snooze. */}
+      {proof.snoozed_until && proof.snooze_rule_code ? (
+        <UnsnoozeButton proof={proof} onUnsnooze={onUnsnooze} />
+      ) : proof.rule_code ? (
         <SnoozeButton proof={proof} onSnooze={onSnooze} stripStyle />
       ) : <StripSpacer />}
     </div>
+  )
+}
+
+// ── Unsnooze button ───────────────────────────────────────────────────────────
+//
+// Rendered in the action strip's snooze slot when a proof has an active
+// snooze (snoozed_until in the future). Clicking it deletes the
+// proof_attention_snoozes row for the (proof_id, rule_code) pair, which
+// causes the underlying rule to fire again on the next dashboard refresh.
+// Same shell as RowActionButton but renders the strike-through clock icon
+// in violet to match the snoozed left-border accent.
+
+interface UnsnoozeButtonProps {
+  proof: DashboardProject
+  onUnsnooze: (proofId: string, ruleCode: NeedsAttentionRule) => Promise<void>
+}
+
+function UnsnoozeButton({ proof, onUnsnooze }: UnsnoozeButtonProps) {
+  const [saving, setSaving] = useState(false)
+  async function handleClick(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!proof.snooze_rule_code || saving) return
+    setSaving(true)
+    try {
+      await onUnsnooze(proof.proof_id, proof.snooze_rule_code)
+    } catch (err) {
+      console.error('[UnsnoozeButton] onUnsnooze failed:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+  return (
+    <button
+      type="button"
+      aria-label="Unsnooze"
+      title="Unsnooze"
+      disabled={saving}
+      onClick={handleClick}
+      className="flex h-7 w-7 items-center justify-center rounded-md text-violet-500 hover:bg-violet-100 hover:text-violet-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 disabled:opacity-50"
+    >
+      <UnsnoozeIcon className="h-4 w-4" />
+    </button>
+  )
+}
+
+// Clock with a diagonal strike-through — signals "remove snooze".
+function UnsnoozeIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" className={className} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="6.25" />
+      <path d="M8 4.5v3.75l2.5 1.5" />
+      <path d="M2.5 13.5L13.5 2.5" />
+    </svg>
   )
 }
 
