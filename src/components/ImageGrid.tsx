@@ -38,6 +38,18 @@ export interface GridImage {
   // call site reads it — the customer-page variant-round render
   // path uses it to order images within a variant card.
   sort_order?: number
+  // Migration 000168: QR-code flag and decoded payload. A row with
+  // is_qr_code=true is rendered by the dedicated QR panel, not the
+  // image grid, so every consumer of GridImage that builds artwork
+  // grids must filter is_qr_code=false up front. qr_decoded_data
+  // and qr_kind are populated iff is_qr_code is true (DB CHECK
+  // constraint), so the customer page can treat them as guaranteed
+  // present whenever it iterates over QR rows. Optional here
+  // because legacy rows and pre-migration test fixtures default to
+  // is_qr_code=false with both QR columns null.
+  is_qr_code?: boolean
+  qr_decoded_data?: string | null
+  qr_kind?: 'vcard' | 'url' | 'wifi' | 'mecard' | 'email' | 'phone' | 'sms' | 'text' | null
 }
 
 // Single-image card with click-to-zoom + caption. Exported so the

@@ -18,6 +18,8 @@ import MessageSendPanel from '../components/MessageSendPanel'
 import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
 import { QuoteLink } from '../components/QuoteLink'
+import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSection'
+import type { QrKind } from '../lib/qrCodes'
 import type { Currency, LetterpressCoreColour, ProofNameApproval } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
@@ -138,6 +140,13 @@ interface V1CarryContext {
   materialOptions: string[]   // codes — '' represents "no-option" equivalent on v2
   images: V1Image[]
   approvalsByName: Record<string, ProofNameApproval>  // keyed by recipient name OR SHARED_APPROVAL_KEY
+  // Migration 000169 — v1's QR rows kept around so the approval
+  // carry-forward block can decide whether to preserve
+  // qr_confirmed_at per slot. Each entry carries the recipient
+  // assignment and the decoded payload; comparison against v2's
+  // qrEntries is multiset-byte-equality on decoded_data within
+  // the slot's coordinates.
+  qrRows: { id: string; associated_name: string | null; decoded_data: string }[]
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -253,6 +262,13 @@ export default function NewVersionPage() {
   const [sidedness, setSidedness] = useState<'one-sided' | 'two-sided'>('two-sided')
   const [shared, setShared] = useState(false)
   const [changeNotes, setChangeNotes] = useState('')
+  // Migration 000168. QR codes uploaded for this version. Empty by
+  // default; each entry carries its file + jsQR-decoded contents +
+  // recipient assignment. The save flow uploads files and inserts
+  // proof_version_images rows with is_qr_code = true. v1-carry of
+  // QR entries from the cloned version is deferred to a follow-up;
+  // designers re-attach QRs on each new version for now.
+  const [qrEntries, setQrEntries] = useState<QrEntry[]>([])
   const [pricingDisplay, setPricingDisplay] = useState<PricingDisplayValue | null>(null)
   const [availableOptions, setAvailableOptions] = useState<MaterialOption[]>([])
   const [selectedOptions, setSelectedOptions] = useState<string[]>([])
@@ -670,7 +686,7 @@ export default function NewVersionPage() {
         const [imagesResult, approvalsResult] = await Promise.all([
           supabase
             .from('proof_version_images')
-            .select('id, image_path, original_filename, associated_name, material_option, side, sort_order')
+            .select('id, image_path, original_filename, associated_name, material_option, side, sort_order, is_qr_code, qr_decoded_data, qr_kind')
             .eq('proof_version_id', inherited.id)
             .order('sort_order'),
           supabase
@@ -680,7 +696,15 @@ export default function NewVersionPage() {
         ])
         if (cancelled) return
 
-        const imageRows = (imagesResult.data ?? []) as {
+        // Migration 000168 — split QR rows out of the artwork
+        // carry-forward path before building V1Image previews. The
+        // QR rows seed qrEntries directly with source='existing'
+        // so the designer sees v1's QRs in the QR section and
+        // can keep / remove / add. On save, kept existing entries
+        // insert new proof_version_images rows referencing v1's
+        // image_path (the safeRemove logic on delete already
+        // accounts for multi-version reuse).
+        const allImageRows = (imagesResult.data ?? []) as {
           id: string
           image_path: string
           original_filename: string | null
@@ -688,7 +712,12 @@ export default function NewVersionPage() {
           material_option: string | null
           side: 'front' | 'back' | null
           sort_order: number
+          is_qr_code: boolean | null
+          qr_decoded_data: string | null
+          qr_kind: QrKind | null
         }[]
+        const imageRows = allImageRows.filter((r) => r.is_qr_code !== true)
+        const qrRows = allImageRows.filter((r) => r.is_qr_code === true)
 
         const imagesWithUrls: V1Image[] = await Promise.all(
           imageRows.map(async (r) => {
@@ -706,6 +735,30 @@ export default function NewVersionPage() {
             }
           }),
         )
+
+        // Seed the QR section with v1's QR rows as 'existing'
+        // entries. The designer can keep / remove / add from this
+        // baseline; carry-forward of qr_confirmed_at on the
+        // associated approvals is gated below on decoded-data
+        // byte-identity per slot (migration 000169's contract).
+        const v1QrEntries: QrEntry[] = await Promise.all(
+          qrRows.map(async (r) => {
+            const { data: urlData } = await supabase.storage
+              .from('proof-images')
+              .createSignedUrl(r.image_path, 3600)
+            return {
+              id: r.id,
+              source: 'existing' as const,
+              imagePath: r.image_path,
+              signedUrl: urlData?.signedUrl ?? '',
+              decodedData: r.qr_decoded_data ?? '',
+              kind: (r.qr_kind ?? 'text') as QrKind,
+              associatedName: r.associated_name,
+              originalFilename: r.original_filename,
+            }
+          }),
+        )
+        setQrEntries(v1QrEntries)
         if (cancelled) return
 
         const approvalsByName: Record<string, ProofNameApproval> = {}
@@ -723,6 +776,11 @@ export default function NewVersionPage() {
           materialOptions: Array.isArray(inherited.material_options) ? inherited.material_options : [],
           images: imagesWithUrls,
           approvalsByName,
+          qrRows: qrRows.map((r) => ({
+            id: r.id,
+            associated_name: r.associated_name,
+            decoded_data: r.qr_decoded_data ?? '',
+          })),
         })
         setKeepByV1RowId(keepDefaults)
 
@@ -2439,6 +2497,78 @@ export default function NewVersionPage() {
       return
     }
 
+    // ── QR code uploads + inserts (migration 000168) ───────────────
+    // New QR entries get a storage path each; existing entries
+    // (v1-carried — not yet wired but supported by the entry
+    // shape) re-use their previous image_path. proof_version_images
+    // rows are inserted with is_qr_code = true and the decoded
+    // payload alongside. Sort order continues from where the
+    // artwork rows ended so the customer-page filter on
+    // is_qr_code stays clean.
+    const qrUploadedPaths: string[] = []
+    if (qrEntries.length > 0) {
+      const qrUploadQueue = qrEntries
+        .filter((e) => e.source === 'new' && e.file)
+        .map((e) => ({
+          entry: e,
+          file: e.file as File,
+          path: `${proofId}/${uuidv4()}.jpg`,
+        }))
+
+      const qrUploadErrors: string[] = []
+      await Promise.all(
+        qrUploadQueue.map(async (u) => {
+          const { error: upErr } = await supabase.storage
+            .from('proof-images')
+            .upload(u.path, u.file, { contentType: u.file.type || 'image/jpeg' })
+          if (upErr) qrUploadErrors.push(`${u.file.name}: ${upErr.message}`)
+          else qrUploadedPaths.push(u.path)
+        }),
+      )
+      if (qrUploadErrors.length > 0) {
+        await supabase.from('proof_versions').delete().eq('id', versionData.id)
+        await supabase.storage.from('proof-images').remove([...uploadedPaths, ...qrUploadedPaths])
+        setError(`Failed to upload QR codes: ${qrUploadErrors.join(' · ')}`)
+        setSubmitting(false)
+        return
+      }
+
+      const pathByEntryId = new Map(qrUploadQueue.map((u) => [u.entry.id, u.path]))
+      const qrInserts = qrEntries.map((entry, i) => ({
+        proof_version_id: versionData.id,
+        image_path:
+          entry.source === 'new'
+            ? pathByEntryId.get(entry.id)!
+            : (entry.imagePath as string),
+        // QRs aren't scoped to a material option; leave null so
+        // they render in every option tab on the customer page.
+        material_option: null,
+        original_filename: entry.originalFilename,
+        associated_name: entry.associatedName,
+        // Single-sided artefact. Stamping 'front' keeps the row
+        // valid against the non-null side constraint without
+        // claiming a back surface that doesn't exist.
+        side: 'front' as const,
+        sort_order: imageInserts.length + i,
+        // Migration 000168 — the CHECK constraint requires all
+        // three to land together on an is_qr_code row.
+        is_qr_code: true,
+        qr_decoded_data: entry.decodedData,
+        qr_kind: entry.kind,
+      }))
+
+      const { error: qrInsertErr } = await supabase
+        .from('proof_version_images')
+        .insert(qrInserts)
+      if (qrInsertErr) {
+        await supabase.from('proof_versions').delete().eq('id', versionData.id)
+        await supabase.storage.from('proof-images').remove([...uploadedPaths, ...qrUploadedPaths])
+        setError(`Failed to save QR codes: ${qrInsertErr.message}`)
+        setSubmitting(false)
+        return
+      }
+    }
+
     // ── Approval carry-forward ──────────────────────────────────
     // Carries an approval from v1 to v2 for a given slot (name or
     // __shared__) iff ALL of the following hold:
@@ -2474,7 +2604,38 @@ export default function NewVersionPage() {
           actor_ua: null
           updated_at: string
           carried_from_version_id: string
+          qr_confirmed_at: string | null
         }[] = []
+
+        // Migration 000169 — slot's QR decoded-data multiset on v1
+        // and v2. qr_confirmed_at only carries when the two sets
+        // are byte-identical, otherwise the customer has to
+        // re-tick on v2. Coordinates match the DB predicate:
+        // __shared__ on a split-name version excludes itself (the
+        // sentinel isn't a gated slot); a named slot collects own
+        // QRs plus shared QRs; __shared__ on a names-empty version
+        // collects every QR.
+        const v1HasNames = v1Carry.names.length > 0
+        const v2HasNames = names.filter((n) => n.trim().length > 0).length > 0
+        const slotQrSet = (
+          rows: Array<{ associated_name: string | null; decoded_data: string }>,
+          slotName: string,
+          hasNames: boolean,
+        ): string[] => {
+          if (slotName === SHARED_APPROVAL_KEY) {
+            return hasNames ? [] : rows.map((r) => r.decoded_data).sort()
+          }
+          return rows
+            .filter(
+              (r) => r.associated_name === slotName || r.associated_name == null,
+            )
+            .map((r) => r.decoded_data)
+            .sort()
+        }
+        const v2QrRowsForCompare = qrEntries.map((e) => ({
+          associated_name: e.associatedName,
+          decoded_data: e.decodedData,
+        }))
 
         // Candidate slot keys: each name currently on v2 (common
         // with v1 or not — non-common names can't carry since v1
@@ -2516,6 +2677,17 @@ export default function NewVersionPage() {
           )
           if (anyFreshForSlot) continue
 
+          // Migration 000169 — preserve qr_confirmed_at only when
+          // the slot's QR set is byte-identical between v1 and v2.
+          // Both sets empty also carries (no QRs on either side =
+          // nothing to re-verify). Anything else nulls the
+          // timestamp; the customer has to re-tick on v2.
+          const v1Set = slotQrSet(v1Carry.qrRows, nameKey, v1HasNames)
+          const v2Set = slotQrSet(v2QrRowsForCompare, nameKey, v2HasNames)
+          const qrSetsMatch =
+            v1Set.length === v2Set.length &&
+            v1Set.every((s, idx) => s === v2Set[idx])
+
           carriedApprovals.push({
             proof_version_id: versionData.id,
             name: nameKey,
@@ -2531,6 +2703,9 @@ export default function NewVersionPage() {
             // across state-change UPDATEs; nulled if v1 is
             // later deleted (FK ON DELETE SET NULL).
             carried_from_version_id: v1Carry.versionId,
+            qr_confirmed_at: qrSetsMatch
+              ? v1Approval.qr_confirmed_at
+              : null,
           })
         }
 
@@ -4476,6 +4651,21 @@ export default function NewVersionPage() {
               below the form (rendered outside the form's flex
               column) replaces both this mirror and the top-right
               placement. */}
+
+          {/* QR codes (migrations 000168 / 000169).
+              Hidden in variant-round mode for v1 — variant-round
+              QR rendering on the customer page is deferred to a
+              follow-up. The schema supports per-variant QRs via
+              round_variant_id, so adding this back is purely a UI
+              concern. */}
+          {!isVariantRound && (
+            <QrCodeUploadSection
+              value={qrEntries}
+              onChange={setQrEntries}
+              names={names.map((n) => n.trim()).filter(Boolean)}
+              disabled={submitting}
+            />
+          )}
 
           {/* Change notes */}
           <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">

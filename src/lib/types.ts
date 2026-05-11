@@ -368,6 +368,13 @@ export type ProofNameApproval = {
   overridden_from_state: 'changes_requested' | null
   overridden_by_user_id: string | null
   overridden_at: string | null
+  // Migration 000169 — customer's "I've verified my QR code
+  // contents" tick or designer-override implicit confirmation.
+  // Server-stamped (proof-action edge function on the customer
+  // path, upsertApproval on the designer-override path). Null
+  // when the slot has no QRs visible, when the customer hasn't
+  // ticked yet, or on legacy approval rows.
+  qr_confirmed_at: string | null
 }
 
 export interface ProofVersionImage {

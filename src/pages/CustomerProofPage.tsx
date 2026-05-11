@@ -15,6 +15,7 @@ import { PaperRecipientBand } from '../components/PaperRecipientBand'
 import { PaperRevisionTimeline } from '../components/PaperRevisionTimeline'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LayeredConstructionPanel } from '../components/LayeredConstructionPanel'
+import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
 import { firstName } from '../lib/firstName'
 import {
   INK,
@@ -52,6 +53,13 @@ export default function CustomerProofPage() {
   const [versions, setVersions] = useState<PublicProofVersion[]>([])
   const [activeVersion, setActiveVersion] = useState<PublicProofVersion | null>(null)
   const [versionImages, setVersionImages] = useState<Record<string, GridImage[]>>({})
+  // QR-code rows split off from versionImages so the regular image
+  // grid never renders them. Same edge-function payload, but
+  // is_qr_code=true rows are bucketed here for the dedicated QR
+  // panel below the version header. Empty object when no QRs are
+  // present on any of the proof's versions (the common case for
+  // anything created before the QR feature shipped).
+  const [versionQrImages, setVersionQrImages] = useState<Record<string, GridImage[]>>({})
   const [materialOptions, setMaterialOptions] = useState<PublicMaterialOption[]>([])
   const [optionSurcharges, setOptionSurcharges] = useState<PublicMaterialOptionSurcharge[]>([])
   // Live pricing — replaces the proof_versions.pricing_snapshot
@@ -149,6 +157,14 @@ export default function CustomerProofPage() {
   const [actionDisclaimerAcked, setActionDisclaimerAcked] = useState(false)
   const [actionDisclaimerExpanded, setActionDisclaimerExpanded] =
     useState(false)
+  // Migration 000169. Tracks the "I've verified my QR code
+  // contents" tick on the approve modal. Renders only when the
+  // active slot has at least one QR row visible to it; gates the
+  // Confirm button alongside the disclaimer tick. The customer
+  // can untick and re-check without losing place, mirroring the
+  // disclaimer tick's behaviour. Reset to false whenever a new
+  // action modal opens.
+  const [actionQrConfirmed, setActionQrConfirmed] = useState(false)
   const [actionResults, setActionResults] = useState<
     Record<
       string,
@@ -449,6 +465,7 @@ export default function CustomerProofPage() {
     // rendered (full vs one-line reminder + Show disclaimer).
     setActionDisclaimerAcked(false)
     setActionDisclaimerExpanded(false)
+    setActionQrConfirmed(false)
   }
 
   // Variant-round equivalent of openActionPanel (build-plan step 4).
@@ -474,6 +491,7 @@ export default function CustomerProofPage() {
     setActionError(null)
     setActionDisclaimerAcked(false)
     setActionDisclaimerExpanded(false)
+    setActionQrConfirmed(false)
   }
 
   function closeActionPanel() {
@@ -511,6 +529,22 @@ export default function CustomerProofPage() {
     ) {
       setActionError('Please confirm you have read the disclaimer.')
       return
+    }
+    // QR-confirmation tick (migration 000169). Same defensive
+    // mirror pattern as the disclaimer block above: the button
+    // is already disabled in this state, but a stale-tab or
+    // bypassed-JS request needs a clear error message rather
+    // than a generic edge-function 400.
+    if (actionPanel.type === 'approve') {
+      const slotQrs = qrRowsForSlot({
+        qrImages: versionQrImages[actionPanel.versionId] ?? [],
+        slotName: actionPanel.name,
+        versionHasNames: (activeVersion?.names ?? []).length > 0,
+      })
+      if (slotQrs.length > 0 && !actionQrConfirmed) {
+        setActionError('Please confirm the QR code contents before approving.')
+        return
+      }
     }
     setActionSubmitting(true)
     setActionError(null)
@@ -553,6 +587,11 @@ export default function CustomerProofPage() {
           ...(actionPanel.roundVariant
             ? { round_variant_id: actionPanel.roundVariant.id }
             : {}),
+          // Migration 000169 — customer's tick on "I've verified my
+          // QR code contents". Edge function ignores it on
+          // request_changes and on slots with no QRs; only the
+          // approve-with-QRs path consumes the flag.
+          qr_confirmed: actionPanel.type === 'approve' && actionQrConfirmed,
         },
       })
       if (error) {
@@ -719,17 +758,26 @@ export default function CustomerProofPage() {
         // Graceful failure: render the page without images rather
         // than blocking the whole load.
         setVersionImages({})
+        setVersionQrImages({})
       } else {
+        // Two buckets, populated in one pass. Artwork images flow
+        // into versionImages (the existing image grid), QR rows
+        // into versionQrImages (the dedicated QR panel). is_qr_code
+        // is set per-row by migration 000168; legacy rows default
+        // to false so the bucketing is safe for pre-QR proofs.
         const byVersion: Record<string, GridImage[]> = {}
+        const qrByVersion: Record<string, GridImage[]> = {}
         imgData.images.forEach((img) => {
           // proof_version_id rides on the row but isn't in the
           // GridImage type. Same shape (and same cast pattern) as
           // the pre-shipment direct-fetch path.
           const pvid = (img as unknown as { proof_version_id: string }).proof_version_id
-          if (!byVersion[pvid]) byVersion[pvid] = []
-          byVersion[pvid].push(img)
+          const target = img.is_qr_code === true ? qrByVersion : byVersion
+          if (!target[pvid]) target[pvid] = []
+          target[pvid].push(img)
         })
         setVersionImages(byVersion)
+        setVersionQrImages(qrByVersion)
       }
     }
 
@@ -2935,6 +2983,20 @@ export default function CustomerProofPage() {
             )
           })()}
 
+          {/* ───── QR codes (migrations 000168 / 000169) ─────
+              Renders a dedicated verification panel for any QR
+              codes on the active version. Sits between the proof
+              images band and Construction so the customer reviews
+              QR contents while the artwork is still fresh in
+              their head. Renders nothing when the version has no
+              QRs (no banner, no heading) so legacy proofs stay
+              visually unchanged. */}
+          <QrCodePanel
+            qrImages={versionQrImages[activeVersion.id] ?? []}
+            names={activeVersion.names ?? []}
+            isVariantRound={activeVersion.is_variant_round ?? false}
+          />
+
           {/* ───── Construction (migration 000135) ─────
               Mirrors the Specification section's two-column rhythm:
               big serif heading on the left (1fr), panel on the
@@ -3853,6 +3915,99 @@ export default function CustomerProofPage() {
               </div>
             )}
 
+            {/* ───── QR-confirmation tick (migration 000169) ─────
+                Renders only on the approve path AND only when the
+                slot has at least one QR row visible to it (named
+                slot: own + shared; __shared__ when names is empty:
+                every QR; otherwise none). Same visual treatment as
+                the disclaimer tick above, with a short reminder of
+                where to find the QRs themselves. Gates Confirm
+                alongside the disclaimer tick. */}
+            {(() => {
+              if (actionPanel.type !== 'approve') return null
+              const slotQrs = qrRowsForSlot({
+                qrImages: versionQrImages[actionPanel.versionId] ?? [],
+                slotName: actionPanel.name,
+                versionHasNames: (activeVersion?.names ?? []).length > 0,
+              })
+              if (slotQrs.length === 0) return null
+              const count = slotQrs.length
+              return (
+                <div className="mt-6">
+                  <p style={{ ...REG_A_BASE, color: PAPER_INK }}>
+                    QR code contents
+                  </p>
+                  <p
+                    className="mt-2 max-w-[60ch] text-[13px] leading-[1.6] sm:text-[14px] sm:leading-[1.65]"
+                    style={{ fontFamily: SANS, color: PAPER_SECONDARY }}
+                  >
+                    {count === 1
+                      ? 'Please double-check the contents of the QR code shown above before approving.'
+                      : `Please double-check the contents of the ${count} QR codes shown above before approving.`}
+                  </p>
+                  <label
+                    className={[
+                      'mt-4 flex w-fit items-center gap-3 rounded-lg px-4 py-3 transition-colors',
+                      'focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-[rgba(123,63,242,0.55)]',
+                      actionSubmitting
+                        ? 'cursor-wait'
+                        : 'cursor-pointer hover:border-[rgba(26,22,18,0.6)]',
+                    ].join(' ')}
+                    style={{
+                      border: actionQrConfirmed
+                        ? `1.5px solid ${PAPER_INK}`
+                        : '1.5px solid rgba(26,22,18,0.4)',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={actionQrConfirmed}
+                      disabled={actionSubmitting}
+                      onChange={(e) => setActionQrConfirmed(e.target.checked)}
+                    />
+                    <span
+                      aria-hidden
+                      className="grid h-5 w-5 shrink-0 place-items-center rounded-[4px]"
+                      style={
+                        actionQrConfirmed
+                          ? {
+                              background: PAPER_INK,
+                              border: `1.5px solid ${PAPER_INK}`,
+                            }
+                          : {
+                              background: 'transparent',
+                              border: '1.5px solid rgba(26,22,18,0.4)',
+                            }
+                      }
+                    >
+                      {actionQrConfirmed && (
+                        <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                          <path
+                            d="M2.5 6.5L5 9L9.5 3.5"
+                            stroke="#ffffff"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
+                    </span>
+                    <span
+                      style={{
+                        ...REG_B_BASE,
+                        fontSize: 14,
+                        fontWeight: 500,
+                        color: PAPER_INK,
+                      }}
+                    >
+                      I've verified my QR code contents
+                    </span>
+                  </label>
+                </div>
+              )
+            })()}
+
             {actionError && (
               <p
                 className="mt-5 max-w-[60ch] text-[14px] leading-[1.55]"
@@ -3907,7 +4062,21 @@ export default function CustomerProofPage() {
                   actionPanel.type === 'approve' &&
                   !!publicSettings?.disclaimer_text &&
                   !actionDisclaimerAcked
-                const confirmDisabled = actionSubmitting || disclaimerGate
+                // Migration 000169 — approve-path tick required
+                // when the slot has any QRs visible to it. Mirrors
+                // qrRowsForSlot's same predicate as the in-modal
+                // render above; on request_changes or QR-free
+                // slots the gate collapses to false.
+                const slotQrsForGate =
+                  actionPanel.type === 'approve'
+                    ? qrRowsForSlot({
+                        qrImages: versionQrImages[actionPanel.versionId] ?? [],
+                        slotName: actionPanel.name,
+                        versionHasNames: (activeVersion?.names ?? []).length > 0,
+                      })
+                    : []
+                const qrGate = slotQrsForGate.length > 0 && !actionQrConfirmed
+                const confirmDisabled = actionSubmitting || disclaimerGate || qrGate
                 return (
                   <button
                     type="button"
@@ -4022,6 +4191,32 @@ export default function CustomerProofPage() {
                   Tick the disclaimer above to enable Confirm.
                 </p>
               )}
+            {(() => {
+              // Sibling hint for the QR tick — same place, same
+              // tone as the disclaimer hint above. Renders only
+              // when the QR gate is the (or an additional) reason
+              // Confirm is disabled; on a slot with no QRs, this
+              // collapses to null.
+              if (
+                actionPanel.type !== 'approve' ||
+                actionSubmitting ||
+                actionQrConfirmed
+              ) return null
+              const slotQrs = qrRowsForSlot({
+                qrImages: versionQrImages[actionPanel.versionId] ?? [],
+                slotName: actionPanel.name,
+                versionHasNames: (activeVersion?.names ?? []).length > 0,
+              })
+              if (slotQrs.length === 0) return null
+              return (
+                <p
+                  className="mt-2 text-right text-[12px] sm:text-[13px]"
+                  style={{ fontFamily: SANS, color: 'rgba(26,22,18,0.65)' }}
+                >
+                  Tick the QR code confirmation to enable Confirm.
+                </p>
+              )
+            })()}
           </div>
           </div>
         </div>

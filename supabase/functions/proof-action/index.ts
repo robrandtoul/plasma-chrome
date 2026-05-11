@@ -480,6 +480,16 @@ Deno.serve(async (req) => {
   // membership check, except this one is required when the parent
   // version is_variant_round = true.
   let roundVariantId: string | null
+  // qr_confirmed: boolean flag the customer page sets to true when
+  // the "I've verified my QR code contents" checkbox is ticked.
+  // The flag is only meaningful on the approve path and only on
+  // versions that have at least one QR row visible to the slot —
+  // see the server-side enforcement block below. Accept boolean
+  // true exclusively; everything else (false, missing, non-bool)
+  // collapses to false. Matches migration 000169's predicate:
+  // qr_confirmed_at IS NOT NULL is what counts; the timestamp
+  // itself is server-stamped to avoid client-clock spoofing.
+  let qrConfirmed: boolean
   try {
     const parsed = await req.json()
     proofVersionId = typeof parsed?.proof_version_id === 'string' ? parsed.proof_version_id.trim() : ''
@@ -499,6 +509,7 @@ Deno.serve(async (req) => {
     roundVariantId = typeof rawVariantId === 'string' && rawVariantId.trim() !== ''
       ? rawVariantId.trim()
       : null
+    qrConfirmed = parsed?.qr_confirmed === true
   } catch {
     return failed('validation', 400, 'invalid JSON body')
   }
@@ -547,7 +558,10 @@ Deno.serve(async (req) => {
     .select(
       'id, proof_id, material_id, currency, displayed_variant_ids, names, material_options, is_variant_round, version_number, ' +
       'proofs:proof_id ( helpscout_conversation_id, created_by ), ' +
-      'proof_version_images ( original_filename, sort_order, associated_name )',
+      // is_qr_code joined per migration 000168 so the QR-confirmation
+      // enforcement block below can decide whether the slot actually
+      // needs the tick before counting qr_confirmed in the upsert.
+      'proof_version_images ( original_filename, sort_order, associated_name, is_qr_code )',
     )
     .eq('id', proofVersionId)
     .maybeSingle()
@@ -577,6 +591,7 @@ Deno.serve(async (req) => {
       original_filename: string | null
       sort_order: number
       associated_name: string | null
+      is_qr_code: boolean
     }>
   }
 
@@ -695,6 +710,56 @@ Deno.serve(async (req) => {
     )
   }
 
+  // ── QR-confirmation enforcement (migration 000169) ───────────────────────
+  // The customer page renders a "I've verified my QR code contents"
+  // checkbox above the Approve button when at least one QR row is
+  // visible to the slot. The button is disabled until that's ticked.
+  // The body's qr_confirmed flag records that tick. This block is
+  // the server-side mirror: if the customer somehow bypasses the
+  // disabled button (stale tab, direct API call), an approve with
+  // an unticked QR set is rejected here rather than landing as a
+  // state='approved' row with null qr_confirmed_at that the DB
+  // predicate then refuses to count toward auto-finalize. Variant
+  // rounds already reject 'approve' earlier (build-plan step 4 +
+  // line 629 above), so this block only fires on the standard path.
+  //
+  // Slot coordinates match the DB predicate in
+  // _finalize_proof_if_complete:
+  //   * Named slot: rows where associated_name = slot OR null
+  //   * __shared__ when names is empty: every QR row
+  //   * __shared__ on a split-name version: not gated (Shared is
+  //     approved-by-implication; the customer page hides the tick)
+  //
+  // qrConfirmedAt feeds the proof_name_approvals upsert below. We
+  // stamp it server-side rather than trusting a client timestamp
+  // — same shape as updated_at — so the predicate can rely on
+  // "set means the customer ticked at action time".
+  let qrConfirmedAt: string | null = null
+  if (eventType === 'approve') {
+    const hasNames = recipientRoster.length > 0
+    const slotQrImages = (v.proof_version_images ?? []).filter((img) => {
+      if (!img.is_qr_code) return false
+      if (recipientName === SHARED_APPROVAL_KEY) {
+        // __shared__ only collects QRs as a slot when names is
+        // empty. On split-name versions the sentinel isn't a
+        // gated slot so no rows count.
+        return !hasNames
+      }
+      return img.associated_name === recipientName || img.associated_name == null
+    })
+
+    if (slotQrImages.length > 0 && !qrConfirmed) {
+      return failed(
+        'validation',
+        400,
+        'Please confirm the QR code contents before approving.',
+      )
+    }
+    if (slotQrImages.length > 0) {
+      qrConfirmedAt = new Date().toISOString()
+    }
+  }
+
   const conversationId = v.proofs?.helpscout_conversation_id ?? null
   // Recipient-scoped file list for the HS thread. SHARED_APPROVAL_KEY
   // sees only the shared images (associated_name IS NULL); a named
@@ -803,6 +868,15 @@ Deno.serve(async (req) => {
     // already covers the divergence — same model as every other
     // mirrored field on this row.
     material_option_code: materialOptionCode,
+    // Migration 000169. Server-stamped above when event = approve
+    // AND the slot has QRs visible to it. Null otherwise (no QRs
+    // visible → tick isn't shown → predicate short-circuits;
+    // request_changes → no QR confirmation semantics). Stamping
+    // here, on the upsert, means a re-approve after a previous
+    // changes-requested correctly refreshes the timestamp, and
+    // a changes-requested clears it back to null so the slot has
+    // to re-confirm on the next approve.
+    qr_confirmed_at: qrConfirmedAt,
   }
 
   // Branch on is_variant_round: standard versions allow the

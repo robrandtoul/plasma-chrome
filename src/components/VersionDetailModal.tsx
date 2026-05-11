@@ -266,6 +266,14 @@ export default function VersionDetailModal({
     actorName: string
     changeRequest: string | null
   }) {
+    // Migration 000169 — designer override implicitly confirms QR
+    // contents. The override path is a deliberate "the designer
+    // has verified the customer's intent" action, so the absence
+    // of a customer-side tick shouldn't block auto-finalize.
+    // Stamping qr_confirmed_at = now() on approve / null on
+    // changes_requested mirrors the proof-action edge function
+    // (which writes the timestamp only on the approve path).
+    const nowIso = new Date().toISOString()
     const { error: err } = await supabase
       .from('proof_name_approvals')
       .upsert(
@@ -277,7 +285,8 @@ export default function VersionDetailModal({
           actor_name: args.actorName,
           actor_ip: null,
           actor_ua: null,
-          updated_at: new Date().toISOString(),
+          updated_at: nowIso,
+          qr_confirmed_at: args.state === 'approved' ? nowIso : null,
         },
         { onConflict: 'proof_version_id,name' },
       )

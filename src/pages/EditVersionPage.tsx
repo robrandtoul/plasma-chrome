@@ -17,6 +17,8 @@ import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { VariantDropZone } from '../components/VariantDropZone'
 import type { Currency, LetterpressCoreColour, PricingSnapshot } from '../lib/types'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
+import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSection'
+import type { QrKind } from '../lib/qrCodes'
 
 // Materials whose physical edge construction exposes the three-
 // layer Colorplan stack (un-gilded letterpress) and therefore want
@@ -134,6 +136,12 @@ export default function EditVersionPage() {
   const [editImagesByOption, setEditImagesByOption] = useState<Record<string, EditImage[]>>({ '': [] })
   const [activeImageOption, setActiveImageOption] = useState('')
   const [originalImageIds, setOriginalImageIds] = useState<Set<string>>(new Set())
+  // Migration 000168. QR codes loaded into a separate bucket so the
+  // artwork image-grid editor (editImagesByOption) doesn't have to
+  // know about them. originalQrIds backs the "what got removed?"
+  // diff at save time, same pattern as originalImageIds.
+  const [qrEntries, setQrEntries] = useState<QrEntry[]>([])
+  const [originalQrIds, setOriginalQrIds] = useState<Set<string>>(new Set())
   // Letterpress layer colours (migrations 000133 + 000135).
   // materialCode is the stable identifier the pickers key on; it
   // gates the block's visibility and the validation rules. Loaded
@@ -199,7 +207,7 @@ export default function EditVersionPage() {
         .single(),
       supabase
         .from('proof_version_images')
-        .select('id, image_path, sort_order, material_option, original_filename, associated_name, side, round_variant_id')
+        .select('id, image_path, sort_order, material_option, original_filename, associated_name, side, round_variant_id, is_qr_code, qr_decoded_data, qr_kind')
         .eq('proof_version_id', vid)
         .order('sort_order'),
     ])
@@ -271,9 +279,28 @@ export default function EditVersionPage() {
     setSelectedOptions(versionOptions)
     setActiveImageOption(versionOptions[0] ?? '')
 
-    const rawImages = (imagesResult.data ?? []) as { id: string; image_path: string; sort_order: number; material_option: string | null; original_filename: string | null; associated_name: string | null; side: 'front' | 'back' | null }[]
+    type RawImageRow = {
+      id: string
+      image_path: string
+      sort_order: number
+      material_option: string | null
+      original_filename: string | null
+      associated_name: string | null
+      side: 'front' | 'back' | null
+      is_qr_code: boolean | null
+      qr_decoded_data: string | null
+      qr_kind: QrKind | null
+    }
+    const allRawRows = (imagesResult.data ?? []) as RawImageRow[]
+    // Migration 000168 — split QRs out of the artwork editor. The
+    // existing image-grid pathway never sees is_qr_code=true rows;
+    // they're handled by the QrCodeUploadSection below. originalQrIds
+    // backs the deletion diff at save time.
+    const rawImages = allRawRows.filter((img) => img.is_qr_code !== true)
+    const rawQrRows = allRawRows.filter((img) => img.is_qr_code === true)
     const ids = new Set(rawImages.map((img) => img.id))
     setOriginalImageIds(ids)
+    setOriginalQrIds(new Set(rawQrRows.map((img) => img.id)))
 
     const withPreviews = await Promise.all(
       rawImages.map(async (img) => {
@@ -292,6 +319,29 @@ export default function EditVersionPage() {
         }
       })
     )
+
+    // Seed QR entries from the saved rows. Each entry rides as
+    // source='existing' with the row id baked in so the save diff
+    // can compute removals; the file/decoded data live on the row
+    // itself, no decode round-trip required at load time.
+    const qrEntriesFromDb = await Promise.all(
+      rawQrRows.map(async (img) => {
+        const { data } = await supabase.storage
+          .from('proof-images')
+          .createSignedUrl(img.image_path, 3600)
+        return {
+          id: img.id,
+          source: 'existing' as const,
+          imagePath: img.image_path,
+          signedUrl: data?.signedUrl ?? '',
+          decodedData: img.qr_decoded_data ?? '',
+          kind: (img.qr_kind ?? 'text') as QrKind,
+          associatedName: img.associated_name,
+          originalFilename: img.original_filename,
+        }
+      }),
+    )
+    setQrEntries(qrEntriesFromDb)
 
     // Group images by option key
     const ibf: Record<string, EditImage[]> = {}
@@ -1109,6 +1159,112 @@ export default function EditVersionPage() {
       }
     }
 
+    // ── QR codes (migration 000168) ──────────────────────────────
+    // Diff qrEntries against originalQrIds:
+    //   * Removed (existing id no longer present) → delete row +
+    //     safeRemoveImagePaths.
+    //   * Kept existing → UPDATE associated_name (the only field
+    //     the designer can change on a saved QR; decoded_data and
+    //     kind are write-once at upload time).
+    //   * New → upload file, INSERT row.
+    // Same belt-and-braces pattern as the artwork save above; a
+    // failure leaves the proof_versions UPDATE intact but surfaces
+    // the error so the designer can retry without recreating
+    // everything they kept.
+    const remainingExistingQrIds = new Set(
+      qrEntries
+        .filter((e) => e.source === 'existing')
+        .map((e) => e.id),
+    )
+    const removedQrIds = [...originalQrIds].filter(
+      (id) => !remainingExistingQrIds.has(id),
+    )
+
+    if (removedQrIds.length > 0) {
+      const { data: removedQrRows } = await supabase
+        .from('proof_version_images')
+        .select('image_path')
+        .in('id', removedQrIds)
+      const removedQrPaths = (removedQrRows ?? []).map((r: any) => r.image_path)
+      await supabase
+        .from('proof_version_images')
+        .delete()
+        .in('id', removedQrIds)
+      if (removedQrPaths.length > 0) {
+        await safeRemoveImagePaths(removedQrPaths)
+      }
+    }
+
+    // Update associated_name on kept existing QR rows. Skip if
+    // unchanged — but the cost of a no-op UPDATE is low and the
+    // diff would need the original associated_name to compare,
+    // which we don't keep around. Cheap enough to always write.
+    await Promise.all(
+      qrEntries
+        .filter((e) => e.source === 'existing')
+        .map((e) =>
+          supabase
+            .from('proof_version_images')
+            .update({ associated_name: e.associatedName })
+            .eq('id', e.id),
+        ),
+    )
+
+    // Upload + insert new QR rows.
+    const newQrEntries = qrEntries.filter((e) => e.source === 'new' && e.file)
+    if (newQrEntries.length > 0) {
+      const qrUploads = newQrEntries.map((e) => ({
+        entry: e,
+        file: e.file as File,
+        path: `${proofId}/${uuidv4()}.jpg`,
+      }))
+      const uploadedQrPaths: string[] = []
+      const qrErrors: string[] = []
+      await Promise.all(
+        qrUploads.map(async (u) => {
+          const { error: upErr } = await supabase.storage
+            .from('proof-images')
+            .upload(u.path, u.file, { contentType: u.file.type || 'image/jpeg' })
+          if (upErr) qrErrors.push(`${u.file.name}: ${upErr.message}`)
+          else uploadedQrPaths.push(u.path)
+        }),
+      )
+      if (qrErrors.length > 0) {
+        if (uploadedQrPaths.length > 0) {
+          await supabase.storage.from('proof-images').remove(uploadedQrPaths)
+        }
+        setError(`Failed to upload QR codes: ${qrErrors.join(' · ')}`)
+        setSubmitting(false)
+        return
+      }
+      const pathByEntryId = new Map(qrUploads.map((u) => [u.entry.id, u.path]))
+      const qrInserts = newQrEntries.map((entry) => ({
+        proof_version_id: versionId!,
+        image_path: pathByEntryId.get(entry.id)!,
+        material_option: null,
+        original_filename: entry.originalFilename,
+        associated_name: entry.associatedName,
+        side: 'front' as const,
+        // Sort the QR rows after the artwork rows. The exact value
+        // doesn't matter for QR rendering on the customer page (the
+        // panel doesn't use sort_order), so a constant offset is
+        // fine.
+        sort_order: 1000,
+        is_qr_code: true,
+        qr_decoded_data: entry.decodedData,
+        qr_kind: entry.kind,
+      }))
+      const { error: qrInsertErr } = await supabase
+        .from('proof_version_images')
+        .insert(qrInserts)
+      if (qrInsertErr) {
+        await supabase.storage.from('proof-images').remove(uploadedQrPaths)
+        setError(`Failed to save QR codes: ${qrInsertErr.message}`)
+        setSubmitting(false)
+        return
+      }
+    }
+
     navigate(`/proofs/${proofId}`)
   }
 
@@ -1569,6 +1725,20 @@ export default function EditVersionPage() {
           <div className="flex justify-end">
             {actionRow}
           </div>
+
+          {/* QR codes (migrations 000168 / 000169).
+              Standard-edit-form parity with NewVersionPage. Hidden
+              in variant-round mode for v1 — variant-round QR
+              rendering on the customer page is deferred to a
+              follow-up. */}
+          {!isVariantRound && (
+            <QrCodeUploadSection
+              value={qrEntries}
+              onChange={setQrEntries}
+              names={names.map((n) => n.trim()).filter(Boolean)}
+              disabled={submitting}
+            />
+          )}
 
           {/* Change notes */}
           <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
