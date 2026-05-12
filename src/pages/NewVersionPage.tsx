@@ -2075,21 +2075,24 @@ export default function NewVersionPage() {
     // two-sided). Also auto-expand the form so the designer can see
     // the required fields they now need to fill in.
     //
-    // Picking a real direction: restore shared=true. Variant-round
-    // images are inherently shared (one design per direction, with
-    // associated_name=null by the variant-round convention). For
-    // 0-name shapes, shared=true is required so the SHARED slot
-    // exists and the carry renders. For 1-name shapes the slot
-    // universe collapses shared to per-name (effectiveShared rule
-    // below) and the carry filter re-maps null-assoc images to the
-    // first name's slot, so the value of `shared` itself doesn't
-    // matter there. For 2+-name shapes, shared=true gives SHARED
-    // front + per-name backs — the natural "one design for everyone
-    // on the front, personalised backs" shape.
+    // Leaving Start fresh (sentinel → real variant): restore
+    // shared=true so variant-round images can land in a SHARED slot
+    // on 0-name shapes (without it, the null-assoc carry has nowhere
+    // to render). For 1-name shapes the slot universe collapses
+    // shared to per-name via effectiveShared and the carry filter
+    // re-maps null-assoc images to the first name; the value of
+    // `shared` doesn't matter there. For 2+-name shapes, shared=true
+    // gives SHARED front + per-name backs.
+    //
+    // Real variant → different real variant: leave `shared` alone.
+    // Whatever the designer picked earlier (toggled off manually,
+    // or kept at the inherited value) stays — picker changes are
+    // scope, not structure. Forcing shared=true here would stomp on
+    // any explicit toggle the designer made between flips.
     if (nextVariantId === START_FRESH_SENTINEL) {
       setShared(false)
       setFormExpanded(true)
-    } else {
+    } else if (carryVariantSelection === START_FRESH_SENTINEL) {
       setShared(true)
     }
   }
@@ -2594,12 +2597,29 @@ export default function NewVersionPage() {
       return assocName != null && v2Names.has(assocName)
     }
 
+    // Variant-round carries arrive with associated_name=null (the
+    // shared-design convention) and the form re-maps them onto the
+    // first v(N) name when the active shape has no SHARED slot for
+    // the side. Render, save-stamp, and validation-count all read
+    // through effectiveAssocForVariantRoundCarry — the save filter
+    // has to use the same effective identity or it would drop
+    // legitimately re-mapped carries that the rest of the form
+    // counted as present. Standard-proof carries pass through with
+    // their original assoc (the helper short-circuits).
+    const carrySlotStillValid = (img: V1Image): boolean => {
+      const liveAssoc = effectiveAssocForVariantRoundCarry(
+        (img.side ?? 'front') as 'front' | 'back',
+        img.associated_name,
+      )
+      return slotStillValid(liveAssoc, img.side)
+    }
+
     const carriedV1Rows = v1Carry
       ? v1Carry.images.filter(
           (img) =>
             (keepByV1RowId[img.v1RowId] ?? true) &&
             !replacementByV1RowId[img.v1RowId] &&
-            slotStillValid(img.associated_name, img.side),
+            carrySlotStillValid(img),
         )
       : []
     const replacementEntries = v1Carry
@@ -2607,7 +2627,7 @@ export default function NewVersionPage() {
           .filter(
             (img) =>
               !!replacementByV1RowId[img.v1RowId] &&
-              slotStillValid(img.associated_name, img.side),
+              carrySlotStillValid(img),
           )
           .map((img) => ({ v1Img: img, file: replacementByV1RowId[img.v1RowId]!.file }))
       : []
@@ -3026,7 +3046,7 @@ export default function NewVersionPage() {
             (img) =>
               (keepByV1RowId[img.v1RowId] ?? true) &&
               !replacementByV1RowId[img.v1RowId] &&
-              slotStillValid(img.associated_name, img.side),
+              carrySlotStillValid(img),
           )
           if (!allCarried) continue
 
@@ -4871,6 +4891,20 @@ export default function NewVersionPage() {
                 ) : v1Carry.customerLockedVariantId == null && (
                   <p className="mt-2.5 text-xs text-amber-800">
                     No customer selection on file — defaulted to <strong>{v1Carry.sourceVariants[0]?.display_name}</strong>. Switch above if the agreed direction was different, or pick <strong>Start fresh</strong> if none of v{v1Carry.versionNumber}&apos;s artwork should carry across.
+                  </p>
+                )}
+                {/* "Picked a direction but no slot for it yet" notice.
+                    Fires when the carry has images but the active shape
+                    has no slot universe — typically business + 0 names
+                    + non-shared sidedness, where adding a recipient
+                    name is the missing step. Without this, the slot
+                    grid below renders empty and the designer has no
+                    signal that their carry needs a name to surface. */}
+                {carryVariantSelection !== START_FRESH_SENTINEL &&
+                  v1Carry.images.length > 0 &&
+                  !hasAnySlot && (
+                  <p className="mt-2.5 text-xs text-amber-800">
+                    Add a recipient name below to see your carry images from this direction.
                   </p>
                 )}
               </div>
