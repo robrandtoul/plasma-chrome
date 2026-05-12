@@ -20,6 +20,7 @@ import {
   PAPER_TERTIARY,
   PAPER_BORDER,
 } from '../lib/theme'
+import { stripDefaultSuffix } from '../lib/labels'
 import { CoreColourSwatch } from './CoreColourSwatch'
 
 interface LayeredConstructionPanelProps {
@@ -47,10 +48,14 @@ export function LayeredConstructionPanel({
   if (!core_name || !core_hex) return null
   if (!back_name || !back_hex) return null
 
+  // Admin-only "(default)" / "(default black)" hints are stripped here
+  // so the customer panel renders just the colour name. The admin
+  // letterpress colours list keeps the suffix to help designers pick
+  // the canonical defaults. See stripDefaultSuffix in lib/labels.ts.
   const layers: Array<{ label: string; name: string; hex: string }> = [
-    { label: 'Front', name: front_name, hex: front_hex },
-    { label: 'Core', name: core_name, hex: core_hex },
-    { label: 'Back', name: back_name, hex: back_hex },
+    { label: 'Front', name: stripDefaultSuffix(front_name), hex: front_hex },
+    { label: 'Core', name: stripDefaultSuffix(core_name), hex: core_hex },
+    { label: 'Back', name: stripDefaultSuffix(back_name), hex: back_hex },
   ]
 
   // Layer heights split evenly across the SVG (front, core, back).
@@ -74,7 +79,7 @@ export function LayeredConstructionPanel({
             height={SVG_H}
             viewBox={`0 0 ${SVG_W} ${SVG_H}`}
             role="img"
-            aria-label={`Card edge cross-section: ${front_name} front, ${core_name} core, ${back_name} back`}
+            aria-label={`Card edge cross-section: ${layers[0].name} front, ${layers[1].name} core, ${layers[2].name} back`}
             style={{ display: 'block' }}
           >
             {layers.map((layer, i) => (

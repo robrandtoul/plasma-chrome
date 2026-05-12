@@ -34,6 +34,18 @@ export function pluralLabel(label: string): string {
   return label + 's'
 }
 
+// Strips a trailing "(default …)" parenthetical from a colour name so
+// admin-only hints like "Pristine white (default)" or "Ebony (default
+// black)" don't leak onto customer-facing surfaces. The admin list keeps
+// the hint to help designers pick the canonical default; the customer
+// panel renders just the colour name. Matches any parenthetical at the
+// end of the string that contains the word "default" (case-insensitive),
+// so designers can phrase the hint however they like.
+export function stripDefaultSuffix(name: string | null | undefined): string {
+  if (!name) return ''
+  return name.replace(/\s*\([^)]*\bdefault\b[^)]*\)\s*$/i, '').trim()
+}
+
 // Human-readable label for a material_variants.variant_type value. Used
 // on the Add and Edit version forms to label the variant-picker section.
 // Falls back to a generic "Variant" for any unrecognised value so a
