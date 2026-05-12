@@ -137,6 +137,16 @@ interface InheritedSnapshot {
   materialOptions: string[]
 }
 
+// Sentinel value carryVariantSelection takes when the designer
+// clicks the "Start fresh" chip on the picker. Used in place of a
+// real proof_round_variants.id so the same state slot serves both
+// "advance from variant X" and "drop every carry and upload fresh".
+// Chosen with double underscores so it can never collide with a
+// real UUID. Read by handleCarryVariantChange (empties v1Carry.images
+// when selected) and the picker render (different chip styling +
+// hint copy).
+const START_FRESH_SENTINEL = '__start_fresh__'
+
 // Variant-round source metadata. Populated only when v(N-1) was a
 // variant round; drives the "Continuing from which direction?" picker
 // at the top of the Proof Images section. When the source isn't a
@@ -1968,7 +1978,17 @@ export default function NewVersionPage() {
   function handleCarryVariantChange(nextVariantId: string) {
     if (!v1Carry || !v1Carry.sourceIsVariantRound) return
     if (nextVariantId === carryVariantSelection) return
-    const refiltered = v1Carry.allImages.filter((img) => img.round_variant_id === nextVariantId)
+    // Start fresh: drop every carry, leave the slots empty so the
+    // designer can upload entirely new artwork. The sentinel value
+    // is also what the downstream consumers (render, validation,
+    // save) see — but they all short-circuit on an empty
+    // v1Carry.images regardless, so the sentinel itself only
+    // matters for the picker's chip-selection styling and the
+    // hint copy below.
+    const refiltered =
+      nextVariantId === START_FRESH_SENTINEL
+        ? []
+        : v1Carry.allImages.filter((img) => img.round_variant_id === nextVariantId)
     const previousVariantImages = v1Carry.images
     const refilteredIds = new Set(refiltered.map((i) => i.v1RowId))
     const orphaned = previousVariantImages.filter((img) => !refilteredIds.has(img.v1RowId))
@@ -4611,10 +4631,44 @@ export default function NewVersionPage() {
                       </button>
                     )
                   })}
+                  {/* Start fresh chip. Sits at the end of the row in a
+                      grey, dashed-border style so it doesn't read as a
+                      third variant — visually distinct from the amber
+                      variant chips. Click it when the customer asked
+                      to go in a completely different direction (e.g.
+                      switching materials entirely) and none of v(N-1)'s
+                      variant artwork should follow. v1Carry.images
+                      flips to [] in the change handler and every carry
+                      slot below empties out; the designer uploads from
+                      scratch. The amber container around the picker
+                      stays — the form still wants the designer to
+                      acknowledge that v(N-1) WAS a variant round,
+                      even when none of it carries forward. */}
+                  {(() => {
+                    const isSelected = carryVariantSelection === START_FRESH_SENTINEL
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => handleCarryVariantChange(START_FRESH_SENTINEL)}
+                        className={[
+                          'inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors',
+                          isSelected
+                            ? 'border-gray-700 bg-gray-700 text-white shadow-sm'
+                            : 'border-dashed border-gray-400 bg-transparent text-gray-700 hover:border-gray-600 hover:bg-gray-100',
+                        ].join(' ')}
+                      >
+                        Start fresh
+                      </button>
+                    )
+                  })()}
                 </div>
-                {v1Carry.customerLockedVariantId == null && (
+                {carryVariantSelection === START_FRESH_SENTINEL ? (
                   <p className="mt-2.5 text-xs text-amber-800">
-                    No customer selection on file — defaulted to <strong>{v1Carry.sourceVariants[0]?.display_name}</strong>. Switch above if the agreed direction was different.
+                    Starting from scratch — no images from v{v1Carry.versionNumber} carry across. Every slot below is empty; upload new artwork for this version.
+                  </p>
+                ) : v1Carry.customerLockedVariantId == null && (
+                  <p className="mt-2.5 text-xs text-amber-800">
+                    No customer selection on file — defaulted to <strong>{v1Carry.sourceVariants[0]?.display_name}</strong>. Switch above if the agreed direction was different, or pick <strong>Start fresh</strong> if none of v{v1Carry.versionNumber}&apos;s artwork should carry across.
                   </p>
                 )}
               </div>
