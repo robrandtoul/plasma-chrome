@@ -19,15 +19,13 @@ import type { Currency, LetterpressCoreColour, PricingSnapshot } from '../lib/ty
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSection'
 import type { QrKind } from '../lib/qrCodes'
+import { LAYER_COLOUR_MATERIAL_CODES } from '../lib/letterpress'
 
 // Materials whose physical edge construction exposes the three-
 // layer Colorplan stack (un-gilded letterpress) and therefore want
 // the front + core + back colour pickers. Mirrored from
 // NewVersionPage so the two stay in lockstep — if the catalogue
 // ever adds another un-gilded letterpress SKU, update both.
-const LAYER_COLOUR_MATERIAL_CODES: ReadonlySet<string> = new Set([
-  'paper_letterpress',
-])
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 

@@ -24,18 +24,7 @@ import type { Currency, LetterpressCoreColour, ProofNameApproval } from '../lib/
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { computeQrArtworkChangedSlots, isQrSlotFlagged, resolveQrEffectiveKeep } from '../lib/qrCarryForward'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
-
-// Materials whose physical edge construction exposes the three-
-// layer Colorplan stack (un-gilded letterpress) and therefore want
-// the front + core + back colour pickers. Gilded letterpress hides
-// the layered edge behind the gilded edge; metals, woods, plastics,
-// etc. don't have the three-layer build. Today this is just
-// paper_letterpress; if the catalogue ever adds another un-gilded
-// letterpress SKU (different stock weight, etc.) extend this set
-// rather than duplicating the picker logic at each call site.
-const LAYER_COLOUR_MATERIAL_CODES: ReadonlySet<string> = new Set([
-  'paper_letterpress',
-])
+import { LAYER_COLOUR_MATERIAL_CODES } from '../lib/letterpress'
 
 interface Material {
   id: string
@@ -135,6 +124,16 @@ interface InheritedSnapshot {
   inkNamesArray: string[]
   inkNamesText: string
   materialOptions: string[]
+  // Letterpress layer colours (migrations 000133 + 000135). Null on
+  // any version where the version-level material isn't in
+  // LAYER_COLOUR_MATERIAL_CODES, or where the colour ids were never
+  // set (legacy pre-000133 letterpress versions, per-direction-
+  // pricing variant rounds). Drives the CarriedPill on the Paper
+  // layers section so the designer can see at a glance whether each
+  // layer is inherited unchanged or has been touched.
+  frontColourId: string | null
+  coreColourId: string | null
+  backColourId: string | null
 }
 
 // Sentinel value carryVariantSelection takes when the designer
@@ -769,6 +768,9 @@ export default function NewVersionPage() {
             inkNamesText: snapshotInkNamesText,
             materialOptions:
               Array.isArray(inherited.material_options) ? inherited.material_options : [],
+            frontColourId: inherited.front_colour_id,
+            coreColourId: inherited.core_colour_id,
+            backColourId: inherited.back_colour_id,
           }
         }
       } else {
@@ -3821,6 +3823,24 @@ export default function NewVersionPage() {
         && inh.materialOptions.length > 0
         && !setEquals(inh.materialOptions, selectedOptions),
     },
+    // Letterpress layer colours. Each layer is independently
+    // tracked: the snapshot captures v(N-1)'s value and the carry
+    // pill reflects whether the current selection matches. The
+    // pickers only render when the version-level material is in
+    // LAYER_COLOUR_MATERIAL_CODES, so the pills only ever appear in
+    // a context where the value is meaningful.
+    frontColour: {
+      isCarried: inh !== null && inh.frontColourId !== null,
+      isEdited: inh !== null && inh.frontColourId !== null && inh.frontColourId !== selectedFrontColourId,
+    },
+    coreColour: {
+      isCarried: inh !== null && inh.coreColourId !== null,
+      isEdited: inh !== null && inh.coreColourId !== null && inh.coreColourId !== selectedCoreColourId,
+    },
+    backColour: {
+      isCarried: inh !== null && inh.backColourId !== null,
+      isEdited: inh !== null && inh.backColourId !== null && inh.backColourId !== selectedBackColourId,
+    },
   }
 
   // ── QR carry-forward derivations ─────────────────────────────────
@@ -4546,6 +4566,8 @@ export default function NewVersionPage() {
                     onChange={setSelectedFrontColourId}
                     colours={coreColours}
                     invalid={shouldHighlight('frontColour')}
+                    carriedFromVersionNumber={carry.frontColour.isCarried ? inheritedVersionNumber : null}
+                    isEdited={carry.frontColour.isEdited}
                   />
                   <LayerColourPicker
                     label="Core"
@@ -4554,6 +4576,8 @@ export default function NewVersionPage() {
                     onChange={setSelectedCoreColourId}
                     colours={coreColours}
                     invalid={shouldHighlight('coreColour')}
+                    carriedFromVersionNumber={carry.coreColour.isCarried ? inheritedVersionNumber : null}
+                    isEdited={carry.coreColour.isEdited}
                   />
                   <LayerColourPicker
                     label="Back"
@@ -4562,6 +4586,8 @@ export default function NewVersionPage() {
                     onChange={setSelectedBackColourId}
                     colours={coreColours}
                     invalid={shouldHighlight('backColour')}
+                    carriedFromVersionNumber={carry.backColour.isCarried ? inheritedVersionNumber : null}
+                    isEdited={carry.backColour.isEdited}
                   />
                 </div>
               </div>
@@ -5924,6 +5950,8 @@ function LayerColourPicker({
   onChange,
   colours,
   invalid,
+  carriedFromVersionNumber,
+  isEdited,
 }: {
   label: string
   refEl: React.RefObject<HTMLDivElement | null>
@@ -5931,12 +5959,24 @@ function LayerColourPicker({
   onChange: (next: string | null) => void
   colours: LetterpressCoreColour[]
   invalid: boolean
+  // Migrations 000133 / 000135 carry indicators. Null = field is
+  // not carried (v1 creation, or v(N-1) had no layer-colour value
+  // for this slot). Non-null = render the CarriedPill next to the
+  // layer label so designers can see which colours are inherited
+  // and which they've changed.
+  carriedFromVersionNumber: number | null
+  isEdited: boolean
 }) {
   const picked = selectedId ? colours.find((c) => c.id === selectedId) ?? null : null
   return (
     <div ref={refEl}>
       <div className="grid grid-cols-[60px_1fr] items-center gap-3">
-        <label className="text-xs font-medium uppercase tracking-wide text-gray-500">{label}</label>
+        <label className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">
+          <span>{label}</span>
+          {carriedFromVersionNumber !== null && (
+            <CarriedPill edited={isEdited} versionNumber={carriedFromVersionNumber} />
+          )}
+        </label>
         <div className="flex items-center gap-3">
           {picked ? (
             <CoreColourSwatch hex={picked.hex_value} size={28} ariaLabel={`${picked.name} swatch`} />
