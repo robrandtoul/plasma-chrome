@@ -1143,6 +1143,14 @@ export default function NewVersionPage() {
             setSelectedOptions([])
             setActiveImageOption('')
             setImagesByOption({})
+            // Auto-expand the form when v(N-1) was a variant round.
+            // The summary card alone can't surface the empty option
+            // chips, and asking the designer to click Edit details to
+            // discover that an option needs picking is friction with
+            // no upside — the form already knows it's invalid the
+            // moment this branch fires. Mirrors the Start-fresh
+            // handler's auto-expand for the same reason.
+            setFormExpanded(true)
           } else {
             const base = options.find((o) => o.is_base) ?? options[0]
             setSelectedOptions([base.code])
@@ -1383,12 +1391,16 @@ export default function NewVersionPage() {
       if (isMembershipSingle) {
         return identity == null ? ['front', 'back'] : []
       }
-      if (shared) {
+      if (effectiveShared) {
         // Shared front collapses to a single shared identity;
-        // back stays per-identity.
+        // back stays per-identity. `effectiveShared` matches the
+        // slot universe rule (shared collapses to per-name when
+        // names.length === 1), so this resolver doesn't suggest a
+        // SHARED slot the cell builder won't render.
         return identity == null ? ['front'] : (names.includes(identity) ? ['back'] : [])
       }
-      // Two-sided + not shared: per-identity on both sides.
+      // Two-sided + not shared (or shared collapsing for the 1-name
+      // case): per-identity on both sides.
       return identity == null ? [] : (names.includes(identity) ? ['front', 'back'] : [])
     }
 
@@ -1443,7 +1455,7 @@ export default function NewVersionPage() {
     // any identity with at least one slot if none match the side
     // preference.
     const fallbackOrder: Array<string | null> = []
-    if (isMembershipSingle || (sidedness === 'two-sided' && shared)) {
+    if (isMembershipSingle || (sidedness === 'two-sided' && effectiveShared)) {
       fallbackOrder.push(null)
     }
     for (const name of names) fallbackOrder.push(name)
@@ -1913,19 +1925,39 @@ export default function NewVersionPage() {
   // existing insert payload.
   function handleNamesChange(next: string[]) {
     const removed = names.filter((n) => !next.includes(n))
-    if (removed.length > 0) {
+    // Detect SHARED collapse: the slot universe's SHARED-front slot
+    // depends on `effectiveShared`, which itself depends on
+    // names.length. Adding a name when previously names.length was 0
+    // (with shared=true) flips effectiveShared from true to false, so
+    // the SHARED slot disappears and any fresh image dropped under it
+    // (associated_name=null) would orphan from the cell builder.
+    // Re-stamp those null-assoc images to the first new name so they
+    // land in a real per-name slot. Mirrors the removed-name re-stamp
+    // below in terms of intent — preserve the designer's uploads as
+    // the shape shifts.
+    const prevEffectiveShared = shared && names.length !== 1
+    const nextEffectiveShared = shared && next.length !== 1
+    const sharedCollapsing = prevEffectiveShared && !nextEffectiveShared && next.length > 0
+    const removedSet = new Set(removed)
+    if (removed.length > 0 || sharedCollapsing) {
       // Fresh images: re-stamp associated_name to null (shared)
-      // for any image whose name was just removed. UI and save
-      // path both read associated_name, so this reassigns them
-      // cleanly to the Shared slot.
+      // for any image whose name was just removed, OR to the new
+      // first name when SHARED is collapsing. UI and save path both
+      // read associated_name, so this reassigns them cleanly to the
+      // correct slot under the new shape.
       setImagesByOption((prev) => {
         const out: Record<string, typeof prev[string]> = {}
         for (const [key, list] of Object.entries(prev)) {
-          out[key] = list.map((img) =>
-            img.associated_name != null && removed.includes(img.associated_name)
-              ? { ...img, associated_name: null }
-              : img,
-          )
+          out[key] = list.map((img) => {
+            let nextAssoc: string | null = img.associated_name
+            if (nextAssoc != null && removedSet.has(nextAssoc)) {
+              nextAssoc = null
+            }
+            if (sharedCollapsing && nextAssoc == null) {
+              nextAssoc = next[0]
+            }
+            return nextAssoc !== img.associated_name ? { ...img, associated_name: nextAssoc } : img
+          })
         }
         return out
       })
@@ -1940,8 +1972,7 @@ export default function NewVersionPage() {
       // is left alone so re-adding the name restores the carry
       // cleanly. Save-path filter below is the belt-and-braces
       // guard against any carry rows that still slip through.
-      if (v1Carry) {
-        const removedSet = new Set(removed)
+      if (v1Carry && removed.length > 0) {
         const orphanedV1RowIds = v1Carry.images
           .filter((img) => img.associated_name != null && removedSet.has(img.associated_name))
           .map((img) => img.v1RowId)
@@ -2034,6 +2065,33 @@ export default function NewVersionPage() {
     for (const img of refiltered) nextKeep[img.v1RowId] = true
     setKeepByV1RowId(nextKeep)
     cleanupReplacementsFor(orphaned)
+    // Shape state per picker selection.
+    //
+    // Start fresh: reset shared=false so the slot universe behaves
+    // predictably — per-name front + per-name back once a name lands,
+    // 0 slots until then (the inherited shared=true from the variant
+    // round would otherwise produce a single shared-front slot with
+    // nowhere for the back to sit, even though sidedness carried as
+    // two-sided). Also auto-expand the form so the designer can see
+    // the required fields they now need to fill in.
+    //
+    // Picking a real direction: restore shared=true. Variant-round
+    // images are inherently shared (one design per direction, with
+    // associated_name=null by the variant-round convention). For
+    // 0-name shapes, shared=true is required so the SHARED slot
+    // exists and the carry renders. For 1-name shapes the slot
+    // universe collapses shared to per-name (effectiveShared rule
+    // below) and the carry filter re-maps null-assoc images to the
+    // first name's slot, so the value of `shared` itself doesn't
+    // matter there. For 2+-name shapes, shared=true gives SHARED
+    // front + per-name backs — the natural "one design for everyone
+    // on the front, personalised backs" shape.
+    if (nextVariantId === START_FRESH_SENTINEL) {
+      setShared(false)
+      setFormExpanded(true)
+    } else {
+      setShared(true)
+    }
   }
 
   function confirmShapeFlip(vanishing: V1Image[]): boolean {
@@ -2178,7 +2236,7 @@ export default function NewVersionPage() {
             return img.associated_name != null
           }
           const isSharedSlotForSide =
-            sidedness === 'two-sided' && shared && normalizedSide === 'front'
+            sidedness === 'two-sided' && effectiveShared && normalizedSide === 'front'
           if (isSharedSlotForSide) return img.associated_name != null
           if (img.associated_name == null) return true
           return !names.includes(img.associated_name)
@@ -2531,7 +2589,7 @@ export default function NewVersionPage() {
       if (normalizedSide === 'back' && sidedness === 'one-sided') return false
       if (isMembershipSingle) return assocName == null
       const isSharedSlotForSide =
-        sidedness === 'two-sided' && shared && normalizedSide === 'front'
+        sidedness === 'two-sided' && effectiveShared && normalizedSide === 'front'
       if (isSharedSlotForSide) return assocName == null
       return assocName != null && v2Names.has(assocName)
     }
@@ -2686,13 +2744,20 @@ export default function NewVersionPage() {
         isVariantRoundCarrySource && img.material_option == null && stampedFirstOption
           ? stampedFirstOption
           : img.material_option
+      // Re-stamp variant-round null-assoc carries to the first v2
+      // name when the active shape has no SHARED slot for the side.
+      // Matches the carry render filter's identity mapping so the
+      // persisted row lands in the same slot the designer saw.
+      // Standard-proof carries pass through unchanged.
+      const stampedSide = (img.side ?? 'front') as 'front' | 'back'
+      const stampedAssoc = effectiveAssocForVariantRoundCarry(stampedSide, img.associated_name)
       return {
         proof_version_id: versionData.id,
         image_path: img.file_path,
         material_option: stampedOption,
         original_filename: img.original_filename,
-        associated_name: img.associated_name,
-        side: (img.side ?? 'front') as 'front' | 'back',
+        associated_name: stampedAssoc,
+        side: stampedSide,
       }
     })
 
@@ -2710,16 +2775,21 @@ export default function NewVersionPage() {
         isVariantRoundCarrySource && r.v1Img.material_option == null && stampedFirstOption
           ? stampedFirstOption
           : r.v1Img.material_option
+      // Same variant-round assoc re-stamp as carriedInserts: null
+      // assoc on a variant-round carry maps to the first v2 name
+      // when the active shape has no SHARED slot for the side.
+      const stampedSide = (r.v1Img.side ?? 'front') as 'front' | 'back'
+      const stampedAssoc = effectiveAssocForVariantRoundCarry(stampedSide, r.v1Img.associated_name)
       return {
         proof_version_id: versionData.id,
         image_path: replacementPaths[i],
         material_option: stampedOption,
         original_filename: r.file.name,
-        associated_name: r.v1Img.associated_name,
+        associated_name: stampedAssoc,
         // Replacement inherits the v1 row's slot (same associated_name,
         // same side). Null-side v1 rows normalise to 'front' — same
         // back-compat rule as carriedInserts.
-        side: (r.v1Img.side ?? 'front') as 'front' | 'back',
+        side: stampedSide,
       }
     })
 
@@ -3111,6 +3181,44 @@ export default function NewVersionPage() {
   // Flipping any failing field to valid clears its error highlight live.
   const imagesFinishKeys = optionMode ? selectedOptions : ['']
 
+  // ── Shared semantics refinement ────────────────────────────────
+  // The `shared` toggle's stored value can be `true` even in shapes
+  // where the concept doesn't apply (single recipient — sharing with
+  // whom?). The toggle UI itself is only rendered for 2+ names (see
+  // line ~4433), so designers can't see or change the value in the
+  // single-name case; it remains at whatever was inherited from
+  // v(N-1). To keep the slot universe and the UI in agreement,
+  // `effectiveShared` collapses to false when there's exactly one
+  // name: a 1-name shape always renders per-name slots, regardless
+  // of what `shared` is set to. The 0-name and 2+-name cases keep
+  // the stored value, since both are shapes where the SHARED slot
+  // is meaningfully distinct from per-name slots.
+  const effectiveShared = shared && names.length !== 1
+
+  // Variant-round v1 images carry forward with associated_name=null
+  // (the variant-round convention — each direction is one shared
+  // design). When v(N) is a standard proof with names but no SHARED
+  // slot in the active shape, the null pattern doesn't match any
+  // per-name slot and the carry would orphan. This helper re-maps
+  // the carry's effective associated_name to the first v(N) name
+  // when a SHARED slot isn't available for the requested side, so
+  // the image lands in a real slot rather than being filtered out
+  // of the cell builder. Used by both the carry render filter and
+  // the save-path stamp so render and persisted state agree.
+  function effectiveAssocForVariantRoundCarry(
+    side: 'front' | 'back',
+    originalAssoc: string | null,
+  ): string | null {
+    if (originalAssoc != null) return originalAssoc
+    if (!v1Carry?.sourceIsVariantRound) return originalAssoc
+    const isMembershipSingleSlot = cardType === 'membership' && names.length === 0
+    const hasSharedSlotForSide =
+      isMembershipSingleSlot ||
+      (sidedness === 'two-sided' && effectiveShared && side === 'front')
+    if (hasSharedSlotForSide) return null
+    return names.length > 0 ? names[0] : null
+  }
+
   // Slot universe for validation — one tuple per (identity, side)
   // across the project, shared across every option tab. Mirrors the
   // render-time slot universe in the image section so validation
@@ -3133,7 +3241,7 @@ export default function NewVersionPage() {
       continue
     }
     const isSharedSlotForSide =
-      sidedness === 'two-sided' && shared && side === 'front'
+      sidedness === 'two-sided' && effectiveShared && side === 'front'
     if (isSharedSlotForSide) {
       slotTuplesForValidation.push({ identity: null, side })
     } else {
@@ -3177,8 +3285,17 @@ export default function NewVersionPage() {
         optionCode === firstSelectedOption &&
         firstSelectedOption !== ''
       if (!matchesActiveTab && !matchesViaVariantRound) return false
-      if (img.associated_name !== identity) return false
-      if ((img.side ?? 'front') !== side) return false
+      // Mirror the cell builder's identity re-mapping for variant-
+      // round null-assoc carries — the image's actual associated_name
+      // is null but the cell builder may have routed it into a per-
+      // name slot when no SHARED slot exists for the side. Validation
+      // has to use the same effective identity, otherwise the Save
+      // button stays disabled with "Add an image for Rob front" even
+      // though the carry is visibly populated in Rob's slot.
+      const imgSide = (img.side ?? 'front') as 'front' | 'back'
+      const effectiveImgAssoc = effectiveAssocForVariantRoundCarry(imgSide, img.associated_name)
+      if (effectiveImgAssoc !== identity) return false
+      if (imgSide !== side) return false
       const hasRep = !!replacementByV1RowId[img.v1RowId]
       const keep = keepByV1RowId[img.v1RowId] ?? true
       return hasRep || keep
@@ -3259,7 +3376,17 @@ export default function NewVersionPage() {
     variantsImages: variantsImagesValid,
   } as const
   const isValid = Object.values(validations).every(Boolean)
-  const shouldHighlight = (k: keyof typeof validations) => submitAttempted && !validations[k]
+  // Rose-tint a field whenever its validation fails, regardless of
+  // whether the designer has clicked Save yet. The previous gate
+  // (`submitAttempted && !validations[k]`) hid the tint until the
+  // first save click, but the Save button is disabled while invalid
+  // — so the click never fires and the tint never appears. The
+  // designer was left guessing what was missing. Always-on tints
+  // are louder on first load (v1 creation lights up every required-
+  // but-empty field) but resolve the "why is Save greyed out"
+  // discoverability problem cleanly: tints clear as fields are
+  // filled, so the form acts as its own progress indicator.
+  const shouldHighlight = (k: keyof typeof validations) => !validations[k]
 
   // Specific images message. Priority: no-slot universe first
   // (can't save an empty shape — unreachable once names becomes
@@ -3705,6 +3832,23 @@ export default function NewVersionPage() {
                     The material has been archived. Edit details to pick a current one, or keep this for continuity.
                   </p>
                 )}
+                {/* Missing-required items list — surfaces validation
+                    gaps in the collapsed summary so the designer doesn't
+                    have to open Edit details to discover them. Reads
+                    the same `missingFieldItems` data the Save tooltip
+                    uses, just rendered as bullets so each item is its
+                    own scannable line. Hidden once everything validates. */}
+                {!isValid && (() => {
+                  const items = missingFieldItems(validations, optionLabelSingular)
+                  if (items.length === 0) return null
+                  return (
+                    <ul className="mt-3 list-disc space-y-1 pl-5 text-sm font-medium text-rose-600">
+                      {items.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  )
+                })()}
                 {!formExpanded && (
                   <div className="mt-4 flex justify-end">
                     <button
@@ -4887,7 +5031,7 @@ export default function NewVersionPage() {
                   continue
                 }
                 const isSharedSlotForSide =
-                  sidedness === 'two-sided' && shared && side === 'front'
+                  sidedness === 'two-sided' && effectiveShared && side === 'front'
                 if (isSharedSlotForSide) {
                   slotTuples.push({ identity: SHARED_APPROVAL_KEY, side })
                 } else {
@@ -4931,8 +5075,15 @@ export default function NewVersionPage() {
                     activeCode === firstSelectedOption &&
                     firstSelectedOption !== ''
                   if (!matchesActiveTab && !matchesViaVariantRound) continue
-                  const identity = img.associated_name ?? SHARED_APPROVAL_KEY
                   const side = img.side ?? 'front'
+                  // Variant-round carries arrive with associated_name=null
+                  // (the variant-round shared-design convention). When
+                  // v(N) has names but no SHARED slot for this side, the
+                  // helper re-maps the carry to the first name's slot so
+                  // it renders rather than orphaning. Standard-proof
+                  // carries are passed through untouched.
+                  const effectiveAssoc = effectiveAssocForVariantRoundCarry(side, img.associated_name)
+                  const identity = effectiveAssoc ?? SHARED_APPROVAL_KEY
                   const key = slotKey(identity, side)
                   if (!validSlots.has(key)) continue
                   ;(carryCellsBySlot[key] ??= []).push(img)
@@ -5042,15 +5193,27 @@ export default function NewVersionPage() {
               const sideBadge = sidedness === 'two-sided'
               function renderCell(cell: Cell, showLabel: boolean) {
                 if (cell.kind === 'carry') {
+                  // Approval lookup keys off the v1 image's ORIGINAL
+                  // associated_name (the key v1's approvals were
+                  // recorded against), not the re-mapped slot identity.
                   const nameKey = cell.img.associated_name ?? SHARED_APPROVAL_KEY
                   const approval = v1Carry?.approvalsByName[nameKey]
                   const keep = keepByV1RowId[cell.img.v1RowId] ?? true
                   const replacement = replacementByV1RowId[cell.img.v1RowId]
+                  // The card's name label reflects the SLOT identity
+                  // (cell.identity), not the image's original
+                  // associated_name. Variant-round carries arrive with
+                  // associated_name=null but the cell builder may have
+                  // re-mapped them into a per-name slot when no SHARED
+                  // slot exists for the side — so reading the image's
+                  // own associated_name would mis-label the card as
+                  // "Shared" even though it's sitting in Rob's slot.
+                  const slotName = cell.identity === SHARED_APPROVAL_KEY ? null : cell.identity
                   return (
                     <CarryCard
                       key={`carry-${cell.img.v1RowId}`}
                       img={cell.img}
-                      nameLabel={showLabel ? cell.img.associated_name : undefined}
+                      nameLabel={showLabel ? slotName : undefined}
                       sideLabel={sideBadge ? cell.side : null}
                       approval={approval}
                       v1VersionNumber={v1Carry?.versionNumber ?? 0}
@@ -5304,8 +5467,8 @@ export default function NewVersionPage() {
               type="submit"
               form="new-version-form"
               disabled={submitting || !isValid}
-              title={!isValid ? missingFieldsHint(validations) : undefined}
-              aria-label={!isValid ? `Save version, ${missingFieldsHint(validations)}` : undefined}
+              title={!isValid ? missingFieldsHint(validations, optionLabelSingular) : undefined}
+              aria-label={!isValid ? `Save version, ${missingFieldsHint(validations, optionLabelSingular)}` : undefined}
               className={[
                 'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
                 isValid ? 'bg-gray-900 hover:bg-gray-700' : 'bg-gray-900/60',
@@ -5384,19 +5547,53 @@ const VARIANT_ROW_LABEL: Record<string, string> = {
  *  disabled tooltip from the current validation results. Pricing
  *  display + currency are the two fields the admin "no default" setting
  *  can leave unselected; other validation errors are reported inline. */
-function missingFieldsHint(validations: Record<string, boolean>): string {
-  const missing: string[] = []
-  if (!validations.pricingDisplay) missing.push('a pricing display')
-  if (!validations.currency) missing.push('a currency')
-  if (!validations.material) missing.push('a material')
-  if (!validations.variant) missing.push('a variant')
-  if (!validations.options) missing.push('an option')
-  if (!validations.images) missing.push('at least one image')
-  if (!validations.inkNames) missing.push('ink names')
-  if (missing.length === 0) return 'Some required fields are incomplete'
-  if (missing.length === 1) return `Select ${missing[0]}`
-  if (missing.length === 2) return `Select ${missing[0]} and ${missing[1]}`
-  return `Select ${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}`
+// Per-item missing-field copy. One entry per failing validation,
+// already prefixed with the right verb ("Select" for pickers,
+// "Add" for entries) so call sites can render the items individually
+// (e.g. as a bullet list in the summary card) or combine them into a
+// single sentence (Save-button tooltip / aria-label).
+//
+// The "option" dimension is renamed per the active material's
+// option_label so the copy mirrors the field label the designer sees
+// ("Species" on wood, "Finish" on metals, etc.). Defaults to the
+// generic "option" when no material is selected (the material picker
+// is itself one of the missing fields in that case).
+function missingFieldItems(
+  validations: Record<string, boolean>,
+  optionLabelSingular: string = 'option',
+): string[] {
+  const optionWord = optionLabelSingular.toLowerCase()
+  const optionArticle = /^[aeiou]/i.test(optionWord) ? 'an' : 'a'
+  const items: string[] = []
+  if (!validations.pricingDisplay) items.push('Select a pricing display')
+  if (!validations.currency) items.push('Select a currency')
+  if (!validations.material) items.push('Select a material')
+  if (!validations.variant) items.push('Select a variant')
+  if (!validations.options) items.push(`Select ${optionArticle} ${optionWord}`)
+  if (!validations.frontColour) items.push('Select a front colour')
+  if (!validations.coreColour) items.push('Select a core colour')
+  if (!validations.backColour) items.push('Select a back colour')
+  if (!validations.inkNames) items.push('Add ink names')
+  if (!validations.names) items.push('Add at least one name')
+  if (!validations.images) items.push('Add at least one image')
+  if (!validations.variantsCount) items.push('Add two or more variant directions')
+  if (!validations.variantsLabels) items.push('Name each variant direction')
+  if (!validations.variantsImages) items.push('Add at least one image per variant direction')
+  return items
+}
+
+// Single-sentence form for the Save button's title tooltip and
+// aria-label. Joins each item with a period + space ("Select a
+// species. Add at least one name.") so the tooltip reads as flowing
+// instructions rather than a stacked list (which the tooltip wouldn't
+// render anyway).
+function missingFieldsHint(
+  validations: Record<string, boolean>,
+  optionLabelSingular: string = 'option',
+): string {
+  const items = missingFieldItems(validations, optionLabelSingular)
+  if (items.length === 0) return 'Some required fields are incomplete.'
+  return items.map((s) => `${s}.`).join(' ')
 }
 
 function material_display_for(id: string, materials: Material[]) {
