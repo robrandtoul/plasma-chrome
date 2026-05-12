@@ -109,6 +109,12 @@ interface V1Image {
   // back-compat treats null as 'front' in carry-match and
   // rendering. Post-migration data is strictly 'front' | 'back'.
   side: 'front' | 'back' | null
+  // Variant-round source signal (migrations 000138/000139). Non-null
+  // only when the predecessor version was a variant round — that
+  // variant's id, used by the carry-from-variant picker to scope
+  // v1Carry.images down to one direction. Null on standard-proof
+  // predecessors.
+  round_variant_id: string | null
 }
 
 // Snapshot of every value inherited from v(N-1) at form-load time.
@@ -131,6 +137,18 @@ interface InheritedSnapshot {
   materialOptions: string[]
 }
 
+// Variant-round source metadata. Populated only when v(N-1) was a
+// variant round; drives the "Continuing from which direction?" picker
+// at the top of the Proof Images section. When the source isn't a
+// variant round these fields stay at their empty defaults and the
+// picker is never rendered.
+interface SourceVariant {
+  id: string
+  code: string
+  display_name: string
+  sort_order: number
+}
+
 // Everything the UI + save path needs to decide carry-forward
 // outcomes. Null when creating v1 (no prior version to carry from);
 // the form falls back to the existing flat image UI in that case.
@@ -139,7 +157,17 @@ interface V1CarryContext {
   versionNumber: number
   names: string[]
   materialOptions: string[]   // codes — '' represents "no-option" equivalent on v2
+  // Filtered to the currently-selected source variant when the
+  // predecessor was a variant round. Equal to allImages on standard-
+  // proof predecessors. Every downstream consumer — slot derivation,
+  // slotStillValid filter, save-path carriedInserts — reads this
+  // field, so the picker change handler updates it (via
+  // setV1Carry) and the rest of the form stays the same.
   images: V1Image[]
+  // Unfiltered v(N-1) image set. Kept alongside the filtered set so
+  // the picker change handler can re-filter without re-running the
+  // network fetch. Equal to images on standard-proof predecessors.
+  allImages: V1Image[]
   approvalsByName: Record<string, ProofNameApproval>  // keyed by recipient name OR SHARED_APPROVAL_KEY
   // Migration 000169 — v1's QR rows kept around so the approval
   // carry-forward block can decide whether to preserve
@@ -148,6 +176,24 @@ interface V1CarryContext {
   // qrEntries is multiset-byte-equality on decoded_data within
   // the slot's coordinates.
   qrRows: { id: string; associated_name: string | null; decoded_data: string }[]
+  // Variant-round predecessor flag. True iff v(N-1).is_variant_round
+  // — gates the picker UI and the filter in handleCarryVariantChange.
+  sourceIsVariantRound: boolean
+  // Variants that existed on v(N-1) when it was a variant round.
+  // Empty array on standard-proof predecessors. Sort order matches
+  // v(N-1)'s row order so the picker reads left-to-right as the
+  // customer saw it.
+  sourceVariants: SourceVariant[]
+  // Customer's locked variant choice on v(N-1), if any. Populated
+  // from the most recent proof_events row with round_variant_id set
+  // (variant rounds always travel as request_changes, so the
+  // event_type filter matches the lock semantics from migration
+  // 000139). Null when no customer selection has landed yet — the
+  // common case during your hybrid email-feedback rollout where
+  // direction decisions happen off-platform. Drives the picker's
+  // default selection: customer pick wins, falls back to first
+  // variant in sort order.
+  customerLockedVariantId: string | null
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -307,6 +353,14 @@ export default function NewVersionPage() {
   // key off this — null → legacy flat UI, non-null → grouped UI
   // with Keep toggles and carry semantics.
   const [v1Carry, setV1Carry] = useState<V1CarryContext | null>(null)
+  // Designer's current pick from the "Continuing from which direction?"
+  // picker rendered at the top of Proof Images when v(N-1) was a
+  // variant round. Defaulted on load to the customer's locked
+  // selection (if any) or the first variant in sort order; the
+  // picker handler updates this state and re-filters v1Carry.images.
+  // Always null when v(N-1) is a standard proof — the picker doesn't
+  // render and no downstream consumer reads this value on that path.
+  const [carryVariantSelection, setCarryVariantSelection] = useState<string | null>(null)
   // Keep toggle state per v1 row. Default true on mount for every
   // carried row. Flips to false automatically when a replacement
   // is queued for that row (and stays false even if the replacement
@@ -697,16 +751,43 @@ export default function NewVersionPage() {
       // If no inherited version exists (v1 creation), skip entirely
       // — the form falls back to the legacy flat image UI.
       if (inherited) {
-        const [imagesResult, approvalsResult] = await Promise.all([
+        // When the predecessor is a variant round we also load its
+        // variant catalogue and the most recent customer selection
+        // (if any). Both feed the "Continuing from which direction?"
+        // picker rendered at the top of the Proof Images section
+        // below. Predecessors that are NOT variant rounds skip the
+        // variant fetch (Supabase still returns success on an empty
+        // result, but the round-trip is unnecessary) and the lock
+        // fetch (round_variant_id is null on every standard event).
+        const isVariantRoundSource = inherited.is_variant_round === true
+        const [imagesResult, approvalsResult, variantsResult, lockResult] = await Promise.all([
           supabase
             .from('proof_version_images')
-            .select('id, image_path, original_filename, associated_name, material_option, side, sort_order, is_qr_code, qr_decoded_data, qr_kind')
+            .select('id, image_path, original_filename, associated_name, material_option, side, sort_order, is_qr_code, qr_decoded_data, qr_kind, round_variant_id')
             .eq('proof_version_id', inherited.id)
             .order('sort_order'),
           supabase
             .from('proof_name_approvals')
             .select('*')
             .eq('proof_version_id', inherited.id),
+          isVariantRoundSource
+            ? supabase
+                .from('proof_round_variants')
+                .select('id, code, display_name, sort_order')
+                .eq('proof_version_id', inherited.id)
+                .order('sort_order')
+            : Promise.resolve({ data: [], error: null }),
+          isVariantRoundSource
+            ? supabase
+                .from('proof_events')
+                .select('round_variant_id')
+                .eq('proof_version_id', inherited.id)
+                .eq('event_type', 'request_changes')
+                .not('round_variant_id', 'is', null)
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
         ])
         if (cancelled) return
 
@@ -729,11 +810,12 @@ export default function NewVersionPage() {
           is_qr_code: boolean | null
           qr_decoded_data: string | null
           qr_kind: QrKind | null
+          round_variant_id: string | null
         }[]
         const imageRows = allImageRows.filter((r) => r.is_qr_code !== true)
         const qrRows = allImageRows.filter((r) => r.is_qr_code === true)
 
-        const imagesWithUrls: V1Image[] = await Promise.all(
+        const allImagesWithUrls: V1Image[] = await Promise.all(
           imageRows.map(async (r) => {
             const { data: urlData } = await supabase.storage
               .from('proof-images')
@@ -746,9 +828,33 @@ export default function NewVersionPage() {
               associated_name: r.associated_name,
               material_option: r.material_option,
               side: r.side,
+              round_variant_id: r.round_variant_id,
             }
           }),
         )
+
+        // Variant-round predecessor: decide which variant's images
+        // the form should carry by default. Customer's locked
+        // selection wins (the customer already declared a direction
+        // — the form just confirms it). Without a lock, fall back
+        // to the first variant in sort order; the designer can flip
+        // the picker if they're advancing a different direction
+        // chosen off-platform (the common case during the email-
+        // feedback rollout). Filtered to the selected variant's
+        // images before any shape derivation runs, so sidedness /
+        // shared inference sees only the chosen direction.
+        const sourceVariants = (variantsResult.data ?? []) as SourceVariant[]
+        const customerLockedVariantId =
+          (lockResult.data as { round_variant_id: string | null } | null)?.round_variant_id ?? null
+        const defaultCarryVariantId = isVariantRoundSource
+          ? (customerLockedVariantId ?? sourceVariants[0]?.id ?? null)
+          : null
+        const imagesWithUrls: V1Image[] = isVariantRoundSource && defaultCarryVariantId
+          ? allImagesWithUrls.filter((img) => img.round_variant_id === defaultCarryVariantId)
+          : allImagesWithUrls
+        if (isVariantRoundSource) {
+          setCarryVariantSelection(defaultCarryVariantId)
+        }
 
         // Seed the QR section with v1's QR rows as 'existing'
         // entries. The designer can keep / remove / add from this
@@ -789,12 +895,16 @@ export default function NewVersionPage() {
           names: Array.isArray(inherited.names) ? inherited.names : [],
           materialOptions: Array.isArray(inherited.material_options) ? inherited.material_options : [],
           images: imagesWithUrls,
+          allImages: allImagesWithUrls,
           approvalsByName,
           qrRows: qrRows.map((r) => ({
             id: r.id,
             associated_name: r.associated_name,
             decoded_data: r.qr_decoded_data ?? '',
           })),
+          sourceIsVariantRound: isVariantRoundSource,
+          sourceVariants,
+          customerLockedVariantId,
         })
         setKeepByV1RowId(keepDefaults)
 
@@ -1830,6 +1940,44 @@ export default function NewVersionPage() {
       }
       return out
     })
+  }
+
+  // Re-scope the carry-forward to a different source variant. Called
+  // by the picker rendered at the top of the Proof Images section
+  // when v(N-1) was a variant round.
+  //
+  // Re-filters v1Carry.images down to the newly-chosen variant's
+  // images (the unfiltered set lives in v1Carry.allImages, populated
+  // once at load time). Keep state is reset to true for every image
+  // in the new variant — same default as the initial load. Any
+  // pending replacement files for the previous variant's images get
+  // cleaned up so we don't leak blob URLs or carry stale designer
+  // input across direction flips.
+  //
+  // Shape inheritance (sidedness / shared) is NOT re-derived here.
+  // If the previous variant was 2-sided and the new variant is 1-
+  // sided, the form's sidedness control stays at 2-sided and the
+  // designer can flip it manually if needed. Re-deriving silently
+  // would risk stomping on whatever shape choices the designer has
+  // already made — picker changes are conceptually about scope, not
+  // structure.
+  //
+  // No-op when the predecessor wasn't a variant round; the picker
+  // doesn't render on that path so this handler shouldn't be
+  // called.
+  function handleCarryVariantChange(nextVariantId: string) {
+    if (!v1Carry || !v1Carry.sourceIsVariantRound) return
+    if (nextVariantId === carryVariantSelection) return
+    const refiltered = v1Carry.allImages.filter((img) => img.round_variant_id === nextVariantId)
+    const previousVariantImages = v1Carry.images
+    const refilteredIds = new Set(refiltered.map((i) => i.v1RowId))
+    const orphaned = previousVariantImages.filter((img) => !refilteredIds.has(img.v1RowId))
+    setCarryVariantSelection(nextVariantId)
+    setV1Carry({ ...v1Carry, images: refiltered })
+    const nextKeep: Record<string, boolean> = {}
+    for (const img of refiltered) nextKeep[img.v1RowId] = true
+    setKeepByV1RowId(nextKeep)
+    cleanupReplacementsFor(orphaned)
   }
 
   function confirmShapeFlip(vanishing: V1Image[]): boolean {
@@ -4361,6 +4509,72 @@ export default function NewVersionPage() {
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
               {v1Carry ? `Proof images, carrying from v${v1Carry.versionNumber}` : 'Proof images'}
             </h2>
+
+            {/* Variant-round carry picker. Renders only when v(N-1)
+                was a variant round AND has at least one variant on
+                file. Lets the designer pick which direction the new
+                version continues from — the customer's locked choice
+                is preselected when available, otherwise the first
+                variant in sort order wins. Changing the picker re-
+                filters v1Carry.images so only the chosen variant's
+                images appear in the carry slots below; the others
+                stay in the DB on v(N-1) as audit trail and don't
+                propagate forward.
+
+                Hybrid email-feedback note: the customer-locked id
+                is null while you're still routing direction decisions
+                off-platform. The "Default — please confirm" hint
+                under the picker is the form's nudge to verify the
+                pre-pick before saving, since the DB has no signal
+                about which direction was agreed by email. */}
+            {v1Carry && v1Carry.sourceIsVariantRound && v1Carry.sourceVariants.length > 0 && (
+              <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <p className="text-sm font-semibold text-amber-900">
+                    Continuing from which direction?
+                  </p>
+                  <p className="text-xs text-amber-800">
+                    v{v1Carry.versionNumber} was a variant round — only the chosen direction&apos;s images carry across.
+                  </p>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {v1Carry.sourceVariants.map((variant) => {
+                    const isSelected = variant.id === carryVariantSelection
+                    const isCustomerLocked = variant.id === v1Carry.customerLockedVariantId
+                    return (
+                      <button
+                        key={variant.id}
+                        type="button"
+                        onClick={() => handleCarryVariantChange(variant.id)}
+                        className={[
+                          'inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors',
+                          isSelected
+                            ? 'border-amber-700 bg-amber-700 text-white shadow-sm'
+                            : 'border-amber-300 bg-white text-amber-900 hover:border-amber-500 hover:bg-amber-100',
+                        ].join(' ')}
+                      >
+                        <span>{variant.display_name}</span>
+                        {isCustomerLocked && (
+                          <span
+                            className={[
+                              'rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                              isSelected ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800',
+                            ].join(' ')}
+                          >
+                            Customer pick
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+                {v1Carry.customerLockedVariantId == null && (
+                  <p className="mt-2.5 text-xs text-amber-800">
+                    No customer selection on file — defaulted to <strong>{v1Carry.sourceVariants[0]?.display_name}</strong>. Switch above if the agreed direction was different.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Section-level batch drop zone. Routes drops through
                 addFilesBatch which auto-distributes each file to a
