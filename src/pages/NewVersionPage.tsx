@@ -185,7 +185,27 @@ interface V1CarryContext {
   // assignment and the decoded payload; comparison against v2's
   // qrEntries is multiset-byte-equality on decoded_data within
   // the slot's coordinates.
+  //
+  // Filtered to the currently-selected source variant when the
+  // predecessor was a variant round (mirrors `images` above).
+  // Equal to allQrRows on standard-proof predecessors.
   qrRows: { id: string; associated_name: string | null; decoded_data: string }[]
+  // Unfiltered v(N-1) QR row set, retained so the picker change
+  // handler can re-filter without re-running the network fetch.
+  // Carries round_variant_id so re-filtering is one filter call.
+  // Equal to qrRows on standard-proof predecessors.
+  allQrRows: {
+    id: string
+    associated_name: string | null
+    decoded_data: string
+    round_variant_id: string | null
+  }[]
+  // Pre-fetched QrEntry shapes for every v(N-1) QR row across
+  // variants. Picker change re-seeds qrEntries from this cache so
+  // the designer doesn't wait on a fresh signed-URL fetch round-
+  // trip. Signed URLs expire after an hour — same horizon the
+  // initial load uses, no worse on picker change.
+  allQrEntries: QrEntry[]
   // Variant-round predecessor flag. True iff v(N-1).is_variant_round
   // — gates the picker UI and the filter in handleCarryVariantChange.
   sourceIsVariantRound: boolean
@@ -889,7 +909,14 @@ export default function NewVersionPage() {
         // baseline; carry-forward of qr_confirmed_at on the
         // associated approvals is gated below on decoded-data
         // byte-identity per slot (migration 000169's contract).
-        const v1QrEntries: QrEntry[] = await Promise.all(
+        //
+        // Signed URLs are pre-fetched here for EVERY v(N-1) QR row
+        // (across all source variants), then filtered to the
+        // picked variant for the initial qrEntries state. The
+        // unfiltered set goes into v1Carry.allQrEntries so a
+        // picker change can re-seed synchronously without a fresh
+        // network round-trip. Same logic as images / allImages.
+        const allV1QrEntries: QrEntry[] = await Promise.all(
           qrRows.map(async (r) => {
             const { data: urlData } = await supabase.storage
               .from('proof-images')
@@ -906,6 +933,17 @@ export default function NewVersionPage() {
             }
           }),
         )
+        // Map v1 QR row id → its round_variant_id. Used both for
+        // the initial filter below and as the lookup the picker
+        // change handler runs to re-scope qrEntries.
+        const qrRowVariantById = new Map<string, string | null>(
+          qrRows.map((r) => [r.id, r.round_variant_id ?? null]),
+        )
+        const v1QrEntries: QrEntry[] = isVariantRoundSource && defaultCarryVariantId
+          ? allV1QrEntries.filter(
+              (e) => qrRowVariantById.get(e.id) === defaultCarryVariantId,
+            )
+          : allV1QrEntries
         setQrEntries(v1QrEntries)
         if (cancelled) return
 
@@ -917,6 +955,20 @@ export default function NewVersionPage() {
         const keepDefaults: Record<string, boolean> = {}
         for (const img of imagesWithUrls) keepDefaults[img.v1RowId] = true
 
+        // Mirror the images/allImages split for QR rows: qrRows is
+        // the picked-variant subset that the byte-identity check
+        // reads; allQrRows holds the full set so picker changes can
+        // re-filter without a fresh fetch. Standard-proof
+        // predecessors collapse the two onto the same data.
+        const allV1QrRows = qrRows.map((r) => ({
+          id: r.id,
+          associated_name: r.associated_name,
+          decoded_data: r.qr_decoded_data ?? '',
+          round_variant_id: r.round_variant_id ?? null,
+        }))
+        const filteredV1QrRows = isVariantRoundSource && defaultCarryVariantId
+          ? allV1QrRows.filter((r) => r.round_variant_id === defaultCarryVariantId)
+          : allV1QrRows
         setV1Carry({
           versionId: inherited.id,
           versionNumber: inherited.version_number,
@@ -925,11 +977,9 @@ export default function NewVersionPage() {
           images: imagesWithUrls,
           allImages: allImagesWithUrls,
           approvalsByName,
-          qrRows: qrRows.map((r) => ({
-            id: r.id,
-            associated_name: r.associated_name,
-            decoded_data: r.qr_decoded_data ?? '',
-          })),
+          qrRows: filteredV1QrRows,
+          allQrRows: allV1QrRows,
+          allQrEntries: allV1QrEntries,
           sourceIsVariantRound: isVariantRoundSource,
           sourceVariants,
           customerLockedVariantId,
@@ -2059,11 +2109,41 @@ export default function NewVersionPage() {
     const previousVariantImages = v1Carry.images
     const refilteredIds = new Set(refiltered.map((i) => i.v1RowId))
     const orphaned = previousVariantImages.filter((img) => !refilteredIds.has(img.v1RowId))
+
+    // Mirror the image re-scope for QR rows: filter v1Carry.qrRows
+    // (byte-identity source) down to the picked variant, and re-
+    // seed qrEntries from the pre-fetched allQrEntries cache. The
+    // 'new' QR entries the designer added in this session survive
+    // the flip; only 'existing' entries get re-scoped to the new
+    // variant. qrKeepOverrides are pruned to keys still present
+    // in the re-seeded entries so a stale override doesn't bleed
+    // across direction changes.
+    const refilteredQrRows =
+      nextVariantId === START_FRESH_SENTINEL
+        ? []
+        : v1Carry.allQrRows.filter((r) => r.round_variant_id === nextVariantId)
+    const newVariantExistingIds = new Set(refilteredQrRows.map((r) => r.id))
+    const newVariantExistingEntries = v1Carry.allQrEntries.filter((e) =>
+      newVariantExistingIds.has(e.id),
+    )
+    const refilteredQrEntries: QrEntry[] = [
+      ...newVariantExistingEntries,
+      ...qrEntries.filter((e) => e.source === 'new'),
+    ]
+    const survivingQrIds = new Set(refilteredQrEntries.map((e) => e.id))
     setCarryVariantSelection(nextVariantId)
-    setV1Carry({ ...v1Carry, images: refiltered })
+    setV1Carry({ ...v1Carry, images: refiltered, qrRows: refilteredQrRows })
     const nextKeep: Record<string, boolean> = {}
     for (const img of refiltered) nextKeep[img.v1RowId] = true
     setKeepByV1RowId(nextKeep)
+    setQrEntries(refilteredQrEntries)
+    setQrKeepOverrides((prev) => {
+      const out: Record<string, boolean> = {}
+      for (const [k, v] of Object.entries(prev)) {
+        if (survivingQrIds.has(k)) out[k] = v
+      }
+      return out
+    })
     cleanupReplacementsFor(orphaned)
     // Shape state per picker selection.
     //
