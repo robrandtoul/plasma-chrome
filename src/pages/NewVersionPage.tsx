@@ -2612,31 +2612,57 @@ export default function NewVersionPage() {
     // shape, so this normalisation is only ever reached for rows
     // whose v1 side was null and whose slot still exists on the
     // front side of v2.
-    const carriedInserts = carriedV1Rows.map((img) => ({
-      proof_version_id: versionData.id,
-      image_path: img.file_path,
-      material_option: img.material_option,
-      original_filename: img.original_filename,
-      associated_name: img.associated_name,
-      side: (img.side ?? 'front') as 'front' | 'back',
-    }))
+    // Stamp variant-round carries with the first selected option so
+    // the DB row lands inside v(N)'s option universe instead of as
+    // a null orphan. Mirrors the render filter above which renders
+    // these carries inside the first tab's slot grid. Standard-proof
+    // carries pass through unchanged — img.material_option is
+    // already a valid option code (or null on a v(N-1) without
+    // option tabs, in which case v(N) also has no tabs and null is
+    // the right answer).
+    const stampedFirstOption = selectedOptions[0] ?? null
+    const isVariantRoundCarrySource = v1Carry?.sourceIsVariantRound === true
+    const carriedInserts = carriedV1Rows.map((img) => {
+      const stampedOption =
+        isVariantRoundCarrySource && img.material_option == null && stampedFirstOption
+          ? stampedFirstOption
+          : img.material_option
+      return {
+        proof_version_id: versionData.id,
+        image_path: img.file_path,
+        material_option: stampedOption,
+        original_filename: img.original_filename,
+        associated_name: img.associated_name,
+        side: (img.side ?? 'front') as 'front' | 'back',
+      }
+    })
 
     // uploadedPaths is laid out as [replacements..., fresh...];
     // slice accordingly to assign paths to the right inserts.
     const replacementPaths = uploadedPaths.slice(0, replacementEntries.length)
     const freshPaths = uploadedPaths.slice(replacementEntries.length)
 
-    const replacementInserts = replacementEntries.map((r, i) => ({
-      proof_version_id: versionData.id,
-      image_path: replacementPaths[i],
-      material_option: r.v1Img.material_option,
-      original_filename: r.file.name,
-      associated_name: r.v1Img.associated_name,
-      // Replacement inherits the v1 row's slot (same associated_name,
-      // same side). Null-side v1 rows normalise to 'front' — same
-      // back-compat rule as carriedInserts.
-      side: (r.v1Img.side ?? 'front') as 'front' | 'back',
-    }))
+    const replacementInserts = replacementEntries.map((r, i) => {
+      // Same variant-round option stamp as carriedInserts above.
+      // If the designer dropped a new file onto a variant-round
+      // carry's slot, the replacement should land in the same
+      // first-tab slot the underlying carry would have occupied.
+      const stampedOption =
+        isVariantRoundCarrySource && r.v1Img.material_option == null && stampedFirstOption
+          ? stampedFirstOption
+          : r.v1Img.material_option
+      return {
+        proof_version_id: versionData.id,
+        image_path: replacementPaths[i],
+        material_option: stampedOption,
+        original_filename: r.file.name,
+        associated_name: r.v1Img.associated_name,
+        // Replacement inherits the v1 row's slot (same associated_name,
+        // same side). Null-side v1 rows normalise to 'front' — same
+        // back-compat rule as carriedInserts.
+        side: (r.v1Img.side ?? 'front') as 'front' | 'back',
+      }
+    })
 
     const freshInserts = allEntries.map(({ entry, option }, i) => ({
       proof_version_id: versionData.id,
@@ -4750,8 +4776,31 @@ export default function NewVersionPage() {
               const validSlots = new Set(slotTuples.map((s) => slotKey(s.identity, s.side)))
               const carryCellsBySlot: Record<string, V1Image[]> = {}
               if (v1Carry) {
+                // Variant-round carries arrive with material_option=null
+                // because the parent variant round had no option tabs.
+                // When v(N) turns option mode on, those carries don't
+                // match any tab code via the equality check below, so
+                // they'd vanish from the slot grid entirely — which is
+                // what we saw when testing the picker (carry slot
+                // empty even after picking a variant). The designer has
+                // already declared a continuing direction via the
+                // picker; the stamp-to-tab decision collapses to "the
+                // first tab the designer enabled", since variant
+                // rounds don't carry an option signal forward. The
+                // save path below mirrors this rule so the row lands
+                // in the DB with a real option code instead of another
+                // null orphan.
+                const firstSelectedOption = selectedOptions[0] ?? ''
+                const isVariantRoundCarry = v1Carry.sourceIsVariantRound === true
                 for (const img of v1Carry.images) {
-                  if ((img.material_option ?? '') !== activeCode) continue
+                  const imgOption = img.material_option ?? ''
+                  const matchesActiveTab = imgOption === activeCode
+                  const matchesViaVariantRound =
+                    isVariantRoundCarry &&
+                    img.material_option == null &&
+                    activeCode === firstSelectedOption &&
+                    firstSelectedOption !== ''
+                  if (!matchesActiveTab && !matchesViaVariantRound) continue
                   const identity = img.associated_name ?? SHARED_APPROVAL_KEY
                   const side = img.side ?? 'front'
                   const key = slotKey(identity, side)
