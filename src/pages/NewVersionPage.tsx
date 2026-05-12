@@ -2208,18 +2208,6 @@ export default function NewVersionPage() {
     }
   }
 
-  function confirmShapeFlip(vanishing: V1Image[]): boolean {
-    if (!v1Carry || vanishing.length === 0) return true
-    const approvedCount = vanishing.filter((i) => {
-      const key = i.associated_name ?? SHARED_APPROVAL_KEY
-      return v1Carry.approvalsByName[key]?.state === 'approved'
-    }).length
-    if (approvedCount === 0) return true
-    return window.confirm(
-      `Flipping this will discard customer approval on ${approvedCount} image${approvedCount === 1 ? '' : 's'}. Continue?`,
-    )
-  }
-
   function handleSidednessChange(next: 'one-sided' | 'two-sided') {
     if (next === sidedness) return
     // Two-sided → one-sided: drops every back-side v1 image.
@@ -2274,7 +2262,7 @@ export default function NewVersionPage() {
       }).length
       // If nothing is approved AND nothing fresh is at risk, the
       // flip is purely cosmetic on v1 carry state and we can skip
-      // the prompt (matches existing confirmShapeFlip semantics).
+      // the prompt — non-approved carries are silently dropped.
       if (v1ApprovedCount > 0 || vanishingFresh.length > 0) {
         const carriedLabel = v1ApprovedCount === 1 ? '1 carried image' : `${v1ApprovedCount} carried images`
         const uploadedLabel = vanishingFresh.length === 1 ? '1 uploaded image' : `${vanishingFresh.length} uploaded images`
@@ -2380,28 +2368,69 @@ export default function NewVersionPage() {
     // new tiered-membership model, cardType no longer changes
     // the shape when names has ≥1 entries — both modes produce
     // identical per-identity slots, differing only in UI copy
-    // and validation relaxation. So vanishing v1 images are
-    // computed against the proposed (cardType=next) slot universe
-    // using the same rule as save-path slotStillValid.
+    // and validation relaxation. So vanishing images are computed
+    // against the proposed (cardType=next) slot universe using the
+    // same rule as save-path slotStillValid.
+    //
+    // Both v1 carries AND designer-uploaded fresh entries are at
+    // risk when names=[] and the flip moves between
+    // "single shared slot per side" (membership-single) and the
+    // shared/sidedness-derived business-side shape. Cleanup mirrors
+    // handleSidednessChange / handleSharedChange's two-bucket
+    // pattern so fresh entries don't silently persist as orphans
+    // in imagesByOption past the flip.
     const proposedMembershipSingle = next === 'membership' && names.length === 0
-    const vanishing = v1Carry
-      ? v1Carry.images.filter((img) => {
-          const normalizedSide: 'front' | 'back' = img.side ?? 'front'
-          if (normalizedSide === 'back' && sidedness === 'one-sided') return true
-          if (proposedMembershipSingle) {
-            // Only a single Shared slot per side exists; per-
-            // identity v1 images orphan.
-            return img.associated_name != null
-          }
-          const isSharedSlotForSide =
-            sidedness === 'two-sided' && effectiveShared && normalizedSide === 'front'
-          if (isSharedSlotForSide) return img.associated_name != null
-          if (img.associated_name == null) return true
-          return !names.includes(img.associated_name)
-        })
+    const wouldOrphan = (assocName: string | null, side: 'front' | 'back' | null): boolean => {
+      const normalizedSide: 'front' | 'back' = side ?? 'front'
+      if (normalizedSide === 'back' && sidedness === 'one-sided') return true
+      if (proposedMembershipSingle) {
+        // Only a single Shared slot per side exists; per-identity
+        // images orphan.
+        return assocName != null
+      }
+      const isSharedSlotForSide =
+        sidedness === 'two-sided' && effectiveShared && normalizedSide === 'front'
+      if (isSharedSlotForSide) return assocName != null
+      if (assocName == null) return true
+      return !names.includes(assocName)
+    }
+    const vanishingV1: V1Image[] = v1Carry
+      ? v1Carry.images.filter((img) => wouldOrphan(img.associated_name, img.side))
       : []
-    if (!confirmShapeFlip(vanishing)) return
-    cleanupReplacementsFor(vanishing)
+    const vanishingFresh: { optionCode: string; entry: ImageEntry }[] = []
+    for (const [optionCode, list] of Object.entries(imagesByOption)) {
+      for (const entry of list) {
+        if (wouldOrphan(entry.associated_name, entry.side)) {
+          vanishingFresh.push({ optionCode, entry })
+        }
+      }
+    }
+    if (vanishingV1.length > 0 || vanishingFresh.length > 0) {
+      const v1ApprovedCount = vanishingV1.filter((i) => {
+        const key = i.associated_name ?? SHARED_APPROVAL_KEY
+        return v1Carry?.approvalsByName[key]?.state === 'approved'
+      }).length
+      if (v1ApprovedCount > 0 || vanishingFresh.length > 0) {
+        const carriedLabel = v1ApprovedCount === 1 ? '1 carried image' : `${v1ApprovedCount} carried images`
+        const uploadedLabel = vanishingFresh.length === 1 ? '1 uploaded image' : `${vanishingFresh.length} uploaded images`
+        const proceed = window.confirm(
+          `Switching to ${next} will discard ${carriedLabel} and ${uploadedLabel}. Continue?`,
+        )
+        if (!proceed) return
+      }
+    }
+    cleanupReplacementsFor(vanishingV1)
+    if (vanishingFresh.length > 0) {
+      const idsToDrop = new Set(vanishingFresh.map((v) => v.entry.localId))
+      for (const { entry } of vanishingFresh) URL.revokeObjectURL(entry.preview)
+      setImagesByOption((prev) => {
+        const out: Record<string, ImageEntry[]> = {}
+        for (const [key, list] of Object.entries(prev)) {
+          out[key] = list.filter((e) => !idsToDrop.has(e.localId))
+        }
+        return out
+      })
+    }
     setCardType(next)
     // Names + shared state are intentionally preserved across the
     // flip. When flipping to membership the chip input just re-
