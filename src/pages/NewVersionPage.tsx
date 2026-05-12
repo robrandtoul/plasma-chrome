@@ -2170,6 +2170,37 @@ export default function NewVersionPage() {
     // scope, not structure. Forcing shared=true here would stomp on
     // any explicit toggle the designer made between flips.
     if (nextVariantId === START_FRESH_SENTINEL) {
+      // Match handleSharedChange's ON→OFF fresh-orphan cleanup,
+      // silently — Start fresh is itself the designer's "discard
+      // everything from this carry context" gesture, so prompting
+      // again with a confirm here would be a second nag for one
+      // intent. Any front upload they made into the SHARED slot
+      // (assoc=null) before clicking Start fresh would orphan once
+      // shared flips to false, since the new slot universe is per-
+      // name and the null-assoc entry has no slot to land in. The
+      // cell builder hides them from view; without this cleanup
+      // they'd silently persist in imagesByOption and get written
+      // through freshInserts on save.
+      if (shared) {
+        const vanishingFresh: ImageEntry[] = []
+        for (const list of Object.values(imagesByOption)) {
+          for (const entry of list) {
+            if ((entry.side ?? 'front') !== 'front') continue
+            if (entry.associated_name == null) vanishingFresh.push(entry)
+          }
+        }
+        if (vanishingFresh.length > 0) {
+          const idsToDrop = new Set(vanishingFresh.map((e) => e.localId))
+          for (const entry of vanishingFresh) URL.revokeObjectURL(entry.preview)
+          setImagesByOption((prev) => {
+            const out: Record<string, ImageEntry[]> = {}
+            for (const [key, list] of Object.entries(prev)) {
+              out[key] = list.filter((e) => !idsToDrop.has(e.localId))
+            }
+            return out
+          })
+        }
+      }
       setShared(false)
       setFormExpanded(true)
     } else if (carryVariantSelection === START_FRESH_SENTINEL) {
@@ -2282,19 +2313,63 @@ export default function NewVersionPage() {
     if (next === shared) return
     // Shared only renders on two-sided, so this handler is
     // unreachable on one-sided. Front-only semantics:
-    //   ON→OFF: shared-front v1 images vanish (replaced by
-    //           per-name front slots).
-    //   OFF→ON: per-name front v1 images vanish (replaced by a
-    //           single shared-front slot).
-    // Back-side v1 images are unaffected either way.
-    const vanishing = v1Carry
+    //   ON→OFF: shared-front images vanish (front slot universe
+    //           collapses to per-name).
+    //   OFF→ON: per-name front images vanish (front slot universe
+    //           collapses to a single shared slot).
+    // Back-side images are unaffected either way.
+    //
+    // Both v1 carries AND designer-uploaded fresh entries are at
+    // risk when the front slot universe collapses; the cleanup
+    // mirrors handleSidednessChange's two-bucket pattern so the
+    // designer doesn't accidentally save an orphan front image
+    // that the cell builder is hiding from view.
+    const vanishingV1 = v1Carry
       ? v1Carry.images.filter((i) => {
           if ((i.side ?? 'front') !== 'front') return false
           return next ? i.associated_name != null : i.associated_name == null
         })
       : []
-    if (!confirmShapeFlip(vanishing)) return
-    cleanupReplacementsFor(vanishing)
+    const vanishingFresh: { optionCode: string; entry: ImageEntry }[] = []
+    for (const [optionCode, list] of Object.entries(imagesByOption)) {
+      for (const entry of list) {
+        if ((entry.side ?? 'front') !== 'front') continue
+        const wouldOrphan = next
+          ? entry.associated_name != null
+          : entry.associated_name == null
+        if (wouldOrphan) vanishingFresh.push({ optionCode, entry })
+      }
+    }
+    // Unified confirm — same shape handleSidednessChange uses.
+    // Prompts whenever any approved-v1 image OR any fresh upload
+    // is at risk, so the designer sees the full impact of the
+    // toggle before losing work.
+    if (vanishingV1.length > 0 || vanishingFresh.length > 0) {
+      const v1ApprovedCount = vanishingV1.filter((i) => {
+        const key = i.associated_name ?? SHARED_APPROVAL_KEY
+        return v1Carry?.approvalsByName[key]?.state === 'approved'
+      }).length
+      if (v1ApprovedCount > 0 || vanishingFresh.length > 0) {
+        const carriedLabel = v1ApprovedCount === 1 ? '1 carried image' : `${v1ApprovedCount} carried images`
+        const uploadedLabel = vanishingFresh.length === 1 ? '1 uploaded image' : `${vanishingFresh.length} uploaded images`
+        const proceed = window.confirm(
+          `Toggling shared ${next ? 'on' : 'off'} will discard ${carriedLabel} and ${uploadedLabel}. Continue?`,
+        )
+        if (!proceed) return
+      }
+    }
+    cleanupReplacementsFor(vanishingV1)
+    if (vanishingFresh.length > 0) {
+      const idsToDrop = new Set(vanishingFresh.map((v) => v.entry.localId))
+      for (const { entry } of vanishingFresh) URL.revokeObjectURL(entry.preview)
+      setImagesByOption((prev) => {
+        const out: Record<string, ImageEntry[]> = {}
+        for (const [key, list] of Object.entries(prev)) {
+          out[key] = list.filter((e) => !idsToDrop.has(e.localId))
+        }
+        return out
+      })
+    }
     setShared(next)
   }
 
