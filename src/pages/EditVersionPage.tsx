@@ -142,6 +142,14 @@ export default function EditVersionPage() {
   // diff at save time, same pattern as originalImageIds.
   const [qrEntries, setQrEntries] = useState<QrEntry[]>([])
   const [originalQrIds, setOriginalQrIds] = useState<Set<string>>(new Set())
+  // Snapshot of each existing QR's associated_name at load time. Used
+  // at save time to detect whether any kept QR's slot assignment
+  // changed — which is the third trigger for invalidating
+  // qr_confirmed_at on existing approvals (alongside add and remove).
+  // Migration 000169's contract: customer ticks "QRs OK" for the
+  // QR set visible to their slot; any mutation to that set means
+  // the prior tick no longer covers the current state.
+  const [originalQrAssocByEntryId, setOriginalQrAssocByEntryId] = useState<Record<string, string | null>>({})
   // Letterpress layer colours (migrations 000133 + 000135).
   // materialCode is the stable identifier the pickers key on; it
   // gates the block's visibility and the validation rules. Loaded
@@ -301,6 +309,9 @@ export default function EditVersionPage() {
     const ids = new Set(rawImages.map((img) => img.id))
     setOriginalImageIds(ids)
     setOriginalQrIds(new Set(rawQrRows.map((img) => img.id)))
+    setOriginalQrAssocByEntryId(
+      Object.fromEntries(rawQrRows.map((img) => [img.id, img.associated_name])),
+    )
 
     const withPreviews = await Promise.all(
       rawImages.map(async (img) => {
@@ -1262,6 +1273,52 @@ export default function EditVersionPage() {
         setError(`Failed to save QR codes: ${qrInsertErr.message}`)
         setSubmitting(false)
         return
+      }
+    }
+
+    // Migration 000169 — invalidate qr_confirmed_at on any
+    // proof_name_approvals row for this version whenever the QR set
+    // changed during this Edit. The customer's prior tick covered v1's
+    // QR contents; if any QR was added, removed, or reassigned to a
+    // different name, the tick no longer corresponds to what's visible
+    // on the version. Nulling the timestamp forces a re-confirmation
+    // (the auto-finalize predicate then declines the slot until the
+    // customer ticks again on the updated set).
+    //
+    // Detection covers the three QR-mutation paths above:
+    //   * removedQrIds.length > 0 — slot's set shrank
+    //   * newQrEntries.length > 0 — slot's set grew
+    //   * any kept existing QR's associated_name differs from the
+    //     load-time snapshot — slot membership shifted even though
+    //     the file set is unchanged
+    //
+    // Cautious-but-safe: nulls qr_confirmed_at across every slot on
+    // the version rather than per-slot. Adding/removing a Shared QR
+    // affects every named slot's QR set anyway, and per-slot diffing
+    // would mostly converge on the same result with more code.
+    const qrAssocChanged = qrEntries.some((entry) => {
+      if (entry.source !== 'existing') return false
+      const original = originalQrAssocByEntryId[entry.id]
+      return original !== entry.associatedName
+    })
+    const qrSetMutated =
+      removedQrIds.length > 0 || newQrEntries.length > 0 || qrAssocChanged
+    if (qrSetMutated) {
+      const { error: qrConfirmInvalidateErr } = await supabase
+        .from('proof_name_approvals')
+        .update({ qr_confirmed_at: null })
+        .eq('proof_version_id', versionId!)
+        .not('qr_confirmed_at', 'is', null)
+      if (qrConfirmInvalidateErr) {
+        // Soft-fail: the QR data has already saved, and the
+        // invalidation is belt-and-braces against the customer
+        // re-approving on stale ticks. Surface the error so the
+        // designer can re-trigger if needed, but don't block the
+        // Edit save.
+        console.error(
+          '[qr-confirm-invalidate] Failed to clear qr_confirmed_at on Edit:',
+          qrConfirmInvalidateErr.message,
+        )
       }
     }
 

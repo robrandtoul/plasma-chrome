@@ -575,6 +575,7 @@ export default function ProofDetailPage() {
           actor_ip: null
           actor_ua: null
           updated_at: string
+          qr_confirmed_at: string
         }> = []
         for (const key of keys) {
           const existing = existingByName.get(key)
@@ -588,6 +589,19 @@ export default function ProofDetailPage() {
               actor_ip: null,
               actor_ua: null,
               updated_at: now,
+              // Migration 000169 — designer override stamps
+              // qr_confirmed_at=now() per the migration comment
+              // ("the designer-override path (Mark as approved)
+              // writing qr_confirmed_at = now() are handled in
+              // their respective TSX files"). Without this, the
+              // approval row lands in an inconsistent state
+              // (state='approved' AND version has QRs AND
+              // qr_confirmed_at IS NULL) that the DB predicate
+              // refuses to count, byte-identity carry-forward then
+              // propagates the null into v(N+1), and any future
+              // re-finalize after reopen disagrees with the
+              // explicit status='approved' write below.
+              qr_confirmed_at: now,
             })
           } else if (existing.state === 'changes_requested') {
             overrides.push(existing)
@@ -656,6 +670,15 @@ export default function ProofDetailPage() {
               overridden_by_user_id: designerUserId,
               overridden_at: now,
               updated_at: now,
+              // Migration 000169 — see freshInserts comment above.
+              // The customer originally requested changes (no
+              // qr_confirmed_at on the changes_requested row), so
+              // stamping the designer's override timestamp here
+              // closes the same predicate gap the fresh-insert path
+              // closes. Preserves the row's original actor_name and
+              // change_request so the names rollup keeps reading
+              // "(originally requested changes by …)".
+              qr_confirmed_at: now,
               // Deliberately NOT touching actor_name or change_request —
               // those preserve the customer's original feedback so
               // the names rollup can show
