@@ -2064,10 +2064,22 @@ export default function CustomerProofPage() {
     ? materialOptions.find(o => o.material_id === activeVersion.material_id && o.code === effectiveOptionCode) ?? null
     : null
 
-  // Filter images for the active option (if this version is in option mode)
+  // Filter images for the active option (if this version is in option mode).
+  // When the version has option tabs (versionOptions.length > 0) every image
+  // is expected to carry a non-null material_option matching one of the
+  // selected options — the save paths in NewVersionPage / EditVersionPage
+  // stamp the active tab onto every fresh upload. A null material_option in
+  // that context is an orphan, typically a variant-round carry-forward that
+  // arrived on a non-variant version (variant-round images have
+  // material_option = null by design, since variant rounds don't use option
+  // tabs). Treating those nulls as "shared across all tabs" would surface
+  // them alongside the real per-tab uploads, which is what we used to do
+  // and exactly the bug fixed here. The non-option-mode branch keeps
+  // returning every image untouched so legacy proofs that never used tabs
+  // continue to render their null-option images.
   const allVersionImages = activeVersion ? (versionImages[activeVersion.id] ?? []) : []
   const displayImages = versionOptions.length > 0 && effectiveOptionCode
-    ? allVersionImages.filter(img => img.material_option === effectiveOptionCode || img.material_option == null)
+    ? allVersionImages.filter(img => img.material_option === effectiveOptionCode)
     : allVersionImages
 
   // Live pricing snapshot for the active version (Phase 2). Replaces
