@@ -7,6 +7,7 @@ import { ImageGrid } from './ImageGrid'
 import { safeRemoveImagePaths } from '../lib/imageStorage'
 import type {
   Currency,
+  LetterpressCoreColour,
   PricingSnapshot,
   ProofNameApproval,
   PublicMaterialVariant,
@@ -15,6 +16,8 @@ import type {
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { DEFAULT_DISPLAY_QUANTITIES } from '../lib/constants'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
+import { CoreColourSwatch } from './CoreColourSwatch'
+import { stripDefaultSuffix } from '../lib/labels'
 
 export interface ModalVersion {
   id: string
@@ -81,6 +84,15 @@ export interface ModalVersion {
   // ship surfaces per-version send history inside this modal;
   // Ship 3 doesn't render it here, only on the page.
   last_reply_sent_at: string | null
+  // Letterpress layer colours (migrations 000133 + 000135). Null on
+  // any non-letterpress version, on per-direction-pricing variant
+  // rounds (form-save forces null), and on legacy pre-000133
+  // letterpress versions. The modal docket renders three rows
+  // (Front / Core / Back) only when all three are non-null AND the
+  // ids resolve in the coreColours catalogue passed in alongside.
+  front_colour_id: string | null
+  core_colour_id: string | null
+  back_colour_id: string | null
 }
 
 interface ModalImage {
@@ -107,6 +119,7 @@ export default function VersionDetailModal({
   onVersionUpdated,
   onDeleteProofRequested,
   onApprovalsChanged,
+  coreColours,
 }: {
   version: ModalVersion
   proofId: string
@@ -128,6 +141,11 @@ export default function VersionDetailModal({
   // separately from the modal's own scoped fetch. No-op if nothing
   // was written; no-op if the prop isn't supplied.
   onApprovalsChanged?: () => void
+  // Letterpress layer-colour catalogue (migrations 000133 + 000135).
+  // Modal looks up each layer's name + hex via id; passes through
+  // empty array on pages that don't load it (no letterpress version
+  // exists on the proof) — the docket rows quietly drop out.
+  coreColours?: LetterpressCoreColour[]
 }) {
   const navigate = useNavigate()
   const [images, setImages] = useState<ModalImage[]>([])
@@ -602,6 +620,48 @@ export default function VersionDetailModal({
                       <dd className="mt-1 text-sm font-medium text-gray-900">{version.ink_names.join(', ')}</dd>
                     </div>
                   )}
+                  {/* Letterpress layer colours (migrations 000133 +
+                      000135). All three rows render together or not
+                      at all — gating on every colour id resolving in
+                      the catalogue mirrors the customer-page band's
+                      front_colour_name && core_colour_name &&
+                      back_colour_name check, so non-letterpress
+                      versions, per-direction-pricing variant rounds,
+                      and pre-000133 legacy rows drop out silently.
+                      Names pass through stripDefaultSuffix so admin
+                      hints like "Ebony (default black)" render as
+                      "Ebony" on this surface, matching the customer
+                      page. */}
+                  {(() => {
+                    if (!coreColours || coreColours.length === 0) return null
+                    const front = version.front_colour_id
+                      ? coreColours.find((c) => c.id === version.front_colour_id)
+                      : null
+                    const core = version.core_colour_id
+                      ? coreColours.find((c) => c.id === version.core_colour_id)
+                      : null
+                    const back = version.back_colour_id
+                      ? coreColours.find((c) => c.id === version.back_colour_id)
+                      : null
+                    if (!front || !core || !back) return null
+                    return (
+                      <>
+                        {[
+                          { label: 'Front', colour: front },
+                          { label: 'Core', colour: core },
+                          { label: 'Back', colour: back },
+                        ].map(({ label, colour }) => (
+                          <div key={label}>
+                            <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</dt>
+                            <dd className="mt-1 flex items-center gap-2 text-sm font-medium text-gray-900">
+                              <CoreColourSwatch hex={colour.hex_value} size={14} ariaLabel={`${colour.name} swatch`} />
+                              <span>{stripDefaultSuffix(colour.name)}</span>
+                            </dd>
+                          </div>
+                        ))}
+                      </>
+                    )
+                  })()}
                   <div>
                     <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Added</dt>
                     <dd className="mt-1 text-sm font-medium text-gray-900">

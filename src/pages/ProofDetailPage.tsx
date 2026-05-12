@@ -11,7 +11,7 @@ import { firstName } from '../lib/firstName'
 import { getRepliesEnabled } from '../lib/repliesEnabled'
 import { logAudit } from '../lib/audit'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
-import type { ProofNameApproval } from '../lib/types'
+import type { LetterpressCoreColour, ProofNameApproval } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/sharedApproval'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
@@ -118,6 +118,16 @@ export default function ProofDetailPage() {
   // kept as a derived index rather than denormalised onto
   // proof_versions so the truth stays in the images table.
   const [versionsWithShared, setVersionsWithShared] = useState<Set<string>>(new Set())
+  // Letterpress layer-colour catalogue (migrations 000133 + 000135).
+  // Fetched once on mount and passed into VersionDetailModal so the
+  // docket can render Front / Core / Back rows for letterpress
+  // versions. Empty array on the more common non-letterpress paths;
+  // the modal's docket rows quietly drop out when the catalogue is
+  // empty or a colour id doesn't resolve. RLS already filters to
+  // is_active=true for the authenticated designer role, so inactive
+  // colours don't appear; legacy versions that referenced a now-
+  // inactive colour just won't render that layer's row.
+  const [coreColours, setCoreColours] = useState<LetterpressCoreColour[]>([])
   // Phase 2 Prompt 8 — proof_events audit detail for the Names
   // rollup. Loaded alongside approvals so each rollup row can
   // expand into the customer's own action detail (actor, comment,
@@ -190,6 +200,26 @@ export default function ProofDetailPage() {
     return () => { cancelled = true }
   }, [])
 
+  // Letterpress core-colour catalogue (migrations 000133 + 000135).
+  // Fetched once on mount and passed into VersionDetailModal. RLS
+  // filters to is_active=true for designers, so the array reflects
+  // the currently-available palette. Non-letterpress proofs never
+  // consult this, but the fetch is cheap (~8 rows) and avoids the
+  // gate-and-conditional-fetch complexity of probing the loaded
+  // versions list first.
+  useEffect(() => {
+    let cancelled = false
+    void supabase
+      .from('letterpress_core_colours')
+      .select('id, name, hex_value, is_active, sort_order')
+      .order('sort_order', { ascending: true })
+      .order('name', { ascending: true })
+      .then(({ data }) => {
+        if (!cancelled) setCoreColours((data ?? []) as LetterpressCoreColour[])
+      })
+    return () => { cancelled = true }
+  }, [])
+
   // Live realtime subscription — appends non-bot view rows to
   // viewsByVersion as they arrive, so the customer-viewed dot
   // updates without a refresh. Runs alongside the load-time
@@ -234,7 +264,7 @@ export default function ProofDetailPage() {
         .single(),
       supabase
         .from('proof_versions')
-        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, last_reply_sent_at, displayed_variant_ids, is_variant_round, is_per_direction_pricing, material_options, materials(display_quantities)')
+        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, last_reply_sent_at, displayed_variant_ids, is_variant_round, is_per_direction_pricing, material_options, front_colour_id, core_colour_id, back_colour_id, materials(display_quantities)')
         .eq('proof_id', proofId)
         .order('version_number', { ascending: false }),
     ])
@@ -2096,6 +2126,7 @@ export default function ProofDetailPage() {
           allVersions={versions}
           viewHistory={viewsByVersion.get(selectedVersion.id) ?? []}
           contactFullName={proof.contacts.full_name}
+          coreColours={coreColours}
           onClose={() => setSelectedVersion(null)}
           onApprovalsChanged={() => { if (id) loadProof(id) }}
           onVersionUpdated={handleVersionUpdated}
