@@ -267,6 +267,17 @@ export default function NewVersionPage() {
   // on Steel, or any non-Natural species on Wood) render as
   // EmptySlot cells on v2.
   const inheritedMaterialOptionsRef = useRef<string[] | null>(null)
+  // Flag set at inheritance-load time when v(N-1) was a variant round.
+  // Variant rounds carry material_options=[], so the inherited stash above
+  // stays null and the options-loading effect would otherwise fall through
+  // to its base-option default (e.g. Black Walnut on wood). That silent
+  // default never matches the direction the designer is actually carrying
+  // forward via the variant picker, leading to a "Bamboo image stamped as
+  // Black Walnut" bug at save time. When this ref is true the options
+  // effect skips the base-option fallback and leaves selectedOptions empty,
+  // forcing the designer to tick the species explicitly via the existing
+  // validation path. Cleared once the effect consumes it.
+  const inheritedSourceIsVariantRoundRef = useRef(false)
   // Two separate ink states so each form path (free-text vs per-ink) keeps
   // typing feel. They only cross over when the designer switches materials
   // between the "requires per-ink names" set and everything else.
@@ -441,6 +452,7 @@ export default function NewVersionPage() {
   const materialRef         = useRef<HTMLSelectElement>(null)
   const variantRef          = useRef<HTMLDivElement>(null)
   const currencyRef         = useRef<HTMLDivElement>(null)
+  const optionsRef          = useRef<HTMLDivElement>(null)
   const inkNamesRef         = useRef<HTMLDivElement>(null)
   const namesRef            = useRef<HTMLDivElement>(null)
   const frontColourRef      = useRef<HTMLDivElement>(null)
@@ -649,6 +661,12 @@ export default function NewVersionPage() {
           inherited.material_options.length > 0
         ) {
           inheritedMaterialOptionsRef.current = inherited.material_options
+        }
+        // Stash the variant-round source flag so the options effect
+        // can skip its base-option fallback when v(N-1) was a variant
+        // round. See the ref declaration for the rationale.
+        if (inherited.is_variant_round === true) {
+          inheritedSourceIsVariantRoundRef.current = true
         }
 
         // Ink names — inherited ink_names is a plain text[] on the
@@ -1109,10 +1127,28 @@ export default function NewVersionPage() {
           }
         }
         if (!optionsApplied) {
-          const base = options.find((o) => o.is_base) ?? options[0]
-          setSelectedOptions([base.code])
-          setActiveImageOption(base.code)
-          setImagesByOption({ [base.code]: [] })
+          // Variant-round predecessors don't carry an option signal —
+          // a v1 variant round comparing 5 wood species exposes nothing
+          // about which species v2 is for. Falling through to the base
+          // option here silently picks Black Walnut while the variant
+          // picker shows whatever direction the designer chose to carry,
+          // and on save the carry image gets stamped with the base
+          // code (see the stampedFirstOption path lower down). Leave
+          // selectedOptions empty so the option-picker validation
+          // surfaces it as a required choice the designer has to make.
+          // Cleared after consumption so a subsequent material swap on
+          // the same form still gets the friendly base-option default.
+          if (inheritedSourceIsVariantRoundRef.current) {
+            inheritedSourceIsVariantRoundRef.current = false
+            setSelectedOptions([])
+            setActiveImageOption('')
+            setImagesByOption({})
+          } else {
+            const base = options.find((o) => o.is_base) ?? options[0]
+            setSelectedOptions([base.code])
+            setActiveImageOption(base.code)
+            setImagesByOption({ [base.code]: [] })
+          }
         }
       }
     }
@@ -2189,6 +2225,9 @@ export default function NewVersionPage() {
         { key: 'material',       ref: materialRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'variant',        ref: variantRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'currency',       ref: currencyRef as unknown as React.RefObject<HTMLElement | null> },
+        // Options chips (Finish / Species) sit between the commercial
+        // fields and the layer-colour pickers in document order.
+        { key: 'options',        ref: optionsRef as unknown as React.RefObject<HTMLElement | null> },
         // Layer-colour pickers slot between options/finishes and
         // ink names in document order (front → core → back). Same
         // order in scroll-to-first-invalid so the focus jump is
@@ -3203,6 +3242,15 @@ export default function NewVersionPage() {
     currency:       isPerDirectionRound ? true : (isCustomQuote || currency !== null),
     inkNames:       isPerDirectionRound ? true : (!requiresInkNames || (inkCount > 0 && inkNameValidities.every(Boolean))),
     names:          isVariantRound ? true : namesValid,
+    // Options — required when the material exposes an option dimension
+    // (finish on metals, species on wood, etc.) and we're saving a
+    // standard proof. Variant-round + per-direction-pricing rounds
+    // hide the option picker entirely so they short-circuit to true.
+    // Standard v1 creation (no carry) defaults to the base option via
+    // the material-loading effect so this validation passes silently
+    // there too; the case it actually catches is "v(N-1) was a variant
+    // round and the designer hasn't picked a species yet for v(N)".
+    options:        (isVariantRound || isPerDirectionRound || !hasOptions) ? true : selectedOptions.length > 0,
     frontColour:    isPerDirectionRound ? true : (!requiresLayerColours || selectedFrontColourId !== null),
     coreColour:     isPerDirectionRound ? true : (!requiresLayerColours || selectedCoreColourId !== null),
     backColour:     isPerDirectionRound ? true : (!requiresLayerColours || selectedBackColourId !== null),
@@ -3987,14 +4035,17 @@ export default function NewVersionPage() {
             {/* Option selection — for materials that expose multi-options
                 (finishes on metals, species on wood, etc.) */}
             {hasOptions && (
-              <div className="mb-8">
+              <div ref={optionsRef} className="mb-8">
                 <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
                   <span>{optionLabelPlural}</span>
                   {carry.options.isCarried && inheritedVersionNumber != null && (
                     <CarriedPill edited={carry.options.isEdited} versionNumber={inheritedVersionNumber} />
                   )}
                 </label>
-                <div style={carriedFieldStyle(carry.options.isCarried, carry.options.isEdited)}>
+                <div
+                  className={shouldHighlight('options') ? 'rounded-xl p-2 ring-1 ring-rose-300' : ''}
+                  style={carriedFieldStyle(carry.options.isCarried, carry.options.isEdited)}
+                >
                   <div className="flex flex-wrap gap-2">
                     {availableOptions.map(o => {
                       const selected = selectedOptions.includes(o.code)
@@ -4019,6 +4070,13 @@ export default function NewVersionPage() {
                   <p className="mt-1.5 text-xs text-gray-500">
                     Each {optionLabelSingular.toLowerCase()} becomes a tab on the customer's view, with its own proof images and pricing.
                   </p>
+                  {shouldHighlight('options') && (
+                    <p className="mt-1.5 text-xs font-medium text-rose-500">
+                      {v1Carry?.sourceIsVariantRound
+                        ? `Pick the ${optionLabelSingular.toLowerCase()} this version is for.`
+                        : `Pick at least one ${optionLabelSingular.toLowerCase()}.`}
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -5332,6 +5390,7 @@ function missingFieldsHint(validations: Record<string, boolean>): string {
   if (!validations.currency) missing.push('a currency')
   if (!validations.material) missing.push('a material')
   if (!validations.variant) missing.push('a variant')
+  if (!validations.options) missing.push('an option')
   if (!validations.images) missing.push('at least one image')
   if (!validations.inkNames) missing.push('ink names')
   if (missing.length === 0) return 'Some required fields are incomplete'
