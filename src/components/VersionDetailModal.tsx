@@ -639,9 +639,30 @@ export default function VersionDetailModal({
                       customer views agree. Rendered before Shared
                       so the most specific approvals read first and
                       the cross-cutting Shared section sits at the
-                      bottom as the distinct entity it is. */}
+                      bottom as the distinct entity it is.
+
+                      Single-name collapse: when there's exactly one
+                      recipient, "Shared" has nobody else to be shared
+                      with — every shared image is effectively that
+                      one person's image. We fold null-name rows into
+                      the single name's section here so the modal
+                      reads "Chris · Front + Back" instead of a
+                      "Shared" heading alongside a "Chris" heading
+                      that mean the same thing. Schema stays as-is
+                      (the rows keep associated_name=null, allowing a
+                      future expansion to two recipients without
+                      recomposing images), and migration 000128
+                      already makes __shared__ implicit for split-
+                      name projects so approving the single name
+                      auto-finalizes the proof. The standalone Shared
+                      section only renders for names.length >= 2.
+                      names.length === 0 is handled by the flat
+                      ImageGrid branch above. */}
                   {version.names.map((name) => {
-                    const nameImages = images.filter((img) => img.associated_name === name)
+                    const collapseShared = version.names.length === 1
+                    const nameImages = collapseShared
+                      ? images.filter((img) => img.associated_name === name || img.associated_name == null)
+                      : images.filter((img) => img.associated_name === name)
                     const approval = approvals[name]
                     return (
                       <ApprovalGroup
@@ -662,14 +683,20 @@ export default function VersionDetailModal({
                     )
                   })}
 
-                  {/* Shared group — images without an associated_name
-                      apply to every recipient. Has its own approval
-                      controls via the SHARED_APPROVAL_KEY sentinel
-                      on proof_name_approvals. A light divider above
-                      the heading separates Shared from the per-name
-                      sections above, since it's a cross-cutting
-                      entity rather than another name. */}
-                  {(() => {
+                  {/* Standalone Shared section — split-name (2+)
+                      projects only. With one recipient the section
+                      above already swallowed the shared images, so
+                      this block sits dormant; with two or more
+                      recipients Shared is genuinely cross-cutting
+                      and keeps its own approval row. The approval
+                      controls hit the SHARED_APPROVAL_KEY sentinel
+                      on proof_name_approvals — note that migration
+                      000128 makes that row implicit at auto-
+                      finalize time, so the buttons here are belt-
+                      and-braces (the designer can still record an
+                      explicit Shared decision if they want a paper
+                      trail). */}
+                  {version.names.length >= 2 && (() => {
                     const shared = images.filter((img) => img.associated_name == null)
                     if (shared.length === 0) return null
                     const approval = approvals[SHARED_APPROVAL_KEY]
