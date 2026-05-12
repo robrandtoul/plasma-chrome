@@ -3098,8 +3098,26 @@ export default function NewVersionPage() {
       (e) => e.associated_name === identity && (e.side ?? 'front') === side,
     ).length
     if (!v1Carry) return fresh
+    // Variant-round carry option fallback. Mirror the render filter
+    // logic at the slot grid: a v1 image from a variant-round
+    // predecessor arrives with material_option=null, and we treat
+    // those as belonging to the first tab in selectedOptions. The
+    // validation has to use the same rule, otherwise the Save
+    // button stays disabled with "Select at least one image" even
+    // though the carry is visibly populated in the slot. The save
+    // path itself stamps the same option onto these rows so the
+    // DB lands consistent with what the form counted.
+    const isVariantRoundCarrySource = v1Carry.sourceIsVariantRound === true
+    const firstSelectedOption = selectedOptions[0] ?? ''
     const carryKeptOrReplaced = v1Carry.images.filter((img) => {
-      if ((img.material_option ?? '') !== optionCode) return false
+      const imgOption = img.material_option ?? ''
+      const matchesActiveTab = imgOption === optionCode
+      const matchesViaVariantRound =
+        isVariantRoundCarrySource &&
+        img.material_option == null &&
+        optionCode === firstSelectedOption &&
+        firstSelectedOption !== ''
+      if (!matchesActiveTab && !matchesViaVariantRound) return false
       if (img.associated_name !== identity) return false
       if ((img.side ?? 'front') !== side) return false
       const hasRep = !!replacementByV1RowId[img.v1RowId]
