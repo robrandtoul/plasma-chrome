@@ -1975,42 +1975,98 @@ export default function NewVersionPage() {
   // existing insert payload.
   function handleNamesChange(next: string[]) {
     const removed = names.filter((n) => !next.includes(n))
-    // Detect SHARED collapse: the slot universe's SHARED-front slot
-    // depends on `effectiveShared`, which itself depends on
-    // names.length. Adding a name when previously names.length was 0
-    // (with shared=true) flips effectiveShared from true to false, so
-    // the SHARED slot disappears and any fresh image dropped under it
-    // (associated_name=null) would orphan from the cell builder.
-    // Re-stamp those null-assoc images to the first new name so they
-    // land in a real per-name slot. Mirrors the removed-name re-stamp
-    // below in terms of intent — preserve the designer's uploads as
-    // the shape shifts.
+    const removedSet = new Set(removed)
+    // Compute the slot universe under the proposed names list and
+    // route every fresh entry through it. Three transformations land
+    // on the new (assoc, side) coordinate that best matches each
+    // entry's current identity, in priority order:
+    //
+    //   1. Removed-name re-stamp — an entry tagged with a name that
+    //      no longer exists collapses to `null` (the shared identity)
+    //      first. Earlier code only did this; everything below is the
+    //      symmetry that closes the gaps.
+    //
+    //   2. SHARED-collapse re-stamp — an entry sitting in a slot whose
+    //      SHARED-side just disappeared (names ≤1 in shared=true; flips
+    //      effectiveShared from true→false) gets re-stamped to the new
+    //      first name so it lands in a real per-name slot.
+    //
+    //   3. SHARED-expand re-stamp — an entry tagged with a name on a
+    //      side that just COLLAPSED into SHARED (names crossed from
+    //      ≤1 to ≥2 in shared=true; effectiveShared flips false→true)
+    //      gets re-stamped to null. Mirror of (2) in the opposite
+    //      direction — closes the orphan path where Rob's per-name
+    //      front upload silently vanishes when the designer adds Sue.
+    //
+    // Any entry that still doesn't fit the new slot universe after the
+    // three transformations is dropped (with preview URL revoked).
+    // Slot universe with names=[] in business mode is genuinely empty
+    // and uploads can't be preserved — silent drop matches the cell
+    // builder's "no slot, no render" behaviour and keeps the chip
+    // input fast (no confirm dialog mid-typing).
     const prevEffectiveShared = shared && names.length !== 1
     const nextEffectiveShared = shared && next.length !== 1
-    const sharedCollapsing = prevEffectiveShared && !nextEffectiveShared && next.length > 0
-    const removedSet = new Set(removed)
-    if (removed.length > 0 || sharedCollapsing) {
-      // Fresh images: re-stamp associated_name to null (shared)
-      // for any image whose name was just removed, OR to the new
-      // first name when SHARED is collapsing. UI and save path both
-      // read associated_name, so this reassigns them cleanly to the
-      // correct slot under the new shape.
+    const effectiveSharedChanged = prevEffectiveShared !== nextEffectiveShared
+    // Cardtype × names=[] is also a shape boundary, since
+    // membership-single (membership + names=[]) flips to/from
+    // ordinary per-name shapes as names crosses 0. Captured here
+    // for symmetry; in practice the boundary cases are subsumed
+    // by removed.length > 0 or effectiveSharedChanged.
+    const prevIsMembershipSingle = cardType === 'membership' && names.length === 0
+    const newIsMembershipSingle = cardType === 'membership' && next.length === 0
+    const membershipSingleChanged = prevIsMembershipSingle !== newIsMembershipSingle
+    const newHasSharedForSide = (side: 'front' | 'back'): boolean => {
+      if (newIsMembershipSingle) return true
+      return sidedness === 'two-sided' && nextEffectiveShared && side === 'front'
+    }
+    const newSlotStillValid = (assoc: string | null, side: 'front' | 'back' | null): boolean => {
+      const s: 'front' | 'back' = side ?? 'front'
+      if (s === 'back' && sidedness === 'one-sided') return false
+      if (newIsMembershipSingle) return assoc == null
+      const isSharedSlotForSide = sidedness === 'two-sided' && nextEffectiveShared && s === 'front'
+      if (isSharedSlotForSide) return assoc == null
+      return assoc != null && next.includes(assoc)
+    }
+    if (removed.length > 0 || effectiveSharedChanged || membershipSingleChanged) {
+      // Fresh images: walk the priority chain, drop the leftovers.
+      // `dropped` carries entries that fall out so their preview
+      // blob URLs get revoked outside the state update (revoking
+      // inside the updater would fire twice under StrictMode).
+      const dropped: ImageEntry[] = []
       setImagesByOption((prev) => {
         const out: Record<string, typeof prev[string]> = {}
         for (const [key, list] of Object.entries(prev)) {
-          out[key] = list.map((img) => {
+          const kept: ImageEntry[] = []
+          for (const img of list) {
+            const side: 'front' | 'back' = (img.side ?? 'front') as 'front' | 'back'
             let nextAssoc: string | null = img.associated_name
+            // (1) Removed-name → null.
             if (nextAssoc != null && removedSet.has(nextAssoc)) {
               nextAssoc = null
             }
-            if (sharedCollapsing && nextAssoc == null) {
+            // (2) Landed at null but the new shape has no SHARED slot
+            //     for this side — re-stamp to the first new name.
+            if (nextAssoc == null && !newHasSharedForSide(side) && next.length > 0) {
               nextAssoc = next[0]
             }
-            return nextAssoc !== img.associated_name ? { ...img, associated_name: nextAssoc } : img
-          })
+            // (3) Landed at per-name but the new shape now has SHARED
+            //     for this side — collapse to null.
+            if (nextAssoc != null && newHasSharedForSide(side)) {
+              nextAssoc = null
+            }
+            if (!newSlotStillValid(nextAssoc, side)) {
+              dropped.push(img)
+              continue
+            }
+            kept.push(nextAssoc !== img.associated_name ? { ...img, associated_name: nextAssoc } : img)
+          }
+          out[key] = kept
         }
         return out
       })
+      if (dropped.length > 0) {
+        for (const entry of dropped) URL.revokeObjectURL(entry.preview)
+      }
 
       // Carry-forward cleanup: clear any queued replacement for
       // v1 images whose name was just removed. The carry card
@@ -2204,6 +2260,41 @@ export default function NewVersionPage() {
       setShared(false)
       setFormExpanded(true)
     } else if (carryVariantSelection === START_FRESH_SENTINEL) {
+      // Mirror of the Start-fresh cleanup above, opposite direction.
+      // Going sentinel → real variant flips shared from false → true.
+      // For 2+-name shapes that brings SHARED-front into effect, so
+      // any per-name front fresh upload the designer made during the
+      // Start-fresh phase (e.g. added Rob and Sue, uploaded Rob front)
+      // would orphan once SHARED-front takes over. Silent drop to
+      // match the entry-into-Start-fresh path; the picker click is
+      // itself the designer's directional choice, not a sub-action
+      // worth prompting on.
+      //
+      // 1-name shapes leave effectiveShared collapsed (per-name)
+      // even with shared=true, so no orphan path fires there. 0-name
+      // shapes have no per-name entries to lose. Only the 2+-name
+      // branch needs the cleanup.
+      const nextEffectiveShared = names.length !== 1 && names.length > 0
+      if (sidedness === 'two-sided' && nextEffectiveShared) {
+        const vanishingFresh: ImageEntry[] = []
+        for (const list of Object.values(imagesByOption)) {
+          for (const entry of list) {
+            if ((entry.side ?? 'front') !== 'front') continue
+            if (entry.associated_name != null) vanishingFresh.push(entry)
+          }
+        }
+        if (vanishingFresh.length > 0) {
+          const idsToDrop = new Set(vanishingFresh.map((e) => e.localId))
+          for (const entry of vanishingFresh) URL.revokeObjectURL(entry.preview)
+          setImagesByOption((prev) => {
+            const out: Record<string, ImageEntry[]> = {}
+            for (const [key, list] of Object.entries(prev)) {
+              out[key] = list.filter((e) => !idsToDrop.has(e.localId))
+            }
+            return out
+          })
+        }
+      }
       setShared(true)
     }
   }
