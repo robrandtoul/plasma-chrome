@@ -319,6 +319,35 @@ export default function QuotePage() {
   // showing a partially-loaded placeholder.
   const noVariantsAvailable = tiersFresh && variants.length > 0 && availableVariants.length === 0
 
+  // Reset form — wipes every field back to the initial empty state
+  // a fresh page load would land on. Cheaper than a full window
+  // reload (keeps the cached materials list and VAT rate) and
+  // avoids losing the tab. Disabled when the form is already
+  // pristine so clicking it can't confuse a designer who pressed
+  // it expecting something visible to happen.
+  const isFormDirty =
+    selectedMaterialId !== null ||
+    currency !== null ||
+    quantity !== null ||
+    names !== 1 ||
+    spreadMode ||
+    spreadQuantities.length > 0 ||
+    customFlags.nfc ||
+    customFlags.uniqueContent
+  function handleReset() {
+    setSelectedMaterialId(null)
+    setVariants([])
+    setSelectedVariantId(null)
+    setCurrency(null)
+    setQuantity(null)
+    setNames(1)
+    setFinishCode(null)
+    setCustomFlags(EMPTY_CUSTOM_QUOTE_FLAGS)
+    setSpreadMode(false)
+    setSpreadQuantities([])
+    setIsMaterialPickerExpanded(true)
+  }
+
   const result = useMemo(() => {
     if (!tiersFresh) {
       return {
@@ -353,12 +382,22 @@ export default function QuotePage() {
             <p className="text-sm font-medium uppercase tracking-widest text-gray-400">PlasmaDesign</p>
             <h1 className="mt-1 text-2xl font-bold text-gray-900">Quote compiler</h1>
           </div>
-          <Link
-            to="/"
-            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
-          >
-            ← Projects
-          </Link>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleReset}
+              disabled={!isFormDirty}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            >
+              Reset form
+            </button>
+            <Link
+              to="/"
+              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
+            >
+              ← Projects
+            </Link>
+          </div>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
