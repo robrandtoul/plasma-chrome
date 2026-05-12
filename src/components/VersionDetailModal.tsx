@@ -65,6 +65,14 @@ export interface ModalVersion {
   // standard variant rounds keep the docket as-is.
   is_variant_round: boolean
   is_per_direction_pricing: boolean
+  // Option tabs offered on the customer page (migration 000025).
+  // Empty array = single-bucket no-tabs version (legacy or variant
+  // round). Non-empty means every legitimate image was stamped
+  // with one of these codes on save, so any image row arriving
+  // here with a null material_option is an orphan carry-forward
+  // from a variant round predecessor and we filter it out of the
+  // modal's image list to keep the per-name groupings clean.
+  material_options: string[]
   materials: { display_quantities: number[] } | null
   // Denormalised hot-path indicator (migration 000103) populated
   // by the send-helpscout-reply edge function on a successful HS
@@ -202,7 +210,7 @@ export default function VersionDetailModal({
     setLoadingImages(true)
     const { data } = await supabase
       .from('proof_version_images')
-      .select('id, proof_version_id, image_path, sort_order, associated_name')
+      .select('id, proof_version_id, image_path, sort_order, associated_name, material_option')
       .eq('proof_version_id', version.id)
       .order('sort_order')
 
@@ -212,8 +220,32 @@ export default function VersionDetailModal({
       return
     }
 
+    // Drop orphan null-option rows when the version has option tabs.
+    // Same rule the customer page applies: a non-empty material_options
+    // array means every legitimate image was stamped with an option on
+    // save (the active tab when uploaded), so a null material_option
+    // row is a stray carry-forward from a variant round v(N-1) that
+    // didn't fit any of v(N)'s tabs. Showing them under Shared / per-
+    // name confuses the designer review — they look like extra
+    // approved-pending images that have no analogue on the customer
+    // page. Versions with no option tabs (material_options empty)
+    // keep their null rows, which is the normal legacy-no-options
+    // path; those nulls are the real images on that version.
+    const versionOptions = Array.isArray(version.material_options)
+      ? version.material_options
+      : []
+    const filtered = versionOptions.length > 0
+      ? data.filter((img) => img.material_option != null && versionOptions.includes(img.material_option))
+      : data
+
+    if (filtered.length === 0) {
+      setImages([])
+      setLoadingImages(false)
+      return
+    }
+
     const withUrls = await Promise.all(
-      data.map(async (img) => {
+      filtered.map(async (img) => {
         const { data: urlData } = await supabase.storage
           .from('proof-images')
           .createSignedUrl(img.image_path, 3600)
