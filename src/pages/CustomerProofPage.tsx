@@ -2021,6 +2021,11 @@ export default function CustomerProofPage() {
                 quoteMinQuantity={activeVersion.quote_min_quantity}
                 quoteMaxQuantity={activeVersion.quote_max_quantity}
                 quantitySurcharges={{}}
+                // Variant rounds are guaranteed non-personalised by
+                // the DB CHECK constraint in migration 000173, so a
+                // hardcoded null here is the right answer rather than
+                // threading the active currency's live pricing.
+                personalisationPricing={null}
               />
             )}
             {!activeVersion.custom_quote && activeVersion.shipping_note && (
