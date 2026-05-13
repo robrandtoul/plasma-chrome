@@ -35,6 +35,12 @@ export interface QuoteMaterial {
   // checkbox (and hides the unique-names input) only on materials
   // where this is true.
   supports_personalisation: boolean
+  // Migration 000175. Current production lead-time window in
+  // business days. Both null when the admin hasn't recorded a
+  // value; both populated otherwise. The Quote compiler renders
+  // a panel beside the quantity input from these.
+  lead_time_min_days: number | null
+  lead_time_max_days: number | null
 }
 
 export interface QuoteVariant {

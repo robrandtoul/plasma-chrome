@@ -9,6 +9,7 @@ const TABS: { to: string; label: string }[] = [
   { to: '/admin/customers', label: 'Customers' },
   { to: '/admin/materials', label: 'Materials' },
   { to: '/admin/pricing', label: 'Pricing' },
+  { to: '/admin/lead-times', label: 'Lead times' },
   { to: '/admin/core-colours', label: 'Paper colours' },
   { to: '/admin/needs-attention', label: 'Needs attention' },
   { to: '/admin/activity', label: 'Activity' },

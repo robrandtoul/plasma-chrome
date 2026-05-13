@@ -33,6 +33,8 @@ import { SpreadQuoteToggle } from '../components/quote/SpreadQuoteToggle'
 import { SpreadQuantityInput } from '../components/quote/SpreadQuantityInput'
 import { SpreadQuoteResults } from '../components/quote/SpreadQuoteResults'
 import { DiscountInput } from '../components/quote/DiscountInput'
+import { LeadTimeCard } from '../components/quote/LeadTimeCard'
+import { resolveLeadTimeState } from '../lib/quote/leadTime'
 
 // Quote compiler — v1 read-only.
 //
@@ -96,6 +98,17 @@ export default function QuotePage() {
   // Resets on every material change (see useEffect below).
   const [discountPercent, setDiscountPercent] = useState(0)
 
+  // "Include lead time" toggle for the copy-paste quote body. The
+  // checkbox tracks an explicit boolean; an `overridden` flag
+  // distinguishes "designer made a deliberate choice" from "we are
+  // still tracking the default". Until they tick the box themselves
+  // the value follows the default (on when every material in the
+  // quote — today exactly one — is in-range AND has a recorded lead
+  // time; off otherwise). After a click, the toggle stays where the
+  // designer left it across material / currency / quantity changes.
+  const [includeLeadTime, setIncludeLeadTime] = useState(false)
+  const [includeLeadTimeOverridden, setIncludeLeadTimeOverridden] = useState(false)
+
   // Material picker auto-collapses once a material is selected so
   // the spec controls below sit closer to the top of the viewport
   // — designers should be able to see Variant / Currency /
@@ -140,7 +153,7 @@ export default function QuotePage() {
   useEffect(() => {
     let cancelled = false
     supabase.from('materials')
-      .select('id, code, display_name, category, variant_type, option_label, split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd, supports_personalisation')
+      .select('id, code, display_name, category, variant_type, option_label, split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd, supports_personalisation, lead_time_min_days, lead_time_max_days')
       .eq('is_active', true)
       .eq('is_published', true)
       .is('archived_at', null)
@@ -358,6 +371,32 @@ export default function QuotePage() {
   // the panel renders one Why bullet per active reason.
   const customQuote = isCustomQuote(customFlags) || aboveMax !== null
 
+  // Lead-time panel state (migration 000175). Resolved from the
+  // material's stored min/max pair plus the custom-quote signal.
+  // Driving the panel render and the copy-paste line off the same
+  // helper keeps the two surfaces in lockstep.
+  const leadTimeState = useMemo(() => {
+    if (!selectedMaterial) return null
+    return resolveLeadTimeState(selectedMaterial, customQuote)
+  }, [selectedMaterial, customQuote])
+
+  // Default state for the "Include lead time" checkbox: on only when
+  // every material in the quote (today: one) is in-range AND has a
+  // recorded lead time. Off in every other case so the designer is
+  // never caught quoting a fabricated number. The designer can
+  // override either way; the override persists until handleReset.
+  const includeLeadTimeDefault = leadTimeState?.kind === 'standard'
+  const effectiveIncludeLeadTime = includeLeadTimeOverridden
+    ? includeLeadTime
+    : includeLeadTimeDefault
+  useEffect(() => {
+    if (!includeLeadTimeOverridden) setIncludeLeadTime(includeLeadTimeDefault)
+  }, [includeLeadTimeDefault, includeLeadTimeOverridden])
+  function handleIncludeLeadTimeChange(next: boolean) {
+    setIncludeLeadTime(next)
+    setIncludeLeadTimeOverridden(true)
+  }
+
   // Variants pruned to those with at least one tier in the active
   // currency. Empty-tier placeholders (e.g. plastic_translucent /
   // plastic_tinted's 7-ink and 8-ink rows, which were left
@@ -424,6 +463,8 @@ export default function QuotePage() {
     setSpreadQuantities([])
     setDiscountPercent(0)
     setIsMaterialPickerExpanded(true)
+    setIncludeLeadTime(false)
+    setIncludeLeadTimeOverridden(false)
   }
 
   const result = useMemo(() => {
@@ -484,7 +525,11 @@ export default function QuotePage() {
           </div>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
+        {/* Right column widened from 22rem to 28rem in PR #94 to make
+            room for the Lead time card sitting alongside the Total
+            card at md+. The selection column still has comfortable
+            breathing room at max-w-5xl. */}
+        <div className="grid gap-6 lg:grid-cols-[1fr_28rem]">
           {/* ── Selection card ───────────────────────────────────────────── */}
           <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200 sm:p-8">
             {/* Tab order: material → variant → currency → quantity →
@@ -593,6 +638,36 @@ export default function QuotePage() {
                 />
               )}
 
+              {/* "Include lead time" toggle — gates the lead-time line
+                  in the copy-paste quote body. Default is on only
+                  when the lead-time panel is in its standard state;
+                  the designer can override either way and the
+                  override sticks until the form is reset. */}
+              {!spreadMode && selectedMaterial && quantity != null && (
+                <div>
+                  <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={effectiveIncludeLeadTime}
+                      onChange={(e) => handleIncludeLeadTimeChange(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 text-gray-900 focus:ring-gray-400"
+                    />
+                    <div>
+                      <div className="text-sm font-medium text-gray-700">
+                        Include lead time in copied quote
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {leadTimeState?.kind === 'standard'
+                          ? 'A short lead-time line is appended to the copied quote body.'
+                          : leadTimeState?.kind === 'custom'
+                            ? 'A "lead time to be confirmed" line is appended to the copied quote body.'
+                            : 'No lead time recorded — nothing will be added to the copied quote body.'}
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              )}
+
               {/* Names + Personalisation share the same conceptual
                   slot: split-name tooling describes N unique names
                   on a single design, personalisation describes
@@ -695,14 +770,12 @@ export default function QuotePage() {
             {spreadMode ? (
               /* Spread quote mode — table-shaped results card
                  replaces the headline + adjacent strips + snap
-                 chips entirely. Custom-quote flags still flow
-                 through to the bottom of the spread card so a
-                 mixed scenario (multi-quantity + NFC) is
-                 obvious. The above-max bailout doesn't apply to
-                 spread mode — invalid quantities surface as
-                 inline manual-swap prompts inside
-                 SpreadQuantityInput rather than collapsing the
-                 whole column. */
+                 chips entirely. Lead-time card is suppressed here
+                 by design: spread mode carries several quantities
+                 against one material, so a single in-range / custom
+                 verdict is less load-bearing. Custom-quote flags
+                 still flow through to the bottom of the spread
+                 card. */
               <SpreadQuoteResults
                 quantities={spreadQuantities}
                 onChangeQuantities={setSpreadQuantities}
@@ -740,62 +813,86 @@ export default function QuotePage() {
                 discountPercent={discountPercent}
                 loading={pricing.loading && !tiersFresh}
               />
-            ) : customQuote ? (
-              /* Custom-quote bailout. Replaces the entire pricing
-                 area — no partial number, no fall-through to base.
-                 SpecSummary still renders below so the designer can
-                 read the customer's spec aloud while flagging for
-                 Rob. */
-              <CustomQuotePanel
-                flags={customFlags}
-                aboveMax={aboveMax && selectedMaterial ? {
-                  typedQuantity: aboveMax.typedQuantity,
-                  maxQuantity: aboveMax.maxQuantity,
-                  materialName: selectedMaterial.display_name,
-                  variantName:
-                    selectedVariantId && variants[0]?.variant_type !== 'default'
-                      ? variants.find((v) => v.id === selectedVariantId)?.display_name ?? null
-                      : null,
-                } : null}
-              />
-            ) : noVariantsAvailable ? (
-              /* Defensive: no variant of this material has prices
-                 in the active currency. Today no published
-                 material trips this branch — every active variant
-                 is priced across all three currencies — but we
-                 surface a clear affordance rather than a stale
-                 placeholder if it ever does. */
-              <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 p-8">
-                <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
-                  No prices available
-                </p>
-                <p className="mt-3 text-2xl font-bold leading-tight text-amber-900">
-                  {selectedMaterial?.display_name ?? 'This material'} isn't priced in {currency} yet
-                </p>
-                <p className="mt-3 text-sm text-amber-800">
-                  Try a different currency, pick another material, or flag this for Rob — there's no live tier data to quote against here.
-                </p>
-              </div>
             ) : (
-              <HeadlinePrice
-                total={result.total}
-                baseTotal={result.baseTotal}
-                splitNameSurcharge={result.splitNameSurcharge}
-                perExtraNameSurcharge={perExtraNameSurcharge}
-                names={names}
-                finishSurcharge={result.finishSurcharge}
-                finishLabel={finishLabel}
-                personalisationSurcharge={result.personalisationSurcharge}
-                personalisationBreakevenQty={personalisationBreakevenQty}
-                subtotal={result.subtotal}
-                discountPercent={result.discountPercent}
-                discountAmount={result.discountAmount}
-                unitPrice={result.unitPrice}
-                quantity={quantity}
-                currency={currency}
-                loading={pricing.loading && !tiersFresh}
-                vatRate={vatRate}
-              />
+              /* Header grid — the price-area card and the lead-time
+                 card sit as siblings at md+, stacked below. Each of
+                 the three price-area branches (customQuote bailout,
+                 no-variants defensive, normal headline) renders on
+                 the left; the lead-time card renders on the right.
+                 The card returns null in its not_set state so the
+                 second grid slot is simply empty without forcing a
+                 placeholder. */
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {customQuote ? (
+                  /* Custom-quote bailout. Replaces the price card
+                     entirely — no partial number, no fall-through.
+                     SpecSummary still renders below so the designer
+                     can read the customer's spec aloud while
+                     flagging for Rob. */
+                  <CustomQuotePanel
+                    flags={customFlags}
+                    aboveMax={aboveMax && selectedMaterial ? {
+                      typedQuantity: aboveMax.typedQuantity,
+                      maxQuantity: aboveMax.maxQuantity,
+                      materialName: selectedMaterial.display_name,
+                      variantName:
+                        selectedVariantId && variants[0]?.variant_type !== 'default'
+                          ? variants.find((v) => v.id === selectedVariantId)?.display_name ?? null
+                          : null,
+                    } : null}
+                  />
+                ) : noVariantsAvailable ? (
+                  /* Defensive: no variant of this material has prices
+                     in the active currency. Today no published
+                     material trips this branch — every active variant
+                     is priced across all three currencies — but we
+                     surface a clear affordance rather than a stale
+                     placeholder if it ever does. */
+                  <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 p-8">
+                    <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+                      No prices available
+                    </p>
+                    <p className="mt-3 text-2xl font-bold leading-tight text-amber-900">
+                      {selectedMaterial?.display_name ?? 'This material'} isn't priced in {currency} yet
+                    </p>
+                    <p className="mt-3 text-sm text-amber-800">
+                      Try a different currency, pick another material, or flag this for Rob — there's no live tier data to quote against here.
+                    </p>
+                  </div>
+                ) : (
+                  <HeadlinePrice
+                    total={result.total}
+                    baseTotal={result.baseTotal}
+                    splitNameSurcharge={result.splitNameSurcharge}
+                    perExtraNameSurcharge={perExtraNameSurcharge}
+                    names={names}
+                    finishSurcharge={result.finishSurcharge}
+                    finishLabel={finishLabel}
+                    personalisationSurcharge={result.personalisationSurcharge}
+                    personalisationBreakevenQty={personalisationBreakevenQty}
+                    subtotal={result.subtotal}
+                    discountPercent={result.discountPercent}
+                    discountAmount={result.discountAmount}
+                    unitPrice={result.unitPrice}
+                    quantity={quantity}
+                    currency={currency}
+                    loading={pricing.loading && !tiersFresh}
+                    vatRate={vatRate}
+                  />
+                )}
+                {/* Lead-time card. Gated on material + quantity
+                    present so the card only shows once the inputs
+                    that drive its state are in. The card itself
+                    returns null when the resolved state is not_set,
+                    so the second column collapses to an empty slot
+                    rather than rendering a placeholder. */}
+                {selectedMaterial && quantity != null && leadTimeState && (
+                  <LeadTimeCard
+                    state={leadTimeState}
+                    materialDisplayName={selectedMaterial.display_name}
+                  />
+                )}
+              </div>
             )}
 
             {/* Spec readout — what the designer says aloud when
@@ -873,6 +970,12 @@ export default function QuotePage() {
                   // suppresses both VAT lines for that window
                   // rather than baking in a stale rate.
                   vatRate,
+                  // Lead-time paragraph in the copied body. The
+                  // formatter handles omission internally when
+                  // the toggle is off or the resolved state is
+                  // not-set.
+                  includeLeadTime: effectiveIncludeLeadTime,
+                  leadTimeState,
                 })
                 return (
                   <CopyQuoteButton plainText={formatted.plainText} html={formatted.html} />

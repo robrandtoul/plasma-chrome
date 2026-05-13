@@ -1,5 +1,7 @@
 import { formatPrice } from '../currency'
 import type { QuoteResult, QuoteSelection } from './calculate'
+import type { LeadTimeState } from './leadTime'
+import { leadTimeQuoteLine } from './leadTime'
 
 // Pure formatter that turns the compiler's current state into a
 // plain-text and HTML pair suitable for a multi-format clipboard
@@ -48,6 +50,13 @@ export interface FormatQuoteArgs {
   variantDisplayName: string | null
   finishOption: { displayName: string; isBase: boolean } | null
   vatRate: number | null
+  // Lead-time line gate + payload (migration 000175). When
+  // `leadTimeState` is null OR the toggle is off, the formatter
+  // emits no lead-time line. Standard / custom states each render
+  // their own sentence; not-set silently drops the line per the
+  // brief (we never invent a lead time the admin hasn't recorded).
+  includeLeadTime: boolean
+  leadTimeState: LeadTimeState | null
 }
 
 export interface FormattedQuote {
@@ -82,11 +91,29 @@ function formatDiscountPercent(value: number): string {
 }
 
 export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
-  const { selection, result, materialDisplayName, variantDisplayName, finishOption, vatRate } = args
+  const {
+    selection,
+    result,
+    materialDisplayName,
+    variantDisplayName,
+    finishOption,
+    vatRate,
+    includeLeadTime,
+    leadTimeState,
+  } = args
   const { quantity, currency, names } = selection
   const { total, baseTotal, splitNameSurcharge, finishSurcharge, personalisationSurcharge, discountAmount, discountPercent } = result
 
   if (total == null || baseTotal == null || quantity == null || !currency) return EMPTY
+
+  // One distinct material per quote in v1 of the compiler — the
+  // resolver produces at most one sentence. Null means "the toggle
+  // is off, or no sentence applies" (not-set state); both paths
+  // suppress the line block.
+  const leadTimeLine =
+    includeLeadTime && leadTimeState
+      ? leadTimeQuoteLine(leadTimeState, materialDisplayName)
+      : null
 
   // Shared intermediate values — computed once, used by both
   // plain-text and html builders. Round ex-VAT at the same 2dp
@@ -141,6 +168,10 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   let totalLinePlain = `Total = ${totalStr}`
   if (showVat) totalLinePlain += ` inc VAT (${exVatStr} ex VAT)`
   plainLines.push(totalLinePlain)
+  if (leadTimeLine) {
+    plainLines.push('')
+    plainLines.push(leadTimeLine)
+  }
   plainLines.push('')
   plainLines.push('This quote excludes shipping.')
   const plainText = plainLines.join('\n')
@@ -168,9 +199,14 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     : `<strong>${totalCore}</strong>`
   htmlLines.push(totalLineHtml)
   // Each content line followed by <br>; extra <br> before the
-  // disclaimer produces the blank-line gap.
+  // lead-time block and again before the disclaimer produces a
+  // single blank-line gap between each paragraph.
+  const leadTimeHtml = leadTimeLine
+    ? '<br>' + escapeHtml(leadTimeLine) + '<br>'
+    : ''
   const html =
     htmlLines.map((l) => l + '<br>').join('') +
+    leadTimeHtml +
     '<br>' +
     'This quote excludes shipping.'
 
