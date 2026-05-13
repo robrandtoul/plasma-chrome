@@ -235,12 +235,15 @@ export const CTA_GHOST_PRESSED_BG = 'rgba(0,0,0,0.08)'
 export const CTA_GHOST_HOVER_BORDER = '#2C2C2A'
 
 // ── Type stacks ──────────────────────────────────────────────
-// JetBrains Mono is preserved here as the legacy MONO stack —
-// PaperPricingTable + QuantityLookup still render through it.
+// Geist Mono powers MONO — used by PaperPricingTable +
+// QuantityLookup for numeric values. Chosen over JetBrains
+// Mono because Geist's zero is a plain undecorated oval; the
+// JetBrains dotted-zero glyph was being mistaken for an 8 at
+// the smaller weights used in the price grid.
 // Red Hat Mono lives behind the `font-paper-mono` Tailwind
-// utility in src/index.css and is used elsewhere for the new
-// paper-register treatments. Coexistence is intentional;
-// alignment is a separate design decision.
+// utility in src/index.css and is used elsewhere for uppercase
+// section labels (no numerals), so the dotted-zero concern
+// doesn't reach it.
 export const SERIF = "'Cormorant Garamond', Georgia, serif"
 export const SANS = "'Inter Tight', system-ui, sans-serif"
-export const MONO = "'JetBrains Mono', ui-monospace, monospace"
+export const MONO = "'Geist Mono', ui-monospace, monospace"
