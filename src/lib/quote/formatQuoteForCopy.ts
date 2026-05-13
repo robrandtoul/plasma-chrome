@@ -73,10 +73,18 @@ function finishWord(option: { displayName: string; isBase: boolean }): string {
   return option.isBase ? 'natural' : option.displayName.toLowerCase()
 }
 
+// Trim trailing zeros on the discount % — "10" reads as "10%" not
+// "10.00%". Matches HeadlinePrice's on-screen formatter so the
+// copy line and the headline breakdown agree.
+function formatDiscountPercent(value: number): string {
+  const rounded = Math.round(value * 100) / 100
+  return `${rounded}%`
+}
+
 export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   const { selection, result, materialDisplayName, variantDisplayName, finishOption, vatRate } = args
   const { quantity, currency, names } = selection
-  const { total, baseTotal, splitNameSurcharge, finishSurcharge, personalisationSurcharge } = result
+  const { total, baseTotal, splitNameSurcharge, finishSurcharge, personalisationSurcharge, discountAmount, discountPercent } = result
 
   if (total == null || baseTotal == null || quantity == null || !currency) return EMPTY
 
@@ -86,6 +94,7 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   const cardsPrice = baseTotal + (finishSurcharge ?? 0)
   const showSplitName = names > 1 && (splitNameSurcharge ?? 0) > 0
   const showPersonalisation = (personalisationSurcharge ?? 0) > 0
+  const showDiscount = (discountAmount ?? 0) > 0 && discountPercent > 0
   const showVat = currency === 'GBP' && vatRate != null
   const exVatTotal = showVat ? Math.round((total / (1 + vatRate)) * 100) / 100 : null
 
@@ -111,6 +120,8 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   const cardsPriceStr = formatPrice(cardsPrice, currency)
   const splitNameStr = showSplitName ? formatPrice(splitNameSurcharge!, currency) : null
   const personalisationStr = showPersonalisation ? formatPrice(personalisationSurcharge!, currency) : null
+  const discountStr = showDiscount ? formatPrice(discountAmount!, currency) : null
+  const discountPctStr = showDiscount ? formatDiscountPercent(discountPercent) : null
   const totalStr = formatPrice(total, currency)
   const exVatStr = exVatTotal != null ? formatPrice(exVatTotal, 'GBP', 2) : null
 
@@ -122,6 +133,9 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   }
   if (showPersonalisation) {
     plainLines.push(`Personalisation = ${personalisationStr}`)
+  }
+  if (showDiscount) {
+    plainLines.push(`Discount (${discountPctStr}) = −${discountStr}`)
   }
   plainLines.push('')
   let totalLinePlain = `Total = ${totalStr}`
@@ -141,6 +155,9 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   }
   if (showPersonalisation) {
     htmlLines.push(`Personalisation = ${escapeHtml(personalisationStr!)}`)
+  }
+  if (showDiscount) {
+    htmlLines.push(`Discount (${escapeHtml(discountPctStr!)}) = −${escapeHtml(discountStr!)}`)
   }
   // Total line — strong wraps up to and including " inc VAT" on
   // GBP, the ex-VAT parenthetical sits outside; on EUR/USD the

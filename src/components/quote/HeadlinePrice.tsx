@@ -30,6 +30,15 @@ function formatVatPercent(rate: number): string {
   const pct = Math.round(rate * 100 * 100) / 100
   return `${pct}%`
 }
+
+// Format the discount percentage with up to 2 decimals, trimming
+// trailing zeros so "10" reads as "10%" not "10.00%". The form
+// allows 0.5-step input; the formatter accepts arbitrary precision
+// (a future preset could land 12.5%).
+function formatDiscountPercent(value: number): string {
+  const rounded = Math.round(value * 100) / 100
+  return `${rounded}%`
+}
 export function HeadlinePrice({
   total,
   baseTotal,
@@ -40,6 +49,9 @@ export function HeadlinePrice({
   finishLabel,
   personalisationSurcharge,
   personalisationBreakevenQty,
+  subtotal,
+  discountPercent,
+  discountAmount,
   unitPrice,
   quantity,
   currency,
@@ -71,6 +83,19 @@ export function HeadlinePrice({
   // off personalisationBreakevenQty.
   personalisationSurcharge: number | null
   personalisationBreakevenQty: number | null
+  // Pre-discount subtotal (base + every surcharge). Surfaced as
+  // a strikethrough sibling to the discounted headline so the
+  // designer reads "was £X → now £Y" at a glance. Null when no
+  // tier matches.
+  subtotal: number | null
+  // Internal discount percentage carried through from the result.
+  // 0 means no discount applied; > 0 reveals the discount line in
+  // the breakdown and the strikethrough subtotal beside the
+  // headline figure.
+  discountPercent: number
+  // Absolute discount amount in major currency units. Null mirrors
+  // total when no tier matches.
+  discountAmount: number | null
   unitPrice: number | null
   quantity: number | null
   currency: Currency | null
@@ -122,6 +147,11 @@ export function HeadlinePrice({
         >
           {showPrice ? formatPrice(total!, currency!) : '—'}
         </span>
+        {showPrice && discountPercent > 0 && subtotal != null && (
+          <span className="text-sm font-medium text-gray-400 line-through tabular-nums">
+            {formatPrice(subtotal, currency!)}
+          </span>
+        )}
         {showPrice && showVatNote && (
           <span className="text-sm font-medium text-gray-400">
             (includes {formatVatPercent(vatRate!)} VAT)
@@ -142,9 +172,11 @@ export function HeadlinePrice({
           line so the designer can read the maths aloud cleanly,
           even when finish + split-name both apply. The leading
           "£X base" line only renders when at least one surcharge
-          is non-zero, so a vanilla quote stays single-line. */}
+          is non-zero, so a vanilla quote stays single-line.
+          An active internal discount also triggers the breakdown
+          so the "−£Y discount" line has its "£X base" anchor. */}
       {showPrice && baseTotal != null && (
-        ((splitNameSurcharge ?? 0) > 0 || (finishSurcharge ?? 0) > 0 || (personalisationSurcharge ?? 0) > 0) && (
+        ((splitNameSurcharge ?? 0) > 0 || (finishSurcharge ?? 0) > 0 || (personalisationSurcharge ?? 0) > 0 || (discountAmount ?? 0) > 0) && (
           <div className="mt-1 space-y-0.5 text-sm text-gray-500 tabular-nums">
             <p>{formatPrice(baseTotal, currency!)} base</p>
             {(finishSurcharge ?? 0) > 0 && (
@@ -155,6 +187,11 @@ export function HeadlinePrice({
             )}
             {(personalisationSurcharge ?? 0) > 0 && (
               <p>+ {formatPrice(personalisationSurcharge!, currency!)} personalisation</p>
+            )}
+            {(discountAmount ?? 0) > 0 && (
+              <p className="text-emerald-700">
+                − {formatPrice(discountAmount!, currency!)} discount ({formatDiscountPercent(discountPercent)})
+              </p>
             )}
           </div>
         )

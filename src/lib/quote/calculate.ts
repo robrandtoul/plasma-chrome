@@ -39,6 +39,13 @@ export interface QuoteSelection {
   // this with `max(min_charge, qty * per_card_rate)` before calling
   // calculate — same pattern as finishSurcharge.
   personalisationSurcharge: number
+  // Internal discount percentage, 0–100. Applied multiplicatively
+  // to the subtotal (base + all surcharges) AFTER everything else
+  // is summed, so the final total reflects whatever the designer
+  // is willing to give away. Zero (the default) leaves the pipeline
+  // identical to its pre-discount behaviour. Designer-set in the
+  // compiler form; resets on material change in the page.
+  discountPercent: number
 }
 
 // Two tier hints surfaced when the typed quantity doesn't match a
@@ -75,9 +82,21 @@ export interface QuoteResult {
   // when on (always >= min_charge by the floor rule). Null mirrors
   // total when no tier matches.
   personalisationSurcharge: number | null
+  // Pre-discount subtotal (baseTotal + every surcharge). Echoed
+  // back so the headline and copy formatters can render
+  // "subtotal → discount → total" without re-summing the parts.
+  // Null mirrors total when no tier matches.
+  subtotal: number | null
+  // Internal discount percentage carried through from the selection.
+  // 0 when no discount; never null (the selection requires a value).
+  discountPercent: number
+  // Absolute discount amount in major currency units (subtotal ×
+  // discountPercent / 100). Zero when discountPercent is zero;
+  // null mirrors total when no tier matches.
+  discountAmount: number | null
   // Inclusive unit price (total / quantity). Reflects what the
   // customer actually pays per card, including any split-name
-  // surcharge spread across the run.
+  // surcharge spread across the run and the internal discount.
   unitPrice: number | null
   // True iff the selection's quantity is in the variant's tier
   // set for the active currency. Useful for the headline-price
@@ -119,6 +138,7 @@ export function calculate(
   variantTiers: readonly PriceTier[],
 ): QuoteResult {
   const { quantity, currency, names, perExtraNameSurcharge } = selection
+  const discountPercent = clampDiscountPercent(selection.discountPercent)
 
   if (variantTiers.length === 0 || quantity == null || !currency) {
     return {
@@ -127,6 +147,9 @@ export function calculate(
       splitNameSurcharge: null,
       finishSurcharge: null,
       personalisationSurcharge: null,
+      subtotal: null,
+      discountPercent,
+      discountAmount: null,
       unitPrice: null,
       validTier: false,
       currency,
@@ -140,13 +163,18 @@ export function calculate(
     const splitName = splitNameSurchargeFor(names, perExtraNameSurcharge)
     const finishSurcharge = selection.finishSurcharge
     const personalisationSurcharge = selection.personalisationSurcharge
-    const total = exact.totalPrice + splitName + finishSurcharge + personalisationSurcharge
+    const subtotal = exact.totalPrice + splitName + finishSurcharge + personalisationSurcharge
+    const discountAmount = subtotal * (discountPercent / 100)
+    const total = subtotal - discountAmount
     return {
       total,
       baseTotal: exact.totalPrice,
       splitNameSurcharge: splitName,
       finishSurcharge,
       personalisationSurcharge,
+      subtotal,
+      discountPercent,
+      discountAmount,
       unitPrice: total / quantity,
       validTier: true,
       currency,
@@ -173,11 +201,25 @@ export function calculate(
     splitNameSurcharge: null,
     finishSurcharge: null,
     personalisationSurcharge: null,
+    subtotal: null,
+    discountPercent,
+    discountAmount: null,
     unitPrice: null,
     validTier: false,
     currency,
     snap: { lower, upper },
   }
+}
+
+// Defensive clamp — the form's number input enforces 0–100 but a
+// stale value coming in from anywhere else (URL param, future
+// preset, etc.) shouldn't be able to push the maths into negative
+// totals or refund-style outcomes. NaN / null falls through to 0.
+export function clampDiscountPercent(value: number | null | undefined): number {
+  if (value == null || Number.isNaN(value)) return 0
+  if (value < 0) return 0
+  if (value > 100) return 100
+  return value
 }
 
 // Helper: nearest valid tier strictly above or below a given

@@ -46,6 +46,7 @@ export function AdjacentVariants({
   currentQuantity,
   currency,
   extraTotalAt = () => 0,
+  discountPercent = 0,
 }: {
   variants: readonly QuoteVariant[]
   currentVariantId: string | null
@@ -58,10 +59,16 @@ export function AdjacentVariants({
   // consistent with AdjacentTiers in case a future surcharge
   // dimension keys on variant too.
   extraTotalAt?: (qty: number) => number
+  // Internal discount percentage (0–100). Same role as on
+  // AdjacentTiers — each cell's total + per-card figure scale by
+  // (1 − percent/100) so the strip matches the post-discount
+  // headline.
+  discountPercent?: number
 }) {
   if (!currency || !currentVariantId || currentQuantity == null) return null
   if (variants.length < 2) return null
   if (variants.length === 1 && variants[0].variant_type === 'default') return null
+  const discountMultiplier = 1 - Math.min(Math.max(discountPercent, 0), 100) / 100
 
   const sorted = [...variants].sort((a, b) => a.sort_order - b.sort_order)
   const currentIndex = sorted.findIndex((v) => v.id === currentVariantId)
@@ -75,7 +82,7 @@ export function AdjacentVariants({
   if (!currentTier) return null
 
   const cellExtra = extraTotalAt(currentQuantity)
-  const currentUnit = (currentTier.totalPrice + cellExtra) / currentTier.quantity
+  const currentUnit = ((currentTier.totalPrice + cellExtra) * discountMultiplier) / currentTier.quantity
 
   // Cell list construction. ≤3 variants → render every one in
   // sort_order, no placeholders. ≥4 → selected ± 1 capped at
@@ -113,6 +120,7 @@ export function AdjacentVariants({
             currency={currency}
             currentUnit={currentUnit}
             extraTotal={cellExtra}
+            discountMultiplier={discountMultiplier}
             isCurrent={!!variant && variant.id === currentVariantId}
           />
         ))}
@@ -128,6 +136,7 @@ function VariantCell({
   currency,
   currentUnit,
   extraTotal,
+  discountMultiplier,
   isCurrent = false,
 }: {
   variant: QuoteVariant | null
@@ -136,6 +145,7 @@ function VariantCell({
   currency: Currency
   currentUnit: number
   extraTotal: number
+  discountMultiplier: number
   isCurrent?: boolean
 }) {
   if (!variant) {
@@ -156,7 +166,7 @@ function VariantCell({
       </div>
     )
   }
-  const total = tier.totalPrice + extraTotal
+  const total = (tier.totalPrice + extraTotal) * discountMultiplier
   const unit = total / tier.quantity
   const deltaUnit = isCurrent ? null : unit - currentUnit
   return (

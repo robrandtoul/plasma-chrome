@@ -50,6 +50,7 @@ export function AdjacentTiers({
   currentQuantity,
   currency,
   extraTotalAt = () => 0,
+  discountPercent = 0,
 }: {
   tiers: readonly PriceTier[]
   // Material code for the public-tier lookup. When empty or
@@ -58,8 +59,16 @@ export function AdjacentTiers({
   currentQuantity: number | null
   currency: Currency | null
   extraTotalAt?: (qty: number) => number
+  // Internal discount percentage (0–100). When non-zero, each
+  // cell's total + per-card figure are scaled by (1 − percent/100)
+  // so the strip matches the post-discount headline. Per-card
+  // deltas between cells still read meaningfully — both sides
+  // share the same multiplier, so the relative comparison is
+  // preserved.
+  discountPercent?: number
 }) {
   if (!currency || currentQuantity == null || !materialCode) return null
+  const discountMultiplier = 1 - Math.min(Math.max(discountPercent, 0), 100) / 100
 
   const sorted = [...tiers].sort((a, b) => a.quantity - b.quantity)
   const current = sorted.find((t) => t.quantity === currentQuantity)
@@ -93,7 +102,7 @@ export function AdjacentTiers({
   const lower = lowerQty != null ? sorted.find((t) => t.quantity === lowerQty) ?? null : null
   const upper = upperQty != null ? sorted.find((t) => t.quantity === upperQty) ?? null : null
 
-  const currentUnit = (current.totalPrice + extraTotalAt(current.quantity)) / current.quantity
+  const currentUnit = ((current.totalPrice + extraTotalAt(current.quantity)) * discountMultiplier) / current.quantity
 
   return (
     <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
@@ -105,13 +114,15 @@ export function AdjacentTiers({
           tier={lower}
           currency={currency}
           extraTotal={lower ? extraTotalAt(lower.quantity) : 0}
-          deltaUnit={lower ? (lower.totalPrice + extraTotalAt(lower.quantity)) / lower.quantity - currentUnit : null}
+          discountMultiplier={discountMultiplier}
+          deltaUnit={lower ? ((lower.totalPrice + extraTotalAt(lower.quantity)) * discountMultiplier) / lower.quantity - currentUnit : null}
           arrow="◄"
         />
         <Cell
           tier={current}
           currency={currency}
           extraTotal={extraTotalAt(current.quantity)}
+          discountMultiplier={discountMultiplier}
           deltaUnit={null}
           isCurrent
         />
@@ -119,7 +130,8 @@ export function AdjacentTiers({
           tier={upper}
           currency={currency}
           extraTotal={upper ? extraTotalAt(upper.quantity) : 0}
-          deltaUnit={upper ? (upper.totalPrice + extraTotalAt(upper.quantity)) / upper.quantity - currentUnit : null}
+          discountMultiplier={discountMultiplier}
+          deltaUnit={upper ? ((upper.totalPrice + extraTotalAt(upper.quantity)) * discountMultiplier) / upper.quantity - currentUnit : null}
           arrow="►"
           arrowRight
         />
@@ -132,6 +144,7 @@ function Cell({
   tier,
   currency,
   extraTotal,
+  discountMultiplier,
   deltaUnit,
   isCurrent = false,
   arrow,
@@ -140,6 +153,7 @@ function Cell({
   tier: PriceTier | null
   currency: Currency
   extraTotal: number
+  discountMultiplier: number
   deltaUnit: number | null
   isCurrent?: boolean
   arrow?: string
@@ -155,7 +169,7 @@ function Cell({
       </div>
     )
   }
-  const total = tier.totalPrice + extraTotal
+  const total = (tier.totalPrice + extraTotal) * discountMultiplier
   const unit = total / tier.quantity
   return (
     <div

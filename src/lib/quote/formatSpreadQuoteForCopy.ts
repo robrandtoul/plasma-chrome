@@ -52,6 +52,13 @@ export interface FormatSpreadArgs {
   // surfaced by the bug sweep.
   personalisationActive: boolean
   personalisationBreakevenQty: number | null
+  // Internal discount percentage (0–100). Non-zero values append
+  // a "Totals above include an X% discount" disclosure block to
+  // both the plain-text and HTML payloads. Per-row Total cells
+  // already carry the post-discount figure via spreadCalculate;
+  // this block just discloses the where so the customer doesn't
+  // see a low-looking number with no provenance.
+  discountPercent: number
   // Whether to include the Unit-price column in the output.
   // Default off in the caller; designer flips ON when the
   // customer has asked for per-card prices.
@@ -76,6 +83,15 @@ function finishWord(option: { displayName: string; isBase: boolean }): string {
   return option.isBase ? 'natural' : option.displayName.toLowerCase()
 }
 
+// Trim trailing zeros on the discount % — matches the headline
+// + on-screen spread disclosure so all three readouts agree.
+// Suffixed with the file name to avoid a name collision if these
+// helpers ever get hoisted to a shared module.
+function formatDiscountPercentSpread(value: number): string {
+  const rounded = Math.round(value * 100) / 100
+  return `${rounded}%`
+}
+
 export function formatSpreadQuoteForCopy(args: FormatSpreadArgs): FormattedSpreadQuote {
   const {
     rows,
@@ -89,10 +105,13 @@ export function formatSpreadQuoteForCopy(args: FormatSpreadArgs): FormattedSprea
     customFlags,
     personalisationActive,
     personalisationBreakevenQty,
+    discountPercent,
     includeUnitPrice,
   } = args
 
   if (rows.length === 0) return EMPTY
+  const showDiscount = discountPercent > 0
+  const discountPctStr = showDiscount ? formatDiscountPercentSpread(discountPercent) : null
 
   const isGbp = currency === 'GBP'
   const headerNote = isGbp ? ' (inc VAT)' : ''
@@ -179,6 +198,15 @@ export function formatSpreadQuoteForCopy(args: FormatSpreadArgs): FormattedSprea
     )
   }
 
+  // Internal discount disclosure — table cells already carry the
+  // post-discount figure (spreadCalculate folds it in per row), so
+  // this block just discloses the percentage so the customer reads
+  // the lower numbers with context.
+  if (showDiscount) {
+    plainLines.push('')
+    plainLines.push(`Discount - Totals above include a ${discountPctStr} discount.`)
+  }
+
   const flagLines: string[] = []
   if (customFlags.nfc) {
     flagLines.push('NFC chips selected — needs custom quote, prices above are without NFC.')
@@ -253,6 +281,13 @@ export function formatSpreadQuoteForCopy(args: FormatSpreadArgs): FormattedSprea
     htmlParts.push('<br><br>')
     htmlParts.push(
       `<p><b>Personalisation</b> - Totals already include personalisation. A minimum personalisation charge applies below ${escapeHtml(personalisationBreakevenQty.toLocaleString())} cards.</p>`,
+    )
+  }
+
+  if (showDiscount) {
+    htmlParts.push('<br><br>')
+    htmlParts.push(
+      `<p><b>Discount</b> - Totals above include a ${escapeHtml(discountPctStr!)} discount.</p>`,
     )
   }
 

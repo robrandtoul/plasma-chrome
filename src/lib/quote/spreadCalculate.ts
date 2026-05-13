@@ -1,6 +1,6 @@
 import type { Currency } from '../types'
 import type { PriceTier } from './calculate'
-import { splitNameSurchargeFor } from './calculate'
+import { clampDiscountPercent, splitNameSurchargeFor } from './calculate'
 
 // One row of the spread-quote results table. Either valid (all
 // fields populated) or invalid (the typed quantity isn't a tier
@@ -22,9 +22,19 @@ export interface SpreadRow {
   // on, zero otherwise. Always defined (no neighbour resolution
   // needed since the formula is closed-form across every qty).
   personalisationSurcharge: number
-  // Per-row total = baseTotal + finishSurcharge + personalisation.
-  // Quantity-independent items (split-name tooling) are NOT folded
-  // into the per-row total — they're listed once below the table.
+  // Per-row pre-discount subtotal = baseTotal + finishSurcharge +
+  // personalisation + splitNameSurcharge. Null mirrors total when
+  // the base or finish tier is missing.
+  subtotal: number | null
+  // Absolute discount amount applied to this row in major currency
+  // units (subtotal × discountPercent / 100). Zero when no discount
+  // is set; null mirrors total when the row is invalid.
+  discountAmount: number | null
+  // Per-row final total = subtotal − discountAmount. Includes every
+  // surcharge AND the internal discount, so the table cells and copy
+  // output read as the final post-discount figure. Quantity-
+  // independent items (split-name tooling) are folded in here too,
+  // since the discount applies across the whole subtotal.
   total: number | null
   // total / quantity. Null when total is null.
   unitPrice: number | null
@@ -106,8 +116,14 @@ export function spreadCalculate(
   // Closed-form, so no validation / neighbour columns — every qty
   // has a well-defined value.
   personalisationAt: (qty: number) => number = () => 0,
+  // Internal discount percentage (0–100). Applied to every row's
+  // subtotal so the table cells render the post-discount figure
+  // the customer will see. Zero (the default) leaves the maths
+  // identical to its pre-discount behaviour.
+  discountPercent: number = 0,
 ): SpreadResult {
   if (!currency || quantities.length === 0) return EMPTY
+  const safeDiscount = clampDiscountPercent(discountPercent)
 
   const sortedTiers = [...variantTiers].sort((a, b) => a.quantity - b.quantity)
   const tierByQty = new Map<number, PriceTier>()
@@ -159,10 +175,12 @@ export function spreadCalculate(
 
     const baseTotal = isValidBase ? tier!.totalPrice : null
     const personalisationSurcharge = personalisationAt(q)
-    const total =
+    const subtotal =
       baseTotal != null && finishSurcharge != null
         ? baseTotal + finishSurcharge + splitNameSurcharge + personalisationSurcharge
         : null
+    const discountAmount = subtotal != null ? subtotal * (safeDiscount / 100) : null
+    const total = subtotal != null && discountAmount != null ? subtotal - discountAmount : null
     const unitPrice = total != null && q > 0 ? total / q : null
 
     return {
@@ -170,6 +188,8 @@ export function spreadCalculate(
       baseTotal,
       finishSurcharge,
       personalisationSurcharge,
+      subtotal,
+      discountAmount,
       total,
       unitPrice,
       isValidBase,

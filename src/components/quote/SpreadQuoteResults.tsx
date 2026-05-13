@@ -64,6 +64,7 @@ export function SpreadQuoteResults({
   personalisationActive,
   personalisationBreakevenQty,
   customFlags,
+  discountPercent,
   loading,
 }: {
   quantities: number[]
@@ -93,6 +94,13 @@ export function SpreadQuoteResults({
   personalisationActive: boolean
   personalisationBreakevenQty: number | null
   customFlags: { nfc: boolean }
+  // Internal discount percentage (0–100). Threaded into
+  // spreadCalculate so every row's Total cell is the post-discount
+  // figure, and into the copy formatter so the clipboard payload
+  // matches the on-screen table. A non-zero value also renders a
+  // disclosure footer below the table so the customer can see
+  // where the lower number came from.
+  discountPercent: number
   loading: boolean
 }) {
   // Component-local state, no persistence — the brief specifies
@@ -101,8 +109,8 @@ export function SpreadQuoteResults({
   const [includeUnitPrice, setIncludeUnitPrice] = useState(false)
 
   const result = useMemo(
-    () => spreadCalculate(quantities, variantTiers, finishSurchargesByQty, currency, splitNameSurcharge, personalisationAt),
-    [quantities, variantTiers, finishSurchargesByQty, currency, splitNameSurcharge, personalisationAt],
+    () => spreadCalculate(quantities, variantTiers, finishSurchargesByQty, currency, splitNameSurcharge, personalisationAt, discountPercent),
+    [quantities, variantTiers, finishSurchargesByQty, currency, splitNameSurcharge, personalisationAt, discountPercent],
   )
 
   const validRows = useMemo(
@@ -180,6 +188,8 @@ export function SpreadQuoteResults({
     splitNameSurcharge > 0 && perExtraNameSurcharge != null && names > 1
   const showFlags = customFlags.nfc
   const isGbp = currency === 'GBP'
+  const showDiscountRow = discountPercent > 0
+  const discountLabel = formatSpreadDiscountPercent(discountPercent)
 
   // Format the formatted-copy payload once. Cheap.
   const formatted =
@@ -196,6 +206,7 @@ export function SpreadQuoteResults({
           customFlags,
           personalisationActive,
           personalisationBreakevenQty,
+          discountPercent,
           includeUnitPrice,
         })
       : null
@@ -271,6 +282,17 @@ export function SpreadQuoteResults({
         </div>
       )}
 
+      {showDiscountRow && validRows.length > 0 && (
+        <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
+          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+            Discount
+          </p>
+          <p className="mt-2 text-base font-medium text-emerald-700 tabular-nums">
+            Totals above include a {discountLabel} discount.
+          </p>
+        </div>
+      )}
+
       {showFlags && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5">
           <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
@@ -303,6 +325,15 @@ export function SpreadQuoteResults({
       )}
     </div>
   )
+}
+
+// Trim trailing zeros on the discount % so "10" reads as "10%"
+// not "10.00%". Same shape as the helper in HeadlinePrice; kept
+// local so the two files don't have a runtime dependency on each
+// other.
+function formatSpreadDiscountPercent(value: number): string {
+  const rounded = Math.round(value * 100) / 100
+  return `${rounded}%`
 }
 
 // Stacked list — one row per quantity, total as the visual

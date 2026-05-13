@@ -32,6 +32,7 @@ import { formatQuoteForCopy } from '../lib/quote/formatQuoteForCopy'
 import { SpreadQuoteToggle } from '../components/quote/SpreadQuoteToggle'
 import { SpreadQuantityInput } from '../components/quote/SpreadQuantityInput'
 import { SpreadQuoteResults } from '../components/quote/SpreadQuoteResults'
+import { DiscountInput } from '../components/quote/DiscountInput'
 
 // Quote compiler — v1 read-only.
 //
@@ -89,6 +90,11 @@ export default function QuotePage() {
   // chip field and the price column renders a results table.
   const [spreadMode, setSpreadMode] = useState(false)
   const [spreadQuantities, setSpreadQuantities] = useState<number[]>([])
+  // Internal discount percentage (0–100). Threaded into calculate /
+  // spreadCalculate / format* so the headline, copy output, spread
+  // table and adjacent strips all reflect the post-discount figure.
+  // Resets on every material change (see useEffect below).
+  const [discountPercent, setDiscountPercent] = useState(0)
 
   // Material picker auto-collapses once a material is selected so
   // the spec controls below sit closer to the top of the viewport
@@ -228,8 +234,12 @@ export default function QuotePage() {
   // shouldn't carry a checked flag, and a designer switching
   // between supporting materials should re-affirm the choice each
   // time so they don't get a silent persistent surcharge.
+  // Discount resets on the same boundary — a forgotten 10% off
+  // following the designer onto a different product is a worse
+  // bug than re-entering the number.
   useEffect(() => {
     setHasPersonalisation(false)
+    setDiscountPercent(0)
   }, [selectedMaterialId])
   const perExtraNameSurcharge: number | null = useMemo(() => {
     if (!selectedMaterial || !currency) return null
@@ -398,7 +408,8 @@ export default function QuotePage() {
     spreadMode ||
     spreadQuantities.length > 0 ||
     customFlags.nfc ||
-    hasPersonalisation
+    hasPersonalisation ||
+    discountPercent > 0
   function handleReset() {
     setSelectedMaterialId(null)
     setVariants([])
@@ -411,6 +422,7 @@ export default function QuotePage() {
     setCustomFlags(EMPTY_CUSTOM_QUOTE_FLAGS)
     setSpreadMode(false)
     setSpreadQuantities([])
+    setDiscountPercent(0)
     setIsMaterialPickerExpanded(true)
   }
 
@@ -422,6 +434,9 @@ export default function QuotePage() {
         splitNameSurcharge: null,
         finishSurcharge: null,
         personalisationSurcharge: null,
+        subtotal: null,
+        discountPercent,
+        discountAmount: null,
         unitPrice: null,
         validTier: false,
         currency,
@@ -437,10 +452,11 @@ export default function QuotePage() {
         perExtraNameSurcharge,
         finishSurcharge: finishSurchargeAtCurrent,
         personalisationSurcharge: personalisationSurchargeAtCurrent,
+        discountPercent,
       },
       variantTiers,
     )
-  }, [selectedVariantId, quantity, currency, names, perExtraNameSurcharge, finishSurchargeAtCurrent, personalisationSurchargeAtCurrent, variantTiers, tiersFresh])
+  }, [selectedVariantId, quantity, currency, names, perExtraNameSurcharge, finishSurchargeAtCurrent, personalisationSurchargeAtCurrent, discountPercent, variantTiers, tiersFresh])
 
   return (
     <div className="min-h-dvh bg-gray-50">
@@ -663,6 +679,14 @@ export default function QuotePage() {
               {selectedMaterialId && (
                 <CustomQuoteFlags value={customFlags} onChange={setCustomFlags} />
               )}
+
+              {/* Internal discount % — designer-only price modifier.
+                  Applies to headline + copy + spread. Hidden in the
+                  custom-quote bailout state since there's no number
+                  to discount; resets on every material change. */}
+              {selectedMaterialId && !customQuote && (
+                <DiscountInput value={discountPercent} onChange={setDiscountPercent} />
+              )}
             </div>
           </div>
 
@@ -713,6 +737,7 @@ export default function QuotePage() {
                 personalisationActive={personalisationActive}
                 personalisationBreakevenQty={personalisationBreakevenQty}
                 customFlags={customFlags}
+                discountPercent={discountPercent}
                 loading={pricing.loading && !tiersFresh}
               />
             ) : customQuote ? (
@@ -762,6 +787,9 @@ export default function QuotePage() {
                 finishLabel={finishLabel}
                 personalisationSurcharge={result.personalisationSurcharge}
                 personalisationBreakevenQty={personalisationBreakevenQty}
+                subtotal={result.subtotal}
+                discountPercent={result.discountPercent}
+                discountAmount={result.discountAmount}
                 unitPrice={result.unitPrice}
                 quantity={quantity}
                 currency={currency}
@@ -816,6 +844,7 @@ export default function QuotePage() {
                     perExtraNameSurcharge,
                     finishSurcharge: finishSurchargeAtCurrent,
                     personalisationSurcharge: personalisationSurchargeAtCurrent,
+                    discountPercent,
                   },
                   result,
                   materialDisplayName: selectedMaterial.display_name,
@@ -864,6 +893,7 @@ export default function QuotePage() {
                 currentQuantity={quantity}
                 currency={currency}
                 extraTotalAt={extraTotalAt}
+                discountPercent={discountPercent}
               />
             )}
             {!spreadMode && !customQuote && tiersFresh && result.validTier && (
@@ -874,6 +904,7 @@ export default function QuotePage() {
                 currentQuantity={quantity}
                 currency={currency}
                 extraTotalAt={extraTotalAt}
+                discountPercent={discountPercent}
               />
             )}
 
