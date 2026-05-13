@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph } from '../lib/types'
+import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
+import { compilePersonalisationSurcharges, personalisationBreakeven } from '../lib/personalisation'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import type { ProofEventState } from '../lib/types'
 import { deriveSharedApprovalState } from '../lib/sharedApproval'
@@ -62,6 +63,11 @@ export default function CustomerProofPage() {
   const [versionQrImages, setVersionQrImages] = useState<Record<string, GridImage[]>>({})
   const [materialOptions, setMaterialOptions] = useState<PublicMaterialOption[]>([])
   const [optionSurcharges, setOptionSurcharges] = useState<PublicMaterialOptionSurcharge[]>([])
+  // Per-currency personalisation pricing (migration 000172). Live-
+  // read from public_get_customer_proof every load; never snapshotted.
+  // Map keyed on currency code ('GBP' / 'USD' / 'EUR'); only currencies
+  // referenced by this proof's versions are populated.
+  const [personalisationPricing, setPersonalisationPricing] = useState<Record<string, PersonalisationPricing>>({})
   // Live pricing — replaces the proof_versions.pricing_snapshot
   // read since Phase 2 (migration 000117). Both lists cover every
   // material × currency referenced by this proof's versions; the
@@ -700,6 +706,7 @@ export default function CustomerProofPage() {
     setOptionSurcharges([])
     setVariantRows([])
     setTierRows([])
+    setPersonalisationPricing({})
     setActiveOptionCode(null)
     setNotFound(false)
 
@@ -738,6 +745,7 @@ export default function CustomerProofPage() {
     setOptionSurcharges(graph.material_option_surcharges ?? [])
     setVariantRows(graph.material_variants ?? [])
     setTierRows(graph.price_tiers ?? [])
+    setPersonalisationPricing(graph.personalisation_pricing ?? {})
 
     // Customer view tracking happens in the proof_version_views
     // table via the record_proof_view RPC fired below (after a
@@ -2157,6 +2165,25 @@ export default function CustomerProofPage() {
       .forEach(s => { quantitySurcharges[s.quantity] = s.surcharge })
   }
 
+  // Personalisation (migration 000172). Three gates:
+  //   * activeVersion.has_personalisation === true
+  //   * not a custom-quote version (no grid to layer on)
+  //   * not a per-direction-pricing variant round (also no grid)
+  // The pricing object is keyed by currency; only currencies referenced
+  // by the proof's versions are present. activePricing falls back to
+  // null when the gate's tripped or the currency lookup misses (e.g.
+  // an admin removed the currency row — defensive).
+  const activePersonalisationPricing: PersonalisationPricing | null =
+    activeVersion?.has_personalisation
+    && !activeVersion.custom_quote
+    && !activeVersion.is_per_direction_pricing
+    && activeVersion.currency
+      ? (personalisationPricing[activeVersion.currency] ?? null)
+      : null
+  const personalisationBreakevenQty = activePersonalisationPricing
+    ? personalisationBreakeven(activePersonalisationPricing)
+    : null
+
   // Smallest surcharge a customer would actually see in the displayed
   // pricing grid for a given option, or null if this option carries no
   // visible surcharge (base/Natural, wood, or surcharge schedule that
@@ -2579,6 +2606,12 @@ export default function CustomerProofPage() {
                 activeVersion.names.length === 0
                   ? '—'
                   : activeVersion.names.join(' + ')
+              // Cell 4 swaps to a Personalisation signpost when the
+              // version is personalised: a single recipient name (or
+              // a list of tier variants) doesn't describe a card
+              // where every recipient gets unique data. Drops the
+              // Names cell entirely in that case; the spec section
+              // does the same.
               return (
                 <dl className="mt-12 grid grid-cols-2 border-b border-[rgba(26,22,18,0.10)] sm:grid-cols-4">
                   <DocketCell label="Material" value={activeVersion.material_display} />
@@ -2594,7 +2627,20 @@ export default function CustomerProofPage() {
                     label="Revision"
                     value={`v${activeVersion.version_number}${heroRevisionDate ? ` · ${heroRevisionDate}` : ''}`}
                   />
-                  <DocketCell label={namesLabel} value={namesValue} />
+                  {/* Personalisation cell only displaces Names
+                      when has_personalisation is on AND the live
+                      pricing payload actually resolved for this
+                      currency. Defends against the rare drift
+                      case where the proof's currency has no
+                      personalisation_pricing row (admin deletion,
+                      RPC drift) — without the second gate the
+                      customer would see a Personalisation label
+                      with no cost disclosed below. */}
+                  {activeVersion.has_personalisation && activePersonalisationPricing ? (
+                    <DocketCell label="Personalisation" value="Unique per card" />
+                  ) : (
+                    <DocketCell label={namesLabel} value={namesValue} />
+                  )}
                 </dl>
               )
             })()}
@@ -3142,10 +3188,23 @@ export default function CustomerProofPage() {
                       value={activeVersion.ink_names.join('\n')}
                     />
                   )}
-                  {activeVersion.names.length > 0 && (
+                  {/* Names on card hidden when personalisation is on
+                      AND its pricing actually resolved (live read
+                      from personalisation_pricing for the proof's
+                      currency). The price-resolved gate matches the
+                      docket-cell defence — a Personalisation label
+                      without a Personalisation row in the pricing
+                      table below would read as a free claim. */}
+                  {activeVersion.names.length > 0 && !(activeVersion.has_personalisation && activePersonalisationPricing) && (
                     <PaperSpecRow
                       label="Names on card"
                       value={activeVersion.names.join('\n')}
+                    />
+                  )}
+                  {activeVersion.has_personalisation && activePersonalisationPricing && (
+                    <PaperSpecRow
+                      label="Personalisation"
+                      value="Unique data per card"
                     />
                   )}
                   <PaperSpecRow
@@ -3303,16 +3362,31 @@ export default function CustomerProofPage() {
                   </p>
                 </div>
               ) : (
-                <PaperPricingTable
-                  snapshot={livePricingSnapshot}
-                  // Inside the !is_per_direction_pricing gate; see
-                  // sibling call above for the migration 000142 reference.
-                  currency={activeVersion.currency!}
-                  displayQuantities={activeVersion.display_quantities}
-                  quoteMinQuantity={activeVersion.quote_min_quantity}
-                  quoteMaxQuantity={activeVersion.quote_max_quantity}
-                  quantitySurcharges={quantitySurcharges}
-                />
+                <>
+                  <PaperPricingTable
+                    snapshot={livePricingSnapshot}
+                    // Inside the !is_per_direction_pricing gate; see
+                    // sibling call above for the migration 000142 reference.
+                    currency={activeVersion.currency!}
+                    displayQuantities={activeVersion.display_quantities}
+                    quoteMinQuantity={activeVersion.quote_min_quantity}
+                    quoteMaxQuantity={activeVersion.quote_max_quantity}
+                    quantitySurcharges={quantitySurcharges}
+                    personalisationPricing={activePersonalisationPricing}
+                  />
+                  {personalisationBreakevenQty != null && (
+                    <p
+                      className="mt-3 font-body"
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 400,
+                        color: PAPER_TERTIARY,
+                      }}
+                    >
+                      A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
+                    </p>
+                  )}
+                </>
               )}
 
               {/* Split-name + shipping callouts — two side-by-
@@ -4461,6 +4535,7 @@ function PaperPricingTable({
   quoteMinQuantity,
   quoteMaxQuantity,
   quantitySurcharges,
+  personalisationPricing,
 }: {
   snapshot: PricingSnapshot
   currency: Currency
@@ -4468,6 +4543,12 @@ function PaperPricingTable({
   quoteMinQuantity: number | null
   quoteMaxQuantity: number | null
   quantitySurcharges: Record<number, number>
+  // Personalisation (migration 000172). Live rate + floor for the
+  // proof's currency, or null when the version isn't personalised or
+  // sits in a mode that bypasses the standard grid. When non-null,
+  // two rows render beneath the base grid: a Personalisation row and
+  // a bold Total row. Otherwise the table renders exactly as before.
+  personalisationPricing: PersonalisationPricing | null
 }) {
   const { variants } = snapshot
   if (!variants?.length) return null
@@ -4490,6 +4571,15 @@ function PaperPricingTable({
     displayFromCurated.length > 0
       ? displayFromCurated
       : lookupSet.slice(0, DISPLAY_FALLBACK_CAP)
+
+  // Compile per-qty personalisation surcharges once for the visible
+  // quantities. Empty map when personalisationPricing is null so the
+  // render paths can read surcharges[qty] without a null guard.
+  const personalisationSurcharges = compilePersonalisationSurcharges(
+    visibleQuantities,
+    personalisationPricing,
+  )
+  const hasPersonalisation = personalisationPricing != null
 
   // Single-variant path — the design mock's shape. Multi-
   // variant proofs (rare: thickness + ink count variants in
@@ -4527,41 +4617,69 @@ function PaperPricingTable({
               >
                 Price
               </th>
-              <th
-                scope="col"
-                className="py-4 text-right font-paper-mono uppercase"
-                style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
-              >
-                Per card
-              </th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ qty, price }) => (
-              <tr
-                key={qty}
-                style={{ borderBottom: '1px solid rgba(26,22,18,0.10)' }}
-              >
-                <td
-                  className="py-5 leading-none"
-                  style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 28, color: '#1a1612' }}
-                >
-                  {qty.toLocaleString()}
-                </td>
-                <td
-                  className="py-5 text-right"
-                  style={{ fontFamily: MONO, fontSize: 16, color: '#1a1612' }}
-                >
-                  {formatPrice(price, currency)}
-                </td>
-                <td
-                  className="py-5 text-right"
-                  style={{ fontFamily: MONO, fontSize: 13, color: PAPER_TERTIARY }}
-                >
-                  {formatPrice(price / qty, currency, 2)}
-                </td>
-              </tr>
-            ))}
+            {rows.map(({ qty, price }) => {
+              const personalisation = personalisationSurcharges[qty] ?? 0
+              const total = price + personalisation
+              const groupBorder = hasPersonalisation
+                ? { borderBottom: '1px solid rgba(26,22,18,0.10)' }
+                : undefined
+              return (
+                <Fragment key={qty}>
+                  <tr
+                    style={hasPersonalisation ? undefined : { borderBottom: '1px solid rgba(26,22,18,0.10)' }}
+                  >
+                    <td
+                      className="py-5 leading-none"
+                      style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 28, color: '#1a1612' }}
+                      rowSpan={hasPersonalisation ? 3 : 1}
+                    >
+                      {qty.toLocaleString()}
+                    </td>
+                    <td
+                      className={hasPersonalisation ? 'pt-5 pb-1 text-right' : 'py-5 text-right'}
+                      style={{ fontFamily: MONO, fontSize: 16, color: '#1a1612' }}
+                    >
+                      {formatPrice(price, currency)}
+                    </td>
+                  </tr>
+                  {hasPersonalisation && (
+                    <>
+                      <tr>
+                        <td
+                          className="py-1 text-right font-paper-mono uppercase"
+                          style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.18em', color: PAPER_TERTIARY }}
+                        >
+                          Personalisation
+                        </td>
+                        <td
+                          className="py-1 text-right"
+                          style={{ fontFamily: MONO, fontSize: 13, color: PAPER_TERTIARY }}
+                        >
+                          + {formatPrice(personalisation, currency)}
+                        </td>
+                      </tr>
+                      <tr style={groupBorder}>
+                        <td
+                          className="pt-1 pb-5 text-right font-paper-mono uppercase"
+                          style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.18em', color: PAPER_INK }}
+                        >
+                          Total
+                        </td>
+                        <td
+                          className="pt-1 pb-5 text-right"
+                          style={{ fontFamily: MONO, fontSize: 17, fontWeight: 600, color: PAPER_INK }}
+                        >
+                          {formatPrice(total, currency)}
+                        </td>
+                      </tr>
+                    </>
+                  )}
+                </Fragment>
+              )
+            })}
           </tbody>
         </table>
         <QuantityLookup
@@ -4571,6 +4689,7 @@ function PaperPricingTable({
           quoteMinQuantity={quoteMinQuantity}
           quoteMaxQuantity={quoteMaxQuantity}
           quantitySurcharges={quantitySurcharges}
+          personalisationPricing={personalisationPricing}
         />
       </>
     )
@@ -4612,43 +4731,115 @@ function PaperPricingTable({
         <tbody>
           {visibleQuantities.map((qty) => {
             const surcharge = quantitySurcharges[qty] ?? 0
+            const personalisation = personalisationSurcharges[qty] ?? 0
+            const groupBorder = hasPersonalisation
+              ? { borderBottom: '1px solid rgba(26,22,18,0.10)' }
+              : undefined
             return (
-              <tr
-                key={qty}
-                style={{ borderBottom: '1px solid rgba(26,22,18,0.10)' }}
-              >
-                <td
-                  className="py-4 pr-2 leading-none sm:pr-4"
-                  style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 24, color: '#1a1612' }}
+              <Fragment key={qty}>
+                <tr
+                  style={hasPersonalisation ? undefined : { borderBottom: '1px solid rgba(26,22,18,0.10)' }}
                 >
-                  {qty.toLocaleString()}
-                </td>
-                {variants.map((v) => {
-                  const base = v.prices[String(qty)]
-                  if (base == null) {
+                  <td
+                    className="py-4 pr-2 leading-none sm:pr-4"
+                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 24, color: '#1a1612' }}
+                    rowSpan={hasPersonalisation ? 3 : 1}
+                  >
+                    {qty.toLocaleString()}
+                  </td>
+                  {variants.map((v) => {
+                    const base = v.prices[String(qty)]
+                    if (base == null) {
+                      return (
+                        <td
+                          key={v.variant_id}
+                          className={hasPersonalisation ? 'pt-4 pb-1 pl-2 text-right sm:pl-4' : 'py-4 pl-2 text-right sm:pl-4'}
+                          style={{ fontFamily: MONO, fontSize: 14, color: 'rgba(26,22,18,0.45)' }}
+                        >
+                          —
+                        </td>
+                      )
+                    }
+                    const price = base + surcharge
                     return (
                       <td
                         key={v.variant_id}
-                        className="py-4 pl-2 text-right sm:pl-4"
-                        style={{ fontFamily: MONO, fontSize: 14, color: 'rgba(26,22,18,0.45)' }}
+                        className={hasPersonalisation ? 'pt-4 pb-1 pl-2 text-right sm:pl-4' : 'py-4 pl-2 text-right sm:pl-4'}
                       >
-                        —
+                        <div style={{ fontFamily: MONO, fontSize: 15, color: '#1a1612' }}>
+                          {formatPrice(price, currency)}
+                        </div>
                       </td>
                     )
-                  }
-                  const price = base + surcharge
-                  return (
-                    <td key={v.variant_id} className="py-4 pl-2 text-right sm:pl-4">
-                      <div style={{ fontFamily: MONO, fontSize: 15, color: '#1a1612' }}>
-                        {formatPrice(price, currency)}
-                      </div>
-                      <div style={{ fontFamily: MONO, fontSize: 12, color: PAPER_TERTIARY }}>
-                        {formatPrice(price / qty, currency, 2)} each
-                      </div>
-                    </td>
-                  )
-                })}
-              </tr>
+                  })}
+                </tr>
+                {hasPersonalisation && (
+                  <>
+                    <tr>
+                      {variants.map((v, idx) => (
+                        <td
+                          key={v.variant_id}
+                          className="py-1 pl-2 text-right sm:pl-4"
+                          style={{ fontFamily: MONO, fontSize: 12, color: PAPER_TERTIARY }}
+                        >
+                          {idx === 0 && (
+                            <span
+                              className="mr-2 font-paper-mono uppercase"
+                              style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.18em' }}
+                            >
+                              Personalisation
+                            </span>
+                          )}
+                          + {formatPrice(personalisation, currency)}
+                        </td>
+                      ))}
+                    </tr>
+                    <tr style={groupBorder}>
+                      {variants.map((v, idx) => {
+                        const base = v.prices[String(qty)]
+                        if (base == null) {
+                          return (
+                            <td
+                              key={v.variant_id}
+                              className="pt-1 pb-4 pl-2 text-right sm:pl-4"
+                              style={{ fontFamily: MONO, fontSize: 13, color: 'rgba(26,22,18,0.45)' }}
+                            >
+                              {idx === 0 && (
+                                <span
+                                  className="mr-2 font-paper-mono uppercase"
+                                  style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em' }}
+                                >
+                                  Total
+                                </span>
+                              )}
+                              —
+                            </td>
+                          )
+                        }
+                        const total = base + surcharge + personalisation
+                        return (
+                          <td
+                            key={v.variant_id}
+                            className="pt-1 pb-4 pl-2 text-right sm:pl-4"
+                          >
+                            {idx === 0 && (
+                              <span
+                                className="mr-2 font-paper-mono uppercase"
+                                style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em', color: PAPER_INK }}
+                              >
+                                Total
+                              </span>
+                            )}
+                            <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 600, color: PAPER_INK }}>
+                              {formatPrice(total, currency)}
+                            </span>
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  </>
+                )}
+              </Fragment>
             )
           })}
         </tbody>
@@ -4661,6 +4852,7 @@ function PaperPricingTable({
       quoteMinQuantity={quoteMinQuantity}
       quoteMaxQuantity={quoteMaxQuantity}
       quantitySurcharges={quantitySurcharges}
+      personalisationPricing={personalisationPricing}
     />
     </>
   )
@@ -4727,6 +4919,7 @@ function QuantityLookup({
   quoteMinQuantity,
   quoteMaxQuantity,
   quantitySurcharges,
+  personalisationPricing,
 }: {
   variants: PricingVariant[]
   currency: Currency
@@ -4734,7 +4927,13 @@ function QuantityLookup({
   quoteMinQuantity: number | null
   quoteMaxQuantity: number | null
   quantitySurcharges: Record<number, number>
+  personalisationPricing: PersonalisationPricing | null
 }) {
+  const hasPersonalisation = personalisationPricing != null
+  const personalisationAt = (qty: number): number =>
+    personalisationPricing
+      ? Math.max(personalisationPricing.min_charge, qty * personalisationPricing.per_card_rate)
+      : 0
   const [raw, setRaw] = useState('')
   if (lookupSet.length === 0) return null
   if (variants.length === 0) return null
@@ -4893,43 +5092,117 @@ function QuantityLookup({
                   </tr>
                 </thead>
                 <tbody>
-                  {tiers.map((qty) => (
-                    <tr
-                      key={qty}
-                      style={{ borderBottom: '1px solid rgba(26,22,18,0.10)' }}
-                    >
-                      <td
-                        className="py-4 pr-4 leading-none"
-                        style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 24, color: '#1a1612' }}
-                      >
-                        {qty.toLocaleString()}
-                      </td>
-                      {variants.map((v) => {
-                        const price = priceAt(qty, v)
-                        if (price == null) {
-                          return (
-                            <td
-                              key={v.variant_id}
-                              className="py-4 pl-4 text-right"
-                              style={{ fontFamily: MONO, fontSize: 14, color: 'rgba(26,22,18,0.45)' }}
-                            >
-                              —
-                            </td>
-                          )
-                        }
-                        return (
-                          <td key={v.variant_id} className="py-4 pl-4 text-right">
-                            <div style={{ fontFamily: MONO, fontSize: 16, color: '#1a1612' }}>
-                              {formatPrice(price, currency)}
-                            </div>
-                            <div style={{ fontFamily: MONO, fontSize: 12, color: PAPER_TERTIARY }}>
-                              {formatPrice(price / qty, currency, 2)} each
-                            </div>
+                  {tiers.map((qty) => {
+                    const personalisation = personalisationAt(qty)
+                    const groupBorder = hasPersonalisation
+                      ? { borderBottom: '1px solid rgba(26,22,18,0.10)' }
+                      : undefined
+                    return (
+                      <Fragment key={qty}>
+                        <tr
+                          style={hasPersonalisation ? undefined : { borderBottom: '1px solid rgba(26,22,18,0.10)' }}
+                        >
+                          <td
+                            className="py-4 pr-4 leading-none"
+                            style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 24, color: '#1a1612' }}
+                            rowSpan={hasPersonalisation ? 3 : 1}
+                          >
+                            {qty.toLocaleString()}
                           </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
+                          {variants.map((v) => {
+                            const price = priceAt(qty, v)
+                            if (price == null) {
+                              return (
+                                <td
+                                  key={v.variant_id}
+                                  className={hasPersonalisation ? 'pt-4 pb-1 pl-4 text-right' : 'py-4 pl-4 text-right'}
+                                  style={{ fontFamily: MONO, fontSize: 14, color: 'rgba(26,22,18,0.45)' }}
+                                >
+                                  —
+                                </td>
+                              )
+                            }
+                            return (
+                              <td
+                                key={v.variant_id}
+                                className={hasPersonalisation ? 'pt-4 pb-1 pl-4 text-right' : 'py-4 pl-4 text-right'}
+                              >
+                                <div style={{ fontFamily: MONO, fontSize: 16, color: '#1a1612' }}>
+                                  {formatPrice(price, currency)}
+                                </div>
+                              </td>
+                            )
+                          })}
+                        </tr>
+                        {hasPersonalisation && (
+                          <>
+                            <tr>
+                              {variants.map((v, idx) => (
+                                <td
+                                  key={v.variant_id}
+                                  className="py-1 pl-4 text-right"
+                                  style={{ fontFamily: MONO, fontSize: 12, color: PAPER_TERTIARY }}
+                                >
+                                  {idx === 0 && (
+                                    <span
+                                      className="mr-2 font-paper-mono uppercase"
+                                      style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.18em' }}
+                                    >
+                                      Personalisation
+                                    </span>
+                                  )}
+                                  + {formatPrice(personalisation, currency)}
+                                </td>
+                              ))}
+                            </tr>
+                            <tr style={groupBorder}>
+                              {variants.map((v, idx) => {
+                                const price = priceAt(qty, v)
+                                if (price == null) {
+                                  return (
+                                    <td
+                                      key={v.variant_id}
+                                      className="pt-1 pb-4 pl-4 text-right"
+                                      style={{ fontFamily: MONO, fontSize: 13, color: 'rgba(26,22,18,0.45)' }}
+                                    >
+                                      {idx === 0 && (
+                                        <span
+                                          className="mr-2 font-paper-mono uppercase"
+                                          style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em' }}
+                                        >
+                                          Total
+                                        </span>
+                                      )}
+                                      —
+                                    </td>
+                                  )
+                                }
+                                const total = price + personalisation
+                                return (
+                                  <td
+                                    key={v.variant_id}
+                                    className="pt-1 pb-4 pl-4 text-right"
+                                  >
+                                    {idx === 0 && (
+                                      <span
+                                        className="mr-2 font-paper-mono uppercase"
+                                        style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em', color: PAPER_INK }}
+                                      >
+                                        Total
+                                      </span>
+                                    )}
+                                    <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 600, color: PAPER_INK }}>
+                                      {formatPrice(total, currency)}
+                                    </span>
+                                  </td>
+                                )
+                              })}
+                            </tr>
+                          </>
+                        )}
+                      </Fragment>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

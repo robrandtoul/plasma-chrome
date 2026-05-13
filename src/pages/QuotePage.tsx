@@ -6,6 +6,8 @@ import type { Currency } from '../lib/types'
 import type { QuoteMaterial, QuoteVariant } from '../lib/quote/types'
 import { calculate, splitNameSurchargeFor } from '../lib/quote/calculate'
 import { usePricing } from '../lib/quote/usePricing'
+import { usePersonalisationPricing } from '../lib/quote/usePersonalisationPricing'
+import { personalisationSurchargeForQty, personalisationBreakeven } from '../lib/personalisation'
 import { getVatRateGbp } from '../lib/vatRateGbp'
 import { MaterialPicker } from '../components/quote/MaterialPicker'
 import { CollapsedMaterialBar } from '../components/quote/CollapsedMaterialBar'
@@ -69,6 +71,12 @@ export default function QuotePage() {
   // "Mirror" can't carry across into a material that doesn't
   // have one. Null when the active material exposes no options.
   const [finishCode, setFinishCode] = useState<string | null>(null)
+  // Membership-card personalisation add-on (migration 000172).
+  // Lives in the same UI slot as NamesInput: a membership card
+  // with personalisation is a different product to a split-name
+  // run, so the two are mutually exclusive in this form. Ticking
+  // personalisation hides NamesInput and forces names back to 1.
+  const [hasPersonalisation, setHasPersonalisation] = useState(false)
   // Custom-quote bailout flags. Either or both on => the
   // pricing column collapses to a CustomQuotePanel. Project-
   // level state, not per-pricing-context — persists across
@@ -116,7 +124,7 @@ export default function QuotePage() {
   useEffect(() => {
     let cancelled = false
     supabase.from('materials')
-      .select('id, code, display_name, category, variant_type, option_label, split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd')
+      .select('id, code, display_name, category, variant_type, option_label, split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd, supports_personalisation')
       .eq('is_active', true)
       .eq('is_published', true)
       .is('archived_at', null)
@@ -171,6 +179,48 @@ export default function QuotePage() {
     () => materials.find((m) => m.id === selectedMaterialId) ?? null,
     [materials, selectedMaterialId],
   )
+
+  // Live personalisation rate + min charge for the active currency
+  // (migration 000172). Null until the row arrives or when there's
+  // no currency selected. The page treats null as "personalisation
+  // unavailable" — the checkbox stays inert until the row loads.
+  const { pricing: personalisationPricing } = usePersonalisationPricing(currency)
+
+  // Personalisation surcharge at the current quantity. Zero when
+  // off (checkbox unticked or material doesn't support it). Same
+  // pattern as finishSurchargeAtCurrent below; threaded into the
+  // calculate selection so total reflects the all-in number.
+  // Names input and personalisation describe mutually exclusive
+  // billing models in this form: split-name tooling bills extra
+  // setup for N unique names sharing a design, personalisation
+  // bills unique-per-card data on a single design. The toggle
+  // already resets names to 1 on tick (symmetry-from-the-tick);
+  // hiding the toggle when names > 1 closes the loop the other
+  // way so a designer with 3 names typed doesn't see an
+  // affordance whose tick would silently wipe their input.
+  const showPersonalisationToggle =
+    selectedMaterial?.supports_personalisation === true
+    && currency !== null
+    && personalisationPricing !== null
+    && names <= 1
+  const personalisationActive = showPersonalisationToggle && hasPersonalisation
+  const personalisationSurchargeAtCurrent =
+    personalisationActive && personalisationPricing && quantity != null
+      ? personalisationSurchargeForQty(quantity, personalisationPricing)
+      : 0
+  const personalisationBreakevenQty =
+    personalisationActive && personalisationPricing
+      ? personalisationBreakeven(personalisationPricing)
+      : null
+
+  // Reset personalisation on every material swap. Keeps the form
+  // honest: a material that doesn't support personalisation
+  // shouldn't carry a checked flag, and a designer switching
+  // between supporting materials should re-affirm the choice each
+  // time so they don't get a silent persistent surcharge.
+  useEffect(() => {
+    setHasPersonalisation(false)
+  }, [selectedMaterialId])
   const perExtraNameSurcharge: number | null = useMemo(() => {
     if (!selectedMaterial || !currency) return null
     const raw = currency === 'GBP'
@@ -237,14 +287,19 @@ export default function QuotePage() {
   )
 
   // Per-cell additive surcharge — split-name (constant across qty)
-  // plus finish (varies per qty from material_option_surcharges).
+  // plus finish (varies per qty from material_option_surcharges)
+  // plus personalisation (closed-form formula, varies per qty).
   // The strips and calculate.ts call this with the active cell's
   // quantity so neighbour rows reflect their own tier's surcharge.
   function extraTotalAt(qty: number): number {
     const splitName = splitNameSurchargeFor(names, perExtraNameSurcharge)
     const finishMap = activeOption ? pricing.surchargesByOptionId.get(activeOption.id) : null
     const finish = finishMap ? (finishMap[qty] ?? 0) : 0
-    return splitName + finish
+    const personalisation =
+      personalisationActive && personalisationPricing
+        ? personalisationSurchargeForQty(qty, personalisationPricing)
+        : 0
+    return splitName + finish + personalisation
   }
   const finishLabel = activeOption && !activeOption.is_base ? activeOption.display_name : null
   const finishSurchargeAtCurrent =
@@ -333,7 +388,7 @@ export default function QuotePage() {
     spreadMode ||
     spreadQuantities.length > 0 ||
     customFlags.nfc ||
-    customFlags.uniqueContent
+    hasPersonalisation
   function handleReset() {
     setSelectedMaterialId(null)
     setVariants([])
@@ -342,6 +397,7 @@ export default function QuotePage() {
     setQuantity(null)
     setNames(1)
     setFinishCode(null)
+    setHasPersonalisation(false)
     setCustomFlags(EMPTY_CUSTOM_QUOTE_FLAGS)
     setSpreadMode(false)
     setSpreadQuantities([])
@@ -355,6 +411,7 @@ export default function QuotePage() {
         baseTotal: null,
         splitNameSurcharge: null,
         finishSurcharge: null,
+        personalisationSurcharge: null,
         unitPrice: null,
         validTier: false,
         currency,
@@ -369,10 +426,11 @@ export default function QuotePage() {
         names,
         perExtraNameSurcharge,
         finishSurcharge: finishSurchargeAtCurrent,
+        personalisationSurcharge: personalisationSurchargeAtCurrent,
       },
       variantTiers,
     )
-  }, [selectedVariantId, quantity, currency, names, perExtraNameSurcharge, finishSurchargeAtCurrent, variantTiers, tiersFresh])
+  }, [selectedVariantId, quantity, currency, names, perExtraNameSurcharge, finishSurchargeAtCurrent, personalisationSurchargeAtCurrent, variantTiers, tiersFresh])
 
   return (
     <div className="min-h-dvh bg-gray-50">
@@ -509,18 +567,65 @@ export default function QuotePage() {
                 />
               )}
 
-              {/* Names input — only renders when the active
-                  (material × currency) actually bills extra names.
-                  Wood, acrylic, paper standard, carbon fibre and
-                  CNC carbon all skip the input; their split-name
-                  columns are null in materials. */}
-              {selectedMaterialId && currency && perExtraNameSurcharge != null && (
+              {/* Names + Personalisation share the same conceptual
+                  slot: split-name tooling describes N unique names
+                  on a single design, personalisation describes
+                  unique data per card on a membership-style run.
+                  A given quote is either one or the other, never
+                  both, so the personalisation checkbox hides the
+                  Names input when ticked (and vice versa: a
+                  material that supports personalisation but the
+                  designer hasn't ticked it still shows Names if
+                  the material bills extra names). */}
+              {selectedMaterialId && currency && perExtraNameSurcharge != null && !personalisationActive && (
                 <NamesInput
                   value={names}
                   onChange={setNames}
                   perExtraNameSurcharge={perExtraNameSurcharge}
                   currency={currency}
                 />
+              )}
+
+              {/* Personalisation checkbox (migration 000172). Shows
+                  when the material is admin-flagged as supporting
+                  personalisation and the live rate has loaded. The
+                  helper text below quotes the live rate so a
+                  designer sees the magnitude at a glance.
+                  Conceptually replaces the Names input above for
+                  membership-card quotes — see comment block on the
+                  Names render. */}
+              {showPersonalisationToggle && personalisationPricing && (
+                <div>
+                  <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={hasPersonalisation}
+                      onChange={(e) => {
+                        const next = e.target.checked
+                        setHasPersonalisation(next)
+                        // Personalisation and split-name tooling are
+                        // mutually exclusive in the quote flow.
+                        // Force names back to 1 on tick so the price
+                        // column doesn't carry a stale split-name
+                        // surcharge under the personalisation total.
+                        if (next && names !== 1) setNames(1)
+                      }}
+                      className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 text-gray-900 focus:ring-gray-400"
+                    />
+                    <div>
+                      <div className="text-sm font-medium text-gray-700">
+                        Add personalisation
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {currency === 'USD'
+                          ? `$${personalisationPricing.per_card_rate.toFixed(2)} per card with a $${personalisationPricing.min_charge.toFixed(0)} minimum charge.`
+                          : currency === 'EUR'
+                            ? `€${personalisationPricing.per_card_rate.toFixed(2)} per card with a €${personalisationPricing.min_charge.toFixed(0)} minimum charge.`
+                            : `£${personalisationPricing.per_card_rate.toFixed(2)} per card with a £${personalisationPricing.min_charge.toFixed(0)} minimum charge.`}
+                      </div>
+                    </div>
+                  </label>
+                </div>
               )}
 
               {/* Finish toggle — only renders when the active
@@ -590,6 +695,13 @@ export default function QuotePage() {
                 }
                 names={names}
                 perExtraNameSurcharge={perExtraNameSurcharge}
+                personalisationAt={(qty) =>
+                  personalisationActive && personalisationPricing
+                    ? personalisationSurchargeForQty(qty, personalisationPricing)
+                    : 0
+                }
+                personalisationActive={personalisationActive}
+                personalisationBreakevenQty={personalisationBreakevenQty}
                 customFlags={customFlags}
                 loading={pricing.loading && !tiersFresh}
               />
@@ -638,6 +750,8 @@ export default function QuotePage() {
                 names={names}
                 finishSurcharge={result.finishSurcharge}
                 finishLabel={finishLabel}
+                personalisationSurcharge={result.personalisationSurcharge}
+                personalisationBreakevenQty={personalisationBreakevenQty}
                 unitPrice={result.unitPrice}
                 quantity={quantity}
                 currency={currency}
@@ -670,6 +784,7 @@ export default function QuotePage() {
                 finishName={showFinishToggle && activeOption ? activeOption.display_name : null}
                 quantity={quantity}
                 names={names}
+                personalisationActive={personalisationActive}
               />
             )}
 
@@ -690,6 +805,7 @@ export default function QuotePage() {
                     names,
                     perExtraNameSurcharge,
                     finishSurcharge: finishSurchargeAtCurrent,
+                    personalisationSurcharge: personalisationSurchargeAtCurrent,
                   },
                   result,
                   materialDisplayName: selectedMaterial.display_name,

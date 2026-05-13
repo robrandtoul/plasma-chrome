@@ -1,16 +1,16 @@
 import type { CustomQuoteFlagsState } from './CustomQuoteFlags'
 
 // Bailout panel that replaces HeadlinePrice + adjacent strips +
-// snap chips when ANY custom-quote trigger fires. Three triggers
-// today:
+// snap chips when a custom-quote trigger fires. Two triggers today:
 //   - flags.nfc                       NFC chip selected
-//   - flags.uniqueContent             unique content per card
 //   - aboveMax !== null               typed quantity exceeds the
 //                                     largest priced tier for the
 //                                     active (variant, currency)
 //
-// First two are user-driven (CustomQuoteFlags toggles). The third
-// is derived in QuotePage from quantity + the loaded tiers map.
+// The first is user-driven (CustomQuoteFlags toggle). The second is
+// derived in QuotePage from quantity + the loaded tiers map. The
+// previous unique-content flag was retired by migration 000172 —
+// the personalisation add-on now prices that case directly.
 //
 // Lists each active trigger in the "Why" block so the designer
 // can read aloud what the customer asked for and why this needs a
@@ -39,7 +39,6 @@ export function CustomQuotePanel({
 }) {
   const reasons: string[] = []
   if (flags.nfc) reasons.push('NFC chips selected')
-  if (flags.uniqueContent) reasons.push('Unique content per card selected')
   if (aboveMax) {
     const variantSuffix = aboveMax.variantName
       ? ` (${aboveMax.variantName.toLowerCase()})`

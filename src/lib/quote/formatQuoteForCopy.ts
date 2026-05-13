@@ -76,7 +76,7 @@ function finishWord(option: { displayName: string; isBase: boolean }): string {
 export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   const { selection, result, materialDisplayName, variantDisplayName, finishOption, vatRate } = args
   const { quantity, currency, names } = selection
-  const { total, baseTotal, splitNameSurcharge, finishSurcharge } = result
+  const { total, baseTotal, splitNameSurcharge, finishSurcharge, personalisationSurcharge } = result
 
   if (total == null || baseTotal == null || quantity == null || !currency) return EMPTY
 
@@ -85,6 +85,7 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   // boundary HeadlinePrice does so the two outputs agree.
   const cardsPrice = baseTotal + (finishSurcharge ?? 0)
   const showSplitName = names > 1 && (splitNameSurcharge ?? 0) > 0
+  const showPersonalisation = (personalisationSurcharge ?? 0) > 0
   const showVat = currency === 'GBP' && vatRate != null
   const exVatTotal = showVat ? Math.round((total / (1 + vatRate)) * 100) / 100 : null
 
@@ -109,6 +110,7 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   const qtyStr = quantity.toLocaleString()
   const cardsPriceStr = formatPrice(cardsPrice, currency)
   const splitNameStr = showSplitName ? formatPrice(splitNameSurcharge!, currency) : null
+  const personalisationStr = showPersonalisation ? formatPrice(personalisationSurcharge!, currency) : null
   const totalStr = formatPrice(total, currency)
   const exVatStr = exVatTotal != null ? formatPrice(exVatTotal, 'GBP', 2) : null
 
@@ -117,6 +119,9 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   plainLines.push(`${qtyStr} ${materialDisplayName} cards${parenPlain} = ${cardsPriceStr}`)
   if (showSplitName) {
     plainLines.push(`Extra setup to split batch between ${names} layouts = ${splitNameStr}`)
+  }
+  if (showPersonalisation) {
+    plainLines.push(`Personalisation = ${personalisationStr}`)
   }
   plainLines.push('')
   let totalLinePlain = `Total = ${totalStr}`
@@ -133,6 +138,9 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   htmlLines.push(`${escapeHtml(qtyStr)} ${escapeHtml(materialDisplayName)} cards${parenHtml} = ${escapeHtml(cardsPriceStr)}`)
   if (showSplitName) {
     htmlLines.push(`Extra setup to split batch between ${names} layouts = ${escapeHtml(splitNameStr!)}`)
+  }
+  if (showPersonalisation) {
+    htmlLines.push(`Personalisation = ${escapeHtml(personalisationStr!)}`)
   }
   // Total line — strong wraps up to and including " inc VAT" on
   // GBP, the ex-VAT parenthetical sits outside; on EUR/USD the

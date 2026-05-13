@@ -60,6 +60,9 @@ export function SpreadQuoteResults({
   splitNameSurcharge,
   names,
   perExtraNameSurcharge,
+  personalisationAt,
+  personalisationActive,
+  personalisationBreakevenQty,
   customFlags,
   loading,
 }: {
@@ -82,7 +85,14 @@ export function SpreadQuoteResults({
   splitNameSurcharge: number
   names: number
   perExtraNameSurcharge: number | null
-  customFlags: { nfc: boolean; uniqueContent: boolean }
+  // Migration 000172. Per-qty personalisation resolver from the
+  // parent (closed-form formula). Returns 0 when personalisation
+  // is off — the SpreadList only renders the dedicated column
+  // when personalisationActive is true.
+  personalisationAt: (qty: number) => number
+  personalisationActive: boolean
+  personalisationBreakevenQty: number | null
+  customFlags: { nfc: boolean }
   loading: boolean
 }) {
   // Component-local state, no persistence — the brief specifies
@@ -91,8 +101,8 @@ export function SpreadQuoteResults({
   const [includeUnitPrice, setIncludeUnitPrice] = useState(false)
 
   const result = useMemo(
-    () => spreadCalculate(quantities, variantTiers, finishSurchargesByQty, currency, splitNameSurcharge),
-    [quantities, variantTiers, finishSurchargesByQty, currency, splitNameSurcharge],
+    () => spreadCalculate(quantities, variantTiers, finishSurchargesByQty, currency, splitNameSurcharge, personalisationAt),
+    [quantities, variantTiers, finishSurchargesByQty, currency, splitNameSurcharge, personalisationAt],
   )
 
   const validRows = useMemo(
@@ -168,7 +178,7 @@ export function SpreadQuoteResults({
 
   const showSplitNameRow =
     splitNameSurcharge > 0 && perExtraNameSurcharge != null && names > 1
-  const showFlags = customFlags.nfc || customFlags.uniqueContent
+  const showFlags = customFlags.nfc
   const isGbp = currency === 'GBP'
 
   // Format the formatted-copy payload once. Cheap.
@@ -184,6 +194,8 @@ export function SpreadQuoteResults({
           names,
           perExtraNameSurcharge,
           customFlags,
+          personalisationActive,
+          personalisationBreakevenQty,
           includeUnitPrice,
         })
       : null
@@ -211,9 +223,16 @@ export function SpreadQuoteResults({
             invalidBaseRows={invalidBaseRows}
             currency={currency}
             includeUnitPrice={includeUnitPrice}
+            personalisationActive={personalisationActive}
             onSwap={swapQuantity}
             onRemove={removeQuantity}
           />
+        )}
+
+        {personalisationActive && personalisationBreakevenQty != null && validRows.length > 0 && (
+          <p className="mt-3 text-xs text-gray-400">
+            Totals already include personalisation. A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
+          </p>
         )}
 
         {invalidFinishRows.length > 0 && (
@@ -264,12 +283,6 @@ export function SpreadQuoteResults({
                 <span>NFC chips selected — prices above are without NFC.</span>
               </li>
             )}
-            {customFlags.uniqueContent && (
-              <li className="flex items-start gap-2">
-                <span aria-hidden className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-600" />
-                <span>Each card has unique content — prices above assume identical artwork.</span>
-              </li>
-            )}
           </ul>
         </div>
       )}
@@ -307,6 +320,7 @@ function SpreadList({
   invalidBaseRows,
   currency,
   includeUnitPrice,
+  personalisationActive,
   onSwap,
   onRemove,
 }: {
@@ -314,6 +328,7 @@ function SpreadList({
   invalidBaseRows: readonly SpreadRow[]
   currency: Currency
   includeUnitPrice: boolean
+  personalisationActive: boolean
   onSwap: (oldQty: number, newQty: number) => void
   onRemove: (oldQty: number) => void
 }) {
@@ -328,6 +343,22 @@ function SpreadList({
 
   return (
     <ul className="mt-4 divide-y divide-gray-100" role="list">
+      {/* Header row appears only when the personalisation column
+          is showing — otherwise the existing two-cell layout reads
+          fine on its own. */}
+      {personalisationActive && merged.length > 0 && (
+        <li className="flex items-baseline justify-between gap-4 pb-2 pt-1">
+          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400" />
+          <div className="flex items-baseline gap-8 text-right">
+            <p className="w-24 text-xs font-semibold uppercase tracking-widest text-gray-400">
+              Personalisation
+            </p>
+            <p className="w-28 text-xs font-semibold uppercase tracking-widest text-gray-400">
+              Total
+            </p>
+          </div>
+        </li>
+      )}
       {merged.map(({ row: r, kind }, i) => (
         <li key={`row-${r.quantity}-${i}`}>
           <div className="flex items-baseline justify-between gap-4 py-[18px]">
@@ -337,23 +368,42 @@ function SpreadList({
               </span>
               <span className="ml-1.5 text-[16px] font-medium text-gray-500">cards</span>
             </p>
-            <div className="text-right">
-              {kind === 'valid' && r.total != null ? (
-                <>
-                  <p className="text-[32px] font-medium leading-none tabular-nums text-gray-900">
-                    {formatPrice(r.total, currency)}
-                  </p>
-                  {includeUnitPrice && r.unitPrice != null && (
-                    <p className="mt-1.5 text-[13px] tabular-nums text-gray-500">
-                      {formatPrice(r.unitPrice, currency, 2)} per card
+            <div className="flex items-baseline gap-8 text-right">
+              {/* Personalisation column — only renders when the
+                  parent flagged personalisation active. The
+                  closed-form formula always has a value (zero is a
+                  valid result), but we only ever show this column
+                  when the toggle is on so a vanilla spread quote
+                  reads as before. */}
+              {personalisationActive && (
+                <div className="w-24 text-right">
+                  {kind === 'valid' ? (
+                    <p className="text-[18px] font-medium leading-none tabular-nums text-gray-700">
+                      {formatPrice(r.personalisationSurcharge, currency)}
                     </p>
+                  ) : (
+                    <p className="text-[16px] tabular-nums text-gray-300">—</p>
                   )}
-                </>
-              ) : (
-                <p className="text-[16px] font-medium tabular-nums text-gray-400">
-                  Not priced
-                </p>
+                </div>
               )}
+              <div className={personalisationActive ? 'w-28 text-right' : 'text-right'}>
+                {kind === 'valid' && r.total != null ? (
+                  <>
+                    <p className="text-[32px] font-medium leading-none tabular-nums text-gray-900">
+                      {formatPrice(r.total, currency)}
+                    </p>
+                    {includeUnitPrice && r.unitPrice != null && (
+                      <p className="mt-1.5 text-[13px] tabular-nums text-gray-500">
+                        {formatPrice(r.unitPrice, currency, 2)} per card
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-[16px] font-medium tabular-nums text-gray-400">
+                    Not priced
+                  </p>
+                )}
+              </div>
             </div>
           </div>
           {/* Inline swap affordance for invalid-base rows. Same

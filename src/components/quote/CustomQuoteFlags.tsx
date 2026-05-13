@@ -1,29 +1,31 @@
-// Two project-level flags that bail out of numeric quoting entirely:
-// NFC chips and unique-content runs. Either or both on => the whole
-// pricing column collapses to a CustomQuotePanel saying "this needs
-// a custom quote — flag for Rob".
+// Project-level flag(s) that bail out of numeric quoting entirely.
+// NFC orders are the only such trigger today: they always need a
+// custom quote because the chip + bonded layer cost lives outside
+// the standard price grid.
 //
-// These are deliberately styled with a warm-amber border so the
-// designer's eye registers "this is the bailout zone" and doesn't
-// confuse them with the spec extras above. Same checkbox-chip
-// shape as those toggles, but inside an amber-trimmed section
-// header.
+// The previous "Each card has unique content" flag was removed in
+// migration 000172 — the personalisation add-on now prices unique-
+// per-card content directly, so the bailout is no longer needed
+// for that case.
+//
+// Styled with a warm-amber border so the designer's eye registers
+// "this is the bailout zone" and doesn't confuse it with the spec
+// extras above. Same checkbox-chip shape as those toggles, but
+// inside an amber-trimmed section header.
 //
 // Flags persist across material and currency switches — they
 // describe the project, not the pricing context.
 
 export interface CustomQuoteFlagsState {
   nfc: boolean
-  uniqueContent: boolean
 }
 
 export const EMPTY_CUSTOM_QUOTE_FLAGS: CustomQuoteFlagsState = {
   nfc: false,
-  uniqueContent: false,
 }
 
 export function isCustomQuote(flags: CustomQuoteFlagsState): boolean {
-  return flags.nfc || flags.uniqueContent
+  return flags.nfc
 }
 
 export function CustomQuoteFlags({
@@ -43,7 +45,7 @@ export function CustomQuoteFlags({
         Special card types
       </legend>
       <p className="mb-2 text-xs text-amber-700/80">
-        Pick if either applies — these always need a custom quote, no live pricing.
+        Pick if this applies — it always needs a custom quote, no live pricing.
       </p>
       <div className="flex flex-col gap-2">
         <Trigger
@@ -51,12 +53,6 @@ export function CustomQuoteFlags({
           caption="NFC orders always need a custom quote."
           checked={value.nfc}
           onChange={(v) => set('nfc', v)}
-        />
-        <Trigger
-          label="Each card has unique content"
-          caption="e.g. numbering, sequential IDs, individual names, membership numbers."
-          checked={value.uniqueContent}
-          onChange={(v) => set('uniqueContent', v)}
         />
       </div>
     </fieldset>

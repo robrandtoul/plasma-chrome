@@ -33,6 +33,12 @@ export interface QuoteSelection {
   // before calling calculate, since the surcharge varies per
   // quantity and we already have the qty in scope.
   finishSurcharge: number
+  // Migration 000172. Personalisation surcharge at the chosen
+  // quantity in major currency units. Zero when personalisation
+  // is off or the material doesn't support it. The page resolves
+  // this with `max(min_charge, qty * per_card_rate)` before calling
+  // calculate — same pattern as finishSurcharge.
+  personalisationSurcharge: number
 }
 
 // Two tier hints surfaced when the typed quantity doesn't match a
@@ -64,6 +70,11 @@ export interface QuoteResult {
   // and for any material with no option surcharge schedule. Null
   // mirrors total when no tier matches.
   finishSurcharge: number | null
+  // Migration 000172. Personalisation surcharge applied at the
+  // active quantity. Zero when personalisation is off; non-zero
+  // when on (always >= min_charge by the floor rule). Null mirrors
+  // total when no tier matches.
+  personalisationSurcharge: number | null
   // Inclusive unit price (total / quantity). Reflects what the
   // customer actually pays per card, including any split-name
   // surcharge spread across the run.
@@ -115,6 +126,7 @@ export function calculate(
       baseTotal: null,
       splitNameSurcharge: null,
       finishSurcharge: null,
+      personalisationSurcharge: null,
       unitPrice: null,
       validTier: false,
       currency,
@@ -127,12 +139,14 @@ export function calculate(
   if (exact) {
     const splitName = splitNameSurchargeFor(names, perExtraNameSurcharge)
     const finishSurcharge = selection.finishSurcharge
-    const total = exact.totalPrice + splitName + finishSurcharge
+    const personalisationSurcharge = selection.personalisationSurcharge
+    const total = exact.totalPrice + splitName + finishSurcharge + personalisationSurcharge
     return {
       total,
       baseTotal: exact.totalPrice,
       splitNameSurcharge: splitName,
       finishSurcharge,
+      personalisationSurcharge,
       unitPrice: total / quantity,
       validTier: true,
       currency,
@@ -158,6 +172,7 @@ export function calculate(
     baseTotal: null,
     splitNameSurcharge: null,
     finishSurcharge: null,
+    personalisationSurcharge: null,
     unitPrice: null,
     validTier: false,
     currency,

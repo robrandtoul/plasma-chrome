@@ -48,6 +48,11 @@ export interface SpecSummaryProps {
   finishName: string | null
   quantity: number | null
   names: number
+  // Migration 000172. When true, surfaces a "Personalisation:
+  // Unique per card" row. Replaces the Layouts row since
+  // personalisation and split-name layouts are mutually exclusive
+  // in this form.
+  personalisationActive: boolean
 }
 
 export function SpecSummary({
@@ -57,6 +62,7 @@ export function SpecSummary({
   finishName,
   quantity,
   names,
+  personalisationActive,
 }: SpecSummaryProps) {
   if (!materialName) return null
 
@@ -90,7 +96,8 @@ export function SpecSummary({
         {variantRow && <Row label={variantRow.label} value={variantRow.value} />}
         {finishName && <Row label="Finish" value={finishName} />}
         {quantity != null && <Row label="Quantity" value={`${quantity.toLocaleString()} cards`} />}
-        {names > 1 && <Row label="Layouts" value={String(names)} />}
+        {names > 1 && !personalisationActive && <Row label="Layouts" value={String(names)} />}
+        {personalisationActive && <Row label="Personalisation" value="Unique per card" />}
       </dl>
     </div>
   )

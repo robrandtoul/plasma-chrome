@@ -17,9 +17,14 @@ export interface SpreadRow {
   // finish surcharge schedule is active. Null when the finish
   // schedule exists but has no row at this quantity.
   finishSurcharge: number | null
-  // Per-row total = baseTotal + finishSurcharge. Quantity-
-  // independent items (split-name tooling) are NOT folded into
-  // the per-row total — they're listed once below the table.
+  // Migration 000172. Personalisation surcharge at this quantity:
+  // max(min_charge, qty * per_card_rate) when personalisation is
+  // on, zero otherwise. Always defined (no neighbour resolution
+  // needed since the formula is closed-form across every qty).
+  personalisationSurcharge: number
+  // Per-row total = baseTotal + finishSurcharge + personalisation.
+  // Quantity-independent items (split-name tooling) are NOT folded
+  // into the per-row total — they're listed once below the table.
   total: number | null
   // total / quantity. Null when total is null.
   unitPrice: number | null
@@ -95,6 +100,12 @@ export function spreadCalculate(
   finishSurchargesByQty: Record<number, number> | null,
   currency: Currency | null,
   splitNameSurcharge: number = 0,
+  // Migration 000172. Per-qty resolver for the personalisation
+  // surcharge. Returns 0 when personalisation is off (the default
+  // identity), or `max(min_charge, qty * per_card_rate)` when on.
+  // Closed-form, so no validation / neighbour columns — every qty
+  // has a well-defined value.
+  personalisationAt: (qty: number) => number = () => 0,
 ): SpreadResult {
   if (!currency || quantities.length === 0) return EMPTY
 
@@ -147,9 +158,10 @@ export function spreadCalculate(
     }
 
     const baseTotal = isValidBase ? tier!.totalPrice : null
+    const personalisationSurcharge = personalisationAt(q)
     const total =
       baseTotal != null && finishSurcharge != null
-        ? baseTotal + finishSurcharge + splitNameSurcharge
+        ? baseTotal + finishSurcharge + splitNameSurcharge + personalisationSurcharge
         : null
     const unitPrice = total != null && q > 0 ? total / q : null
 
@@ -157,6 +169,7 @@ export function spreadCalculate(
       quantity: q,
       baseTotal,
       finishSurcharge,
+      personalisationSurcharge,
       total,
       unitPrice,
       isValidBase,

@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { downloadPricingExport } from '../../lib/pricingIO'
+import { logAudit } from '../../lib/audit'
+import { invalidatePublicSettings } from '../../lib/publicSettings'
+import { invalidateVatRateGbp } from '../../lib/vatRateGbp'
 import AdminPricingImport from './AdminPricingImport'
+import PersonalisationPricingSection from './PersonalisationPricingSection'
 import { MATERIAL_OPTION_BACKED_ADDONS, resolveBackingOptionIds } from './backedAddons'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -53,6 +57,14 @@ export default function AdminPricingPage() {
   const [showImport, setShowImport] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
+  // VAT rate (settings.vat_rate_gbp, migration 000115). Lives here
+  // now rather than on the Settings page — pricing-adjacent. Stored
+  // as a fraction (0.20 = 20%); rendered as percent-like decimal.
+  const [vatRate, setVatRate] = useState<number | null>(null)
+  const [vatDraft, setVatDraft] = useState<string>('')
+  const [vatSaving, setVatSaving] = useState(false)
+  const [vatSavedAt, setVatSavedAt] = useState<number | null>(null)
+  const [vatError, setVatError] = useState<string | null>(null)
 
   async function handleExportAll() {
     setExportError(null)
@@ -78,7 +90,65 @@ export default function AdminPricingPage() {
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(); void loadVatRate() }, [])
+
+  async function loadVatRate() {
+    const { data } = await supabase.from('settings').select('vat_rate_gbp').eq('id', 1).single()
+    const rate = data?.vat_rate_gbp != null ? Number(data.vat_rate_gbp) : null
+    setVatRate(rate)
+    setVatDraft(rate == null ? '' : String(rate))
+  }
+
+  async function saveVatRate() {
+    if (vatRate == null) return
+    const draft = vatDraft.trim()
+    if (draft === '') {
+      // Snap back to the saved value rather than wiping it. VAT is
+      // load-bearing for every GBP quote in the system; an accidental
+      // empty save would be very wrong.
+      setVatDraft(String(vatRate))
+      setVatError(null)
+      return
+    }
+    const n = Number(draft)
+    if (!Number.isFinite(n) || n < 0 || n > 1) {
+      setVatError('Must be between 0 and 1 (e.g. 0.20)')
+      return
+    }
+    // Round to 4dp to match the column's numeric(5,4) precision.
+    const next = Math.round(n * 10000) / 10000
+    if (next === vatRate) {
+      setVatError(null)
+      return
+    }
+    setVatSaving(true)
+    setVatError(null)
+    const prev = vatRate
+    const { error: err } = await supabase
+      .from('settings')
+      .update({ vat_rate_gbp: next, updated_at: new Date().toISOString() })
+      .eq('id', 1)
+    setVatSaving(false)
+    if (err) {
+      setVatError(err.message)
+      return
+    }
+    setVatRate(next)
+    setVatDraft(String(next))
+    setVatSavedAt(Date.now())
+    invalidatePublicSettings()
+    invalidateVatRateGbp()
+    void logAudit({
+      action: 'setting.vat_rate_gbp_updated',
+      targetType: 'setting',
+      targetId: 'vat_rate_gbp',
+      targetLabel: 'UK VAT rate (GBP)',
+      beforeValue: { vat_rate_gbp: prev },
+      afterValue: { vat_rate_gbp: next },
+    })
+  }
+
+  const vatRecentlySaved = vatSavedAt != null && Date.now() - vatSavedAt < 2000
 
   async function load() {
     setLoading(true)
@@ -227,6 +297,35 @@ export default function AdminPricingPage() {
         />
       )}
 
+      {/* ── Pricing settings ──────────────────────────────────
+          VAT rate and personalisation pricing — both global
+          per-currency settings that affect every quote. Lifted
+          here from the Settings page so pricing-affecting
+          knobs live next to the pricing they affect. */}
+      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+        <h3 className="mb-1 text-sm font-semibold text-gray-900">VAT rate</h3>
+        <p className="mb-4 text-xs text-gray-500">
+          UK VAT rate. Currently {vatRate != null ? `${Math.round(vatRate * 100 * 100) / 100}% (${vatRate})` : '—'}. Edit if HMRC changes it. EUR and USD prices are VAT-free and unaffected.
+        </p>
+        <div className="flex items-center gap-3">
+          <input
+            type="number"
+            min={0}
+            max={1}
+            step={0.01}
+            value={vatDraft}
+            onChange={(e) => { setVatDraft(e.target.value); setVatError(null) }}
+            onBlur={() => { void saveVatRate() }}
+            className={`${pricingInputClass} max-w-[10rem]`}
+          />
+          {vatSaving && <span className="text-xs text-gray-400">Saving…</span>}
+          {vatRecentlySaved && !vatSaving && <span className="text-xs text-emerald-600">Saved</span>}
+          {vatError && <span className="text-xs text-rose-600">{vatError}</span>}
+        </div>
+      </section>
+
+      <PersonalisationPricingSection />
+
       {loading ? (
         <div className="flex justify-center py-20">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
@@ -289,3 +388,5 @@ export default function AdminPricingPage() {
     </div>
   )
 }
+
+const pricingInputClass = 'rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'

@@ -16,6 +16,7 @@ import { safeRemoveImagePaths } from '../lib/imageStorage'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { VariantDropZone } from '../components/VariantDropZone'
 import type { Currency, LetterpressCoreColour, PricingSnapshot } from '../lib/types'
+import { usePersonalisationPricing } from '../lib/quote/usePersonalisationPricing'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSection'
 import type { QrKind } from '../lib/qrCodes'
@@ -127,7 +128,21 @@ export default function EditVersionPage() {
   const [changeNotes, setChangeNotes] = useState('')
   const [pricingDisplay, setPricingDisplay] = useState<PricingDisplayValue | null>(null)
   const [pricingSnapshot, setPricingSnapshot] = useState<PricingSnapshot | null>(null)
+  // Personalisation flag and supporting material metadata (migration
+  // 000172). Loaded from the version row + its joined material so the
+  // gate (supports_personalisation && cardType === 'membership') can
+  // render the same way the new-version form does. cardType isn't
+  // editable from this page; it's read once at load and used only for
+  // the gate.
+  const [hasPersonalisation, setHasPersonalisation] = useState(false)
+  const [materialSupportsPersonalisation, setMaterialSupportsPersonalisation] = useState(false)
+  const [cardType, setCardType] = useState<'business' | 'membership'>('business')
   const [shippingNote, setShippingNote] = useState('')
+  // Live per-currency rate + min charge for the personalisation
+  // checkbox helper. Read live so an admin rate change propagates
+  // to the designer-facing copy without a redeploy — see the
+  // matching hook in NewVersionPage.
+  const { pricing: personalisationLivePricing } = usePersonalisationPricing(currency)
   const [displayQuantities, setDisplayQuantities] = useState<number[]>(DEFAULT_DISPLAY_QUANTITIES)
   const [availableOptions, setAvailableOptions] = useState<MaterialOption[]>([])
   const [selectedOptions, setSelectedOptions] = useState<string[]>([])
@@ -208,7 +223,7 @@ export default function EditVersionPage() {
       supabase.from('proofs').select('contacts(full_name, companies(name))').eq('id', pid).single(),
       supabase
         .from('proof_versions')
-        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, names, core_colour_id, front_colour_id, back_colour_id, is_variant_round, materials(code, display_quantities, requires_ink_names, option_label, multi_variant)')
+        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, names, core_colour_id, front_colour_id, back_colour_id, is_variant_round, card_type, has_personalisation, materials(code, display_quantities, requires_ink_names, option_label, multi_variant, supports_personalisation)')
         .eq('id', vid)
         .single(),
       supabase
@@ -239,6 +254,9 @@ export default function EditVersionPage() {
     setRequiresInkNames(materialRequiresInkNames)
     setOptionLabelSingular(materialMeta.option_label ?? 'Finish')
     setMaterialCode(materialMeta.code ?? '')
+    setMaterialSupportsPersonalisation(!!materialMeta.supports_personalisation)
+    setCardType((v.card_type as 'business' | 'membership') ?? 'business')
+    setHasPersonalisation(!!v.has_personalisation)
     setSelectedFrontColourId((v.front_colour_id as string | null) ?? null)
     setSelectedCoreColourId((v.core_colour_id as string | null) ?? null)
     setSelectedBackColourId((v.back_colour_id as string | null) ?? null)
@@ -1096,6 +1114,20 @@ export default function EditVersionPage() {
         front_colour_id: requiresLayerColours ? selectedFrontColourId : null,
         core_colour_id:  requiresLayerColours ? selectedCoreColourId  : null,
         back_colour_id:  requiresLayerColours ? selectedBackColourId  : null,
+        // Personalisation (migration 000172). Same eligibility gate
+        // as NewVersionPage's standard insert path. Saves false if
+        // the gate isn't currently satisfied; this lets a designer
+        // untick by switching to a custom quote (the box
+        // disappears, the save lands false). !isVariantRound
+        // matches NewVersionPage's hard-coded false on the variant-
+        // round path — and is enforced at the DB level too
+        // (migration 000173 CHECK constraint).
+        has_personalisation:
+          materialSupportsPersonalisation
+          && cardType === 'membership'
+          && pricingDisplay !== 'custom'
+          && !isVariantRound
+          && hasPersonalisation,
       })
       .eq('id', versionId!)
 
@@ -1806,6 +1838,49 @@ export default function EditVersionPage() {
               className={inputClass}
             />
           </section>
+
+          {/* Personalisation add-on (migration 000172). Visible only
+              when the material supports personalisation AND this is a
+              membership card AND it's not a custom quote AND it's
+              not a variant round. cardType + isVariantRound aren't
+              editable from this page, so the gate either always
+              passes or never does for a given version.
+              !isVariantRound matches NewVersionPage's hard-coded
+              false on the variant-round save path (bug sweep
+              consistency fix). */}
+          {materialSupportsPersonalisation
+            && cardType === 'membership'
+            && !isCustomQuote
+            && !isVariantRound && (
+            <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+              <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Personalisation</h2>
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <input
+                  type="checkbox"
+                  checked={hasPersonalisation}
+                  onChange={(e) => setHasPersonalisation(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 text-gray-900 focus:ring-gray-400"
+                />
+                <div>
+                  <div className="text-sm font-medium text-gray-700">
+                    Add personalisation
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {(() => {
+                      // Live rate from personalisation_pricing.
+                      // Seed fallbacks (migration 000172) apply only
+                      // during the first paint before the row loads.
+                      const symbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '£'
+                      const rate = personalisationLivePricing?.per_card_rate
+                        ?? (currency === 'USD' || currency === 'EUR' ? 0.25 : 0.20)
+                      const min = personalisationLivePricing?.min_charge ?? 50
+                      return `${symbol}${rate.toFixed(2)} per card with a ${symbol}${min.toFixed(0)} minimum charge.`
+                    })()}
+                  </div>
+                </div>
+              </label>
+            </section>
+          )}
 
           {/* Pricing — read-only. Hidden when this version is a custom quote. */}
           {!isCustomQuote && pricingSnapshot && (

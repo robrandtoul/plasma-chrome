@@ -211,6 +211,13 @@ export interface PublicProofVersion {
   // family is used at different thicknesses with different price
   // tiers, so framing this around "mixed materials" was misleading.
   is_per_direction_pricing: boolean
+  // ── Personalisation (migration 000172) ───────────────────────────────
+  // When true, the customer page renders a Personalisation line item
+  // (per-card rate with a min-charge floor) beneath the base pricing
+  // grid plus a Total row. Set per-version by the designer; the rate
+  // and floor live in personalisation_pricing and update live. Hidden
+  // when custom_quote or is_per_direction_pricing is true.
+  has_personalisation: boolean
 }
 
 // One parallel design alternative on a variant-round proof_version
@@ -315,6 +322,17 @@ export interface CustomerProofGraph {
   material_option_surcharges: PublicMaterialOptionSurcharge[]
   material_variants: PublicMaterialVariant[]
   price_tiers: PublicPriceTier[]
+  // Per-currency personalisation rate + min-charge floor (migration
+  // 000172). Keyed by the version's currency. Only currencies
+  // referenced by the proof's versions are returned. Customer page
+  // reads this live every time it renders, so an admin rate edit
+  // takes effect immediately on the next load — no version bump.
+  personalisation_pricing: Record<string, PersonalisationPricing>
+}
+
+export interface PersonalisationPricing {
+  per_card_rate: number
+  min_charge: number
 }
 
 export interface SiteSettings {

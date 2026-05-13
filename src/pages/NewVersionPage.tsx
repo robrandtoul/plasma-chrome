@@ -21,6 +21,7 @@ import { QuoteLink } from '../components/QuoteLink'
 import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSection'
 import type { QrKind } from '../lib/qrCodes'
 import type { Currency, LetterpressCoreColour, ProofNameApproval } from '../lib/types'
+import { usePersonalisationPricing } from '../lib/quote/usePersonalisationPricing'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { computeQrArtworkChangedSlots, isQrSlotFlagged, resolveQrEffectiveKeep } from '../lib/qrCarryForward'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
@@ -41,6 +42,10 @@ interface Material {
   // the picker. Filtered out of the default list, but present when
   // the inherited material has been archived since v1.
   archived_at: string | null
+  // Personalisation eligibility (migration 000172). Combined with
+  // card_type='membership' to decide whether the version form shows
+  // the "Add personalisation" checkbox at all.
+  supports_personalisation: boolean
 }
 
 interface Variant {
@@ -349,6 +354,19 @@ export default function NewVersionPage() {
   const [sidedness, setSidedness] = useState<'one-sided' | 'two-sided'>('two-sided')
   const [shared, setShared] = useState(false)
   const [changeNotes, setChangeNotes] = useState('')
+  // Personalisation add-on for membership cards (migration 000172).
+  // Gated on selectedMaterial.supports_personalisation && cardType ===
+  // 'membership'. False on v1 by default; carried from v(N-1) on
+  // inheritance. The field is hidden entirely when the gate isn't
+  // satisfied, so a flipped state value sticks around but is ignored.
+  const [hasPersonalisation, setHasPersonalisation] = useState(false)
+  // Live per-currency rate + min charge for the checkbox helper
+  // text. Reads from personalisation_pricing every (re)mount so an
+  // admin rate edit propagates to the designer-facing helper
+  // without code redeploy. Null while loading or before currency
+  // picked; the helper falls back to a sensible placeholder in
+  // that window via personalisationHelperText().
+  const { pricing: personalisationPricing } = usePersonalisationPricing(currency)
   // Migration 000168. QR codes uploaded for this version. On v1
   // creation this starts empty; on v(N>1) creation the v1-carry
   // loader (~line 740) seeds it from v(N-1)'s is_qr_code rows so
@@ -545,7 +563,7 @@ export default function NewVersionPage() {
       // so the designer can continue with it.
       const materialsPromise = supabase
         .from('materials')
-        .select('id, code, display_name, requires_ink_names, option_label, display_quantities, multi_variant, archived_at')
+        .select('id, code, display_name, requires_ink_names, option_label, display_quantities, multi_variant, archived_at, supports_personalisation')
         .eq('is_active', true)
         .eq('is_published', true)
         .is('archived_at', null)
@@ -563,7 +581,7 @@ export default function NewVersionPage() {
       // default).
       const inheritPromise = supabase
         .from('proof_versions')
-        .select('id, version_number, currency, material_id, displayed_variant_ids, names, ink_names, material_options, card_type, custom_quote, core_colour_id, front_colour_id, back_colour_id, is_variant_round, is_per_direction_pricing')
+        .select('id, version_number, currency, material_id, displayed_variant_ids, names, ink_names, material_options, card_type, custom_quote, core_colour_id, front_colour_id, back_colour_id, is_variant_round, is_per_direction_pricing, has_personalisation')
         .eq('proof_id', proofId!)
         .eq('is_current', true)
         .maybeSingle()
@@ -601,6 +619,7 @@ export default function NewVersionPage() {
         back_colour_id: string | null
         is_variant_round: boolean | null
         is_per_direction_pricing: boolean | null
+        has_personalisation: boolean | null
       } | null
 
       if (inherited) {
@@ -638,7 +657,7 @@ export default function NewVersionPage() {
           if (!inMain) {
             const { data: archivedMatData } = await supabase
               .from('materials')
-              .select('id, code, display_name, requires_ink_names, option_label, display_quantities, multi_variant, archived_at')
+              .select('id, code, display_name, requires_ink_names, option_label, display_quantities, multi_variant, archived_at, supports_personalisation')
               .eq('id', inherited.material_id)
               .maybeSingle()
             if (!cancelled && archivedMatData) {
@@ -1004,6 +1023,13 @@ export default function NewVersionPage() {
         //               (shared side is always 'front' by
         //               convention — see state declaration above)
         setCardType(inherited.card_type)
+        // Personalisation flag carries across version bumps. The
+        // form gate (material + cardType) still applies on render,
+        // so an inherited true will visually disappear if the new
+        // version flips cardType to business or swaps to a material
+        // that doesn't support personalisation. The persisted value
+        // remains until save resolves the gate.
+        setHasPersonalisation(!!inherited.has_personalisation)
         // Default the snapshot to the v1 state-defaults — only
         // overwritten if there's at least one v1 image to derive
         // from (matches the actual setSidedness/setShared paths).
@@ -2673,6 +2699,11 @@ export default function NewVersionPage() {
           back_colour_id:  isPerDirectionPricing ? null : (requiresLayerColours ? selectedBackColourId  : null),
           is_variant_round: true,
           is_per_direction_pricing: isPerDirectionPricing,
+          // Personalisation is a membership-card concept on the
+          // standard pricing grid. Variant rounds carry parallel
+          // designs (often via per-direction pricing), so
+          // personalisation is unconditionally false on this path.
+          has_personalisation: false,
         })
         .select('id, version_number')
         .single()
@@ -2997,6 +3028,17 @@ export default function NewVersionPage() {
         front_colour_id: requiresLayerColours ? selectedFrontColourId : null,
         core_colour_id:  requiresLayerColours ? selectedCoreColourId  : null,
         back_colour_id:  requiresLayerColours ? selectedBackColourId  : null,
+        // Personalisation (migration 000172). Persisted only when the
+        // eligibility gate is satisfied at save time. Hiding the
+        // checkbox on a non-membership / non-supporting material then
+        // flipping back leaves stale state in hasPersonalisation; the
+        // gate here means a save lands as false unless the form
+        // currently shows the box ticked.
+        has_personalisation:
+          material.supports_personalisation
+          && cardType === 'membership'
+          && !isCustomQuote
+          && hasPersonalisation,
       })
       .select('id, version_number')
       .single()
@@ -4869,6 +4911,37 @@ export default function NewVersionPage() {
             </div>
             </>)}
 
+            {/* Personalisation add-on (migration 000172). Visible only
+                when the material supports it, the version is a
+                membership card, and it isn't a custom-quote. Hidden
+                (not disabled) when the gate isn't met. */}
+            {selectedMaterial?.supports_personalisation
+              && cardType === 'membership'
+              && !isCustomQuote && (
+              <div className="mt-10">
+                <h3 className="text-base font-semibold text-gray-900">Personalisation</h3>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  Unique data per card, like member numbers or names.
+                </p>
+                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={hasPersonalisation}
+                    onChange={(e) => setHasPersonalisation(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 text-gray-900 focus:ring-gray-400"
+                  />
+                  <div>
+                    <div className="text-sm font-medium text-gray-700">
+                      Add personalisation
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {personalisationHelperText(currency, personalisationPricing)}
+                    </div>
+                  </div>
+                </label>
+              </div>
+            )}
+
           </section>
           )}
           </>
@@ -5831,6 +5904,30 @@ export default function NewVersionPage() {
 // renders the full list with "and" before the last; four or more
 // collapses to "first and N others" so the row stays scannable on
 // projects with long lists.
+// Helper text for the personalisation checkbox. Pulls live values
+// from personalisation_pricing so an admin rate edit propagates
+// here too — bug sweep finding: the previous hardcoded strings
+// silently drifted if an admin ever changed the rate.
+// `pricing` is null briefly while the row loads or when the form
+// has no currency selected; in that window we fall back to the
+// seed values from migration 000172 so the helper is never empty.
+function personalisationHelperText(
+  currency: Currency | null,
+  pricing: { per_card_rate: number; min_charge: number } | null,
+): string {
+  const symbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '£'
+  // Seed fallbacks match migration 000172 — only relevant before
+  // pricing loads. After load these never apply.
+  const rate = pricing?.per_card_rate ?? (currency === 'USD' || currency === 'EUR' ? 0.25 : 0.20)
+  const min = pricing?.min_charge ?? 50
+  // Trim trailing zeros on the rate so 0.20 reads as "0.20" but
+  // 0.255 reads as "0.255". Two-dp default matches Plasma's
+  // existing price typography on the customer page.
+  const rateStr = rate.toFixed(2)
+  const minStr = min.toFixed(0)
+  return `${symbol}${rateStr} per card with a ${symbol}${minStr} minimum charge.`
+}
+
 function formatJoinedList(items: string[]): string {
   if (items.length === 0) return ''
   if (items.length === 1) return items[0]

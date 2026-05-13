@@ -31,6 +31,11 @@ export interface MaterialContent {
   // section as a numbered editorial list. Null or empty means
   // not yet curated; customer render hides the block cleanly.
   key_features: KeyFeature[] | null
+  // ── Personalisation eligibility (migration 000172) ───────────────────
+  // True iff this material can carry the personalisation add-on.
+  // Combined with card_type='membership' on the version form to
+  // decide whether to render the "Add personalisation" checkbox.
+  supports_personalisation: boolean
 }
 
 // Kept in sync with the CHECK constraint on materials.category installed
@@ -140,6 +145,14 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
     material.key_features ?? [],
   )
   const [featuresError, setFeaturesError] = useState<string | null>(null)
+  // Personalisation eligibility (migration 000172). Toggle. Save
+  // fires immediately on change; uses the same direct-update +
+  // audit-log pattern as the publish toggle.
+  const [supportsPersonalisation, setSupportsPersonalisation] = useState(
+    material.supports_personalisation,
+  )
+  const [supportsPersonalisationError, setSupportsPersonalisationError] = useState<string | null>(null)
+  const [supportsPersonalisationInFlight, setSupportsPersonalisationInFlight] = useState(false)
   // Index of the row just added via "Add feature", so its title
   // input can auto-focus on the next render. Cleared after focus
   // fires so a later unrelated render doesn't steal focus.
@@ -428,6 +441,35 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
       targetLabel: material.display_name,
       beforeValue: { quote_max_quantity: prev },
       afterValue: { quote_max_quantity: next },
+    })
+  }
+
+  async function saveSupportsPersonalisation(next: boolean) {
+    if (next === material.supports_personalisation) return
+    setSupportsPersonalisationInFlight(true)
+    setSupportsPersonalisationError(null)
+    const prev = material.supports_personalisation
+    setSupportsPersonalisation(next)
+    const { error: err } = await supabase
+      .from('materials')
+      .update({ supports_personalisation: next })
+      .eq('id', material.id)
+    setSupportsPersonalisationInFlight(false)
+    if (err) {
+      setSupportsPersonalisation(prev)
+      setSupportsPersonalisationError(`Failed to save: ${err.message}`)
+      return
+    }
+    material.supports_personalisation = next
+    onSaved({ ...material })
+    setSavedAt(Date.now())
+    void logAudit({
+      action: 'material.supports_personalisation_updated',
+      targetType: 'material',
+      targetId: material.id,
+      targetLabel: material.display_name,
+      beforeValue: { supports_personalisation: prev },
+      afterValue: { supports_personalisation: next },
     })
   }
 
@@ -1060,6 +1102,54 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
               <p className="mt-1.5 text-xs text-gray-400">
                 Bound the customer's quantity-lookup input. Typing a value outside the range returns a "please get in touch" message instead of a tier row.
               </p>
+            </section>
+
+            {/* Personalisation eligibility (migration 000172).
+                When on, designers can tick the "Add personalisation"
+                box on a membership-card version using this material.
+                Hidden entirely for business cards regardless of this
+                flag. Edit personalisation prices on the Settings
+                page (Personalisation pricing section). */}
+            <section>
+              <div className="flex items-start justify-between gap-3">
+                <label className="text-sm font-medium text-gray-700">
+                  Supports personalisation
+                </label>
+                {supportsPersonalisationInFlight && (
+                  <span className="text-xs text-gray-400">Saving…</span>
+                )}
+              </div>
+              <div className="mt-2 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => void saveSupportsPersonalisation(!supportsPersonalisation)}
+                  disabled={supportsPersonalisationInFlight}
+                  role="switch"
+                  aria-checked={supportsPersonalisation}
+                  className={[
+                    'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50',
+                    supportsPersonalisation ? 'bg-gray-900' : 'bg-gray-200',
+                  ].join(' ')}
+                >
+                  <span
+                    className={[
+                      'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-white transition-transform',
+                      supportsPersonalisation ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
+                    ].join(' ')}
+                  />
+                </button>
+                <span className="text-sm text-gray-600">
+                  {supportsPersonalisation
+                    ? 'Designers can add personalisation to membership cards on this material.'
+                    : 'Personalisation is hidden for this material.'}
+                </span>
+              </div>
+              <p className="mt-1.5 text-xs text-gray-500">
+                Personalisation prices live one rate, one floor per currency, edited from the Settings page.
+              </p>
+              {supportsPersonalisationError && (
+                <p className="mt-1.5 text-xs text-rose-600">{supportsPersonalisationError}</p>
+              )}
             </section>
 
             {/* Icon */}

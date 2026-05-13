@@ -41,7 +41,17 @@ export interface FormatSpreadArgs {
   perExtraNameSurcharge: number | null
   // Custom-quote flags carried through to the bottom of the
   // copy as red-flag bullets.
-  customFlags: { nfc: boolean; uniqueContent: boolean }
+  customFlags: { nfc: boolean }
+  // Migration 000172. When personalisationActive is true the
+  // copy emits a dedicated Personalisation column matching the
+  // on-screen Spread table, plus a "minimum applies below N
+  // cards" footnote keyed off personalisationBreakevenQty.
+  // Without these the customer would read the table's Total
+  // figures (which already include personalisation per row from
+  // spreadCalculate) with no disclosure — a high-severity gap
+  // surfaced by the bug sweep.
+  personalisationActive: boolean
+  personalisationBreakevenQty: number | null
   // Whether to include the Unit-price column in the output.
   // Default off in the caller; designer flips ON when the
   // customer has asked for per-card prices.
@@ -77,6 +87,8 @@ export function formatSpreadQuoteForCopy(args: FormatSpreadArgs): FormattedSprea
     names,
     perExtraNameSurcharge,
     customFlags,
+    personalisationActive,
+    personalisationBreakevenQty,
     includeUnitPrice,
   } = args
 
@@ -115,11 +127,16 @@ export function formatSpreadQuoteForCopy(args: FormatSpreadArgs): FormattedSprea
     8,
     ...rows.map((r) => r.quantity.toLocaleString().length),
   )
+  const personalisationWidth = 15
   const totalWidth = 11
   const headerCols = [
     'Qty'.padEnd(qtyWidth),
-    'Total'.padEnd(totalWidth),
   ]
+  // Personalisation column sits between Qty and Total so the
+  // customer reads the breakdown as base + add-on → total left to
+  // right, same shape as the on-screen Spread table.
+  if (personalisationActive) headerCols.push('Personalisation'.padEnd(personalisationWidth))
+  headerCols.push('Total'.padEnd(totalWidth))
   if (includeUnitPrice) headerCols.push('Unit price')
   plainLines.push(headerCols.join('  '))
 
@@ -127,8 +144,11 @@ export function formatSpreadQuoteForCopy(args: FormatSpreadArgs): FormattedSprea
     if (r.total == null) continue
     const cols = [
       r.quantity.toLocaleString().padEnd(qtyWidth),
-      formatPrice(r.total, currency).padEnd(totalWidth),
     ]
+    if (personalisationActive) {
+      cols.push(formatPrice(r.personalisationSurcharge, currency).padEnd(personalisationWidth))
+    }
+    cols.push(formatPrice(r.total, currency).padEnd(totalWidth))
     if (includeUnitPrice && r.unitPrice != null) {
       cols.push(formatPrice(r.unitPrice, currency, 2))
     }
@@ -147,12 +167,21 @@ export function formatSpreadQuoteForCopy(args: FormatSpreadArgs): FormattedSprea
     )
   }
 
+  // Personalisation footnote — mirrors the on-screen "Minimum
+  // personalisation charge applies below N cards" treatment. Only
+  // renders when personalisationActive is true and a breakeven
+  // was supplied; the column above already itemises the per-qty
+  // surcharge, this band just discloses the floor.
+  if (personalisationActive && personalisationBreakevenQty != null) {
+    plainLines.push('')
+    plainLines.push(
+      `Personalisation - Totals already include personalisation. A minimum personalisation charge applies below ${personalisationBreakevenQty.toLocaleString()} cards.`,
+    )
+  }
+
   const flagLines: string[] = []
   if (customFlags.nfc) {
     flagLines.push('NFC chips selected — needs custom quote, prices above are without NFC.')
-  }
-  if (customFlags.uniqueContent) {
-    flagLines.push('Each card has unique content — needs custom quote, prices above assume identical artwork.')
   }
   if (flagLines.length > 0) {
     plainLines.push('')
@@ -188,6 +217,9 @@ export function formatSpreadQuoteForCopy(args: FormatSpreadArgs): FormattedSprea
 
   htmlParts.push(`<table style="${tableStyle}"><thead><tr>`)
   htmlParts.push(`<th style="${thStyle}">Quantity</th>`)
+  if (personalisationActive) {
+    htmlParts.push(`<th style="${thNumStyle}">Personalisation</th>`)
+  }
   htmlParts.push(`<th style="${thNumStyle}">Total</th>`)
   if (includeUnitPrice) {
     htmlParts.push(`<th style="${thNumStyle}">Unit price</th>`)
@@ -197,8 +229,11 @@ export function formatSpreadQuoteForCopy(args: FormatSpreadArgs): FormattedSprea
     if (r.total == null) continue
     let row =
       `<tr>` +
-      `<td style="${tdStyle}">${escapeHtml(r.quantity.toLocaleString())}</td>` +
-      `<td style="${tdNumStyle}">${escapeHtml(formatPrice(r.total, currency))}</td>`
+      `<td style="${tdStyle}">${escapeHtml(r.quantity.toLocaleString())}</td>`
+    if (personalisationActive) {
+      row += `<td style="${tdNumStyle}">${escapeHtml(formatPrice(r.personalisationSurcharge, currency))}</td>`
+    }
+    row += `<td style="${tdNumStyle}">${escapeHtml(formatPrice(r.total, currency))}</td>`
     if (includeUnitPrice && r.unitPrice != null) {
       row += `<td style="${tdNumStyle}">${escapeHtml(formatPrice(r.unitPrice, currency, 2))}</td>`
     }
@@ -211,6 +246,13 @@ export function formatSpreadQuoteForCopy(args: FormatSpreadArgs): FormattedSprea
     htmlParts.push('<br><br>')
     htmlParts.push(
       `<p><b>Split-name tooling</b> - Totals already include ${escapeHtml(formatPrice(splitNameSurcharge, currency))} charge to split batch between ${escapeHtml(String(names))} names. This covers the extra tooling and machine set up incurred.</p>`,
+    )
+  }
+
+  if (personalisationActive && personalisationBreakevenQty != null) {
+    htmlParts.push('<br><br>')
+    htmlParts.push(
+      `<p><b>Personalisation</b> - Totals already include personalisation. A minimum personalisation charge applies below ${escapeHtml(personalisationBreakevenQty.toLocaleString())} cards.</p>`,
     )
   }
 

@@ -15,6 +15,7 @@ import QuotePage from './pages/QuotePage'
 import AdminLayout from './pages/admin/AdminLayout'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
 import AdminPricingPage from './pages/admin/AdminPricingPage'
+import AdminMaterialsPage from './pages/admin/AdminMaterialsPage'
 import AdminMaterialEditor from './pages/admin/AdminMaterialEditor'
 import AdminAddOnEditor from './pages/admin/AdminAddOnEditor'
 import AdminActivityPage from './pages/admin/AdminActivityPage'
@@ -54,6 +55,7 @@ function AppShell() {
         <Route index element={<Navigate to="users" replace />} />
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="customers" element={<CustomersPage />} />
+        <Route path="materials" element={<AdminMaterialsPage />} />
         <Route path="pricing" element={<AdminPricingPage />} />
         <Route path="materials/new" element={<AdminCreateMaterialPage />} />
         <Route path="pricing/materials/:code" element={<AdminMaterialEditor />} />

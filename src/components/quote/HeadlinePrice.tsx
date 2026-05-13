@@ -38,6 +38,8 @@ export function HeadlinePrice({
   names,
   finishSurcharge,
   finishLabel,
+  personalisationSurcharge,
+  personalisationBreakevenQty,
   unitPrice,
   quantity,
   currency,
@@ -62,6 +64,13 @@ export function HeadlinePrice({
   // breakdown copy.
   finishSurcharge: number | null
   finishLabel: string | null
+  // Migration 000172. Personalisation surcharge at the current
+  // quantity. Null mirrors total when no tier matches; zero when
+  // personalisation is off. Renders as a separate breakdown line
+  // plus a "Minimum charge applies below N cards" footnote keyed
+  // off personalisationBreakevenQty.
+  personalisationSurcharge: number | null
+  personalisationBreakevenQty: number | null
   unitPrice: number | null
   quantity: number | null
   currency: Currency | null
@@ -135,7 +144,7 @@ export function HeadlinePrice({
           "£X base" line only renders when at least one surcharge
           is non-zero, so a vanilla quote stays single-line. */}
       {showPrice && baseTotal != null && (
-        ((splitNameSurcharge ?? 0) > 0 || (finishSurcharge ?? 0) > 0) && (
+        ((splitNameSurcharge ?? 0) > 0 || (finishSurcharge ?? 0) > 0 || (personalisationSurcharge ?? 0) > 0) && (
           <div className="mt-1 space-y-0.5 text-sm text-gray-500 tabular-nums">
             <p>{formatPrice(baseTotal, currency!)} base</p>
             {(finishSurcharge ?? 0) > 0 && (
@@ -144,8 +153,16 @@ export function HeadlinePrice({
             {(splitNameSurcharge ?? 0) > 0 && perExtraNameSurcharge != null && names > 1 && (
               <p>+ {names - 1} × {formatPrice(perExtraNameSurcharge, currency!)} split-name surcharge</p>
             )}
+            {(personalisationSurcharge ?? 0) > 0 && (
+              <p>+ {formatPrice(personalisationSurcharge!, currency!)} personalisation</p>
+            )}
           </div>
         )
+      )}
+      {showPrice && (personalisationSurcharge ?? 0) > 0 && personalisationBreakevenQty != null && (
+        <p className="mt-2 text-xs text-gray-400">
+          A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
+        </p>
       )}
       {!showPrice && !loading && (
         <p className="mt-3 text-sm text-gray-400">

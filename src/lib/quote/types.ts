@@ -30,6 +30,11 @@ export interface QuoteMaterial {
   // metals, paper, plastic, carbon fibre); the FinishToggle's
   // hide rule keeps it out of view in those cases.
   option_label: string | null
+  // Migration 000172. Admin-toggled gate for the membership-card
+  // personalisation add-on. The compiler shows the personalisation
+  // checkbox (and hides the unique-names input) only on materials
+  // where this is true.
+  supports_personalisation: boolean
 }
 
 export interface QuoteVariant {
