@@ -168,12 +168,12 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   let totalLinePlain = `Total = ${totalStr}`
   if (showVat) totalLinePlain += ` inc VAT (${exVatStr} ex VAT)`
   plainLines.push(totalLinePlain)
+  plainLines.push('')
+  plainLines.push('This quote excludes shipping.')
   if (leadTimeLine) {
     plainLines.push('')
     plainLines.push(leadTimeLine)
   }
-  plainLines.push('')
-  plainLines.push('This quote excludes shipping.')
   const plainText = plainLines.join('\n')
 
   // ── HTML (tight spacing, bolded Total) ───────────────────────
@@ -199,16 +199,19 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     : `<strong>${totalCore}</strong>`
   htmlLines.push(totalLineHtml)
   // Each content line followed by <br>; extra <br> before the
-  // lead-time block and again before the disclaimer produces a
-  // single blank-line gap between each paragraph.
+  // disclaimer and again before the lead-time line produces a
+  // single blank-line gap between each paragraph. Lead-time line
+  // sits after the disclaimer so the closing copy reads "This
+  // quote excludes shipping." then a separate "we are currently
+  // quoting N business days" beat.
   const leadTimeHtml = leadTimeLine
-    ? '<br>' + escapeHtml(leadTimeLine) + '<br>'
+    ? '<br><br>' + escapeHtml(leadTimeLine)
     : ''
   const html =
     htmlLines.map((l) => l + '<br>').join('') +
-    leadTimeHtml +
     '<br>' +
-    'This quote excludes shipping.'
+    'This quote excludes shipping.' +
+    leadTimeHtml
 
   return { plainText, html }
 }

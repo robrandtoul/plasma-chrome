@@ -525,11 +525,7 @@ export default function QuotePage() {
           </div>
         </div>
 
-        {/* Right column widened from 22rem to 28rem in PR #94 to make
-            room for the Lead time card sitting alongside the Total
-            card at md+. The selection column still has comfortable
-            breathing room at max-w-5xl. */}
-        <div className="grid gap-6 lg:grid-cols-[1fr_28rem]">
+        <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
           {/* ── Selection card ───────────────────────────────────────────── */}
           <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200 sm:p-8">
             {/* Tab order: material → variant → currency → quantity →
@@ -636,36 +632,6 @@ export default function QuotePage() {
                   previewUnitPrice={result.unitPrice}
                   previewValidTier={result.validTier}
                 />
-              )}
-
-              {/* "Include lead time" toggle — gates the lead-time line
-                  in the copy-paste quote body. Default is on only
-                  when the lead-time panel is in its standard state;
-                  the designer can override either way and the
-                  override sticks until the form is reset. */}
-              {!spreadMode && selectedMaterial && quantity != null && (
-                <div>
-                  <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
-                    <input
-                      type="checkbox"
-                      checked={effectiveIncludeLeadTime}
-                      onChange={(e) => handleIncludeLeadTimeChange(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 text-gray-900 focus:ring-gray-400"
-                    />
-                    <div>
-                      <div className="text-sm font-medium text-gray-700">
-                        Include lead time in copied quote
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {leadTimeState?.kind === 'standard'
-                          ? 'A short lead-time line is appended to the copied quote body.'
-                          : leadTimeState?.kind === 'custom'
-                            ? 'A "lead time to be confirmed" line is appended to the copied quote body.'
-                            : 'No lead time recorded — nothing will be added to the copied quote body.'}
-                      </div>
-                    </div>
-                  </label>
-                </div>
               )}
 
               {/* Names + Personalisation share the same conceptual
@@ -814,15 +780,22 @@ export default function QuotePage() {
                 loading={pricing.loading && !tiersFresh}
               />
             ) : (
-              /* Header grid — the price-area card and the lead-time
-                 card sit as siblings at md+, stacked below. Each of
-                 the three price-area branches (customQuote bailout,
-                 no-variants defensive, normal headline) renders on
-                 the left; the lead-time card renders on the right.
-                 The card returns null in its not_set state so the
-                 second grid slot is simply empty without forcing a
-                 placeholder. */
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              /* Stacked layout: lead-time card sits at the top of the
+                 results column, the price card (or its alternates)
+                 sits directly below. Reads as "when can we make it"
+                 → "how much". Both cards keep the full column width
+                 so the headline numbers never wrap (the previous
+                 two-column layout would clip 5-digit ranges like
+                 "12-14" at narrow widths). The lead-time card
+                 returns null in its not_set state so the slot is
+                 simply absent rather than rendering a placeholder. */
+              <>
+                {selectedMaterial && quantity != null && leadTimeState && (
+                  <LeadTimeCard
+                    state={leadTimeState}
+                    materialDisplayName={selectedMaterial.display_name}
+                  />
+                )}
                 {customQuote ? (
                   /* Custom-quote bailout. Replaces the price card
                      entirely — no partial number, no fall-through.
@@ -880,19 +853,7 @@ export default function QuotePage() {
                     vatRate={vatRate}
                   />
                 )}
-                {/* Lead-time card. Gated on material + quantity
-                    present so the card only shows once the inputs
-                    that drive its state are in. The card itself
-                    returns null when the resolved state is not_set,
-                    so the second column collapses to an empty slot
-                    rather than rendering a placeholder. */}
-                {selectedMaterial && quantity != null && leadTimeState && (
-                  <LeadTimeCard
-                    state={leadTimeState}
-                    materialDisplayName={selectedMaterial.display_name}
-                  />
-                )}
-              </div>
+              </>
             )}
 
             {/* Spec readout — what the designer says aloud when
@@ -978,7 +939,36 @@ export default function QuotePage() {
                   leadTimeState,
                 })
                 return (
-                  <CopyQuoteButton plainText={formatted.plainText} html={formatted.html} />
+                  /* Copy-quote group. The "Include lead time" toggle
+                     gates the lead-time line in the copied body, so
+                     it lives right next to the Copy button — cause
+                     and effect in one place. Hidden when no lead
+                     time is recorded for the material (nothing to
+                     include); the not-set case can't reach this
+                     branch's other paths either. The custom-quote
+                     branch never renders the copy block at all, so
+                     'custom' lead-time state is unreachable here. */
+                  <div className="space-y-3">
+                    {leadTimeState?.kind === 'standard' && (
+                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={effectiveIncludeLeadTime}
+                          onChange={(e) => handleIncludeLeadTimeChange(e.target.checked)}
+                          className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 text-gray-900 focus:ring-gray-400"
+                        />
+                        <div>
+                          <div className="text-sm font-medium text-gray-700">
+                            Include lead time in copied quote
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            Appends a short lead-time line to the copied quote body.
+                          </div>
+                        </div>
+                      </label>
+                    )}
+                    <CopyQuoteButton plainText={formatted.plainText} html={formatted.html} />
+                  </div>
                 )
               })()}
 
