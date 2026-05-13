@@ -102,6 +102,16 @@ export default function QuotePage() {
     if (selectedMaterialId) setIsMaterialPickerExpanded(false)
   }, [selectedMaterialId])
 
+  // Distinct document.title so a designer with both the dashboard
+  // and the compiler open in Chrome can tell the tabs apart.
+  // Mirrors the per-proof title pattern in CustomerProofPage:
+  // restore whatever was there on unmount.
+  useEffect(() => {
+    const previous = document.title
+    document.title = 'Quote compiler — Proof Viewer'
+    return () => { document.title = previous }
+  }, [])
+
   // GBP VAT rate from settings (migration 000115). Loaded once on
   // mount via the cached helper in src/lib/vatRateGbp.ts; null
   // until the first fetch resolves (HeadlinePrice suppresses the
