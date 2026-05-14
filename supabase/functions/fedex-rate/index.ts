@@ -153,9 +153,35 @@ Deno.serve(async (req) => {
   } catch (err) {
     if (err instanceof FedExError) {
       console.error('fedex-rate FedExError:', err.status, err.message)
-      return json({ error: err.message }, 502)
+      // FedExError carries the upstream FedEx body verbatim in its
+      // message (see _shared/fedex.ts). Extract just the FedEx-side
+      // human-readable bit so the frontend doesn't have to parse a
+      // wrapped JSON string out of a wrapped JSON string.
+      const friendly = extractFedExErrorMessage(err.message) ?? err.message
+      return json({
+        error: friendly,
+        fedex_status: err.status,
+      }, 502)
     }
     console.error('fedex-rate error:', err)
     return json({ error: (err as Error).message ?? 'Unknown error' }, 502)
   }
 })
+
+// FedExError.message looks like:
+//   `FedEx rate error (400): {"transactionId":"...","errors":[{"code":"...","message":"..."}]}`
+// Pull the embedded JSON out and return the first errors[].message
+// so the frontend can map it to a friendly hint (or surface it as-is).
+function extractFedExErrorMessage(raw: string): string | null {
+  const colonIdx = raw.indexOf(':')
+  if (colonIdx < 0) return null
+  const bodyStr = raw.slice(colonIdx + 1).trim()
+  try {
+    const body = JSON.parse(bodyStr)
+    const first = body?.errors?.[0]
+    if (first && typeof first.message === 'string') return first.message
+  } catch {
+    // Body wasn't JSON — fall through.
+  }
+  return null
+}

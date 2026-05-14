@@ -41,6 +41,7 @@ import { ShippingCard } from '../components/quote/ShippingCard'
 import {
   deriveParcelWeightGrams,
   resolveShippingState,
+  toFriendlyShippingError,
   type ShippingRate,
 } from '../lib/quote/shipping'
 import { getShippingSettings, type ShippingSettings } from '../lib/shippingSettings'
@@ -520,16 +521,33 @@ export default function QuotePage() {
             currency: 'GBP',
           },
         },
-      ).then(({ data, error }) => {
+      ).then(async ({ data, error }) => {
         if (cancelled) return
         setShippingLoading(false)
         if (error) {
-          setShippingError(error.message ?? 'Shipping rate request failed')
+          // supabase-js wraps any non-2xx response from the edge
+          // function into a generic FunctionsHttpError with message
+          // "Edge Function returned a non-2xx status code". The
+          // useful detail (FedEx's actual rejection reason, our
+          // own 400 validation messages, etc.) lives in the
+          // response body — read it via the `context` Response
+          // and run it through the friendly mapper before showing.
+          let detail: string | null = null
+          try {
+            const ctx = (error as { context?: Response }).context
+            const body = ctx ? await ctx.clone().json() : null
+            if (body && typeof body.error === 'string') detail = body.error
+          } catch {
+            // Body wasn't readable as JSON — fall through to the
+            // generic mapper which knows what to do with the
+            // wrapper message alone.
+          }
+          setShippingError(toFriendlyShippingError(detail ?? error.message))
           setShippingRate(null)
           return
         }
         if (!data) {
-          setShippingError('Empty response from shipping rate service')
+          setShippingError(toFriendlyShippingError('Empty response from shipping rate service'))
           setShippingRate(null)
           return
         }
@@ -537,7 +555,7 @@ export default function QuotePage() {
         // If it returned an error envelope, surface it; otherwise
         // accept the rate.
         if ((data as { error?: string }).error) {
-          setShippingError((data as { error?: string }).error ?? null)
+          setShippingError(toFriendlyShippingError((data as { error?: string }).error ?? ''))
           setShippingRate(null)
           return
         }

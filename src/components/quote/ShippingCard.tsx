@@ -99,10 +99,9 @@ export function ShippingCard({
         <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
           Shipping
         </p>
-        <p className="mt-2 text-sm font-medium text-amber-900">
-          Couldn't fetch a FedEx rate
+        <p className="mt-2 break-words text-sm font-medium text-amber-900">
+          {state.message}
         </p>
-        <p className="mt-2 break-words text-xs text-amber-800">{state.message}</p>
       </div>
     )
   }

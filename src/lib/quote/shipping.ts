@@ -141,6 +141,60 @@ export interface ShippingStateInputs {
   shippingSettings: ShippingSettings | null
 }
 
+// Map a raw error string from the fedex-rate edge function (or the
+// supabase-js wrapper) to a human sentence the designer can act on.
+// The raw string is FedEx's own message after the edge function's
+// extractFedExErrorMessage helper has pulled it out of the upstream
+// JSON, or our edge function's 400/500 validation messages, or
+// (worst case) supabase-js's generic "Edge Function returned a
+// non-2xx status code".
+//
+// Patterns are heuristic — FedEx's error catalogue is large and not
+// publicly documented in full, so we match keywords rather than
+// trying to enumerate. Anything that doesn't match a known pattern
+// passes through as the raw message (still much better than the
+// generic wrapper string) unless the input is itself the generic
+// wrapper, in which case we substitute a polite catch-all.
+export function toFriendlyShippingError(raw: string): string {
+  const text = raw.trim()
+  const lower = text.toLowerCase()
+
+  // Postcode / postal code rejected by FedEx.
+  if (/postal|postcode|zip/.test(lower) && /(invalid|not valid|incorrect|format|unknown|not.*recogn)/.test(lower)) {
+    return "That postcode doesn't look right for the destination country. Double-check it and try again."
+  }
+  // Country code rejected.
+  if (/country/.test(lower) && /(invalid|not.*support|not.*recogn|unknown)/.test(lower)) {
+    return "FedEx doesn't recognise that destination country."
+  }
+  // FedEx-side rate limit.
+  if (/rate.?limit|too.?many|throttl/.test(lower)) {
+    return 'FedEx is rate-limiting requests — wait a few seconds and try again.'
+  }
+  // Auth / credentials problems on our side.
+  if (/credentials? not configured/.test(lower)) {
+    return "FedEx credentials aren't configured. Set FEDEX_API_KEY, FEDEX_API_SECRET and FEDEX_ACCOUNT_NUMBER in the Supabase dashboard."
+  }
+  if (/(unauthori[sz]ed|forbidden|invalid.*credential|401|403)/.test(lower)) {
+    return "Couldn't authenticate with FedEx — check the API credentials in admin."
+  }
+  // FedEx unreachable / token endpoint errors.
+  if (/token error|unreachable|gateway/.test(lower)) {
+    return 'Could not reach FedEx — try again in a moment.'
+  }
+  // Generic supabase-js wrapper with no useful detail.
+  if (
+    text === ''
+    || text === 'Edge Function returned a non-2xx status code'
+    || text === 'Empty response from shipping rate service'
+  ) {
+    return "Couldn't fetch a shipping rate — check the destination details and try again."
+  }
+  // Last resort: pass the underlying message through. It's at least
+  // specific, even if not pretty.
+  return text
+}
+
 export function resolveShippingState(inputs: ShippingStateInputs): ShippingState {
   // Spread mode and the custom-quote bailout are explicit "no
   // shipping card" states from the brief. Bail before any of the
