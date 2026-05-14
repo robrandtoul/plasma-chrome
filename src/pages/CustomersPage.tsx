@@ -542,7 +542,7 @@ export default function CustomersPage() {
                             if (e.key === 'Escape') cancelEditCompany(c.id)
                           }}
                           autoFocus
-                          className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-base font-semibold text-gray-900 shadow-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                          className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-sm font-medium text-gray-900 shadow-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
                           aria-label="Company name"
                           disabled={edit.saving}
                         />
@@ -585,7 +585,7 @@ export default function CustomersPage() {
                           >
                             <polyline points="4.5 3 8.5 6 4.5 9" />
                           </svg>
-                          <span className="truncate whitespace-nowrap text-base font-semibold text-gray-900">{c.name}</span>
+                          <span className="truncate whitespace-nowrap text-sm font-medium text-gray-900">{c.name}</span>
                         </button>
                         <CountBadge
                           count={c.proofCount}
@@ -681,7 +681,7 @@ export default function CustomersPage() {
                       >
                         <polyline points="4.5 3 8.5 6 4.5 9" />
                       </svg>
-                      <span className="whitespace-nowrap text-base font-semibold text-gray-500">No company</span>
+                      <span className="whitespace-nowrap text-sm font-medium text-gray-500">No company</span>
                       <span className="ml-1 text-xs text-gray-400">({visibleOrphans.length})</span>
                     </button>
                     <div className="flex-1 border-t border-gray-200" />
