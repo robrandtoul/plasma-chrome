@@ -218,6 +218,15 @@ export interface PublicProofVersion {
   // and floor live in personalisation_pricing and update live. Hidden
   // when custom_quote or is_per_direction_pricing is true.
   has_personalisation: boolean
+  // ── Material code (migration 000177) ─────────────────────────────────
+  // Raw material code from the materials table (e.g. 'metal_steel',
+  // 'paper_letterpress'). Null on per-direction-pricing variant rounds
+  // (same condition as material_id — the left join to materials returns
+  // null when material_id is null). Customer page uses this to gate
+  // material-specific contextual panels: the letterpress Construction
+  // section (gated on colour data presence) and the metal Thickness
+  // guide (gated on material_code?.startsWith('metal_')).
+  material_code: string | null
 }
 
 // One parallel design alternative on a variant-round proof_version

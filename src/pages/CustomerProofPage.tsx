@@ -16,6 +16,7 @@ import { PaperRecipientBand } from '../components/PaperRecipientBand'
 import { PaperRevisionTimeline } from '../components/PaperRevisionTimeline'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LayeredConstructionPanel } from '../components/LayeredConstructionPanel'
+import { MetalThicknessPanel } from '../components/MetalThicknessPanel'
 import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
 import { firstName } from '../lib/firstName'
 import {
@@ -3059,6 +3060,54 @@ export default function CustomerProofPage() {
             names={activeVersion.names ?? []}
             isVariantRound={activeVersion.is_variant_round ?? false}
           />
+
+          {/* ───── Metal thickness guide (migration 000177) ─────
+              Contextual section explaining the three metal card
+              thickness options (300μm / 500μm / 800μm). Mirrors the
+              Construction section's two-column rhythm and sits on the
+              same PAPER_TINT_1 band. Renders only on metal proofs
+              (material_code starts with 'metal_') so no other
+              material category is affected. Metal proofs never have
+              the letterpress Construction section, so the two bands
+              never stack — each material gets at most one contextual
+              panel in this slot. */}
+          {activeVersion.material_code?.startsWith('metal_') && (
+            <section
+              aria-labelledby="section-thickness-heading"
+              style={{
+                background: PAPER_TINT_1,
+                color: PAPER_INK,
+                borderTop: '1px solid rgba(26,22,18,0.10)',
+              }}
+            >
+              <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
+                <div className="grid gap-10 sm:grid-cols-[1fr_2fr] sm:gap-16">
+                  <div>
+                    <h2
+                      id="section-thickness-heading"
+                      className="leading-[1.02] border-b-2 pb-4 break-words"
+                      style={{
+                        fontFamily: SERIF,
+                        fontWeight: 400,
+                        fontSize: 'clamp(40px, 9vw, 56px)',
+                        color: PAPER_INK,
+                        borderColor: 'rgba(26,22,18,0.8)',
+                      }}
+                    >
+                      Thickness
+                    </h2>
+                    <p
+                      className="mt-5 max-w-[30ch] text-[14px] leading-[1.55]"
+                      style={{ color: PAPER_TERTIARY }}
+                    >
+                      Metal cards are available in three thicknesses. The pricing table above shows the cost for each — choose the weight that suits you best.
+                    </p>
+                  </div>
+                  <MetalThicknessPanel />
+                </div>
+              </div>
+            </section>
+          )}
 
           {/* ───── Construction (migration 000135) ─────
               Mirrors the Specification section's two-column rhythm:
