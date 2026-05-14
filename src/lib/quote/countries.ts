@@ -1,8 +1,11 @@
-// Curated country list for the Quote compiler's international
-// shipping destination picker. ISO 3166-1 alpha-2 codes paired with
-// the spelling Plasma uses in customer-facing copy. Sorted by
-// display name in the picker; GB is excluded because all shipments
-// originate there.
+// Curated country list for the Quote compiler's shipping destination
+// picker. ISO 3166-1 alpha-2 codes paired with the spelling Plasma
+// uses in customer-facing copy. Sorted by display name in the picker.
+//
+// GB is included even though it's also the origin — selecting it
+// triggers the DPD domestic flat-rate path (migration 000179) rather
+// than a FedEx international fetch. The compiler routes on
+// destCountry; the picker doesn't need to gate it out.
 //
 // Not exhaustive — about 80 entries covering the destinations
 // Plasma routinely sends to plus the common European, North-
@@ -38,6 +41,7 @@ export const SHIPPING_COUNTRIES: Country[] = [
   { code: 'ES', name: 'Spain' },
   { code: 'FI', name: 'Finland' },
   { code: 'FR', name: 'France' },
+  { code: 'GB', name: 'United Kingdom' },
   { code: 'GR', name: 'Greece' },
   { code: 'HK', name: 'Hong Kong' },
   { code: 'HR', name: 'Croatia' },

@@ -1,6 +1,6 @@
 import { formatPrice } from '../../lib/currency'
 import type { Currency } from '../../lib/types'
-import type { ShippingState } from '../../lib/quote/shipping'
+import type { ShippingState, DomesticRegion } from '../../lib/quote/shipping'
 import { applyIntlAdjustment } from '../../lib/quote/shipping'
 import { gbpToCurrency, type ExchangeRates } from '../../lib/exchangeRates'
 
@@ -47,6 +47,12 @@ export interface ShippingCardProps {
    *  card falls through to GBP figures regardless of the compiler
    *  currency so designers never see a blank or zero figure mid-call. */
   exchangeRates: ExchangeRates | null
+  /** GBP VAT rate from settings.vat_rate_gbp (migration 000115).
+   *  Drives the "inc VAT (£X ex VAT)" footnote on the GBP path for
+   *  domestic shipping — UK DPD shipments are standard-rated, unlike
+   *  the FedEx zero-rated export. Null while still loading or for
+   *  EUR/USD; both cases suppress the footnote. */
+  vatRate: number | null
 }
 
 export function ShippingCard({
@@ -55,6 +61,7 @@ export function ShippingCard({
   intlAdjustPercent,
   parcelWeightGrams,
   exchangeRates,
+  vatRate,
 }: ShippingCardProps) {
   if (state.kind === 'not_ready') return null
 
@@ -96,6 +103,62 @@ export function ShippingCard({
           Couldn't fetch a FedEx rate
         </p>
         <p className="mt-2 break-words text-xs text-amber-800">{state.message}</p>
+      </div>
+    )
+  }
+
+  // ── domestic UK (migration 000179) ────────────────────────────
+  // Flat DPD rate from settings, no fetch. Single line total (no
+  // per-line breakdown — there's nothing to break down for a flat
+  // rate). VAT shown inclusive-of for GBP, exactly like the
+  // product HeadlinePrice does. EUR / USD convert from the GBP
+  // base at the live ECB rate.
+  if (state.kind === 'domestic') {
+    const displayCurrency: Currency = currency ?? 'GBP'
+    const multiplier = gbpToCurrency(displayCurrency, exchangeRates)
+    const totalDisplay = state.rate.totalGbp * multiplier
+    const showVatFootnote = displayCurrency === 'GBP' && vatRate != null && vatRate > 0
+    const exVatTotal = showVatFootnote
+      ? Math.round((state.rate.totalGbp / (1 + vatRate)) * 100) / 100
+      : null
+    const showConversionNote = displayCurrency !== 'GBP' && exchangeRates !== null
+    return (
+      <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+        <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+          Shipping · {displayCurrency}
+        </p>
+        <p className="mt-1 text-sm font-medium text-gray-700">
+          DPD UK · {regionLabel(state.rate.region)}
+        </p>
+
+        <dl className="mt-4 space-y-1.5 text-sm text-gray-600">
+          {parcelWeightGrams != null && (
+            <div className="flex items-baseline justify-between">
+              <dt>Parcel weight</dt>
+              <dd className="tabular-nums">{formatWeight(parcelWeightGrams)}</dd>
+            </div>
+          )}
+        </dl>
+
+        <div className="mt-4 flex items-baseline justify-between border-t border-gray-100 pt-3">
+          <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+            Total shipping
+          </span>
+          <span className="text-2xl font-bold tabular-nums text-gray-900">
+            {formatPrice(totalDisplay, displayCurrency)}
+          </span>
+        </div>
+        {showVatFootnote && exVatTotal != null && (
+          <p className="mt-2 text-xs text-gray-400 tabular-nums">
+            Includes {Math.round(vatRate * 100)}% VAT · {formatPrice(exVatTotal, 'GBP', 2)} ex VAT
+          </p>
+        )}
+        {showConversionNote && exchangeRates && (
+          <p className="mt-1 text-xs text-gray-400">
+            Converted from {formatPrice(state.rate.totalGbp, 'GBP', 2)} at 1 GBP = {formatRate(multiplier, displayCurrency)}
+            {exchangeRates.rateDate ? ` (ECB ${exchangeRates.rateDate})` : ''}.
+          </p>
+        )}
       </div>
     )
   }
@@ -239,6 +302,10 @@ function formatWeight(grams: number): string {
   const kg = grams / 1000
   if (kg >= 1) return `${kg.toFixed(2)} kg`
   return `${kg.toFixed(2)} kg`
+}
+
+function regionLabel(region: DomesticRegion): string {
+  return region === 'uk_ni' ? 'Northern Ireland delivery' : 'Mainland delivery'
 }
 
 // 1.1735 → "€1.17", 1.27 → "$1.27". Two decimals is plenty for

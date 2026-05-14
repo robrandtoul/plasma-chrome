@@ -3,8 +3,18 @@
 // turns the various input gates into a state union, plus a couple
 // of bare arithmetic helpers so the card and copy paths apply the
 // same maths.
+//
+// Two shipping flavours feed through this module:
+//   * International — FedEx rate via the fedex-rate edge function
+//     (migration 000178), always denominated in GBP regardless of
+//     compiler currency. Conversion happens at render.
+//   * Domestic UK — DPD flat rates (migration 000179) sourced
+//     directly from settings (mainland / Northern Ireland). No
+//     edge function involved; the resolver returns the right one
+//     based on postcode prefix.
 
 import type { Currency } from '../types'
+import type { ShippingSettings } from '../shippingSettings'
 
 // Single canonical surcharge shape the card and copy formatter both
 // consume. Label is the human-readable description from FedEx
@@ -59,6 +69,41 @@ export function applyIntlAdjustment(amount: number, adjustPercent: number): numb
   return amount * (1 + adjustPercent / 100)
 }
 
+// Domestic flat-rate result (migration 000179). Always GBP VAT-
+// inclusive at the base — display-side conversion to EUR / USD
+// uses the live ECB rate, same as international.
+export type DomesticRegion = 'uk_mainland' | 'uk_ni'
+
+export interface DomesticRate {
+  region: DomesticRegion
+  /** VAT-inclusive flat rate in GBP. */
+  totalGbp: number
+}
+
+// Northern Ireland detection. BT-prefix postcodes followed by a
+// digit cover the actual NI postcode area (BT1–BT94). Test on the
+// upper-cased, whitespace-stripped string so "bt7 1aa" and
+// "BT7 1AA" resolve identically. Returns false for stub entries
+// like "BT" with no digit so we don't flip-flop while the
+// designer's still typing.
+export function isNorthernIrelandPostcode(postcode: string): boolean {
+  const cleaned = postcode.replace(/\s+/g, '').toUpperCase()
+  return /^BT\d/.test(cleaned)
+}
+
+export function resolveDomesticRate(
+  postcode: string,
+  settings: ShippingSettings,
+): DomesticRate {
+  const region: DomesticRegion = isNorthernIrelandPostcode(postcode) ? 'uk_ni' : 'uk_mainland'
+  return {
+    region,
+    totalGbp: region === 'uk_ni'
+      ? settings.domesticNiRateGbp
+      : settings.domesticMainlandRateGbp,
+  }
+}
+
 // State union driving the ShippingCard render. Mirrors the lead-time
 // shape (string-kind discriminator + payload) so the card render
 // reads as a clean switch.
@@ -66,7 +111,9 @@ export function applyIntlAdjustment(amount: number, adjustPercent: number): numb
 //   * not_ready — inputs aren't complete yet (e.g. no destination,
 //     no quantity, spread mode, custom-quote bailout). Card hides.
 //   * loading   — fetch is in flight. Card shows a placeholder.
-//   * quoted    — rate came back, render the breakdown.
+//   * quoted    — international (FedEx) rate came back, render
+//     the breakdown.
+//   * domestic  — UK flat rate, no fetch involved.
 //   * unavailable — FedEx didn't offer either of the preferred
 //     services for the lane. Card shows the unavailable affordance.
 //   * error     — fetch failed. Card shows the error affordance.
@@ -74,6 +121,7 @@ export type ShippingState =
   | { kind: 'not_ready' }
   | { kind: 'loading' }
   | { kind: 'quoted'; rate: ShippingRate }
+  | { kind: 'domestic'; rate: DomesticRate }
   | { kind: 'unavailable' }
   | { kind: 'error'; message: string }
 
@@ -85,9 +133,12 @@ export interface ShippingStateInputs {
   destCountry: string | null
   destPostcode: string | null
   variantWeightGrams: number | null
+  // International (FedEx) inputs.
   loading: boolean
   rate: ShippingRate | null
   error: string | null
+  // Shipping settings — required for resolving domestic flat rates.
+  shippingSettings: ShippingSettings | null
 }
 
 export function resolveShippingState(inputs: ShippingStateInputs): ShippingState {
@@ -104,6 +155,12 @@ export function resolveShippingState(inputs: ShippingStateInputs): ShippingState
     || inputs.variantWeightGrams == null
   ) {
     return { kind: 'not_ready' }
+  }
+  // Domestic UK path takes precedence over the FedEx path. No
+  // network round-trip; the rate is a lookup into settings.
+  if (inputs.destCountry === 'GB') {
+    if (!inputs.shippingSettings) return { kind: 'loading' }
+    return { kind: 'domestic', rate: resolveDomesticRate(inputs.destPostcode, inputs.shippingSettings) }
   }
   if (inputs.loading) return { kind: 'loading' }
   if (inputs.error) return { kind: 'error', message: inputs.error }

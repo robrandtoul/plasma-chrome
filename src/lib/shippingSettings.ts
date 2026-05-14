@@ -20,19 +20,26 @@ const TTL_MS = 60_000
 export interface ShippingSettings {
   boxWeightGrams: number
   intlAdjustPercent: number
+  /** Flat DPD rate for UK mainland deliveries, GBP VAT-inclusive. */
+  domesticMainlandRateGbp: number
+  /** Flat DPD rate for Northern Ireland deliveries, GBP VAT-inclusive. */
+  domesticNiRateGbp: number
 }
 
 let cache: { value: ShippingSettings; fetchedAt: number } | null = null
 let inFlight: Promise<ShippingSettings> | null = null
 
-// Same defaults that the migration ships: 250g placeholder box,
-// 0% adjustment. Picking these as the fallback keeps the compiler
-// rendering a plausible total during a transient settings outage —
-// the worst case is the figure being off by the missing adjustment,
-// not the card collapsing entirely.
+// Same defaults that the migrations ship: 250g placeholder box,
+// 0% adjustment, £12.90 / £18.90 domestic rates. Picking these as
+// the fallback keeps the compiler rendering a plausible total
+// during a transient settings outage — the worst case is the
+// figure being off by the missing adjustment, not the card
+// collapsing entirely.
 const FAIL_SAFE_DEFAULT: ShippingSettings = {
   boxWeightGrams: 250,
   intlAdjustPercent: 0,
+  domesticMainlandRateGbp: 12.90,
+  domesticNiRateGbp: 18.90,
 }
 
 export async function getShippingSettings(): Promise<ShippingSettings> {
@@ -43,7 +50,7 @@ export async function getShippingSettings(): Promise<ShippingSettings> {
     try {
       const { data, error } = await supabase
         .from('settings')
-        .select('fedex_box_weight_grams, fedex_intl_adjust_percent')
+        .select('fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp')
         .eq('id', 1)
         .single()
       if (error || !data) {
@@ -59,9 +66,17 @@ export async function getShippingSettings(): Promise<ShippingSettings> {
       const adjRaw = typeof data.fedex_intl_adjust_percent === 'number'
         ? data.fedex_intl_adjust_percent
         : FAIL_SAFE_DEFAULT.intlAdjustPercent
+      const mainlandRaw = typeof data.domestic_uk_mainland_rate_gbp === 'number'
+        ? data.domestic_uk_mainland_rate_gbp
+        : FAIL_SAFE_DEFAULT.domesticMainlandRateGbp
+      const niRaw = typeof data.domestic_uk_ni_rate_gbp === 'number'
+        ? data.domestic_uk_ni_rate_gbp
+        : FAIL_SAFE_DEFAULT.domesticNiRateGbp
       const value: ShippingSettings = {
         boxWeightGrams: Math.max(0, Math.round(boxRaw)),
         intlAdjustPercent: Math.max(-100, Math.min(100, adjRaw)),
+        domesticMainlandRateGbp: Math.max(0, mainlandRaw),
+        domesticNiRateGbp: Math.max(0, niRaw),
       }
       cache = { value, fetchedAt: Date.now() }
       return value

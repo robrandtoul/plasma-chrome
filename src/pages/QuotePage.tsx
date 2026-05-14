@@ -486,6 +486,17 @@ export default function QuotePage() {
       setShippingError(null)
       return
     }
+    // Domestic UK lanes are a settings lookup, not a FedEx fetch.
+    // Clear any prior international state so a destination flip
+    // from US → GB doesn't leave a stale FedEx rate sitting under
+    // the new domestic card. resolveShippingState reads the rate
+    // straight from shippingSettings — nothing to fetch.
+    if (destCountry === 'GB') {
+      setShippingRate(null)
+      setShippingLoading(false)
+      setShippingError(null)
+      return
+    }
     let cancelled = false
     setShippingLoading(true)
     setShippingError(null)
@@ -548,8 +559,9 @@ export default function QuotePage() {
       loading: shippingLoading,
       rate: shippingRate,
       error: shippingError,
+      shippingSettings,
     }),
-    [spreadMode, customQuote, currency, quantity, destCountry, destPostcode, selectedVariantWeightGrams, shippingLoading, shippingRate, shippingError],
+    [spreadMode, customQuote, currency, quantity, destCountry, destPostcode, selectedVariantWeightGrams, shippingLoading, shippingRate, shippingError, shippingSettings],
   )
 
   // Default state for the "Include lead time" checkbox: on only when
@@ -1083,6 +1095,7 @@ export default function QuotePage() {
                     intlAdjustPercent={shippingSettings.intlAdjustPercent}
                     parcelWeightGrams={parcelWeightGrams}
                     exchangeRates={exchangeRates}
+                    vatRate={vatRate}
                   />
                 )}
               </>
@@ -1178,6 +1191,11 @@ export default function QuotePage() {
                   view: quoteView,
                   shippingRate,
                   shippingIntlAdjustPercent: shippingSettings?.intlAdjustPercent ?? 0,
+                  // Domestic UK rate sourced from the resolved state
+                  // (migration 000179). Mutually exclusive with
+                  // shippingRate at this branch — only one of the
+                  // two will be populated for a given quote.
+                  domesticRate: shippingState.kind === 'domestic' ? shippingState.rate : null,
                   exchangeRates,
                 })
                 return (

@@ -25,6 +25,9 @@ interface Settings {
   /** Shipping (migration 000178). */
   fedex_box_weight_grams: number
   fedex_intl_adjust_percent: number
+  /** Domestic UK flat rates (migration 000179), GBP VAT-inclusive. */
+  domestic_uk_mainland_rate_gbp: number
+  domestic_uk_ni_rate_gbp: number
 }
 
 // Help Scout test-connection result. Component-scoped only — no DB
@@ -53,6 +56,8 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   request_changes_confirmation_copy: 'setting.request_changes_confirmation_copy_updated',
   fedex_box_weight_grams:            'setting.fedex_box_weight_grams_updated',
   fedex_intl_adjust_percent:         'setting.fedex_intl_adjust_percent_updated',
+  domestic_uk_mainland_rate_gbp:     'setting.domestic_uk_mainland_rate_gbp_updated',
+  domestic_uk_ni_rate_gbp:           'setting.domestic_uk_ni_rate_gbp_updated',
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -142,7 +147,12 @@ export default function AdminSettingsPage() {
     ) {
       invalidateApprovalSettings()
     }
-    if (field === 'fedex_box_weight_grams' || field === 'fedex_intl_adjust_percent') {
+    if (
+      field === 'fedex_box_weight_grams'
+      || field === 'fedex_intl_adjust_percent'
+      || field === 'domestic_uk_mainland_rate_gbp'
+      || field === 'domestic_uk_ni_rate_gbp'
+    ) {
       invalidateShippingSettings()
     }
 
@@ -189,14 +199,18 @@ export default function AdminSettingsPage() {
     void saveField(field, trimmed)
   }
 
-  // Blur handler for the two Shipping number inputs. Validates the
+  // Blur handler for the Shipping number inputs. Validates the
   // draft is a finite number within the column's CHECK range, then
   // saves the rounded value (whole grams for the box; 2dp percent
   // for the adjustment so 7.5% works but stray decimals don't).
   // On invalid input we surface a pill rather than silently snapping
   // back — same philosophy as onConfirmationCopyBlur above.
   function onShippingNumberBlur(
-    field: 'fedex_box_weight_grams' | 'fedex_intl_adjust_percent',
+    field:
+      | 'fedex_box_weight_grams'
+      | 'fedex_intl_adjust_percent'
+      | 'domestic_uk_mainland_rate_gbp'
+      | 'domestic_uk_ni_rate_gbp',
   ) {
     if (!settings) return
     const draft = drafts[field]
@@ -211,9 +225,15 @@ export default function AdminSettingsPage() {
         setErrors((e) => ({ ...e, [field]: 'Whole grams, zero or greater.' }))
         return
       }
-    } else {
+    } else if (field === 'fedex_intl_adjust_percent') {
       if (value < -100 || value > 100) {
         setErrors((e) => ({ ...e, [field]: 'Between -100 and 100.' }))
+        return
+      }
+    } else {
+      // domestic UK rates — non-negative GBP amounts
+      if (value < 0) {
+        setErrors((e) => ({ ...e, [field]: 'Must be zero or greater.' }))
         return
       }
     }
@@ -511,6 +531,44 @@ export default function AdminSettingsPage() {
             />
           </FieldRow>
 
+          <FieldRow
+            label="UK mainland shipping rate (£, inc VAT)"
+            help="Flat DPD rate for UK mainland deliveries, GBP VAT-inclusive. Triggered when the Quote compiler destination is United Kingdom and the postcode is anything other than a BT-prefix Northern Ireland code."
+            saved={recentlySaved('domestic_uk_mainland_rate_gbp')}
+            working={working.domestic_uk_mainland_rate_gbp}
+            error={errors.domestic_uk_mainland_rate_gbp}
+          >
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              inputMode="decimal"
+              value={drafts.domestic_uk_mainland_rate_gbp ?? settings.domestic_uk_mainland_rate_gbp}
+              onChange={(e) => setDrafts((d) => ({ ...d, domestic_uk_mainland_rate_gbp: e.target.value === '' ? 0 : Number(e.target.value) }))}
+              onBlur={() => onShippingNumberBlur('domestic_uk_mainland_rate_gbp')}
+              className={`w-32 ${inputClass}`}
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Northern Ireland shipping rate (£, inc VAT)"
+            help="Flat DPD rate for Northern Ireland deliveries, GBP VAT-inclusive. Triggered when the Quote compiler destination is United Kingdom and the postcode starts with BT."
+            saved={recentlySaved('domestic_uk_ni_rate_gbp')}
+            working={working.domestic_uk_ni_rate_gbp}
+            error={errors.domestic_uk_ni_rate_gbp}
+          >
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              inputMode="decimal"
+              value={drafts.domestic_uk_ni_rate_gbp ?? settings.domestic_uk_ni_rate_gbp}
+              onChange={(e) => setDrafts((d) => ({ ...d, domestic_uk_ni_rate_gbp: e.target.value === '' ? 0 : Number(e.target.value) }))}
+              onBlur={() => onShippingNumberBlur('domestic_uk_ni_rate_gbp')}
+              className={`w-32 ${inputClass}`}
+            />
+          </FieldRow>
+
           <p className="text-xs text-gray-500">
             To update FedEx credentials, open the Supabase dashboard → Project Settings → Edge Functions → Secrets and update <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">FEDEX_API_KEY</code>, <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">FEDEX_API_SECRET</code>, and <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">FEDEX_ACCOUNT_NUMBER</code>.
           </p>
@@ -701,6 +759,8 @@ function humanFieldLabel(field: keyof Settings): string {
     request_changes_confirmation_copy: 'Request changes confirmation copy',
     fedex_box_weight_grams: 'FedEx box weight (grams)',
     fedex_intl_adjust_percent: 'International shipping adjustment (%)',
+    domestic_uk_mainland_rate_gbp: 'UK mainland shipping rate (£, inc VAT)',
+    domestic_uk_ni_rate_gbp: 'Northern Ireland shipping rate (£, inc VAT)',
   }[field]
 }
 

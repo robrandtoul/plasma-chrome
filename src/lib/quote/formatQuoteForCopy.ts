@@ -2,7 +2,7 @@ import { formatPrice } from '../currency'
 import type { QuoteResult, QuoteSelection } from './calculate'
 import type { LeadTimeState } from './leadTime'
 import { leadTimeQuoteLine } from './leadTime'
-import type { ShippingRate } from './shipping'
+import type { ShippingRate, DomesticRate } from './shipping'
 import { applyIntlAdjustment } from './shipping'
 import { gbpToCurrency, type ExchangeRates } from '../exchangeRates'
 
@@ -75,6 +75,10 @@ export interface FormatQuoteArgs {
   view?: QuoteCopyView
   shippingRate?: ShippingRate | null
   shippingIntlAdjustPercent?: number
+  /** Domestic UK flat rate (migration 000179). Mutually exclusive
+   *  with shippingRate — the resolver returns one or the other
+   *  based on the destination country. */
+  domesticRate?: DomesticRate | null
   /** Live GBP → EUR / USD multipliers. FedEx always invoices in GBP
    *  so EUR / USD shipping figures are conversions of the GBP base
    *  at this rate. Null falls through to GBP figures (same fail-safe
@@ -126,6 +130,7 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     view = 'product',
     shippingRate = null,
     shippingIntlAdjustPercent = 0,
+    domesticRate = null,
     exchangeRates = null,
   } = args
   const { quantity, currency, names } = selection
@@ -136,12 +141,19 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   // needs a quoted rate. Compute both up front so the branches below
   // can compose without re-checking.
   const showProduct = view === 'product' || view === 'both'
-  const showShipping =
+  // International (FedEx) shipping is included only when a usable
+  // rate object came through. Domestic is included on a parallel
+  // gate; the two are mutually exclusive so at most one renders.
+  const showInternationalShipping =
     (view === 'shipping' || view === 'both')
     && shippingRate != null
     && shippingRate.available
     && shippingRate.netCharge != null
     && shippingRate.currency != null
+  const showDomesticShipping =
+    (view === 'shipping' || view === 'both')
+    && domesticRate != null
+  const showShipping = showInternationalShipping || showDomesticShipping
 
   // Product section needs a resolved tier. When the view doesn't
   // include the product section we skip this check entirely so a
@@ -231,7 +243,45 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   // rate used in a footnote.
   let shippingPlain: string[] = []
   let shippingHtml: string[] = []
-  if (showShipping && shippingRate) {
+  if (showDomesticShipping && domesticRate) {
+    // Domestic UK flat rate — single line total. VAT shown
+    // inclusive-of for GBP; conversion footnote for EUR / USD.
+    const displayCurrency = currency ?? 'GBP'
+    const multiplier = gbpToCurrency(displayCurrency, exchangeRates)
+    const totalDisplay = domesticRate.totalGbp * multiplier
+    const showVatNote = displayCurrency === 'GBP' && vatRate != null && vatRate > 0
+    const exVatTotal = showVatNote
+      ? Math.round((domesticRate.totalGbp / (1 + vatRate)) * 100) / 100
+      : null
+    const showConversionNote = displayCurrency !== 'GBP' && exchangeRates !== null
+    const regionLabel = domesticRate.region === 'uk_ni'
+      ? 'Northern Ireland delivery'
+      : 'Mainland delivery'
+
+    shippingPlain.push(`Shipping — DPD UK · ${regionLabel}`)
+    let totalLine = `Total shipping = ${formatPrice(totalDisplay, displayCurrency, 2)}`
+    if (showVatNote && exVatTotal != null) {
+      totalLine += ` inc VAT (${formatPrice(exVatTotal, 'GBP', 2)} ex VAT)`
+    }
+    shippingPlain.push(totalLine)
+    if (showConversionNote && exchangeRates) {
+      const symbol = displayCurrency === 'EUR' ? '€' : '$'
+      const dateTag = exchangeRates.rateDate ? ` (ECB ${exchangeRates.rateDate})` : ''
+      shippingPlain.push(`Converted from ${formatPrice(domesticRate.totalGbp, 'GBP', 2)} at 1 GBP = ${symbol}${multiplier.toFixed(4)}${dateTag}.`)
+    }
+
+    shippingHtml.push(`Shipping — DPD UK · ${escapeHtml(regionLabel)}`)
+    let totalLineHtml = `<strong>Total shipping = ${escapeHtml(formatPrice(totalDisplay, displayCurrency, 2))}</strong>`
+    if (showVatNote && exVatTotal != null) {
+      totalLineHtml += ` inc VAT (${escapeHtml(formatPrice(exVatTotal, 'GBP', 2))} ex VAT)`
+    }
+    shippingHtml.push(totalLineHtml)
+    if (showConversionNote && exchangeRates) {
+      const symbol = displayCurrency === 'EUR' ? '€' : '$'
+      const dateTag = exchangeRates.rateDate ? ` (ECB ${escapeHtml(exchangeRates.rateDate)})` : ''
+      shippingHtml.push(`<span style="color:#6b7280">Converted from ${escapeHtml(formatPrice(domesticRate.totalGbp, 'GBP', 2))} at 1 GBP = ${symbol}${multiplier.toFixed(4)}${dateTag}.</span>`)
+    }
+  } else if (showInternationalShipping && shippingRate) {
     const displayCurrency = currency ?? 'GBP'
     const multiplier = gbpToCurrency(displayCurrency, exchangeRates)
     const showConversionNote = displayCurrency !== 'GBP' && exchangeRates !== null
