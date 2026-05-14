@@ -542,12 +542,12 @@ export default function QuotePage() {
             // generic mapper which knows what to do with the
             // wrapper message alone.
           }
-          setShippingError(toFriendlyShippingError(detail ?? error.message))
+          setShippingError(toFriendlyShippingError(detail ?? error.message, { parcelWeightGrams }))
           setShippingRate(null)
           return
         }
         if (!data) {
-          setShippingError(toFriendlyShippingError('Empty response from shipping rate service'))
+          setShippingError(toFriendlyShippingError('Empty response from shipping rate service', { parcelWeightGrams }))
           setShippingRate(null)
           return
         }
@@ -555,7 +555,7 @@ export default function QuotePage() {
         // If it returned an error envelope, surface it; otherwise
         // accept the rate.
         if ((data as { error?: string }).error) {
-          setShippingError(toFriendlyShippingError((data as { error?: string }).error ?? ''))
+          setShippingError(toFriendlyShippingError((data as { error?: string }).error ?? '', { parcelWeightGrams }))
           setShippingRate(null)
           return
         }

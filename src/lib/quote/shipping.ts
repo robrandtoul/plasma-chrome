@@ -141,6 +141,21 @@ export interface ShippingStateInputs {
   shippingSettings: ShippingSettings | null
 }
 
+// Optional context for the friendly mapper. parcelWeightGrams lets
+// the mapper distinguish between FedEx's identical-looking
+// "service not available" messages for two different causes
+// (over-weight package vs unreachable postcode).
+export interface FriendlyErrorContext {
+  parcelWeightGrams?: number | null
+}
+
+// FedEx Box international service has a soft upper bound somewhere
+// around 15 kg. Above this, FedEx tends to refuse the quote with
+// the generic "service not available" error rather than a clean
+// "weight too high" message. Used by the friendly mapper to decide
+// whether to suggest weight or postcode as the likely cause.
+const HEAVY_PARCEL_THRESHOLD_GRAMS = 15_000
+
 // Map a raw error string from the fedex-rate edge function (or the
 // supabase-js wrapper) to a human sentence the designer can act on.
 // The raw string is FedEx's own message after the edge function's
@@ -155,18 +170,30 @@ export interface ShippingStateInputs {
 // passes through as the raw message (still much better than the
 // generic wrapper string) unless the input is itself the generic
 // wrapper, in which case we substitute a polite catch-all.
-export function toFriendlyShippingError(raw: string): string {
+export function toFriendlyShippingError(
+  raw: string,
+  ctx: FriendlyErrorContext = {},
+): string {
   const text = raw.trim()
   const lower = text.toLowerCase()
 
   // "Service not currently available to this origin/destination
-  // combination" — FedEx's generic catch-all when the lane itself
-  // is fine but the specific postcode isn't reachable (PO Box,
-  // restricted area, non-standard service zone, or simply a
-  // postcode FedEx can't resolve). FedEx phrases this as if the
-  // whole country is unavailable, which is almost never the case.
+  // combination" — FedEx's generic catch-all that fires for several
+  // unrelated causes:
+  //   * Postcode FedEx can't resolve (PO Box, restricted area,
+  //     non-standard service zone).
+  //   * Parcel weight exceeds the FedEx Box international limit
+  //     (~15kg upward). FedEx returns the same generic message
+  //     rather than a clean "weight too high".
+  // We branch on parcel weight to point the designer at the actual
+  // likely cause rather than mislead them about the postcode.
   if (/service is not.*available.*(origin|destination)/.test(lower)
       || /no.*service.*(origin|destination)/.test(lower)) {
+    const weight = ctx.parcelWeightGrams ?? 0
+    if (weight > HEAVY_PARCEL_THRESHOLD_GRAMS) {
+      const kg = (weight / 1000).toFixed(2)
+      return `Package weight (${kg} kg) likely exceeds the FedEx Box international limit. Reduce the quantity, split into multiple parcels, or contact FedEx for a freight quote.`
+    }
     return "FedEx couldn't quote this exact destination — likely a PO Box postcode or a non-standard service area. Check the postcode is correct, or try a different one for the same area."
   }
   // Postcode / postal code rejected by FedEx.
