@@ -50,15 +50,22 @@ interface RawJoinedVariant {
   } | null
 }
 
-// Standard metal materials share their card size and thickness
-// schedule (300 / 500 / 800 micron). Card weight depends on
-// thickness, not on which finish family the metal belongs to
-// (steel / gold / copper / gun metal / matte black / matte white,
-// plus any future activation of titanium), so the Card weights tab
-// merges them into one "Metal" mega-group with one input per
-// thickness. Mini Steel is a different card size with its own
-// thickness schedule (200 / 300 / 500), so it stays separate.
-const STANDARD_METAL_EXCLUDED_CODES = new Set(['metal_mini_steel'])
+// Standard metal materials share their card size, thickness
+// schedule (300 / 500 / 800 micron) AND base metal — they're all
+// stainless steel under different surface finishes (steel / gold /
+// copper / gun metal / matte black / matte white). Card weight
+// depends on thickness, not on finish family, so the Card weights
+// tab merges them into one "Metal" mega-group with one input per
+// thickness.
+//
+// Explicit exclusions:
+//   * metal_mini_steel — different card size, different thickness
+//     set (200 / 300 / 500), so it has its own section.
+//   * metal_titanium   — genuine titanium, not stainless steel
+//     with a finish, so it has a unique weight profile even at
+//     the same thicknesses (and a 1000μm tier the others don't
+//     have). It stays in its own section.
+const STANDARD_METAL_EXCLUDED_CODES = new Set(['metal_mini_steel', 'metal_titanium'])
 function isStandardMetal(materialCode: string): boolean {
   return materialCode.startsWith('metal_') && !STANDARD_METAL_EXCLUDED_CODES.has(materialCode)
 }
