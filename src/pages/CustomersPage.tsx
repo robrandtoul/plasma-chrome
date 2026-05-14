@@ -62,8 +62,21 @@ export default function CustomersPage() {
   const [orphans, setOrphans] = useState<ContactRow[]>([])
   const [projectsByCompany, setProjectsByCompany] = useState<Map<string, ProjectLite[]>>(new Map())
   const [projectsByContact, setProjectsByContact] = useState<Map<string, ProjectLite[]>>(new Map())
+  // `expandedCompanies` controls whether a company's CONTACTS panel is
+  // open. Defaults to empty — everything collapses to one row per
+  // company on load. Pulling a search query auto-expands every visible
+  // company (computed below) so contact matches are findable without a
+  // click.
   const [expandedCompanies, setExpandedCompanies] = useState<Set<string>>(new Set())
+  // `companyProjectsOpen` controls the separate "show projects under
+  // this company" panel triggered by the count chip. Independent of
+  // contact-expansion: a designer can have just the project list open,
+  // just the contacts, or both.
+  const [companyProjectsOpen, setCompanyProjectsOpen] = useState<Set<string>>(new Set())
   const [expandedContacts, setExpandedContacts] = useState<Set<string>>(new Set())
+  // "No company" group collapse state. Single boolean since there's
+  // only one such section.
+  const [orphansExpanded, setOrphansExpanded] = useState<boolean>(false)
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState<Pending | null>(null)
   const [working, setWorking] = useState(false)
@@ -172,6 +185,15 @@ export default function CustomersPage() {
 
   function toggleCompanyExpanded(id: string) {
     setExpandedCompanies((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleCompanyProjects(id: string) {
+    setCompanyProjectsOpen((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
@@ -497,10 +519,15 @@ export default function CustomersPage() {
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
           </div>
         ) : (
-          <div className="space-y-8">
+          <div className="space-y-4">
             {visibleCompanies.map((c) => {
               const canDeleteCompany = c.proofCount === 0
               const edit = editingCompany[c.id]
+              // A live search auto-expands every visible company so a
+              // contact-only match isn't hidden behind a click. Edit
+              // mode also forces open so the contacts panel doesn't
+              // pop closed while the designer is mid-rename.
+              const contactsOpen = searching || !!edit || expandedCompanies.has(c.id)
               return (
                 <section key={c.id}>
                   <div className="mb-3 flex items-center gap-3">
@@ -536,11 +563,34 @@ export default function CustomersPage() {
                       </>
                     ) : (
                       <>
-                        <span className="whitespace-nowrap text-base font-semibold text-gray-900">{c.name}</span>
+                        {/* Header toggle: chevron + name as one button.
+                            Sibling chip / Edit / Delete stay outside so
+                            we don't violate nested-button HTML. */}
+                        <button
+                          type="button"
+                          onClick={() => toggleCompanyExpanded(c.id)}
+                          aria-expanded={contactsOpen}
+                          aria-controls={`company-${c.id}-contacts`}
+                          className="-ml-1 inline-flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+                        >
+                          <svg
+                            viewBox="0 0 12 12"
+                            aria-hidden="true"
+                            className={['h-3 w-3 shrink-0 text-gray-400 transition-transform', contactsOpen ? 'rotate-90' : ''].join(' ')}
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <polyline points="4.5 3 8.5 6 4.5 9" />
+                          </svg>
+                          <span className="truncate whitespace-nowrap text-base font-semibold text-gray-900">{c.name}</span>
+                        </button>
                         <CountBadge
                           count={c.proofCount}
-                          expanded={expandedCompanies.has(c.id)}
-                          onToggle={() => toggleCompanyExpanded(c.id)}
+                          expanded={companyProjectsOpen.has(c.id)}
+                          onToggle={() => toggleCompanyProjects(c.id)}
                         />
                         <button
                           onClick={() => startEditCompany(c)}
@@ -564,7 +614,7 @@ export default function CustomersPage() {
                     <p className="mb-2 rounded-md bg-rose-50 px-3 py-1.5 text-xs text-rose-700">{edit.rowError}</p>
                   )}
 
-                  {expandedCompanies.has(c.id) && c.proofCount > 0 && (
+                  {companyProjectsOpen.has(c.id) && c.proofCount > 0 && (
                     <ProjectList
                       projects={projectsByCompany.get(c.id) ?? []}
                       showContact
@@ -572,11 +622,76 @@ export default function CustomersPage() {
                     />
                   )}
 
-                  <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-                    {c.contacts.length === 0 ? (
-                      <div className="px-5 py-4 text-sm text-gray-400">No contacts.</div>
-                    ) : (
-                      c.contacts.map((k, i) => (
+                  {contactsOpen && (
+                    <div
+                      id={`company-${c.id}-contacts`}
+                      className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200"
+                    >
+                      {c.contacts.length === 0 ? (
+                        <div className="px-5 py-4 text-sm text-gray-400">No contacts.</div>
+                      ) : (
+                        c.contacts.map((k, i) => (
+                          <ContactRowUI
+                            key={k.id}
+                            contact={k}
+                            withTopBorder={i > 0}
+                            edit={editingContact[k.id]}
+                            companies={companies}
+                            projects={projectsByContact.get(k.id) ?? []}
+                            expanded={expandedContacts.has(k.id)}
+                            onToggleExpanded={() => toggleContactExpanded(k.id)}
+                            onStartEdit={() => startEditContact(k)}
+                            onCancelEdit={() => cancelEditContact(k.id)}
+                            onChangeDraft={(patch) => setContactDraft(k.id, patch)}
+                            onSave={() => void saveContact(k)}
+                            onDelete={() => setPending({ kind: 'contact', id: k.id, label: k.full_name })}
+                          />
+                        ))
+                      )}
+                    </div>
+                  )}
+                </section>
+              )
+            })}
+
+            {/* No-company section. Same collapse-by-default behaviour
+                as a regular company; a live search auto-opens it so
+                orphan matches surface immediately. */}
+            {visibleOrphans.length > 0 && (() => {
+              const open = searching || orphansExpanded
+              return (
+                <section>
+                  <div className="mb-3 flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setOrphansExpanded((v) => !v)}
+                      aria-expanded={open}
+                      aria-controls="no-company-contacts"
+                      className="-ml-1 inline-flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+                    >
+                      <svg
+                        viewBox="0 0 12 12"
+                        aria-hidden="true"
+                        className={['h-3 w-3 shrink-0 text-gray-400 transition-transform', open ? 'rotate-90' : ''].join(' ')}
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polyline points="4.5 3 8.5 6 4.5 9" />
+                      </svg>
+                      <span className="whitespace-nowrap text-base font-semibold text-gray-500">No company</span>
+                      <span className="ml-1 text-xs text-gray-400">({visibleOrphans.length})</span>
+                    </button>
+                    <div className="flex-1 border-t border-gray-200" />
+                  </div>
+                  {open && (
+                    <div
+                      id="no-company-contacts"
+                      className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200"
+                    >
+                      {visibleOrphans.map((k, i) => (
                         <ContactRowUI
                           key={k.id}
                           contact={k}
@@ -592,41 +707,12 @@ export default function CustomersPage() {
                           onSave={() => void saveContact(k)}
                           onDelete={() => setPending({ kind: 'contact', id: k.id, label: k.full_name })}
                         />
-                      ))
-                    )}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </section>
               )
-            })}
-
-            {/* No-company section */}
-            {visibleOrphans.length > 0 && (
-              <section>
-                <div className="mb-3 flex items-center gap-3">
-                  <span className="whitespace-nowrap text-base font-semibold text-gray-500">No company</span>
-                  <div className="flex-1 border-t border-gray-200" />
-                </div>
-                <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-                  {visibleOrphans.map((k, i) => (
-                    <ContactRowUI
-                      key={k.id}
-                      contact={k}
-                      withTopBorder={i > 0}
-                      edit={editingContact[k.id]}
-                      companies={companies}
-                      projects={projectsByContact.get(k.id) ?? []}
-                      expanded={expandedContacts.has(k.id)}
-                      onToggleExpanded={() => toggleContactExpanded(k.id)}
-                      onStartEdit={() => startEditContact(k)}
-                      onCancelEdit={() => cancelEditContact(k.id)}
-                      onChangeDraft={(patch) => setContactDraft(k.id, patch)}
-                      onSave={() => void saveContact(k)}
-                      onDelete={() => setPending({ kind: 'contact', id: k.id, label: k.full_name })}
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
+            })()}
 
             {!hasResults && (
               <div className="rounded-2xl bg-white py-16 text-center shadow-sm ring-1 ring-gray-200">
