@@ -323,9 +323,16 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     const netGbp = shippingRate.netCharge!
     const adjustedTotalGbp = applyIntlAdjustment(netGbp, shippingIntlAdjustPercent)
 
+    // International shipping is zero-rated for UK VAT — relevant
+    // context for GBP customers (who would otherwise assume VAT
+    // applies to shipping the way it does to most UK services).
+    // EUR / USD customers aren't in the UK VAT world at all, so
+    // the tag is just noise on those currencies.
+    const vatTag = displayCurrency === 'GBP' ? ' (zero-rated for VAT)' : ''
+
     const serviceLabel = shippingRate.serviceName ?? 'FedEx International'
     shippingPlain.push(`Shipping — ${serviceLabel}`)
-    shippingPlain.push(`Total shipping = ${formatPrice(adjustedTotalGbp * multiplier, displayCurrency, 2)} (zero-rated for VAT)`)
+    shippingPlain.push(`Total shipping = ${formatPrice(adjustedTotalGbp * multiplier, displayCurrency, 2)}${vatTag}`)
     if (multiBoxNote) shippingPlain.push(multiBoxNote)
     if (showConversionNote && exchangeRates) {
       const symbol = displayCurrency === 'EUR' ? '€' : '$'
@@ -334,7 +341,7 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     }
 
     shippingHtml.push(`Shipping — ${escapeHtml(serviceLabel)}`)
-    shippingHtml.push(`<strong>Total shipping = ${escapeHtml(formatPrice(adjustedTotalGbp * multiplier, displayCurrency, 2))}</strong> (zero-rated for VAT)`)
+    shippingHtml.push(`<strong>Total shipping = ${escapeHtml(formatPrice(adjustedTotalGbp * multiplier, displayCurrency, 2))}</strong>${vatTag}`)
     if (multiBoxNote) shippingHtml.push(escapeHtml(multiBoxNote))
     if (showConversionNote && exchangeRates) {
       const symbol = displayCurrency === 'EUR' ? '€' : '$'

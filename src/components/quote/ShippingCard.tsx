@@ -264,10 +264,18 @@ export function ShippingCard({
           {formatPrice(adjustedTotalGbp * multiplier, displayCurrency)}
         </span>
       </div>
-      <p className="mt-2 text-xs text-gray-400">
-        Shipping is zero-rated for VAT.
-        {rate.cached ? ' · Cached rate' : ''}
-      </p>
+      {/* VAT context is only relevant to UK customers — EUR / USD
+          customers aren't in the UK VAT world, so we drop the
+          "zero-rated for VAT" line on those currencies. Cache
+          indicator still surfaces when applicable. */}
+      {displayCurrency === 'GBP' ? (
+        <p className="mt-2 text-xs text-gray-400">
+          Shipping is zero-rated for VAT.
+          {rate.cached ? ' · Cached rate' : ''}
+        </p>
+      ) : rate.cached ? (
+        <p className="mt-2 text-xs text-gray-400">Cached rate</p>
+      ) : null}
       {showConversionNote && exchangeRates && (
         <p className="mt-1 text-xs text-gray-400">
           Converted from GBP at 1 GBP = {formatRate(multiplier, displayCurrency)}
