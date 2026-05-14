@@ -87,6 +87,15 @@ begin
         from unnest(coalesce(p.proconfig, '{}'::text[])) cfg
         where cfg like 'search_path=%'
       )
+      -- Skip functions owned by an extension (e.g. pg_trgm installs
+      -- gtrgm_distance etc. into public). Our migration role does not
+      -- own them, so ALTER FUNCTION would fail with 'must be owner'.
+      and not exists (
+        select 1
+        from pg_depend d
+        where d.objid = p.oid
+          and d.deptype = 'e'
+      )
   loop
     execute format('alter function %s set search_path = public', fn.sig);
   end loop;
