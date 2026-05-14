@@ -195,6 +195,10 @@ The patterns below come from real friction in PV-2026W20. Each one cost a round 
 
 **Trusting curated docs.** Treat the migration summary in this file, and Rob's global `~/.claude/CLAUDE.md`, as orientation only. Both have been the source of "trusted information that turned out to be wrong" in the recent past. Verify against source / the live system before acting on anything from either.
 
+**Drop-and-recreate views must re-state grants.** Dropping and recreating a `public_*` view wipes its grants. Any migration that drops and recreates a `public_*` view must explicitly re-state both `REVOKE SELECT ON <view> FROM anon, public` and `GRANT SELECT ON <view> TO authenticated` after the recreate. The drop silently removes both, with no error — the only symptom is a broken customer page or a permission-denied on the next REST call. See 000168 (forgot the revoke after recreating `public_proof_version_images`) and 000174 (the fix, captured two months later after the drift was discovered in a push chain).
+
+**Future SELECT-only tables need an explicit REVOKE.** `ALTER DEFAULT PRIVILEGES` (000176) grants full CRUD to `authenticated` on every new table by default. If a future migration creates a table that should be SELECT-only for `authenticated` (e.g. a sensitive admin-only catalogue), it must immediately follow the `CREATE TABLE` with `REVOKE INSERT, UPDATE, DELETE ON <table> FROM authenticated`. Forgetting this is silent — RLS may block the writes in practice, but the grant is still unnecessarily permissive and a policy change could expose it.
+
 ## Working style
 
 - Rob is a non-coder doing his first Claude Code project. Explain each step as you go, avoid jargon, don't assume knowledge of build tooling or SQL beyond the basics.
