@@ -4,6 +4,7 @@ import type { LeadTimeState } from './leadTime'
 import { leadTimeQuoteLine } from './leadTime'
 import type { ShippingRate } from './shipping'
 import { applyIntlAdjustment } from './shipping'
+import { gbpToCurrency, type ExchangeRates } from '../exchangeRates'
 
 // Pure formatter that turns the compiler's current state into a
 // plain-text and HTML pair suitable for a multi-format clipboard
@@ -74,6 +75,11 @@ export interface FormatQuoteArgs {
   view?: QuoteCopyView
   shippingRate?: ShippingRate | null
   shippingIntlAdjustPercent?: number
+  /** Live GBP → EUR / USD multipliers. FedEx always invoices in GBP
+   *  so EUR / USD shipping figures are conversions of the GBP base
+   *  at this rate. Null falls through to GBP figures (same fail-safe
+   *  as the on-screen card). */
+  exchangeRates?: ExchangeRates | null
 }
 
 export interface FormattedQuote {
@@ -120,6 +126,7 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     view = 'product',
     shippingRate = null,
     shippingIntlAdjustPercent = 0,
+    exchangeRates = null,
   } = args
   const { quantity, currency, names } = selection
   const { total, baseTotal, splitNameSurcharge, finishSurcharge, personalisationSurcharge, discountAmount, discountPercent } = result
@@ -216,69 +223,88 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   // other surcharges, plus the international adjustment, plus the
   // total. Shipping is zero-rated for VAT so we never add VAT
   // language here — even on GBP.
+  //
+  // FedEx invoices Plasma in GBP regardless of preferredCurrency,
+  // so the rate's numbers are always GBP. When the compiler
+  // currency is EUR / USD we multiply each line by the live
+  // exchange rate (Frankfurter / ECB) and tag the figure with the
+  // rate used in a footnote.
   let shippingPlain: string[] = []
   let shippingHtml: string[] = []
   if (showShipping && shippingRate) {
-    const shipCurrency = shippingRate.currency!
-    const base = shippingRate.baseCharge ?? 0
-    const discount = shippingRate.discountAmount ?? 0
-    const fuel = shippingRate.fuelSurcharge ?? 0
+    const displayCurrency = currency ?? 'GBP'
+    const multiplier = gbpToCurrency(displayCurrency, exchangeRates)
+    const showConversionNote = displayCurrency !== 'GBP' && exchangeRates !== null
+
+    const baseGbp = shippingRate.baseCharge ?? 0
+    const discountGbp = shippingRate.discountAmount ?? 0
+    const fuelGbp = shippingRate.fuelSurcharge ?? 0
     const fuelPct = shippingRate.fuelPercent
-    const net = shippingRate.netCharge!
-    const otherTotal = shippingRate.otherSurcharges.reduce((s, x) => s + x.amount, 0)
-    const adjustedTotal = applyIntlAdjustment(net, shippingIntlAdjustPercent)
-    const adjustment = adjustedTotal - net
+    const netGbp = shippingRate.netCharge!
+    const otherTotalGbp = shippingRate.otherSurcharges.reduce((s, x) => s + x.amount, 0)
+    const adjustedTotalGbp = applyIntlAdjustment(netGbp, shippingIntlAdjustPercent)
+    const adjustmentGbp = adjustedTotalGbp - netGbp
     const showAdjustment = shippingIntlAdjustPercent !== 0
 
     const serviceLabel = shippingRate.serviceName ?? 'FedEx International'
     shippingPlain.push(`Shipping — ${serviceLabel}`)
-    shippingPlain.push(`Base carriage = ${formatPrice(base, shipCurrency, 2)}`)
-    if (discount > 0) {
+    shippingPlain.push(`Base carriage = ${formatPrice(baseGbp * multiplier, displayCurrency, 2)}`)
+    if (discountGbp > 0) {
       const pct = shippingRate.discountPercent != null
         ? ` (${formatDiscountPercent(shippingRate.discountPercent)})`
         : ''
-      shippingPlain.push(`Negotiated discount${pct} = −${formatPrice(discount, shipCurrency, 2)}`)
+      shippingPlain.push(`Negotiated discount${pct} = −${formatPrice(discountGbp * multiplier, displayCurrency, 2)}`)
     }
-    if (fuel > 0) {
+    if (fuelGbp > 0) {
       const pct = fuelPct != null ? ` (${formatDiscountPercent(fuelPct)})` : ''
-      shippingPlain.push(`Fuel surcharge${pct} = ${formatPrice(fuel, shipCurrency, 2)}`)
+      shippingPlain.push(`Fuel surcharge${pct} = ${formatPrice(fuelGbp * multiplier, displayCurrency, 2)}`)
     }
-    if (otherTotal > 0) {
+    if (otherTotalGbp > 0) {
       const label = shippingRate.otherSurcharges.length === 1
         ? shippingRate.otherSurcharges[0].label
         : 'Other surcharges'
-      shippingPlain.push(`${label} = ${formatPrice(otherTotal, shipCurrency, 2)}`)
+      shippingPlain.push(`${label} = ${formatPrice(otherTotalGbp * multiplier, displayCurrency, 2)}`)
     }
     if (showAdjustment) {
-      const sign = adjustment >= 0 ? '' : '−'
-      shippingPlain.push(`International adjustment (${formatDiscountPercent(shippingIntlAdjustPercent)}) = ${sign}${formatPrice(Math.abs(adjustment), shipCurrency, 2)}`)
+      const sign = adjustmentGbp >= 0 ? '' : '−'
+      shippingPlain.push(`International adjustment (${formatDiscountPercent(shippingIntlAdjustPercent)}) = ${sign}${formatPrice(Math.abs(adjustmentGbp) * multiplier, displayCurrency, 2)}`)
     }
     shippingPlain.push('')
-    shippingPlain.push(`Total shipping = ${formatPrice(adjustedTotal, shipCurrency, 2)} (zero-rated for VAT)`)
+    shippingPlain.push(`Total shipping = ${formatPrice(adjustedTotalGbp * multiplier, displayCurrency, 2)} (zero-rated for VAT)`)
+    if (showConversionNote && exchangeRates) {
+      const symbol = displayCurrency === 'EUR' ? '€' : '$'
+      const dateTag = exchangeRates.rateDate ? ` (ECB ${exchangeRates.rateDate})` : ''
+      shippingPlain.push(`Converted from GBP at 1 GBP = ${symbol}${multiplier.toFixed(4)}${dateTag}.`)
+    }
 
     shippingHtml.push(`Shipping — ${escapeHtml(serviceLabel)}`)
-    shippingHtml.push(`Base carriage = ${escapeHtml(formatPrice(base, shipCurrency, 2))}`)
-    if (discount > 0) {
+    shippingHtml.push(`Base carriage = ${escapeHtml(formatPrice(baseGbp * multiplier, displayCurrency, 2))}`)
+    if (discountGbp > 0) {
       const pct = shippingRate.discountPercent != null
         ? ` (${escapeHtml(formatDiscountPercent(shippingRate.discountPercent))})`
         : ''
-      shippingHtml.push(`Negotiated discount${pct} = −${escapeHtml(formatPrice(discount, shipCurrency, 2))}`)
+      shippingHtml.push(`Negotiated discount${pct} = −${escapeHtml(formatPrice(discountGbp * multiplier, displayCurrency, 2))}`)
     }
-    if (fuel > 0) {
+    if (fuelGbp > 0) {
       const pct = fuelPct != null ? ` (${escapeHtml(formatDiscountPercent(fuelPct))})` : ''
-      shippingHtml.push(`Fuel surcharge${pct} = ${escapeHtml(formatPrice(fuel, shipCurrency, 2))}`)
+      shippingHtml.push(`Fuel surcharge${pct} = ${escapeHtml(formatPrice(fuelGbp * multiplier, displayCurrency, 2))}`)
     }
-    if (otherTotal > 0) {
+    if (otherTotalGbp > 0) {
       const label = shippingRate.otherSurcharges.length === 1
         ? shippingRate.otherSurcharges[0].label
         : 'Other surcharges'
-      shippingHtml.push(`${escapeHtml(label)} = ${escapeHtml(formatPrice(otherTotal, shipCurrency, 2))}`)
+      shippingHtml.push(`${escapeHtml(label)} = ${escapeHtml(formatPrice(otherTotalGbp * multiplier, displayCurrency, 2))}`)
     }
     if (showAdjustment) {
-      const sign = adjustment >= 0 ? '' : '−'
-      shippingHtml.push(`International adjustment (${escapeHtml(formatDiscountPercent(shippingIntlAdjustPercent))}) = ${sign}${escapeHtml(formatPrice(Math.abs(adjustment), shipCurrency, 2))}`)
+      const sign = adjustmentGbp >= 0 ? '' : '−'
+      shippingHtml.push(`International adjustment (${escapeHtml(formatDiscountPercent(shippingIntlAdjustPercent))}) = ${sign}${escapeHtml(formatPrice(Math.abs(adjustmentGbp) * multiplier, displayCurrency, 2))}`)
     }
-    shippingHtml.push(`<strong>Total shipping = ${escapeHtml(formatPrice(adjustedTotal, shipCurrency, 2))}</strong> (zero-rated for VAT)`)
+    shippingHtml.push(`<strong>Total shipping = ${escapeHtml(formatPrice(adjustedTotalGbp * multiplier, displayCurrency, 2))}</strong> (zero-rated for VAT)`)
+    if (showConversionNote && exchangeRates) {
+      const symbol = displayCurrency === 'EUR' ? '€' : '$'
+      const dateTag = exchangeRates.rateDate ? ` (ECB ${escapeHtml(exchangeRates.rateDate)})` : ''
+      shippingHtml.push(`<span style="color:#6b7280">Converted from GBP at 1 GBP = ${symbol}${multiplier.toFixed(4)}${dateTag}.</span>`)
+    }
   }
 
   // ── Compose ──────────────────────────────────────────────────

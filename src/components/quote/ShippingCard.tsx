@@ -2,6 +2,7 @@ import { formatPrice } from '../../lib/currency'
 import type { Currency } from '../../lib/types'
 import type { ShippingState } from '../../lib/quote/shipping'
 import { applyIntlAdjustment } from '../../lib/quote/shipping'
+import { gbpToCurrency, type ExchangeRates } from '../../lib/exchangeRates'
 
 // FedEx shipping breakdown card. Sits in the Quote compiler's price
 // column, styled to match HeadlinePrice / LeadTimeCard chrome
@@ -20,7 +21,15 @@ import { applyIntlAdjustment } from '../../lib/quote/shipping'
 // gates on the same inputs, but null-guarding here keeps the
 // component self-contained for future call sites.
 //
-// Currency notes: shipping is zero-rated for VAT in the UK, so the
+// Currency conversion: FedEx invoices Plasma in GBP regardless of
+// the preferredCurrency on the request, so the rate the edge
+// function returns is always denominated in GBP. When the
+// compiler's currency selector is on EUR or USD, every line on
+// the breakdown is converted at the live ECB rate (Frankfurter
+// via getExchangeRates). The card surfaces the rate it used in a
+// footnote so the designer can see what the conversion is based on.
+//
+// Other notes: shipping is zero-rated for VAT in the UK, so the
 // GBP rendering does NOT add a "(includes N% VAT)" tag the way
 // HeadlinePrice does for product price. The adjustment percentage
 // is applied at render — the rate object is unmodified.
@@ -29,9 +38,24 @@ export interface ShippingCardProps {
   state: ShippingState
   currency: Currency | null
   intlAdjustPercent: number
+  /** Parcel weight in grams (per-card × qty + box tare). Surfaced as
+   *  a "Parcel weight" row in the quoted state so the designer can
+   *  read the underlying figure aloud alongside the price. */
+  parcelWeightGrams: number | null
+  /** Live GBP → EUR / USD multipliers, or null while the helper is
+   *  still resolving (or after a transient failure). When null the
+   *  card falls through to GBP figures regardless of the compiler
+   *  currency so designers never see a blank or zero figure mid-call. */
+  exchangeRates: ExchangeRates | null
 }
 
-export function ShippingCard({ state, currency, intlAdjustPercent }: ShippingCardProps) {
+export function ShippingCard({
+  state,
+  currency,
+  intlAdjustPercent,
+  parcelWeightGrams,
+  exchangeRates,
+}: ShippingCardProps) {
   if (state.kind === 'not_ready') return null
 
   if (state.kind === 'loading') {
@@ -78,73 +102,78 @@ export function ShippingCard({ state, currency, intlAdjustPercent }: ShippingCar
 
   // ── quoted ────────────────────────────────────────────────────
   const { rate } = state
-  const renderCurrency = rate.currency ?? currency
-  if (!renderCurrency) return null
+  // Display currency follows the compiler's selector, not the rate
+  // object — the rate object is always GBP (see file header), the
+  // selector decides what currency we present to the designer.
+  const displayCurrency: Currency = currency ?? 'GBP'
+  const multiplier = gbpToCurrency(displayCurrency, exchangeRates)
+  const showConversionNote = displayCurrency !== 'GBP' && exchangeRates !== null
 
-  // Format negotiated discount as a negative line; FedEx returns
-  // discount.amount as a positive number representing the reduction.
-  const baseCharge = rate.baseCharge ?? 0
-  const discountAmount = rate.discountAmount ?? 0
-  const fuelSurcharge = rate.fuelSurcharge ?? 0
+  // Base (GBP) figures from the rate. Convert each at render time
+  // so the per-line breakdown reads in the displayed currency.
+  const baseChargeGbp = rate.baseCharge ?? 0
+  const discountAmountGbp = rate.discountAmount ?? 0
+  const fuelSurchargeGbp = rate.fuelSurcharge ?? 0
   const fuelPercent = rate.fuelPercent
-  const netCharge = rate.netCharge ?? 0
-  const otherSurchargesTotal = rate.otherSurcharges.reduce((sum, s) => sum + s.amount, 0)
-
-  // International adjustment — applied here at render time so the
-  // admin can tweak the percentage and see it reflected on the
-  // next reload without flushing the rate cache. 0% leaves
-  // netCharge unchanged.
-  const adjustedTotal = applyIntlAdjustment(netCharge, intlAdjustPercent)
-  const adjustmentAmount = adjustedTotal - netCharge
+  const netChargeGbp = rate.netCharge ?? 0
+  const otherSurchargesTotalGbp = rate.otherSurcharges.reduce((sum, s) => sum + s.amount, 0)
+  const adjustedTotalGbp = applyIntlAdjustment(netChargeGbp, intlAdjustPercent)
+  const adjustmentAmountGbp = adjustedTotalGbp - netChargeGbp
   const showAdjustment = intlAdjustPercent !== 0
 
   return (
     <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
       <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
-        Shipping · {renderCurrency}
+        Shipping · {displayCurrency}
       </p>
       <p className="mt-1 text-sm font-medium text-gray-700">
         {rate.serviceName ?? 'FedEx International Priority'}
       </p>
 
       <dl className="mt-4 space-y-1.5 text-sm text-gray-600">
-        <BreakdownRow label="Base carriage" amount={baseCharge} currency={renderCurrency} />
-        {discountAmount > 0 && (
+        {parcelWeightGrams != null && (
+          <div className="flex items-baseline justify-between">
+            <dt>Parcel weight</dt>
+            <dd className="tabular-nums">{formatWeight(parcelWeightGrams)}</dd>
+          </div>
+        )}
+        <BreakdownRow label="Base carriage" amount={baseChargeGbp * multiplier} currency={displayCurrency} />
+        {discountAmountGbp > 0 && (
           <BreakdownRow
             label={
               rate.discountPercent != null
                 ? `Negotiated discount (${formatPercent(rate.discountPercent)})`
                 : 'Negotiated discount'
             }
-            amount={-discountAmount}
-            currency={renderCurrency}
+            amount={-discountAmountGbp * multiplier}
+            currency={displayCurrency}
           />
         )}
-        {fuelSurcharge > 0 && (
+        {fuelSurchargeGbp > 0 && (
           <BreakdownRow
             label={
               fuelPercent != null
                 ? `Fuel surcharge (${formatPercent(fuelPercent)})`
                 : 'Fuel surcharge'
             }
-            amount={fuelSurcharge}
-            currency={renderCurrency}
+            amount={fuelSurchargeGbp * multiplier}
+            currency={displayCurrency}
           />
         )}
-        {otherSurchargesTotal > 0 && (
+        {otherSurchargesTotalGbp > 0 && (
           <BreakdownRow
             label={rate.otherSurcharges.length === 1
               ? rate.otherSurcharges[0].label
               : 'Other surcharges'}
-            amount={otherSurchargesTotal}
-            currency={renderCurrency}
+            amount={otherSurchargesTotalGbp * multiplier}
+            currency={displayCurrency}
           />
         )}
         {showAdjustment && (
           <BreakdownRow
             label={`International adjustment (${formatPercent(intlAdjustPercent)})`}
-            amount={adjustmentAmount}
-            currency={renderCurrency}
+            amount={adjustmentAmountGbp * multiplier}
+            currency={displayCurrency}
           />
         )}
       </dl>
@@ -154,13 +183,19 @@ export function ShippingCard({ state, currency, intlAdjustPercent }: ShippingCar
           Total shipping
         </span>
         <span className="text-2xl font-bold tabular-nums text-gray-900">
-          {formatPrice(adjustedTotal, renderCurrency)}
+          {formatPrice(adjustedTotalGbp * multiplier, displayCurrency)}
         </span>
       </div>
       <p className="mt-2 text-xs text-gray-400">
         Shipping is zero-rated for VAT.
         {rate.cached ? ' · Cached rate' : ''}
       </p>
+      {showConversionNote && exchangeRates && (
+        <p className="mt-1 text-xs text-gray-400">
+          Converted from GBP at 1 GBP = {formatRate(multiplier, displayCurrency)}
+          {exchangeRates.rateDate ? ` (ECB ${exchangeRates.rateDate})` : ''}.
+        </p>
+      )}
     </div>
   )
 }
@@ -195,4 +230,21 @@ function BreakdownRow({
 function formatPercent(value: number): string {
   const rounded = Math.round(value * 100) / 100
   return `${rounded}%`
+}
+
+// 1,250g → "1.25 kg", 500g → "0.5 kg". Reading aloud sounds more
+// natural in kilograms once you're over a kilo, and stays
+// reasonable below it (parcels under 1 kg show one decimal place).
+function formatWeight(grams: number): string {
+  const kg = grams / 1000
+  if (kg >= 1) return `${kg.toFixed(2)} kg`
+  return `${kg.toFixed(2)} kg`
+}
+
+// 1.1735 → "€1.17", 1.27 → "$1.27". Two decimals is plenty for
+// rate display — the designer's reading the round figures from
+// HeadlinePrice, not the per-unit conversion factor.
+function formatRate(multiplier: number, currency: Currency): string {
+  const symbol = currency === 'EUR' ? '€' : currency === 'USD' ? '$' : '£'
+  return `${symbol}${multiplier.toFixed(4)}`
 }

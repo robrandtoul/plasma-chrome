@@ -44,6 +44,7 @@ import {
   type ShippingRate,
 } from '../lib/quote/shipping'
 import { getShippingSettings, type ShippingSettings } from '../lib/shippingSettings'
+import { getExchangeRates, type ExchangeRates } from '../lib/exchangeRates'
 
 // Quote compiler — v1 read-only.
 //
@@ -128,6 +129,7 @@ export default function QuotePage() {
   const [shippingLoading, setShippingLoading] = useState(false)
   const [shippingError, setShippingError] = useState<string | null>(null)
   const [shippingSettings, setShippingSettings] = useState<ShippingSettings | null>(null)
+  const [exchangeRates, setExchangeRates] = useState<ExchangeRates | null>(null)
 
   // "Include lead time" toggle for the copy-paste quote body. The
   // checkbox tracks an explicit boolean; an `overridden` flag
@@ -185,6 +187,21 @@ export default function QuotePage() {
     let cancelled = false
     getShippingSettings().then((value) => {
       if (!cancelled) setShippingSettings(value)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  // Live GBP → EUR / USD exchange rates (ECB via Frankfurter).
+  // FedEx invoices Plasma in GBP regardless of preferredCurrency, so
+  // the EUR / USD figures we display are conversions of the GBP
+  // figure at today's rate. Mount-once; the cached helper handles
+  // TTL. Null until first resolve — the ShippingCard converts
+  // safely (returns the GBP figure unchanged via gbpToCurrency's
+  // null guard) so the brief loading window doesn't blank the card.
+  useEffect(() => {
+    let cancelled = false
+    getExchangeRates().then((value) => {
+      if (!cancelled) setExchangeRates(value)
     })
     return () => { cancelled = true }
   }, [])
@@ -476,6 +493,12 @@ export default function QuotePage() {
     // out character by character, short enough that a designer who
     // pastes a postcode sees the rate appear in well under a second.
     const handle = window.setTimeout(() => {
+      // Always request rates from FedEx in GBP — Plasma's account
+      // is billed in GBP regardless of preferredCurrency, so the
+      // figures we get back are GBP no matter what. Asking in EUR
+      // or USD just relabels the GBP numbers, which is misleading.
+      // Conversion to the compiler's selected currency happens in
+      // ShippingCard and formatQuoteForCopy using the live ECB rate.
       void supabase.functions.invoke<ShippingRate & { error?: string }>(
         'fedex-rate',
         {
@@ -483,7 +506,7 @@ export default function QuotePage() {
             destCountry,
             destPostcode,
             weightGrams: parcelWeightGrams,
-            currency,
+            currency: 'GBP',
           },
         },
       ).then(({ data, error }) => {
@@ -1058,6 +1081,8 @@ export default function QuotePage() {
                     state={shippingState}
                     currency={currency}
                     intlAdjustPercent={shippingSettings.intlAdjustPercent}
+                    parcelWeightGrams={parcelWeightGrams}
+                    exchangeRates={exchangeRates}
                   />
                 )}
               </>
@@ -1153,6 +1178,7 @@ export default function QuotePage() {
                   view: quoteView,
                   shippingRate,
                   shippingIntlAdjustPercent: shippingSettings?.intlAdjustPercent ?? 0,
+                  exchangeRates,
                 })
                 return (
                   /* Copy-quote group. The "Include lead time" toggle
