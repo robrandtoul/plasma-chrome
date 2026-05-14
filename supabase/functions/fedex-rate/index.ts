@@ -55,13 +55,23 @@ Deno.serve(async (req) => {
   // ── Validate body ──────────────────────────────────────────────
   let destCountry: string | undefined
   let destPostcode: string | undefined
-  let weightGrams: number | undefined
+  let boxWeightsGrams: number[] | undefined
   let currency: 'GBP' | 'EUR' | 'USD' | undefined
   try {
     const body = await req.json()
     destCountry  = typeof body?.destCountry === 'string'  ? body.destCountry.trim().toUpperCase()  : undefined
     destPostcode = typeof body?.destPostcode === 'string' ? body.destPostcode.trim().toUpperCase() : undefined
-    weightGrams  = typeof body?.weightGrams === 'number'  ? Math.round(body.weightGrams) : undefined
+    // Accept either the new boxWeightsGrams array or the legacy
+    // single-value weightGrams (for backwards compat with any
+    // unrefreshed client). The array is canonical going forward.
+    if (Array.isArray(body?.boxWeightsGrams)) {
+      const list = body.boxWeightsGrams
+        .map((w: unknown) => (typeof w === 'number' ? Math.round(w) : NaN))
+        .filter((w: number) => Number.isFinite(w) && w > 0)
+      if (list.length > 0) boxWeightsGrams = list
+    } else if (typeof body?.weightGrams === 'number' && body.weightGrams > 0) {
+      boxWeightsGrams = [Math.round(body.weightGrams)]
+    }
     const c = typeof body?.currency === 'string' ? body.currency.trim().toUpperCase() : null
     if (c === 'GBP' || c === 'EUR' || c === 'USD') currency = c
   } catch {
@@ -73,12 +83,14 @@ Deno.serve(async (req) => {
   if (!destPostcode) {
     return json({ error: 'destPostcode is required' }, 400)
   }
-  if (!weightGrams || weightGrams <= 0) {
-    return json({ error: 'weightGrams must be a positive integer' }, 400)
+  if (!boxWeightsGrams || boxWeightsGrams.length === 0) {
+    return json({ error: 'boxWeightsGrams must be a non-empty array of positive integers' }, 400)
   }
   if (!currency) {
     return json({ error: 'currency must be one of GBP, EUR, USD' }, 400)
   }
+  const totalWeightGrams = boxWeightsGrams.reduce((a, b) => a + b, 0)
+  const isSingleBox = boxWeightsGrams.length === 1
 
   // ── Read FedEx secrets ─────────────────────────────────────────
   const apiKey = Deno.env.get('FEDEX_API_KEY')
@@ -89,25 +101,34 @@ Deno.serve(async (req) => {
   }
 
   // ── Cache lookup ───────────────────────────────────────────────
+  // Cache is keyed on the four columns we always had: country,
+  // postcode, weight, currency. Multi-box shipments would need
+  // extra key dimensions (box count and per-box weights) to be
+  // cached safely, which would require a schema change. For now
+  // we skip the cache entirely on multi-box requests — they're
+  // less common than single-box and the round-trip to FedEx is
+  // sub-second, so cache miss latency is acceptable.
   const cacheCutoffIso = new Date(Date.now() - CACHE_TTL_MS).toISOString()
-  const { data: cachedRow } = await admin
-    .from('fedex_rate_cache')
-    .select('response, fetched_at')
-    .eq('dest_country', destCountry)
-    .eq('dest_postcode', destPostcode)
-    .eq('weight_grams', weightGrams)
-    .eq('currency', currency)
-    .gte('fetched_at', cacheCutoffIso)
-    .maybeSingle()
+  if (isSingleBox) {
+    const { data: cachedRow } = await admin
+      .from('fedex_rate_cache')
+      .select('response, fetched_at')
+      .eq('dest_country', destCountry)
+      .eq('dest_postcode', destPostcode)
+      .eq('weight_grams', totalWeightGrams)
+      .eq('currency', currency)
+      .gte('fetched_at', cacheCutoffIso)
+      .maybeSingle()
 
-  if (cachedRow?.response) {
-    const parsed = cachedRow.response as ParsedRate
-    const payload: CachedResponse = {
-      ...parsed,
-      cached: true,
-      quotedAt: cachedRow.fetched_at as string,
+    if (cachedRow?.response) {
+      const parsed = cachedRow.response as ParsedRate
+      const payload: CachedResponse = {
+        ...parsed,
+        cached: true,
+        quotedAt: cachedRow.fetched_at as string,
+      }
+      return json(payload)
     }
-    return json(payload)
   }
 
   // ── Live FedEx call ────────────────────────────────────────────
@@ -116,33 +137,36 @@ Deno.serve(async (req) => {
     const raw = await requestRate(token, {
       destCountry,
       destPostcode,
-      weightKg: weightGrams / 1000,
+      boxWeightsKg: boxWeightsGrams.map((g) => g / 1000),
       currency,
       accountNumber,
     })
     const parsed = parseRateResponse(raw, currency)
     const nowIso = new Date().toISOString()
 
-    // Persist to the cache. Upsert on the unique-index columns so a
-    // re-fetch of the same lane (rare; would mean two designers hit
-    // an expired row at the same time) updates rather than dupes.
-    // Fire-and-forget — we don't await the result for the response.
-    void admin
-      .from('fedex_rate_cache')
-      .upsert(
-        {
-          dest_country: destCountry,
-          dest_postcode: destPostcode,
-          weight_grams: weightGrams,
-          currency,
-          response: parsed as unknown as Record<string, unknown>,
-          fetched_at: nowIso,
-        },
-        { onConflict: 'dest_country,dest_postcode,weight_grams,currency' },
-      )
-      .then(({ error }) => {
-        if (error) console.error('fedex_rate_cache upsert failed:', error.message)
-      })
+    // Persist to the cache. Skip for multi-box (see note at the
+    // cache-lookup branch above). Upsert on the unique-index columns
+    // so a re-fetch of the same lane (rare — would mean two
+    // designers hit an expired row at the same time) updates rather
+    // than dupes. Fire-and-forget — we don't await the result.
+    if (isSingleBox) {
+      void admin
+        .from('fedex_rate_cache')
+        .upsert(
+          {
+            dest_country: destCountry,
+            dest_postcode: destPostcode,
+            weight_grams: totalWeightGrams,
+            currency,
+            response: parsed as unknown as Record<string, unknown>,
+            fetched_at: nowIso,
+          },
+          { onConflict: 'dest_country,dest_postcode,weight_grams,currency' },
+        )
+        .then(({ error }) => {
+          if (error) console.error('fedex_rate_cache upsert failed:', error.message)
+        })
+    }
 
     const payload: CachedResponse = {
       ...parsed,

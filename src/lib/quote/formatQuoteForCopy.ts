@@ -2,7 +2,7 @@ import { formatPrice } from '../currency'
 import type { QuoteResult, QuoteSelection } from './calculate'
 import type { LeadTimeState } from './leadTime'
 import { leadTimeQuoteLine } from './leadTime'
-import type { ShippingRate, DomesticRate } from './shipping'
+import type { ShippingRate, DomesticRate, ParcelSplit } from './shipping'
 import { applyIntlAdjustment } from './shipping'
 import { gbpToCurrency, type ExchangeRates } from '../exchangeRates'
 
@@ -84,6 +84,10 @@ export interface FormatQuoteArgs {
    *  at this rate. Null falls through to GBP figures (same fail-safe
    *  as the on-screen card). */
   exchangeRates?: ExchangeRates | null
+  /** Multi-box split (per-box weights, total, count). Surfaced as
+   *  a "X boxes shipped" note in the shipping section when the
+   *  parcel needs more than one box. */
+  parcelSplit?: ParcelSplit | null
 }
 
 export interface FormattedQuote {
@@ -117,6 +121,19 @@ function formatDiscountPercent(value: number): string {
   return `${rounded}%`
 }
 
+// "2 boxes at 14.12 kg each" for an even split; "3 boxes (12.00,
+// 12.00, 12.13 kg)" if rounding gave a different last-box weight.
+// Used inside the multiBoxNote sentence.
+function formatBoxesPhrase(split: ParcelSplit): string {
+  const { boxWeightsGrams, boxCount } = split
+  const allEqual = boxWeightsGrams.every((w) => w === boxWeightsGrams[0])
+  if (allEqual) {
+    return `${boxCount} boxes at ${(boxWeightsGrams[0] / 1000).toFixed(2)} kg each`
+  }
+  const parts = boxWeightsGrams.map((w) => (w / 1000).toFixed(2))
+  return `${boxCount} boxes (${parts.join(', ')} kg)`
+}
+
 export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   const {
     selection,
@@ -132,6 +149,7 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     shippingIntlAdjustPercent = 0,
     domesticRate = null,
     exchangeRates = null,
+    parcelSplit = null,
   } = args
   const { quantity, currency, names } = selection
   const { total, baseTotal, splitNameSurcharge, finishSurcharge, personalisationSurcharge, discountAmount, discountPercent } = result
@@ -241,6 +259,13 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   // currency is EUR / USD we multiply each line by the live
   // exchange rate (Frankfurter / ECB) and tag the figure with the
   // rate used in a footnote.
+  // Multi-box note shared by both the domestic and international
+  // shipping paths. Returns null when shipping fits in one box
+  // (the common case) so the formatter can omit the line cleanly.
+  const multiBoxNote = parcelSplit && parcelSplit.boxCount > 1
+    ? `Shipped as ${formatBoxesPhrase(parcelSplit)}.`
+    : null
+
   let shippingPlain: string[] = []
   let shippingHtml: string[] = []
   if (showDomesticShipping && domesticRate) {
@@ -264,6 +289,7 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
       totalLine += ` inc VAT (${formatPrice(exVatTotal, 'GBP', 2)} ex VAT)`
     }
     shippingPlain.push(totalLine)
+    if (multiBoxNote) shippingPlain.push(multiBoxNote)
     if (showConversionNote && exchangeRates) {
       const symbol = displayCurrency === 'EUR' ? '€' : '$'
       const dateTag = exchangeRates.rateDate ? ` (ECB ${exchangeRates.rateDate})` : ''
@@ -276,6 +302,7 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
       totalLineHtml += ` inc VAT (${escapeHtml(formatPrice(exVatTotal, 'GBP', 2))} ex VAT)`
     }
     shippingHtml.push(totalLineHtml)
+    if (multiBoxNote) shippingHtml.push(escapeHtml(multiBoxNote))
     if (showConversionNote && exchangeRates) {
       const symbol = displayCurrency === 'EUR' ? '€' : '$'
       const dateTag = exchangeRates.rateDate ? ` (ECB ${escapeHtml(exchangeRates.rateDate)})` : ''
@@ -321,6 +348,7 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     }
     shippingPlain.push('')
     shippingPlain.push(`Total shipping = ${formatPrice(adjustedTotalGbp * multiplier, displayCurrency, 2)} (zero-rated for VAT)`)
+    if (multiBoxNote) shippingPlain.push(multiBoxNote)
     if (showConversionNote && exchangeRates) {
       const symbol = displayCurrency === 'EUR' ? '€' : '$'
       const dateTag = exchangeRates.rateDate ? ` (ECB ${exchangeRates.rateDate})` : ''
@@ -350,6 +378,7 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
       shippingHtml.push(`International adjustment (${escapeHtml(formatDiscountPercent(shippingIntlAdjustPercent))}) = ${sign}${escapeHtml(formatPrice(Math.abs(adjustmentGbp) * multiplier, displayCurrency, 2))}`)
     }
     shippingHtml.push(`<strong>Total shipping = ${escapeHtml(formatPrice(adjustedTotalGbp * multiplier, displayCurrency, 2))}</strong> (zero-rated for VAT)`)
+    if (multiBoxNote) shippingHtml.push(escapeHtml(multiBoxNote))
     if (showConversionNote && exchangeRates) {
       const symbol = displayCurrency === 'EUR' ? '€' : '$'
       const dateTag = exchangeRates.rateDate ? ` (ECB ${escapeHtml(exchangeRates.rateDate)})` : ''

@@ -1,6 +1,6 @@
 import { formatPrice } from '../../lib/currency'
 import type { Currency } from '../../lib/types'
-import type { ShippingState, DomesticRegion } from '../../lib/quote/shipping'
+import type { ShippingState, DomesticRegion, ParcelSplit } from '../../lib/quote/shipping'
 import { applyIntlAdjustment } from '../../lib/quote/shipping'
 import { gbpToCurrency, type ExchangeRates } from '../../lib/exchangeRates'
 
@@ -38,10 +38,10 @@ export interface ShippingCardProps {
   state: ShippingState
   currency: Currency | null
   intlAdjustPercent: number
-  /** Parcel weight in grams (per-card × qty + box tare). Surfaced as
-   *  a "Parcel weight" row in the quoted state so the designer can
-   *  read the underlying figure aloud alongside the price. */
-  parcelWeightGrams: number | null
+  /** Resolved parcel split — per-box weights, total weight, and
+   *  box count. Surfaced as a "Parcel weight" row plus an optional
+   *  "Boxes" line when N > 1. Null while inputs aren't complete. */
+  parcelSplit: ParcelSplit | null
   /** Live GBP → EUR / USD multipliers, or null while the helper is
    *  still resolving (or after a transient failure). When null the
    *  card falls through to GBP figures regardless of the compiler
@@ -59,11 +59,15 @@ export function ShippingCard({
   state,
   currency,
   intlAdjustPercent,
-  parcelWeightGrams,
+  parcelSplit,
   exchangeRates,
   vatRate,
 }: ShippingCardProps) {
   if (state.kind === 'not_ready') return null
+  // Convenience accessor — most rows read the total; only the
+  // multi-box display reads the box count.
+  const parcelWeightGrams = parcelSplit?.totalGrams ?? null
+  const boxCount = parcelSplit?.boxCount ?? null
 
   if (state.kind === 'loading') {
     return (
@@ -137,6 +141,12 @@ export function ShippingCard({
               <dd className="tabular-nums">{formatWeight(parcelWeightGrams)}</dd>
             </div>
           )}
+          {boxCount != null && boxCount > 1 && (
+            <div className="flex items-baseline justify-between">
+              <dt>Boxes</dt>
+              <dd className="tabular-nums">{formatBoxCount(parcelSplit!)}</dd>
+            </div>
+          )}
         </dl>
 
         <div className="mt-4 flex items-baseline justify-between border-t border-gray-100 pt-3">
@@ -197,6 +207,12 @@ export function ShippingCard({
           <div className="flex items-baseline justify-between">
             <dt>Parcel weight</dt>
             <dd className="tabular-nums">{formatWeight(parcelWeightGrams)}</dd>
+          </div>
+        )}
+        {boxCount != null && boxCount > 1 && (
+          <div className="flex items-baseline justify-between">
+            <dt>Boxes</dt>
+            <dd className="tabular-nums">{formatBoxCount(parcelSplit!)}</dd>
           </div>
         )}
         <BreakdownRow label="Base carriage" amount={baseChargeGbp * multiplier} currency={displayCurrency} />
@@ -305,6 +321,20 @@ function formatWeight(grams: number): string {
 
 function regionLabel(region: DomesticRegion): string {
   return region === 'uk_ni' ? 'Northern Ireland delivery' : 'Mainland delivery'
+}
+
+// "2 × 14.12 kg" when all boxes share a weight; "3 boxes (12.00,
+// 12.00, 12.13 kg)" if rounding gave the last box a different
+// total. Most splits are even (per-box weights match to the gram)
+// so the simple form is what designers usually see.
+function formatBoxCount(split: ParcelSplit): string {
+  const { boxWeightsGrams, boxCount } = split
+  const allEqual = boxWeightsGrams.every((w) => w === boxWeightsGrams[0])
+  if (allEqual) {
+    return `${boxCount} × ${(boxWeightsGrams[0] / 1000).toFixed(2)} kg`
+  }
+  const parts = boxWeightsGrams.map((w) => (w / 1000).toFixed(2))
+  return `${boxCount} boxes (${parts.join(', ')} kg)`
 }
 
 // 1.1735 → "€1.17", 1.27 → "$1.27". Two decimals is plenty for

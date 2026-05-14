@@ -102,12 +102,13 @@ export async function getFedExToken(
 
 // Inputs to a rate request. Currency is the same enum the compiler
 // uses; the FedEx API accepts the three ISO codes directly via
-// preferredCurrency. weightKg is the parcel weight after the
-// per-card × quantity + box-tare maths has run in the edge function.
+// preferredCurrency. boxWeightsKg is one entry per box in the
+// shipment — FedEx prices the whole shipment in a single response.
+// Single-box callers pass a one-element array.
 export interface RateRequest {
   destCountry: string
   destPostcode: string
-  weightKg: number
+  boxWeightsKg: number[]
   currency: 'GBP' | 'EUR' | 'USD'
   accountNumber: string
 }
@@ -128,9 +129,13 @@ export async function requestRate(
       packagingType: PACKAGING_TYPE,
       rateRequestType: ['ACCOUNT'],
       preferredCurrency: req.currency,
-      requestedPackageLineItems: [
-        { weight: { units: 'KG', value: req.weightKg } },
-      ],
+      // One package line item per box in the shipment. FedEx
+      // returns one rate response covering the whole shipment
+      // (totalNetCharge aggregates all packages, fuel + surcharges
+      // scale appropriately).
+      requestedPackageLineItems: req.boxWeightsKg.map((kg) => ({
+        weight: { units: 'KG', value: kg },
+      })),
     },
   }
 

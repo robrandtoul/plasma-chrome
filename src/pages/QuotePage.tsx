@@ -39,10 +39,11 @@ import { ShippingDestinationInput } from '../components/quote/ShippingDestinatio
 import { QuoteViewToggle, type QuoteView } from '../components/quote/QuoteViewToggle'
 import { ShippingCard } from '../components/quote/ShippingCard'
 import {
-  deriveParcelWeightGrams,
+  splitIntoBoxes,
   resolveShippingState,
   toFriendlyShippingError,
   type ShippingRate,
+  type ParcelSplit,
 } from '../lib/quote/shipping'
 import { getShippingSettings, type ShippingSettings } from '../lib/shippingSettings'
 import { getExchangeRates, type ExchangeRates } from '../lib/exchangeRates'
@@ -450,16 +451,23 @@ export default function QuotePage() {
     return v?.weight_grams ?? null
   }, [variants, selectedVariantId])
 
-  // Derived parcel weight in grams. Null whenever any input is
-  // missing so the fetch effect can guard cleanly.
-  const parcelWeightGrams = useMemo(() => {
+  // Derived parcel split. Returns the per-box weights, total, and
+  // box count, or null whenever any input is missing. Heavy
+  // shipments (> 15kg of cards) are automatically broken into
+  // multiple boxes; sub-15kg shipments come back as a one-element
+  // array. Null guards the fetch effect cleanly.
+  const parcelSplit = useMemo<ParcelSplit | null>(() => {
     if (!shippingSettings) return null
-    return deriveParcelWeightGrams(
+    return splitIntoBoxes(
       selectedVariantWeightGrams,
       quantity,
       shippingSettings.boxWeightGrams,
     )
   }, [selectedVariantWeightGrams, quantity, shippingSettings])
+  // Total parcel weight surfaced for backward-compat with consumers
+  // that read just the total (friendly-error mapper, card display
+  // line, copy formatter). Null when no split has resolved.
+  const parcelWeightGrams = parcelSplit?.totalGrams ?? null
 
   // Debounced FedEx rate fetch. Fires only when:
   //   * the compiler is in single-quantity mode (no shipping in spread)
@@ -480,7 +488,7 @@ export default function QuotePage() {
       || !quantity
       || !destCountry
       || !destPostcode
-      || parcelWeightGrams == null
+      || !parcelSplit
     ) {
       setShippingRate(null)
       setShippingLoading(false)
@@ -517,7 +525,9 @@ export default function QuotePage() {
           body: {
             destCountry,
             destPostcode,
-            weightGrams: parcelWeightGrams,
+            // One package line item per box. The edge function
+            // forwards the array straight through to FedEx.
+            boxWeightsGrams: parcelSplit.boxWeightsGrams,
             currency: 'GBP',
           },
         },
@@ -563,7 +573,10 @@ export default function QuotePage() {
       })
     }, 350)
     return () => { cancelled = true; window.clearTimeout(handle) }
-  }, [spreadMode, customQuote, currency, quantity, parcelWeightGrams, destCountry, destPostcode])
+    // parcelSplit is a fresh object every render; stringify the box-
+    // weights array so the effect's identity hash changes only when
+    // the actual weights do (not on every parent re-render).
+  }, [spreadMode, customQuote, currency, quantity, parcelSplit?.boxWeightsGrams.join(','), destCountry, destPostcode])
 
   const shippingState = useMemo(
     () => resolveShippingState({
@@ -1111,7 +1124,7 @@ export default function QuotePage() {
                     state={shippingState}
                     currency={currency}
                     intlAdjustPercent={shippingSettings.intlAdjustPercent}
-                    parcelWeightGrams={parcelWeightGrams}
+                    parcelSplit={parcelSplit}
                     exchangeRates={exchangeRates}
                     vatRate={vatRate}
                   />
@@ -1215,6 +1228,9 @@ export default function QuotePage() {
                   // two will be populated for a given quote.
                   domesticRate: shippingState.kind === 'domestic' ? shippingState.rate : null,
                   exchangeRates,
+                  // Multi-box context — drives the "shipped as N
+                  // boxes" line in the shipping section of the copy.
+                  parcelSplit,
                 })
                 return (
                   /* Copy-quote group. The "Include lead time" toggle

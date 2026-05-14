@@ -45,19 +45,85 @@ export interface ShippingRate {
   quotedAt: string
 }
 
+// Maximum gross weight FedEx will accept per FEDEX_BOX on
+// International Priority services before refusing the rate quote.
+// 15kg is the empirically-observed soft cutoff (FedEx Box Extra
+// Large is documented at ~13.6kg; some lanes accept slightly more).
+// A different FedEx packaging type could lift this — adjust here
+// if the packaging constant in _shared/fedex.ts ever changes.
+export const MAX_BOX_WEIGHT_GRAMS = 15_000
+
 // Resolve a derived parcel weight in grams. (variantWeight × qty)
 // + box tare. Defensive: an undefined or invalid variant weight
 // resolves to null rather than NaN propagating through the rate
 // request, so the card can show its waiting state.
+//
+// Kept as a thin wrapper around splitIntoBoxes for callers that
+// only need the total weight (e.g. friendly-error mapping). For
+// the actual shipment shape — number of boxes plus the per-box
+// weights — use splitIntoBoxes directly.
 export function deriveParcelWeightGrams(
   variantWeightGrams: number | null | undefined,
   quantity: number | null | undefined,
   boxWeightGrams: number,
 ): number | null {
+  const split = splitIntoBoxes(variantWeightGrams, quantity, boxWeightGrams)
+  return split?.totalGrams ?? null
+}
+
+// Output of the multi-box splitter. boxWeightsGrams is one entry
+// per box, summing to totalGrams (cards + N box tares). boxCount
+// is just the array length, surfaced explicitly so the UI doesn't
+// have to keep recomputing it.
+export interface ParcelSplit {
+  boxWeightsGrams: number[]
+  totalGrams: number
+  boxCount: number
+}
+
+// Split the shipment into N boxes, each capped at MAX_BOX_WEIGHT_GRAMS
+// (15kg). Cards are distributed evenly across boxes; each box
+// carries one box tare. Total shipment weight = card weight + N × tare.
+//
+// Algorithm:
+//   * cardsWeight     = perCardWeight × quantity
+//   * maxCardsPerBox  = MAX_BOX_WEIGHT_GRAMS - boxTare (cards alone,
+//                       since the tare ships with the box)
+//   * boxCount        = ceil(cardsWeight / maxCardsPerBox), >= 1
+//   * cardsPerBox     = cardsWeight / boxCount, integer-rounded with
+//                       the last box absorbing the rounding remainder
+//                       so the totals stay exact.
+//
+// Defence: if boxTare ever exceeds the FedEx limit (admin
+// misconfiguration), maxCardsPerBox would go negative. We clamp
+// the cap to a sane lower bound (1g) which forces one box per card
+// — a clearly broken result the designer will spot, rather than
+// silent NaN propagation through the rate request.
+export function splitIntoBoxes(
+  variantWeightGrams: number | null | undefined,
+  quantity: number | null | undefined,
+  boxTareGrams: number,
+): ParcelSplit | null {
   if (variantWeightGrams == null || variantWeightGrams <= 0) return null
   if (quantity == null || quantity <= 0) return null
-  const cards = variantWeightGrams * quantity
-  return Math.round(cards + Math.max(0, boxWeightGrams))
+  const cardsWeight = variantWeightGrams * quantity
+  const tare = Math.max(0, boxTareGrams)
+  const maxCardsPerBox = Math.max(1, MAX_BOX_WEIGHT_GRAMS - tare)
+  const boxCount = Math.max(1, Math.ceil(cardsWeight / maxCardsPerBox))
+  const cardsPerBox = cardsWeight / boxCount
+
+  const boxes: number[] = []
+  let assignedCards = 0
+  for (let i = 0; i < boxCount - 1; i++) {
+    const cards = Math.round(cardsPerBox)
+    boxes.push(cards + tare)
+    assignedCards += cards
+  }
+  const lastBoxCards = cardsWeight - assignedCards
+  boxes.push(lastBoxCards + tare)
+
+  const totalGrams = boxes.reduce((s, w) => s + w, 0)
+  return { boxWeightsGrams: boxes, totalGrams, boxCount }
 }
 
 // Apply the admin-set international adjustment percentage. Lives
