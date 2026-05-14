@@ -2,6 +2,9 @@ import { formatPrice } from '../currency'
 import type { QuoteResult, QuoteSelection } from './calculate'
 import type { LeadTimeState } from './leadTime'
 import { leadTimeQuoteLine } from './leadTime'
+import type { ShippingRate, DomesticRate, ParcelSplit } from './shipping'
+import { applyIntlAdjustment } from './shipping'
+import { gbpToCurrency, type ExchangeRates } from '../exchangeRates'
 
 // Pure formatter that turns the compiler's current state into a
 // plain-text and HTML pair suitable for a multi-format clipboard
@@ -43,6 +46,13 @@ import { leadTimeQuoteLine } from './leadTime'
 // variant + finish lowercased; base option always renders as
 // "natural finish" regardless of DB display_name.
 
+// Quote-view switch from the compiler (migration 000178). Drives
+// which sections this formatter emits: 'product' is the legacy
+// product-only output (byte-identical to before the shipping
+// feature shipped), 'shipping' emits only the shipping section,
+// 'both' emits product followed by shipping.
+export type QuoteCopyView = 'product' | 'shipping' | 'both'
+
 export interface FormatQuoteArgs {
   selection: QuoteSelection
   result: QuoteResult
@@ -57,6 +67,27 @@ export interface FormatQuoteArgs {
   // brief (we never invent a lead time the admin hasn't recorded).
   includeLeadTime: boolean
   leadTimeState: LeadTimeState | null
+  // Shipping copy gate + payload (migration 000178). Default is
+  // 'product' so callers that haven't opted in get the same output
+  // they did before this argument existed. The shipping section is
+  // emitted only when a valid `shippingRate` is supplied and the
+  // view is 'shipping' or 'both'.
+  view?: QuoteCopyView
+  shippingRate?: ShippingRate | null
+  shippingIntlAdjustPercent?: number
+  /** Domestic UK flat rate (migration 000179). Mutually exclusive
+   *  with shippingRate — the resolver returns one or the other
+   *  based on the destination country. */
+  domesticRate?: DomesticRate | null
+  /** Live GBP → EUR / USD multipliers. FedEx always invoices in GBP
+   *  so EUR / USD shipping figures are conversions of the GBP base
+   *  at this rate. Null falls through to GBP figures (same fail-safe
+   *  as the on-screen card). */
+  exchangeRates?: ExchangeRates | null
+  /** Multi-box split (per-box weights, total, count). Surfaced as
+   *  a "X boxes shipped" note in the shipping section when the
+   *  parcel needs more than one box. */
+  parcelSplit?: ParcelSplit | null
 }
 
 export interface FormattedQuote {
@@ -90,6 +121,19 @@ function formatDiscountPercent(value: number): string {
   return `${rounded}%`
 }
 
+// "2 boxes at 14.12 kg each" for an even split; "3 boxes (12.00,
+// 12.00, 12.13 kg)" if rounding gave a different last-box weight.
+// Used inside the multiBoxNote sentence.
+function formatBoxesPhrase(split: ParcelSplit): string {
+  const { boxWeightsGrams, boxCount } = split
+  const allEqual = boxWeightsGrams.every((w) => w === boxWeightsGrams[0])
+  if (allEqual) {
+    return `${boxCount} boxes at ${(boxWeightsGrams[0] / 1000).toFixed(2)} kg each`
+  }
+  const parts = boxWeightsGrams.map((w) => (w / 1000).toFixed(2))
+  return `${boxCount} boxes (${parts.join(', ')} kg)`
+}
+
 export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   const {
     selection,
@@ -100,11 +144,41 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     vatRate,
     includeLeadTime,
     leadTimeState,
+    view = 'product',
+    shippingRate = null,
+    shippingIntlAdjustPercent = 0,
+    domesticRate = null,
+    exchangeRates = null,
+    parcelSplit = null,
   } = args
   const { quantity, currency, names } = selection
   const { total, baseTotal, splitNameSurcharge, finishSurcharge, personalisationSurcharge, discountAmount, discountPercent } = result
 
-  if (total == null || baseTotal == null || quantity == null || !currency) return EMPTY
+  // Shipping-only path bails on a different gate than product-only:
+  // the product section needs a resolved tier, the shipping section
+  // needs a quoted rate. Compute both up front so the branches below
+  // can compose without re-checking.
+  const showProduct = view === 'product' || view === 'both'
+  // International (FedEx) shipping is included only when a usable
+  // rate object came through. Domestic is included on a parallel
+  // gate; the two are mutually exclusive so at most one renders.
+  const showInternationalShipping =
+    (view === 'shipping' || view === 'both')
+    && shippingRate != null
+    && shippingRate.available
+    && shippingRate.netCharge != null
+    && shippingRate.currency != null
+  const showDomesticShipping =
+    (view === 'shipping' || view === 'both')
+    && domesticRate != null
+  const showShipping = showInternationalShipping || showDomesticShipping
+
+  // Product section needs a resolved tier. When the view doesn't
+  // include the product section we skip this check entirely so a
+  // designer can copy a shipping-only quote for a quantity that
+  // happens not to be a tier (rare but possible).
+  if (showProduct && (total == null || baseTotal == null || quantity == null || !currency)) return EMPTY
+  if (!showProduct && !showShipping) return EMPTY
 
   // One distinct material per quote in v1 of the compiler — the
   // resolver produces at most one sentence. Null means "the toggle
@@ -115,103 +189,241 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
       ? leadTimeQuoteLine(leadTimeState, materialDisplayName)
       : null
 
-  // Shared intermediate values — computed once, used by both
-  // plain-text and html builders. Round ex-VAT at the same 2dp
-  // boundary HeadlinePrice does so the two outputs agree.
-  const cardsPrice = baseTotal + (finishSurcharge ?? 0)
-  const showSplitName = names > 1 && (splitNameSurcharge ?? 0) > 0
-  const showPersonalisation = (personalisationSurcharge ?? 0) > 0
-  const showDiscount = (discountAmount ?? 0) > 0 && discountPercent > 0
-  const showVat = currency === 'GBP' && vatRate != null
-  const exVatTotal = showVat ? Math.round((total / (1 + vatRate)) * 100) / 100 : null
+  // ── Product section (when included) ─────────────────────────
+  // Builds the qty/material line plus any surcharge / discount
+  // lines. The standalone product Total line is held back so the
+  // compose step can either emit it (product-only output) or
+  // suppress it in favour of the combined TOTAL when shipping is
+  // included. Computed in a branch so the shipping-only view
+  // doesn't need any of the product values resolved.
+  let productBodyPlain: string[] = []
+  let productBodyHtml: string[] = []
+  // Standalone product Total line, emitted only in product-only
+  // output. Null when the product section isn't included.
+  let productTotalLinePlain: string | null = null
+  let productTotalLineHtml: string | null = null
+  // Product total in the same display currency. Used by the
+  // combined TOTAL line below.
+  let productTotalAmount: number | null = null
+  if (showProduct) {
+    const cardsPrice = baseTotal! + (finishSurcharge ?? 0)
+    const showSplitName = names > 1 && (splitNameSurcharge ?? 0) > 0
+    const showPersonalisation = (personalisationSurcharge ?? 0) > 0
+    const showDiscount = (discountAmount ?? 0) > 0 && discountPercent > 0
+    const showVat = currency === 'GBP' && vatRate != null
+    const exVatTotal = showVat ? Math.round((total! / (1 + vatRate)) * 100) / 100 : null
 
-  // Spec parenthetical, shared between plain and html paths. The
-  // html version escapes its parts; the plain version doesn't
-  // need to. Build once with raw strings, escape on the html
-  // side at use.
-  let parenPlain = ''
-  let parenHtml = ''
-  if (variantDisplayName) {
-    const vlow = variantDisplayName.toLowerCase()
-    if (finishOption) {
-      const fw = finishWord(finishOption)
-      parenPlain = ` (${vlow} with ${fw} finish)`
-      parenHtml = ` (${escapeHtml(vlow)} with ${escapeHtml(fw)} finish)`
-    } else {
-      parenPlain = ` (${vlow})`
-      parenHtml = ` (${escapeHtml(vlow)})`
+    let parenPlain = ''
+    let parenHtml = ''
+    if (variantDisplayName) {
+      const vlow = variantDisplayName.toLowerCase()
+      if (finishOption) {
+        const fw = finishWord(finishOption)
+        parenPlain = ` (${vlow} with ${fw} finish)`
+        parenHtml = ` (${escapeHtml(vlow)} with ${escapeHtml(fw)} finish)`
+      } else {
+        parenPlain = ` (${vlow})`
+        parenHtml = ` (${escapeHtml(vlow)})`
+      }
+    }
+
+    const qtyStr = quantity!.toLocaleString()
+    const cardsPriceStr = formatPrice(cardsPrice, currency!)
+    const splitNameStr = showSplitName ? formatPrice(splitNameSurcharge!, currency!) : null
+    const personalisationStr = showPersonalisation ? formatPrice(personalisationSurcharge!, currency!) : null
+    const discountStr = showDiscount ? formatPrice(discountAmount!, currency!) : null
+    const discountPctStr = showDiscount ? formatDiscountPercent(discountPercent) : null
+    const totalStr = formatPrice(total!, currency!)
+    const exVatStr = exVatTotal != null ? formatPrice(exVatTotal, 'GBP', 2) : null
+
+    productBodyPlain.push(`${qtyStr} ${materialDisplayName} cards${parenPlain} = ${cardsPriceStr}`)
+    if (showSplitName) productBodyPlain.push(`Extra setup to split batch between ${names} layouts = ${splitNameStr}`)
+    if (showPersonalisation) productBodyPlain.push(`Personalisation = ${personalisationStr}`)
+    if (showDiscount) productBodyPlain.push(`Discount (${discountPctStr}) = −${discountStr}`)
+
+    let totalLinePlain = `Total = ${totalStr}`
+    if (showVat) totalLinePlain += ` inc VAT (${exVatStr} ex VAT)`
+    productTotalLinePlain = totalLinePlain
+
+    productBodyHtml.push(`${escapeHtml(qtyStr)} ${escapeHtml(materialDisplayName)} cards${parenHtml} = ${escapeHtml(cardsPriceStr)}`)
+    if (showSplitName) productBodyHtml.push(`Extra setup to split batch between ${names} layouts = ${escapeHtml(splitNameStr!)}`)
+    if (showPersonalisation) productBodyHtml.push(`Personalisation = ${escapeHtml(personalisationStr!)}`)
+    if (showDiscount) productBodyHtml.push(`Discount (${escapeHtml(discountPctStr!)}) = −${escapeHtml(discountStr!)}`)
+    const totalCore = `Total = ${escapeHtml(totalStr)}`
+    productTotalLineHtml = showVat
+      ? `<strong>${totalCore} inc VAT</strong> (${escapeHtml(exVatStr!)} ex VAT)`
+      : `<strong>${totalCore}</strong>`
+
+    productTotalAmount = total!
+  }
+
+  // ── Shipping section (when included) ─────────────────────────
+  // Copy-paste output keeps the shipping section minimal — service
+  // line + total + optional multi-box and currency-conversion
+  // footnotes. The on-card render in ShippingCard keeps the full
+  // breakdown (base − discount + fuel + surcharges + international
+  // adjustment) for designers to read; customers don't need to
+  // see the internal accounting. Shipping is zero-rated for VAT
+  // on international export so no VAT language even on GBP;
+  // domestic UK rates include UK VAT and surface inc/ex VAT.
+  //
+  // FedEx invoices Plasma in GBP regardless of preferredCurrency,
+  // so the international rate's numbers are always GBP. When the
+  // compiler currency is EUR / USD we multiply the total by the
+  // live exchange rate (Frankfurter / ECB) and tag the figure
+  // with the rate used in a footnote.
+  // Multi-box note shared by both the domestic and international
+  // shipping paths. Returns null when shipping fits in one box
+  // (the common case) so the formatter can omit the line cleanly.
+  const multiBoxNote = parcelSplit && parcelSplit.boxCount > 1
+    ? `Shipped as ${formatBoxesPhrase(parcelSplit)}.`
+    : null
+
+  // Shipping section flattens to a single line: "Shipping —
+  // Service Name = $X". The total figure goes inline rather than
+  // on its own line. Multi-box note still surfaces beneath when
+  // applicable. The shipping figure also feeds the combined
+  // TOTAL line below.
+  let shippingLinePlain: string | null = null
+  let shippingLineHtml: string | null = null
+  // Total shipping in display currency. Combined TOTAL adds this
+  // to productTotalAmount.
+  let shippingTotalAmount: number | null = null
+  // Whether shipping is VAT-bearing at the current vatRate.
+  // Domestic UK shipping (DPD) is standard-rated, so its GBP
+  // figure includes VAT. International export is zero-rated.
+  // Drives the ex-VAT half of the combined TOTAL line.
+  let shippingIsVatBearing = false
+  if (showDomesticShipping && domesticRate) {
+    const displayCurrency = currency ?? 'GBP'
+    const multiplier = gbpToCurrency(displayCurrency, exchangeRates)
+    const totalDisplay = domesticRate.totalGbp * multiplier
+    const regionLabel = domesticRate.region === 'uk_ni'
+      ? 'Northern Ireland delivery'
+      : 'Mainland delivery'
+    const totalStr = formatPrice(totalDisplay, displayCurrency, 2)
+    shippingLinePlain = `Shipping — DPD UK · ${regionLabel} = ${totalStr}`
+    shippingLineHtml = `Shipping — DPD UK · ${escapeHtml(regionLabel)} = ${escapeHtml(totalStr)}`
+    shippingTotalAmount = totalDisplay
+    shippingIsVatBearing = displayCurrency === 'GBP'
+  } else if (showInternationalShipping && shippingRate) {
+    const displayCurrency = currency ?? 'GBP'
+    const multiplier = gbpToCurrency(displayCurrency, exchangeRates)
+    // International total = FedEx net charge (already includes
+    // base − discount + fuel + surcharges) plus the admin's
+    // international adjustment percentage. The on-card render
+    // shows the components; copy keeps just the total.
+    const netGbp = shippingRate.netCharge!
+    const adjustedTotalGbp = applyIntlAdjustment(netGbp, shippingIntlAdjustPercent)
+    const totalDisplay = adjustedTotalGbp * multiplier
+    const totalStr = formatPrice(totalDisplay, displayCurrency, 2)
+    const serviceLabel = shippingRate.serviceName ?? 'FedEx International'
+    shippingLinePlain = `Shipping — ${serviceLabel} = ${totalStr}`
+    shippingLineHtml = `Shipping — ${escapeHtml(serviceLabel)} = ${escapeHtml(totalStr)}`
+    shippingTotalAmount = totalDisplay
+    shippingIsVatBearing = false
+  }
+
+  // ── Compose ──────────────────────────────────────────────────
+  // Three shapes the formatter emits, decided by which sections
+  // are included:
+  //
+  //   product-only:
+  //     product body lines (qty + surcharges + discount)
+  //     <blank>
+  //     Total = $X (inc VAT (Y ex VAT) on GBP)
+  //     <blank>
+  //     This quote excludes shipping.
+  //     [<blank> + lead-time line]
+  //
+  //   shipping-only:
+  //     Shipping — Service = $X
+  //     [Shipped as N boxes ...]
+  //     [<blank> + lead-time line]
+  //
+  //   both (the new combined shape — replaces the duplicate
+  //   product Total with a single combined TOTAL):
+  //     product body lines (no standalone Total)
+  //     Shipping — Service = $X
+  //     [Shipped as N boxes ...]
+  //     <blank>
+  //     TOTAL = $X (inc VAT (Y ex VAT) on GBP)
+  //     [<blank> + lead-time line]
+
+  // Compute the combined TOTAL line, used only when both product
+  // and shipping are included. GBP gets an inc VAT / ex VAT
+  // qualifier; the ex-VAT half splits between the product (always
+  // VAT-bearing on GBP) and shipping (VAT-bearing only on
+  // domestic UK; zero-rated on international export).
+  function buildCombinedTotalLines(): { plain: string; html: string } | null {
+    if (!showProduct || !showShipping) return null
+    if (productTotalAmount == null || shippingTotalAmount == null) return null
+    const displayCurrency = currency!
+    const combined = productTotalAmount + shippingTotalAmount
+    const combinedStr = formatPrice(combined, displayCurrency, 2)
+    if (displayCurrency === 'GBP' && vatRate != null) {
+      const productExVat = productTotalAmount / (1 + vatRate)
+      const shippingExVat = shippingIsVatBearing
+        ? shippingTotalAmount / (1 + vatRate)
+        : shippingTotalAmount
+      const combinedExVat = Math.round((productExVat + shippingExVat) * 100) / 100
+      const exVatStr = formatPrice(combinedExVat, 'GBP', 2)
+      return {
+        plain: `TOTAL = ${combinedStr} inc VAT (${exVatStr} ex VAT)`,
+        html: `<strong>TOTAL = ${escapeHtml(combinedStr)} inc VAT</strong> (${escapeHtml(exVatStr)} ex VAT)`,
+      }
+    }
+    return {
+      plain: `TOTAL = ${combinedStr}`,
+      html: `<strong>TOTAL = ${escapeHtml(combinedStr)}</strong>`,
     }
   }
+  const combinedTotal = buildCombinedTotalLines()
 
-  const qtyStr = quantity.toLocaleString()
-  const cardsPriceStr = formatPrice(cardsPrice, currency)
-  const splitNameStr = showSplitName ? formatPrice(splitNameSurcharge!, currency) : null
-  const personalisationStr = showPersonalisation ? formatPrice(personalisationSurcharge!, currency) : null
-  const discountStr = showDiscount ? formatPrice(discountAmount!, currency) : null
-  const discountPctStr = showDiscount ? formatDiscountPercent(discountPercent) : null
-  const totalStr = formatPrice(total, currency)
-  const exVatStr = exVatTotal != null ? formatPrice(exVatTotal, 'GBP', 2) : null
-
-  // ── Plain-text (unchanged spacing) ───────────────────────────
+  // ── Plain text ────────────────────────────────────────────────
   const plainLines: string[] = []
-  plainLines.push(`${qtyStr} ${materialDisplayName} cards${parenPlain} = ${cardsPriceStr}`)
-  if (showSplitName) {
-    plainLines.push(`Extra setup to split batch between ${names} layouts = ${splitNameStr}`)
+  if (showProduct) {
+    plainLines.push(...productBodyPlain)
   }
-  if (showPersonalisation) {
-    plainLines.push(`Personalisation = ${personalisationStr}`)
+  if (showShipping && shippingLinePlain) {
+    plainLines.push(shippingLinePlain)
+    if (multiBoxNote) plainLines.push(multiBoxNote)
   }
-  if (showDiscount) {
-    plainLines.push(`Discount (${discountPctStr}) = −${discountStr}`)
+  if (combinedTotal) {
+    plainLines.push('')
+    plainLines.push(combinedTotal.plain)
+  } else if (showProduct && !showShipping && productTotalLinePlain) {
+    // Product-only: keep the legacy "Total" + "This quote
+    // excludes shipping." footer.
+    plainLines.push('')
+    plainLines.push(productTotalLinePlain)
+    plainLines.push('')
+    plainLines.push('This quote excludes shipping.')
   }
-  plainLines.push('')
-  let totalLinePlain = `Total = ${totalStr}`
-  if (showVat) totalLinePlain += ` inc VAT (${exVatStr} ex VAT)`
-  plainLines.push(totalLinePlain)
-  plainLines.push('')
-  plainLines.push('This quote excludes shipping.')
   if (leadTimeLine) {
     plainLines.push('')
     plainLines.push(leadTimeLine)
   }
   const plainText = plainLines.join('\n')
 
-  // ── HTML (tight spacing, bolded Total) ───────────────────────
-  // Content lines join with single <br>; a leading <br> before
-  // the disclaimer produces the one blank-line gap.
-  const htmlLines: string[] = []
-  htmlLines.push(`${escapeHtml(qtyStr)} ${escapeHtml(materialDisplayName)} cards${parenHtml} = ${escapeHtml(cardsPriceStr)}`)
-  if (showSplitName) {
-    htmlLines.push(`Extra setup to split batch between ${names} layouts = ${escapeHtml(splitNameStr!)}`)
+  // ── HTML ──────────────────────────────────────────────────────
+  let html = ''
+  if (showProduct) {
+    html += productBodyHtml.map((l) => l + '<br>').join('')
   }
-  if (showPersonalisation) {
-    htmlLines.push(`Personalisation = ${escapeHtml(personalisationStr!)}`)
+  if (showShipping && shippingLineHtml) {
+    html += shippingLineHtml + '<br>'
+    if (multiBoxNote) html += escapeHtml(multiBoxNote) + '<br>'
   }
-  if (showDiscount) {
-    htmlLines.push(`Discount (${escapeHtml(discountPctStr!)}) = −${escapeHtml(discountStr!)}`)
+  if (combinedTotal) {
+    html += '<br>' + combinedTotal.html
+  } else if (showProduct && !showShipping && productTotalLineHtml) {
+    html += '<br>' + productTotalLineHtml
+    html += '<br><br>This quote excludes shipping.'
   }
-  // Total line — strong wraps up to and including " inc VAT" on
-  // GBP, the ex-VAT parenthetical sits outside; on EUR/USD the
-  // whole "Total = $X" is wrapped.
-  const totalCore = `Total = ${escapeHtml(totalStr)}`
-  const totalLineHtml = showVat
-    ? `<strong>${totalCore} inc VAT</strong> (${escapeHtml(exVatStr!)} ex VAT)`
-    : `<strong>${totalCore}</strong>`
-  htmlLines.push(totalLineHtml)
-  // Each content line followed by <br>; extra <br> before the
-  // disclaimer and again before the lead-time line produces a
-  // single blank-line gap between each paragraph. Lead-time line
-  // sits after the disclaimer so the closing copy reads "This
-  // quote excludes shipping." then a separate "we are currently
-  // quoting N business days" beat.
-  const leadTimeHtml = leadTimeLine
-    ? '<br><br>' + escapeHtml(leadTimeLine)
-    : ''
-  const html =
-    htmlLines.map((l) => l + '<br>').join('') +
-    '<br>' +
-    'This quote excludes shipping.' +
-    leadTimeHtml
+  if (leadTimeLine) {
+    html += '<br><br>' + escapeHtml(leadTimeLine)
+  }
 
   return { plainText, html }
 }

@@ -35,6 +35,18 @@ import { SpreadQuoteResults } from '../components/quote/SpreadQuoteResults'
 import { DiscountInput } from '../components/quote/DiscountInput'
 import { LeadTimeCard } from '../components/quote/LeadTimeCard'
 import { resolveLeadTimeState } from '../lib/quote/leadTime'
+import { ShippingDestinationInput } from '../components/quote/ShippingDestinationInput'
+import { QuoteViewToggle, type QuoteView } from '../components/quote/QuoteViewToggle'
+import { ShippingCard } from '../components/quote/ShippingCard'
+import {
+  splitIntoBoxes,
+  resolveShippingState,
+  toFriendlyShippingError,
+  type ShippingRate,
+  type ParcelSplit,
+} from '../lib/quote/shipping'
+import { getShippingSettings, type ShippingSettings } from '../lib/shippingSettings'
+import { getExchangeRates, type ExchangeRates } from '../lib/exchangeRates'
 
 // Quote compiler — v1 read-only.
 //
@@ -49,12 +61,18 @@ import { resolveLeadTimeState } from '../lib/quote/leadTime'
 // the typed quantity to a total, HeadlinePrice renders the result.
 // Adjacent tier strips, split-name surcharge, finish toggles and
 // the custom-quote bailout follow in commits 4–8.
+// Local extension of QuoteVariant — the picker doesn't need
+// weight_grams but the shipping fetch does, so we widen the type
+// for the variants array and let the picker ignore the extra
+// column.
+type QuoteVariantWithWeight = QuoteVariant & { weight_grams: number }
+
 export default function QuotePage() {
   const [materials, setMaterials] = useState<QuoteMaterial[]>([])
   const [materialsLoading, setMaterialsLoading] = useState(true)
 
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null)
-  const [variants, setVariants] = useState<QuoteVariant[]>([])
+  const [variants, setVariants] = useState<QuoteVariantWithWeight[]>([])
   const [variantsLoading, setVariantsLoading] = useState(false)
   const [selectedVariantId, setSelectedVariantId] = useState<string | null>(null)
 
@@ -97,6 +115,23 @@ export default function QuotePage() {
   // table and adjacent strips all reflect the post-discount figure.
   // Resets on every material change (see useEffect below).
   const [discountPercent, setDiscountPercent] = useState(0)
+
+  // ── Shipping state (migration 000178) ─────────────────────────
+  // FedEx international rate fetch. All compiler-local — never
+  // persisted. The fetch effect below debounces on the relevant
+  // inputs (currency, quantity, variant weight, destination), so
+  // designers can type a postcode without firing one request per
+  // keystroke. quoteView is the designer-only product/shipping/both
+  // switch over the price column; defaults to 'both' so a fresh
+  // session shows everything.
+  const [destCountry, setDestCountry] = useState<string | null>(null)
+  const [destPostcode, setDestPostcode] = useState<string | null>(null)
+  const [quoteView, setQuoteView] = useState<QuoteView>('both')
+  const [shippingRate, setShippingRate] = useState<ShippingRate | null>(null)
+  const [shippingLoading, setShippingLoading] = useState(false)
+  const [shippingError, setShippingError] = useState<string | null>(null)
+  const [shippingSettings, setShippingSettings] = useState<ShippingSettings | null>(null)
+  const [exchangeRates, setExchangeRates] = useState<ExchangeRates | null>(null)
 
   // "Include lead time" toggle for the copy-paste quote body. The
   // checkbox tracks an explicit boolean; an `overridden` flag
@@ -146,6 +181,33 @@ export default function QuotePage() {
     return () => { cancelled = true }
   }, [])
 
+  // Cached shipping settings — fed-ex box weight and the international
+  // % adjustment. Mounted once; the cached helper handles its own
+  // TTL/invalidation. Drives the parcel-weight calculation and the
+  // ShippingCard's adjustment line.
+  useEffect(() => {
+    let cancelled = false
+    getShippingSettings().then((value) => {
+      if (!cancelled) setShippingSettings(value)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  // Live GBP → EUR / USD exchange rates (ECB via Frankfurter).
+  // FedEx invoices Plasma in GBP regardless of preferredCurrency, so
+  // the EUR / USD figures we display are conversions of the GBP
+  // figure at today's rate. Mount-once; the cached helper handles
+  // TTL. Null until first resolve — the ShippingCard converts
+  // safely (returns the GBP figure unchanged via gbpToCurrency's
+  // null guard) so the brief loading window doesn't blank the card.
+  useEffect(() => {
+    let cancelled = false
+    getExchangeRates().then((value) => {
+      if (!cancelled) setExchangeRates(value)
+    })
+    return () => { cancelled = true }
+  }, [])
+
   // Materials: filtered to is_active = true AND is_published = true
   // AND archived_at IS NULL. Mirrors the new-version form's filter
   // so the compiler exposes exactly the same catalogue a designer
@@ -181,13 +243,13 @@ export default function QuotePage() {
     let cancelled = false
     setVariantsLoading(true)
     supabase.from('material_variants')
-      .select('id, code, display_name, variant_type, sort_order')
+      .select('id, code, display_name, variant_type, sort_order, weight_grams')
       .eq('material_id', selectedMaterialId)
       .eq('is_active', true)
       .order('sort_order')
       .then(({ data }) => {
         if (cancelled) return
-        const list = (data ?? []) as QuoteVariant[]
+        const list = (data ?? []) as QuoteVariantWithWeight[]
         setVariants(list)
         setSelectedVariantId(list[0]?.id ?? null)
         setVariantsLoading(false)
@@ -380,6 +442,159 @@ export default function QuotePage() {
     return resolveLeadTimeState(selectedMaterial, customQuote)
   }, [selectedMaterial, customQuote])
 
+  // ── Shipping derived state + fetch effect ────────────────────────
+  // Weight of one card on the active variant. Drives the parcel-
+  // weight calculation below.
+  const selectedVariantWeightGrams = useMemo(() => {
+    if (!selectedVariantId) return null
+    const v = variants.find((x) => x.id === selectedVariantId)
+    return v?.weight_grams ?? null
+  }, [variants, selectedVariantId])
+
+  // Derived parcel split. Returns the per-box weights, total, and
+  // box count, or null whenever any input is missing. Heavy
+  // shipments (> 15kg of cards) are automatically broken into
+  // multiple boxes; sub-15kg shipments come back as a one-element
+  // array. Null guards the fetch effect cleanly.
+  const parcelSplit = useMemo<ParcelSplit | null>(() => {
+    if (!shippingSettings) return null
+    return splitIntoBoxes(
+      selectedVariantWeightGrams,
+      quantity,
+      shippingSettings.boxWeightGrams,
+    )
+  }, [selectedVariantWeightGrams, quantity, shippingSettings])
+  // Total parcel weight surfaced for backward-compat with consumers
+  // that read just the total (friendly-error mapper, card display
+  // line, copy formatter). Null when no split has resolved.
+  const parcelWeightGrams = parcelSplit?.totalGrams ?? null
+
+  // Debounced FedEx rate fetch. Fires only when:
+  //   * the compiler is in single-quantity mode (no shipping in spread)
+  //   * the compiler isn't in the custom-quote bailout
+  //   * currency, quantity, parcel weight, country and postcode are
+  //     all populated
+  // Resets cleanly on input changes so a stale rate from a previous
+  // lane can't render under fresh inputs.
+  useEffect(() => {
+    if (spreadMode || customQuote) {
+      setShippingRate(null)
+      setShippingLoading(false)
+      setShippingError(null)
+      return
+    }
+    if (
+      !currency
+      || !quantity
+      || !destCountry
+      || !destPostcode
+      || !parcelSplit
+    ) {
+      setShippingRate(null)
+      setShippingLoading(false)
+      setShippingError(null)
+      return
+    }
+    // Domestic UK lanes are a settings lookup, not a FedEx fetch.
+    // Clear any prior international state so a destination flip
+    // from US → GB doesn't leave a stale FedEx rate sitting under
+    // the new domestic card. resolveShippingState reads the rate
+    // straight from shippingSettings — nothing to fetch.
+    if (destCountry === 'GB') {
+      setShippingRate(null)
+      setShippingLoading(false)
+      setShippingError(null)
+      return
+    }
+    let cancelled = false
+    setShippingLoading(true)
+    setShippingError(null)
+    // 350ms debounce — long enough to absorb a postcode being typed
+    // out character by character, short enough that a designer who
+    // pastes a postcode sees the rate appear in well under a second.
+    const handle = window.setTimeout(() => {
+      // Always request rates from FedEx in GBP — Plasma's account
+      // is billed in GBP regardless of preferredCurrency, so the
+      // figures we get back are GBP no matter what. Asking in EUR
+      // or USD just relabels the GBP numbers, which is misleading.
+      // Conversion to the compiler's selected currency happens in
+      // ShippingCard and formatQuoteForCopy using the live ECB rate.
+      void supabase.functions.invoke<ShippingRate & { error?: string }>(
+        'fedex-rate',
+        {
+          body: {
+            destCountry,
+            destPostcode,
+            // One package line item per box. The edge function
+            // forwards the array straight through to FedEx.
+            boxWeightsGrams: parcelSplit.boxWeightsGrams,
+            currency: 'GBP',
+          },
+        },
+      ).then(async ({ data, error }) => {
+        if (cancelled) return
+        setShippingLoading(false)
+        if (error) {
+          // supabase-js wraps any non-2xx response from the edge
+          // function into a generic FunctionsHttpError with message
+          // "Edge Function returned a non-2xx status code". The
+          // useful detail (FedEx's actual rejection reason, our
+          // own 400 validation messages, etc.) lives in the
+          // response body — read it via the `context` Response
+          // and run it through the friendly mapper before showing.
+          let detail: string | null = null
+          try {
+            const ctx = (error as { context?: Response }).context
+            const body = ctx ? await ctx.clone().json() : null
+            if (body && typeof body.error === 'string') detail = body.error
+          } catch {
+            // Body wasn't readable as JSON — fall through to the
+            // generic mapper which knows what to do with the
+            // wrapper message alone.
+          }
+          setShippingError(toFriendlyShippingError(detail ?? error.message, { parcelWeightGrams }))
+          setShippingRate(null)
+          return
+        }
+        if (!data) {
+          setShippingError(toFriendlyShippingError('Empty response from shipping rate service', { parcelWeightGrams }))
+          setShippingRate(null)
+          return
+        }
+        // Edge function returns { ...ParsedRate, cached, quotedAt }.
+        // If it returned an error envelope, surface it; otherwise
+        // accept the rate.
+        if ((data as { error?: string }).error) {
+          setShippingError(toFriendlyShippingError((data as { error?: string }).error ?? '', { parcelWeightGrams }))
+          setShippingRate(null)
+          return
+        }
+        setShippingRate(data as ShippingRate)
+      })
+    }, 350)
+    return () => { cancelled = true; window.clearTimeout(handle) }
+    // parcelSplit is a fresh object every render; stringify the box-
+    // weights array so the effect's identity hash changes only when
+    // the actual weights do (not on every parent re-render).
+  }, [spreadMode, customQuote, currency, quantity, parcelSplit?.boxWeightsGrams.join(','), destCountry, destPostcode])
+
+  const shippingState = useMemo(
+    () => resolveShippingState({
+      spreadMode,
+      customQuote,
+      currency,
+      quantity,
+      destCountry,
+      destPostcode,
+      variantWeightGrams: selectedVariantWeightGrams,
+      loading: shippingLoading,
+      rate: shippingRate,
+      error: shippingError,
+      shippingSettings,
+    }),
+    [spreadMode, customQuote, currency, quantity, destCountry, destPostcode, selectedVariantWeightGrams, shippingLoading, shippingRate, shippingError, shippingSettings],
+  )
+
   // Default state for the "Include lead time" checkbox: on only when
   // every material in the quote (today: one) is in-range AND has a
   // recorded lead time. Off in every other case so the designer is
@@ -448,7 +663,10 @@ export default function QuotePage() {
     spreadQuantities.length > 0 ||
     customFlags.nfc ||
     hasPersonalisation ||
-    discountPercent > 0
+    discountPercent > 0 ||
+    destCountry !== null ||
+    destPostcode !== null ||
+    quoteView !== 'both'
   function handleReset() {
     setSelectedMaterialId(null)
     setVariants([])
@@ -465,6 +683,11 @@ export default function QuotePage() {
     setIsMaterialPickerExpanded(true)
     setIncludeLeadTime(false)
     setIncludeLeadTimeOverridden(false)
+    setDestCountry(null)
+    setDestPostcode(null)
+    setQuoteView('both')
+    setShippingRate(null)
+    setShippingError(null)
   }
 
   const result = useMemo(() => {
@@ -728,11 +951,38 @@ export default function QuotePage() {
               {selectedMaterialId && !customQuote && (
                 <DiscountInput value={discountPercent} onChange={setDiscountPercent} />
               )}
+
+              {/* Shipping destination (migration 000178). Hidden in
+                  spread mode (no resolved quantity to weigh against)
+                  and in the custom-quote bailout (same). Otherwise
+                  available the moment the form has a material —
+                  designers often type the postcode while still
+                  picking the variant. */}
+              {selectedMaterialId && !spreadMode && !customQuote && (
+                <ShippingDestinationInput
+                  country={destCountry}
+                  postcode={destPostcode}
+                  onCountryChange={setDestCountry}
+                  onPostcodeChange={setDestPostcode}
+                />
+              )}
             </div>
           </div>
 
           {/* ── Price column ─────────────────────────────────────────────── */}
           <div className="space-y-4">
+            {/* Designer-only view switch. Suppressed in spread mode
+                (shipping card is never rendered in spread, so the
+                toggle has nothing to gate) and in the custom-quote
+                bailout (no product price to hide either). The price-
+                column blocks below honour quoteView so the toggle
+                actually flips what's rendered. */}
+            {!spreadMode && !customQuote && selectedMaterialId && (
+              <div className="flex items-center justify-end">
+                <QuoteViewToggle value={quoteView} onChange={setQuoteView} />
+              </div>
+            )}
+
             {/* Lead-time card sits at the top of the results column
                 in both single and spread modes. Reads as "when can
                 we make it" → "how much". Render predicate is mode-
@@ -826,18 +1076,20 @@ export default function QuotePage() {
                      is priced across all three currencies — but we
                      surface a clear affordance rather than a stale
                      placeholder if it ever does. */
-                  <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 p-8">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
-                      No prices available
-                    </p>
-                    <p className="mt-3 text-2xl font-bold leading-tight text-amber-900">
-                      {selectedMaterial?.display_name ?? 'This material'} isn't priced in {currency} yet
-                    </p>
-                    <p className="mt-3 text-sm text-amber-800">
-                      Try a different currency, pick another material, or flag this for Rob — there's no live tier data to quote against here.
-                    </p>
-                  </div>
-                ) : (
+                  quoteView !== 'shipping' && (
+                    <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 p-8">
+                      <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+                        No prices available
+                      </p>
+                      <p className="mt-3 text-2xl font-bold leading-tight text-amber-900">
+                        {selectedMaterial?.display_name ?? 'This material'} isn't priced in {currency} yet
+                      </p>
+                      <p className="mt-3 text-sm text-amber-800">
+                        Try a different currency, pick another material, or flag this for Rob — there's no live tier data to quote against here.
+                      </p>
+                    </div>
+                  )
+                ) : quoteView !== 'shipping' ? (
                   <HeadlinePrice
                     total={result.total}
                     baseTotal={result.baseTotal}
@@ -855,6 +1107,25 @@ export default function QuotePage() {
                     quantity={quantity}
                     currency={currency}
                     loading={pricing.loading && !tiersFresh}
+                    vatRate={vatRate}
+                  />
+                ) : null}
+
+                {/* FedEx shipping card. Sits beneath the headline so
+                    the "product price → shipping price" read order
+                    matches the two questions the designer is
+                    answering. Hidden in spread mode, in the custom-
+                    quote bailout, and when quoteView is 'product'.
+                    resolveShippingState handles the other inputs;
+                    ShippingCard renders nothing when state is
+                    not_ready. */}
+                {!customQuote && shippingSettings && quoteView !== 'product' && (
+                  <ShippingCard
+                    state={shippingState}
+                    currency={currency}
+                    intlAdjustPercent={shippingSettings.intlAdjustPercent}
+                    parcelSplit={parcelSplit}
+                    exchangeRates={exchangeRates}
                     vatRate={vatRate}
                   />
                 )}
@@ -942,6 +1213,24 @@ export default function QuotePage() {
                   // not-set.
                   includeLeadTime: effectiveIncludeLeadTime,
                   leadTimeState,
+                  // Shipping section in the copied body (migration
+                  // 000178). View follows the designer's quoteView
+                  // pill so a 'product' selection yields the same
+                  // byte-identical output the formatter has always
+                  // produced. The rate + adjustment % flow through
+                  // so 'shipping' and 'both' get the live breakdown.
+                  view: quoteView,
+                  shippingRate,
+                  shippingIntlAdjustPercent: shippingSettings?.intlAdjustPercent ?? 0,
+                  // Domestic UK rate sourced from the resolved state
+                  // (migration 000179). Mutually exclusive with
+                  // shippingRate at this branch — only one of the
+                  // two will be populated for a given quote.
+                  domesticRate: shippingState.kind === 'domestic' ? shippingState.rate : null,
+                  exchangeRates,
+                  // Multi-box context — drives the "shipped as N
+                  // boxes" line in the shipping section of the copy.
+                  parcelSplit,
                 })
                 return (
                   /* Copy-quote group. The "Include lead time" toggle
@@ -984,7 +1273,7 @@ export default function QuotePage() {
                 custom-quote bailout is active. AdjacentVariants
                 additionally suppresses for default-variant
                 materials. */}
-            {!spreadMode && !customQuote && tiersFresh && result.validTier && (
+            {!spreadMode && !customQuote && quoteView !== 'shipping' && tiersFresh && result.validTier && (
               <AdjacentTiers
                 tiers={variantTiers}
                 materialCode={selectedMaterial?.code ?? null}
@@ -994,7 +1283,7 @@ export default function QuotePage() {
                 discountPercent={discountPercent}
               />
             )}
-            {!spreadMode && !customQuote && tiersFresh && result.validTier && (
+            {!spreadMode && !customQuote && quoteView !== 'shipping' && tiersFresh && result.validTier && (
               <AdjacentVariants
                 variants={variants}
                 currentVariantId={selectedVariantId}
@@ -1010,7 +1299,7 @@ export default function QuotePage() {
                 isn't a valid tier and tiers have loaded. Click to
                 jump to the suggested quantity. Suppressed in the
                 bailout state. */}
-            {!spreadMode && !customQuote && tiersFresh && quantity != null && !result.validTier && (result.snap.lower || result.snap.upper) && (
+            {!spreadMode && !customQuote && quoteView !== 'shipping' && tiersFresh && quantity != null && !result.validTier && (result.snap.lower || result.snap.upper) && (
               <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-amber-200">
                 <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
                   No tier at {quantity.toLocaleString()}

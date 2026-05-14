@@ -1,0 +1,329 @@
+// Pure shipping helpers shared by the Quote compiler card and the
+// copy-paste formatter. Mirrors leadTime.ts in shape: one resolver
+// turns the various input gates into a state union, plus a couple
+// of bare arithmetic helpers so the card and copy paths apply the
+// same maths.
+//
+// Two shipping flavours feed through this module:
+//   * International — FedEx rate via the fedex-rate edge function
+//     (migration 000178), always denominated in GBP regardless of
+//     compiler currency. Conversion happens at render.
+//   * Domestic UK — DPD flat rates (migration 000179) sourced
+//     directly from settings (mainland / Northern Ireland). No
+//     edge function involved; the resolver returns the right one
+//     based on postcode prefix.
+
+import type { Currency } from '../types'
+import type { ShippingSettings } from '../shippingSettings'
+
+// Single canonical surcharge shape the card and copy formatter both
+// consume. Label is the human-readable description from FedEx
+// (e.g. "Out of Delivery Area", "Ancillary Fee") and the amount is
+// in the same currency the rate was requested in.
+export interface ShippingOtherSurcharge {
+  label: string
+  amount: number
+}
+
+// Edge-function response shape — kept here so consumers can import
+// the type without reaching into the function code. Mirrors the
+// ParsedRate shape returned by supabase/functions/_shared/fedex.ts
+// plus the cached/quotedAt envelope the edge function adds.
+export interface ShippingRate {
+  available: boolean
+  service: string | null
+  serviceName: string | null
+  currency: Currency | null
+  netCharge: number | null
+  baseCharge: number | null
+  discountAmount: number | null
+  discountPercent: number | null
+  fuelSurcharge: number | null
+  fuelPercent: number | null
+  otherSurcharges: ShippingOtherSurcharge[]
+  cached: boolean
+  quotedAt: string
+}
+
+// Maximum gross weight FedEx will accept per FEDEX_BOX on
+// International Priority services before refusing the rate quote.
+// 15kg is the empirically-observed soft cutoff (FedEx Box Extra
+// Large is documented at ~13.6kg; some lanes accept slightly more).
+// A different FedEx packaging type could lift this — adjust here
+// if the packaging constant in _shared/fedex.ts ever changes.
+export const MAX_BOX_WEIGHT_GRAMS = 15_000
+
+// Resolve a derived parcel weight in grams. (variantWeight × qty)
+// + box tare. Defensive: an undefined or invalid variant weight
+// resolves to null rather than NaN propagating through the rate
+// request, so the card can show its waiting state.
+//
+// Kept as a thin wrapper around splitIntoBoxes for callers that
+// only need the total weight (e.g. friendly-error mapping). For
+// the actual shipment shape — number of boxes plus the per-box
+// weights — use splitIntoBoxes directly.
+export function deriveParcelWeightGrams(
+  variantWeightGrams: number | null | undefined,
+  quantity: number | null | undefined,
+  boxWeightGrams: number,
+): number | null {
+  const split = splitIntoBoxes(variantWeightGrams, quantity, boxWeightGrams)
+  return split?.totalGrams ?? null
+}
+
+// Output of the multi-box splitter. boxWeightsGrams is one entry
+// per box, summing to totalGrams (cards + N box tares). boxCount
+// is just the array length, surfaced explicitly so the UI doesn't
+// have to keep recomputing it.
+export interface ParcelSplit {
+  boxWeightsGrams: number[]
+  totalGrams: number
+  boxCount: number
+}
+
+// Split the shipment into N boxes, each capped at MAX_BOX_WEIGHT_GRAMS
+// (15kg). Cards are distributed evenly across boxes; each box
+// carries one box tare. Total shipment weight = card weight + N × tare.
+//
+// Algorithm:
+//   * cardsWeight     = perCardWeight × quantity
+//   * maxCardsPerBox  = MAX_BOX_WEIGHT_GRAMS - boxTare (cards alone,
+//                       since the tare ships with the box)
+//   * boxCount        = ceil(cardsWeight / maxCardsPerBox), >= 1
+//   * cardsPerBox     = cardsWeight / boxCount, integer-rounded with
+//                       the last box absorbing the rounding remainder
+//                       so the totals stay exact.
+//
+// Defence: if boxTare ever exceeds the FedEx limit (admin
+// misconfiguration), maxCardsPerBox would go negative. We clamp
+// the cap to a sane lower bound (1g) which forces one box per card
+// — a clearly broken result the designer will spot, rather than
+// silent NaN propagation through the rate request.
+export function splitIntoBoxes(
+  variantWeightGrams: number | null | undefined,
+  quantity: number | null | undefined,
+  boxTareGrams: number,
+): ParcelSplit | null {
+  if (variantWeightGrams == null || variantWeightGrams <= 0) return null
+  if (quantity == null || quantity <= 0) return null
+  const cardsWeight = variantWeightGrams * quantity
+  const tare = Math.max(0, boxTareGrams)
+  const maxCardsPerBox = Math.max(1, MAX_BOX_WEIGHT_GRAMS - tare)
+  const boxCount = Math.max(1, Math.ceil(cardsWeight / maxCardsPerBox))
+  const cardsPerBox = cardsWeight / boxCount
+
+  const boxes: number[] = []
+  let assignedCards = 0
+  for (let i = 0; i < boxCount - 1; i++) {
+    const cards = Math.round(cardsPerBox)
+    boxes.push(cards + tare)
+    assignedCards += cards
+  }
+  const lastBoxCards = cardsWeight - assignedCards
+  boxes.push(lastBoxCards + tare)
+
+  const totalGrams = boxes.reduce((s, w) => s + w, 0)
+  return { boxWeightsGrams: boxes, totalGrams, boxCount }
+}
+
+// Apply the admin-set international adjustment percentage. Lives
+// frontend-side at render so changing the percentage in admin takes
+// effect on the next render with no cache invalidation needed. A
+// 0 adjustment is the identity; positive marks up, negative marks
+// down.
+export function applyIntlAdjustment(amount: number, adjustPercent: number): number {
+  return amount * (1 + adjustPercent / 100)
+}
+
+// Domestic flat-rate result (migration 000179). Always GBP VAT-
+// inclusive at the base — display-side conversion to EUR / USD
+// uses the live ECB rate, same as international.
+export type DomesticRegion = 'uk_mainland' | 'uk_ni'
+
+export interface DomesticRate {
+  region: DomesticRegion
+  /** VAT-inclusive flat rate in GBP. */
+  totalGbp: number
+}
+
+// Northern Ireland detection. BT-prefix postcodes followed by a
+// digit cover the actual NI postcode area (BT1–BT94). Test on the
+// upper-cased, whitespace-stripped string so "bt7 1aa" and
+// "BT7 1AA" resolve identically. Returns false for stub entries
+// like "BT" with no digit so we don't flip-flop while the
+// designer's still typing.
+export function isNorthernIrelandPostcode(postcode: string): boolean {
+  const cleaned = postcode.replace(/\s+/g, '').toUpperCase()
+  return /^BT\d/.test(cleaned)
+}
+
+export function resolveDomesticRate(
+  postcode: string,
+  settings: ShippingSettings,
+): DomesticRate {
+  const region: DomesticRegion = isNorthernIrelandPostcode(postcode) ? 'uk_ni' : 'uk_mainland'
+  return {
+    region,
+    totalGbp: region === 'uk_ni'
+      ? settings.domesticNiRateGbp
+      : settings.domesticMainlandRateGbp,
+  }
+}
+
+// State union driving the ShippingCard render. Mirrors the lead-time
+// shape (string-kind discriminator + payload) so the card render
+// reads as a clean switch.
+//
+//   * not_ready — inputs aren't complete yet (e.g. no destination,
+//     no quantity, spread mode, custom-quote bailout). Card hides.
+//   * loading   — fetch is in flight. Card shows a placeholder.
+//   * quoted    — international (FedEx) rate came back, render
+//     the breakdown.
+//   * domestic  — UK flat rate, no fetch involved.
+//   * unavailable — FedEx didn't offer either of the preferred
+//     services for the lane. Card shows the unavailable affordance.
+//   * error     — fetch failed. Card shows the error affordance.
+export type ShippingState =
+  | { kind: 'not_ready' }
+  | { kind: 'loading' }
+  | { kind: 'quoted'; rate: ShippingRate }
+  | { kind: 'domestic'; rate: DomesticRate }
+  | { kind: 'unavailable' }
+  | { kind: 'error'; message: string }
+
+export interface ShippingStateInputs {
+  spreadMode: boolean
+  customQuote: boolean
+  currency: Currency | null
+  quantity: number | null
+  destCountry: string | null
+  destPostcode: string | null
+  variantWeightGrams: number | null
+  // International (FedEx) inputs.
+  loading: boolean
+  rate: ShippingRate | null
+  error: string | null
+  // Shipping settings — required for resolving domestic flat rates.
+  shippingSettings: ShippingSettings | null
+}
+
+// Optional context for the friendly mapper. parcelWeightGrams lets
+// the mapper distinguish between FedEx's identical-looking
+// "service not available" messages for two different causes
+// (over-weight package vs unreachable postcode).
+export interface FriendlyErrorContext {
+  parcelWeightGrams?: number | null
+}
+
+// FedEx Box international service has a soft upper bound somewhere
+// around 15 kg. Above this, FedEx tends to refuse the quote with
+// the generic "service not available" error rather than a clean
+// "weight too high" message. Used by the friendly mapper to decide
+// whether to suggest weight or postcode as the likely cause.
+const HEAVY_PARCEL_THRESHOLD_GRAMS = 15_000
+
+// Map a raw error string from the fedex-rate edge function (or the
+// supabase-js wrapper) to a human sentence the designer can act on.
+// The raw string is FedEx's own message after the edge function's
+// extractFedExErrorMessage helper has pulled it out of the upstream
+// JSON, or our edge function's 400/500 validation messages, or
+// (worst case) supabase-js's generic "Edge Function returned a
+// non-2xx status code".
+//
+// Patterns are heuristic — FedEx's error catalogue is large and not
+// publicly documented in full, so we match keywords rather than
+// trying to enumerate. Anything that doesn't match a known pattern
+// passes through as the raw message (still much better than the
+// generic wrapper string) unless the input is itself the generic
+// wrapper, in which case we substitute a polite catch-all.
+export function toFriendlyShippingError(
+  raw: string,
+  ctx: FriendlyErrorContext = {},
+): string {
+  const text = raw.trim()
+  const lower = text.toLowerCase()
+
+  // "Service not currently available to this origin/destination
+  // combination" — FedEx's generic catch-all that fires for several
+  // unrelated causes:
+  //   * Postcode FedEx can't resolve (PO Box, restricted area,
+  //     non-standard service zone).
+  //   * Parcel weight exceeds the FedEx Box international limit
+  //     (~15kg upward). FedEx returns the same generic message
+  //     rather than a clean "weight too high".
+  // We branch on parcel weight to point the designer at the actual
+  // likely cause rather than mislead them about the postcode.
+  if (/service is not.*available.*(origin|destination)/.test(lower)
+      || /no.*service.*(origin|destination)/.test(lower)) {
+    const weight = ctx.parcelWeightGrams ?? 0
+    if (weight > HEAVY_PARCEL_THRESHOLD_GRAMS) {
+      const kg = (weight / 1000).toFixed(2)
+      return `Package weight (${kg} kg) likely exceeds the FedEx Box international limit. Reduce the quantity, split into multiple parcels, or contact FedEx for a freight quote.`
+    }
+    return "FedEx couldn't quote this exact destination — likely a PO Box postcode or a non-standard service area. Check the postcode is correct, or try a different one for the same area."
+  }
+  // Postcode / postal code rejected by FedEx.
+  if (/postal|postcode|zip/.test(lower) && /(invalid|not valid|incorrect|format|unknown|not.*recogn)/.test(lower)) {
+    return "That postcode doesn't look right for the destination country. Double-check it and try again."
+  }
+  // Country code rejected.
+  if (/country/.test(lower) && /(invalid|not.*support|not.*recogn|unknown)/.test(lower)) {
+    return "FedEx doesn't recognise that destination country."
+  }
+  // FedEx-side rate limit.
+  if (/rate.?limit|too.?many|throttl/.test(lower)) {
+    return 'FedEx is rate-limiting requests — wait a few seconds and try again.'
+  }
+  // Auth / credentials problems on our side.
+  if (/credentials? not configured/.test(lower)) {
+    return "FedEx credentials aren't configured. Set FEDEX_API_KEY, FEDEX_API_SECRET and FEDEX_ACCOUNT_NUMBER in the Supabase dashboard."
+  }
+  if (/(unauthori[sz]ed|forbidden|invalid.*credential|401|403)/.test(lower)) {
+    return "Couldn't authenticate with FedEx — check the API credentials in admin."
+  }
+  // FedEx unreachable / token endpoint errors.
+  if (/token error|unreachable|gateway/.test(lower)) {
+    return 'Could not reach FedEx — try again in a moment.'
+  }
+  // Generic supabase-js wrapper with no useful detail.
+  if (
+    text === ''
+    || text === 'Edge Function returned a non-2xx status code'
+    || text === 'Empty response from shipping rate service'
+  ) {
+    return "Couldn't fetch a shipping rate — check the destination details and try again."
+  }
+  // Last resort: pass the underlying message through. It's at least
+  // specific, even if not pretty.
+  return text
+}
+
+export function resolveShippingState(inputs: ShippingStateInputs): ShippingState {
+  // Spread mode and the custom-quote bailout are explicit "no
+  // shipping card" states from the brief. Bail before any of the
+  // other checks so a half-filled form in either of those modes
+  // still hides the card cleanly.
+  if (inputs.spreadMode || inputs.customQuote) return { kind: 'not_ready' }
+  if (
+    !inputs.currency
+    || !inputs.quantity
+    || !inputs.destCountry
+    || !inputs.destPostcode
+    || inputs.variantWeightGrams == null
+  ) {
+    return { kind: 'not_ready' }
+  }
+  // Domestic UK path takes precedence over the FedEx path. No
+  // network round-trip; the rate is a lookup into settings.
+  if (inputs.destCountry === 'GB') {
+    if (!inputs.shippingSettings) return { kind: 'loading' }
+    return { kind: 'domestic', rate: resolveDomesticRate(inputs.destPostcode, inputs.shippingSettings) }
+  }
+  if (inputs.loading) return { kind: 'loading' }
+  if (inputs.error) return { kind: 'error', message: inputs.error }
+  if (inputs.rate) {
+    if (!inputs.rate.available) return { kind: 'unavailable' }
+    return { kind: 'quoted', rate: inputs.rate }
+  }
+  return { kind: 'not_ready' }
+}
