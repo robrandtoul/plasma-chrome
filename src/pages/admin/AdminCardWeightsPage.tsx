@@ -150,16 +150,34 @@ export default function AdminCardWeightsPage() {
 
   // Group rows by material id for the table render. Map keeps
   // insertion order, which is the sorted order from `flat` above.
+  //
+  // Each group also carries the material's variant_type so the
+  // render below can decide whether to collapse the per-variant
+  // inputs into one. Thickness materially affects card weight
+  // (a 300μm steel card weighs less than an 800μm one) so those
+  // groups stay expanded. Ink count and the Standard-Paper
+  // finish dimension don't shift the underlying paper weight,
+  // so those groups render a single input that controls every
+  // variant in the material at once.
   const grouped = useMemo(() => {
-    const groups = new Map<string, { materialName: string; category: string; rows: typeof rowState }>()
+    interface Group {
+      materialId: string
+      materialName: string
+      category: string
+      variantType: string
+      rows: typeof rowState
+    }
+    const groups = new Map<string, Group>()
     for (const item of rowState) {
       const existing = groups.get(item.row.material_id)
       if (existing) {
         existing.rows.push(item)
       } else {
         groups.set(item.row.material_id, {
+          materialId: item.row.material_id,
           materialName: item.row.material_display_name,
           category: item.row.material_category,
+          variantType: item.row.variant_type,
           rows: [item],
         })
       }
@@ -167,13 +185,49 @@ export default function AdminCardWeightsPage() {
     return Array.from(groups.values())
   }, [rowState])
 
-  const dirtyCount = rowState.filter((s) => s.dirty).length
+  // dirtyDisplayCount mirrors the visible UI rows: a collapsed
+  // material counts as one regardless of how many underlying
+  // variants the save will touch. Thickness materials still count
+  // one per dirty variant since each is its own visible row.
+  const dirtyDisplayCount = grouped.reduce((acc, g) => {
+    const collapsed = shouldCollapseVariants(g.variantType)
+    if (collapsed) {
+      return acc + (g.rows[0]?.dirty ? 1 : 0)
+    }
+    return acc + g.rows.filter((r) => r.dirty).length
+  }, 0)
   const hasInvalidTouched = rowState.some((s) => s.draft.touched && !s.validation.ok)
-  const saveDisabled = saving || dirtyCount === 0 || hasInvalidTouched
+  const saveDisabled = saving || dirtyDisplayCount === 0 || hasInvalidTouched
 
   function updateDraft(id: string, patch: Partial<RowDraft>) {
     setDrafts((d) => ({ ...d, [id]: { ...d[id], ...patch, touched: true } }))
     if (savedAt != null) setSavedAt(null)
+  }
+
+  // Apply the same draft to every variant of a material. Used by
+  // collapsed groups (ink count / finish) where the UI shows one
+  // input that stands in for all variants. Every variant is marked
+  // touched + dirty so the save path picks them all up.
+  function updateGroupDraft(materialId: string, patch: Partial<RowDraft>) {
+    setDrafts((d) => {
+      const next = { ...d }
+      for (const r of rows) {
+        if (r.material_id !== materialId) continue
+        next[r.variant_id] = { ...d[r.variant_id], ...patch, touched: true }
+      }
+      return next
+    })
+    if (savedAt != null) setSavedAt(null)
+  }
+
+  // Variants of type 'ink_count' don't affect card weight (colour
+  // count drives setup, not material density); 'finish' variants on
+  // Standard Paper are surface treatments (UV spot, foiling) that
+  // don't change the underlying paper weight either. Only 'thickness'
+  // genuinely shifts the per-card figure. A new variant type with a
+  // weight delta would need to be excluded from this check.
+  function shouldCollapseVariants(variantType: string): boolean {
+    return variantType !== 'thickness'
   }
 
   async function handleSave() {
@@ -241,7 +295,10 @@ export default function AdminCardWeightsPage() {
       <div>
         <h2 className="text-xl font-bold text-gray-900">Card weights</h2>
         <p className="mt-1 text-sm text-gray-500">
-          Single-card weight in grams per variant. The Quote compiler multiplies this by quantity and adds the FedEx box tare weight to derive the parcel weight for shipping rates. Customer-facing pages are unaffected — weights only surface internally on the Quote compiler.
+          Single-card weight in grams. The Quote compiler multiplies this by quantity and adds the FedEx box tare weight to derive the parcel weight for shipping rates. Customer-facing pages are unaffected — weights only surface internally on the Quote compiler.
+        </p>
+        <p className="mt-2 text-xs text-gray-400">
+          Thickness variants (metal at 300μm, 500μm, 800μm, etc.) take their own weight. Ink count and finish variants share one weight per material — those dimensions don't shift the underlying card weight.
         </p>
       </div>
 
@@ -265,52 +322,71 @@ export default function AdminCardWeightsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 text-sm">
-              {grouped.map((group) => (
-                <Fragment key={group.rows[0].row.material_id}>
-                  <tr className="bg-gray-50/60">
-                    <td colSpan={2} className="px-5 py-2">
-                      <div className="font-medium text-gray-900">{group.materialName}</div>
-                      <div className="text-xs uppercase tracking-wider text-gray-400">{group.category}</div>
-                    </td>
-                  </tr>
-                  {group.rows.map(({ row, draft, validation, dirty }) => {
-                    const showError = draft.touched && !validation.ok
-                    const errorId = showError ? `weight-error-${row.variant_id}` : undefined
-                    // Default-variant materials show a single nameless
-                    // row; surface the variant code so admin can still
-                    // tell which line they're editing.
-                    const variantLabel =
-                      row.variant_type === 'default'
-                        ? row.variant_code
-                        : row.variant_display_name
-                    return (
-                      <tr key={row.variant_id} className={dirty ? 'bg-amber-50/40' : ''}>
-                        <td className="px-5 py-3 align-top pl-10">
-                          <div className="text-gray-700">{variantLabel}</div>
-                        </td>
-                        <td className="px-5 py-3 align-top">
-                          <input
-                            type="number"
-                            min={1}
-                            step={1}
-                            inputMode="numeric"
-                            value={draft.weightStr}
-                            onChange={(e) => updateDraft(row.variant_id, { weightStr: e.target.value })}
-                            aria-invalid={showError || undefined}
-                            aria-describedby={errorId}
-                            className={weightInputClass(showError)}
-                          />
-                          {showError && (
-                            <p id={errorId} className="mt-1 text-xs text-rose-700">
-                              {validation.message}
-                            </p>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </Fragment>
-              ))}
+              {grouped.map((group) => {
+                const collapsed = shouldCollapseVariants(group.variantType)
+                // Collapsed groups render just the first variant's
+                // row; the input handler propagates edits to every
+                // variant in the group via updateGroupDraft.
+                const renderedRows = collapsed ? group.rows.slice(0, 1) : group.rows
+                return (
+                  <Fragment key={group.materialId}>
+                    <tr className="bg-gray-50/60">
+                      <td colSpan={2} className="px-5 py-2">
+                        <div className="font-medium text-gray-900">{group.materialName}</div>
+                        <div className="text-xs uppercase tracking-wider text-gray-400">{group.category}</div>
+                      </td>
+                    </tr>
+                    {renderedRows.map(({ row, draft, validation, dirty }) => {
+                      const showError = draft.touched && !validation.ok
+                      const errorId = showError ? `weight-error-${row.variant_id}` : undefined
+                      // Default-variant materials show a single nameless
+                      // row; surface the variant code so admin can still
+                      // tell which line they're editing. Collapsed
+                      // groups skip the variant sub-label entirely —
+                      // the material header above already names the
+                      // material, and there's only one input.
+                      const variantLabel = collapsed
+                        ? 'All variants'
+                        : row.variant_type === 'default'
+                          ? row.variant_code
+                          : row.variant_display_name
+                      return (
+                        <tr key={row.variant_id} className={dirty ? 'bg-amber-50/40' : ''}>
+                          <td className="px-5 py-3 align-top pl-10">
+                            <div className={collapsed ? 'italic text-gray-400' : 'text-gray-700'}>
+                              {variantLabel}
+                            </div>
+                          </td>
+                          <td className="px-5 py-3 align-top">
+                            <input
+                              type="number"
+                              min={1}
+                              step={1}
+                              inputMode="numeric"
+                              value={draft.weightStr}
+                              onChange={(e) => {
+                                if (collapsed) {
+                                  updateGroupDraft(group.materialId, { weightStr: e.target.value })
+                                } else {
+                                  updateDraft(row.variant_id, { weightStr: e.target.value })
+                                }
+                              }}
+                              aria-invalid={showError || undefined}
+                              aria-describedby={errorId}
+                              className={weightInputClass(showError)}
+                            />
+                            {showError && (
+                              <p id={errorId} className="mt-1 text-xs text-rose-700">
+                                {validation.message}
+                              </p>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </Fragment>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -327,9 +403,9 @@ export default function AdminCardWeightsPage() {
           disabled={saveDisabled}
           className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-gray-900"
         >
-          {dirtyCount === 0
+          {dirtyDisplayCount === 0
             ? 'Save changes'
-            : `Save changes (${dirtyCount} ${dirtyCount === 1 ? 'row' : 'rows'})`}
+            : `Save changes (${dirtyDisplayCount} ${dirtyDisplayCount === 1 ? 'row' : 'rows'})`}
         </button>
       </div>
     </div>
