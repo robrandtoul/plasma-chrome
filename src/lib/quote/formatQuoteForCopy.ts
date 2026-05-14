@@ -248,17 +248,20 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
   }
 
   // ── Shipping section (when included) ─────────────────────────
-  // Mirrors the on-card breakdown so the designer sees the same
-  // numbers in both surfaces: base − negotiated discount + fuel +
-  // other surcharges, plus the international adjustment, plus the
-  // total. Shipping is zero-rated for VAT so we never add VAT
-  // language here — even on GBP.
+  // Copy-paste output keeps the shipping section minimal — service
+  // line + total + optional multi-box and currency-conversion
+  // footnotes. The on-card render in ShippingCard keeps the full
+  // breakdown (base − discount + fuel + surcharges + international
+  // adjustment) for designers to read; customers don't need to
+  // see the internal accounting. Shipping is zero-rated for VAT
+  // on international export so no VAT language even on GBP;
+  // domestic UK rates include UK VAT and surface inc/ex VAT.
   //
   // FedEx invoices Plasma in GBP regardless of preferredCurrency,
-  // so the rate's numbers are always GBP. When the compiler
-  // currency is EUR / USD we multiply each line by the live
-  // exchange rate (Frankfurter / ECB) and tag the figure with the
-  // rate used in a footnote.
+  // so the international rate's numbers are always GBP. When the
+  // compiler currency is EUR / USD we multiply the total by the
+  // live exchange rate (Frankfurter / ECB) and tag the figure
+  // with the rate used in a footnote.
   // Multi-box note shared by both the domestic and international
   // shipping paths. Returns null when shipping fits in one box
   // (the common case) so the formatter can omit the line cleanly.
@@ -313,40 +316,15 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     const multiplier = gbpToCurrency(displayCurrency, exchangeRates)
     const showConversionNote = displayCurrency !== 'GBP' && exchangeRates !== null
 
-    const baseGbp = shippingRate.baseCharge ?? 0
-    const discountGbp = shippingRate.discountAmount ?? 0
-    const fuelGbp = shippingRate.fuelSurcharge ?? 0
-    const fuelPct = shippingRate.fuelPercent
+    // International total = FedEx net charge (which already
+    // includes base − discount + fuel + surcharges) plus the
+    // admin's international adjustment percentage. The on-card
+    // render shows the components; copy keeps the total only.
     const netGbp = shippingRate.netCharge!
-    const otherTotalGbp = shippingRate.otherSurcharges.reduce((s, x) => s + x.amount, 0)
     const adjustedTotalGbp = applyIntlAdjustment(netGbp, shippingIntlAdjustPercent)
-    const adjustmentGbp = adjustedTotalGbp - netGbp
-    const showAdjustment = shippingIntlAdjustPercent !== 0
 
     const serviceLabel = shippingRate.serviceName ?? 'FedEx International'
     shippingPlain.push(`Shipping — ${serviceLabel}`)
-    shippingPlain.push(`Base carriage = ${formatPrice(baseGbp * multiplier, displayCurrency, 2)}`)
-    if (discountGbp > 0) {
-      const pct = shippingRate.discountPercent != null
-        ? ` (${formatDiscountPercent(shippingRate.discountPercent)})`
-        : ''
-      shippingPlain.push(`Negotiated discount${pct} = −${formatPrice(discountGbp * multiplier, displayCurrency, 2)}`)
-    }
-    if (fuelGbp > 0) {
-      const pct = fuelPct != null ? ` (${formatDiscountPercent(fuelPct)})` : ''
-      shippingPlain.push(`Fuel surcharge${pct} = ${formatPrice(fuelGbp * multiplier, displayCurrency, 2)}`)
-    }
-    if (otherTotalGbp > 0) {
-      const label = shippingRate.otherSurcharges.length === 1
-        ? shippingRate.otherSurcharges[0].label
-        : 'Other surcharges'
-      shippingPlain.push(`${label} = ${formatPrice(otherTotalGbp * multiplier, displayCurrency, 2)}`)
-    }
-    if (showAdjustment) {
-      const sign = adjustmentGbp >= 0 ? '' : '−'
-      shippingPlain.push(`International adjustment (${formatDiscountPercent(shippingIntlAdjustPercent)}) = ${sign}${formatPrice(Math.abs(adjustmentGbp) * multiplier, displayCurrency, 2)}`)
-    }
-    shippingPlain.push('')
     shippingPlain.push(`Total shipping = ${formatPrice(adjustedTotalGbp * multiplier, displayCurrency, 2)} (zero-rated for VAT)`)
     if (multiBoxNote) shippingPlain.push(multiBoxNote)
     if (showConversionNote && exchangeRates) {
@@ -356,27 +334,6 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     }
 
     shippingHtml.push(`Shipping — ${escapeHtml(serviceLabel)}`)
-    shippingHtml.push(`Base carriage = ${escapeHtml(formatPrice(baseGbp * multiplier, displayCurrency, 2))}`)
-    if (discountGbp > 0) {
-      const pct = shippingRate.discountPercent != null
-        ? ` (${escapeHtml(formatDiscountPercent(shippingRate.discountPercent))})`
-        : ''
-      shippingHtml.push(`Negotiated discount${pct} = −${escapeHtml(formatPrice(discountGbp * multiplier, displayCurrency, 2))}`)
-    }
-    if (fuelGbp > 0) {
-      const pct = fuelPct != null ? ` (${escapeHtml(formatDiscountPercent(fuelPct))})` : ''
-      shippingHtml.push(`Fuel surcharge${pct} = ${escapeHtml(formatPrice(fuelGbp * multiplier, displayCurrency, 2))}`)
-    }
-    if (otherTotalGbp > 0) {
-      const label = shippingRate.otherSurcharges.length === 1
-        ? shippingRate.otherSurcharges[0].label
-        : 'Other surcharges'
-      shippingHtml.push(`${escapeHtml(label)} = ${escapeHtml(formatPrice(otherTotalGbp * multiplier, displayCurrency, 2))}`)
-    }
-    if (showAdjustment) {
-      const sign = adjustmentGbp >= 0 ? '' : '−'
-      shippingHtml.push(`International adjustment (${escapeHtml(formatDiscountPercent(shippingIntlAdjustPercent))}) = ${sign}${escapeHtml(formatPrice(Math.abs(adjustmentGbp) * multiplier, displayCurrency, 2))}`)
-    }
     shippingHtml.push(`<strong>Total shipping = ${escapeHtml(formatPrice(adjustedTotalGbp * multiplier, displayCurrency, 2))}</strong> (zero-rated for VAT)`)
     if (multiBoxNote) shippingHtml.push(escapeHtml(multiBoxNote))
     if (showConversionNote && exchangeRates) {
