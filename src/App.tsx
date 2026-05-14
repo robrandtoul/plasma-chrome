@@ -24,6 +24,7 @@ import AdminCreateMaterialPage from './pages/admin/AdminCreateMaterialPage'
 import AdminCoreColoursPage from './pages/admin/AdminCoreColoursPage'
 import AdminNeedsAttentionPage from './pages/admin/AdminNeedsAttentionPage'
 import AdminLeadTimesPage from './pages/admin/AdminLeadTimesPage'
+import AdminCardWeightsPage from './pages/admin/AdminCardWeightsPage'
 
 // Inner shell so the Cmd-K / Ctrl-K shortcut can mount inside the
 // router. Lives here rather than directly in App so the hook has
@@ -59,6 +60,7 @@ function AppShell() {
         <Route path="materials" element={<AdminMaterialsPage />} />
         <Route path="pricing" element={<AdminPricingPage />} />
         <Route path="lead-times" element={<AdminLeadTimesPage />} />
+        <Route path="card-weights" element={<AdminCardWeightsPage />} />
         <Route path="materials/new" element={<AdminCreateMaterialPage />} />
         <Route path="pricing/materials/:code" element={<AdminMaterialEditor />} />
         <Route path="pricing/add-ons/:code" element={<AdminAddOnEditor />} />

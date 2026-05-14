@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
 import { invalidatePublicSettings } from '../../lib/publicSettings'
 import { invalidateApprovalSettings } from '../../lib/approvalSettings'
+import { invalidateShippingSettings } from '../../lib/shippingSettings'
 import AdminTemplatesSection from './AdminTemplatesSection'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -21,6 +22,9 @@ interface Settings {
   approvals_enabled: boolean
   approve_confirmation_copy: string
   request_changes_confirmation_copy: string
+  /** Shipping (migration 000178). */
+  fedex_box_weight_grams: number
+  fedex_intl_adjust_percent: number
 }
 
 // Help Scout test-connection result. Component-scoped only — no DB
@@ -47,6 +51,8 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   approvals_enabled:                 'setting.approvals_enabled_updated',
   approve_confirmation_copy:         'setting.approve_confirmation_copy_updated',
   request_changes_confirmation_copy: 'setting.request_changes_confirmation_copy_updated',
+  fedex_box_weight_grams:            'setting.fedex_box_weight_grams_updated',
+  fedex_intl_adjust_percent:         'setting.fedex_intl_adjust_percent_updated',
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -136,6 +142,9 @@ export default function AdminSettingsPage() {
     ) {
       invalidateApprovalSettings()
     }
+    if (field === 'fedex_box_weight_grams' || field === 'fedex_intl_adjust_percent') {
+      invalidateShippingSettings()
+    }
 
     void logAudit({
       action: AUDIT_ACTION[field],
@@ -178,6 +187,38 @@ export default function AdminSettingsPage() {
       return
     }
     void saveField(field, trimmed)
+  }
+
+  // Blur handler for the two Shipping number inputs. Validates the
+  // draft is a finite number within the column's CHECK range, then
+  // saves the rounded value (whole grams for the box; 2dp percent
+  // for the adjustment so 7.5% works but stray decimals don't).
+  // On invalid input we surface a pill rather than silently snapping
+  // back — same philosophy as onConfirmationCopyBlur above.
+  function onShippingNumberBlur(
+    field: 'fedex_box_weight_grams' | 'fedex_intl_adjust_percent',
+  ) {
+    if (!settings) return
+    const draft = drafts[field]
+    if (draft === undefined) return
+    const value = Number(draft)
+    if (!Number.isFinite(value)) {
+      setErrors((e) => ({ ...e, [field]: 'Must be a number.' }))
+      return
+    }
+    if (field === 'fedex_box_weight_grams') {
+      if (!Number.isInteger(value) || value < 0) {
+        setErrors((e) => ({ ...e, [field]: 'Whole grams, zero or greater.' }))
+        return
+      }
+    } else {
+      if (value < -100 || value > 100) {
+        setErrors((e) => ({ ...e, [field]: 'Between -100 and 100.' }))
+        return
+      }
+    }
+    if (errors[field]) setErrors((e) => ({ ...e, [field]: undefined }))
+    void saveField(field, value)
   }
 
   function recentlySaved(field: keyof Settings): boolean {
@@ -420,6 +461,62 @@ export default function AdminSettingsPage() {
         </div>
       </section>
 
+      {/* ── Shipping (migration 000178) ──────────────────────────
+          FedEx box tare weight and the international % adjustment
+          applied on top of FedEx-quoted shipping totals in the Quote
+          compiler. Both round-trip through the same saveField path
+          as the other settings; on success the shippingSettings
+          cache is invalidated so other open tabs pick the change up
+          faster than the 60s TTL. Customer-facing pages are
+          unaffected. */}
+      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+        <h3 className="mb-4 text-sm font-semibold text-gray-900">Shipping</h3>
+        <div className="space-y-5">
+          <FieldRow
+            label="FedEx box weight (grams)"
+            help="Weight of an empty FedEx box in grams. Added to the per-card weight × quantity figure to produce the parcel weight sent to FedEx for a rate request. Only used by the Quote compiler; customer-facing pages don't see this."
+            saved={recentlySaved('fedex_box_weight_grams')}
+            working={working.fedex_box_weight_grams}
+            error={errors.fedex_box_weight_grams}
+          >
+            <input
+              type="number"
+              min={0}
+              step={1}
+              inputMode="numeric"
+              value={drafts.fedex_box_weight_grams ?? settings.fedex_box_weight_grams}
+              onChange={(e) => setDrafts((d) => ({ ...d, fedex_box_weight_grams: e.target.value === '' ? 0 : Number(e.target.value) }))}
+              onBlur={() => onShippingNumberBlur('fedex_box_weight_grams')}
+              className={`w-32 ${inputClass}`}
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="International shipping adjustment (%)"
+            help="Percentage applied to FedEx-quoted shipping totals in the Quote compiler. Positive marks shipping up, negative marks down, 0 leaves the FedEx figure untouched. Applied at render time, so changes here take effect immediately."
+            saved={recentlySaved('fedex_intl_adjust_percent')}
+            working={working.fedex_intl_adjust_percent}
+            error={errors.fedex_intl_adjust_percent}
+          >
+            <input
+              type="number"
+              min={-100}
+              max={100}
+              step={0.5}
+              inputMode="decimal"
+              value={drafts.fedex_intl_adjust_percent ?? settings.fedex_intl_adjust_percent}
+              onChange={(e) => setDrafts((d) => ({ ...d, fedex_intl_adjust_percent: e.target.value === '' ? 0 : Number(e.target.value) }))}
+              onBlur={() => onShippingNumberBlur('fedex_intl_adjust_percent')}
+              className={`w-32 ${inputClass}`}
+            />
+          </FieldRow>
+
+          <p className="text-xs text-gray-500">
+            To update FedEx credentials, open the Supabase dashboard → Project Settings → Edge Functions → Secrets and update <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">FEDEX_API_KEY</code>, <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">FEDEX_API_SECRET</code>, and <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">FEDEX_ACCOUNT_NUMBER</code>.
+          </p>
+        </div>
+      </section>
+
       {/* ── Reply templates ──────────────────────────────────── */}
       <AdminTemplatesSection />
     </div>
@@ -602,6 +699,8 @@ function humanFieldLabel(field: keyof Settings): string {
     approvals_enabled: 'Customer-facing approval flow enabled',
     approve_confirmation_copy: 'Approve confirmation copy',
     request_changes_confirmation_copy: 'Request changes confirmation copy',
+    fedex_box_weight_grams: 'FedEx box weight (grams)',
+    fedex_intl_adjust_percent: 'International shipping adjustment (%)',
   }[field]
 }
 
