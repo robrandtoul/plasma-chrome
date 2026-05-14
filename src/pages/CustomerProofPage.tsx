@@ -3103,7 +3103,7 @@ export default function CustomerProofPage() {
                       Metal cards are available in three thicknesses. The pricing table above shows the cost for each — choose the weight that suits you best.
                     </p>
                   </div>
-                  <MetalThicknessPanel />
+                  <MetalThicknessPanel materialCode={activeVersion.material_code} />
                 </div>
               </div>
             </section>
