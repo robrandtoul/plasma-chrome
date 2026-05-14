@@ -159,6 +159,16 @@ export function toFriendlyShippingError(raw: string): string {
   const text = raw.trim()
   const lower = text.toLowerCase()
 
+  // "Service not currently available to this origin/destination
+  // combination" — FedEx's generic catch-all when the lane itself
+  // is fine but the specific postcode isn't reachable (PO Box,
+  // restricted area, non-standard service zone, or simply a
+  // postcode FedEx can't resolve). FedEx phrases this as if the
+  // whole country is unavailable, which is almost never the case.
+  if (/service is not.*available.*(origin|destination)/.test(lower)
+      || /no.*service.*(origin|destination)/.test(lower)) {
+    return "FedEx couldn't quote this exact destination — likely a PO Box postcode or a non-standard service area. Check the postcode is correct, or try a different one for the same area."
+  }
   // Postcode / postal code rejected by FedEx.
   if (/postal|postcode|zip/.test(lower) && /(invalid|not valid|incorrect|format|unknown|not.*recogn)/.test(lower)) {
     return "That postcode doesn't look right for the destination country. Double-check it and try again."
