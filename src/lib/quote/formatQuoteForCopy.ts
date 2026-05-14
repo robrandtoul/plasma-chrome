@@ -281,7 +281,6 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     const exVatTotal = showVatNote
       ? Math.round((domesticRate.totalGbp / (1 + vatRate)) * 100) / 100
       : null
-    const showConversionNote = displayCurrency !== 'GBP' && exchangeRates !== null
     const regionLabel = domesticRate.region === 'uk_ni'
       ? 'Northern Ireland delivery'
       : 'Mainland delivery'
@@ -293,11 +292,6 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     }
     shippingPlain.push(totalLine)
     if (multiBoxNote) shippingPlain.push(multiBoxNote)
-    if (showConversionNote && exchangeRates) {
-      const symbol = displayCurrency === 'EUR' ? '€' : '$'
-      const dateTag = exchangeRates.rateDate ? ` (ECB ${exchangeRates.rateDate})` : ''
-      shippingPlain.push(`Converted from ${formatPrice(domesticRate.totalGbp, 'GBP', 2)} at 1 GBP = ${symbol}${multiplier.toFixed(4)}${dateTag}.`)
-    }
 
     shippingHtml.push(`Shipping — DPD UK · ${escapeHtml(regionLabel)}`)
     let totalLineHtml = `<strong>Total shipping = ${escapeHtml(formatPrice(totalDisplay, displayCurrency, 2))}</strong>`
@@ -306,15 +300,9 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     }
     shippingHtml.push(totalLineHtml)
     if (multiBoxNote) shippingHtml.push(escapeHtml(multiBoxNote))
-    if (showConversionNote && exchangeRates) {
-      const symbol = displayCurrency === 'EUR' ? '€' : '$'
-      const dateTag = exchangeRates.rateDate ? ` (ECB ${escapeHtml(exchangeRates.rateDate)})` : ''
-      shippingHtml.push(`<span style="color:#6b7280">Converted from ${escapeHtml(formatPrice(domesticRate.totalGbp, 'GBP', 2))} at 1 GBP = ${symbol}${multiplier.toFixed(4)}${dateTag}.</span>`)
-    }
   } else if (showInternationalShipping && shippingRate) {
     const displayCurrency = currency ?? 'GBP'
     const multiplier = gbpToCurrency(displayCurrency, exchangeRates)
-    const showConversionNote = displayCurrency !== 'GBP' && exchangeRates !== null
 
     // International total = FedEx net charge (which already
     // includes base − discount + fuel + surcharges) plus the
@@ -334,20 +322,10 @@ export function formatQuoteForCopy(args: FormatQuoteArgs): FormattedQuote {
     shippingPlain.push(`Shipping — ${serviceLabel}`)
     shippingPlain.push(`Total shipping = ${formatPrice(adjustedTotalGbp * multiplier, displayCurrency, 2)}${vatTag}`)
     if (multiBoxNote) shippingPlain.push(multiBoxNote)
-    if (showConversionNote && exchangeRates) {
-      const symbol = displayCurrency === 'EUR' ? '€' : '$'
-      const dateTag = exchangeRates.rateDate ? ` (ECB ${exchangeRates.rateDate})` : ''
-      shippingPlain.push(`Converted from GBP at 1 GBP = ${symbol}${multiplier.toFixed(4)}${dateTag}.`)
-    }
 
     shippingHtml.push(`Shipping — ${escapeHtml(serviceLabel)}`)
     shippingHtml.push(`<strong>Total shipping = ${escapeHtml(formatPrice(adjustedTotalGbp * multiplier, displayCurrency, 2))}</strong>${vatTag}`)
     if (multiBoxNote) shippingHtml.push(escapeHtml(multiBoxNote))
-    if (showConversionNote && exchangeRates) {
-      const symbol = displayCurrency === 'EUR' ? '€' : '$'
-      const dateTag = exchangeRates.rateDate ? ` (ECB ${escapeHtml(exchangeRates.rateDate)})` : ''
-      shippingHtml.push(`<span style="color:#6b7280">Converted from GBP at 1 GBP = ${symbol}${multiplier.toFixed(4)}${dateTag}.</span>`)
-    }
   }
 
   // ── Compose ──────────────────────────────────────────────────

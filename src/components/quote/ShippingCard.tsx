@@ -124,7 +124,6 @@ export function ShippingCard({
     const exVatTotal = showVatFootnote
       ? Math.round((state.rate.totalGbp / (1 + vatRate)) * 100) / 100
       : null
-    const showConversionNote = displayCurrency !== 'GBP' && exchangeRates !== null
     return (
       <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
         <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
@@ -162,12 +161,6 @@ export function ShippingCard({
             Includes {Math.round(vatRate * 100)}% VAT · {formatPrice(exVatTotal, 'GBP', 2)} ex VAT
           </p>
         )}
-        {showConversionNote && exchangeRates && (
-          <p className="mt-1 text-xs text-gray-400">
-            Converted from {formatPrice(state.rate.totalGbp, 'GBP', 2)} at 1 GBP = {formatRate(multiplier, displayCurrency)}
-            {exchangeRates.rateDate ? ` (ECB ${exchangeRates.rateDate})` : ''}.
-          </p>
-        )}
       </div>
     )
   }
@@ -179,7 +172,6 @@ export function ShippingCard({
   // selector decides what currency we present to the designer.
   const displayCurrency: Currency = currency ?? 'GBP'
   const multiplier = gbpToCurrency(displayCurrency, exchangeRates)
-  const showConversionNote = displayCurrency !== 'GBP' && exchangeRates !== null
 
   // Base (GBP) figures from the rate. Convert each at render time
   // so the per-line breakdown reads in the displayed currency.
@@ -192,6 +184,10 @@ export function ShippingCard({
   const adjustedTotalGbp = applyIntlAdjustment(netChargeGbp, intlAdjustPercent)
   const adjustmentAmountGbp = adjustedTotalGbp - netChargeGbp
   const showAdjustment = intlAdjustPercent !== 0
+  // exchangeRates is still consumed by the multiplier above; the
+  // separate "showConversionNote" footnote has been dropped from
+  // the card chrome as designer feedback found it cluttered the
+  // total. The conversion still applies silently.
 
   return (
     <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
@@ -276,12 +272,6 @@ export function ShippingCard({
       ) : rate.cached ? (
         <p className="mt-2 text-xs text-gray-400">Cached rate</p>
       ) : null}
-      {showConversionNote && exchangeRates && (
-        <p className="mt-1 text-xs text-gray-400">
-          Converted from GBP at 1 GBP = {formatRate(multiplier, displayCurrency)}
-          {exchangeRates.rateDate ? ` (ECB ${exchangeRates.rateDate})` : ''}.
-        </p>
-      )}
     </div>
   )
 }
@@ -345,10 +335,3 @@ function formatBoxCount(split: ParcelSplit): string {
   return `${boxCount} boxes (${parts.join(', ')} kg)`
 }
 
-// 1.1735 → "€1.17", 1.27 → "$1.27". Two decimals is plenty for
-// rate display — the designer's reading the round figures from
-// HeadlinePrice, not the per-unit conversion factor.
-function formatRate(multiplier: number, currency: Currency): string {
-  const symbol = currency === 'EUR' ? '€' : currency === 'USD' ? '$' : '£'
-  return `${symbol}${multiplier.toFixed(4)}`
-}
