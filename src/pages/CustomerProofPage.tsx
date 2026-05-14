@@ -3100,7 +3100,7 @@ export default function CustomerProofPage() {
                       className="mt-5 max-w-[30ch] text-[14px] leading-[1.55]"
                       style={{ color: PAPER_TERTIARY }}
                     >
-                      Metal cards are available in three thicknesses. The pricing table above shows the cost for each — choose the weight that suits you best.
+                      Metal cards are available in three thicknesses. The pricing table below shows the cost for each — choose the weight that suits you best.
                     </p>
                   </div>
                   <MetalThicknessPanel materialCode={activeVersion.material_code} />
