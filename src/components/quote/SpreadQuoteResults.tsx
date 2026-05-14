@@ -7,6 +7,7 @@ import {
 } from '../../lib/quote/spreadCalculate'
 import type { PriceTier } from '../../lib/quote/calculate'
 import { formatSpreadQuoteForCopy } from '../../lib/quote/formatSpreadQuoteForCopy'
+import type { LeadTimeState } from '../../lib/quote/leadTime'
 import { CopyQuoteButton } from './CopyQuoteButton'
 
 // Multi-quantity spread quote results — stacked list + quantity-
@@ -65,6 +66,9 @@ export function SpreadQuoteResults({
   personalisationBreakevenQty,
   customFlags,
   discountPercent,
+  includeLeadTime,
+  onIncludeLeadTimeChange,
+  leadTimeState,
   loading,
 }: {
   quantities: number[]
@@ -101,6 +105,15 @@ export function SpreadQuoteResults({
   // disclosure footer below the table so the customer can see
   // where the lower number came from.
   discountPercent: number
+  // Lead-time toggle state (migration 000175). Mirrors the
+  // single-quantity Copy block in QuotePage: the toggle gates a
+  // lead-time line in the copied body; the on-screen LeadTimeCard
+  // (rendered by the parent above this card) is independent.
+  // Toggle UI only renders when leadTimeState.kind === 'standard',
+  // matching single-mode gating.
+  includeLeadTime: boolean
+  onIncludeLeadTimeChange: (next: boolean) => void
+  leadTimeState: LeadTimeState | null
   loading: boolean
 }) {
   // Component-local state, no persistence — the brief specifies
@@ -208,6 +221,8 @@ export function SpreadQuoteResults({
           personalisationBreakevenQty,
           discountPercent,
           includeUnitPrice,
+          includeLeadTime,
+          leadTimeState,
         })
       : null
 
@@ -320,6 +335,17 @@ export function SpreadQuoteResults({
             />
             <span>Include unit price</span>
           </label>
+          {leadTimeState?.kind === 'standard' && (
+            <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={includeLeadTime}
+                onChange={(e) => onIncludeLeadTimeChange(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-400"
+              />
+              <span>Include lead time</span>
+            </label>
+          )}
           <CopyQuoteButton plainText={formatted.plainText} html={formatted.html} />
         </div>
       )}

@@ -733,15 +733,32 @@ export default function QuotePage() {
 
           {/* ── Price column ─────────────────────────────────────────────── */}
           <div className="space-y-4">
+            {/* Lead-time card sits at the top of the results column
+                in both single and spread modes. Reads as "when can
+                we make it" → "how much". Render predicate is mode-
+                aware: single mode waits for a typed quantity, spread
+                mode waits for currency + at least one quantity chip
+                (the same moment SpreadQuoteResults switches from its
+                empty-state placeholder to the stacked list). The
+                card returns null in its not_set state so the slot
+                is simply absent rather than rendering a placeholder. */}
+            {selectedMaterial && leadTimeState && (
+              spreadMode
+                ? (currency != null && spreadQuantities.length > 0)
+                : quantity != null
+            ) && (
+              <LeadTimeCard
+                state={leadTimeState}
+                materialDisplayName={selectedMaterial.display_name}
+              />
+            )}
             {spreadMode ? (
               /* Spread quote mode — table-shaped results card
                  replaces the headline + adjacent strips + snap
-                 chips entirely. Lead-time card is suppressed here
-                 by design: spread mode carries several quantities
-                 against one material, so a single in-range / custom
-                 verdict is less load-bearing. Custom-quote flags
-                 still flow through to the bottom of the spread
-                 card. */
+                 chips entirely. Lead-time card renders above per
+                 the block immediately preceding this ternary;
+                 custom-quote flags still flow through to the bottom
+                 of the spread card. */
               <SpreadQuoteResults
                 quantities={spreadQuantities}
                 onChangeQuantities={setSpreadQuantities}
@@ -777,25 +794,13 @@ export default function QuotePage() {
                 personalisationBreakevenQty={personalisationBreakevenQty}
                 customFlags={customFlags}
                 discountPercent={discountPercent}
+                includeLeadTime={effectiveIncludeLeadTime}
+                onIncludeLeadTimeChange={handleIncludeLeadTimeChange}
+                leadTimeState={leadTimeState}
                 loading={pricing.loading && !tiersFresh}
               />
             ) : (
-              /* Stacked layout: lead-time card sits at the top of the
-                 results column, the price card (or its alternates)
-                 sits directly below. Reads as "when can we make it"
-                 → "how much". Both cards keep the full column width
-                 so the headline numbers never wrap (the previous
-                 two-column layout would clip 5-digit ranges like
-                 "12-14" at narrow widths). The lead-time card
-                 returns null in its not_set state so the slot is
-                 simply absent rather than rendering a placeholder. */
               <>
-                {selectedMaterial && quantity != null && leadTimeState && (
-                  <LeadTimeCard
-                    state={leadTimeState}
-                    materialDisplayName={selectedMaterial.display_name}
-                  />
-                )}
                 {customQuote ? (
                   /* Custom-quote bailout. Replaces the price card
                      entirely — no partial number, no fall-through.

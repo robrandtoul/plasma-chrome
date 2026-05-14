@@ -1,6 +1,8 @@
 import { formatPrice } from '../currency'
 import type { Currency } from '../types'
 import type { SpreadRow } from './spreadCalculate'
+import type { LeadTimeState } from './leadTime'
+import { leadTimeQuoteLine } from './leadTime'
 
 // Help Scout-friendly multi-quantity quote formatter. Plain-text
 // for terminals / Notes / plain reply boxes, HTML for Help
@@ -63,6 +65,13 @@ export interface FormatSpreadArgs {
   // Default off in the caller; designer flips ON when the
   // customer has asked for per-card prices.
   includeUnitPrice: boolean
+  // Lead-time line gate + payload (migration 000175). Mirrors the
+  // single-quantity formatter: when `leadTimeState` is null OR the
+  // toggle is off, the formatter emits no lead-time line. Standard
+  // / custom states each render their own sentence via
+  // `leadTimeQuoteLine`; not-set silently drops the line.
+  includeLeadTime: boolean
+  leadTimeState: LeadTimeState | null
 }
 
 export interface FormattedSpreadQuote {
@@ -107,9 +116,16 @@ export function formatSpreadQuoteForCopy(args: FormatSpreadArgs): FormattedSprea
     personalisationBreakevenQty,
     discountPercent,
     includeUnitPrice,
+    includeLeadTime,
+    leadTimeState,
   } = args
 
   if (rows.length === 0) return EMPTY
+
+  const leadTimeLine =
+    includeLeadTime && leadTimeState
+      ? leadTimeQuoteLine(leadTimeState, materialDisplayName)
+      : null
   const showDiscount = discountPercent > 0
   const discountPctStr = showDiscount ? formatDiscountPercentSpread(discountPercent) : null
 
@@ -221,6 +237,10 @@ export function formatSpreadQuoteForCopy(args: FormatSpreadArgs): FormattedSprea
   } else {
     plainLines.push('This quote excludes shipping.')
   }
+  if (leadTimeLine) {
+    plainLines.push('')
+    plainLines.push(leadTimeLine)
+  }
   const plainText = plainLines.join('\n')
 
   // ── HTML ──────────────────────────────────────────────────
@@ -305,6 +325,10 @@ export function formatSpreadQuoteForCopy(args: FormatSpreadArgs): FormattedSprea
       ? 'Prices include VAT. This quote excludes shipping.'
       : 'This quote excludes shipping.',
   )
+  if (leadTimeLine) {
+    htmlParts.push('<br><br>')
+    htmlParts.push(escapeHtml(leadTimeLine))
+  }
 
   const html = htmlParts.join('')
 
