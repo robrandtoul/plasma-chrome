@@ -429,6 +429,13 @@ verify_jwt = false
 [functions.proof-action]
 verify_jwt = false
 
+# contact-form-submit: anon-callable because the form lives on the
+# public Squarespace support page. Defence in depth: CORS pinned to
+# www.plasmadesign.co.uk, a honeypot field, and a server-side
+# Cloudflare Turnstile token re-verify before touching Help Scout.
+[functions.contact-form-submit]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

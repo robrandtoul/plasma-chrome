@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && vite build --config vite.price-list.config.ts",
+    "build": "tsc -b && vite build && vite build --config vite.price-list.config.ts && vite build --config vite.contact-form.config.ts",
     "build:price-list": "vite build --config vite.price-list.config.ts",
+    "build:contact-form": "vite build --config vite.contact-form.config.ts",
     "preview": "vite preview",
     "db:diff": "tsx scripts/db-diff.ts",
     "db:push:confirm": "tsx scripts/db-push-confirm.ts",
