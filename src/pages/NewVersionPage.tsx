@@ -2922,12 +2922,35 @@ export default function NewVersionPage() {
       return slotStillValid(liveAssoc, img.side)
     }
 
+    // Option-universe guard. The render-side carry grid only shows a
+    // v1 image when its material_option matches one of v2's option
+    // tabs (see the carryCellsBySlot filter in the image section).
+    // Without the equivalent check here, a carry whose finish no
+    // longer exists on v2, e.g. a steel "Natural" image when v2 is
+    // gun metal (which has no finish options at all), stays hidden
+    // in the form but is still written into v2 on save, producing
+    // ghost images on the customer page. Mirror the render filter:
+    // the carry is in v2's option universe iff its option code is
+    // one of the selected tabs, or it's a variant-round carry (null
+    // option) the save path stamps onto the first selected tab.
+    const carryOptionStillValid = (img: V1Image): boolean => {
+      const imgOption = img.material_option ?? ''
+      if (optionKeys.includes(imgOption)) return true
+      const firstSelectedOption = selectedOptions[0] ?? ''
+      return (
+        v1Carry?.sourceIsVariantRound === true &&
+        img.material_option == null &&
+        firstSelectedOption !== ''
+      )
+    }
+
     const carriedV1Rows = v1Carry
       ? v1Carry.images.filter(
           (img) =>
             (keepByV1RowId[img.v1RowId] ?? true) &&
             !replacementByV1RowId[img.v1RowId] &&
-            carrySlotStillValid(img),
+            carrySlotStillValid(img) &&
+            carryOptionStillValid(img),
         )
       : []
     const replacementEntries = v1Carry
@@ -2935,7 +2958,8 @@ export default function NewVersionPage() {
           .filter(
             (img) =>
               !!replacementByV1RowId[img.v1RowId] &&
-              carrySlotStillValid(img),
+              carrySlotStillValid(img) &&
+              carryOptionStillValid(img),
           )
           .map((img) => ({ v1Img: img, file: replacementByV1RowId[img.v1RowId]!.file }))
       : []
