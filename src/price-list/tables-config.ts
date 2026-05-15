@@ -149,7 +149,7 @@ export const TABLES: TableConfig[] = [
     dimension: 'thickness',
     column_headers: ['300 micron thick', '500 micron thick', '800 micron thick'],
     column_match: ['300', '500', '800'],
-    quantities: [50, 100, 150, 200, 250, 500, 750, 1000],
+    quantities: [25, 50, 100, 150, 200, 250, 500, 750, 1000],
     surcharge_column: {
       type: 'metal_finish',
       header: 'optional mirror or brushed finish',
@@ -172,7 +172,7 @@ export const TABLES: TableConfig[] = [
     dimension: 'thickness',
     column_headers: ['300 micron thick', '500 micron thick', '800 micron thick'],
     column_match: ['300', '500', '800'],
-    quantities: [50, 100, 150, 200, 250, 500, 750, 1000],
+    quantities: [25, 50, 100, 150, 200, 250, 500, 750, 1000],
     surcharge_column: {
       type: 'metal_finish',
       header: 'optional mirror or brushed finish',
@@ -185,7 +185,7 @@ export const TABLES: TableConfig[] = [
     dimension: 'thickness',
     column_headers: ['300 micron thick', '500 micron thick', '800 micron thick'],
     column_match: ['300', '500', '800'],
-    quantities: [50, 100, 150, 200, 250, 500, 750, 1000],
+    quantities: [25, 50, 100, 150, 200, 250, 500, 750, 1000],
     surcharge_column: null,
   },
   {
@@ -195,7 +195,7 @@ export const TABLES: TableConfig[] = [
     dimension: 'thickness',
     column_headers: ['300 micron thick', '500 micron thick', '800 micron thick'],
     column_match: ['300', '500', '800'],
-    quantities: [50, 100, 150, 200, 250, 500, 750, 1000],
+    quantities: [25, 50, 100, 150, 200, 250, 500, 750, 1000],
     surcharge_column: null,
   },
   {
@@ -205,7 +205,7 @@ export const TABLES: TableConfig[] = [
     dimension: 'thickness',
     column_headers: ['300 micron thick', '500 micron thick', '800 micron thick'],
     column_match: ['300', '500', '800'],
-    quantities: [50, 100, 150, 200, 250, 500, 750, 1000],
+    quantities: [25, 50, 100, 150, 200, 250, 500, 750, 1000],
     surcharge_column: null,
   },
   {
@@ -215,7 +215,7 @@ export const TABLES: TableConfig[] = [
     dimension: 'thickness',
     column_headers: ['300 micron thick', '500 micron thick', '800 micron thick'],
     column_match: ['300', '500', '800'],
-    quantities: [50, 100, 150, 200, 250, 500, 750, 1000],
+    quantities: [25, 50, 100, 150, 200, 250, 500, 750, 1000],
     surcharge_column: null,
   },
   {
