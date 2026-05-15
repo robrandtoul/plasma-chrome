@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Price-list preview harness (GBP)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;700&family=Inter+Tight:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    >
+    <style>
+      :root { color-scheme: light; }
+      body {
+        font-family: 'Inter Tight', sans-serif;
+        margin: 0;
+        padding: 0;
+        background: #f7f7f8;
+        color: rgb(34, 34, 34);
+      }
+      .harness-shell {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 24px 16px 80px;
+      }
+      h1 {
+        font-family: 'Inter Tight', sans-serif;
+        font-weight: 600;
+        font-size: 22px;
+        margin: 8px 0 4px;
+      }
+      .harness-subtitle {
+        color: rgb(102, 102, 102);
+        margin: 0 0 24px;
+      }
+      #harness-banner {
+        padding: 14px 18px;
+        border-radius: 8px;
+        font-weight: 500;
+        margin-bottom: 24px;
+        background: #eaeaea;
+      }
+      #harness-banner[data-state="loading"] { background: #eef2ff; color: #1e3a8a; }
+      #harness-banner[data-state="pass"]    { background: #ecfdf5; color: #065f46; }
+      #harness-banner[data-state="fail"]    { background: #fef2f2; color: #991b1b; }
+      .harness-section-title {
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: rgb(120, 120, 120);
+        margin: 32px 0 8px;
+      }
+      #harness-summary {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 24px;
+      }
+      .harness-summary-row {
+        padding: 4px 0;
+        font-size: 14px;
+        font-family: 'Inter Tight', sans-serif;
+      }
+      .harness-summary-row[data-pass="true"]::before { content: '✓ '; color: #047857; }
+      .harness-summary-row[data-pass="false"]::before { content: '✗ '; color: #b91c1c; }
+      #harness-failures:not(:empty) {
+        background: #fff;
+        border: 1px solid #fecaca;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 24px;
+        color: #7f1d1d;
+        font-size: 14px;
+      }
+      .table-card {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 18px 20px;
+        margin-bottom: 18px;
+      }
+      .table-card h2 {
+        margin: 0 0 12px;
+        font-family: 'Inter Tight', sans-serif;
+        font-size: 15px;
+        font-weight: 600;
+        color: rgb(60, 60, 60);
+      }
+      .table-card [data-price-table] {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="harness-shell">
+      <h1>Price-list preview harness — GBP</h1>
+      <p class="harness-subtitle">
+        Renders all 16 GBP placeholders from public_get_price_list and
+        diffs every cell against the 2026-05-15 golden master.
+      </p>
+
+      <div id="harness-banner" data-state="loading">Loading…</div>
+
+      <div class="harness-section-title">Per-table summary</div>
+      <div id="harness-summary"></div>
+
+      <div id="harness-failures"></div>
+
+      <div class="harness-section-title">Rendered tables</div>
+
+      <div class="table-card"><h2>Translucent Plastic Cards</h2><div data-price-table="plastic_translucent"></div></div>
+      <div class="table-card"><h2>Tinted Plastic Cards</h2><div data-price-table="plastic_tinted"></div></div>
+      <div class="table-card"><h2>Satin Plastic Cards</h2><div data-price-table="plastic_satin"></div></div>
+      <div class="table-card"><h2>Full Colour Plastic Cards</h2><div data-price-table="plastic_full_colour"></div></div>
+      <div class="table-card"><h2>3mm Wooden Cards</h2><div data-price-table="wood"></div></div>
+      <div class="table-card"><h2>Carbon Fibre</h2><div data-price-table="carbon_fibre"></div></div>
+      <div class="table-card"><h2>3mm Perspex Cards</h2><div data-price-table="acrylic"></div></div>
+      <div class="table-card"><h2>Stainless Steel Cards</h2><div data-price-table="metal_steel"></div></div>
+      <div class="table-card"><h2>Mini Metal Cards</h2><div data-price-table="metal_mini_steel"></div></div>
+      <div class="table-card"><h2>Gold Metal Cards</h2><div data-price-table="metal_gold"></div></div>
+      <div class="table-card"><h2>Matte Black Metal Cards</h2><div data-price-table="metal_matte_black"></div></div>
+      <div class="table-card"><h2>Matte White Metal Cards</h2><div data-price-table="metal_matte_white"></div></div>
+      <div class="table-card"><h2>Copper Metal Cards</h2><div data-price-table="metal_copper"></div></div>
+      <div class="table-card"><h2>GunMetal Cards</h2><div data-price-table="metal_gun_metal"></div></div>
+      <div class="table-card"><h2>Letterpress Cards</h2><div data-price-table="paper_letterpress"></div></div>
+      <div class="table-card"><h2>Standard Cards</h2><div data-price-table="paper_standard"></div></div>
+    </div>
+
+    <script type="module" src="/src/price-list/harness.ts"></script>
+  </body>
+</html>
