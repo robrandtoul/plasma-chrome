@@ -1,1 +1,5 @@
+# Dev-only price-list preview harness — keep the file in source so
+# `pnpm dev` can serve it, but return 404 in production so the path
+# never falls through to the SPA catch-all below.
+/price-list-preview.html  /404  404
 /*    /index.html   200
