@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build --config vite.price-list.config.ts",
+    "build:price-list": "vite build --config vite.price-list.config.ts",
     "preview": "vite preview",
     "db:diff": "tsx scripts/db-diff.ts",
     "db:push:confirm": "tsx scripts/db-push-confirm.ts",
     "db:status": "npx supabase migration list --linked",
-    "db:clean-fixtures": "tsx scripts/clean-test-fixtures.ts"
+    "db:clean-fixtures": "tsx scripts/clean-test-fixtures.ts",
+    "check:price-list": "tsx scripts/check-price-list-golden.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.4",
