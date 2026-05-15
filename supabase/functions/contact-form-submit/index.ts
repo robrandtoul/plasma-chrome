@@ -256,7 +256,7 @@ Deno.serve(async (req) => {
     return json({ error: 'Server misconfigured' }, 500)
   }
   const remoteip =
-    req.headers.get('cf-connecting-ip') ??
+    req.headers.get('cf-connecting-ip') ||
     (req.headers.get('x-forwarded-for') ?? '').split(',')[0].trim() ||
     null
   const turnstileOk = await verifyTurnstile(turnstileToken, turnstileSecret, remoteip)

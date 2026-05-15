@@ -256,7 +256,7 @@ function validate(refs: FieldRefs, form: HTMLFormElement): boolean {
 function renderThankYou(host: HTMLElement, name: string): void {
   host.replaceChildren(
     el('div', { class: 'plasma-contact-form pcf-thanks', role: 'status', tabindex: '-1' }, [
-      el('h3', {}, [name ? `Thanks, ${name}!` : 'Thanks for getting in touch!']),
+      el('h3', {}, [name ? `Thanks, ${name}` : 'Thanks for getting in touch']),
       el('p', {}, [
         'We have received your message and will be in touch shortly. If your enquiry is urgent, email us at ',
         el('a', { href: `mailto:${SUPPORT_EMAIL}` }, [SUPPORT_EMAIL]),
