@@ -177,7 +177,7 @@ export function SpreadQuantityInput({
           placeholder={placeholder}
           aria-label="Add quantity"
           className={[
-            'min-w-[6rem] flex-1 border-0 bg-transparent px-1 py-0.5 text-[15px] outline-none',
+            'min-w-[6rem] flex-1 border-0 bg-transparent px-1 py-0.5 text-[17px] sm:text-[15px] outline-none',
             chrome ? 'text-gray-400 placeholder:text-gray-300' : 'text-gray-900 placeholder:text-gray-400',
           ].join(' ')}
         />
