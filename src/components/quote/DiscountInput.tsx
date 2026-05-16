@@ -57,7 +57,7 @@ export function DiscountInput({
             }}
             placeholder="0"
             className={[
-              'w-28 rounded-lg border px-3 py-2 pr-8 text-sm tabular-nums shadow-sm',
+              'w-28 rounded-lg border px-3 py-2 pr-8 text-[17px] sm:text-sm tabular-nums shadow-sm',
               'focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1',
               isActive
                 ? 'border-gray-400 bg-white text-gray-900'

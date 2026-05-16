@@ -3,7 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- maximum-scale=1 stops iOS Safari's auto-zoom-on-focus on
+         form fields (the cause of the page-zoom + horizontal-scroll
+         issue when tapping into the quote compiler's inputs). iOS
+         10+ ignores user-scalable=no for accessibility, so an
+         intentional pinch-zoom still works. interactive-widget
+         keeps the layout viewport stable when the soft keyboard
+         appears so focused inputs don't shove the page sideways. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, interactive-widget=resizes-content" />
     <!-- Editorial type stack for the customer-facing proof page.
          Cormorant Garamond as the display serif (hero + section
          headings), Inter Tight as the body sans, Geist Mono for
