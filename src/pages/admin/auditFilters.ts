@@ -108,10 +108,13 @@ export interface ActionDef { code: string; label: string }
 
 export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
   { name: 'User management', actions: [
-    { code: 'user.created',     label: 'User created' },
-    { code: 'user.deactivated', label: 'User deactivated' },
-    { code: 'user.reactivated', label: 'User reactivated' },
-    { code: 'user.role_changed', label: 'User role changed' },
+    { code: 'user.created',              label: 'User created' },
+    { code: 'user.deactivated',          label: 'User deactivated' },
+    { code: 'user.reactivated',          label: 'User reactivated' },
+    { code: 'user.role_changed',         label: 'User role changed' },
+    { code: 'profile.updated',           label: 'Profile updated' },
+    { code: 'profile.avatar_uploaded',   label: 'Profile avatar uploaded' },
+    { code: 'profile.avatar_removed',    label: 'Profile avatar removed' },
   ]},
   { name: 'Materials', actions: [
     { code: 'material_created',                          label: 'Material created' },

@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import Modal from './Modal'
 import { supabase } from '../lib/supabase'
+import { logAudit } from '../lib/audit'
 import type { DesignerColour } from '../lib/dashboardGrouping'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -74,6 +75,14 @@ export default function EditProfileModal({
   const [colour, setColour]                         = useState<DesignerColour>('blue')
   const [initialsUserEdited, setInitialsUserEdited] = useState(false)
   const [avatarUrl, setAvatarUrl]                   = useState<string | null>(null)
+  // Snapshot of the row as loaded. Used by handleSubmit to compute a
+  // before/after diff that only includes changed fields when logging
+  // the profile.updated audit event (PV-2026W21-075).
+  const [originalSnapshot, setOriginalSnapshot]     = useState<{
+    fullName: string
+    initials: string
+    colour: DesignerColour
+  } | null>(null)
 
   const [loading,         setLoading]         = useState(true)
   const [saving,          setSaving]          = useState(false)
@@ -91,14 +100,22 @@ export default function EditProfileModal({
       .single()
       .then(({ data }) => {
         if (data) {
-          setFullName(data.full_name ?? '')
-          setInitials((data.designer_initials ?? '').slice(0, 2))
-          setColour((data.designer_colour ?? 'blue') as DesignerColour)
+          const loadedName     = data.full_name ?? ''
+          const loadedInitials = (data.designer_initials ?? '').slice(0, 2)
+          const loadedColour   = (data.designer_colour ?? 'blue') as DesignerColour
+          setFullName(loadedName)
+          setInitials(loadedInitials)
+          setColour(loadedColour)
           setAvatarUrl(data.avatar_url ?? null)
+          setOriginalSnapshot({
+            fullName: loadedName,
+            initials: loadedInitials,
+            colour:   loadedColour,
+          })
           // If the stored initials match what we'd auto-derive, treat them
           // as not manually edited so auto-derive keeps working as they type.
-          const stored  = (data.designer_initials ?? '').slice(0, 2).toUpperCase()
-          const derived = initialsFromName(data.full_name ?? '')
+          const stored  = loadedInitials.toUpperCase()
+          const derived = initialsFromName(loadedName)
           setInitialsUserEdited(stored !== '' && stored !== derived)
         }
         setLoading(false)
@@ -161,11 +178,44 @@ export default function EditProfileModal({
     setUploading(false)
 
     if (dbErr) {
+      // Roll back the storage write so the bucket doesn't carry an
+      // orphan file whose URL is no longer referenced anywhere
+      // (PV-2026W21-079). A 404 means the object never landed; any
+      // other error is logged but not surfaced — the original dbErr
+      // is what the designer needs to see.
+      const { error: rollbackErr } = await supabase
+        .storage
+        .from('avatars')
+        .remove([storagePath])
+      if (rollbackErr && !/not\s*found/i.test(rollbackErr.message)) {
+        console.warn('[avatar] storage rollback failed:', rollbackErr.message)
+      }
       setUploadError(dbErr.message || 'Could not save avatar. Please try again.')
       return
     }
 
     setAvatarUrl(urlWithBuster)
+    // Mirror the immediate DB write to the parent so the dashboard
+    // header re-renders with the new photo right away. Without this,
+    // closing via Cancel after upload leaves the header showing
+    // initials until the next dashboard refetch (PV-2026W21-078;
+    // matches the same pattern on Remove photo).
+    onSaved({
+      initials,
+      colour,
+      fullName,
+      avatarUrl: urlWithBuster,
+    })
+    // Audit log (PV-2026W21-075). Designer self-edited their own avatar;
+    // record size + content-type as metadata, no diff payload because
+    // avatar bytes aren't meaningfully diffable.
+    void logAudit({
+      action:      'profile.avatar_uploaded',
+      targetType:  'user',
+      targetId:    userId,
+      targetLabel: fullName || undefined,
+      metadata:    { size_bytes: file.size, content_type: file.type },
+    })
   }
 
   // ── Name / initials handlers ─────────────────────────────────────────────
@@ -214,6 +264,36 @@ export default function EditProfileModal({
     if (updateErr) {
       setFormError(updateErr.message || 'Failed to save profile.')
       return
+    }
+
+    // Audit log (PV-2026W21-075). Build before/after payloads that
+    // only include fields that actually changed against the snapshot
+    // captured on load — saving without edits produces no audit row.
+    if (originalSnapshot) {
+      const before: Record<string, unknown> = {}
+      const after:  Record<string, unknown> = {}
+      if (originalSnapshot.fullName !== cleanName) {
+        before.full_name = originalSnapshot.fullName
+        after.full_name  = cleanName
+      }
+      if (originalSnapshot.initials !== finalInitials) {
+        before.designer_initials = originalSnapshot.initials
+        after.designer_initials  = finalInitials
+      }
+      if (originalSnapshot.colour !== colour) {
+        before.designer_colour = originalSnapshot.colour
+        after.designer_colour  = colour
+      }
+      if (Object.keys(after).length > 0) {
+        void logAudit({
+          action:      'profile.updated',
+          targetType:  'user',
+          targetId:    userId,
+          targetLabel: cleanName,
+          beforeValue: before,
+          afterValue:  after,
+        })
+      }
     }
 
     onSaved({ initials: finalInitials, colour, fullName: cleanName, avatarUrl })
@@ -299,22 +379,50 @@ export default function EditProfileModal({
                   <button
                     type="button"
                     onClick={async () => {
+                      // Delete the object first so the public bucket
+                      // doesn't keep an orphan file after avatar_url is
+                      // nulled (PV-2026W21-076). A 404 is fine — it
+                      // just means the row was nulled outside of this
+                      // session. Any other error is logged as a warning
+                      // but doesn't block the profile UPDATE: the row
+                      // reference should still clear so the UI stops
+                      // referring to a file we can't manage.
+                      const { error: storageErr } = await supabase
+                        .storage
+                        .from('avatars')
+                        .remove([`${userId}/avatar`])
+                      if (storageErr && !/not\s*found/i.test(storageErr.message)) {
+                        console.warn('[avatar] storage remove failed:', storageErr.message)
+                      }
                       const { error } = await supabase
                         .from('profiles')
                         .update({ avatar_url: null })
                         .eq('id', userId)
                       if (!error) {
                         setAvatarUrl(null)
-                        // Mirror the immediate DB write to the parent so the
-                        // dashboard header re-renders with initials right
-                        // away. Without this, closing via Cancel after a
-                        // Remove photo leaves the stale avatar visible in
-                        // the header until the next dashboard refetch.
+                        // Audit log (PV-2026W21-075). Designer removed their
+                        // own avatar; no diff payload needed.
+                        void logAudit({
+                          action:      'profile.avatar_removed',
+                          targetType:  'user',
+                          targetId:    userId,
+                          targetLabel: fullName || undefined,
+                        })
+                        // Refetch the canonical row state before calling
+                        // onSaved so any unsaved edits to the form fields
+                        // (name/initials/colour) don't leak into the
+                        // payload (PV-2026W21-080). Falls back to current
+                        // in-memory values if the refetch fails.
+                        const { data: latest } = await supabase
+                          .from('profiles')
+                          .select('full_name, designer_initials, designer_colour, avatar_url')
+                          .eq('id', userId)
+                          .single()
                         onSaved({
-                          initials,
-                          colour,
-                          fullName,
-                          avatarUrl: null,
+                          initials:  (latest?.designer_initials ?? initials).slice(0, 2),
+                          colour:    (latest?.designer_colour ?? colour) as DesignerColour,
+                          fullName:  latest?.full_name ?? fullName,
+                          avatarUrl: latest?.avatar_url ?? null,
                         })
                       }
                     }}

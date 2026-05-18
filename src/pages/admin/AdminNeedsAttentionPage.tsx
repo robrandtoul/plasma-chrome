@@ -79,7 +79,11 @@ const RULE_SPECS: RuleSpec[] = [
 
 const DEFAULT_RULES: Rules = {
   request_changes_no_version: { enabled: true,  threshold_days: 2,  calendar: false, priority: 1 },
-  helpscout_follow_up_tag:    { enabled: true,                                          priority: 2 },
+  // helpscout_follow_up_tag defaults to disabled until Phase 2b ships
+  // the HS-tag sync that populates proofs.helpscout_tags. Re-enable in
+  // the same PR that wires the sync; threshold and priority stay set
+  // so flipping the boolean is the only change needed (PV-2026W21-043).
+  helpscout_follow_up_tag:    { enabled: false,                                         priority: 2 },
   sent_never_viewed:          { enabled: true,  threshold_days: 3,  calendar: false, priority: 3 },
   viewed_not_actioned:        { enabled: true,  threshold_days: 5,  calendar: false, priority: 4 },
   approaching_dormant:        { enabled: true,  threshold_days: 5,  calendar: true,  priority: 5 },

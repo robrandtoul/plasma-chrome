@@ -75,6 +75,22 @@ test('HTTPS URL', () => {
 test('HTTP URL (case-insensitive)', () => {
   assertEqual(classifyQrData('HTTP://example.com'), 'url')
 })
+// Bare-email and bare-phone classifications, added in PV-2026W21-089.
+test('Bare email without mailto: prefix', () => {
+  assertEqual(classifyQrData('rob@plasmadesign.co.uk'), 'email')
+})
+test('Bare email rejects strings without a dot', () => {
+  assertEqual(classifyQrData('rob@plasma'), 'text')
+})
+test('Bare E.164 phone with leading +', () => {
+  assertEqual(classifyQrData('+447700900123'), 'phone')
+})
+test('Bare phone rejects too-short E.164', () => {
+  assertEqual(classifyQrData('+44'), 'text')
+})
+test('Bare phone rejects digits-only without +', () => {
+  assertEqual(classifyQrData('447700900123'), 'text')
+})
 test('Plain text fallback', () => {
   assertEqual(classifyQrData('Just some plain text'), 'text')
 })
