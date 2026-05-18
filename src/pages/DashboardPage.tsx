@@ -1645,9 +1645,14 @@ export default function DashboardPage() {
           <EditProfileModal
             userId={userId}
             onClose={() => setEditProfileOpen(false)}
-            onSaved={(payload: EditProfileSavedPayload) =>
+            onSaved={(payload: EditProfileSavedPayload) => {
               setMyProfile({ initials: payload.initials, colour: payload.colour, avatarUrl: payload.avatarUrl })
-            }
+              // Refetch dashboard rows so the designer-avatar columns on
+              // every project tile pick up the new avatar/initials/colour
+              // immediately rather than waiting for the next
+              // visibilitychange tick (PV-2026W21-071).
+              void loadDashboard()
+            }}
           />
         )}
 
