@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { formatPrice } from '../lib/currency'
-import type { Currency, PricingSnapshot } from '../lib/types'
+import { compilePersonalisationSurcharges, personalisationBreakeven } from '../lib/personalisation'
+import type { Currency, PersonalisationPricing, PricingSnapshot } from '../lib/types'
 
 export function PricingDisplay({
   snapshot,
   currency,
   displayQuantities,
   quantitySurcharges = {},
+  personalisationPricing = null,
 }: {
   // Nullable snapshot: post-000117, proof_versions.pricing_snapshot
   // can legitimately be null (the column became nullable when the
@@ -20,6 +22,17 @@ export function PricingDisplay({
   currency: Currency
   displayQuantities: number[]
   quantitySurcharges?: Record<number, number>
+  // Membership-style personalisation (migration 000172). When set,
+  // a separate row group renders beneath the variant table with one
+  // (quantity, per-batch surcharge) row per visible quantity, plus a
+  // breakeven footnote. Deliberately NOT folded into the base/finish
+  // cells: the customer page renders Personalisation as its own row
+  // group too (see PaperPricingTable in CustomerProofPage.tsx) and a
+  // designer flipping between surfaces must see the same shape.
+  // Caller gates this at the version level (has_personalisation +
+  // !custom_quote + !is_per_direction_pricing), mirroring the
+  // customer page's activePersonalisationPricing reducer.
+  personalisationPricing?: PersonalisationPricing | null
 }) {
   const [showAll, setShowAll] = useState(false)
   if (!snapshot) return null
@@ -43,28 +56,52 @@ export function PricingDisplay({
   const hiddenCount = allQuantities.length - allQuantities.filter((q) => displaySet.has(q)).length
   const showToggle = hiddenCount > 0
 
-  return variants.length === 1 ? (
-    <SingleVariantTable
-      variant={variants[0]}
-      currency={currency}
-      quantities={visibleQuantities}
-      displaySet={displaySet}
-      quantitySurcharges={quantitySurcharges}
-      showToggle={showToggle}
-      showAll={showAll}
-      onToggle={() => setShowAll((v) => !v)}
-    />
-  ) : (
-    <MultiVariantGrid
-      variants={variants}
-      currency={currency}
-      quantities={visibleQuantities}
-      displaySet={displaySet}
-      quantitySurcharges={quantitySurcharges}
-      showToggle={showToggle}
-      showAll={showAll}
-      onToggle={() => setShowAll((v) => !v)}
-    />
+  // Personalisation rows render beneath the variant table when the
+  // prop is set. Computed across allQuantities so the show-all
+  // toggle reveals correctly priced rows for any quantity exposed
+  // above. Option surcharges stay in quantitySurcharges and merge
+  // into the base/finish cells in the variant tables themselves.
+  const personalisationByQty = personalisationPricing
+    ? compilePersonalisationSurcharges(allQuantities, personalisationPricing)
+    : null
+  const breakevenQty = personalisationPricing
+    ? personalisationBreakeven(personalisationPricing)
+    : null
+
+  return (
+    <>
+      {variants.length === 1 ? (
+        <SingleVariantTable
+          variant={variants[0]}
+          currency={currency}
+          quantities={visibleQuantities}
+          displaySet={displaySet}
+          quantitySurcharges={quantitySurcharges}
+          showToggle={showToggle}
+          showAll={showAll}
+          onToggle={() => setShowAll((v) => !v)}
+        />
+      ) : (
+        <MultiVariantGrid
+          variants={variants}
+          currency={currency}
+          quantities={visibleQuantities}
+          displaySet={displaySet}
+          quantitySurcharges={quantitySurcharges}
+          showToggle={showToggle}
+          showAll={showAll}
+          onToggle={() => setShowAll((v) => !v)}
+        />
+      )}
+      {personalisationByQty && (
+        <PersonalisationRowGroup
+          currency={currency}
+          quantities={visibleQuantities}
+          personalisationByQty={personalisationByQty}
+          breakevenQty={breakevenQty}
+        />
+      )}
+    </>
   )
 }
 
@@ -257,6 +294,65 @@ function MultiVariantGrid({
           )}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+// ── Personalisation row group ────────────────────────────────────────────────
+//
+// Per-batch personalisation surcharge per visible quantity. Mirrors
+// the customer page's PaperPricingTable (CustomerProofPage.tsx, search
+// "function PaperPricingTable") which renders Personalisation as a
+// sibling row group beneath the price grid, not folded into the cells.
+// Designer-side styling uses the modal's own gray/tailwind idiom (the
+// surrounding card is gray-on-white; PaperPricingTable's serif/mono
+// paper styling would clash) — the structural match is what matters
+// when a designer compares numbers across the two surfaces.
+
+function PersonalisationRowGroup({
+  currency,
+  quantities,
+  personalisationByQty,
+  breakevenQty,
+}: {
+  currency: Currency
+  quantities: number[]
+  personalisationByQty: Record<number, number>
+  breakevenQty: number | null
+}) {
+  if (quantities.length === 0) return null
+  return (
+    <div className="border-t border-gray-100">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-gray-100">
+            <th
+              colSpan={2}
+              className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400"
+            >
+              Personalisation
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {quantities.map((qty) => {
+            const surcharge = personalisationByQty[qty] ?? 0
+            return (
+              <tr key={qty} className="border-b border-gray-50 last:border-0">
+                <td className="px-6 py-3 font-medium text-gray-900">{qty.toLocaleString()}</td>
+                <td className="px-6 py-3 text-right text-gray-900">
+                  + {formatPrice(surcharge, currency)}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      {breakevenQty != null && breakevenQty > 0 && (
+        <p className="px-6 py-3 text-xs text-gray-500">
+          A minimum personalisation charge applies below {breakevenQty.toLocaleString()} cards.
+        </p>
+      )}
     </div>
   )
 }

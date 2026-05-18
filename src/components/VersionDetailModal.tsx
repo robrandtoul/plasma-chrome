@@ -8,8 +8,11 @@ import { safeRemoveImagePaths } from '../lib/imageStorage'
 import type {
   Currency,
   LetterpressCoreColour,
+  PersonalisationPricing,
   PricingSnapshot,
   ProofNameApproval,
+  PublicMaterialOption,
+  PublicMaterialOptionSurcharge,
   PublicMaterialVariant,
   PublicPriceTier,
 } from '../lib/types'
@@ -76,6 +79,11 @@ export interface ModalVersion {
   // from a variant round predecessor and we filter it out of the
   // modal's image list to keep the per-name groupings clean.
   material_options: string[]
+  // Membership-style personalisation flag (migration 000172). Toggles
+  // the personalisation surcharge layer in the modal's pricing card,
+  // matching the customer page's gate. False on every non-membership
+  // version and on variant rounds (000173 DB CHECK blocks the combo).
+  has_personalisation: boolean
   materials: { display_quantities: number[] } | null
   // Denormalised hot-path indicator (migration 000103) populated
   // by the send-helpscout-reply edge function on a successful HS
@@ -157,6 +165,14 @@ export default function VersionDetailModal({
   // different version refreshes both fetches.
   const [variantRows, setVariantRows] = useState<PublicMaterialVariant[]>([])
   const [tierRows, setTierRows] = useState<PublicPriceTier[]>([])
+  // Option-surcharge and personalisation reads fold into loadPricing
+  // alongside the variants/tiers fetch (PV-2026W21-001). Customer-page
+  // parity for finish surcharges (steel/gold mirror/brushed,
+  // carbon-fibre CNC, etc.) and membership personalisation. Empty map
+  // / null = "no surcharge to layer", matching the customer page's
+  // base-tab and non-personalised behaviour.
+  const [optionQuantitySurcharges, setOptionQuantitySurcharges] = useState<Record<number, number>>({})
+  const [personalisationPricing, setPersonalisationPricing] = useState<PersonalisationPricing | null>(null)
   const [loadingPricing, setLoadingPricing] = useState(true)
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const [deleteState, setDeleteState] = useState<'idle' | 'confirm' | 'working'>('idle')
@@ -307,6 +323,53 @@ export default function VersionDetailModal({
       } else {
         setTierRows([])
       }
+
+      // Per-version finish/option surcharges (PV-2026W21-001). Mirrors
+      // CustomerProofPage's optionSurcharges reducer (line ~2167):
+      // pick the active option (first entry in material_options, or
+      // fall back to the material's base option if the version has
+      // none) and reduce its rows for this currency to a
+      // { quantity: surcharge } map. Empty map when there are no
+      // options on this material or no rows match.
+      const { data: optionData } = await supabase
+        .from('public_material_options')
+        .select('*')
+        .eq('material_id', version.material_id)
+        .order('sort_order')
+      const options = (optionData ?? []) as PublicMaterialOption[]
+      const activeOptionCode = version.material_options[0] ?? null
+      const activeOption = activeOptionCode
+        ? options.find((o) => o.code === activeOptionCode) ?? null
+        : options.find((o) => o.is_base) ?? null
+
+      if (activeOption) {
+        const { data: surchargeData } = await supabase
+          .from('public_material_option_surcharges')
+          .select('*')
+          .eq('material_option_id', activeOption.id)
+          .eq('currency', version.currency)
+        const surcharges: Record<number, number> = {}
+        for (const row of (surchargeData ?? []) as PublicMaterialOptionSurcharge[]) {
+          surcharges[row.quantity] = row.surcharge
+        }
+        setOptionQuantitySurcharges(surcharges)
+      } else {
+        setOptionQuantitySurcharges({})
+      }
+
+      // Personalisation pricing (PV-2026W21-001). Mirrors
+      // CustomerProofPage's activePersonalisationPricing reducer
+      // (line ~2182): one row per currency, live (never snapshotted)
+      // so admin rate edits take effect immediately. The
+      // has_personalisation gate is applied at the render call site
+      // so this fetch can warm the cache even on a flag-off version
+      // (cheap, single .maybeSingle() row).
+      const { data: personalisationData } = await supabase
+        .from('personalisation_pricing')
+        .select('per_card_rate, min_charge')
+        .eq('currency', version.currency)
+        .maybeSingle()
+      setPersonalisationPricing((personalisationData ?? null) as PersonalisationPricing | null)
     } finally {
       setLoadingPricing(false)
     }
@@ -824,6 +887,13 @@ export default function VersionDetailModal({
                     // rows that somehow predate the trigger.
                     currency={(version.currency ?? 'GBP') as Currency}
                     displayQuantities={displayQuantities}
+                    quantitySurcharges={optionQuantitySurcharges}
+                    // has_personalisation gate keeps the surcharge
+                    // off a version that hasn't opted in, even if a
+                    // row exists in personalisation_pricing for this
+                    // currency (the table is admin-managed and seeded
+                    // for every currency, so the flag does the gating).
+                    personalisationPricing={version.has_personalisation ? personalisationPricing : null}
                   />
                 )}
                 <div className="border-t border-gray-100 px-6 py-3">
