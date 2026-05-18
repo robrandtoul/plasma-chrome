@@ -1024,12 +1024,18 @@ export default function NewVersionPage() {
         //               convention — see state declaration above)
         setCardType(inherited.card_type)
         // Personalisation flag carries across version bumps. The
-        // form gate (material + cardType) still applies on render,
-        // so an inherited true will visually disappear if the new
-        // version flips cardType to business or swaps to a material
-        // that doesn't support personalisation. The persisted value
-        // remains until save resolves the gate.
-        setHasPersonalisation(!!inherited.has_personalisation)
+        // form gate (material + cardType + !isVariantRound) still
+        // applies on render, so an inherited true will visually
+        // disappear if the new version flips cardType to business,
+        // swaps to a material that doesn't support personalisation,
+        // or flips into variant-round mode. The persisted value
+        // remains until save resolves the gate. Inheriting from a
+        // variant-round source is impossible at the DB level
+        // (000173 CHECK), so the gate only matters when the new
+        // version itself flips to variant-round.
+        setHasPersonalisation(
+          !!inherited.has_personalisation && !isVariantRoundSource,
+        )
         // Default the snapshot to the v1 state-defaults — only
         // overwritten if there's at least one v1 image to derive
         // from (matches the actual setSidedness/setShared paths).
@@ -4968,11 +4974,15 @@ export default function NewVersionPage() {
 
             {/* Personalisation add-on (migration 000172). Visible only
                 when the material supports it, the version is a
-                membership card, and it isn't a custom-quote. Hidden
-                (not disabled) when the gate isn't met. */}
+                membership card, and it isn't a custom-quote or a
+                variant round. Hidden (not disabled) when the gate
+                isn't met. The variant-round gate is also enforced
+                at the DB level by the CHECK constraint added in
+                000173 (mirrors EditVersionPage). */}
             {selectedMaterial?.supports_personalisation
               && cardType === 'membership'
-              && !isCustomQuote && (
+              && !isCustomQuote
+              && !isVariantRound && (
               <div className="mt-10">
                 <h3 className="text-base font-semibold text-gray-900">Personalisation</h3>
                 <p className="mt-0.5 text-xs text-gray-500">
