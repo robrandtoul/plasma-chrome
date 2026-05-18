@@ -356,6 +356,21 @@ export default function EditProfileModal({
                   <button
                     type="button"
                     onClick={async () => {
+                      // Delete the object first so the public bucket
+                      // doesn't keep an orphan file after avatar_url is
+                      // nulled (PV-2026W21-076). A 404 is fine — it
+                      // just means the row was nulled outside of this
+                      // session. Any other error is logged as a warning
+                      // but doesn't block the profile UPDATE: the row
+                      // reference should still clear so the UI stops
+                      // referring to a file we can't manage.
+                      const { error: storageErr } = await supabase
+                        .storage
+                        .from('avatars')
+                        .remove([`${userId}/avatar`])
+                      if (storageErr && !/not\s*found/i.test(storageErr.message)) {
+                        console.warn('[avatar] storage remove failed:', storageErr.message)
+                      }
                       const { error } = await supabase
                         .from('profiles')
                         .update({ avatar_url: null })
