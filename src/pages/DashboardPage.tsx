@@ -149,7 +149,7 @@ function viewedStateFor(p: DashboardProject): ViewedState {
 const COLOUR_CLASSES: Record<DesignerColour, string> = {
   blue:   'bg-sky-100 text-sky-800 ring-sky-200',
   teal:   'bg-teal-100 text-teal-800 ring-teal-200',
-  coral:  'bg-rose-100 text-rose-800 ring-rose-200',
+  coral:  'bg-orange-100 text-orange-800 ring-orange-200',
   purple: 'bg-violet-100 text-violet-800 ring-violet-200',
 }
 
