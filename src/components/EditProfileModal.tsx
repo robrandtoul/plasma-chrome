@@ -408,16 +408,21 @@ export default function EditProfileModal({
                           targetId:    userId,
                           targetLabel: fullName || undefined,
                         })
-                        // Mirror the immediate DB write to the parent so the
-                        // dashboard header re-renders with initials right
-                        // away. Without this, closing via Cancel after a
-                        // Remove photo leaves the stale avatar visible in
-                        // the header until the next dashboard refetch.
+                        // Refetch the canonical row state before calling
+                        // onSaved so any unsaved edits to the form fields
+                        // (name/initials/colour) don't leak into the
+                        // payload (PV-2026W21-080). Falls back to current
+                        // in-memory values if the refetch fails.
+                        const { data: latest } = await supabase
+                          .from('profiles')
+                          .select('full_name, designer_initials, designer_colour, avatar_url')
+                          .eq('id', userId)
+                          .single()
                         onSaved({
-                          initials,
-                          colour,
-                          fullName,
-                          avatarUrl: null,
+                          initials:  (latest?.designer_initials ?? initials).slice(0, 2),
+                          colour:    (latest?.designer_colour ?? colour) as DesignerColour,
+                          fullName:  latest?.full_name ?? fullName,
+                          avatarUrl: latest?.avatar_url ?? null,
                         })
                       }
                     }}
