@@ -417,6 +417,7 @@ export default function ProofDetailPage() {
           .from('proof_version_images')
           .select('id, image_path, original_filename, associated_name, side, proof_version_id')
           .in('proof_version_id', versionIds)
+          .eq('is_qr_code', false)
         if (isStale()) return
 
         const approvalTuples = new Set(
@@ -472,6 +473,7 @@ export default function ProofDetailPage() {
         .select('proof_version_id')
         .in('proof_version_id', versionIds)
         .is('associated_name', null)
+        .eq('is_qr_code', false)
       if (isStale()) return
       const set = new Set<string>()
       for (const r of (sharedRows ?? []) as { proof_version_id: string }[]) {
@@ -561,6 +563,7 @@ export default function ProofDetailPage() {
         .select('id')
         .eq('proof_version_id', currentVersion.id)
         .is('associated_name', null)
+        .eq('is_qr_code', false)
         .limit(1)
       const hasShared = (sharedRows?.length ?? 0) > 0
 

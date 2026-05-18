@@ -149,6 +149,13 @@ export default function EditVersionPage() {
   const [editImagesByOption, setEditImagesByOption] = useState<Record<string, EditImage[]>>({ '': [] })
   const [activeImageOption, setActiveImageOption] = useState('')
   const [originalImageIds, setOriginalImageIds] = useState<Set<string>>(new Set())
+  // Snapshot of each existing artwork image's associated_name at load
+  // time. Used at save time to detect whether any kept artwork row's
+  // slot assignment shifted — one of the three triggers for
+  // invalidating qr_confirmed_at (alongside artwork add and remove).
+  // A QR confirmation was given on top of the artwork visible to the
+  // slot; any mutation to that surface means the prior tick is stale.
+  const [originalArtworkAssocById, setOriginalArtworkAssocById] = useState<Record<string, string | null>>({})
   // Migration 000168. QR codes loaded into a separate bucket so the
   // artwork image-grid editor (editImagesByOption) doesn't have to
   // know about them. originalQrIds backs the "what got removed?"
@@ -324,6 +331,9 @@ export default function EditVersionPage() {
     const rawQrRows = allRawRows.filter((img) => img.is_qr_code === true)
     const ids = new Set(rawImages.map((img) => img.id))
     setOriginalImageIds(ids)
+    setOriginalArtworkAssocById(
+      Object.fromEntries(rawImages.map((img) => [img.id, img.associated_name])),
+    )
     setOriginalQrIds(new Set(rawQrRows.map((img) => img.id)))
     setOriginalQrAssocByEntryId(
       Object.fromEntries(rawQrRows.map((img) => [img.id, img.associated_name])),
@@ -1315,24 +1325,46 @@ export default function EditVersionPage() {
     // (the auto-finalize predicate then declines the slot until the
     // customer ticks again on the updated set).
     //
-    // Detection covers the three QR-mutation paths above:
-    //   * removedQrIds.length > 0 — slot's set shrank
-    //   * newQrEntries.length > 0 — slot's set grew
+    // Detection covers QR-set mutations AND artwork mutations. A QR
+    // confirmation was ticked on top of a specific artwork surface;
+    // if either side of that surface changes, the prior tick no
+    // longer corresponds to what the customer last saw:
+    //   * removedQrIds.length > 0 — QR set shrank
+    //   * newQrEntries.length > 0 — QR set grew
     //   * any kept existing QR's associated_name differs from the
     //     load-time snapshot — slot membership shifted even though
     //     the file set is unchanged
+    //   * removedIds.length > 0 — an artwork image was deleted
+    //   * newImages.length > 0 — a fresh artwork image was added
+    //   * any kept existing artwork row's associated_name differs
+    //     from the load-time snapshot — artwork moved between slots
     //
     // Cautious-but-safe: nulls qr_confirmed_at across every slot on
     // the version rather than per-slot. Adding/removing a Shared QR
     // affects every named slot's QR set anyway, and per-slot diffing
-    // would mostly converge on the same result with more code.
+    // would mostly converge on the same result with more code. The
+    // single UPDATE is cheap, so the wider trigger is essentially
+    // free.
     const qrAssocChanged = qrEntries.some((entry) => {
       if (entry.source !== 'existing') return false
       const original = originalQrAssocByEntryId[entry.id]
       return original !== entry.associatedName
     })
+    const artworkAssocChanged = Object.values(editImagesByOption)
+      .flat()
+      .some((img) => {
+        if (img.kind !== 'existing') return false
+        const original = originalArtworkAssocById[img.id]
+        if (original === undefined) return false
+        return original !== img.associated_name
+      })
     const qrSetMutated =
-      removedQrIds.length > 0 || newQrEntries.length > 0 || qrAssocChanged
+      removedQrIds.length > 0
+      || newQrEntries.length > 0
+      || qrAssocChanged
+      || removedIds.length > 0
+      || newImages.length > 0
+      || artworkAssocChanged
     if (qrSetMutated) {
       const { error: qrConfirmInvalidateErr } = await supabase
         .from('proof_name_approvals')

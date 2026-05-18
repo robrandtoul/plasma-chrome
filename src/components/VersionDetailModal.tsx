@@ -230,6 +230,7 @@ export default function VersionDetailModal({
       .from('proof_version_images')
       .select('id, proof_version_id, image_path, sort_order, associated_name, material_option')
       .eq('proof_version_id', version.id)
+      .eq('is_qr_code', false)
       .order('sort_order')
 
     if (!data?.length) {

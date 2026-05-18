@@ -67,6 +67,12 @@ export default function HelpScoutEditModal({
   const [urlFormatError, setUrlFormatError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  // Tracks whether the current link resolution came from the designer
+  // typing/pasting a URL into the input. Auto-applied lookups and
+  // picker selections leave this false. Drives the audit metadata's
+  // `source` field on link_set so attribution mirrors the pattern
+  // PV-2026W20-001 introduced in NewProofPage.
+  const [pasteWasUsed, setPasteWasUsed] = useState(false)
   const lookupRan = useRef(false)
 
   // Esc handling is owned by the Modal primitive; preventClose
@@ -119,6 +125,7 @@ export default function HelpScoutEditModal({
     setHsLookupReturnedZero(false)
     setOverrideReason('')
     setUrlFormatError(null)
+    setPasteWasUsed(false)
   }
 
   function clearLink() {
@@ -126,6 +133,7 @@ export default function HelpScoutEditModal({
     setHsLinkedSubject(null)
     setHsPickerOpen(false)
     setHsPickerMatches([])
+    setPasteWasUsed(false)
   }
 
   function switchToOverride() {
@@ -216,7 +224,12 @@ export default function HelpScoutEditModal({
               helpscout_conversation_url: resolvedConvoUrl,
             },
             metadata: {
-              source: hsPickerMatches.length > 0 ? 'picker' : hsLinkedSubject ? 'auto' : 'manual',
+              // Picker selections clear hsPickerMatches via
+              // applyMatch before save runs, so the
+              // hsPickerMatches.length>0 branch was unreachable.
+              // Picker resolutions audit as 'auto', same as the
+              // single-match auto-apply path.
+              source: pasteWasUsed ? 'paste' : 'auto',
             },
           })
         }
@@ -316,6 +329,7 @@ export default function HelpScoutEditModal({
                       setHsLinkedSubject(`Conversation #${parsed.id}`)
                     }
                     setHsLookupReturnedZero(false)
+                    setPasteWasUsed(true)
                   } else {
                     clearLink()
                   }

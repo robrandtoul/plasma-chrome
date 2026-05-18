@@ -790,13 +790,17 @@ export default function NewProofPage() {
           metadata: {
             helpscout_conversation_id:  resolvedConvoId,
             helpscout_conversation_url: resolvedConvoUrl,
+            // Picker selections clear hsPickerMatches via
+            // applyHelpscoutMatch before save runs, so the
+            // hsPickerMatches.length>0 branch was unreachable.
+            // Picker resolutions audit as 'auto' (same as the
+            // single-match auto-apply path) since both end with
+            // hsLookupEmail set and the link populated.
             source: pasteWasUsed
               ? 'paste'
-              : hsPickerMatches.length > 0
-                ? 'picker'
-                : hsLookupEmail
-                  ? 'auto'
-                  : 'manual',
+              : hsLookupEmail
+                ? 'auto'
+                : 'manual',
           },
         })
       } else if (resolvedOverride) {

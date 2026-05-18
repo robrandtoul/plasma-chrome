@@ -292,6 +292,34 @@ test('whitespace name in v2 roster still flags the v1 name', () => {
   assertSetEquals(result, ['Bill'])
 })
 
+test('invalidV1RowIds flags the slot of an option-universe-dropped image', () => {
+  // Page-level guard (PV-2026W21-084): a v1 image whose
+  // material_option no longer maps to v2's selected tabs is
+  // effectively dropped on save, so the QR auto-unkeep + amber
+  // notice should fire for its slot.
+  const v1 = v1CarryWith(['Bob', 'Bill'], [
+    v1Image('img-bob', 'Bob'),
+    v1Image('img-bill', 'Bill'),
+  ])
+  const result = computeQrArtworkChangedSlots(
+    v1,
+    {},
+    {},
+    { '': [] },
+    ['Bob', 'Bill'],
+    new Set(['img-bill']),
+  )
+  assertSetEquals(result, ['Bill'], "Bill's option dropped, slot flagged")
+})
+
+test('invalidV1RowIds undefined leaves the result unchanged', () => {
+  // Backwards-compat sanity: callers that don't pass the optional
+  // sixth parameter behave exactly like before.
+  const v1 = v1CarryWith(['Bob'], [v1Image('img-bob', 'Bob')])
+  const result = computeQrArtworkChangedSlots(v1, {}, {}, { '': [] }, ['Bob'])
+  assertSetEquals(result, [])
+})
+
 // ── isQrSlotFlagged ───────────────────────────────────────────────────────────
 
 console.log('\nisQrSlotFlagged')

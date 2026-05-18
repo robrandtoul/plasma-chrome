@@ -419,13 +419,25 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false }: SnoozeButtonProps
   }
   const ref = useRef<HTMLDivElement>(null)
 
+  // Shared dismissal path. Every close — outside click, Escape,
+  // explicit Close button — drops the popover back to a clean state
+  // so reopening doesn't surface a stale half-typed note or a
+  // custom-date row left mid-entry. handleSnooze hits the same
+  // path after a successful save.
+  function resetState() {
+    setOpen(false)
+    setNote('')
+    setCustomMode(false)
+    setCustomDate('')
+  }
+
   useEffect(() => {
     if (!open) return
     function onDocClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      if (ref.current && !ref.current.contains(e.target as Node)) resetState()
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') resetState()
     }
     document.addEventListener('mousedown', onDocClick)
     document.addEventListener('keydown', onKey)
@@ -440,10 +452,7 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false }: SnoozeButtonProps
     setSaving(true)
     try {
       await onSnooze(proof.proof_id, proof.rule_code, hours, note)
-      setNote('')
-      setCustomMode(false)
-      setCustomDate('')
-      setOpen(false)
+      resetState()
     } catch (err) {
       console.error('[SnoozeButton] onSnooze failed:', err)
     } finally {
@@ -461,9 +470,7 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false }: SnoozeButtonProps
 
   function handleClose(e: React.MouseEvent) {
     e.stopPropagation()
-    setOpen(false)
-    setCustomMode(false)
-    setCustomDate('')
+    resetState()
   }
 
   return (

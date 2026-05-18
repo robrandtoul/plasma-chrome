@@ -1024,12 +1024,18 @@ export default function NewVersionPage() {
         //               convention — see state declaration above)
         setCardType(inherited.card_type)
         // Personalisation flag carries across version bumps. The
-        // form gate (material + cardType) still applies on render,
-        // so an inherited true will visually disappear if the new
-        // version flips cardType to business or swaps to a material
-        // that doesn't support personalisation. The persisted value
-        // remains until save resolves the gate.
-        setHasPersonalisation(!!inherited.has_personalisation)
+        // form gate (material + cardType + !isVariantRound) still
+        // applies on render, so an inherited true will visually
+        // disappear if the new version flips cardType to business,
+        // swaps to a material that doesn't support personalisation,
+        // or flips into variant-round mode. The persisted value
+        // remains until save resolves the gate. Inheriting from a
+        // variant-round source is impossible at the DB level
+        // (000173 CHECK), so the gate only matters when the new
+        // version itself flips to variant-round.
+        setHasPersonalisation(
+          !!inherited.has_personalisation && !isVariantRoundSource,
+        )
         // Default the snapshot to the v1 state-defaults — only
         // overwritten if there's at least one v1 image to derive
         // from (matches the actual setSidedness/setShared paths).
@@ -3198,12 +3204,20 @@ export default function NewVersionPage() {
     // the same helper so save and UI agree exactly. New entries
     // are always kept (designer added them deliberately on this
     // version); the auto-rule only governs existing entries.
+    const invalidV1RowIdsForSave = v1Carry
+      ? new Set(
+          v1Carry.images
+            .filter((img) => !carryOptionStillValid(img))
+            .map((img) => img.v1RowId),
+        )
+      : undefined
     const artworkChangedSlotsForSave = computeQrArtworkChangedSlots(
       v1Carry,
       keepByV1RowId,
       replacementByV1RowId,
       imagesByOption,
       names.map((n) => n.trim()).filter(Boolean),
+      invalidV1RowIdsForSave,
     )
     const isQrEntryKept = (entry: QrEntry): boolean => {
       if (entry.source !== 'existing') return true
@@ -3389,7 +3403,8 @@ export default function NewVersionPage() {
             (img) =>
               (keepByV1RowId[img.v1RowId] ?? true) &&
               !replacementByV1RowId[img.v1RowId] &&
-              carrySlotStillValid(img),
+              carrySlotStillValid(img) &&
+              carryOptionStillValid(img),
           )
           if (!allCarried) continue
 
@@ -3918,12 +3933,34 @@ export default function NewVersionPage() {
   // auto-rule (keep=true unless the entry's slot is in
   // artworkChangedSlots). Both inputs feed handleSubmit through the
   // same helper, so save-time filtering can't drift from the UI.
+  // Mirror the save-path carryOptionStillValid guard so the render-
+  // side amber notice + auto-unkeep fires when a v1 image's option no
+  // longer maps to v2's selected tabs. Same predicate as in
+  // handleSubmit; kept inline here to avoid lifting closure state.
+  const renderOptionKeys = optionMode ? selectedOptions : ['']
+  const invalidV1RowIds = v1Carry
+    ? new Set(
+        v1Carry.images
+          .filter((img) => {
+            const imgOption = img.material_option ?? ''
+            if (renderOptionKeys.includes(imgOption)) return false
+            const firstSelectedOption = selectedOptions[0] ?? ''
+            return !(
+              v1Carry.sourceIsVariantRound === true &&
+              img.material_option == null &&
+              firstSelectedOption !== ''
+            )
+          })
+          .map((img) => img.v1RowId),
+      )
+    : undefined
   const artworkChangedSlots = computeQrArtworkChangedSlots(
     v1Carry,
     keepByV1RowId,
     replacementByV1RowId,
     imagesByOption,
     names.map((n) => n.trim()).filter(Boolean),
+    invalidV1RowIds,
   )
 
   const displayQrEntries: QrEntry[] = qrEntries.map((entry) => {
@@ -4303,6 +4340,24 @@ export default function NewVersionPage() {
                             { key: uuidv4(), display_name: '', frontFiles: [], backFiles: null },
                             { key: uuidv4(), display_name: '', frontFiles: [], backFiles: null },
                           ])
+                        }
+                        // The QR section is hidden in variant-round
+                        // mode, but a pending state survives the
+                        // flip and would silently re-emerge on a
+                        // flip back to Standard, including any new-
+                        // entry object URLs that leak memory. Clear
+                        // qrEntries and revoke new previews so the
+                        // state transition is clean.
+                        if (opt.value) {
+                          setQrEntries((prev) => {
+                            for (const e of prev) {
+                              if (e.source === 'new' && e.previewUrl) {
+                                URL.revokeObjectURL(e.previewUrl)
+                              }
+                            }
+                            return []
+                          })
+                          setQrKeepOverrides({})
                         }
                       }}
                       className="sr-only"
@@ -4937,11 +4992,15 @@ export default function NewVersionPage() {
 
             {/* Personalisation add-on (migration 000172). Visible only
                 when the material supports it, the version is a
-                membership card, and it isn't a custom-quote. Hidden
-                (not disabled) when the gate isn't met. */}
+                membership card, and it isn't a custom-quote or a
+                variant round. Hidden (not disabled) when the gate
+                isn't met. The variant-round gate is also enforced
+                at the DB level by the CHECK constraint added in
+                000173 (mirrors EditVersionPage). */}
             {selectedMaterial?.supports_personalisation
               && cardType === 'membership'
-              && !isCustomQuote && (
+              && !isCustomQuote
+              && !isVariantRound && (
               <div className="mt-10">
                 <h3 className="text-base font-semibold text-gray-900">Personalisation</h3>
                 <p className="mt-0.5 text-xs text-gray-500">

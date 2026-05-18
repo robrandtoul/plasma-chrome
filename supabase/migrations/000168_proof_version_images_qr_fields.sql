@@ -134,6 +134,13 @@ create view public_proof_version_images as
 -- function reads under service-role and bypasses grants entirely.
 -- Re-grant authenticated for designer-side reads (NewVersionPage,
 -- EditVersionPage, VersionDetailModal, ProofDetailPage).
+--
+-- Drop+recreate wipes the 000162 anon revoke that the previous
+-- view carried, so restate it explicitly here. Without this the
+-- view would default-grant select to anon between 000168 and the
+-- live remediation in 000174 — captured as PV-2026W21-052 to keep
+-- the file self-contained and replay-safe.
+revoke select on public_proof_version_images from anon, public;
 grant select on public_proof_version_images to authenticated;
 
 commit;

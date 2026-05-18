@@ -1,4 +1,4 @@
--- Migration 000179: set security_invoker = on for the 11 public-schema views.
+-- Migration 000181: set security_invoker = on for the 11 public-schema views.
 --
 -- ── What the Supabase advisor is flagging ────────────────────────────
 --

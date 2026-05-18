@@ -54,6 +54,8 @@ export interface QrCarryContext {
  * A slot is considered modified when ANY of the following applies:
  *   * one of its v1 images has been unkept (keep toggle off)
  *   * one of its v1 images has a queued replacement
+ *   * one of its v1 images has fallen out of v2's option universe
+ *     (its material_option no longer maps to a selected option tab)
  *   * the slot's recipient name has been removed from v2's roster
  *   * a fresh image entry has been added to the slot in v2
  *
@@ -70,18 +72,21 @@ export function computeQrArtworkChangedSlots(
   replacementByV1RowId: Record<string, unknown>,
   freshEntriesByOption: Record<string, QrCarryFreshEntry[]>,
   v2Names: string[],
+  invalidV1RowIds?: Set<string>,
 ): Set<string> {
   const set = new Set<string>()
   if (!v1Carry) return set
   const v2NameSet = new Set(v2Names)
 
-  // v1 images the designer has unkept or queued a replacement for.
-  // Either signal independently invalidates the slot's carry.
+  // v1 images the designer has unkept, queued a replacement for, or
+  // that have fallen out of v2's option universe. Any of the three
+  // signals independently invalidates the slot's carry.
   for (const img of v1Carry.images) {
     const slotKey = img.associated_name ?? SHARED_APPROVAL_KEY
     const isKept = keepByV1RowId[img.v1RowId] ?? true
     const hasReplacement = !!replacementByV1RowId[img.v1RowId]
-    if (!isKept || hasReplacement) set.add(slotKey)
+    const isInvalid = invalidV1RowIds?.has(img.v1RowId) ?? false
+    if (!isKept || hasReplacement || isInvalid) set.add(slotKey)
   }
 
   // Names that existed on v1 but are no longer in v2's roster.

@@ -106,6 +106,10 @@ export function groupByTime(projects: DashboardProject[]): ProjectSection[] {
   const older: DashboardProject[] = []
   for (const p of projects) {
     const ts = p.last_activity_at
+    if (!ts) {
+      older.push(p)
+      continue
+    }
     if (recentlyAwakened(p) || isSameDay(ts)) today.push(p)
     else if (isThisWeek(ts))                  week.push(p)
     else                                       older.push(p)
