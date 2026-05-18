@@ -28,6 +28,7 @@ import {
   fetchConversation,
   fetchCustomer,
   getAccessToken,
+  HsError,
   type HsCustomer,
 } from '../_shared/helpscout.ts'
 
@@ -58,7 +59,7 @@ async function resolveNumberToId(token: string, conversationNumber: string): Pro
   })
   if (!resp.ok) {
     const text = await resp.text()
-    throw new Error(`Help Scout search error (${resp.status}): ${text}`)
+    throw new HsError(resp.status, `Help Scout search error (${resp.status}): ${text}`)
   }
   const data = await resp.json()
   const convs = (data?._embedded?.conversations ?? []) as Array<{ id: number }>
@@ -146,7 +147,11 @@ Deno.serve(async (req) => {
       } : null,
     })
   } catch (err) {
-    console.error('lookup-helpscout-conversation error:', err)
+    if (err instanceof HsError) {
+      console.error('lookup-helpscout-conversation: HsError', err.status, err.message)
+      return json({ error: err.message }, err.status >= 400 && err.status < 600 ? err.status : 502)
+    }
+    console.error('lookup-helpscout-conversation: unexpected error', err)
     return json({ error: (err as Error).message ?? 'Unknown error' }, 502)
   }
 })
