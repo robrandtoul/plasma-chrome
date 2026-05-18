@@ -183,6 +183,17 @@ export default function EditProfileModal({
     }
 
     setAvatarUrl(urlWithBuster)
+    // Mirror the immediate DB write to the parent so the dashboard
+    // header re-renders with the new photo right away. Without this,
+    // closing via Cancel after upload leaves the header showing
+    // initials until the next dashboard refetch (PV-2026W21-078;
+    // matches the same pattern on Remove photo).
+    onSaved({
+      initials,
+      colour,
+      fullName,
+      avatarUrl: urlWithBuster,
+    })
     // Audit log (PV-2026W21-075). Designer self-edited their own avatar;
     // record size + content-type as metadata, no diff payload because
     // avatar bytes aren't meaningfully diffable.
