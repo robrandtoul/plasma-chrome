@@ -23,6 +23,7 @@ import {
   groupByTime,
   groupByCompany,
   buildSnoozedSection,
+  isCurrentlySnoozed,
   type DashboardProject,
   type DesignerColour,
   type NeedsAttentionRule,
@@ -149,7 +150,7 @@ function viewedStateFor(p: DashboardProject): ViewedState {
 const COLOUR_CLASSES: Record<DesignerColour, string> = {
   blue:   'bg-sky-100 text-sky-800 ring-sky-200',
   teal:   'bg-teal-100 text-teal-800 ring-teal-200',
-  coral:  'bg-rose-100 text-rose-800 ring-rose-200',
+  coral:  'bg-orange-100 text-orange-800 ring-orange-200',
   purple: 'bg-violet-100 text-violet-800 ring-violet-200',
 }
 
@@ -258,6 +259,7 @@ interface OverflowMenuProps {
   teamPinned: boolean
   onToggleMinePin: (proofId: string) => void
   onToggleTeamPin: (proofId: string) => void
+  onSnooze: (proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) => Promise<void>
   onUnsnooze: (proofId: string, ruleCode: NeedsAttentionRule) => Promise<void>
 }
 
@@ -268,6 +270,7 @@ function OverflowMenu({
   teamPinned,
   onToggleMinePin,
   onToggleTeamPin,
+  onSnooze,
   onUnsnooze,
 }: OverflowMenuProps) {
   const [open, setOpen] = useState(false)
@@ -304,7 +307,7 @@ function OverflowMenu({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-9 z-10 w-56 overflow-hidden rounded-lg bg-white py-1 text-sm shadow-lg ring-1 ring-gray-200"
+          className="absolute right-0 top-9 z-10 w-56 rounded-lg bg-white py-1 text-sm shadow-lg ring-1 ring-gray-200"
           onClick={(e) => e.stopPropagation()}
         >
           {proof.current_version_id ? (
@@ -370,6 +373,11 @@ function OverflowMenu({
               Unsnooze
             </button>
           )}
+          {proof.rule_code && !proof.snoozed_until && (
+            <div className="border-t border-gray-100">
+              <SnoozeButton proof={proof} onSnooze={onSnooze} menuStyle />
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -392,9 +400,14 @@ interface SnoozeButtonProps {
   // action strip. Default (false) renders the smaller amber button used
   // next to the attention chip on narrow screens.
   stripStyle?: boolean
+  // menuStyle: renders the trigger as a full-width left-aligned menu item
+  // (clock icon + "Snooze" text), styled to match the surrounding entries
+  // in OverflowMenu. Used on narrow viewports where the action strip is
+  // hidden and the snooze action has to be reachable from the ⋯ menu.
+  menuStyle?: boolean
 }
 
-function SnoozeButton({ proof, onSnooze, stripStyle = false }: SnoozeButtonProps) {
+function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }: SnoozeButtonProps) {
   const [open, setOpen]       = useState(false)
   const [note, setNote]       = useState('')
   const [saving, setSaving]   = useState(false)
@@ -475,26 +488,39 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false }: SnoozeButtonProps
 
   return (
     <div className="relative" ref={ref}>
-      <button
-        type="button"
-        aria-label="Snooze this alert"
-        title="Snooze this alert"
-        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
-        className={
-          stripStyle
-            ? 'flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900'
-            : 'flex h-5 w-5 items-center justify-center rounded-full text-amber-600 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500'
-        }
-      >
-        <ClockIcon className={stripStyle ? 'h-4 w-4' : 'h-3 w-3'} />
-      </button>
+      {menuStyle ? (
+        <button
+          type="button"
+          role="menuitem"
+          aria-label="Snooze this alert"
+          onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-gray-700 hover:bg-gray-100"
+        >
+          <ClockIcon className="h-4 w-4 shrink-0 text-gray-400" />
+          <span>Snooze</span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          aria-label="Snooze this alert"
+          title="Snooze this alert"
+          onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
+          className={
+            stripStyle
+              ? 'flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900'
+              : 'flex h-5 w-5 items-center justify-center rounded-full text-amber-600 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500'
+          }
+        >
+          <ClockIcon className={stripStyle ? 'h-4 w-4' : 'h-3 w-3'} />
+        </button>
+      )}
       {open && (
         <div
           role="dialog"
           aria-label="Snooze options"
           className={[
-            'absolute z-20 w-56 overflow-hidden rounded-lg bg-white py-2 shadow-lg ring-1 ring-gray-200',
-            stripStyle ? 'right-0 top-8' : 'left-0 top-6',
+            'absolute z-30 w-56 overflow-hidden rounded-lg bg-white py-2 shadow-lg ring-1 ring-gray-200',
+            menuStyle ? 'right-0 top-full mt-1' : stripStyle ? 'right-0 top-8' : 'left-0 top-6',
           ].join(' ')}
           onClick={(e) => e.stopPropagation()}
         >
@@ -680,6 +706,7 @@ function ProjectRow({
         teamPinned={teamPinned}
         onToggleMinePin={onToggleMinePin}
         onToggleTeamPin={onToggleTeamPin}
+        onSnooze={onSnooze}
         onUnsnooze={onUnsnooze}
       />
     </div>
@@ -1338,14 +1365,17 @@ export default function DashboardPage() {
   }, [projects])
 
   // Tile counts — all computed client-side so counts and filters use exactly
-  // the same predicates. Snoozed projects are always excluded: they live in
-  // the dedicated Snoozed section regardless of their other state.
-  // Needs-attention projects are excluded from every other tile so each
-  // project belongs to exactly one tile.
+  // the same predicates. Currently-snoozed projects are always excluded:
+  // they live in the dedicated Snoozed section regardless of their other
+  // state. Note `isCurrentlySnoozed` rather than `snoozed_until == null`:
+  // 000186 widened the view's lateral so recently-expired snoozes still
+  // surface snoozed_until for the 24-hour grace window that powers
+  // recentlyAwakened(). Needs-attention projects are excluded from every
+  // other tile so each project belongs to exactly one tile.
   const needsAttentionCount = useMemo(() =>
     projects.filter((p) =>
       p.rule_code != null &&
-      p.snoozed_until == null &&
+      !isCurrentlySnoozed(p) &&
       (showAbandoned || p.status !== 'abandoned')
     ).length,
   [projects, showAbandoned])
@@ -1355,7 +1385,7 @@ export default function DashboardPage() {
       const isActive = p.status === 'in_progress' || p.status === 'dormant'
       return (
         p.rule_code == null &&
-        p.snoozed_until == null &&
+        !isCurrentlySnoozed(p) &&
         isActive &&
         p.current_version_id !== null &&
         p.current_version_viewed_at === null
@@ -1366,7 +1396,7 @@ export default function DashboardPage() {
   const awaitingCustomerCount = useMemo(() =>
     projects.filter((p) =>
       p.rule_code == null &&
-      p.snoozed_until == null &&
+      !isCurrentlySnoozed(p) &&
       p.status === 'in_progress' &&
       p.current_version_id !== null &&
       p.current_version_viewed_at !== null
@@ -1384,7 +1414,7 @@ export default function DashboardPage() {
   const changesRequestedCount = useMemo(() =>
     projects.filter((p) => {
       if (p.rule_code != null) return false
-      if (p.snoozed_until != null) return false
+      if (isCurrentlySnoozed(p)) return false
       if (p.status !== 'in_progress') return false
       if (p.latest_event_type !== 'request_changes') return false
       if (!p.latest_event_at || !p.version_created_at) return false
@@ -1395,15 +1425,15 @@ export default function DashboardPage() {
   // Dormant / Approved-this-week counts. Migration 000152's
   // dashboard_tile_counts() returns server-side counts that do not
   // filter snoozed proofs (the snooze filter is applied in 000164's
-  // proofs_needing_attention() only). Computing these client-side
-  // with the same p.snoozed_until == null guard ensures the tile
-  // count matches the number of rows shown when the tile is clicked
-  // (the click-through filter on line 1289 drops snoozed proofs
-  // when any tile filter is active). Mirrors the alignment fix from
-  // PV-2026W19-015 (awaiting_customer) for the remaining two tiles.
+  // proofs_needing_attention() only). Computing these client-side with
+  // the same isCurrentlySnoozed guard ensures the tile count matches
+  // the number of rows shown when the tile is clicked (the click-through
+  // filter below drops currently-snoozed proofs when any tile filter is
+  // active). Mirrors the alignment fix from PV-2026W19-015
+  // (awaiting_customer) for the remaining two tiles.
   const dormantCount = useMemo(() =>
     projects.filter((p) =>
-      p.snoozed_until == null &&
+      !isCurrentlySnoozed(p) &&
       p.status === 'dormant'
     ).length,
   [projects])
@@ -1411,7 +1441,7 @@ export default function DashboardPage() {
   const approvedThisWeekCount = useMemo(() => {
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
     return projects.filter((p) => {
-      if (p.snoozed_until != null) return false
+      if (isCurrentlySnoozed(p)) return false
       if (p.status !== 'approved') return false
       if (!p.approved_at) return false
       return new Date(p.approved_at).getTime() >= sevenDaysAgo
@@ -1432,9 +1462,12 @@ export default function DashboardPage() {
         ].filter(Boolean).join(' ').toLowerCase()
         if (!hay.includes(q)) return false
       }
-      // Snoozed projects always belong to the Snoozed section — exclude from
-      // every tile filter so they don't appear in the main list when a tile is active.
-      if (tileFilter && p.snoozed_until != null) return false
+      // Currently-snoozed projects always belong to the Snoozed section —
+      // exclude them from every tile filter so they don't appear in the main
+      // list when a tile is active. Recently-awakened proofs (snoozed_until
+      // in the 24-hour grace window from 000186) fall through and are
+      // bucketed normally by the tile predicates below.
+      if (tileFilter && isCurrentlySnoozed(p)) return false
       if (tileFilter === 'needs_attention'    && p.rule_code == null) return false
       if (tileFilter === 'awaiting_customer'  && !(p.rule_code == null && p.status === 'in_progress' && p.current_version_id !== null && p.current_version_viewed_at !== null)) return false
       if (tileFilter === 'dormant'            && p.status !== 'dormant') return false
