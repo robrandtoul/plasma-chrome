@@ -258,6 +258,7 @@ interface OverflowMenuProps {
   teamPinned: boolean
   onToggleMinePin: (proofId: string) => void
   onToggleTeamPin: (proofId: string) => void
+  onSnooze: (proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) => Promise<void>
   onUnsnooze: (proofId: string, ruleCode: NeedsAttentionRule) => Promise<void>
 }
 
@@ -268,6 +269,7 @@ function OverflowMenu({
   teamPinned,
   onToggleMinePin,
   onToggleTeamPin,
+  onSnooze,
   onUnsnooze,
 }: OverflowMenuProps) {
   const [open, setOpen] = useState(false)
@@ -304,7 +306,7 @@ function OverflowMenu({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-9 z-10 w-56 overflow-hidden rounded-lg bg-white py-1 text-sm shadow-lg ring-1 ring-gray-200"
+          className="absolute right-0 top-9 z-10 w-56 rounded-lg bg-white py-1 text-sm shadow-lg ring-1 ring-gray-200"
           onClick={(e) => e.stopPropagation()}
         >
           {proof.current_version_id ? (
@@ -370,6 +372,11 @@ function OverflowMenu({
               Unsnooze
             </button>
           )}
+          {proof.rule_code && !proof.snoozed_until && (
+            <div className="border-t border-gray-100">
+              <SnoozeButton proof={proof} onSnooze={onSnooze} menuStyle />
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -392,9 +399,14 @@ interface SnoozeButtonProps {
   // action strip. Default (false) renders the smaller amber button used
   // next to the attention chip on narrow screens.
   stripStyle?: boolean
+  // menuStyle: renders the trigger as a full-width left-aligned menu item
+  // (clock icon + "Snooze" text), styled to match the surrounding entries
+  // in OverflowMenu. Used on narrow viewports where the action strip is
+  // hidden and the snooze action has to be reachable from the ⋯ menu.
+  menuStyle?: boolean
 }
 
-function SnoozeButton({ proof, onSnooze, stripStyle = false }: SnoozeButtonProps) {
+function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }: SnoozeButtonProps) {
   const [open, setOpen]       = useState(false)
   const [note, setNote]       = useState('')
   const [saving, setSaving]   = useState(false)
@@ -475,26 +487,39 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false }: SnoozeButtonProps
 
   return (
     <div className="relative" ref={ref}>
-      <button
-        type="button"
-        aria-label="Snooze this alert"
-        title="Snooze this alert"
-        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
-        className={
-          stripStyle
-            ? 'flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900'
-            : 'flex h-5 w-5 items-center justify-center rounded-full text-amber-600 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500'
-        }
-      >
-        <ClockIcon className={stripStyle ? 'h-4 w-4' : 'h-3 w-3'} />
-      </button>
+      {menuStyle ? (
+        <button
+          type="button"
+          role="menuitem"
+          aria-label="Snooze this alert"
+          onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-gray-700 hover:bg-gray-100"
+        >
+          <ClockIcon className="h-4 w-4 shrink-0 text-gray-400" />
+          <span>Snooze</span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          aria-label="Snooze this alert"
+          title="Snooze this alert"
+          onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
+          className={
+            stripStyle
+              ? 'flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900'
+              : 'flex h-5 w-5 items-center justify-center rounded-full text-amber-600 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500'
+          }
+        >
+          <ClockIcon className={stripStyle ? 'h-4 w-4' : 'h-3 w-3'} />
+        </button>
+      )}
       {open && (
         <div
           role="dialog"
           aria-label="Snooze options"
           className={[
-            'absolute z-20 w-56 overflow-hidden rounded-lg bg-white py-2 shadow-lg ring-1 ring-gray-200',
-            stripStyle ? 'right-0 top-8' : 'left-0 top-6',
+            'absolute z-30 w-56 overflow-hidden rounded-lg bg-white py-2 shadow-lg ring-1 ring-gray-200',
+            menuStyle ? 'right-0 top-full mt-1' : stripStyle ? 'right-0 top-8' : 'left-0 top-6',
           ].join(' ')}
           onClick={(e) => e.stopPropagation()}
         >
@@ -680,6 +705,7 @@ function ProjectRow({
         teamPinned={teamPinned}
         onToggleMinePin={onToggleMinePin}
         onToggleTeamPin={onToggleTeamPin}
+        onSnooze={onSnooze}
         onUnsnooze={onUnsnooze}
       />
     </div>
