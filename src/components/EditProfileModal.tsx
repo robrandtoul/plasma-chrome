@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import Modal from './Modal'
 import { supabase } from '../lib/supabase'
+import { logAudit } from '../lib/audit'
 import type { DesignerColour } from '../lib/dashboardGrouping'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -74,6 +75,14 @@ export default function EditProfileModal({
   const [colour, setColour]                         = useState<DesignerColour>('blue')
   const [initialsUserEdited, setInitialsUserEdited] = useState(false)
   const [avatarUrl, setAvatarUrl]                   = useState<string | null>(null)
+  // Snapshot of the row as loaded. Used by handleSubmit to compute a
+  // before/after diff that only includes changed fields when logging
+  // the profile.updated audit event (PV-2026W21-075).
+  const [originalSnapshot, setOriginalSnapshot]     = useState<{
+    fullName: string
+    initials: string
+    colour: DesignerColour
+  } | null>(null)
 
   const [loading,         setLoading]         = useState(true)
   const [saving,          setSaving]          = useState(false)
@@ -91,14 +100,22 @@ export default function EditProfileModal({
       .single()
       .then(({ data }) => {
         if (data) {
-          setFullName(data.full_name ?? '')
-          setInitials((data.designer_initials ?? '').slice(0, 2))
-          setColour((data.designer_colour ?? 'blue') as DesignerColour)
+          const loadedName     = data.full_name ?? ''
+          const loadedInitials = (data.designer_initials ?? '').slice(0, 2)
+          const loadedColour   = (data.designer_colour ?? 'blue') as DesignerColour
+          setFullName(loadedName)
+          setInitials(loadedInitials)
+          setColour(loadedColour)
           setAvatarUrl(data.avatar_url ?? null)
+          setOriginalSnapshot({
+            fullName: loadedName,
+            initials: loadedInitials,
+            colour:   loadedColour,
+          })
           // If the stored initials match what we'd auto-derive, treat them
           // as not manually edited so auto-derive keeps working as they type.
-          const stored  = (data.designer_initials ?? '').slice(0, 2).toUpperCase()
-          const derived = initialsFromName(data.full_name ?? '')
+          const stored  = loadedInitials.toUpperCase()
+          const derived = initialsFromName(loadedName)
           setInitialsUserEdited(stored !== '' && stored !== derived)
         }
         setLoading(false)
@@ -166,6 +183,16 @@ export default function EditProfileModal({
     }
 
     setAvatarUrl(urlWithBuster)
+    // Audit log (PV-2026W21-075). Designer self-edited their own avatar;
+    // record size + content-type as metadata, no diff payload because
+    // avatar bytes aren't meaningfully diffable.
+    void logAudit({
+      action:      'profile.avatar_uploaded',
+      targetType:  'user',
+      targetId:    userId,
+      targetLabel: fullName || undefined,
+      metadata:    { size_bytes: file.size, content_type: file.type },
+    })
   }
 
   // ── Name / initials handlers ─────────────────────────────────────────────
@@ -214,6 +241,36 @@ export default function EditProfileModal({
     if (updateErr) {
       setFormError(updateErr.message || 'Failed to save profile.')
       return
+    }
+
+    // Audit log (PV-2026W21-075). Build before/after payloads that
+    // only include fields that actually changed against the snapshot
+    // captured on load — saving without edits produces no audit row.
+    if (originalSnapshot) {
+      const before: Record<string, unknown> = {}
+      const after:  Record<string, unknown> = {}
+      if (originalSnapshot.fullName !== cleanName) {
+        before.full_name = originalSnapshot.fullName
+        after.full_name  = cleanName
+      }
+      if (originalSnapshot.initials !== finalInitials) {
+        before.designer_initials = originalSnapshot.initials
+        after.designer_initials  = finalInitials
+      }
+      if (originalSnapshot.colour !== colour) {
+        before.designer_colour = originalSnapshot.colour
+        after.designer_colour  = colour
+      }
+      if (Object.keys(after).length > 0) {
+        void logAudit({
+          action:      'profile.updated',
+          targetType:  'user',
+          targetId:    userId,
+          targetLabel: cleanName,
+          beforeValue: before,
+          afterValue:  after,
+        })
+      }
     }
 
     onSaved({ initials: finalInitials, colour, fullName: cleanName, avatarUrl })
@@ -305,6 +362,14 @@ export default function EditProfileModal({
                         .eq('id', userId)
                       if (!error) {
                         setAvatarUrl(null)
+                        // Audit log (PV-2026W21-075). Designer removed their
+                        // own avatar; no diff payload needed.
+                        void logAudit({
+                          action:      'profile.avatar_removed',
+                          targetType:  'user',
+                          targetId:    userId,
+                          targetLabel: fullName || undefined,
+                        })
                         // Mirror the immediate DB write to the parent so the
                         // dashboard header re-renders with initials right
                         // away. Without this, closing via Cancel after a
