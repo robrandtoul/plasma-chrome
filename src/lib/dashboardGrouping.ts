@@ -84,7 +84,25 @@ export function isThisWeek(iso: string): boolean {
   return diffDays > 0 && diffDays < 7
 }
 
-// ── Snooze awakening ──────────────────────────────────────────────────────────
+// ── Snooze state helpers ──────────────────────────────────────────────────────
+//
+// public_dashboard_projects (000186) carries snoozed_until forward for 24
+// hours after a snooze expires so the dashboard can bucket recently-awakened
+// proofs back into Today. The frontend therefore can't read
+// `snoozed_until != null` as "this proof is currently snoozed" any more —
+// it has to also check the timestamp is in the future. Wrapping that check
+// in a helper keeps the same predicate consistent across the tile counts,
+// the click-through filters, and the Snoozed-section grouping.
+
+/**
+ * Returns true when the proof has a snooze row whose snoozed_until is still
+ * in the future. False for recently-awakened proofs (snoozed_until in the
+ * 24-hour grace window) and for proofs that were never snoozed.
+ */
+export function isCurrentlySnoozed(p: DashboardProject): boolean {
+  if (!p.snoozed_until) return false
+  return new Date(p.snoozed_until).getTime() > Date.now()
+}
 
 /**
  * Returns true when the proof's snooze expired within the last 24 hours.
@@ -137,7 +155,7 @@ export function groupByCompany(projects: DashboardProject[]): ProjectSection[] {
 }
 
 export function buildSnoozedSection(projects: DashboardProject[]): ProjectSection[] {
-  const snoozed = projects.filter((p) => p.snoozed_until != null)
+  const snoozed = projects.filter(isCurrentlySnoozed)
   if (!snoozed.length) return []
   return [{ key: '__snoozed__', title: 'Snoozed', kind: 'snoozed', projects: snoozed }]
 }

@@ -23,6 +23,7 @@ import {
   groupByTime,
   groupByCompany,
   buildSnoozedSection,
+  isCurrentlySnoozed,
   type DashboardProject,
   type DesignerColour,
   type NeedsAttentionRule,
@@ -1364,14 +1365,17 @@ export default function DashboardPage() {
   }, [projects])
 
   // Tile counts — all computed client-side so counts and filters use exactly
-  // the same predicates. Snoozed projects are always excluded: they live in
-  // the dedicated Snoozed section regardless of their other state.
-  // Needs-attention projects are excluded from every other tile so each
-  // project belongs to exactly one tile.
+  // the same predicates. Currently-snoozed projects are always excluded:
+  // they live in the dedicated Snoozed section regardless of their other
+  // state. Note `isCurrentlySnoozed` rather than `snoozed_until == null`:
+  // 000186 widened the view's lateral so recently-expired snoozes still
+  // surface snoozed_until for the 24-hour grace window that powers
+  // recentlyAwakened(). Needs-attention projects are excluded from every
+  // other tile so each project belongs to exactly one tile.
   const needsAttentionCount = useMemo(() =>
     projects.filter((p) =>
       p.rule_code != null &&
-      p.snoozed_until == null &&
+      !isCurrentlySnoozed(p) &&
       (showAbandoned || p.status !== 'abandoned')
     ).length,
   [projects, showAbandoned])
@@ -1381,7 +1385,7 @@ export default function DashboardPage() {
       const isActive = p.status === 'in_progress' || p.status === 'dormant'
       return (
         p.rule_code == null &&
-        p.snoozed_until == null &&
+        !isCurrentlySnoozed(p) &&
         isActive &&
         p.current_version_id !== null &&
         p.current_version_viewed_at === null
@@ -1392,7 +1396,7 @@ export default function DashboardPage() {
   const awaitingCustomerCount = useMemo(() =>
     projects.filter((p) =>
       p.rule_code == null &&
-      p.snoozed_until == null &&
+      !isCurrentlySnoozed(p) &&
       p.status === 'in_progress' &&
       p.current_version_id !== null &&
       p.current_version_viewed_at !== null
@@ -1410,7 +1414,7 @@ export default function DashboardPage() {
   const changesRequestedCount = useMemo(() =>
     projects.filter((p) => {
       if (p.rule_code != null) return false
-      if (p.snoozed_until != null) return false
+      if (isCurrentlySnoozed(p)) return false
       if (p.status !== 'in_progress') return false
       if (p.latest_event_type !== 'request_changes') return false
       if (!p.latest_event_at || !p.version_created_at) return false
@@ -1421,15 +1425,15 @@ export default function DashboardPage() {
   // Dormant / Approved-this-week counts. Migration 000152's
   // dashboard_tile_counts() returns server-side counts that do not
   // filter snoozed proofs (the snooze filter is applied in 000164's
-  // proofs_needing_attention() only). Computing these client-side
-  // with the same p.snoozed_until == null guard ensures the tile
-  // count matches the number of rows shown when the tile is clicked
-  // (the click-through filter on line 1289 drops snoozed proofs
-  // when any tile filter is active). Mirrors the alignment fix from
-  // PV-2026W19-015 (awaiting_customer) for the remaining two tiles.
+  // proofs_needing_attention() only). Computing these client-side with
+  // the same isCurrentlySnoozed guard ensures the tile count matches
+  // the number of rows shown when the tile is clicked (the click-through
+  // filter below drops currently-snoozed proofs when any tile filter is
+  // active). Mirrors the alignment fix from PV-2026W19-015
+  // (awaiting_customer) for the remaining two tiles.
   const dormantCount = useMemo(() =>
     projects.filter((p) =>
-      p.snoozed_until == null &&
+      !isCurrentlySnoozed(p) &&
       p.status === 'dormant'
     ).length,
   [projects])
@@ -1437,7 +1441,7 @@ export default function DashboardPage() {
   const approvedThisWeekCount = useMemo(() => {
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
     return projects.filter((p) => {
-      if (p.snoozed_until != null) return false
+      if (isCurrentlySnoozed(p)) return false
       if (p.status !== 'approved') return false
       if (!p.approved_at) return false
       return new Date(p.approved_at).getTime() >= sevenDaysAgo
@@ -1458,9 +1462,12 @@ export default function DashboardPage() {
         ].filter(Boolean).join(' ').toLowerCase()
         if (!hay.includes(q)) return false
       }
-      // Snoozed projects always belong to the Snoozed section — exclude from
-      // every tile filter so they don't appear in the main list when a tile is active.
-      if (tileFilter && p.snoozed_until != null) return false
+      // Currently-snoozed projects always belong to the Snoozed section —
+      // exclude them from every tile filter so they don't appear in the main
+      // list when a tile is active. Recently-awakened proofs (snoozed_until
+      // in the 24-hour grace window from 000186) fall through and are
+      // bucketed normally by the tile predicates below.
+      if (tileFilter && isCurrentlySnoozed(p)) return false
       if (tileFilter === 'needs_attention'    && p.rule_code == null) return false
       if (tileFilter === 'awaiting_customer'  && !(p.rule_code == null && p.status === 'in_progress' && p.current_version_id !== null && p.current_version_viewed_at !== null)) return false
       if (tileFilter === 'dormant'            && p.status !== 'dormant') return false

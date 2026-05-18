@@ -5,7 +5,7 @@
 // determines where a proof appears in the time-bucketed list after a
 // snooze expires.
 
-import { recentlyAwakened, groupByTime, buildSnoozedSection } from './dashboardGrouping'
+import { recentlyAwakened, isCurrentlySnoozed, groupByTime, buildSnoozedSection } from './dashboardGrouping'
 import type { DashboardProject } from './dashboardGrouping'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -229,6 +229,29 @@ test('mix of regular and recently-awakened proofs sorts correctly', () => {
   assertEqual(todaySection.projects[0].proof_id, 'awoken')
 })
 
+// ── isCurrentlySnoozed() ──────────────────────────────────────────────────────
+
+console.log('\nisCurrentlySnoozed()')
+
+test('returns false when snoozed_until is null', () => {
+  const p = makeProject({ snoozed_until: null })
+  assert(!isCurrentlySnoozed(p), 'should be false')
+})
+
+test('returns true when snooze expires in the future', () => {
+  const p = makeProject({ snoozed_until: hoursFromNow(12) })
+  assert(isCurrentlySnoozed(p), 'should be true')
+})
+
+test('returns false when snooze just expired (recently awakened grace window)', () => {
+  // 000186 widens the dashboard view's lateral so snoozed_until carries
+  // forward for 24 hours after expiry. isCurrentlySnoozed must NOT treat
+  // those rows as still-snoozed — they belong in Today, not in the
+  // Snoozed section.
+  const p = makeProject({ snoozed_until: hoursAgo(1) })
+  assert(!isCurrentlySnoozed(p), 'should be false — snooze expired')
+})
+
 // ── buildSnoozedSection() ─────────────────────────────────────────────────────
 
 console.log('\nbuildSnoozedSection()')
@@ -238,7 +261,7 @@ test('returns empty array when no projects are snoozed', () => {
   assertEqual(sections.length, 0)
 })
 
-test('returns one Snoozed section when a project has snoozed_until set', () => {
+test('returns one Snoozed section when a project has an active snooze', () => {
   const p = makeProject({ snoozed_until: hoursFromNow(24) })
   const sections = buildSnoozedSection([p])
   assertEqual(sections.length, 1)
@@ -246,10 +269,21 @@ test('returns one Snoozed section when a project has snoozed_until set', () => {
   assertEqual(sections[0].projects.length, 1)
 })
 
-test('only snoozed projects appear in the snoozed section', () => {
+test('only currently-snoozed projects appear in the snoozed section', () => {
   const snoozed  = makeProject({ proof_id: 'snoozed', snoozed_until: hoursFromNow(24) })
   const normal   = makeProject({ proof_id: 'normal',  snoozed_until: null })
   const sections = buildSnoozedSection([snoozed, normal])
+  assertEqual(sections[0].projects.length, 1)
+  assertEqual(sections[0].projects[0].proof_id, 'snoozed')
+})
+
+test('recently-awakened proofs are excluded from the snoozed section', () => {
+  // After 000186, snoozed_until persists for 24 h post-expiry to power
+  // recentlyAwakened bucketing. The Snoozed section must still hide
+  // those rows or the count would over-report the live snooze tally.
+  const recentlyAwoken = makeProject({ proof_id: 'awoken',  snoozed_until: hoursAgo(2) })
+  const stillSnoozed   = makeProject({ proof_id: 'snoozed', snoozed_until: hoursFromNow(2) })
+  const sections = buildSnoozedSection([recentlyAwoken, stillSnoozed])
   assertEqual(sections[0].projects.length, 1)
   assertEqual(sections[0].projects[0].proof_id, 'snoozed')
 })
