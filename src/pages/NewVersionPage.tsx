@@ -3198,12 +3198,20 @@ export default function NewVersionPage() {
     // the same helper so save and UI agree exactly. New entries
     // are always kept (designer added them deliberately on this
     // version); the auto-rule only governs existing entries.
+    const invalidV1RowIdsForSave = v1Carry
+      ? new Set(
+          v1Carry.images
+            .filter((img) => !carryOptionStillValid(img))
+            .map((img) => img.v1RowId),
+        )
+      : undefined
     const artworkChangedSlotsForSave = computeQrArtworkChangedSlots(
       v1Carry,
       keepByV1RowId,
       replacementByV1RowId,
       imagesByOption,
       names.map((n) => n.trim()).filter(Boolean),
+      invalidV1RowIdsForSave,
     )
     const isQrEntryKept = (entry: QrEntry): boolean => {
       if (entry.source !== 'existing') return true
@@ -3389,7 +3397,8 @@ export default function NewVersionPage() {
             (img) =>
               (keepByV1RowId[img.v1RowId] ?? true) &&
               !replacementByV1RowId[img.v1RowId] &&
-              carrySlotStillValid(img),
+              carrySlotStillValid(img) &&
+              carryOptionStillValid(img),
           )
           if (!allCarried) continue
 
@@ -3918,12 +3927,34 @@ export default function NewVersionPage() {
   // auto-rule (keep=true unless the entry's slot is in
   // artworkChangedSlots). Both inputs feed handleSubmit through the
   // same helper, so save-time filtering can't drift from the UI.
+  // Mirror the save-path carryOptionStillValid guard so the render-
+  // side amber notice + auto-unkeep fires when a v1 image's option no
+  // longer maps to v2's selected tabs. Same predicate as in
+  // handleSubmit; kept inline here to avoid lifting closure state.
+  const renderOptionKeys = optionMode ? selectedOptions : ['']
+  const invalidV1RowIds = v1Carry
+    ? new Set(
+        v1Carry.images
+          .filter((img) => {
+            const imgOption = img.material_option ?? ''
+            if (renderOptionKeys.includes(imgOption)) return false
+            const firstSelectedOption = selectedOptions[0] ?? ''
+            return !(
+              v1Carry.sourceIsVariantRound === true &&
+              img.material_option == null &&
+              firstSelectedOption !== ''
+            )
+          })
+          .map((img) => img.v1RowId),
+      )
+    : undefined
   const artworkChangedSlots = computeQrArtworkChangedSlots(
     v1Carry,
     keepByV1RowId,
     replacementByV1RowId,
     imagesByOption,
     names.map((n) => n.trim()).filter(Boolean),
+    invalidV1RowIds,
   )
 
   const displayQrEntries: QrEntry[] = qrEntries.map((entry) => {
