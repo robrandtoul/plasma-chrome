@@ -61,6 +61,18 @@ const URL_PREFIX_RE = /^https?:\/\//i
 const EMAIL_PREFIX_RE = /^mailto:/i
 const PHONE_PREFIX_RE = /^tel:/i
 const SMS_PREFIX_RE = /^sms(?:to)?:/i
+// Bare-email match (PV-2026W21-089). Conservative single-line shape:
+// one or more non-whitespace, non-@ characters before the @, then the
+// same after, then a single dot followed by at least one
+// non-whitespace, non-@ character. Strict enough to keep "12.34" or
+// "@plasma" out, loose enough for the real-world QR cases we care
+// about. The kind maps to the existing 'email' value rather than a
+// new enum — the 000168 CHECK constraint on qr_kind would reject
+// anything new.
+const BARE_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+// Bare E.164 phone match (PV-2026W21-089). Leading +, then 8-15
+// digits. Same constraint reasoning — maps to 'phone'.
+const BARE_PHONE_RE = /^\+\d{8,15}$/
 
 export function classifyQrData(data: string): QrKind {
   const trimmed = data.trim()
@@ -71,6 +83,8 @@ export function classifyQrData(data: string): QrKind {
   if (PHONE_PREFIX_RE.test(trimmed)) return 'phone'
   if (SMS_PREFIX_RE.test(trimmed)) return 'sms'
   if (URL_PREFIX_RE.test(trimmed)) return 'url'
+  if (BARE_EMAIL_RE.test(trimmed)) return 'email'
+  if (BARE_PHONE_RE.test(trimmed)) return 'phone'
   return 'text'
 }
 
