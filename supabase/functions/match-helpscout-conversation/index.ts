@@ -49,7 +49,10 @@ async function fetchMailboxes(token: string): Promise<Map<number, string>> {
   const resp = await fetch('https://api.helpscout.net/v2/mailboxes', {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
   })
-  if (!resp.ok) return new Map()
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new HsError(resp.status, `Help Scout mailboxes (${resp.status}): ${text}`)
+  }
   const data = await resp.json()
   const boxes = (data?._embedded?.mailboxes ?? []) as Array<{ id: number; name: string }>
   return new Map(boxes.map((b) => [b.id, b.name]))
