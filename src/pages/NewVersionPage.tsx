@@ -4341,6 +4341,24 @@ export default function NewVersionPage() {
                             { key: uuidv4(), display_name: '', frontFiles: [], backFiles: null },
                           ])
                         }
+                        // The QR section is hidden in variant-round
+                        // mode, but a pending state survives the
+                        // flip and would silently re-emerge on a
+                        // flip back to Standard, including any new-
+                        // entry object URLs that leak memory. Clear
+                        // qrEntries and revoke new previews so the
+                        // state transition is clean.
+                        if (opt.value) {
+                          setQrEntries((prev) => {
+                            for (const e of prev) {
+                              if (e.source === 'new' && e.previewUrl) {
+                                URL.revokeObjectURL(e.previewUrl)
+                              }
+                            }
+                            return []
+                          })
+                          setQrKeepOverrides({})
+                        }
                       }}
                       className="sr-only"
                     />
