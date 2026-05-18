@@ -417,6 +417,7 @@ export default function ProofDetailPage() {
           .from('proof_version_images')
           .select('id, image_path, original_filename, associated_name, side, proof_version_id')
           .in('proof_version_id', versionIds)
+          .eq('is_qr_code', false)
         if (isStale()) return
 
         const approvalTuples = new Set(
