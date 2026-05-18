@@ -1724,7 +1724,7 @@ export default function DashboardPage() {
                     onClick={() => toggleTile('changes_requested')}
                   />
                   <StatTile
-                    label="Approved"
+                    label="Approved this week"
                     count={approvedThisWeekCount}
                     active={tileFilter === 'approved_this_week'}
                     tone="green"
