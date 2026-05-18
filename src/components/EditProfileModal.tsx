@@ -178,6 +178,18 @@ export default function EditProfileModal({
     setUploading(false)
 
     if (dbErr) {
+      // Roll back the storage write so the bucket doesn't carry an
+      // orphan file whose URL is no longer referenced anywhere
+      // (PV-2026W21-079). A 404 means the object never landed; any
+      // other error is logged but not surfaced — the original dbErr
+      // is what the designer needs to see.
+      const { error: rollbackErr } = await supabase
+        .storage
+        .from('avatars')
+        .remove([storagePath])
+      if (rollbackErr && !/not\s*found/i.test(rollbackErr.message)) {
+        console.warn('[avatar] storage rollback failed:', rollbackErr.message)
+      }
       setUploadError(dbErr.message || 'Could not save avatar. Please try again.')
       return
     }
