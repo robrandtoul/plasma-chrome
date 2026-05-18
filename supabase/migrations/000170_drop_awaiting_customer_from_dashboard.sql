@@ -161,6 +161,7 @@ returns table (
 )
 language sql
 stable
+set search_path = public
 as $$
   select
     (select count(*)::int from proofs_needing_attention())   as needs_attention,
