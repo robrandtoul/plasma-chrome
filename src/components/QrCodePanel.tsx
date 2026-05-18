@@ -282,17 +282,6 @@ function QrCodeCard({
             Shared across all cards
           </div>
         )}
-        {image.original_filename && (
-          <div
-            className="mt-1 text-[11px]"
-            style={{
-              fontFamily: MONO,
-              color: 'rgba(26,22,18,0.45)',
-            }}
-          >
-            {image.original_filename}
-          </div>
-        )}
       </div>
       <div>
         <KindBadge kind={kind} />
