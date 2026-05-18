@@ -224,7 +224,12 @@ export default function HelpScoutEditModal({
               helpscout_conversation_url: resolvedConvoUrl,
             },
             metadata: {
-              source: hsPickerMatches.length > 0 ? 'picker' : pasteWasUsed ? 'paste' : 'auto',
+              // Picker selections clear hsPickerMatches via
+              // applyMatch before save runs, so the
+              // hsPickerMatches.length>0 branch was unreachable.
+              // Picker resolutions audit as 'auto', same as the
+              // single-match auto-apply path.
+              source: pasteWasUsed ? 'paste' : 'auto',
             },
           })
         }
