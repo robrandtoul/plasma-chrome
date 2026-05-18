@@ -1,4 +1,4 @@
--- Migration 000169: drop the awaiting_customer column from
+-- Migration 000170: drop the awaiting_customer column from
 -- public_dashboard_projects and the awaiting_customer field from
 -- dashboard_tile_counts() (PV-2026W20-005).
 --
