@@ -52,7 +52,7 @@ Rules to check:
 - CMYK is included at no extra charge. Any reference to a CMYK upcharge is a bug.
 - Satin and Translucent Plastic share one pricing schedule; divergence between them in the database is a bug.
 - USD Copper is seeded from Gun Metal USD pricing.
-- Custom-quote triggers: only NFC and unique-data orders trigger custom quotes. Edge colour, engraving, die-cut shape are free standard inclusions and must not trigger a custom quote.
+- Custom-quote triggers, post-000172: NFC inclusion remains a custom-quote trigger. Unique-data orders (numbering, membership names, sequential IDs) split: on materials with `supports_personalisation = true` (all `metal_*`, `plastic_full_colour`, `wood`, `acrylic`) personalisation is a priced surcharge via `personalisation_pricing` (qty * per_card_rate with min_charge floor), gated by `card_type = 'membership' AND NOT is_variant_round` per the 000173 DB CHECK. Unique-data orders on materials without `supports_personalisation` still route to custom quote. Edge colour, engraving, die-cut shape remain free standard inclusions and must not trigger a custom quote. Personalisation pricing is live (not snapshotted), so admin rate edits immediately update every existing personalised proof.
 - Letterpress is two material codes since migration 000098: `paper_letterpress` (no gilding) and `paper_letterpress_gilded`. Split-name tooling and pricing apply per code; treating letterpress as one material with a gilding flag is a bug.
 
 ### Area 2: Customer proof page & RLS
