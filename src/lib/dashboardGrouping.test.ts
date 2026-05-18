@@ -152,6 +152,26 @@ test('empty list returns no sections', () => {
   assertEqual(groupByTime([]).length, 0)
 })
 
+test('proof with null last_activity_at lands in Older', () => {
+  // Defensive against the rare case where a freshly-inserted proof
+  // row has not yet been bump-triggered, or a row arrives from a
+  // typed cast that allows null. Without the null-guard the proof
+  // would slip past every bucket and disappear from the dashboard.
+  const p = makeProject({ last_activity_at: null as unknown as string })
+  const sections = groupByTime([p])
+  assertEqual(sections.length, 1)
+  assertEqual(sections[0].key, 'older')
+  assertEqual(sections[0].projects.length, 1)
+})
+
+test('proof with missing last_activity_at lands in Older', () => {
+  // Same guard, undefined branch.
+  const p = makeProject({ last_activity_at: undefined as unknown as string })
+  const sections = groupByTime([p])
+  assertEqual(sections.length, 1)
+  assertEqual(sections[0].key, 'older')
+})
+
 // ── groupByTime() — recently awakened snooze overrides bucket ─────────────────
 
 console.log('\ngroupByTime() — snooze awakening')
