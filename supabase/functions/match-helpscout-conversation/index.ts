@@ -12,7 +12,7 @@
 // Response: { matches: Array<{ id, subject, status, modifiedAt, url }> }
 
 import { requireDesigner } from '../_shared/admin.ts'
-import { getAccessToken } from '../_shared/helpscout.ts'
+import { getAccessToken, HsError } from '../_shared/helpscout.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -73,7 +73,7 @@ async function searchByEmailAndStatus(
   })
   if (!resp.ok) {
     const text = await resp.text()
-    throw new Error(`Help Scout conversations error (${resp.status}) status=${status}: ${text}`)
+    throw new HsError(resp.status, `Help Scout conversations error (${resp.status}) status=${status}: ${text}`)
   }
   const data = await resp.json()
   return (data?._embedded?.conversations ?? []) as HelpScoutConversation[]
@@ -144,7 +144,11 @@ Deno.serve(async (req) => {
     }))
     return json({ matches })
   } catch (err) {
-    console.error('match-helpscout-conversation error:', err)
+    if (err instanceof HsError) {
+      console.error('match-helpscout-conversation: HsError', err.status, err.message)
+      return json({ error: err.message }, err.status >= 400 && err.status < 600 ? err.status : 502)
+    }
+    console.error('match-helpscout-conversation: unexpected error', err)
     return json({ error: (err as Error).message ?? 'Unknown error' }, 502)
   }
 })
