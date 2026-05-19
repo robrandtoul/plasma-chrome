@@ -21,6 +21,7 @@ import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSection'
 import type { QrKind } from '../lib/qrCodes'
 import { LAYER_COLOUR_MATERIAL_CODES } from '../lib/letterpress'
+import VersionPreviewGate from '../components/VersionPreviewGate'
 
 // Materials whose physical edge construction exposes the three-
 // layer Colorplan stack (un-gilded letterpress) and therefore want
@@ -75,6 +76,16 @@ export default function EditVersionPage() {
   const [proofName, setProofName] = useState('')
   const [proofCompany, setProofCompany] = useState('')
   const [versionNumber, setVersionNumber] = useState(0)
+  // Preview gate state. After a successful save, render
+  // VersionPreviewGate instead of jumping straight back to the
+  // project detail page. Clicking "Looks good" navigates on as
+  // before; "Go back and edit" clears this so the form re-appears
+  // and the designer can keep editing the same version. Mirrors
+  // the savedVersion + previewApproved pattern on NewVersionPage
+  // but collapsed here because EditVersionPage has no
+  // MessageSendPanel step downstream — once the gate is cleared
+  // we go straight to /proofs/:id. See VersionPreviewGate.tsx.
+  const [savedVersionForPreview, setSavedVersionForPreview] = useState<{ currency: Currency | null } | null>(null)
   // ── Variant rounds (build-plan step 5.5) ────────────────────────────────
   // EditVersionPage doesn't yet support editing variant-round versions.
   // When a variant-round version is loaded, the form renders an alert
@@ -1016,7 +1027,11 @@ export default function EditVersionPage() {
       }
 
       setSubmitting(false)
-      navigate(`/proofs/${proofId}`)
+      // Variant-round save success: show the preview gate instead
+      // of navigating straight back. Currency on variant-round
+      // versions is null (per-direction-pricing or mixed) so it's
+      // omitted from the banner.
+      setSavedVersionForPreview({ currency: null })
       return
     }
 
@@ -1384,7 +1399,12 @@ export default function EditVersionPage() {
       }
     }
 
-    navigate(`/proofs/${proofId}`)
+    // Standard-version save success: show the preview gate. The
+    // gate's "Looks good" returns to /proofs/:id (same target as
+    // the old immediate navigate); "Go back and edit" clears the
+    // gate and the form re-renders with the still-in-state values
+    // for further editing.
+    setSavedVersionForPreview({ currency })
   }
 
   if (loading) {
@@ -1392,6 +1412,26 @@ export default function EditVersionPage() {
       <div className="flex min-h-dvh items-center justify-center bg-gray-50">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
       </div>
+    )
+  }
+
+  // Post-save preview gate. Replaces the form (and the rest of the
+  // page chrome — the gate uses fixed inset-0) until the designer
+  // confirms what the customer will see. Cleared by "Go back and
+  // edit" so the form re-appears with state intact, advanced by
+  // "Looks good" via navigate back to the project detail. See
+  // VersionPreviewGate.tsx for the wider rationale.
+  if (savedVersionForPreview && proofId && versionId) {
+    return (
+      <VersionPreviewGate
+        proofId={proofId}
+        versionId={versionId}
+        versionNumber={versionNumber}
+        currency={savedVersionForPreview.currency}
+        confirmLabel="Looks good, return to project"
+        onConfirm={() => navigate(`/proofs/${proofId}`)}
+        onEdit={() => setSavedVersionForPreview(null)}
+      />
     )
   }
 
