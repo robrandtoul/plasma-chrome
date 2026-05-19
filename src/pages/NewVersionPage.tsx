@@ -15,6 +15,7 @@ import { matchImageToName } from '../lib/matchImageToName'
 import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { PageDropOverlay } from '../components/PageDropOverlay'
 import MessageSendPanel from '../components/MessageSendPanel'
+import VersionPreviewGate from '../components/VersionPreviewGate'
 import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
 import { QuoteLink } from '../components/QuoteLink'
@@ -252,6 +253,14 @@ export default function NewVersionPage() {
   // editable; non-null after handleSubmit's insert returns. Replaces
   // the previous immediate navigate(`/proofs/${proofId}`).
   const [savedVersion, setSavedVersion] = useState<{ id: string; number: number } | null>(null)
+  // Preview gate state. After save the designer first sees
+  // VersionPreviewGate (an iframe of the customer page with a
+  // banner of action buttons); only after clicking "Looks good"
+  // does this flip true and the MessageSendPanel takes over. The
+  // gate exists to stop the "save → send → next job" reflex from
+  // shipping a layout bug to the customer. Ephemeral by design,
+  // no DB column. See VersionPreviewGate.tsx for the rationale.
+  const [previewApproved, setPreviewApproved] = useState(false)
   const [materials, setMaterials] = useState<Material[]>([])
   const [selectedMaterialId, setSelectedMaterialId] = useState('')
   const [variants, setVariants] = useState<Variant[]>([])
@@ -4041,7 +4050,26 @@ export default function NewVersionPage() {
           {proofCompany && <p className="text-sm text-gray-400">{proofCompany}</p>}
         </div>
 
-        {savedVersion && (() => {
+        {savedVersion && !previewApproved && (
+          // Post-save preview gate. The designer sees the customer
+          // page rendered in an iframe with a banner of action
+          // buttons; only after they tick "Looks good" does the
+          // MessageSendPanel below take over. "Go back and edit"
+          // hops them to the edit-version route for this just-
+          // saved version. See VersionPreviewGate.tsx for the
+          // wider rationale.
+          <VersionPreviewGate
+            proofId={proofId!}
+            versionId={savedVersion.id}
+            versionNumber={savedVersion.number}
+            currency={currency}
+            confirmLabel="Looks good, send proofs to customer"
+            onConfirm={() => setPreviewApproved(true)}
+            onEdit={() => navigate(`/proofs/${proofId}/versions/${savedVersion.id}/edit`)}
+          />
+        )}
+
+        {savedVersion && previewApproved && (() => {
           // Post-save MessageSendPanel branch. Replaces the form
           // until the designer either sends a reply or skips. Both
           // paths navigate to the project detail page.

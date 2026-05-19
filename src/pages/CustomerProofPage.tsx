@@ -739,7 +739,17 @@ export default function CustomerProofPage() {
 
     const rawVersions = graph.versions ?? []
     setVersions(rawVersions)
-    const initialVersion = rawVersions.find((v) => v.is_current) ?? rawVersions[rawVersions.length - 1] ?? null
+    // Initial version: the one with is_current=true, falling back to
+    // the last in the array. Designer-preview overrides via ?v=<id>:
+    // VersionPreviewGate opens the customer page in an iframe pinned
+    // to the just-saved version so the designer is checking what
+    // they're about to send, not whichever version happens to carry
+    // is_current right now (relevant when the designer edits an
+    // older, non-current version). The param is read once at load
+    // time and ignored if it doesn't match any version in the graph.
+    const pinnedVersionId = new URLSearchParams(window.location.search).get('v')
+    const pinnedVersion = pinnedVersionId ? rawVersions.find((v) => v.id === pinnedVersionId) ?? null : null
+    const initialVersion = pinnedVersion ?? rawVersions.find((v) => v.is_current) ?? rawVersions[rawVersions.length - 1] ?? null
     setActiveVersion(initialVersion)
 
     setMaterialOptions(graph.material_options ?? [])
