@@ -22,6 +22,9 @@ import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSec
 import type { QrKind } from '../lib/qrCodes'
 import { LAYER_COLOUR_MATERIAL_CODES } from '../lib/letterpress'
 import VersionPreviewGate from '../components/VersionPreviewGate'
+import MessageSendPanel from '../components/MessageSendPanel'
+import { firstName } from '../lib/firstName'
+import { customerProofPath } from '../lib/customerProofUrl'
 
 // Materials whose physical edge construction exposes the three-
 // layer Colorplan stack (un-gilded letterpress) and therefore want
@@ -76,16 +79,22 @@ export default function EditVersionPage() {
   const [proofName, setProofName] = useState('')
   const [proofCompany, setProofCompany] = useState('')
   const [versionNumber, setVersionNumber] = useState(0)
+  // Linked Help Scout conversation id, populated by loadAll. Null
+  // means the proof was never linked to a HS thread; the post-
+  // preview MessageSendPanel reads this flag to decide between
+  // rendering the editor or the no-conversation continue-only
+  // path. Mirrors the same field on NewVersionPage.
+  const [proofHelpScoutConversationId, setProofHelpScoutConversationId] =
+    useState<string | null>(null)
   // Preview gate state. After a successful save, render
-  // VersionPreviewGate instead of jumping straight back to the
-  // project detail page. Clicking "Looks good" navigates on as
-  // before; "Go back and edit" clears this so the form re-appears
-  // and the designer can keep editing the same version. Mirrors
-  // the savedVersion + previewApproved pattern on NewVersionPage
-  // but collapsed here because EditVersionPage has no
-  // MessageSendPanel step downstream — once the gate is cleared
-  // we go straight to /proofs/:id. See VersionPreviewGate.tsx.
+  // VersionPreviewGate; when the designer clicks "Looks good"
+  // the gate flips to MessageSendPanel (same as NewVersionPage)
+  // so they can send the customer a Help Scout reply with the
+  // proof URL. "Go back and edit" clears this so the form re-
+  // appears with state intact for further editing. Both flags
+  // are ephemeral, no DB.
   const [savedVersionForPreview, setSavedVersionForPreview] = useState<{ currency: Currency | null } | null>(null)
+  const [previewApproved, setPreviewApproved] = useState(false)
   // ── Variant rounds (build-plan step 5.5) ────────────────────────────────
   // EditVersionPage doesn't yet support editing variant-round versions.
   // When a variant-round version is loaded, the form renders an alert
@@ -238,7 +247,7 @@ export default function EditVersionPage() {
 
   async function loadAll(pid: string, vid: string) {
     const [proofResult, versionResult, imagesResult] = await Promise.all([
-      supabase.from('proofs').select('contacts(full_name, companies(name))').eq('id', pid).single(),
+      supabase.from('proofs').select('helpscout_conversation_id, contacts(full_name, companies(name))').eq('id', pid).single(),
       supabase
         .from('proof_versions')
         .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, names, core_colour_id, front_colour_id, back_colour_id, is_variant_round, card_type, has_personalisation, materials(code, display_quantities, requires_ink_names, option_label, multi_variant, supports_personalisation)')
@@ -261,6 +270,11 @@ export default function EditVersionPage() {
       setProofName(c.full_name ?? '')
       setProofCompany(c.companies?.name ?? '')
     }
+    // Stash the linked Help Scout conversation id (if any). Used
+    // by the post-preview MessageSendPanel to switch between the
+    // reply editor and the no-conversation continue-only path.
+    const hsConvId = (proofResult.data as any)?.helpscout_conversation_id ?? null
+    setProofHelpScoutConversationId(hsConvId)
 
     const v = versionResult.data as any
     setVersionNumber(v.version_number)
@@ -1417,21 +1431,68 @@ export default function EditVersionPage() {
 
   // Post-save preview gate. Replaces the form (and the rest of the
   // page chrome — the gate uses fixed inset-0) until the designer
-  // confirms what the customer will see. Cleared by "Go back and
-  // edit" so the form re-appears with state intact, advanced by
-  // "Looks good" via navigate back to the project detail. See
-  // VersionPreviewGate.tsx for the wider rationale.
-  if (savedVersionForPreview && proofId && versionId) {
+  // confirms what the customer will see. "Go back and edit" clears
+  // the gate so the form re-appears with state intact. "Looks
+  // good, send proofs to customer" flips previewApproved and the
+  // MessageSendPanel branch below renders, matching the new-
+  // version flow so the designer can fire a Help Scout reply
+  // with the proof URL straight from here. See VersionPreviewGate
+  // for the gate rationale; see NewVersionPage for the original
+  // MessageSendPanel pattern this mirrors.
+  if (savedVersionForPreview && !previewApproved && proofId && versionId) {
     return (
       <VersionPreviewGate
         proofId={proofId}
         versionId={versionId}
         versionNumber={versionNumber}
         currency={savedVersionForPreview.currency}
-        confirmLabel="Looks good, return to project"
-        onConfirm={() => navigate(`/proofs/${proofId}`)}
+        confirmLabel="Looks good, send proofs to customer"
+        onConfirm={() => setPreviewApproved(true)}
         onEdit={() => setSavedVersionForPreview(null)}
       />
+    )
+  }
+
+  // Post-preview MessageSendPanel branch. Lifted into EditVersion
+  // so an edit can notify the customer the same way a new version
+  // does. Template id mirrors NewVersionPage: v1 is the first-
+  // proof intro, anything later is a revision. onSent / onSkip
+  // both land on the project detail page, same as before.
+  if (savedVersionForPreview && previewApproved && proofId && versionId) {
+    const tplId: 'first_proof' | 'revision' =
+      versionNumber === 1 ? 'first_proof' : 'revision'
+    const customerUrl = `${window.location.origin}${customerProofPath(proofId)}`
+    const messageContext = {
+      first_name: firstName(proofName),
+      full_name: proofName,
+      company: proofCompany || null,
+      version_number: versionNumber,
+      url: customerUrl,
+      // Designer accounts are deferred; the variable resolves to
+      // empty today. Templates currently hardcode "Plasma Design"
+      // in the signoff so the empty value is fine.
+      designer_first_name: '',
+    }
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-10 pb-32 sm:px-6">
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold text-gray-900">
+            Version v{versionNumber} saved
+          </h1>
+          {proofName && <p className="mt-1 text-gray-500">{proofName}</p>}
+          {proofCompany && <p className="text-sm text-gray-400">{proofCompany}</p>}
+        </div>
+        <MessageSendPanel
+          proofId={proofId}
+          versionId={versionId}
+          versionNumber={versionNumber}
+          templateId={tplId}
+          context={messageContext}
+          hasHelpScoutConversation={!!proofHelpScoutConversationId}
+          onSent={() => navigate(`/proofs/${proofId}`)}
+          onSkip={() => navigate(`/proofs/${proofId}`)}
+        />
+      </div>
     )
   }
 

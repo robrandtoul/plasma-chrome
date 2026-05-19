@@ -4063,7 +4063,7 @@ export default function NewVersionPage() {
             versionId={savedVersion.id}
             versionNumber={savedVersion.number}
             currency={currency}
-            confirmLabel="Looks good, continue to send"
+            confirmLabel="Looks good, send proofs to customer"
             onConfirm={() => setPreviewApproved(true)}
             onEdit={() => navigate(`/proofs/${proofId}/versions/${savedVersion.id}/edit`)}
           />
