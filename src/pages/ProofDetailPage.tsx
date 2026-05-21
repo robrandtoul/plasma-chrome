@@ -1437,6 +1437,78 @@ export default function ProofDetailPage() {
           )
         })()}
 
+        {/* Hosted-vCard snapshot, current version only.
+            The edge function (migration 000194) writes qr_snapshot
+            onto the proof_name_approvals row it touched at approve
+            time. Which row depends on the proof's shape:
+              * Split-name (current.names not empty) → one row per
+                named recipient, keyed by name. Multiple snapshots
+                render side-by-side when more than one named
+                recipient has a hosted-vCard QR.
+              * Shared / no-names one-off → a single __shared__ row.
+              * Membership (card_type === 'membership') → also a
+                single __shared__ row; the Names rollup section
+                below skips membership entirely, so this section
+                is the only place a designer can see what was
+                approved on a membership card.
+            We render this as its own section ABOVE the rollup so
+            the three shapes share one display path; the inline
+            "expand to see snapshot" affordance the rollup used to
+            host has been removed to keep the surface single-rooted
+            and avoid double-rendering for the named case. */}
+        {(() => {
+          const currentVersion = versions.find((v) => v.is_current)
+          if (!currentVersion) return null
+          const entries = approvals
+            .filter(
+              (a) =>
+                a.proof_version_id === currentVersion.id &&
+                a.state === 'approved' &&
+                a.qr_snapshot &&
+                Object.keys(a.qr_snapshot).length > 0,
+            )
+            // Render named rows first (alphabetical / version-name
+            // order), the __shared__ sentinel last — matches the
+            // Names rollup ordering convention so designers scan
+            // both sections the same way.
+            .sort((a, b) => {
+              if (a.name === SHARED_APPROVAL_KEY && b.name !== SHARED_APPROVAL_KEY) return 1
+              if (a.name !== SHARED_APPROVAL_KEY && b.name === SHARED_APPROVAL_KEY) return -1
+              return a.name.localeCompare(b.name)
+            })
+          if (entries.length === 0) return null
+          const sharedHeading =
+            currentVersion.card_type === 'membership' ? 'Membership card' : 'Shared'
+          return (
+            <section className="mb-8">
+              <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
+                Approved vCard contents
+              </h2>
+              <div className="space-y-3">
+                {entries.map((approval) => {
+                  const heading =
+                    approval.name === SHARED_APPROVAL_KEY ? sharedHeading : approval.name
+                  const when = new Date(approval.updated_at).toLocaleDateString('en-GB')
+                  return (
+                    <div
+                      key={approval.id}
+                      className="overflow-hidden rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200"
+                    >
+                      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
+                        <p className="text-sm font-semibold text-gray-900">{heading}</p>
+                        <p className="text-xs text-gray-500">
+                          Approved {when} by {approval.actor_name}
+                        </p>
+                      </div>
+                      <VcardSnapshotPanel snapshot={approval.qr_snapshot!} />
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          )
+        })()}
+
         {/* Names roll-up — aggregate per-name approval state across
             the project's version history, plus a Shared row when the
             current version has shared images. Renders if either
@@ -1766,18 +1838,7 @@ export default function ProofDetailPage() {
                             )}
                           </button>
                           {expanded && (
-                            <>
-                              <AuditPanel event={auditEvent} hsFailed={hsFailed} />
-                              {/* Hosted-vCard snapshot (migration 000194).
-                                  Renders only on approved rows where the
-                                  edge function captured one. Live vCard
-                                  data can drift after print; the snapshot
-                                  is the permanent record of what was
-                                  approved. */}
-                              {approval?.state === 'approved' && approval.qr_snapshot && (
-                                <VcardSnapshotPanel snapshot={approval.qr_snapshot} />
-                              )}
-                            </>
+                            <AuditPanel event={auditEvent} hsFailed={hsFailed} />
                           )}
                         </div>
                       )}
