@@ -37,6 +37,17 @@
 //                                              (already configured per
 //                                              project brief, used by
 //                                              send-helpscout-reply).
+//   VCARD_SUPABASE_URL,                       — vCard app's project URL
+//   VCARD_SUPABASE_ANON_KEY                    + anon (publishable) key.
+//                                              Used by the Phase 4
+//                                              hosted-vCard snapshot
+//                                              (migration 000194) to
+//                                              freeze the contact data
+//                                              the customer approved.
+//                                              Missing / unreachable
+//                                              degrades to null
+//                                              qr_snapshot — the
+//                                              approval still records.
 //   PROOF_VIEWER_BASE_URL                    — e.g. https://proofs
 //                                              .plasmadesign.co.uk
 //                                              (the legacy
@@ -417,6 +428,225 @@ async function buildPricingSnapshot(
   }
 }
 
+// ── Hosted-vCard snapshot (migration 000194) ──────────────────────────────────
+//
+// On approve, for every hosted-vCard QR visible to the slot, we fetch the
+// vCard app's anon RPCs to freeze a copy of the contact data the customer
+// just confirmed. Mirrors src/lib/vcardClient.ts on the frontend side
+// (verbatim parity: the edge runtime cannot import from src/, same as
+// SHARED_APPROVAL_KEY above). Three sequential lookups per slug:
+//   1. lookup_card_by_slug         — top-level card row (incl. card id)
+//   2. lookup_card_links_by_card_id        — social / custom links
+//   3. lookup_card_contact_methods_by_card_id — secondary emails / phones
+//
+// Snapshot shape is documented in migration 000194's column comment.
+// Styling fields (profile / cover image, theme_*) are intentionally
+// excluded — they are not part of the proof's contractual content.
+//
+// Best-effort: any failure (env missing, network down, slug not found,
+// shape mismatch) is logged and that slug is skipped. When every slug
+// fails the whole snapshot is returned as null — the approval row still
+// records, qr_confirmed_at still stamps, and the designer surface shows
+// "snapshot unavailable" on the approval expand.
+//
+// Slugs are case-sensitive per the integration brief — we use
+// qr_vcard_slug as stored without normalising.
+
+const VCARD_RPC_TIMEOUT_MS = 4_000
+
+interface VcardCardRow {
+  id: string
+  slug: string
+  first_name: string | null
+  last_name: string | null
+  nickname: string | null
+  job_title: string | null
+  company: string | null
+  birthday: string | null
+  primary_email: string | null
+  email_label: string | null
+  primary_phone: string | null
+  phone_label: string | null
+  bio: string | null
+  address_street: string | null
+  address_city: string | null
+  address_region: string | null
+  address_postcode: string | null
+  address_country: string | null
+}
+
+interface VcardLinkRow {
+  id: string
+  url: string
+  label: string | null
+  icon_slug: string | null
+  sort_order: number
+}
+
+interface VcardContactMethodRow {
+  id: string
+  method_type: 'email' | 'phone'
+  value: string
+  label: string | null
+  sort_order: number
+}
+
+interface VcardSnapshotEntry {
+  captured_at: string
+  card_id: string
+  card_slug: string
+  first_name: string | null
+  last_name: string | null
+  nickname: string | null
+  job_title: string | null
+  company: string | null
+  primary_email: string | null
+  email_label: string | null
+  primary_phone: string | null
+  phone_label: string | null
+  bio: string | null
+  birthday: string | null
+  address_street: string | null
+  address_city: string | null
+  address_region: string | null
+  address_postcode: string | null
+  address_country: string | null
+  links: Array<{
+    url: string
+    label: string | null
+    icon_slug: string | null
+    sort_order: number
+  }>
+  contact_methods: Array<{
+    method_type: 'email' | 'phone'
+    value: string
+    label: string | null
+    sort_order: number
+  }>
+}
+
+async function vcardRpc<T>(
+  baseUrl: string,
+  anonKey: string,
+  fnName: string,
+  body: Record<string, unknown>,
+): Promise<T> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), VCARD_RPC_TIMEOUT_MS)
+  try {
+    const res = await fetch(`${baseUrl}/rest/v1/rpc/${fnName}`, {
+      method: 'POST',
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`vCard RPC ${fnName} ${res.status}: ${text}`)
+    }
+    return (await res.json()) as T
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function buildHostedVcardSnapshot(
+  slugs: string[],
+): Promise<Record<string, VcardSnapshotEntry> | null> {
+  if (slugs.length === 0) return null
+  const baseUrl = Deno.env.get('VCARD_SUPABASE_URL')?.trim().replace(/\/+$/, '') ?? ''
+  const anonKey = Deno.env.get('VCARD_SUPABASE_ANON_KEY')?.trim() ?? ''
+  if (!baseUrl || !anonKey) {
+    console.warn('[proof-action] vCard snapshot skipped: env not configured')
+    return null
+  }
+
+  // De-dupe in case the same slug appears on multiple QR rows for the
+  // slot. Case-sensitive as per the integration brief.
+  const uniqueSlugs = Array.from(new Set(slugs))
+  const capturedAt = new Date().toISOString()
+  const snapshot: Record<string, VcardSnapshotEntry> = {}
+
+  await Promise.all(
+    uniqueSlugs.map(async (slug) => {
+      try {
+        const cardRows = await vcardRpc<VcardCardRow[]>(baseUrl, anonKey, 'lookup_card_by_slug', {
+          card_slug: slug,
+        })
+        const card = Array.isArray(cardRows) && cardRows.length > 0 ? cardRows[0] : null
+        if (!card) {
+          console.warn('[proof-action] vCard snapshot skipped: slug not found', { slug })
+          return
+        }
+        const [links, contactMethods] = await Promise.all([
+          vcardRpc<VcardLinkRow[]>(baseUrl, anonKey, 'lookup_card_links_by_card_id', {
+            p_card_id: card.id,
+          }).catch((e) => {
+            console.warn('[proof-action] vCard links lookup failed', { slug, error: String(e) })
+            return [] as VcardLinkRow[]
+          }),
+          vcardRpc<VcardContactMethodRow[]>(
+            baseUrl,
+            anonKey,
+            'lookup_card_contact_methods_by_card_id',
+            { p_card_id: card.id },
+          ).catch((e) => {
+            console.warn('[proof-action] vCard contact methods lookup failed', {
+              slug,
+              error: String(e),
+            })
+            return [] as VcardContactMethodRow[]
+          }),
+        ])
+        snapshot[slug] = {
+          captured_at: capturedAt,
+          card_id: card.id,
+          card_slug: card.slug,
+          first_name: card.first_name,
+          last_name: card.last_name,
+          nickname: card.nickname,
+          job_title: card.job_title,
+          company: card.company,
+          primary_email: card.primary_email,
+          email_label: card.email_label,
+          primary_phone: card.primary_phone,
+          phone_label: card.phone_label,
+          bio: card.bio,
+          birthday: card.birthday,
+          address_street: card.address_street,
+          address_city: card.address_city,
+          address_region: card.address_region,
+          address_postcode: card.address_postcode,
+          address_country: card.address_country,
+          links: (Array.isArray(links) ? links : []).map((l) => ({
+            url: l.url,
+            label: l.label,
+            icon_slug: l.icon_slug,
+            sort_order: l.sort_order,
+          })),
+          contact_methods: (Array.isArray(contactMethods) ? contactMethods : []).map((m) => ({
+            method_type: m.method_type,
+            value: m.value,
+            label: m.label,
+            sort_order: m.sort_order,
+          })),
+        }
+      } catch (err) {
+        console.warn('[proof-action] vCard snapshot failed for slug', {
+          slug,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }),
+  )
+
+  return Object.keys(snapshot).length > 0 ? snapshot : null
+}
+
 // ── IP capture ────────────────────────────────────────────────────────────────
 //
 // Edge functions sit behind Supabase's edge layer; the client's real IP
@@ -561,7 +791,9 @@ Deno.serve(async (req) => {
       // is_qr_code joined per migration 000168 so the QR-confirmation
       // enforcement block below can decide whether the slot actually
       // needs the tick before counting qr_confirmed in the upsert.
-      'proof_version_images ( original_filename, sort_order, associated_name, is_qr_code )',
+      // qr_kind + qr_vcard_slug (migrations 000192 / 000194) feed the
+      // hosted-vCard snapshot below.
+      'proof_version_images ( original_filename, sort_order, associated_name, is_qr_code, qr_kind, qr_vcard_slug )',
     )
     .eq('id', proofVersionId)
     .maybeSingle()
@@ -592,6 +824,8 @@ Deno.serve(async (req) => {
       sort_order: number
       associated_name: string | null
       is_qr_code: boolean
+      qr_kind: string | null
+      qr_vcard_slug: string | null
     }>
   }
 
@@ -735,6 +969,11 @@ Deno.serve(async (req) => {
   // — same shape as updated_at — so the predicate can rely on
   // "set means the customer ticked at action time".
   let qrConfirmedAt: string | null = null
+  // Hosted-vCard snapshot (migration 000194). Populated only on the
+  // approve path AND only when at least one slot QR is a hosted vCard
+  // with a stored slug. Best-effort: null if the vCard app is
+  // unreachable or env-misconfigured; the approval still records.
+  let qrSnapshot: Record<string, VcardSnapshotEntry> | null = null
   if (eventType === 'approve') {
     const hasNames = recipientRoster.length > 0
     const slotQrImages = (v.proof_version_images ?? []).filter((img) => {
@@ -757,6 +996,24 @@ Deno.serve(async (req) => {
     }
     if (slotQrImages.length > 0) {
       qrConfirmedAt = new Date().toISOString()
+    }
+
+    // Snapshot the hosted-vCard QRs visible to this slot. The slot
+    // coordinate filter above already restricts to the relevant rows;
+    // here we narrow to the hosted_vcard subset with a non-null slug.
+    const hostedSlugs = slotQrImages
+      .filter((img) => img.qr_kind === 'hosted_vcard' && img.qr_vcard_slug)
+      .map((img) => img.qr_vcard_slug as string)
+    if (hostedSlugs.length > 0) {
+      try {
+        qrSnapshot = await buildHostedVcardSnapshot(hostedSlugs)
+      } catch (snapErr) {
+        // Defensive — buildHostedVcardSnapshot swallows its own
+        // failures, so this branch is essentially unreachable. Logged
+        // and degraded to null so the approve still lands.
+        console.warn('[proof-action] vCard snapshot threw at top level', snapErr)
+        qrSnapshot = null
+      }
     }
   }
 
@@ -877,6 +1134,16 @@ Deno.serve(async (req) => {
     // a changes-requested clears it back to null so the slot has
     // to re-confirm on the next approve.
     qr_confirmed_at: qrConfirmedAt,
+    // Migration 000194. Slug-keyed snapshot of each hosted-vCard
+    // QR's contact data at action time. Null when no hosted-vCard
+    // QRs are visible to the slot, when the vCard app couldn't be
+    // reached, or on the request_changes path (a customer who is
+    // asking for changes hasn't approved anything to snapshot).
+    // Set explicitly on every approve+QR-confirm so a re-approve
+    // after a changes-requested correctly refreshes the captured
+    // values; cleared (set to null) on request_changes for the
+    // same reason qr_confirmed_at is.
+    qr_snapshot: qrSnapshot,
   }
 
   // Branch on is_variant_round: standard versions allow the
