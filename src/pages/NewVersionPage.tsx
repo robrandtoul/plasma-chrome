@@ -841,7 +841,7 @@ export default function NewVersionPage() {
         const [imagesResult, approvalsResult, variantsResult, lockResult] = await Promise.all([
           supabase
             .from('proof_version_images')
-            .select('id, image_path, original_filename, associated_name, material_option, side, sort_order, is_qr_code, qr_decoded_data, qr_kind, round_variant_id')
+            .select('id, image_path, original_filename, associated_name, material_option, side, sort_order, is_qr_code, qr_decoded_data, qr_kind, qr_vcard_slug, round_variant_id')
             .eq('proof_version_id', inherited.id)
             .order('sort_order'),
           supabase
@@ -888,6 +888,7 @@ export default function NewVersionPage() {
           is_qr_code: boolean | null
           qr_decoded_data: string | null
           qr_kind: QrKind | null
+          qr_vcard_slug: string | null
           round_variant_id: string | null
         }[]
         const imageRows = allImageRows.filter((r) => r.is_qr_code !== true)
@@ -960,6 +961,11 @@ export default function NewVersionPage() {
               kind: (r.qr_kind ?? 'text') as QrKind,
               associatedName: r.associated_name,
               originalFilename: r.original_filename,
+              // Migration 000192: carry the slug forward so the
+              // save path can write it on the new row's INSERT, and
+              // so the customer page renders the live contact
+              // fields via the same slug v1 was confirmed against.
+              vcardSlug: r.qr_vcard_slug ?? undefined,
             }
           }),
         )
@@ -3246,7 +3252,13 @@ export default function NewVersionPage() {
         .map((e) => ({
           entry: e,
           file: e.file as File,
-          path: `${proofId}/${uuidv4()}.jpg`,
+          // Path extension matches the artefact: hosted-vCard QRs
+          // are SVGs generated client-side; uploaded customer QRs
+          // are the raw JPEG / PNG the designer dropped. The
+          // storage bucket is content-type-agnostic, but a wrong
+          // extension would mis-route any downstream tooling that
+          // inspects path suffixes.
+          path: `${proofId}/${uuidv4()}.${e.kind === 'hosted_vcard' ? 'svg' : 'jpg'}`,
         }))
 
       const qrUploadErrors: string[] = []
@@ -3285,10 +3297,13 @@ export default function NewVersionPage() {
         side: 'front' as const,
         sort_order: imageInserts.length + i,
         // Migration 000168 — the CHECK constraint requires all
-        // three to land together on an is_qr_code row.
+        // three to land together on an is_qr_code row. Migration
+        // 000192 then layers `qr_vcard_slug` on top: populated iff
+        // qr_kind = 'hosted_vcard', null on every other QR kind.
         is_qr_code: true,
         qr_decoded_data: entry.decodedData,
         qr_kind: entry.kind,
+        qr_vcard_slug: entry.kind === 'hosted_vcard' ? entry.vcardSlug ?? null : null,
       }))
 
       const { error: qrInsertErr } = await supabase

@@ -24,6 +24,7 @@
 // embedded photos make QRs too dense for letterpress / metal
 // printing, so we never produce them.
 
+import { useEffect, useState } from 'react'
 import {
   classifyQrData,
   isShortenedUrl,
@@ -32,6 +33,11 @@ import {
   parseWifi,
   type QrKind,
 } from '../lib/qrCodes'
+import {
+  fetchVcardForSlug,
+  type VcardBundle,
+  VcardConfigError,
+} from '../lib/vcardClient'
 import {
   MONO,
   PAPER_BORDER,
@@ -199,6 +205,12 @@ function QrSection({ children }: { children: React.ReactNode }) {
             >
               Before approving, please double-check the contents of each QR code. Scan with your phone or read the decoded text alongside each one. The on-screen QR is the exact image we'll print.
             </p>
+            <p
+              className="mt-3 max-w-[30ch] text-[13px] leading-[1.55]"
+              style={{ color: PAPER_TERTIARY }}
+            >
+              For Plasma vCards, scanning the QR saves the contact details below to a phone. The look of the page it opens, the photo, colours and layout, is yours to personalise after your cards arrive.
+            </p>
           </div>
           <div>{children}</div>
         </div>
@@ -286,7 +298,7 @@ function QrCodeCard({
       <div>
         <KindBadge kind={kind} />
         <div className="mt-3">
-          <DecodedContents kind={kind} data={decoded} />
+          <DecodedContents kind={kind} data={decoded} vcardSlug={image.qr_vcard_slug ?? null} />
         </div>
       </div>
     </article>
@@ -304,6 +316,7 @@ const KIND_LABELS: Record<QrKind, string> = {
   phone: 'Phone number',
   sms: 'Text message',
   text: 'Plain text',
+  hosted_vcard: 'Plasma vCard',
 }
 
 function KindBadge({ kind }: { kind: QrKind }) {
@@ -324,8 +337,24 @@ function KindBadge({ kind }: { kind: QrKind }) {
 
 // ── Decoded contents dispatcher ──────────────────────────────────────
 
-function DecodedContents({ kind, data }: { kind: QrKind; data: string }) {
+function DecodedContents({
+  kind,
+  data,
+  vcardSlug,
+}: {
+  kind: QrKind
+  data: string
+  /** Populated by the proof-viewer only for kind = 'hosted_vcard' rows. */
+  vcardSlug: string | null
+}) {
   switch (kind) {
+    case 'hosted_vcard':
+      // The hosted-vCard renderer fetches live contact details from
+      // the vCard app and shows them field by field. Falls back to
+      // the URL + a "temporarily unavailable" line if the vCard app
+      // is unreachable, so the page never breaks even if the
+      // integration is down.
+      return <HostedVcardView slug={vcardSlug} url={data} />
     case 'vcard':
       return <VCardView raw={data} />
     case 'mecard':
@@ -431,6 +460,254 @@ function VCardView({ raw }: { raw: string }) {
       )}
       {v.note && <FieldGroup label="Note">{v.note}</FieldGroup>}
       <RawDataDisclosure raw={raw} extraRawLines={v.rawOtherLines} />
+    </div>
+  )
+}
+
+// ── HostedVcardView ─────────────────────────────────────────────────
+//
+// Hosted-vCard QRs encode a short URL only. The customer can't verify
+// the actual contact details from the URL itself, so the panel fetches
+// the live contact data from the vCard app via its anon RPCs and
+// renders the relevant fields. Styling fields (photo, cover, accent,
+// font) are intentionally not shown — they're the customer's job to
+// personalise after the cards arrive.
+//
+// If the vCard app is unreachable (network error, env vars missing,
+// CORS, anything), the panel degrades gracefully: it shows the URL,
+// a quiet "contact details are temporarily unavailable" line, and
+// the QR-confirmation tick above the Approve button still works.
+// The customer can always re-open the page later if they want to
+// re-verify.
+
+function HostedVcardView({ slug, url }: { slug: string | null; url: string }) {
+  // Three states: idle (loading), loaded with data, error.
+  type State =
+    | { kind: 'loading' }
+    | { kind: 'loaded'; bundle: VcardBundle }
+    | { kind: 'unavailable'; message: string }
+    | { kind: 'not_found' }
+  const [state, setState] = useState<State>({ kind: 'loading' })
+
+  useEffect(() => {
+    if (!slug) {
+      setState({ kind: 'unavailable', message: 'No Plasma vCard slug attached to this QR.' })
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const result = await fetchVcardForSlug(slug)
+        if (cancelled) return
+        if (result.ok) {
+          setState({ kind: 'loaded', bundle: result.data })
+        } else if (result.reason === 'not_found') {
+          setState({ kind: 'not_found' })
+        } else {
+          setState({ kind: 'unavailable', message: result.message ?? 'Lookup failed.' })
+        }
+      } catch (err) {
+        if (cancelled) return
+        if (err instanceof VcardConfigError) {
+          setState({
+            kind: 'unavailable',
+            message: 'vCard app integration is not configured on this site.',
+          })
+        } else {
+          setState({ kind: 'unavailable', message: (err as Error).message })
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [slug])
+
+  // URL row is always shown, regardless of state — it's what the QR
+  // literally encodes and the customer should always be able to read
+  // the destination back to themselves.
+  const urlLine = (
+    <FieldGroup label="QR link">
+      <span style={{ fontFamily: MONO, color: PAPER_INK, wordBreak: 'break-all' }}>
+        {url}
+      </span>
+    </FieldGroup>
+  )
+
+  if (state.kind === 'loading') {
+    return (
+      <div className="space-y-3">
+        {urlLine}
+        <div className="text-[13px]" style={{ color: PAPER_TERTIARY, fontFamily: SANS }}>
+          Loading the contact details for this Plasma vCard…
+        </div>
+      </div>
+    )
+  }
+
+  if (state.kind === 'not_found') {
+    return (
+      <div className="space-y-3">
+        {urlLine}
+        <div className="text-[13px]" style={{ color: PAPER_TERTIARY, fontFamily: SANS }}>
+          The Plasma vCard for this QR hasn't been published yet. The
+          link is correct and will resolve as soon as the card is live.
+        </div>
+      </div>
+    )
+  }
+
+  if (state.kind === 'unavailable') {
+    return (
+      <div className="space-y-3">
+        {urlLine}
+        <div className="text-[13px]" style={{ color: PAPER_TERTIARY, fontFamily: SANS }}>
+          The contact details for this Plasma vCard are temporarily
+          unavailable. Try refreshing this page; you can still approve
+          once you've reviewed the link above.
+        </div>
+      </div>
+    )
+  }
+
+  const { card, links, contactMethods } = state.bundle
+  const formattedName =
+    [card.first_name, card.last_name].filter(Boolean).join(' ').trim() ||
+    card.nickname ||
+    null
+  const titleLine = [card.job_title, card.company].filter(Boolean).join(' · ')
+  const addressLine = [
+    card.address_street,
+    card.address_city,
+    card.address_region,
+    card.address_postcode,
+    card.address_country,
+  ]
+    .map((p) => (p ?? '').trim())
+    .filter(Boolean)
+    .join(', ')
+  const extraEmails = contactMethods.filter((m) => m.method_type === 'email')
+  const extraPhones = contactMethods.filter((m) => m.method_type === 'phone')
+
+  return (
+    <div className="space-y-3">
+      {formattedName && (
+        <div
+          style={{
+            fontFamily: SERIF,
+            fontSize: 22,
+            lineHeight: 1.2,
+            color: PAPER_INK,
+          }}
+        >
+          {formattedName}
+        </div>
+      )}
+      {card.nickname && formattedName && card.nickname !== formattedName && (
+        <div
+          className="text-[13px]"
+          style={{ fontFamily: SANS, color: PAPER_SECONDARY }}
+        >
+          Also known as {card.nickname}
+        </div>
+      )}
+      {titleLine && (
+        <div
+          className="text-[14px]"
+          style={{ fontFamily: SANS, color: PAPER_SECONDARY, lineHeight: 1.45 }}
+        >
+          {titleLine}
+        </div>
+      )}
+      {card.primary_phone && (
+        <FieldGroup label="Phone">
+          <div>
+            <span style={{ fontFamily: MONO, color: PAPER_INK }}>
+              {card.primary_phone}
+            </span>
+            {card.phone_label && (
+              <span
+                className="ml-2 text-[11px] uppercase tracking-wide"
+                style={{ color: PAPER_TERTIARY, fontFamily: MONO }}
+              >
+                {card.phone_label}
+              </span>
+            )}
+          </div>
+          {extraPhones.map((p) => (
+            <div key={p.id}>
+              <span style={{ fontFamily: MONO, color: PAPER_INK }}>{p.value}</span>
+              {p.label && (
+                <span
+                  className="ml-2 text-[11px] uppercase tracking-wide"
+                  style={{ color: PAPER_TERTIARY, fontFamily: MONO }}
+                >
+                  {p.label}
+                </span>
+              )}
+            </div>
+          ))}
+        </FieldGroup>
+      )}
+      {card.primary_email && (
+        <FieldGroup label="Email">
+          <div>
+            <span style={{ fontFamily: MONO, color: PAPER_INK }}>
+              {card.primary_email}
+            </span>
+            {card.email_label && (
+              <span
+                className="ml-2 text-[11px] uppercase tracking-wide"
+                style={{ color: PAPER_TERTIARY, fontFamily: MONO }}
+              >
+                {card.email_label}
+              </span>
+            )}
+          </div>
+          {extraEmails.map((em) => (
+            <div key={em.id}>
+              <span style={{ fontFamily: MONO, color: PAPER_INK }}>{em.value}</span>
+              {em.label && (
+                <span
+                  className="ml-2 text-[11px] uppercase tracking-wide"
+                  style={{ color: PAPER_TERTIARY, fontFamily: MONO }}
+                >
+                  {em.label}
+                </span>
+              )}
+            </div>
+          ))}
+        </FieldGroup>
+      )}
+      {addressLine && (
+        <FieldGroup label="Address">
+          <span style={{ color: PAPER_INK }}>{addressLine}</span>
+        </FieldGroup>
+      )}
+      {card.birthday && (
+        <FieldGroup label="Birthday">
+          <span style={{ color: PAPER_INK, fontFamily: MONO }}>{card.birthday}</span>
+        </FieldGroup>
+      )}
+      {card.bio && (
+        <FieldGroup label="Bio">
+          <span style={{ color: PAPER_INK }}>{card.bio}</span>
+        </FieldGroup>
+      )}
+      {links.length > 0 && (
+        <FieldGroup label="Links">
+          {links
+            .slice()
+            .sort((a, b) => a.sort_order - b.sort_order)
+            .map((l) => (
+              <div key={l.id} style={{ fontFamily: MONO, color: PAPER_INK, wordBreak: 'break-all' }}>
+                {l.label ? `${l.label} — ` : ''}
+                {l.url}
+              </div>
+            ))}
+        </FieldGroup>
+      )}
+      {urlLine}
     </div>
   )
 }

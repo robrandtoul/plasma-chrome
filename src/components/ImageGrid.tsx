@@ -49,7 +49,11 @@ export interface GridImage {
   // is_qr_code=false with both QR columns null.
   is_qr_code?: boolean
   qr_decoded_data?: string | null
-  qr_kind?: 'vcard' | 'url' | 'wifi' | 'mecard' | 'email' | 'phone' | 'sms' | 'text' | null
+  qr_kind?: 'vcard' | 'url' | 'wifi' | 'mecard' | 'email' | 'phone' | 'sms' | 'text' | 'hosted_vcard' | null
+  // Migration 000192: only populated when qr_kind = 'hosted_vcard'. The
+  // customer-side QR panel uses this to fetch live contact details
+  // from the vCard app's anon RPCs and render them for verification.
+  qr_vcard_slug?: string | null
 }
 
 // Single-image card with click-to-zoom + caption. Exported so the
