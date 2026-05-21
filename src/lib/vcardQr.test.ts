@@ -72,8 +72,10 @@ tests.push(test('Trailing slash is tolerated', () => {
 tests.push(test('Leading whitespace is trimmed', () => {
   assertEqual(parseVcardSlugInput('   abcdef  '), 'abcdef')
 }))
-tests.push(test('Mixed-case slug is lowercased', () => {
-  assertEqual(parseVcardSlugInput('https://qcrd.uk/ABCDEF'), 'abcdef')
+tests.push(test('Mixed-case slug keeps its case', () => {
+  // Regression: vCard slugs are case-sensitive. `PtrsjZk` must not
+  // be lowercased to `ptrsjzk` or the lookup misses the card.
+  assertEqual(parseVcardSlugInput('https://qcrd.uk/PtrsjZk'), 'PtrsjZk')
 }))
 tests.push(test('Query string is stripped', () => {
   assertEqual(parseVcardSlugInput('https://qcrd.uk/abcdef?utm=foo'), 'abcdef')
@@ -85,7 +87,10 @@ tests.push(test('Rejects extra path segment', () => {
   assertEqual(parseVcardSlugInput('https://qcrd.uk/abcdef/extra'), null)
 }))
 tests.push(test('Rejects too-short slug', () => {
-  assertEqual(parseVcardSlugInput('abc'), null)
+  assertEqual(parseVcardSlugInput('ab'), null)
+}))
+tests.push(test('Accepts a 3-character slug', () => {
+  assertEqual(parseVcardSlugInput('abc'), 'abc')
 }))
 tests.push(test('Rejects underscored slug', () => {
   assertEqual(parseVcardSlugInput('abc_def'), null)

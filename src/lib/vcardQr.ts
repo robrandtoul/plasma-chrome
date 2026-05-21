@@ -35,13 +35,19 @@ import QRCode from 'qrcode'
 export const VCARD_BASE_URL = 'https://qcrd.uk'
 
 /**
- * vCard slug format: 6-32 characters of lowercase letters, digits, and
- * hyphens. Matches what the vCard app generates and accepts.
- * Conservative — rejects uppercase, slashes, underscores, anything
- * URL-encoded — so a paste of `qcrd.uk/abc/def` or a stray query
- * string never lands as a slug.
+ * vCard slug format: 3-32 characters of letters, digits and hyphens,
+ * matching the vCard app's own rule (its NewCardPage states "Letters,
+ * digits and hyphens. 3-32 characters").
+ *
+ * Case is significant and must be preserved. vCard slugs are stored
+ * case-preserving and the vCard app's lookup RPC matches case-
+ * sensitively, so a slug pasted as `PtrsjZk` has to reach the lookup
+ * as `PtrsjZk`, not `ptrsjzk`. The character class allows both cases
+ * and the parser returns the slug verbatim. Slashes, underscores and
+ * URL-encoded junk are still rejected, so a paste of `qcrd.uk/abc/def`
+ * or a stray query string never lands as a slug.
  */
-const SLUG_RE = /^[a-z0-9-]{6,32}$/
+const SLUG_RE = /^[a-zA-Z0-9-]{3,32}$/
 
 /**
  * Build the canonical hosted-vCard URL from a slug. Caller is expected
@@ -83,9 +89,11 @@ export function parseVcardSlugInput(raw: string): string | null {
   // Reject if there's still a path segment beyond the slug.
   if (candidate.includes('/')) return null
 
-  const lowered = candidate.toLowerCase()
-  if (!SLUG_RE.test(lowered)) return null
-  return lowered
+  // Return the slug verbatim, case preserved. The vCard app's lookup
+  // is case-sensitive (see SLUG_RE), so `PtrsjZk` and `ptrsjzk`
+  // resolve to different cards, or to none.
+  if (!SLUG_RE.test(candidate)) return null
+  return candidate
 }
 
 /**
