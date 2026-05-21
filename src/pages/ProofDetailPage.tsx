@@ -1481,9 +1481,12 @@ export default function ProofDetailPage() {
             currentVersion.card_type === 'membership' ? 'Membership card' : 'Shared'
           return (
             <section className="mb-8">
-              <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
+              <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
                 Approved vCard contents
               </h2>
+              <p className="mb-4 text-xs text-gray-500">
+                Captured at approval time. The live vCard may have changed since.
+              </p>
               <div className="space-y-3">
                 {entries.map((approval) => {
                   const heading =
@@ -2377,14 +2380,6 @@ function VcardSnapshotPanel({ snapshot }: { snapshot: QrSnapshot }) {
   const showHeading = entries.length > 1
   return (
     <div className="mt-3 rounded-lg bg-gray-50 px-3 py-3 text-xs ring-1 ring-gray-200">
-      <div className="mb-2 flex items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-          Approved vCard contents
-        </span>
-        <span className="text-[11px] text-gray-400">
-          Captured at approval time. The live vCard may have changed since.
-        </span>
-      </div>
       <div className="space-y-3">
         {entries.map(([slug, entry]) => (
           <VcardSnapshotEntryView
