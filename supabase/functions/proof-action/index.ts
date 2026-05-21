@@ -457,6 +457,12 @@ const VCARD_RPC_TIMEOUT_MS = 4_000
 interface VcardCardRow {
   id: string
   slug: string
+  // A Plasma vCard can be a contact card OR a URL redirect. When
+  // target_type is 'external_url' the card resolves to external_url
+  // and the contact fields below are unused — the snapshot needs
+  // both to record what the customer actually approved.
+  target_type: string | null
+  external_url: string | null
   first_name: string | null
   last_name: string | null
   nickname: string | null
@@ -495,6 +501,11 @@ interface VcardSnapshotEntry {
   captured_at: string
   card_id: string
   card_slug: string
+  // 'vcard' (contact card) or 'external_url' (URL redirect). Null
+  // tolerated for forward-compatibility with future card kinds; the
+  // designer-side display treats null the same as 'vcard'.
+  target_type: string | null
+  external_url: string | null
   first_name: string | null
   last_name: string | null
   nickname: string | null
@@ -582,30 +593,40 @@ async function buildHostedVcardSnapshot(
           console.warn('[proof-action] vCard snapshot skipped: slug not found', { slug })
           return
         }
-        const [links, contactMethods] = await Promise.all([
-          vcardRpc<VcardLinkRow[]>(baseUrl, anonKey, 'lookup_card_links_by_card_id', {
-            p_card_id: card.id,
-          }).catch((e) => {
-            console.warn('[proof-action] vCard links lookup failed', { slug, error: String(e) })
-            return [] as VcardLinkRow[]
-          }),
-          vcardRpc<VcardContactMethodRow[]>(
-            baseUrl,
-            anonKey,
-            'lookup_card_contact_methods_by_card_id',
-            { p_card_id: card.id },
-          ).catch((e) => {
-            console.warn('[proof-action] vCard contact methods lookup failed', {
-              slug,
-              error: String(e),
-            })
-            return [] as VcardContactMethodRow[]
-          }),
-        ])
+        // URL-redirect cards have no contact card behind them, so
+        // links / contact_methods are by definition empty for those
+        // — skip the two extra RPC round-trips. Contact-card cards
+        // (target_type === 'vcard' or legacy null) keep the full
+        // bundled fetch.
+        const isRedirect = card.target_type === 'external_url'
+        const [links, contactMethods] = isRedirect
+          ? [[] as VcardLinkRow[], [] as VcardContactMethodRow[]]
+          : await Promise.all([
+              vcardRpc<VcardLinkRow[]>(baseUrl, anonKey, 'lookup_card_links_by_card_id', {
+                p_card_id: card.id,
+              }).catch((e) => {
+                console.warn('[proof-action] vCard links lookup failed', { slug, error: String(e) })
+                return [] as VcardLinkRow[]
+              }),
+              vcardRpc<VcardContactMethodRow[]>(
+                baseUrl,
+                anonKey,
+                'lookup_card_contact_methods_by_card_id',
+                { p_card_id: card.id },
+              ).catch((e) => {
+                console.warn('[proof-action] vCard contact methods lookup failed', {
+                  slug,
+                  error: String(e),
+                })
+                return [] as VcardContactMethodRow[]
+              }),
+            ])
         snapshot[slug] = {
           captured_at: capturedAt,
           card_id: card.id,
           card_slug: card.slug,
+          target_type: card.target_type,
+          external_url: card.external_url,
           first_name: card.first_name,
           last_name: card.last_name,
           nickname: card.nickname,

@@ -2408,6 +2408,38 @@ function VcardSnapshotEntryView({
   entry: QrSnapshotEntry
   showHeading: boolean
 }) {
+  const capturedDate = (() => {
+    const d = new Date(entry.captured_at)
+    if (Number.isNaN(d.getTime())) return entry.captured_at
+    return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} at ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}`
+  })()
+
+  // URL-redirect cards: the QR resolves to external_url, not to a
+  // contact panel, so the only meaningful audit line is the
+  // destination. Skip the contact field grid entirely. Treat null
+  // target_type (legacy / forward-compat) as 'vcard'.
+  if (entry.target_type === 'external_url') {
+    return (
+      <div>
+        {showHeading && (
+          <p className="mb-1 text-[11px] font-semibold text-gray-700">
+            qcrd.uk/{slug}
+          </p>
+        )}
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-gray-600">
+          <dt className="font-semibold text-gray-700">Type</dt>
+          <dd className="text-gray-900">URL redirect</dd>
+          <dt className="font-semibold text-gray-700">Redirects to</dt>
+          <dd className="break-all font-mono text-gray-900">
+            {entry.external_url ?? '(no destination recorded)'}
+          </dd>
+          <dt className="font-semibold text-gray-700">Captured</dt>
+          <dd className="text-gray-500">{capturedDate}</dd>
+        </dl>
+      </div>
+    )
+  }
+
   const formattedName =
     [entry.first_name, entry.last_name].filter(Boolean).join(' ').trim() ||
     entry.nickname ||
@@ -2426,11 +2458,6 @@ function VcardSnapshotEntryView({
   const extraEmails = entry.contact_methods.filter((m) => m.method_type === 'email')
   const extraPhones = entry.contact_methods.filter((m) => m.method_type === 'phone')
   const sortedLinks = entry.links.slice().sort((a, b) => a.sort_order - b.sort_order)
-  const capturedDate = (() => {
-    const d = new Date(entry.captured_at)
-    if (Number.isNaN(d.getTime())) return entry.captured_at
-    return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} at ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}`
-  })()
   return (
     <div>
       {showHeading && (

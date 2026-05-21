@@ -19,6 +19,8 @@
 --       "captured_at": "2026-05-21T11:22:33Z",
 --       "card_id": "uuid",
 --       "card_slug": "<slug>",
+--       "target_type": "vcard" | "external_url" | null,
+--       "external_url": "https://example.com/...",
 --       "first_name": "...", "last_name": "...", "nickname": "...",
 --       "job_title": "...", "company": "...",
 --       "primary_email": "...", "email_label": "...",
@@ -32,6 +34,15 @@
 --     },
 --     ...
 --   }
+--
+-- A Plasma vCard is either a contact card ('vcard', the default) or
+-- a URL redirect ('external_url'). The contact-field block is null
+-- on redirect cards because the underlying app stores no contact
+-- data for them; the meaningful payload is external_url. The
+-- designer-side display branches on target_type so a redirect card
+-- shows "Redirects to: <url>" instead of an empty contact panel.
+-- target_type may be null on legacy entries snapshotted before this
+-- field was added; the display treats null the same as 'vcard'.
 --
 -- Designer-side only. The customer never reads the snapshot — they
 -- approve against the live data — so no public_* view or customer RPC

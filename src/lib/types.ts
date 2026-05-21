@@ -422,6 +422,16 @@ export interface QrSnapshotEntry {
   captured_at: string
   card_id: string
   card_slug: string
+  // A Plasma vCard is either a contact card ('vcard') or a URL
+  // redirect ('external_url'). When the card is a redirect, the
+  // QR resolves to external_url (https://example.com/...) rather
+  // than to the contact fields below — those will typically be
+  // null. The designer display branches on target_type so a
+  // redirect renders "Redirects to: <url>" instead of an empty
+  // contact block. Null tolerated for legacy / forward-compat;
+  // the display treats null the same as 'vcard'.
+  target_type: string | null
+  external_url: string | null
   first_name: string | null
   last_name: string | null
   nickname: string | null
