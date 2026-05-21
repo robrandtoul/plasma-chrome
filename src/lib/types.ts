@@ -402,6 +402,54 @@ export type ProofNameApproval = {
   // when the slot has no QRs visible, when the customer hasn't
   // ticked yet, or on legacy approval rows.
   qr_confirmed_at: string | null
+  // Migration 000194 — slug-keyed snapshot of each hosted-vCard
+  // QR's contact data at approval time. Designer-side audit only;
+  // the customer never reads this. Null when the slot has no
+  // hosted-vCard QRs, when the vCard app was unreachable at action
+  // time, or on legacy approval rows that predate this feature.
+  qr_snapshot: QrSnapshot | null
+}
+
+// Migration 000194 — hosted-vCard approval snapshot shape. One entry
+// per QR on the slot, keyed by qr_vcard_slug. Fields mirror what
+// HostedVcardView in src/components/QrCodePanel.tsx renders on the
+// customer page; styling fields (profile / cover image, theme) are
+// intentionally omitted because they are not part of the proof's
+// contractual content.
+export type QrSnapshot = Record<string, QrSnapshotEntry>
+
+export interface QrSnapshotEntry {
+  captured_at: string
+  card_id: string
+  card_slug: string
+  first_name: string | null
+  last_name: string | null
+  nickname: string | null
+  job_title: string | null
+  company: string | null
+  primary_email: string | null
+  email_label: string | null
+  primary_phone: string | null
+  phone_label: string | null
+  bio: string | null
+  birthday: string | null
+  address_street: string | null
+  address_city: string | null
+  address_region: string | null
+  address_postcode: string | null
+  address_country: string | null
+  links: Array<{
+    url: string
+    label: string | null
+    icon_slug: string | null
+    sort_order: number
+  }>
+  contact_methods: Array<{
+    method_type: 'email' | 'phone'
+    value: string
+    label: string | null
+    sort_order: number
+  }>
 }
 
 export interface ProofVersionImage {
