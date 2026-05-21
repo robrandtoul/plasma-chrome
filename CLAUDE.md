@@ -82,6 +82,7 @@ Migration summary (post-000009):
 - **000182** — security-advisor cleanup, part 2. Two safely-mechanical fixes for the WARN-level findings: (1) pins `search_path = public` on the 27 plain SECURITY INVOKER functions that lacked it (looped over `pg_proc` filtered on `prokind='f'` and absence of any `search_path=%` element in `proconfig`, idempotently skipping extension-owned functions to avoid `must be owner` failures) — closes the latent injection vector where a caller could inject a lookalike object via their search_path; (2) revokes EXECUTE from `public, anon, authenticated` on 11 internal-only SECURITY DEFINER trigger/plumbing functions that nothing in `src/` or `supabase/functions/` calls — triggers still fire because trigger invocation ignores EXECUTE, but the functions are no longer part of the callable API surface. The other 21 SECURITY DEFINER functions (the deliberate anon + designer/admin API) are left callable.
 - **000183** — fill the USD Standard Paper price-tier gap surfaced by the 2026-05-15 CommonNinja vs Supabase parity audit. Inserts 12 `price_tiers` rows for `paper_standard` USD: quantities 2000 / 3000 / 5000 / 10000 across the three finish variants (`standard`, `uv_spot`, `foiling`). GBP and EUR already carried those quantities; only USD was short. Totals taken from the live US price list (treated as source of truth where it and the DB diverge, same stance as 000111); unit_price computed to 4 dp to match seed convention. `on conflict (material_variant_id, currency, quantity) do nothing` for idempotency. After this, all 1,248 cells across the three CommonNinja currency pages reconcile exactly against Supabase, which is the precondition for 000184's read path.
 - **000184** — `public_get_price_list(p_currency text)` SECURITY DEFINER RPC, EXECUTE granted to anon. Single-round-trip read path for the new marketing-site price-list script (see "Price-list rendering script" below): takes one currency and returns a jsonb object `{ currency, materials: [{ code, display_name, variants: [{ id, code, display_name, variant_type, ink_count, sort_order, tiers: [{ quantity, total_price }] }], option_surcharges: [{ option_code, quantity, surcharge }] }] }`. Filters to `is_active = true AND is_published = true AND archived_at IS NULL` on materials so unpublished rows (Titanium today) stay hidden, plus `is_active = true` on variants and `currency = p_currency` on tiers and option surcharges. `carbon_fibre_cnc` and `paper_letterpress_gilded` come through as ordinary materials; the script computes the CNC and gilding surcharge columns as differences against the base materials. Pricing data only — no customer, proof, contact, profile, audit, or settings columns. Same house pattern as 000180; raw `price_tiers` and the catalogue views stay anon-revoked.
+- **000192** — hosted-vCard QR codes. Adds `proof_version_images.qr_vcard_slug text` and widens the qr-consistency CHECK to allow `qr_kind = 'hosted_vcard'`, with the slug populated iff that's the kind. The Plasma vCard product prints a QR pointing at a short URL (`https://qcrd.uk/<slug>`); the old upload-and-decode path can't show the customer the actual contact details because there aren't any in the QR payload. The new kind lets the proof viewer generate the QR itself (so the QR shown for approval is provably the one that prints) and fetch the live contact fields from the vCard app's anon RPCs for the customer-side verification panel. Rebuilds `public_proof_version_images` to expose the new column and restates the anon revoke + the authenticated grant + `security_invoker = on` (per the 000168/000174/000181 drop+recreate footgun chain). `public_get_customer_proof` is intentionally untouched — image rows flow through the `customer-proof-images` edge function which `select *`s the view, not through the RPC. The 000169 `qr_confirmed_at` predicate already gates any `is_qr_code = true` row, so hosted-vCard QRs inherit the existing approval flow without a function rewrite. See "Plasma vCard QR integration" below.
 
 `seed.sql` (applied via 000009's pricing rebuild) contains roughly 16,000 price-tier rows sourced from the per-currency Pricing CSVs in Rob's Dropbox (`mnt/Pricing`). The generic `add_ons` / `add_on_prices` tables are still present but largely superseded by `material_options` for anything that behaves as a switchable dimension on a proof.
 
@@ -189,6 +190,55 @@ Build:
 - `vite.price-list.config.ts` is a second Vite build target, library mode in IIFE format. Emits `dist/price-list/price-list.js` with a stable unhashed filename so the Squarespace `<script src>` URL is permanent. Runs as part of `pnpm build` (after the SPA `vite build`) and ships in the same Netlify deploy under `proofs.plasmadesign.co.uk/price-list/price-list.js`. The Supabase URL and anon key are interpolated at build time via `import.meta.env`.
 
 Squarespace side: each of the 16 tables per currency page is a `<div data-price-table="<key>">` placeholder; the page loads the script once via `<script src="https://proofs.plasmadesign.co.uk/price-list/price-list.js" defer></script>`. The script detects currency from the page URL, calls `public_get_price_list` once, and fills every placeholder it finds.
+
+## Plasma vCard QR integration
+
+Plasma's hosted vCard product (`https://qcrd.uk/<slug>`) prints a QR that decodes to a short URL only, not to a vCard payload. The proof viewer cross-references that with the vCard app so the customer verifies the actual contact details, not a blind URL.
+
+Two QR types live side by side in the version form's QR section, and the designer picks which one they're adding:
+
+- **Customer-supplied QR** — drop a JPEG, jsQR decodes it, the existing eight `qr_kind` values handle the rest. Unchanged from 000168 / 000169.
+- **Plasma vCard QR** — paste a `qcrd.uk` URL or slug, the form validates it against the vCard app via `lookup_card_by_slug`, generates the QR SVG client-side with `qrcode@1.5.4` (locked to the same options the vCard studio uses, see below), and offers a Download SVG button so the designer can drop the exact bytes into the print artwork. Stored as `qr_kind = 'hosted_vcard'`, `qr_vcard_slug = <slug>`, `qr_decoded_data = https://qcrd.uk/<slug>`, `image_path = <generated .svg>`.
+
+Customer side, `QrCodePanel` branches on `qr_kind === 'hosted_vcard'` and calls the vCard app's three anon RPCs (`lookup_card_by_slug`, `lookup_card_links_by_card_id`, `lookup_card_contact_methods_by_card_id`) to render contact fields live. Styling fields (photo, cover image, accent colour, font) are deliberately not shown — those are the customer's to personalise after the cards arrive. If the vCard app is unreachable, the panel quietly falls back to "contact details temporarily unavailable" plus the URL; the page never breaks.
+
+There is **no shared database** between the two apps and **no proof-viewer edge function proxying the lookups**. The vCard app is consulted purely over its existing anon REST surface. Two env vars (`VITE_VCARD_SUPABASE_URL` / `VITE_VCARD_SUPABASE_ANON_KEY`) carry the publishable key into the proof-viewer bundle; the key is already public on the vCard site so baking it in is fine.
+
+### QR byte-identity guarantee
+
+The customer's approval is honest only if the QR they see in the proof is the QR that prints. Two guarantees back that up:
+
+1. **Destination identity.** A QR's destination is fully determined by the encoded string. Both apps encode `https://qcrd.uk/<slug>`; pin base and slug and the destination matches regardless of the QR library.
+2. **Byte identity.** `qrcode` is deterministic; identical input + identical options = identical SVG bytes. Verified on `qrcode@1.5.4`: SVG for `https://qcrd.uk/7k2nq8x` is byte-stable at md5 `fe395e7fcf5063a2d7f82b2c9a26faab`, 1161 bytes.
+
+The canonical options live in two places in lockstep:
+
+- `apps/studio/src/components/QrPanel.tsx` in the vCard app
+- `src/lib/vcardQr.ts` in this repo
+
+A committed golden fixture (`src/lib/__fixtures__/vcard-qr-7k2nq8x.svg`) and the matching test (`src/lib/vcardQr.test.ts`) catch any drift in the QR library or options. If you change either side, check both — the test only flags drift on the proof-viewer side.
+
+### Files
+
+Library:
+
+- `src/lib/vcardQr.ts` — QR generation, slug parsing (`parseVcardSlugInput`), URL builder.
+- `src/lib/vcardClient.ts` — anon RPC wrappers + bundled `fetchVcardForSlug`. Env read lazily inside the helper so unit tests can shim via `process.env` (each ESM module gets its own `import.meta`).
+
+UI:
+
+- `src/components/QrCodeUploadSection.tsx` — adds the "Plasma vCard QR" add path + Download SVG button alongside the existing drop zone.
+- `src/components/QrCodePanel.tsx` — adds `HostedVcardView` that fetches and renders the live contact data.
+
+Pages:
+
+- `src/pages/NewVersionPage.tsx` / `src/pages/EditVersionPage.tsx` — read/write `qr_vcard_slug`; hosted-vCard rows use a `.svg` path extension.
+
+### What stayed deferred
+
+- A scan-test on the live qcrd.uk URL during the proof (option 2b from the build brief).
+- A `.vcf` download in the proof — at first-proof time the vCard card is still a draft and `.vcf` 404s.
+- A `qr_snapshot jsonb` on `proof_name_approvals` capturing the contact fields the customer approved (Phase 4 of the brief). The vCard stays editable after printing; without a snapshot, the approved fields and the live fields can drift. Picked up as a follow-up if the drift becomes a real issue.
 
 ## Frontend patterns
 
