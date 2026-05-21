@@ -3354,6 +3354,13 @@ export default function NewVersionPage() {
           updated_at: string
           carried_from_version_id: string
           qr_confirmed_at: string | null
+          // Migration 000194 — carries with qr_confirmed_at on the
+          // same byte-identity gate: if the slot's QR set didn't
+          // change, the snapshot taken on v1 still describes what was
+          // approved on v2. Different multiset nulls the snapshot
+          // alongside the timestamp; customer re-ticks on v2 and the
+          // edge function captures a fresh snapshot at that point.
+          qr_snapshot: ProofNameApproval['qr_snapshot']
         }[] = []
 
         // Migration 000169 — slot's QR decoded-data multiset on v1
@@ -3480,6 +3487,9 @@ export default function NewVersionPage() {
             carried_from_version_id: v1Carry.versionId,
             qr_confirmed_at: qrSetsMatch
               ? v1Approval.qr_confirmed_at
+              : null,
+            qr_snapshot: qrSetsMatch
+              ? v1Approval.qr_snapshot
               : null,
           })
         }

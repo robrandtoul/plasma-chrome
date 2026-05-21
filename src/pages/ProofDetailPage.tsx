@@ -11,7 +11,12 @@ import { firstName } from '../lib/firstName'
 import { getRepliesEnabled } from '../lib/repliesEnabled'
 import { logAudit } from '../lib/audit'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
-import type { LetterpressCoreColour, ProofNameApproval } from '../lib/types'
+import type {
+  LetterpressCoreColour,
+  ProofNameApproval,
+  QrSnapshot,
+  QrSnapshotEntry,
+} from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/sharedApproval'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
@@ -1761,7 +1766,18 @@ export default function ProofDetailPage() {
                             )}
                           </button>
                           {expanded && (
-                            <AuditPanel event={auditEvent} hsFailed={hsFailed} />
+                            <>
+                              <AuditPanel event={auditEvent} hsFailed={hsFailed} />
+                              {/* Hosted-vCard snapshot (migration 000194).
+                                  Renders only on approved rows where the
+                                  edge function captured one. Live vCard
+                                  data can drift after print; the snapshot
+                                  is the permanent record of what was
+                                  approved. */}
+                              {approval?.state === 'approved' && approval.qr_snapshot && (
+                                <VcardSnapshotPanel snapshot={approval.qr_snapshot} />
+                              )}
+                            </>
                           )}
                         </div>
                       )}
@@ -2277,6 +2293,193 @@ function AuditPanel({
           </dl>
         )}
       </div>
+    </div>
+  )
+}
+
+// Phase 4 (migration 000194) — read-only display of the hosted-vCard
+// snapshot captured at approval time. Hosted-vCard QRs point at a
+// vCard whose contact data stays editable indefinitely, so the live
+// data can drift from what the customer approved. This panel surfaces
+// what was frozen at the moment of approval so the designer can match
+// it against the live vCard (or against a print proof) later.
+//
+// Read-only, designer-side, audit grid shape mirroring AuditPanel.
+// One <dl> per snapshotted slug; when only one slug is present we
+// drop the slug heading to keep the chrome quiet. Empty fields are
+// elided rather than rendered as em-dashes — this is permanent audit
+// data, not a form, and a missing line reads as "wasn't captured /
+// was empty at the time", which is the honest signal.
+function VcardSnapshotPanel({ snapshot }: { snapshot: QrSnapshot }) {
+  const entries = Object.entries(snapshot)
+  if (entries.length === 0) return null
+  const showHeading = entries.length > 1
+  return (
+    <div className="mt-3 rounded-lg bg-gray-50 px-3 py-3 text-xs ring-1 ring-gray-200">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+          Approved vCard contents
+        </span>
+        <span className="text-[11px] text-gray-400">
+          Captured at approval time. The live vCard may have changed since.
+        </span>
+      </div>
+      <div className="space-y-3">
+        {entries.map(([slug, entry]) => (
+          <VcardSnapshotEntryView
+            key={slug}
+            slug={slug}
+            entry={entry}
+            showHeading={showHeading}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function VcardSnapshotEntryView({
+  slug,
+  entry,
+  showHeading,
+}: {
+  slug: string
+  entry: QrSnapshotEntry
+  showHeading: boolean
+}) {
+  const formattedName =
+    [entry.first_name, entry.last_name].filter(Boolean).join(' ').trim() ||
+    entry.nickname ||
+    null
+  const titleLine = [entry.job_title, entry.company].filter(Boolean).join(' · ')
+  const addressLine = [
+    entry.address_street,
+    entry.address_city,
+    entry.address_region,
+    entry.address_postcode,
+    entry.address_country,
+  ]
+    .map((p) => (p ?? '').trim())
+    .filter(Boolean)
+    .join(', ')
+  const extraEmails = entry.contact_methods.filter((m) => m.method_type === 'email')
+  const extraPhones = entry.contact_methods.filter((m) => m.method_type === 'phone')
+  const sortedLinks = entry.links.slice().sort((a, b) => a.sort_order - b.sort_order)
+  const capturedDate = (() => {
+    const d = new Date(entry.captured_at)
+    if (Number.isNaN(d.getTime())) return entry.captured_at
+    return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} at ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}`
+  })()
+  return (
+    <div>
+      {showHeading && (
+        <p className="mb-1 text-[11px] font-semibold text-gray-700">
+          qcrd.uk/{slug}
+        </p>
+      )}
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-gray-600">
+        {formattedName && (
+          <>
+            <dt className="font-semibold text-gray-700">Name</dt>
+            <dd className="text-gray-900">{formattedName}</dd>
+          </>
+        )}
+        {entry.nickname && entry.nickname !== formattedName && (
+          <>
+            <dt className="font-semibold text-gray-700">Nickname</dt>
+            <dd className="text-gray-900">{entry.nickname}</dd>
+          </>
+        )}
+        {titleLine && (
+          <>
+            <dt className="font-semibold text-gray-700">Role</dt>
+            <dd className="text-gray-900">{titleLine}</dd>
+          </>
+        )}
+        {entry.primary_phone && (
+          <>
+            <dt className="font-semibold text-gray-700">Phone</dt>
+            <dd className="text-gray-900">
+              <div className="font-mono">
+                {entry.primary_phone}
+                {entry.phone_label && (
+                  <span className="ml-2 text-[10px] uppercase tracking-wider text-gray-500">
+                    {entry.phone_label}
+                  </span>
+                )}
+              </div>
+              {extraPhones.map((p) => (
+                <div key={`${p.value}-${p.sort_order}`} className="font-mono">
+                  {p.value}
+                  {p.label && (
+                    <span className="ml-2 text-[10px] uppercase tracking-wider text-gray-500">
+                      {p.label}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </dd>
+          </>
+        )}
+        {entry.primary_email && (
+          <>
+            <dt className="font-semibold text-gray-700">Email</dt>
+            <dd className="text-gray-900">
+              <div className="font-mono">
+                {entry.primary_email}
+                {entry.email_label && (
+                  <span className="ml-2 text-[10px] uppercase tracking-wider text-gray-500">
+                    {entry.email_label}
+                  </span>
+                )}
+              </div>
+              {extraEmails.map((m) => (
+                <div key={`${m.value}-${m.sort_order}`} className="font-mono">
+                  {m.value}
+                  {m.label && (
+                    <span className="ml-2 text-[10px] uppercase tracking-wider text-gray-500">
+                      {m.label}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </dd>
+          </>
+        )}
+        {addressLine && (
+          <>
+            <dt className="font-semibold text-gray-700">Address</dt>
+            <dd className="text-gray-900">{addressLine}</dd>
+          </>
+        )}
+        {entry.birthday && (
+          <>
+            <dt className="font-semibold text-gray-700">Birthday</dt>
+            <dd className="font-mono text-gray-900">{entry.birthday}</dd>
+          </>
+        )}
+        {entry.bio && (
+          <>
+            <dt className="font-semibold text-gray-700">Bio</dt>
+            <dd className="whitespace-pre-line text-gray-900">{entry.bio}</dd>
+          </>
+        )}
+        {sortedLinks.length > 0 && (
+          <>
+            <dt className="font-semibold text-gray-700">Links</dt>
+            <dd className="text-gray-900">
+              {sortedLinks.map((l) => (
+                <div key={l.url + l.sort_order} className="break-all font-mono">
+                  {l.label ? `${l.label} — ` : ''}
+                  {l.url}
+                </div>
+              ))}
+            </dd>
+          </>
+        )}
+        <dt className="font-semibold text-gray-700">Captured</dt>
+        <dd className="text-gray-500">{capturedDate}</dd>
+      </dl>
     </div>
   )
 }
