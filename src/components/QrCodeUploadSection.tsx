@@ -27,6 +27,8 @@ import {
   QrDecodeError,
   type QrKind,
 } from '../lib/qrCodes'
+import { lookupCardBySlug, VcardConfigError } from '../lib/vcardClient'
+import { generateVcardQrSvg, parseVcardSlugInput, vcardUrlForSlug } from '../lib/vcardQr'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 
 /**
@@ -57,6 +59,30 @@ export interface QrEntry {
   associatedName: string | null
   /** Original filename for audit, populated from file.name on new entries. */
   originalFilename: string | null
+  /**
+   * Hosted-vCard slug — only populated when kind = 'hosted_vcard'. The
+   * canonical URL the QR encodes is vcardUrlForSlug(vcardSlug); we
+   * keep both decodedData (the URL, for storage symmetry with all
+   * other QR kinds) and vcardSlug (which is what qr_vcard_slug
+   * persists). On save the parent writes both columns.
+   */
+  vcardSlug?: string
+  /**
+   * Human-readable label resolved at "Add" time via lookup_card_by_slug
+   * — e.g. "Jane Smith, Acme Ltd". UI-only ("Found: …" read-back so
+   * the designer can confirm they linked the right card); not
+   * persisted. Re-resolved live by the customer page on render, so
+   * staleness here doesn't propagate.
+   */
+  vcardCardName?: string | null
+  /**
+   * Cached SVG markup for the generated hosted-vCard QR. Populated at
+   * "Add" time; used both for the thumbnail preview and the
+   * "Download SVG" action. Re-derivable from vcardSlug at any moment,
+   * but keeping it on the entry avoids re-running QRCode.toString on
+   * every render.
+   */
+  vcardSvg?: string
   /**
    * Effective Keep state for existing entries on the new-version
    * form. When false, the entry is ghosted in the UI and the parent
@@ -109,6 +135,7 @@ const KIND_LABELS: Record<QrKind, string> = {
   phone: 'Phone number',
   sms: 'Text message',
   text: 'Plain text',
+  hosted_vcard: 'Plasma vCard',
 }
 
 export function QrCodeUploadSection({
@@ -121,8 +148,102 @@ export function QrCodeUploadSection({
 }: QrCodeUploadSectionProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const inputId = useId()
+  const vcardInputId = useId()
   const [dropError, setDropError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
+
+  // Plasma vCard add-form state. Lives here rather than inside a
+  // sub-component because the validate→generate→add sequence
+  // resets local state and pushes a new entry into the parent's
+  // `value` array — both concerns belong with the rest of the
+  // QR section's add UI.
+  const [vcardInput, setVcardInput] = useState('')
+  const [vcardLoading, setVcardLoading] = useState(false)
+  const [vcardError, setVcardError] = useState<string | null>(null)
+
+  async function handleAddVcard() {
+    setVcardError(null)
+    const slug = parseVcardSlugInput(vcardInput)
+    if (!slug) {
+      setVcardError(
+        'Paste a qcrd.uk URL (e.g. https://qcrd.uk/jane-smith) or the slug on its own.',
+      )
+      return
+    }
+
+    setVcardLoading(true)
+    try {
+      const lookup = await lookupCardBySlug(slug)
+      if (!lookup.ok) {
+        setVcardError(
+          lookup.reason === 'not_found'
+            ? `No Plasma vCard exists with the slug "${slug}". Check the URL or create the card in the vCard app first.`
+            : `Couldn't reach the vCard app to verify the slug. ${lookup.message ?? ''}`.trim(),
+        )
+        return
+      }
+
+      const card = lookup.data
+      const cardName =
+        [card.first_name, card.last_name].filter(Boolean).join(' ').trim() ||
+        card.company ||
+        slug
+
+      // Generate the QR SVG once and stash both the markup and a
+      // File ready for the parent's save path. The File is the same
+      // shape the upload path already understands; only the path
+      // extension differs (.svg vs .jpg) and the parent picks that
+      // by entry.kind.
+      const svg = await generateVcardQrSvg(slug)
+      const file = new File([svg], `${slug}.svg`, { type: 'image/svg+xml' })
+      // Object URL for the inline preview. The parent's save flow
+      // never reads previewUrl, so revoking it on Remove (existing
+      // pattern below) is the only lifecycle concern.
+      const previewUrl = URL.createObjectURL(file)
+
+      const newEntry: QrEntry = {
+        id: uuidv4(),
+        source: 'new',
+        file,
+        previewUrl,
+        decodedData: vcardUrlForSlug(slug),
+        kind: 'hosted_vcard',
+        associatedName: defaultRecipient ?? null,
+        originalFilename: file.name,
+        vcardSlug: slug,
+        vcardCardName: cardName,
+        vcardSvg: svg,
+      }
+      onChange([...value, newEntry])
+      setVcardInput('')
+    } catch (err) {
+      if (err instanceof VcardConfigError) {
+        setVcardError(
+          'vCard app integration is not configured. Add VITE_VCARD_SUPABASE_URL and VITE_VCARD_SUPABASE_ANON_KEY to .env, then restart the dev server.',
+        )
+      } else {
+        setVcardError(`Unexpected error: ${(err as Error).message}`)
+      }
+    } finally {
+      setVcardLoading(false)
+    }
+  }
+
+  function handleDownloadSvg(entry: QrEntry) {
+    if (!entry.vcardSvg || !entry.vcardSlug) return
+    const blob = new Blob([entry.vcardSvg], { type: 'image/svg+xml' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${entry.vcardSlug}-qr.svg`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    // Revoke after the click event has fired so the download
+    // actually starts. setTimeout 0 is enough; the browser caches
+    // the blob long enough to read it.
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
 
   async function handleFiles(fileList: FileList | File[]) {
     setDropError(null)
@@ -180,9 +301,12 @@ export function QrCodeUploadSection({
         </span>
       </div>
       <p className="mb-5 max-w-prose text-sm text-gray-600">
-        Drop a JPEG of each QR code that appears on the card. The decoded contents are stored alongside the image and shown to the customer for verification before they approve. Files that don't contain a readable QR are rejected.
+        Add each QR code that appears on the card so the customer can verify it before approving. Use the customer-supplied path for QRs the customer sent (vCard, URL, wifi, etc.), or the Plasma vCard path when the QR points at a hosted qcrd.uk card.
       </p>
 
+      <div className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-gray-400">
+        Customer-supplied QR
+      </div>
       <label
         htmlFor={inputId}
         onDragOver={(e) => {
@@ -254,6 +378,46 @@ export function QrCodeUploadSection({
         </p>
       )}
 
+      {/* ── Plasma vCard QR add form ─────────────────────────────── */}
+      <div className="mt-6 mb-3 text-[11px] font-semibold uppercase tracking-widest text-gray-400">
+        Plasma vCard QR
+      </div>
+      <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+        <p className="mb-3 max-w-prose text-xs text-gray-600">
+          Paste the qcrd.uk URL or slug of the Plasma vCard this QR points at. We'll generate the QR for the artwork and show the live contact details to the customer when they verify.
+        </p>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+          <input
+            id={vcardInputId}
+            type="text"
+            value={vcardInput}
+            onChange={(e) => setVcardInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                void handleAddVcard()
+              }
+            }}
+            placeholder="https://qcrd.uk/jane-smith or jane-smith"
+            disabled={disabled || vcardLoading}
+            className="flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-200 disabled:cursor-not-allowed disabled:opacity-60"
+          />
+          <button
+            type="button"
+            onClick={() => void handleAddVcard()}
+            disabled={disabled || vcardLoading || !vcardInput.trim()}
+            className="rounded-md bg-violet-700 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-violet-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {vcardLoading ? 'Looking up…' : 'Look up + add'}
+          </button>
+        </div>
+        {vcardError && (
+          <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            {vcardError}
+          </p>
+        )}
+      </div>
+
       {value.length > 0 && (
         <ul className="mt-6 space-y-4">
           {value.map((entry) => {
@@ -314,12 +478,24 @@ export function QrCodeUploadSection({
                           strokeLinejoin="round"
                         />
                       </svg>
-                      Decoded
+                      {entry.kind === 'hosted_vcard' ? 'Generated' : 'Decoded'}
                     </span>
-                    <span className="inline-flex items-center rounded-full bg-gray-200 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-gray-700">
+                    <span
+                      className={[
+                        'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide',
+                        entry.kind === 'hosted_vcard'
+                          ? 'bg-violet-100 text-violet-800'
+                          : 'bg-gray-200 text-gray-700',
+                      ].join(' ')}
+                    >
                       {KIND_LABELS[entry.kind]}
                     </span>
-                    {entry.originalFilename && (
+                    {entry.kind === 'hosted_vcard' && entry.vcardCardName && (
+                      <span className="text-[12px] font-medium text-gray-700">
+                        {entry.vcardCardName}
+                      </span>
+                    )}
+                    {entry.kind !== 'hosted_vcard' && entry.originalFilename && (
                       <span className="text-[12px] text-gray-500" title={entry.originalFilename}>
                         {entry.originalFilename}
                       </span>
@@ -355,6 +531,27 @@ export function QrCodeUploadSection({
                   <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-white p-2 text-[12px] text-gray-800 ring-1 ring-gray-200">
                     {entry.decodedData}
                   </pre>
+                  {entry.kind === 'hosted_vcard' && entry.vcardSvg && entry.source === 'new' && (
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadSvg(entry)}
+                        disabled={disabled}
+                        className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[12px] font-medium text-gray-700 hover:border-violet-400 hover:text-violet-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                          <path
+                            d="M12 4v12m0 0l-4-4m4 4l4-4M5 20h14"
+                            stroke="currentColor"
+                            strokeWidth="1.6"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                        Download SVG for artwork
+                      </button>
+                    </div>
+                  )}
                   {names.length > 1 && (
                     // Only render the dropdown when there are
                     // 2+ recipients. For single-recipient proofs,

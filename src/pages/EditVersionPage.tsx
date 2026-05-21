@@ -255,7 +255,7 @@ export default function EditVersionPage() {
         .single(),
       supabase
         .from('proof_version_images')
-        .select('id, image_path, sort_order, material_option, original_filename, associated_name, side, round_variant_id, is_qr_code, qr_decoded_data, qr_kind')
+        .select('id, image_path, sort_order, material_option, original_filename, associated_name, side, round_variant_id, is_qr_code, qr_decoded_data, qr_kind, qr_vcard_slug')
         .eq('proof_version_id', vid)
         .order('sort_order'),
     ])
@@ -346,6 +346,7 @@ export default function EditVersionPage() {
       is_qr_code: boolean | null
       qr_decoded_data: string | null
       qr_kind: QrKind | null
+      qr_vcard_slug: string | null
     }
     const allRawRows = (imagesResult.data ?? []) as RawImageRow[]
     // Migration 000168 — split QRs out of the artwork editor. The
@@ -400,6 +401,11 @@ export default function EditVersionPage() {
           kind: (img.qr_kind ?? 'text') as QrKind,
           associatedName: img.associated_name,
           originalFilename: img.original_filename,
+          // Migration 000192: the editor doesn't currently let
+          // designers re-link the slug after save, but carrying it
+          // through here keeps the customer page's live-fetch path
+          // working when this version is the one being viewed.
+          vcardSlug: img.qr_vcard_slug ?? undefined,
         }
       }),
     )
@@ -1296,7 +1302,11 @@ export default function EditVersionPage() {
       const qrUploads = newQrEntries.map((e) => ({
         entry: e,
         file: e.file as File,
-        path: `${proofId}/${uuidv4()}.jpg`,
+        // Path extension follows the artefact: hosted-vCard QRs are
+        // generated SVGs; customer-supplied QRs are the dropped
+        // JPEG / PNG. Mirrors NewVersionPage so a fresh-create and
+        // an edit-add produce paths in the same shape.
+        path: `${proofId}/${uuidv4()}.${e.kind === 'hosted_vcard' ? 'svg' : 'jpg'}`,
       }))
       const uploadedQrPaths: string[] = []
       const qrErrors: string[] = []
@@ -1333,6 +1343,9 @@ export default function EditVersionPage() {
         is_qr_code: true,
         qr_decoded_data: entry.decodedData,
         qr_kind: entry.kind,
+        // Migration 000192 — populated iff kind = 'hosted_vcard'.
+        // The CHECK constraint rejects mismatched (kind, slug) pairs.
+        qr_vcard_slug: entry.kind === 'hosted_vcard' ? entry.vcardSlug ?? null : null,
       }))
       const { error: qrInsertErr } = await supabase
         .from('proof_version_images')

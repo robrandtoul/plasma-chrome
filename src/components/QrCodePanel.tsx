@@ -304,6 +304,7 @@ const KIND_LABELS: Record<QrKind, string> = {
   phone: 'Phone number',
   sms: 'Text message',
   text: 'Plain text',
+  hosted_vcard: 'Plasma vCard',
 }
 
 function KindBadge({ kind }: { kind: QrKind }) {

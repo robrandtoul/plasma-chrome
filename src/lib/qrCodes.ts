@@ -32,6 +32,15 @@ export type QrKind =
   | 'phone'
   | 'sms'
   | 'text'
+  // hosted_vcard: a Plasma hosted vCard QR — the encoded payload is a
+  // short URL (https://qcrd.uk/<slug>) that resolves to an editable
+  // contact page. classifyQrData() does NOT emit 'hosted_vcard' (the
+  // decoder can't tell a qcrd.uk URL apart from any other URL and
+  // mis-classifying a stray qcrd.uk link would let it skip the
+  // hosted-vCard codepath). hosted_vcard rows are only ever created
+  // via the designer's explicit "Add Plasma vCard QR" action; uploaded
+  // QR images stay on the eight decoder-derived kinds.
+  | 'hosted_vcard'
 
 export interface DecodedQr {
   /** Raw decoded payload — the exact bytes the QR encodes. */
