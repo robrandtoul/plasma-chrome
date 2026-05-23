@@ -41,7 +41,7 @@ export type ProofDetailViewProps = {
   // When the request-changes panel is open, inset the detail view so
   // it doesn't cover the panel: stops short of the docked panel on
   // desktop (sm:right-[400px]) and leaves room above the bottom
-  // sheet on mobile (pb-[70vh]).
+  // sheet on mobile (pb-[50vh]).
   panelOpen: boolean
   // Phase 3 — reports the side of the currently-visible image to
   // the parent so a subsequent change-request submit can record
@@ -164,7 +164,7 @@ export function ProofDetailView({
         // panel's left edge. Mobile: leave room above the bottom
         // sheet so the image centres in the visible region rather
         // than under the sheet.
-        panelOpen ? 'pb-[70vh] sm:pb-0 sm:right-[400px]' : '',
+        panelOpen ? 'pb-[50vh] sm:pb-0 sm:right-[400px]' : '',
         // Subtle fade in for the overlay itself; the image
         // settles in with the parent transition.
         'motion-safe:animate-[pdv-in_140ms_ease-out]',
@@ -229,7 +229,7 @@ export function ProofDetailView({
           and chevron buttons fail the target===currentTarget
           check and don't close. */}
       <div
-        className="relative flex flex-1 min-h-0 items-center justify-center px-4 sm:px-8"
+        className="relative flex flex-1 min-h-0 items-center justify-center"
         onClick={(e) => { if (e.target === e.currentTarget) close() }}
       >
         {canStep && (

@@ -2417,8 +2417,8 @@ export default function CustomerProofPage() {
 
   // While the request-changes panel is open, push the page content
   // away from it so nothing is hidden: right-side gutter on desktop
-  // (panel width = 400px), bottom gutter on mobile (sheet max-height
-  // = 70vh — the bottom-padding lets the page scroll its full
+  // (panel width = 400px), bottom gutter on mobile (sheet height
+  // = 50vh — the bottom-padding lets the page scroll its full
   // content into the visible area above the sheet). Approve path is
   // unaffected; it still renders as a centred modal over the page.
   const requestChangesOpen = actionPanel?.type === 'request_changes'
@@ -2427,7 +2427,7 @@ export default function CustomerProofPage() {
     <div
       className={[
         'antialiased',
-        requestChangesOpen ? 'pb-[70vh] sm:pb-0 sm:pr-[400px]' : '',
+        requestChangesOpen ? 'pb-[50vh] sm:pb-0 sm:pr-[400px]' : '',
       ].join(' ')}
       style={{ fontFamily: SANS, background: INK }}
     >
