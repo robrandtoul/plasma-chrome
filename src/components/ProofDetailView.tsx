@@ -82,7 +82,6 @@ export function ProofDetailView({
     Math.min(Math.max(initialIndex, 0), Math.max(images.length - 1, 0)),
   )
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
-  const overlayRef = useRef<HTMLDivElement | null>(null)
 
   const current = images[index]
   const total = images.length
@@ -160,7 +159,6 @@ export function ProofDetailView({
 
   return (
     <div
-      ref={overlayRef}
       role="dialog"
       aria-label={altText ? `Proof detail — ${altText}` : 'Proof detail'}
       className={[
@@ -274,68 +272,78 @@ export function ProofDetailView({
         Both sides
       </button>
 
-      {/* Caption strip — floats bottom-centred. pointer-events-none
-          so a tap in the bottom letterbox space passes through to
-          the image-region backdrop (which closes). Pill backing
-          keeps it readable over a busy proof. Renders only when
-          there's something to say. */}
-      {captionPieces.length > 0 && (
-        <p
-          className="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full px-4 py-1.5 text-center uppercase sm:bottom-6"
-          style={{
-            fontFamily: MONO,
-            fontSize: 12,
-            fontWeight: 500,
-            letterSpacing: '0.22em',
-            color: PAPER_SECONDARY,
-            background: 'rgba(255,255,255,0.7)',
-            border: '1px solid rgba(26,22,18,0.14)',
-            backdropFilter: 'blur(4px)',
-            maxWidth: 'calc(100% - 32px)',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
-          {captionPieces.join(' · ')}
-        </p>
-      )}
+      {/* Bottom-centred stack: caption on top, Request changes CTA
+          below it with a small gap. Putting both in one container
+          guarantees they never overlap at any screen width (the
+          previous layout had caption bottom-centred and CTA
+          bottom-right; on a phone with both visible the two
+          collided). When the CTA is hidden (panel docked) the
+          container just holds the caption, unchanged from before.
 
-      {/* Request changes CTA — floats bottom-right when no panel
-          is docked. Suppressed when a panel is already open (the
-          customer is in the flow). The amber fill is its own
-          backing, no extra scrim needed. */}
-      {!hideRequestChanges && (
-        <button
-          type="button"
-          onClick={onRequestChanges}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = CTA_AMBER_HOVER_BG
-            e.currentTarget.style.borderColor = CTA_AMBER_HOVER_BORDER
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = CTA_AMBER_BG
-            e.currentTarget.style.borderColor = CTA_AMBER_BORDER
-          }}
-          onMouseDown={(e) => {
-            e.currentTarget.style.background = CTA_AMBER_PRESSED_BG
-          }}
-          onMouseUp={(e) => {
-            e.currentTarget.style.background = CTA_AMBER_HOVER_BG
-          }}
-          className="absolute bottom-4 right-4 z-20 inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-5 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)] sm:bottom-6 sm:right-6"
-          style={{
-            background: CTA_AMBER_BG,
-            border: `1.5px solid ${CTA_AMBER_BORDER}`,
-            color: CTA_AMBER_TEXT,
-            fontFamily: MONO,
-            fontSize: 13,
-            letterSpacing: '0.06em',
-            textTransform: 'uppercase',
-          }}
+          pointer-events-none on the container + caption so taps in
+          the bottom letterbox space pass through to the image-
+          region backdrop (which closes). The CTA opts back into
+          pointer-events because it's interactive. */}
+      {(captionPieces.length > 0 || !hideRequestChanges) && (
+        <div
+          className="pointer-events-none absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 flex-col items-center gap-3 sm:bottom-6"
+          style={{ maxWidth: 'calc(100% - 32px)' }}
         >
-          Request changes
-        </button>
+          {captionPieces.length > 0 && (
+            <p
+              className="pointer-events-none rounded-full px-4 py-1.5 text-center uppercase"
+              style={{
+                fontFamily: MONO,
+                fontSize: 12,
+                fontWeight: 500,
+                letterSpacing: '0.22em',
+                color: PAPER_SECONDARY,
+                background: 'rgba(255,255,255,0.7)',
+                border: '1px solid rgba(26,22,18,0.14)',
+                backdropFilter: 'blur(4px)',
+                maxWidth: '100%',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                margin: 0,
+              }}
+            >
+              {captionPieces.join(' · ')}
+            </p>
+          )}
+          {!hideRequestChanges && (
+            <button
+              type="button"
+              onClick={onRequestChanges}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = CTA_AMBER_HOVER_BG
+                e.currentTarget.style.borderColor = CTA_AMBER_HOVER_BORDER
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = CTA_AMBER_BG
+                e.currentTarget.style.borderColor = CTA_AMBER_BORDER
+              }}
+              onMouseDown={(e) => {
+                e.currentTarget.style.background = CTA_AMBER_PRESSED_BG
+              }}
+              onMouseUp={(e) => {
+                e.currentTarget.style.background = CTA_AMBER_HOVER_BG
+              }}
+              className="pointer-events-auto inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-5 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)]"
+              style={{
+                background: CTA_AMBER_BG,
+                border: `1.5px solid ${CTA_AMBER_BORDER}`,
+                color: CTA_AMBER_TEXT,
+                fontFamily: MONO,
+                fontSize: 13,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+              }}
+            >
+              Request changes
+            </button>
+          )}
+        </div>
       )}
     </div>
   )
