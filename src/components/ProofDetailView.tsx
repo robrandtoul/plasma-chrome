@@ -4,7 +4,6 @@ import {
   PAPER_CREAM,
   PAPER_INK,
   PAPER_SECONDARY,
-  PAPER_TERTIARY,
   CTA_AMBER_BG,
   CTA_AMBER_HOVER_BG,
   CTA_AMBER_PRESSED_BG,
@@ -12,7 +11,6 @@ import {
   CTA_AMBER_HOVER_BORDER,
   CTA_AMBER_TEXT,
   MONO,
-  SANS,
 } from '../lib/theme'
 
 export type ProofDetailViewProps = {
@@ -41,7 +39,7 @@ export type ProofDetailViewProps = {
   // When the request-changes panel is open, inset the detail view so
   // it doesn't cover the panel: stops short of the docked panel on
   // desktop (sm:right-[400px]) and leaves room above the bottom
-  // sheet on mobile (pb-[50vh]).
+  // sheet on mobile (bottom-[50vh]).
   panelOpen: boolean
   // Phase 3 — reports the side of the currently-visible image to
   // the parent so a subsequent change-request submit can record
@@ -59,6 +57,15 @@ export type ProofDetailViewProps = {
 // customer zoom in on the proof and describe a change at the same
 // time. z-index sits below the panel (z-40) and the approve modal
 // (z-50) so both win when stacked.
+//
+// The chrome (Both sides, caption, Request changes) floats absolutely
+// over the proof so the image region claims every available pixel of
+// the detail-view area. With the panel open on a phone the detail
+// view only gets 50vh, so the previous "top bar + flex-1 image +
+// caption + filename" stack squeezed the proof down to ~30% of the
+// viewport with cream pillarboxing; floating the chrome lifts that
+// constraint and lets object-contain reach full screen width in
+// portrait (and gain height in landscape).
 export function ProofDetailView({
   images,
   initialIndex,
@@ -75,21 +82,6 @@ export function ProofDetailView({
     Math.min(Math.max(initialIndex, 0), Math.max(images.length - 1, 0)),
   )
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
-  const overlayRef = useRef<HTMLDivElement | null>(null)
-  // PR #127 made the middle image region edge-to-edge so the proof
-  // fills the viewport width in portrait. The caption + Request
-  // changes row underneath used to carry the same horizontal padding
-  // the image region had (px-4 sm:px-8) — once that padding came off
-  // the image, the row's right edge no longer lined up with the
-  // proof's right edge. We measure the rendered image and clamp the
-  // caption + filename rows to the same width: in portrait the image
-  // is viewport-wide so the row runs edge-to-edge; in landscape the
-  // image is centred with side gaps and the row sits within the
-  // image's bounds, with the chevron buttons (absolutely positioned
-  // over the image region above) sitting beside the image in the
-  // same way.
-  const imageRef = useRef<HTMLElement | null>(null)
-  const [imageWidth, setImageWidth] = useState<number | null>(null)
 
   const current = images[index]
   const total = images.length
@@ -165,46 +157,22 @@ export function ProofDetailView({
     setIndex((i) => (i + direction + total) % total)
   }
 
-  // Observe the rendered image (or its fallback placeholder) and
-  // track its width so the caption + filename rows below can match.
-  // Re-runs when current.signed_url flips between img and fallback
-  // — the DOM node imageRef points at changes, so we tear down the
-  // previous observer and rebind. Reads the initial size synchronously
-  // (ResizeObserver only fires on changes, not on first attach) so
-  // there's no flash of unconstrained-width rows before the first
-  // observer callback.
-  useEffect(() => {
-    const el = imageRef.current
-    if (!el) {
-      setImageWidth(null)
-      return
-    }
-    const initial = el.getBoundingClientRect().width
-    if (initial > 0) setImageWidth(initial)
-    const ro = new ResizeObserver((entries) => {
-      for (const e of entries) {
-        const w = e.contentRect.width
-        if (w > 0) setImageWidth(w)
-      }
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [current?.signed_url, index])
-
   return (
     <div
-      ref={overlayRef}
       role="dialog"
       aria-label={altText ? `Proof detail — ${altText}` : 'Proof detail'}
       className={[
-        'fixed z-30 flex flex-col',
-        // Default to the full viewport.
-        'inset-0',
-        // Panel-aware inset. Desktop: stop short of the docked
-        // panel's left edge. Mobile: leave room above the bottom
-        // sheet so the image centres in the visible region rather
-        // than under the sheet.
-        panelOpen ? 'pb-[50vh] sm:pb-0 sm:right-[400px]' : '',
+        'fixed z-30',
+        // Panel-aware inset via positional constraints rather than
+        // padding. Padding would shrink the *content* area, but
+        // absolutely-positioned chrome (the Both sides, caption,
+        // and CTA below) would still anchor to the screen edges —
+        // a caption at bottom-4 would sit behind the docked panel.
+        // Positional inset shrinks the whole box, so absolute
+        // children land relative to the visible detail-view area.
+        panelOpen
+          ? 'inset-x-0 top-0 bottom-[50vh] sm:bottom-0 sm:right-[400px]'
+          : 'inset-0',
         // Subtle fade in for the overlay itself; the image
         // settles in with the parent transition.
         'motion-safe:animate-[pdv-in_140ms_ease-out]',
@@ -219,11 +187,6 @@ export function ProofDetailView({
         background: 'rgba(254,253,250,0.96)',
         color: PAPER_INK,
       }}
-      onClick={(e) => {
-        // Backdrop click closes — but only on the backdrop itself,
-        // not on bubbled clicks from the image or the controls.
-        if (e.target === e.currentTarget) close()
-      }}
     >
       <style>{`
         @keyframes pdv-in {
@@ -232,44 +195,18 @@ export function ProofDetailView({
         }
       `}</style>
 
-      {/* Top bar: "Both sides" close affordance (top-left). The
-          spec names this control explicitly — it returns the
-          customer to the overview where every plate of the proof
-          is visible together. */}
-      <div className="flex items-start justify-between px-4 pt-4 sm:px-8 sm:pt-6">
-        <button
-          ref={closeButtonRef}
-          type="button"
-          onClick={close}
-          className="inline-flex min-h-[44px] items-center gap-2 rounded-[2px] px-4 py-2 transition-colors hover:bg-[rgba(26,22,18,0.06)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)]"
-          style={{
-            fontFamily: MONO,
-            fontSize: 13,
-            letterSpacing: '0.06em',
-            textTransform: 'uppercase',
-            color: PAPER_INK,
-          }}
-        >
-          <span aria-hidden="true">‹</span>
-          Both sides
-        </button>
-      </div>
+      {/* Image region: fills the full detail-view area. With the
+          chrome (Both sides, caption, CTA) lifted out of the flex
+          flow and floated absolutely on top, the proof gets every
+          available pixel — reaching full screen width in portrait
+          and gaining height in landscape.
 
-      {/* Middle: chevrons either side of the centred image. The
-          image sits inside a flex-1 region that grows to fill
-          available vertical space; max-h on the <img> caps it
-          short of the visible region so the caption + Request
-          changes row stay on-screen without scrolling.
-
-          Self-click closes the detail view — the empty space
-          around the image acts as the backdrop. The overlay's
-          own onClick can't see these clicks (flex children
-          fully cover it), so the close affordance lives here
-          where the unoccupied padding sits. Clicks on the image
-          and chevron buttons fail the target===currentTarget
-          check and don't close. */}
+          Self-click closes the detail view — the empty letterbox
+          space around the object-contain image acts as the
+          backdrop. Clicks on the image or chevrons fail the
+          target===currentTarget check and don't close. */}
       <div
-        className="relative flex flex-1 min-h-0 items-center justify-center"
+        className="absolute inset-0 flex items-center justify-center"
         onClick={(e) => { if (e.target === e.currentTarget) close() }}
       >
         {canStep && (
@@ -285,23 +222,13 @@ export function ProofDetailView({
         )}
         {current?.signed_url ? (
           <img
-            ref={(el) => { imageRef.current = el }}
             src={current.signed_url}
             alt={altText}
             className="block max-h-full max-w-full rounded-md object-contain"
             style={{ background: PAPER_CREAM }}
-            onLoad={(e) => {
-              // Pick up the post-load width — the ResizeObserver
-              // also catches this via the natural-size-driven
-              // layout change, but an explicit read here removes
-              // any cross-browser race.
-              const w = (e.currentTarget as HTMLImageElement).getBoundingClientRect().width
-              if (w > 0) setImageWidth(w)
-            }}
           />
         ) : (
           <div
-            ref={(el) => { imageRef.current = el }}
             className="h-64 w-full max-w-md rounded-md"
             style={{ background: PAPER_CREAM, border: '1px solid rgba(26,22,18,0.12)' }}
           />
@@ -319,76 +246,104 @@ export function ProofDetailView({
         )}
       </div>
 
-      {/* Bottom: caption row (recipient · side · n / m) + the
-          amber "Request changes" CTA. The CTA is suppressed when
-          a request-changes panel is already docked — the customer
-          is already in the flow and a second entry point would
-          read as redundant. */}
-      <div
-        className="mx-auto flex w-full flex-col items-center justify-between gap-3 pb-6 pt-4 sm:flex-row sm:pb-8"
-        style={{ maxWidth: imageWidth ?? undefined }}
+      {/* "Both sides" — floats top-left over the proof. The semi-
+          opaque cream pill keeps it legible whatever the proof
+          looks like underneath: in portrait the proof typically
+          leaves letterbox space above so the pill mostly sits in
+          the gap; in landscape it sits over the proof's top-left
+          corner, where the backing earns its place. */}
+      <button
+        ref={closeButtonRef}
+        type="button"
+        onClick={close}
+        className="absolute left-4 top-4 z-20 inline-flex min-h-[44px] items-center gap-2 rounded-full px-4 py-2 transition-colors hover:bg-[rgba(255,255,255,0.85)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)] sm:left-6 sm:top-6"
+        style={{
+          fontFamily: MONO,
+          fontSize: 13,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+          color: PAPER_INK,
+          background: 'rgba(255,255,255,0.7)',
+          border: '1px solid rgba(26,22,18,0.18)',
+          backdropFilter: 'blur(4px)',
+        }}
       >
-        <p
-          className="text-center font-paper-mono uppercase sm:text-left"
-          style={{
-            fontSize: 12,
-            fontWeight: 500,
-            letterSpacing: '0.22em',
-            color: PAPER_SECONDARY,
-          }}
-        >
-          {captionPieces.length > 0 ? captionPieces.join(' · ') : ' '}
-        </p>
-        {!hideRequestChanges && (
-          <button
-            type="button"
-            onClick={onRequestChanges}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = CTA_AMBER_HOVER_BG
-              e.currentTarget.style.borderColor = CTA_AMBER_HOVER_BORDER
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = CTA_AMBER_BG
-              e.currentTarget.style.borderColor = CTA_AMBER_BORDER
-            }}
-            onMouseDown={(e) => {
-              e.currentTarget.style.background = CTA_AMBER_PRESSED_BG
-            }}
-            onMouseUp={(e) => {
-              e.currentTarget.style.background = CTA_AMBER_HOVER_BG
-            }}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-6 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)]"
-            style={{
-              background: CTA_AMBER_BG,
-              border: `1.5px solid ${CTA_AMBER_BORDER}`,
-              color: CTA_AMBER_TEXT,
-              fontFamily: MONO,
-              fontSize: 13,
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-            }}
-          >
-            Request changes
-          </button>
-        )}
-      </div>
+        <span aria-hidden="true">‹</span>
+        Both sides
+      </button>
 
-      {/* Filename + tertiary hint sits quietly below. Width-matched
-          to the proof image above (same maxWidth treatment as the
-          caption row) so it stays inside the proof's bounds rather
-          than running edge-to-edge in landscape. */}
-      {current?.original_filename && (
-        <p
-          className="pointer-events-none mx-auto w-full pb-3 text-center"
-          style={{
-            fontFamily: SANS,
-            fontSize: 12,
-            color: PAPER_TERTIARY,
-            maxWidth: imageWidth ?? undefined,
-          }}
+      {/* Bottom-centred stack: caption on top, Request changes CTA
+          below it with a small gap. Putting both in one container
+          guarantees they never overlap at any screen width (the
+          previous layout had caption bottom-centred and CTA
+          bottom-right; on a phone with both visible the two
+          collided). When the CTA is hidden (panel docked) the
+          container just holds the caption, unchanged from before.
+
+          pointer-events-none on the container + caption so taps in
+          the bottom letterbox space pass through to the image-
+          region backdrop (which closes). The CTA opts back into
+          pointer-events because it's interactive. */}
+      {(captionPieces.length > 0 || !hideRequestChanges) && (
+        <div
+          className="pointer-events-none absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 flex-col items-center gap-3 sm:bottom-6"
+          style={{ maxWidth: 'calc(100% - 32px)' }}
         >
-          {current.original_filename}
-        </p>
+          {captionPieces.length > 0 && (
+            <p
+              className="pointer-events-none rounded-full px-4 py-1.5 text-center uppercase"
+              style={{
+                fontFamily: MONO,
+                fontSize: 12,
+                fontWeight: 500,
+                letterSpacing: '0.22em',
+                color: PAPER_SECONDARY,
+                background: 'rgba(255,255,255,0.7)',
+                border: '1px solid rgba(26,22,18,0.14)',
+                backdropFilter: 'blur(4px)',
+                maxWidth: '100%',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                margin: 0,
+              }}
+            >
+              {captionPieces.join(' · ')}
+            </p>
+          )}
+          {!hideRequestChanges && (
+            <button
+              type="button"
+              onClick={onRequestChanges}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = CTA_AMBER_HOVER_BG
+                e.currentTarget.style.borderColor = CTA_AMBER_HOVER_BORDER
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = CTA_AMBER_BG
+                e.currentTarget.style.borderColor = CTA_AMBER_BORDER
+              }}
+              onMouseDown={(e) => {
+                e.currentTarget.style.background = CTA_AMBER_PRESSED_BG
+              }}
+              onMouseUp={(e) => {
+                e.currentTarget.style.background = CTA_AMBER_HOVER_BG
+              }}
+              className="pointer-events-auto inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-5 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)]"
+              style={{
+                background: CTA_AMBER_BG,
+                border: `1.5px solid ${CTA_AMBER_BORDER}`,
+                color: CTA_AMBER_TEXT,
+                fontFamily: MONO,
+                fontSize: 13,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+              }}
+            >
+              Request changes
+            </button>
+          )}
+        </div>
       )}
     </div>
   )
