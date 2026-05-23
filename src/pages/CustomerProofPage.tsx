@@ -18,7 +18,7 @@ import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LayeredConstructionPanel } from '../components/LayeredConstructionPanel'
 import { MetalThicknessPanel } from '../components/MetalThicknessPanel'
 import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
-import { RequestChangesPanel } from '../components/RequestChangesPanel'
+import { ActionPanel } from '../components/ActionPanel'
 import { ProofDetailView } from '../components/ProofDetailView'
 import { firstName } from '../lib/firstName'
 import {
@@ -227,11 +227,11 @@ export default function CustomerProofPage() {
   >({})
   const [successMessages, setSuccessMessages] = useState<Record<string, string>>({})
   // Confirmation-screen flag for the standard request-changes
-  // panel. When true, RequestChangesPanel swaps its form body
-  // for a "thanks, we'll be in touch" view that the customer
-  // dismisses with Done. Approve and variant-round "Choose this
-  // direction" close on success as before — they never set this
-  // flag. Cleared in closeActionPanel and reset at every open.
+  // panel. When true, ActionPanel swaps its form body for a
+  // "thanks, we'll be in touch" view that the customer dismisses
+  // with Done. Approve and variant-round "Choose this direction"
+  // close on success as before — they never set this flag. Cleared
+  // in closeActionPanel and reset at every open.
   const [requestChangesSubmitted, setRequestChangesSubmitted] = useState(false)
 
   useEffect(() => {
@@ -255,68 +255,15 @@ export default function CustomerProofPage() {
     return () => { document.title = previous }
   }, [proof])
 
-  // Modal: Escape to dismiss + Tab focus trap. Closes only when not
-  // mid-submit so the customer
-  // can't accidentally cancel a request that's already on the wire.
-  // The Tab handler keeps focus inside actionPanelRef — without it,
-  // tabbing past the Confirm button lands on the version-tab buttons
-  // behind the (fixed) modal, which is disorienting on a screen-
-  // reader and a violation of the dialog contract.
-  const actionPanelRef = useRef<HTMLDivElement | null>(null)
-  // Element that had focus when the modal opened — restored on close so
-  // keyboard users land back on the per-recipient Approve / Request
-  // changes button rather than at <body> with the page's tab order
-  // re-set to zero.
+  // Element that had focus when the panel opened — restored on close
+  // so keyboard users land back on the per-recipient Approve /
+  // Request changes button rather than at <body> with the page's tab
+  // order re-set to zero. The previous focus-trap effect tied to the
+  // approve modal is gone with the modal; the docked panel owns its
+  // own Escape + focus-on-open, and deliberately does NOT trap Tab
+  // so the customer can scroll the proof while reading the
+  // disclaimer.
   const actionPanelTriggerRef = useRef<HTMLElement | null>(null)
-  useEffect(() => {
-    // Approve flow only — the request-changes flow now renders as a
-    // non-modal docked panel that owns its own Escape handler and
-    // deliberately does NOT trap Tab (the page underneath must stay
-    // reachable so the customer can scroll the proof while typing).
-    if (!actionPanel || actionPanel.type !== 'approve') return
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        if (!actionSubmitting) closeActionPanel()
-        return
-      }
-      if (e.key !== 'Tab' || !actionPanelRef.current) return
-      const focusables = actionPanelRef.current.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
-      )
-      if (focusables.length === 0) return
-      const first = focusables[0]
-      const last = focusables[focusables.length - 1]
-      const active = document.activeElement as HTMLElement | null
-      if (e.shiftKey && active === first) {
-        e.preventDefault()
-        last.focus()
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault()
-        first.focus()
-      } else if (active && !actionPanelRef.current.contains(active)) {
-        // Focus escaped (e.g. clicked something outside, then tabbed)
-        // — pull it back in to the first element.
-        e.preventDefault()
-        first.focus()
-      }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [actionPanel, actionSubmitting])
-
-  // Body scroll lock while the approve modal is open. Without this
-  // the page underneath scrolls on touch / wheel — the disclaimer
-  // block can be tall enough on mobile that scrolling within the
-  // modal "leaks" into the page. Same pattern as VersionDetailModal.
-  // Deliberately skipped for the request-changes panel (Phase 1 docked
-  // panel rework): the customer must be able to see and scroll the
-  // proof while typing their comment.
-  useEffect(() => {
-    if (!actionPanel || actionPanel.type !== 'approve') return
-    const previous = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = previous }
-  }, [actionPanel])
 
   // When active version changes, reset the option switcher to the first option
   // this version exposes.
@@ -1312,6 +1259,21 @@ export default function CustomerProofPage() {
     // an earlier version on a not-yet-approved proof, prepend an
     // amber warning so they know they're not on the most recent
     // proof but can still approve this one if they prefer it.
+    //
+    // If the action panel is already open for this slot (same version
+    // and recipient, and not the variant-round path), suppress the
+    // whole pending block — eyebrow, warning, both buttons. The panel
+    // IS the form now; rendering a second pair of buttons below it
+    // reads as redundant and confusing. The block reappears if the
+    // customer cancels.
+    if (
+      actionPanel &&
+      !actionPanel.roundVariant &&
+      actionPanel.versionId === activeVersion.id &&
+      actionPanel.name === name
+    ) {
+      return null
+    }
     const approveLabel = `Approve ${recipientLabel}${named ? "'s design" : ''}`
     const showEarlierVersionWarning =
       !activeVersion.is_current && !proofIsApproved && latestVersion != null
@@ -1708,7 +1670,19 @@ export default function CustomerProofPage() {
       )
     }
 
-    // Pending — render the CTA.
+    // Pending — render the CTA. Same guard as renderActionBand:
+    // if the action panel is already open for this specific variant
+    // card (variant-round path, same version + variantId), suppress
+    // the "Choose this direction" button. The panel IS the form, so
+    // a second copy of the entry-point button would just read as
+    // redundant. The button reappears if the customer cancels.
+    if (
+      actionPanel &&
+      actionPanel.roundVariant?.id === variant.id &&
+      actionPanel.versionId === activeVersion.id
+    ) {
+      return null
+    }
     return (
       <div className="mt-6">
         <button
@@ -2357,10 +2331,6 @@ export default function CustomerProofPage() {
     letterSpacing: '0.12em',
     textTransform: 'uppercase' as const,
   }
-  const REG_B_BASE = {
-    fontFamily: SANS,
-    letterSpacing: '-0.005em',
-  }
   // Surface colour palette for the new registers. Dark sections
   // use #C8C8C8 for primary labels (one stop above the previous
   // text-white/45 ≈ #737373); light cream sections use #5F564D
@@ -2415,19 +2385,19 @@ export default function CustomerProofPage() {
       })
     : null
 
-  // While the request-changes panel is open, push the page content
-  // away from it so nothing is hidden: right-side gutter on desktop
-  // (panel width = 400px), bottom gutter on mobile (sheet height
-  // = 50vh — the bottom-padding lets the page scroll its full
-  // content into the visible area above the sheet). Approve path is
-  // unaffected; it still renders as a centred modal over the page.
-  const requestChangesOpen = actionPanel?.type === 'request_changes'
+  // While either action panel is open (approve or request_changes),
+  // push the page content away from it so nothing is hidden:
+  // right-side gutter on desktop (panel width = 400px), bottom
+  // gutter on mobile (sheet height = 50vh — the bottom-padding lets
+  // the page scroll its full content into the visible area above
+  // the sheet).
+  const actionPanelOpen = actionPanel != null
 
   return (
     <div
       className={[
         'antialiased',
-        requestChangesOpen ? 'pb-[50vh] sm:pb-0 sm:pr-[400px]' : '',
+        actionPanelOpen ? 'pb-[50vh] sm:pb-0 sm:pr-[400px]' : '',
       ].join(' ')}
       style={{ fontFamily: SANS, background: INK }}
     >
@@ -3914,571 +3884,23 @@ export default function CustomerProofPage() {
               )
             }
           }}
-          hideRequestChanges={actionPanel?.type === 'request_changes'}
-          panelOpen={actionPanel?.type === 'request_changes'}
+          hideRequestChanges={actionPanel != null}
+          panelOpen={actionPanel != null}
           onCurrentSideChange={setDetailViewSide}
         />
       )}
 
-      {/* Phase 2 action confirmation modal —
-          two-layer scroll pattern: outer backdrop owns the scroll,
-          inner flex wrapper uses min-h-full + items-center so the
-          card centres when it fits and pushes the page-scroll
-          when it doesn't. The disclaimer block + tick box can
-          push total height past 740px on a 360-wide viewport in
-          the full-text state; without the scroll the bottom of
-          the card (Confirm button) was unreachable.
-
-          Approve flow only — the request-changes flow renders below
-          as a non-modal docked panel / bottom sheet (Phase 1
-          rework). The two paths share submitAction and all form
-          state; only the container presentation differs. */}
-      {actionPanel && actionPanel.type === 'approve' && (
-        <div
-          className="fixed inset-0 z-50 overflow-y-auto bg-black/80"
-          onClick={() => { if (!actionSubmitting) closeActionPanel() }}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="action-modal-title"
-        >
-          <div className="flex min-h-full items-center justify-center px-3 py-6 sm:px-4 sm:py-8">
-          <div
-            ref={actionPanelRef}
-            className="relative w-full rounded-xl px-5 py-6 sm:px-7 sm:py-8"
-            style={{
-              background: PAPER_TINT_1,
-              border: '1px solid rgba(26,22,18,0.18)',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
-              color: PAPER_INK,
-              maxWidth: 'min(440px, calc(100vw - 24px))',
-              overflowWrap: 'anywhere',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Close (X). Hidden while submitting so the customer
-                can't cancel a write that's already in flight. */}
-            <button
-              type="button"
-              aria-label="Close"
-              onClick={closeActionPanel}
-              disabled={actionSubmitting}
-              className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full transition-colors hover:bg-[rgba(26,22,18,0.06)] disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] sm:right-4 sm:top-4"
-              style={{ color: 'rgba(26,22,18,0.55)' }}
-              onMouseEnter={(e) => { if (!actionSubmitting) e.currentTarget.style.color = PAPER_INK }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(26,22,18,0.55)' }}
-            >
-              <span aria-hidden="true" className="text-xl leading-none">×</span>
-            </button>
-            <h2
-              id="action-modal-title"
-              className="m-0"
-              style={{
-                ...REG_A_BASE,
-                fontSize: 11,
-                color: actionPanel.type === 'approve' ? '#1f5640' : '#3a2c91',
-              }}
-            >
-              {actionPanel.roundVariant
-                ? `Choose this direction — ${actionPanel.roundVariant.displayName}`
-                : actionPanel.type === 'approve'
-                  ? actionPanel.name === SHARED_APPROVAL_KEY
-                    ? 'Approve this proof'
-                    : `Approve ${actionPanel.name}'s design`
-                  : actionPanel.name === SHARED_APPROVAL_KEY
-                    ? 'Request changes'
-                    : `Request changes for ${actionPanel.name}`}
-            </h2>
-            <div className="mt-6">
-              <label
-                className="block"
-                style={{ ...REG_A_BASE, color: PAPER_INK }}
-              >
-                Your name <span style={{ color: '#3a2c91' }}>*</span>
-              </label>
-              <input
-                type="text"
-                value={actionName}
-                onChange={(e) => setActionName(e.target.value)}
-                disabled={actionSubmitting}
-                autoFocus
-                className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:text-[15px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] placeholder:text-[rgba(26,22,18,0.45)]"
-                style={{
-                  fontFamily: SANS,
-                  background: '#ffffff',
-                  border: '1px solid rgba(26,22,18,0.18)',
-                  color: PAPER_INK,
-                }}
-              />
-            </div>
-
-            {actionPanel.type === 'approve' && (
-              <div className="mt-5">
-                <label
-                  className="block"
-                  style={{
-                    ...REG_B_BASE,
-                    fontSize: 14,
-                    fontWeight: 500,
-                    color: PAPER_INK,
-                  }}
-                >
-                  Anything to add?{' '}
-                  <span style={{ fontWeight: 400, color: PAPER_TERTIARY }}>
-                    (optional)
-                  </span>
-                </label>
-                <textarea
-                  value={actionComment}
-                  onChange={(e) => setActionComment(e.target.value)}
-                  disabled={actionSubmitting}
-                  rows={3}
-                  className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:text-[15px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] placeholder:text-[rgba(26,22,18,0.45)]"
-                  style={{
-                    fontFamily: SANS,
-                    background: '#ffffff',
-                    border: '1px solid rgba(26,22,18,0.18)',
-                    color: PAPER_INK,
-                  }}
-                />
-              </div>
-            )}
-
-            {/* ───── Per-action disclaimer + tick box ─────
-                Modal is the canonical home for the disclaimer
-                copy. The bottom-of-page card mirrors the same
-                string from publicSettings as informational
-                reference. The tick box gates Confirm and is
-                reset on every modal open — the per-action ack
-                is captured implicitly by the existence of the
-                proof_events row. The session-scoped flag only
-                changes how prominently the text is rendered:
-                full block on the first action, one-line
-                reminder + "Show disclaimer" affordance on
-                subsequent actions in the same page session. */}
-            {actionPanel.type === 'approve' && publicSettings?.disclaimer_text && (
-              <div className="mt-6">
-                <p style={{ ...REG_A_BASE, color: PAPER_INK }}>
-                  Disclaimer
-                </p>
-                {disclaimerAckedThisSession && !actionDisclaimerExpanded ? (
-                  <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
-                    <p
-                      className="text-[14px] leading-[1.6]"
-                      style={{ fontFamily: SANS, color: PAPER_SECONDARY }}
-                    >
-                      By confirming, you reaffirm you have read the disclaimer.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setActionDisclaimerExpanded(true)}
-                      className="self-start underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] rounded-sm"
-                      style={{ ...REG_A_BASE, color: PAPER_INK }}
-                    >
-                      Show disclaimer
-                    </button>
-                  </div>
-                ) : (
-                  <p
-                    className="mt-2 max-w-[60ch] whitespace-pre-line rounded-md px-3 py-3 text-[13px] leading-[1.6] sm:px-4 sm:text-[14px] sm:leading-[1.65]"
-                    style={{
-                      fontFamily: SANS,
-                      background: '#ffffff',
-                      border: '0.5px solid rgba(26,22,18,0.18)',
-                      color: PAPER_INK,
-                      overflowWrap: 'anywhere',
-                    }}
-                  >
-                    {publicSettings.disclaimer_text}
-                  </p>
-                )}
-                <label
-                  className={[
-                    'mt-4 flex w-fit items-center gap-3 rounded-lg px-4 py-3 transition-colors',
-                    // The real <input> is sr-only so its focus ring is
-                    // invisible; surface keyboard focus on the wrapping
-                    // label so this control isn't a Focus Visible
-                    // (WCAG 2.4.7) failure.
-                    'focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-[rgba(123,63,242,0.55)]',
-                    actionSubmitting
-                      ? 'cursor-wait'
-                      : 'cursor-pointer hover:border-[rgba(26,22,18,0.6)]',
-                  ].join(' ')}
-                  style={{
-                    border: actionDisclaimerAcked
-                      ? `1.5px solid ${PAPER_INK}`
-                      : '1.5px solid rgba(26,22,18,0.4)',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    className="sr-only"
-                    checked={actionDisclaimerAcked}
-                    disabled={actionSubmitting}
-                    onChange={(e) => setActionDisclaimerAcked(e.target.checked)}
-                  />
-                  <span
-                    aria-hidden
-                    className="grid h-5 w-5 shrink-0 place-items-center rounded-[4px]"
-                    style={
-                      actionDisclaimerAcked
-                        ? {
-                            background: PAPER_INK,
-                            border: `1.5px solid ${PAPER_INK}`,
-                          }
-                        : {
-                            background: 'transparent',
-                            border: '1.5px solid rgba(26,22,18,0.4)',
-                          }
-                    }
-                  >
-                    {actionDisclaimerAcked && (
-                      <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-                        <path
-                          d="M2.5 6.5L5 9L9.5 3.5"
-                          stroke="#ffffff"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    )}
-                  </span>
-                  <span
-                    style={{
-                      ...REG_B_BASE,
-                      fontSize: 14,
-                      fontWeight: 500,
-                      color: PAPER_INK,
-                    }}
-                  >
-                    I confirm I have read the disclaimer above
-                  </span>
-                </label>
-              </div>
-            )}
-
-            {/* ───── QR-confirmation tick (migration 000169) ─────
-                Renders only on the approve path AND only when the
-                slot has at least one QR row visible to it (named
-                slot: own + shared; __shared__ when names is empty:
-                every QR; otherwise none). Same visual treatment as
-                the disclaimer tick above, with a short reminder of
-                where to find the QRs themselves. Gates Confirm
-                alongside the disclaimer tick. */}
-            {(() => {
-              if (actionPanel.type !== 'approve') return null
-              const slotQrs = qrRowsForSlot({
-                qrImages: versionQrImages[actionPanel.versionId] ?? [],
-                slotName: actionPanel.name,
-                versionHasNames: (activeVersion?.names ?? []).length > 0,
-              })
-              if (slotQrs.length === 0) return null
-              const count = slotQrs.length
-              return (
-                <div className="mt-6">
-                  <p style={{ ...REG_A_BASE, color: PAPER_INK }}>
-                    QR code contents
-                  </p>
-                  <p
-                    className="mt-2 max-w-[60ch] text-[13px] leading-[1.6] sm:text-[14px] sm:leading-[1.65]"
-                    style={{ fontFamily: SANS, color: PAPER_SECONDARY }}
-                  >
-                    {count === 1
-                      ? 'Please double-check the contents of the QR code shown above before approving.'
-                      : `Please double-check the contents of the ${count} QR codes shown above before approving.`}
-                  </p>
-                  <label
-                    className={[
-                      'mt-4 flex w-fit items-center gap-3 rounded-lg px-4 py-3 transition-colors',
-                      'focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-[rgba(123,63,242,0.55)]',
-                      actionSubmitting
-                        ? 'cursor-wait'
-                        : 'cursor-pointer hover:border-[rgba(26,22,18,0.6)]',
-                    ].join(' ')}
-                    style={{
-                      border: actionQrConfirmed
-                        ? `1.5px solid ${PAPER_INK}`
-                        : '1.5px solid rgba(26,22,18,0.4)',
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      className="sr-only"
-                      checked={actionQrConfirmed}
-                      disabled={actionSubmitting}
-                      onChange={(e) => setActionQrConfirmed(e.target.checked)}
-                    />
-                    <span
-                      aria-hidden
-                      className="grid h-5 w-5 shrink-0 place-items-center rounded-[4px]"
-                      style={
-                        actionQrConfirmed
-                          ? {
-                              background: PAPER_INK,
-                              border: `1.5px solid ${PAPER_INK}`,
-                            }
-                          : {
-                              background: 'transparent',
-                              border: '1.5px solid rgba(26,22,18,0.4)',
-                            }
-                      }
-                    >
-                      {actionQrConfirmed && (
-                        <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-                          <path
-                            d="M2.5 6.5L5 9L9.5 3.5"
-                            stroke="#ffffff"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      )}
-                    </span>
-                    <span
-                      style={{
-                        ...REG_B_BASE,
-                        fontSize: 14,
-                        fontWeight: 500,
-                        color: PAPER_INK,
-                      }}
-                    >
-                      I've verified my QR code contents
-                    </span>
-                  </label>
-                </div>
-              )
-            })()}
-
-            {actionError && (
-              <p
-                className="mt-5 max-w-[60ch] text-[14px] leading-[1.55]"
-                style={{ fontFamily: SANS, color: '#3a2c91' }}
-              >
-                {actionError}
-              </p>
-            )}
-
-            <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={closeActionPanel}
-                disabled={actionSubmitting}
-                onMouseEnter={(e) => {
-                  if (actionSubmitting) return
-                  e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-                  e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = CTA_GHOST_BG
-                  e.currentTarget.style.borderColor = CTA_GHOST_BORDER
-                }}
-                onMouseDown={(e) => {
-                  if (actionSubmitting) return
-                  e.currentTarget.style.background = CTA_GHOST_PRESSED_BG
-                }}
-                onMouseUp={(e) => {
-                  if (actionSubmitting) return
-                  e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-                }}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-7 py-4 transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)]"
-                style={{
-                  background: CTA_GHOST_BG,
-                  border: `1.5px solid ${CTA_GHOST_BORDER}`,
-                  color: CTA_GHOST_TEXT,
-                  fontFamily: MONO,
-                  fontSize: 13,
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                }}
-              >
-                Cancel
-              </button>
-              {(() => {
-                // Confirm-button gating mirrors submitAction's
-                // guard. Approve flow with a configured
-                // disclaimer requires the tick box; without a
-                // disclaimer or for Request Changes, the button
-                // is enabled as soon as the modal opens.
-                const disclaimerGate =
-                  actionPanel.type === 'approve' &&
-                  !!publicSettings?.disclaimer_text &&
-                  !actionDisclaimerAcked
-                // Migration 000169 — approve-path tick required
-                // when the slot has any QRs visible to it. Mirrors
-                // qrRowsForSlot's same predicate as the in-modal
-                // render above; on request_changes or QR-free
-                // slots the gate collapses to false.
-                const slotQrsForGate =
-                  actionPanel.type === 'approve'
-                    ? qrRowsForSlot({
-                        qrImages: versionQrImages[actionPanel.versionId] ?? [],
-                        slotName: actionPanel.name,
-                        versionHasNames: (activeVersion?.names ?? []).length > 0,
-                      })
-                    : []
-                const qrGate = slotQrsForGate.length > 0 && !actionQrConfirmed
-                const confirmDisabled = actionSubmitting || disclaimerGate || qrGate
-                return (
-                  <button
-                    type="button"
-                    onClick={() => void submitAction()}
-                    disabled={confirmDisabled}
-                    // Visible text stays "Confirm" (no design change),
-                    // but screen-reader users hear the explicit action
-                    // verb so they don't have to infer the verb from
-                    // the dialog title.
-                    aria-label={
-                      actionPanel.roundVariant
-                        ? `Send selection — ${actionPanel.roundVariant.displayName}`
-                        : actionPanel.type === 'approve'
-                          ? actionPanel.name === SHARED_APPROVAL_KEY
-                            ? 'Approve this proof'
-                            : `Approve ${actionPanel.name}'s design`
-                          : 'Send change request'
-                    }
-                    onMouseEnter={(e) => {
-                      if (confirmDisabled) return
-                      if (actionPanel.type === 'approve') {
-                        e.currentTarget.style.background = CTA_TEAL_HOVER
-                      } else if (actionPanel.type === 'request_changes') {
-                        e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-                        e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (actionPanel.type === 'approve') {
-                        e.currentTarget.style.background = CTA_TEAL
-                      } else if (actionPanel.type === 'request_changes') {
-                        e.currentTarget.style.background = CTA_GHOST_BG
-                        e.currentTarget.style.borderColor = CTA_GHOST_BORDER
-                      }
-                    }}
-                    onMouseDown={(e) => {
-                      if (confirmDisabled) return
-                      if (actionPanel.type === 'approve') {
-                        e.currentTarget.style.background = CTA_TEAL_PRESSED
-                      } else if (actionPanel.type === 'request_changes') {
-                        e.currentTarget.style.background = CTA_GHOST_PRESSED_BG
-                      }
-                    }}
-                    onMouseUp={(e) => {
-                      if (actionPanel.type === 'approve') {
-                        e.currentTarget.style.background = CTA_TEAL_HOVER
-                      } else if (actionPanel.type === 'request_changes') {
-                        e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-                      }
-                    }}
-                    className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-7 py-4 transition-colors disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2"
-                    style={{
-                      // Disabled state renders as a ghost outline
-                      // matching the Cancel button rather than a
-                      // faded primary fill. opacity-60 on the deep
-                      // teal still read as "saturated primary, just
-                      // dimmer" — customers were trying to click it.
-                      // Switching to ghost makes the gate visually
-                      // unambiguous: the tick box at the top of the
-                      // modal is what unlocks the primary fill.
-                      //
-                      // Request-changes flow uses the same paper-
-                      // register ghost as Cancel — the modal panel
-                      // is now on PAPER_TINT_1, so the per-recipient
-                      // CTA_GHOST_* tokens carry directly across.
-                      background: confirmDisabled
-                        ? 'transparent'
-                        : actionPanel.type === 'approve'
-                          ? CTA_TEAL
-                          : CTA_GHOST_BG,
-                      border: confirmDisabled
-                        ? '1.5px solid rgba(26,22,18,0.20)'
-                        : actionPanel.type === 'approve'
-                          ? 'none'
-                          : `1.5px solid ${CTA_GHOST_BORDER}`,
-                      color: confirmDisabled
-                        ? 'rgba(26,22,18,0.35)'
-                        : actionPanel.type === 'approve'
-                          ? '#ffffff'
-                          : CTA_GHOST_TEXT,
-                      fontFamily: MONO,
-                      fontSize: 13,
-                      letterSpacing: '0.06em',
-                      textTransform: 'uppercase',
-                      ['--tw-ring-color' as string]:
-                        actionPanel.type === 'approve' ? CTA_TEAL_RING : 'rgba(123,63,242,0.5)',
-                    }}
-                  >
-                    {actionSubmitting
-                      ? 'Sending…'
-                      : actionPanel.roundVariant
-                        ? 'Send selection'
-                        : 'Confirm'}
-                  </button>
-                )
-              })()}
-            </div>
-            {/* Helper line — only renders when the Confirm button is
-                gated by the disclaimer tick (not by submit-in-flight),
-                so the customer knows exactly what unlocks the action.
-                Sits below the button row rather than above so it
-                reads as a footnote to "why is Confirm dim?", not
-                another piece of body copy. */}
-            {actionPanel.type === 'approve' &&
-              !!publicSettings?.disclaimer_text &&
-              !actionDisclaimerAcked &&
-              !actionSubmitting && (
-                <p
-                  className="mt-3 text-right text-[12px] sm:text-[13px]"
-                  style={{ fontFamily: SANS, color: 'rgba(26,22,18,0.65)' }}
-                >
-                  Tick the disclaimer above to enable Confirm.
-                </p>
-              )}
-            {(() => {
-              // Sibling hint for the QR tick — same place, same
-              // tone as the disclaimer hint above. Renders only
-              // when the QR gate is the (or an additional) reason
-              // Confirm is disabled; on a slot with no QRs, this
-              // collapses to null.
-              if (
-                actionPanel.type !== 'approve' ||
-                actionSubmitting ||
-                actionQrConfirmed
-              ) return null
-              const slotQrs = qrRowsForSlot({
-                qrImages: versionQrImages[actionPanel.versionId] ?? [],
-                slotName: actionPanel.name,
-                versionHasNames: (activeVersion?.names ?? []).length > 0,
-              })
-              if (slotQrs.length === 0) return null
-              return (
-                <p
-                  className="mt-2 text-right text-[12px] sm:text-[13px]"
-                  style={{ fontFamily: SANS, color: 'rgba(26,22,18,0.65)' }}
-                >
-                  Tick the QR code confirmation to enable Confirm.
-                </p>
-              )
-            })()}
-          </div>
-          </div>
-        </div>
-      )}
-
-      {/* Phase 1 docked panel / bottom sheet for the request-changes
-          flow. Shares actionName / actionComment / actionError /
-          submitAction with the approve modal above so the optimistic
-          per-recipient state machine (actionResults / successMessages
-          keyed by bandKey / variantBandKey) is preserved verbatim.
-          Non-modal — see RequestChangesPanel for the rationale and
-          the gated focus-trap / scroll-lock effects above. */}
-      {actionPanel && actionPanel.type === 'request_changes' && (
-        <RequestChangesPanel
-          actionPanel={actionPanel as {
-            versionId: string
-            name: string
-            type: 'request_changes'
-            roundVariant?: { id: string; displayName: string } | null
-          }}
+      {/* Docked panel / bottom sheet for both customer actions —
+          request_changes and approve. Replaces the previous dark-
+          backdrop approve modal so the proof and the zoomed detail
+          view stay visible while the customer reads the disclaimer.
+          Shares actionName / actionComment / actionError /
+          submitAction across both flows, so the optimistic per-
+          recipient state machine (actionResults / successMessages
+          keyed by bandKey / variantBandKey) is preserved verbatim. */}
+      {actionPanel && (
+        <ActionPanel
+          actionPanel={actionPanel}
           actionName={actionName}
           setActionName={setActionName}
           actionComment={actionComment}
@@ -4489,6 +3911,27 @@ export default function CustomerProofPage() {
           closeActionPanel={closeActionPanel}
           submitAction={() => void submitAction()}
           submitted={requestChangesSubmitted}
+          disclaimerText={publicSettings?.disclaimer_text ?? null}
+          disclaimerAckedThisSession={disclaimerAckedThisSession}
+          actionDisclaimerAcked={actionDisclaimerAcked}
+          setActionDisclaimerAcked={setActionDisclaimerAcked}
+          actionDisclaimerExpanded={actionDisclaimerExpanded}
+          setActionDisclaimerExpanded={setActionDisclaimerExpanded}
+          // Same qrRowsForSlot predicate submitAction's server-mirror
+          // guard uses, so the panel's QR tick + the Confirm-disabled
+          // gate stay in lockstep. The panel doesn't need to know
+          // about the GridImage shape — it just needs the count.
+          slotQrCount={
+            actionPanel.type === 'approve'
+              ? qrRowsForSlot({
+                  qrImages: versionQrImages[actionPanel.versionId] ?? [],
+                  slotName: actionPanel.name,
+                  versionHasNames: (activeVersion?.names ?? []).length > 0,
+                }).length
+              : 0
+          }
+          actionQrConfirmed={actionQrConfirmed}
+          setActionQrConfirmed={setActionQrConfirmed}
         />
       )}
     </div>
