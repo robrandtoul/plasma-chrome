@@ -181,7 +181,7 @@ export function RequestChangesPanel({
           // Mobile: bottom sheet, full width, rounded top corners,
           // top hairline + upward shadow lifting the sheet above the
           // page.
-          'inset-x-0 bottom-0 max-h-[70vh] w-full rounded-t-2xl',
+          'inset-x-0 bottom-0 h-[50vh] w-full rounded-t-2xl',
           'border-t border-t-[rgba(26,22,18,0.18)] shadow-[0_-8px_32px_rgba(0,0,0,0.15)]',
           // Desktop (sm+): fixed to the right edge, full height, ~400px
           // wide, square corners against the viewport edge, left
