@@ -19,6 +19,7 @@ import { LayeredConstructionPanel } from '../components/LayeredConstructionPanel
 import { MetalThicknessPanel } from '../components/MetalThicknessPanel'
 import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
 import { RequestChangesPanel } from '../components/RequestChangesPanel'
+import { ProofDetailView } from '../components/ProofDetailView'
 import { firstName } from '../lib/firstName'
 import {
   INK,
@@ -85,32 +86,55 @@ export default function CustomerProofPage() {
   const [variantRows, setVariantRows] = useState<PublicMaterialVariant[]>([])
   const [activeOptionCode, setActiveOptionCode] = useState<string | null>(null)
   const [publicSettings, setPublicSettings] = useState<PublicSettings | null>(null)
-  // Lightbox carries both src and a per-image alt so the modal
-  // can announce "ALEC · FRONT" rather than the generic "Proof
-  // image" when a screen reader user opens it. The alt is
-  // synthesised by the click site (PlateCard) from recipient +
-  // side, falling back to the page-level descriptor.
-  const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
-  // Focus management for the lightbox dialog: capture the element that
-  // had focus before opening so we can restore it on close, refs to the
-  // dialog root + close button so the keydown effect can trap Tab inside
-  // and move focus into the dialog on open. Mirrors the action modal
-  // pattern below.
-  const lightboxTriggerRef = useRef<HTMLElement | null>(null)
-  const lightboxRef = useRef<HTMLDivElement | null>(null)
-  const lightboxCloseButtonRef = useRef<HTMLButtonElement | null>(null)
-  const openLightbox = (src: string, alt: string) => {
-    lightboxTriggerRef.current = document.activeElement as HTMLElement | null
-    setLightbox({ src, alt })
+  // Detail view (Phase 2 — replaces the dark fullscreen lightbox).
+  // Non-modal, light-register zoom that coexists with the request-
+  // changes panel. `images` is the navigable set (the clicked image's
+  // group — front + back of one recipient's card, or both directions
+  // of one variant-round card). `index` is the clicked image inside
+  // that set; chevrons step within `images` only, never the whole
+  // page. `displayLabel` is the caption's primary label
+  // (recipient name, "Shared", or a variant display name).
+  // `recipientName` / `roundVariant` route the "Request changes"
+  // button to the right opener (openActionPanel vs
+  // openVariantActionPanel).
+  const [detailView, setDetailView] = useState<
+    | {
+        images: GridImage[]
+        index: number
+        displayLabel: string | null
+        versionId: string
+        recipientName: string
+        roundVariant: { id: string; displayName: string } | null
+      }
+    | null
+  >(null)
+  // Captured on open so we can restore focus to the originating
+  // PlateCard button on close (keyboard-user continuity — same
+  // pattern the action modal uses).
+  const detailViewTriggerRef = useRef<HTMLElement | null>(null)
+  function openDetailView(payload: {
+    images: GridImage[]
+    index: number
+    displayLabel: string | null
+    versionId: string
+    recipientName: string
+    roundVariant?: { id: string; displayName: string } | null
+  }) {
+    detailViewTriggerRef.current = document.activeElement as HTMLElement | null
+    setDetailView({
+      images: payload.images,
+      index: payload.index,
+      displayLabel: payload.displayLabel,
+      versionId: payload.versionId,
+      recipientName: payload.recipientName,
+      roundVariant: payload.roundVariant ?? null,
+    })
   }
-  const closeLightbox = () => {
-    setLightbox(null)
-    const trigger = lightboxTriggerRef.current
-    lightboxTriggerRef.current = null
+  function closeDetailView() {
+    setDetailView(null)
+    const trigger = detailViewTriggerRef.current
+    detailViewTriggerRef.current = null
     if (trigger && typeof trigger.focus === 'function') {
-      // requestAnimationFrame so the focus restore lands after React
-      // unmounts the dialog, otherwise the trigger isn't yet the
-      // document's focus target.
       requestAnimationFrame(() => trigger.focus())
     }
   }
@@ -213,48 +237,8 @@ export default function CustomerProofPage() {
     return () => { document.title = previous }
   }, [proof])
 
-  useEffect(() => {
-    if (!lightbox) return
-    // Move focus into the dialog on open so the customer's first Tab
-    // lands inside the lightbox rather than on the page behind it.
-    // requestAnimationFrame waits one frame for the dialog DOM to
-    // mount before we look up the close button.
-    const focusFrame = requestAnimationFrame(() => {
-      lightboxCloseButtonRef.current?.focus()
-    })
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        closeLightbox()
-        return
-      }
-      if (e.key !== 'Tab' || !lightboxRef.current) return
-      const focusables = lightboxRef.current.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
-      )
-      if (focusables.length === 0) return
-      const first = focusables[0]
-      const last = focusables[focusables.length - 1]
-      const active = document.activeElement as HTMLElement | null
-      if (e.shiftKey && active === first) {
-        e.preventDefault()
-        last.focus()
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault()
-        first.focus()
-      } else if (active && !lightboxRef.current.contains(active)) {
-        e.preventDefault()
-        first.focus()
-      }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => {
-      cancelAnimationFrame(focusFrame)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [lightbox])
-
-  // Modal: Escape to dismiss + Tab focus trap. Mirrors the lightbox
-  // pattern above. Closes only when not mid-submit so the customer
+  // Modal: Escape to dismiss + Tab focus trap. Closes only when not
+  // mid-submit so the customer
   // can't accidentally cancel a request that's already on the wire.
   // The Tab handler keeps focus inside actionPanelRef — without it,
   // tabbing past the Confirm button lands on the version-tab buttons
@@ -1855,6 +1839,16 @@ export default function CustomerProofPage() {
                   (img) => img.side === 'back',
                 )
                 const hasBack = backImages.length > 0
+                // Variant-round navigable set — what the detail view
+                // (Phase 2) walks through with its chevrons. Front-
+                // then-back across this single variant card; the
+                // rest of the page (other variants, the shared
+                // section) is not part of the same set, so chevron
+                // navigation never escapes the variant the customer
+                // clicked into.
+                const variantNavigableImages: GridImage[] = hasBack
+                  ? [...frontImages, ...backImages]
+                  : frontImages
                 const isChosen =
                   isLocked && lockState.chosenVariantId === variant.id
                 const dimmed = isLocked && !isChosen
@@ -1924,7 +1918,14 @@ export default function CustomerProofPage() {
                                 image={img}
                                 brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
                                 alt={`${variant.display_name} — proof version ${activeVersion.version_number}`}
-                                onClick={openLightbox}
+                                onClick={() => openDetailView({
+                                  images: variantNavigableImages,
+                                  index: variantNavigableImages.findIndex((x) => x.id === img.id),
+                                  displayLabel: variant.display_name,
+                                  versionId: activeVersion.id,
+                                  recipientName: SHARED_APPROVAL_KEY,
+                                  roundVariant: { id: variant.id, displayName: variant.display_name },
+                                })}
                               />
                             ))}
                           </div>
@@ -1948,7 +1949,14 @@ export default function CustomerProofPage() {
                                 image={img}
                                 brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
                                 alt={`${variant.display_name} (back) — proof version ${activeVersion.version_number}`}
-                                onClick={openLightbox}
+                                onClick={() => openDetailView({
+                                  images: variantNavigableImages,
+                                  index: variantNavigableImages.findIndex((x) => x.id === img.id),
+                                  displayLabel: variant.display_name,
+                                  versionId: activeVersion.id,
+                                  recipientName: SHARED_APPROVAL_KEY,
+                                  roundVariant: { id: variant.id, displayName: variant.display_name },
+                                })}
                               />
                             ))}
                           </div>
@@ -1965,7 +1973,14 @@ export default function CustomerProofPage() {
                             image={img}
                             brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
                             alt={`${variant.display_name} — proof version ${activeVersion.version_number}`}
-                            onClick={openLightbox}
+                            onClick={() => openDetailView({
+                              images: variantNavigableImages,
+                              index: variantNavigableImages.findIndex((x) => x.id === img.id),
+                              displayLabel: variant.display_name,
+                              versionId: activeVersion.id,
+                              recipientName: SHARED_APPROVAL_KEY,
+                              roundVariant: { id: variant.id, displayName: variant.display_name },
+                            })}
                           />
                         ))}
                       </div>
@@ -2953,7 +2968,13 @@ export default function CustomerProofPage() {
                             image={img}
                             brandColor={BRAND_ORDER[idx % BRAND_ORDER.length]}
                             alt={`Proof version ${activeVersion.version_number}`}
-                            onClick={openLightbox}
+                            onClick={() => openDetailView({
+                              images: sharedStandaloneGroup.images,
+                              index: idx,
+                              displayLabel: 'Shared',
+                              versionId: activeVersion.id,
+                              recipientName: SHARED_APPROVAL_KEY,
+                            })}
                             recipientLabel="Shared"
                           />
                         ))}
@@ -3078,7 +3099,13 @@ export default function CustomerProofPage() {
                                       image={img}
                                       brandColor={BRAND_ORDER[dotIdx % BRAND_ORDER.length]}
                                       alt={`${group.heading} — proof version ${activeVersion.version_number}`}
-                                      onClick={openLightbox}
+                                      onClick={() => openDetailView({
+                                        images: group.images,
+                                        index: localIdx,
+                                        displayLabel: group.heading ?? null,
+                                        versionId: activeVersion.id,
+                                        recipientName: group.heading ?? SHARED_APPROVAL_KEY,
+                                      })}
                                       recipientLabel={group.heading ?? undefined}
                                     />
                                   )
@@ -3800,36 +3827,45 @@ export default function CustomerProofPage() {
         </div>
       </footer>
 
-      {/* Lightbox.
-          Uses h-[100dvh] (dynamic viewport) instead of `inset-0`
-          alone so iOS Safari's URL bar doesn't clip the bottom of
-          tall portrait images. The image's max-h is capped a touch
-          short of the viewport to keep some margin around it. */}
-      {lightbox && (
-        <div
-          ref={lightboxRef}
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Image preview: ${lightbox.alt}`}
-          className="fixed inset-x-0 top-0 z-50 flex h-[100dvh] items-center justify-center bg-black/80 p-4"
-          onClick={closeLightbox}
-        >
-          <button
-            ref={lightboxCloseButtonRef}
-            type="button"
-            aria-label="Close image preview"
-            onClick={(e) => { e.stopPropagation(); closeLightbox() }}
-            className="absolute right-4 top-4 grid h-11 w-11 place-items-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/20 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
-          >
-            <span aria-hidden="true" className="text-2xl leading-none">×</span>
-          </button>
-          <img
-            src={lightbox.src}
-            alt={lightbox.alt}
-            className="max-h-[calc(100dvh-2rem)] max-w-full rounded-lg object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
+      {/* Detail view (Phase 2).
+          Replaces the previous dark fullscreen lightbox with a
+          non-modal, light-register zoom that coexists with the
+          request-changes panel. z-index sits below the panel
+          (z-40) and the approve modal (z-50). When the panel is
+          open, the detail view insets so it doesn't cover it. */}
+      {detailView && (
+        <ProofDetailView
+          // Re-keying on (versionId, recipientName, roundVariantId)
+          // forces a remount when the trigger group changes — the
+          // component seeds `index` from `initialIndex` once on
+          // mount, so without the key a second click would keep the
+          // first session's index. Multiple opens of the same group
+          // re-use one instance, so the index seed is honoured.
+          key={`${detailView.versionId}|${detailView.recipientName}|${detailView.roundVariant?.id ?? ''}`}
+          images={detailView.images}
+          initialIndex={detailView.index}
+          displayLabel={detailView.displayLabel}
+          close={closeDetailView}
+          onRequestChanges={() => {
+            // Variant rounds use the variant-specific opener so the
+            // edge function picks up round_variant_id; standard
+            // path uses the per-recipient opener.
+            if (detailView.roundVariant) {
+              openVariantActionPanel(detailView.versionId, {
+                id: detailView.roundVariant.id,
+                display_name: detailView.roundVariant.displayName,
+              })
+            } else {
+              openActionPanel(
+                detailView.versionId,
+                detailView.recipientName,
+                'request_changes',
+              )
+            }
+          }}
+          hideRequestChanges={actionPanel?.type === 'request_changes'}
+          panelOpen={actionPanel?.type === 'request_changes'}
+        />
       )}
 
       {/* Phase 2 action confirmation modal —
@@ -3867,9 +3903,8 @@ export default function CustomerProofPage() {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Close (X) — same pattern as the lightbox above. Hidden
-                while submitting so the customer can't cancel a write
-                that's already in flight. */}
+            {/* Close (X). Hidden while submitting so the customer
+                can't cancel a write that's already in flight. */}
             <button
               type="button"
               aria-label="Close"
@@ -4416,7 +4451,7 @@ export default function CustomerProofPage() {
 // uploaded original_filename (with extension), muted and
 // truncated with a full-name tooltip on hover. Hidden when
 // original_filename is null (pre-migration-000021 legacy
-// rows). Clicking the image opens the lightbox via the
+// rows). Clicking the image opens the detail view via the
 // parent's onClick handler. Download link uses the real
 // uploaded filename so the customer's downloads folder
 // matches what they saw on the page.
@@ -4430,7 +4465,11 @@ function PlateCard({
   image: GridImage
   brandColor: string
   alt: string
-  onClick: (src: string, alt: string) => void
+  // Caller-provided opener. Carries no per-image payload anymore —
+  // the call site knows the image's group context (recipient,
+  // variant, version) and passes it through when it builds the
+  // closure for openDetailView (Phase 2 detail-view rework).
+  onClick: () => void
   recipientLabel?: string
 }) {
   const downloadHref = image.signed_url ?? '#'
@@ -4445,18 +4484,12 @@ function PlateCard({
       ? `${recipientLabel.toUpperCase()} · ${sideText}`
       : recipientLabel.toUpperCase()
     : sideText
-  // Lightbox alt: prefer the captionLabel (which carries
-  // recipient + side context — what the customer was just
-  // looking at) over the page-level descriptor passed in via
-  // the alt prop. Falls back to alt for shared-only proofs that
-  // skip the caption.
-  const lightboxAlt = captionLabel || alt
   return (
     <div className="relative">
       <figure className="relative">
         <button
           type="button"
-          onClick={() => image.signed_url && onClick(image.signed_url, lightboxAlt)}
+          onClick={() => image.signed_url && onClick()}
           // ring colour set explicitly to the ACCENT-50 token used
           // across the page; without it Tailwind falls back to its
           // default blue ring. ring-offset-2 sits against PAPER_CREAM
