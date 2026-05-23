@@ -43,6 +43,12 @@ export type ProofDetailViewProps = {
   // desktop (sm:right-[400px]) and leaves room above the bottom
   // sheet on mobile (pb-[70vh]).
   panelOpen: boolean
+  // Phase 3 — reports the side of the currently-visible image to
+  // the parent so a subsequent change-request submit can record
+  // which face the customer was looking at. Fires on mount and
+  // whenever the index changes. Null when the current image has
+  // no `side` value (legacy / shared / single-image groups).
+  onCurrentSideChange?: (side: 'front' | 'back' | null) => void
 }
 
 // Non-modal, light-register replacement for the previous dark
@@ -61,6 +67,7 @@ export function ProofDetailView({
   onRequestChanges,
   hideRequestChanges,
   panelOpen,
+  onCurrentSideChange,
 }: ProofDetailViewProps) {
   // Index is local — opening a new detail view re-mounts the
   // component (different key in the parent), so the seed always wins.
@@ -96,6 +103,16 @@ export function ProofDetailView({
     })
     return () => cancelAnimationFrame(frame)
   }, [])
+
+  // Phase 3 — report the visible side to the parent so a subsequent
+  // change-request submit can stamp proof_events.side. Fires on
+  // mount with the initial side and again every time the customer
+  // steps via chevron / arrow key. images is stable per mount
+  // (parent re-keys on group change), so depending on `index` alone
+  // is correct.
+  useEffect(() => {
+    onCurrentSideChange?.(images[index]?.side ?? null)
+  }, [index, images, onCurrentSideChange])
 
   // Escape + arrow-key navigation. Bound on document so we hear
   // keys regardless of where focus currently sits (e.g. on the
