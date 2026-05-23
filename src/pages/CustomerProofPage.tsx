@@ -214,6 +214,15 @@ export default function CustomerProofPage() {
   // disclaimer tick's behaviour. Reset to false whenever a new
   // action modal opens.
   const [actionQrConfirmed, setActionQrConfirmed] = useState(false)
+  // Earlier-version acknowledgement on the approve panel. Renders an
+  // extra warning block + tick at the top of the panel body whenever
+  // the version being approved is not the latest, since approving a
+  // superseded design is higher-risk than the standard disclaimer
+  // covers. Gates Confirm alongside the disclaimer and QR ticks.
+  // Reset to false on every action-panel open (same pattern as the
+  // other approve-only acks).
+  const [actionEarlierVersionAcked, setActionEarlierVersionAcked] =
+    useState(false)
   const [actionResults, setActionResults] = useState<
     Record<
       string,
@@ -436,6 +445,7 @@ export default function CustomerProofPage() {
     setActionDisclaimerAcked(false)
     setActionDisclaimerExpanded(false)
     setActionQrConfirmed(false)
+    setActionEarlierVersionAcked(false)
     // Defensive reset — closeActionPanel already clears the flag,
     // but a fresh open should never inherit a stale confirmation
     // view if state ever drifts (e.g. component remount).
@@ -466,6 +476,7 @@ export default function CustomerProofPage() {
     setActionDisclaimerAcked(false)
     setActionDisclaimerExpanded(false)
     setActionQrConfirmed(false)
+    setActionEarlierVersionAcked(false)
     // Same defensive reset as openActionPanel — variant-round opens
     // close on success anyway, but a state-drifted "submitted" flag
     // would render a confirmation view on top of a fresh form.
@@ -528,6 +539,22 @@ export default function CustomerProofPage() {
         setActionError('Please confirm the QR code contents before approving.')
         return
       }
+    }
+    // Earlier-version acknowledgement. Same defensive-mirror pattern
+    // as the disclaimer and QR guards above: the Confirm button is
+    // already disabled by the panel's gate, but a stale-tab or
+    // bypassed-JS submit needs a clear error rather than landing on
+    // the edge function and looking like a generic failure.
+    if (
+      actionPanel.type === 'approve' &&
+      activeVersion &&
+      !activeVersion.is_current &&
+      !actionEarlierVersionAcked
+    ) {
+      setActionError(
+        'Please confirm you understand you are approving an earlier version.',
+      )
+      return
     }
     setActionSubmitting(true)
     setActionError(null)
@@ -3978,6 +4005,16 @@ export default function CustomerProofPage() {
           }
           actionQrConfirmed={actionQrConfirmed}
           setActionQrConfirmed={setActionQrConfirmed}
+          // Earlier-version acknowledgement. activeVersion is the
+          // version being approved (the panel always opens for the
+          // active version). When it's not the current proof, the
+          // panel renders an extra warning block + tick at the top
+          // and gates Confirm on it.
+          isEarlierVersion={activeVersion ? !activeVersion.is_current : false}
+          earlierVersionNumber={activeVersion?.version_number ?? null}
+          latestVersionNumber={latestVersion?.version_number ?? null}
+          actionEarlierVersionAcked={actionEarlierVersionAcked}
+          setActionEarlierVersionAcked={setActionEarlierVersionAcked}
         />
       )}
     </div>
