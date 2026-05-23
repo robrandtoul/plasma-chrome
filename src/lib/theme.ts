@@ -159,6 +159,21 @@
  *      All other surfaces (PAPER_INK on PAPER_TINT_1 / on white,
  *      title shades, banner reuse) clear AA with margin.
  *
+ *  10. Request-changes CTA rebalanced (Option C). In the per-recipient
+ *      pending-state action area, the two buttons swap visual order:
+ *      Request changes renders first (left on desktop, top on mobile),
+ *      Approve second. Request changes also moves off the ghost outline
+ *      onto a soft amber fill via new CTA_AMBER_* tokens (bg #F7E4BE,
+ *      border #E6C57C, text #5C3406, with hover / pressed shades); the
+ *      Approve button keeps its teal styling unchanged. A small uppercase
+ *      mono "Request changes or approve" lead-in label is rendered above
+ *      the button row in PAPER_SECONDARY, framed the same way as the
+ *      adjacent "Heads up" earlier-version warning eyebrow. The intent
+ *      is to make requesting changes feel like a welcome, legitimate
+ *      choice rather than a reluctant escape hatch. CTA_GHOST_* tokens
+ *      stay in use for the Cancel and request-changes Confirm buttons
+ *      inside the action modal further down the page.
+ *
  *   9. Coral → brand blue migration on the changes-requested family.
  *      Coral (rgba(229,114,49,X) + #a04116 / #7c2d12) was off-brand;
  *      the logomark blue #3a2c91 (RGB 58,44,145) ties to brand. Every
@@ -233,6 +248,14 @@ export const CTA_GHOST_BG = 'transparent'
 export const CTA_GHOST_HOVER_BG = 'rgba(0,0,0,0.04)'
 export const CTA_GHOST_PRESSED_BG = 'rgba(0,0,0,0.08)'
 export const CTA_GHOST_HOVER_BORDER = '#2C2C2A'
+// Soft amber fill for the Request changes CTA — see deviation #10.
+// Same layout footprint as the ghost variant, only colours change.
+export const CTA_AMBER_BG = '#F7E4BE'
+export const CTA_AMBER_HOVER_BG = '#F1D9A8'
+export const CTA_AMBER_PRESSED_BG = '#EACF94'
+export const CTA_AMBER_BORDER = '#E6C57C'
+export const CTA_AMBER_HOVER_BORDER = '#D9B461'
+export const CTA_AMBER_TEXT = '#5C3406'
 
 // ── Type stacks ──────────────────────────────────────────────
 // Geist Mono powers MONO — used by PaperPricingTable +
