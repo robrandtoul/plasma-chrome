@@ -41,6 +41,12 @@ import {
   CTA_GHOST_HOVER_BG,
   CTA_GHOST_PRESSED_BG,
   CTA_GHOST_HOVER_BORDER,
+  CTA_AMBER_BG,
+  CTA_AMBER_HOVER_BG,
+  CTA_AMBER_PRESSED_BG,
+  CTA_AMBER_BORDER,
+  CTA_AMBER_HOVER_BORDER,
+  CTA_AMBER_TEXT,
   SERIF,
   SANS,
   MONO,
@@ -1302,7 +1308,51 @@ export default function CustomerProofPage() {
             </p>
           </div>
         )}
+        <span
+          className="uppercase"
+          style={{
+            fontFamily: MONO,
+            fontSize: 11,
+            letterSpacing: '0.22em',
+            textTransform: 'uppercase',
+            color: PAPER_SECONDARY,
+          }}
+        >
+          Request changes or approve
+        </span>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <button
+            type="button"
+            onClick={() => openActionPanel(activeVersion.id, name, 'request_changes')}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = CTA_AMBER_HOVER_BG
+              e.currentTarget.style.borderColor = CTA_AMBER_HOVER_BORDER
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = CTA_AMBER_BG
+              e.currentTarget.style.borderColor = CTA_AMBER_BORDER
+            }}
+            onMouseDown={(e) => {
+              e.currentTarget.style.background = CTA_AMBER_PRESSED_BG
+            }}
+            onMouseUp={(e) => {
+              e.currentTarget.style.background = CTA_AMBER_HOVER_BG
+            }}
+            className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-7 py-4 transition-colors focus-visible:outline-none focus-visible:ring-2"
+            style={{
+              background: CTA_AMBER_BG,
+              border: `1.5px solid ${CTA_AMBER_BORDER}`,
+              color: CTA_AMBER_TEXT,
+              fontFamily: MONO,
+              fontSize: 13,
+              fontWeight: 500,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              ['--tw-ring-color' as string]: CTA_TEAL_RING,
+            }}
+          >
+            Request changes
+          </button>
           <button
             type="button"
             onClick={() => openActionPanel(activeVersion.id, name, 'approve')}
@@ -1330,38 +1380,6 @@ export default function CustomerProofPage() {
             }}
           >
             {approveLabel}
-          </button>
-          <button
-            type="button"
-            onClick={() => openActionPanel(activeVersion.id, name, 'request_changes')}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-              e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = CTA_GHOST_BG
-              e.currentTarget.style.borderColor = CTA_GHOST_BORDER
-            }}
-            onMouseDown={(e) => {
-              e.currentTarget.style.background = CTA_GHOST_PRESSED_BG
-            }}
-            onMouseUp={(e) => {
-              e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-            }}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-7 py-4 transition-colors focus-visible:outline-none focus-visible:ring-2"
-            style={{
-              background: CTA_GHOST_BG,
-              border: `1.5px solid ${CTA_GHOST_BORDER}`,
-              color: CTA_GHOST_TEXT,
-              fontFamily: MONO,
-              fontSize: 13,
-              fontWeight: 500,
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-              ['--tw-ring-color' as string]: CTA_TEAL_RING,
-            }}
-          >
-            Request changes
           </button>
         </div>
       </div>
