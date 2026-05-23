@@ -111,6 +111,12 @@ export function ProofDetailView({
         close()
         return
       }
+      // Don't hijack arrow keys when the customer is typing in the
+      // request-changes panel's name or comment field — moving the
+      // text cursor must keep working. Escape is handled above so
+      // the close affordance still fires from anywhere.
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       if (!canStep) return
       if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
         e.preventDefault()
@@ -196,8 +202,19 @@ export function ProofDetailView({
           image sits inside a flex-1 region that grows to fill
           available vertical space; max-h on the <img> caps it
           short of the visible region so the caption + Request
-          changes row stay on-screen without scrolling. */}
-      <div className="relative flex flex-1 min-h-0 items-center justify-center px-4 sm:px-8">
+          changes row stay on-screen without scrolling.
+
+          Self-click closes the detail view — the empty space
+          around the image acts as the backdrop. The overlay's
+          own onClick can't see these clicks (flex children
+          fully cover it), so the close affordance lives here
+          where the unoccupied padding sits. Clicks on the image
+          and chevron buttons fail the target===currentTarget
+          check and don't close. */}
+      <div
+        className="relative flex flex-1 min-h-0 items-center justify-center px-4 sm:px-8"
+        onClick={(e) => { if (e.target === e.currentTarget) close() }}
+      >
         {canStep && (
           <button
             type="button"
