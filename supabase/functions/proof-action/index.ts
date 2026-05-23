@@ -741,6 +741,14 @@ Deno.serve(async (req) => {
   // qr_confirmed_at IS NOT NULL is what counts; the timestamp
   // itself is server-stamped to avoid client-clock spoofing.
   let qrConfirmed: boolean
+  // side is the card face the customer had open in the detail view
+  // when they submitted the action (Phase 3 customer-page rework).
+  // Accept exactly 'front' or 'back' off the wire; everything else
+  // — missing key, null, empty string, unexpected value — collapses
+  // to null. The DB CHECK from migration 000196 only allows those
+  // two values plus null, so anything weirder than that would
+  // 23514 anyway; the parser pre-empts it with a clean null.
+  let side: 'front' | 'back' | null
   try {
     const parsed = await req.json()
     proofVersionId = typeof parsed?.proof_version_id === 'string' ? parsed.proof_version_id.trim() : ''
@@ -761,6 +769,8 @@ Deno.serve(async (req) => {
       ? rawVariantId.trim()
       : null
     qrConfirmed = parsed?.qr_confirmed === true
+    const rawSide = parsed?.side
+    side = rawSide === 'front' || rawSide === 'back' ? rawSide : null
   } catch {
     return failed('validation', 400, 'invalid JSON body')
   }
@@ -1094,6 +1104,13 @@ Deno.serve(async (req) => {
     // this version. The FK on proof_events.round_variant_id catches
     // any client that bypasses edge-function validation.
     round_variant_id: roundVariantId,
+    // Migration 000196. Card side visible in the detail view at the
+    // moment the customer submitted; null when no detail view was
+    // open (e.g. the panel was opened from the overview action band)
+    // or for non-Phase-3 clients that don't send the field.
+    // Designer-only — surfaced on ProofDetailPage's audit panel and
+    // not exposed via any public_* view.
+    side,
   }
   const { data: eventRow, error: insertErr } = await admin
     .from('proof_events')

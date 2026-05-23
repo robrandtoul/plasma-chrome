@@ -78,6 +78,11 @@ interface ProofEventAuditDetail {
   // selection. Null on standard-proof events. Resolved server-side
   // via a nested embed on proof_round_variants in the events query.
   variant_display_name: string | null
+  // Phase 3 (000196): the card side the customer had open in the
+  // detail view when they submitted this event. Null when no
+  // detail view was open (panel opened from the overview action
+  // band) or for events that predate the Phase 3 rework.
+  side: 'front' | 'back' | null
 }
 
 interface ApprovedImageRow {
@@ -340,7 +345,7 @@ export default function ProofDetailPage() {
       // added by the LEFT JOIN.
       const { data: eventRows } = await supabase
         .from('proof_events')
-        .select('id, proof_version_id, name, event_type, actor_name, comment, from_ip, from_ua, helpscout_thread_id, created_at, round_variant_id, proof_round_variants(display_name)')
+        .select('id, proof_version_id, name, event_type, actor_name, comment, from_ip, from_ua, helpscout_thread_id, created_at, round_variant_id, side, proof_round_variants(display_name)')
         .in('proof_version_id', versionIds)
         .order('created_at', { ascending: false })
       if (isStale()) return
@@ -363,6 +368,7 @@ export default function ProofDetailPage() {
         helpscout_thread_id: string | null
         created_at: string
         round_variant_id: string | null
+        side: 'front' | 'back' | null
         proof_round_variants:
           | { display_name: string }
           | { display_name: string }[]
@@ -385,6 +391,7 @@ export default function ProofDetailPage() {
             helpscout_thread_id: r.helpscout_thread_id,
             created_at: r.created_at,
             variant_display_name: variantDisplayName,
+            side: r.side,
           })
         }
       }
@@ -1801,7 +1808,22 @@ export default function ProofDetailPage() {
                                 {' '}in {vRef}, {when} by {approval.actor_name}
                               </>
                             ) : (
-                              <>Changes requested in {vRef}, {when} by {approval.actor_name}</>
+                              <>
+                                Changes requested in {vRef}
+                                {/* Phase 3 (000196) — quiet side
+                                    indicator so the designer can
+                                    see at-a-glance which face the
+                                    customer was zoomed in on. The
+                                    audit panel's Side row carries
+                                    the same value for non-summary
+                                    surfaces. */}
+                                {auditEvent?.side && (
+                                  <span className="font-normal text-amber-700/80">
+                                    {' '}({auditEvent.side === 'front' ? 'front' : 'back'})
+                                  </span>
+                                )}
+                                , {when} by {approval.actor_name}
+                              </>
                             )}
                           </span>
                         )}
@@ -2312,6 +2334,17 @@ function AuditPanel({
           <>
             <dt className="font-semibold text-gray-700">Comment</dt>
             <dd className="whitespace-pre-line text-gray-900">{event.comment}</dd>
+          </>
+        )}
+        {/* Phase 3 (000196): which card face the customer had open
+            in the detail view when they submitted. Rendered only
+            when the column is non-null — events from before the
+            Phase 3 rework, and events submitted with the detail
+            view closed, simply omit the row. */}
+        {event.side && (
+          <>
+            <dt className="font-semibold text-gray-700">Side</dt>
+            <dd className="text-gray-900">{event.side === 'front' ? 'Front' : 'Back'}</dd>
           </>
         )}
         {event.event_type === 'designer_override_approve' ? (

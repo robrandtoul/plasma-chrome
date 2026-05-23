@@ -112,6 +112,14 @@ export default function CustomerProofPage() {
   // PlateCard button on close (keyboard-user continuity — same
   // pattern the action modal uses).
   const detailViewTriggerRef = useRef<HTMLElement | null>(null)
+  // Phase 3 — the side currently visible in the detail view, kept
+  // here so submitAction can stamp proof_events.side when the
+  // customer sends a change request without the detail view having
+  // to thread state into the panel. Reported by ProofDetailView's
+  // onCurrentSideChange callback on mount and on every chevron step.
+  // Null when no detail view is open OR when the visible image has
+  // no side value (shared / single-image groups).
+  const [detailViewSide, setDetailViewSide] = useState<'front' | 'back' | null>(null)
   function openDetailView(payload: {
     images: GridImage[]
     index: number
@@ -132,6 +140,9 @@ export default function CustomerProofPage() {
   }
   function closeDetailView() {
     setDetailView(null)
+    // Reset so a subsequent change request opened from the overview
+    // (rather than from inside a detail view) records side=null.
+    setDetailViewSide(null)
     const trigger = detailViewTriggerRef.current
     detailViewTriggerRef.current = null
     if (trigger && typeof trigger.focus === 'function') {
@@ -597,6 +608,15 @@ export default function CustomerProofPage() {
           // request_changes and on slots with no QRs; only the
           // approve-with-QRs path consumes the flag.
           qr_confirmed: actionPanel.type === 'approve' && actionQrConfirmed,
+          // Migration 000196 (Phase 3) — the card side currently
+          // visible in the detail view, if any. ProofDetailView
+          // reports it through onCurrentSideChange while open;
+          // closeDetailView resets it. Null when the panel was
+          // opened from the overview action band (no zoom context)
+          // or when the visible image has no side value. Edge
+          // function pre-Phase-3 ignores the field, so it's safe
+          // to send unconditionally.
+          side: detailViewSide,
         },
       })
       if (error) {
@@ -3865,6 +3885,7 @@ export default function CustomerProofPage() {
           }}
           hideRequestChanges={actionPanel?.type === 'request_changes'}
           panelOpen={actionPanel?.type === 'request_changes'}
+          onCurrentSideChange={setDetailViewSide}
         />
       )}
 
