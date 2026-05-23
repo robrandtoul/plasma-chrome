@@ -214,6 +214,15 @@ export default function CustomerProofPage() {
   // disclaimer tick's behaviour. Reset to false whenever a new
   // action modal opens.
   const [actionQrConfirmed, setActionQrConfirmed] = useState(false)
+  // Earlier-version acknowledgement on the approve panel. Renders an
+  // extra warning block + tick at the top of the panel body whenever
+  // the version being approved is not the latest, since approving a
+  // superseded design is higher-risk than the standard disclaimer
+  // covers. Gates Confirm alongside the disclaimer and QR ticks.
+  // Reset to false on every action-panel open (same pattern as the
+  // other approve-only acks).
+  const [actionEarlierVersionAcked, setActionEarlierVersionAcked] =
+    useState(false)
   const [actionResults, setActionResults] = useState<
     Record<
       string,
@@ -436,6 +445,7 @@ export default function CustomerProofPage() {
     setActionDisclaimerAcked(false)
     setActionDisclaimerExpanded(false)
     setActionQrConfirmed(false)
+    setActionEarlierVersionAcked(false)
     // Defensive reset — closeActionPanel already clears the flag,
     // but a fresh open should never inherit a stale confirmation
     // view if state ever drifts (e.g. component remount).
@@ -466,6 +476,7 @@ export default function CustomerProofPage() {
     setActionDisclaimerAcked(false)
     setActionDisclaimerExpanded(false)
     setActionQrConfirmed(false)
+    setActionEarlierVersionAcked(false)
     // Same defensive reset as openActionPanel — variant-round opens
     // close on success anyway, but a state-drifted "submitted" flag
     // would render a confirmation view on top of a fresh form.
@@ -528,6 +539,22 @@ export default function CustomerProofPage() {
         setActionError('Please confirm the QR code contents before approving.')
         return
       }
+    }
+    // Earlier-version acknowledgement. Same defensive-mirror pattern
+    // as the disclaimer and QR guards above: the Confirm button is
+    // already disabled by the panel's gate, but a stale-tab or
+    // bypassed-JS submit needs a clear error rather than landing on
+    // the edge function and looking like a generic failure.
+    if (
+      actionPanel.type === 'approve' &&
+      activeVersion &&
+      !activeVersion.is_current &&
+      !actionEarlierVersionAcked
+    ) {
+      setActionError(
+        'Please confirm you understand you are approving an earlier version.',
+      )
+      return
     }
     setActionSubmitting(true)
     setActionError(null)
@@ -1313,51 +1340,97 @@ export default function CustomerProofPage() {
             </p>
           </div>
         )}
-        <span
-          className="uppercase"
-          style={{
-            fontFamily: MONO,
-            fontSize: 11,
-            letterSpacing: '0.22em',
-            textTransform: 'uppercase',
-            color: PAPER_SECONDARY,
-          }}
-        >
-          Request changes or approve
-        </span>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <button
-            type="button"
-            onClick={() => openActionPanel(activeVersion.id, name, 'request_changes')}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = CTA_AMBER_HOVER_BG
-              e.currentTarget.style.borderColor = CTA_AMBER_HOVER_BORDER
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = CTA_AMBER_BG
-              e.currentTarget.style.borderColor = CTA_AMBER_BORDER
-            }}
-            onMouseDown={(e) => {
-              e.currentTarget.style.background = CTA_AMBER_PRESSED_BG
-            }}
-            onMouseUp={(e) => {
-              e.currentTarget.style.background = CTA_AMBER_HOVER_BG
-            }}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-7 py-4 transition-colors focus-visible:outline-none focus-visible:ring-2"
+        {/* "Request changes or approve" eyebrow only makes sense
+            when both actions are on offer. On an earlier version
+            Request changes is suppressed (capturing feedback
+            against a superseded design is illogical — the customer
+            should be on the latest version to do that), so the
+            eyebrow goes too. The amber "Heads up" block above
+            already frames the earlier-version choice. */}
+        {!showEarlierVersionWarning && (
+          <span
+            className="uppercase"
             style={{
-              background: CTA_AMBER_BG,
-              border: `1.5px solid ${CTA_AMBER_BORDER}`,
-              color: CTA_AMBER_TEXT,
               fontFamily: MONO,
-              fontSize: 13,
-              fontWeight: 500,
-              letterSpacing: '0.06em',
+              fontSize: 11,
+              letterSpacing: '0.22em',
               textTransform: 'uppercase',
-              ['--tw-ring-color' as string]: CTA_TEAL_RING,
+              color: PAPER_SECONDARY,
             }}
           >
-            Request changes
-          </button>
+            Request changes or approve
+          </span>
+        )}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          {showEarlierVersionWarning && latestVersion ? (
+            // Earlier version — secondary navigation, not the
+            // primary action. Style matches the "View current
+            // version" button in the hard-lockout branch above so
+            // the same affordance reads as the same control. The
+            // teal Approve button to the right is the primary
+            // action; this gives the customer a quiet way to
+            // switch off the earlier version if they didn't mean
+            // to be on it.
+            <button
+              type="button"
+              onClick={() => setActiveVersion(latestVersion)}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = CTA_GHOST_HOVER_BG
+                e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent'
+                e.currentTarget.style.borderColor = 'rgba(26,22,18,0.25)'
+              }}
+              className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-5 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2"
+              style={{
+                background: 'transparent',
+                border: '1px solid rgba(26,22,18,0.25)',
+                color: 'rgba(26,22,18,0.75)',
+                fontFamily: MONO,
+                fontSize: 12,
+                fontWeight: 500,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                ['--tw-ring-color' as string]: CTA_TEAL_RING,
+              }}
+            >
+              Go to the latest version
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => openActionPanel(activeVersion.id, name, 'request_changes')}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = CTA_AMBER_HOVER_BG
+                e.currentTarget.style.borderColor = CTA_AMBER_HOVER_BORDER
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = CTA_AMBER_BG
+                e.currentTarget.style.borderColor = CTA_AMBER_BORDER
+              }}
+              onMouseDown={(e) => {
+                e.currentTarget.style.background = CTA_AMBER_PRESSED_BG
+              }}
+              onMouseUp={(e) => {
+                e.currentTarget.style.background = CTA_AMBER_HOVER_BG
+              }}
+              className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-7 py-4 transition-colors focus-visible:outline-none focus-visible:ring-2"
+              style={{
+                background: CTA_AMBER_BG,
+                border: `1.5px solid ${CTA_AMBER_BORDER}`,
+                color: CTA_AMBER_TEXT,
+                fontFamily: MONO,
+                fontSize: 13,
+                fontWeight: 500,
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                ['--tw-ring-color' as string]: CTA_TEAL_RING,
+              }}
+            >
+              Request changes
+            </button>
+          )}
           <button
             type="button"
             onClick={() => openActionPanel(activeVersion.id, name, 'approve')}
@@ -3932,6 +4005,16 @@ export default function CustomerProofPage() {
           }
           actionQrConfirmed={actionQrConfirmed}
           setActionQrConfirmed={setActionQrConfirmed}
+          // Earlier-version acknowledgement. activeVersion is the
+          // version being approved (the panel always opens for the
+          // active version). When it's not the current proof, the
+          // panel renders an extra warning block + tick at the top
+          // and gates Confirm on it.
+          isEarlierVersion={activeVersion ? !activeVersion.is_current : false}
+          earlierVersionNumber={activeVersion?.version_number ?? null}
+          latestVersionNumber={latestVersion?.version_number ?? null}
+          actionEarlierVersionAcked={actionEarlierVersionAcked}
+          setActionEarlierVersionAcked={setActionEarlierVersionAcked}
         />
       )}
     </div>

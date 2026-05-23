@@ -111,6 +111,22 @@ export type ActionPanelProps = {
   slotQrCount: number
   actionQrConfirmed: boolean
   setActionQrConfirmed: (value: boolean) => void
+  // Earlier-version acknowledgement. True when the version being
+  // approved is not the latest — approving a superseded design is
+  // higher-risk than the standard disclaimer covers, so the panel
+  // renders an extra warning block + tick at the top of the body
+  // (above Your name) and gates Confirm on it. earlierVersionNumber
+  // is the version being approved; latestVersionNumber is what the
+  // warning copy points the customer at. Null on either when the
+  // proof has no resolvable latest version — the panel still renders
+  // the block but uses fallback copy. The tick is hidden entirely on
+  // the request-changes and variant-round paths (gated on isApprove
+  // in render and in the gate predicate).
+  isEarlierVersion: boolean
+  earlierVersionNumber: number | null
+  latestVersionNumber: number | null
+  actionEarlierVersionAcked: boolean
+  setActionEarlierVersionAcked: (value: boolean) => void
 }
 
 // Docked panel (desktop, right edge) / bottom sheet (mobile) host
@@ -147,6 +163,11 @@ export function ActionPanel({
   slotQrCount,
   actionQrConfirmed,
   setActionQrConfirmed,
+  isEarlierVersion,
+  earlierVersionNumber,
+  latestVersionNumber,
+  actionEarlierVersionAcked,
+  setActionEarlierVersionAcked,
 }: ActionPanelProps) {
   const isApprove = actionPanel.type === 'approve'
   // Accent ink for the header eyebrow and the brand-blue ring on the
@@ -251,13 +272,18 @@ export function ActionPanel({
         : `Approve ${actionPanel.name}'s design`
       : 'Send change request'
 
-  // Approve-only Confirm gating — disclaimer tick (when configured)
-  // and QR-confirmation tick (when the slot has any QRs). Mirrors
-  // submitAction's server-side guard so the button can't claim to be
-  // enabled while the submit would refuse.
+  // Approve-only Confirm gating — disclaimer tick (when configured),
+  // QR-confirmation tick (when the slot has any QRs), and the
+  // earlier-version acknowledgement (when the version being
+  // approved isn't the latest). Mirrors submitAction's server-side
+  // guards so the button can't claim to be enabled while the submit
+  // would refuse.
   const disclaimerGate = isApprove && !!disclaimerText && !actionDisclaimerAcked
   const qrGate = isApprove && slotQrCount > 0 && !actionQrConfirmed
-  const confirmDisabled = actionSubmitting || disclaimerGate || qrGate
+  const earlierVersionGate =
+    isApprove && isEarlierVersion && !actionEarlierVersionAcked
+  const confirmDisabled =
+    actionSubmitting || disclaimerGate || qrGate || earlierVersionGate
 
   // Approve dialog aria-label echoes the modal's wording so SR users
   // landing in the panel get the same "Approve <name>'s design"
@@ -447,7 +473,115 @@ export function ActionPanel({
                 scrolls it inside the panel without the proof or
                 detail view going anywhere. */}
             <div className="flex-1 overflow-y-auto px-5 pb-4 pt-4 sm:flex sm:flex-col sm:min-h-0 sm:px-6">
-              <div className="mt-1">
+              {/* ── Approve-only earlier-version warning + tick ─────
+                  Renders first in the body — the customer should
+                  see this before reaching the name field, because
+                  it changes the meaning of the whole action.
+                  Approving a superseded design is supported but
+                  not the default expectation; the amber treatment
+                  mirrors the "Heads up" block on the overview's
+                  action band so the customer reads the same
+                  visual register here. The tick gates Confirm
+                  alongside the disclaimer and QR ticks. */}
+              {isApprove && isEarlierVersion && (
+                <div
+                  className="mt-1 flex flex-col gap-3 rounded-md px-4 py-4"
+                  style={{
+                    background: 'rgba(217,119,6,0.10)',
+                    border: '1px solid rgba(217,119,6,0.45)',
+                    color: PAPER_INK,
+                  }}
+                >
+                  <span
+                    className="uppercase"
+                    style={{
+                      fontFamily: MONO,
+                      fontSize: 11,
+                      letterSpacing: '0.22em',
+                      color: '#92400e',
+                    }}
+                  >
+                    Earlier version
+                  </span>
+                  <p
+                    style={{
+                      fontFamily: SANS,
+                      fontSize: 14,
+                      lineHeight: 1.55,
+                      color: PAPER_INK,
+                    }}
+                  >
+                    {earlierVersionNumber != null && latestVersionNumber != null
+                      ? `You are approving version ${earlierVersionNumber}. Version ${latestVersionNumber} is the most recent.`
+                      : 'You are approving an earlier version. A more recent version exists.'}
+                  </p>
+                  <label
+                    className={[
+                      'flex w-fit items-center gap-3 rounded-lg px-4 py-3 transition-colors',
+                      'focus-within:ring-2 focus-within:ring-offset-2',
+                      actionSubmitting
+                        ? 'cursor-wait'
+                        : 'cursor-pointer hover:border-[rgba(26,22,18,0.6)]',
+                    ].join(' ')}
+                    style={{
+                      background: '#ffffff',
+                      border: actionEarlierVersionAcked
+                        ? `1.5px solid ${PAPER_INK}`
+                        : '1.5px solid rgba(26,22,18,0.4)',
+                      ['--tw-ring-color' as string]: accentRing,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={actionEarlierVersionAcked}
+                      disabled={actionSubmitting}
+                      onChange={(e) => setActionEarlierVersionAcked(e.target.checked)}
+                    />
+                    <span
+                      aria-hidden
+                      className="grid h-5 w-5 shrink-0 place-items-center rounded-[4px]"
+                      style={
+                        actionEarlierVersionAcked
+                          ? {
+                              background: PAPER_INK,
+                              border: `1.5px solid ${PAPER_INK}`,
+                            }
+                          : {
+                              background: 'transparent',
+                              border: '1.5px solid rgba(26,22,18,0.4)',
+                            }
+                      }
+                    >
+                      {actionEarlierVersionAcked && (
+                        <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                          <path
+                            d="M2.5 6.5L5 9L9.5 3.5"
+                            stroke="#ffffff"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
+                    </span>
+                    <span
+                      style={{
+                        ...REG_B_BASE,
+                        fontSize: 14,
+                        fontWeight: 500,
+                        color: PAPER_INK,
+                      }}
+                    >
+                      {earlierVersionNumber != null
+                        ? `I understand I am approving version ${earlierVersionNumber}, not the latest`
+                        : 'I understand I am approving an earlier version, not the latest'}
+                    </span>
+                  </label>
+                </div>
+              )}
+
+              <div className={isApprove && isEarlierVersion ? 'mt-5' : 'mt-1'}>
                 <label className="block" style={{ ...REG_A_BASE, color: PAPER_INK }}>
                   Your name <span style={{ color: accentInk }}>*</span>
                 </label>
@@ -767,6 +901,14 @@ export function ActionPanel({
                   style={{ fontFamily: SANS, color: 'rgba(26,22,18,0.65)' }}
                 >
                   Tick the QR code confirmation to enable Confirm.
+                </p>
+              )}
+              {earlierVersionGate && !actionSubmitting && (
+                <p
+                  className="mt-2 text-[12px] sm:text-[13px]"
+                  style={{ fontFamily: SANS, color: 'rgba(26,22,18,0.65)' }}
+                >
+                  Tick the version acknowledgement to enable Confirm.
                 </p>
               )}
             </div>
