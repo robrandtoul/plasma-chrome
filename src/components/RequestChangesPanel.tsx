@@ -3,7 +3,6 @@ import { SHARED_APPROVAL_KEY } from '../lib/types'
 import {
   PAPER_TINT_1,
   PAPER_INK,
-  PAPER_SECONDARY,
   CTA_GHOST_BORDER,
   CTA_GHOST_TEXT,
   CTA_GHOST_BG,
@@ -58,11 +57,20 @@ export type RequestChangesPanelProps = {
   setActionComment: (value: string) => void
   actionError: string | null
   actionSubmitting: boolean
-  // Optional intro copy resolved from publicSettings; passed in as a
-  // string so the panel stays decoupled from settings loading.
+  // Admin-configured confirmation copy resolved from publicSettings;
+  // passed in as a string so the panel stays decoupled from settings
+  // loading. Used only on the post-submit confirmation view — it
+  // used to render as a pre-submit helper paragraph, but the copy
+  // is worded as a confirmation of a request already made and read
+  // wrong in that position.
   introCopy: string | null
   closeActionPanel: () => void
   submitAction: () => void
+  // True after the customer has successfully submitted a change
+  // request. Swaps the form body and Cancel/Send footer for a
+  // confirmation view (tick + the configured copy + a Done button).
+  // Owned by CustomerProofPage, reset on close/open.
+  submitted: boolean
 }
 
 // Docked panel (desktop, right edge) / bottom sheet (mobile) host
@@ -85,8 +93,12 @@ export function RequestChangesPanel({
   introCopy,
   closeActionPanel,
   submitAction,
+  submitted,
 }: RequestChangesPanelProps) {
   const firstFieldRef = useRef<HTMLInputElement | null>(null)
+  // Focused on transition to the confirmation view so a keyboard
+  // user lands on Done and can dismiss with Enter.
+  const doneButtonRef = useRef<HTMLButtonElement | null>(null)
 
   // Move focus to the first input on open. requestAnimationFrame
   // waits one frame so the panel DOM is mounted before we focus.
@@ -102,6 +114,19 @@ export function RequestChangesPanel({
     // request_changes shape and unmounts when it doesn't, so a
     // single on-mount focus is correct.
   }, [])
+
+  // Move focus to Done when the confirmation view appears so a
+  // keyboard customer can dismiss with Enter. Only fires on the
+  // false→true edge — depending on `submitted` is enough since
+  // the panel doesn't flip back to false without unmounting
+  // (closeActionPanel resets the flag and unmounts the panel).
+  useEffect(() => {
+    if (!submitted) return
+    const frame = requestAnimationFrame(() => {
+      doneButtonRef.current?.focus()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [submitted])
 
   // Panel-scoped Escape handler. Independent of the modal's focus
   // trap effect (which only applies to the approve flow), so the
@@ -226,158 +251,237 @@ export function RequestChangesPanel({
           </button>
         </div>
 
-        {/* Scrollable body. flex-1 + overflow-y-auto so the form
-            scrolls internally on short viewports while the footer
-            (Cancel + Send) stays pinned. */}
-        <div className="flex-1 overflow-y-auto px-5 pb-4 pt-4 sm:px-6">
-          {!isVariantRound && introCopy && (
-            <p
-              className="max-w-[60ch] whitespace-pre-line text-[14px] leading-[1.6]"
-              style={{ fontFamily: SERIF, color: PAPER_SECONDARY }}
+        {submitted ? (
+          <>
+            {/* Confirmation view. Swapped in by the parent when the
+                standard request-changes path lands a successful
+                submit. Header (eyebrow + recipient line + close ×)
+                stays above this block; the form body + Cancel/Send
+                footer is replaced by the tick + introCopy + Done.
+                The variant-round path closes on success, so this
+                branch never renders for "Choose this direction". */}
+            <div className="flex-1 overflow-y-auto px-5 pb-4 pt-6 sm:px-6 sm:pt-8">
+              <div
+                aria-hidden="true"
+                className="grid h-12 w-12 place-items-center rounded-full"
+                style={{
+                  background: 'rgba(58,44,145,0.12)',
+                  color: BRAND_BLUE,
+                }}
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                  <path
+                    d="M5 12.5L10 17.5L19 7"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </div>
+              <p
+                className="mt-5 max-w-[60ch] whitespace-pre-line text-[15px] leading-[1.65] sm:text-[16px] sm:leading-[1.7]"
+                style={{ fontFamily: SERIF, color: PAPER_INK }}
+              >
+                {/* Admin-configured copy reads as the confirmation
+                    of a request already made — exactly where it
+                    belongs now. Generic fallback covers the case
+                    where the admin hasn't set custom copy. */}
+                {introCopy && introCopy.trim() !== ''
+                  ? introCopy
+                  : 'Thanks. Your change request has been sent.'}
+              </p>
+            </div>
+
+            {/* Footer — single Done button, primary brand-blue
+                styling so it reads as the natural next action. */}
+            <div
+              className="flex items-center justify-end px-5 py-4 sm:px-6 sm:py-5"
+              style={{ borderTop: '1px solid rgba(26,22,18,0.10)' }}
             >
-              {introCopy}
-            </p>
-          )}
+              <button
+                ref={doneButtonRef}
+                type="button"
+                onClick={closeActionPanel}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = SEND_HOVER_BG
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = SEND_BG
+                }}
+                onMouseDown={(e) => {
+                  e.currentTarget.style.background = SEND_PRESSED_BG
+                }}
+                onMouseUp={(e) => {
+                  e.currentTarget.style.background = SEND_HOVER_BG
+                }}
+                className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-6 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2"
+                style={{
+                  background: SEND_BG,
+                  border: 'none',
+                  color: '#ffffff',
+                  fontFamily: MONO,
+                  fontSize: 13,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                  ['--tw-ring-color' as string]: SEND_RING,
+                }}
+              >
+                Done
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Scrollable body. flex-1 + overflow-y-auto so the form
+                scrolls internally on short viewports while the footer
+                (Cancel + Send) stays pinned. The pre-submit
+                confirmation paragraph used to render here; it now
+                only appears after a successful submit (see the
+                submitted branch above) because the admin-configured
+                copy is worded as a confirmation, not as instructions. */}
+            <div className="flex-1 overflow-y-auto px-5 pb-4 pt-4 sm:px-6">
+              <div className="mt-1">
+                <label className="block" style={{ ...REG_A_BASE, color: PAPER_INK }}>
+                  Your name <span style={{ color: BRAND_BLUE }}>*</span>
+                </label>
+                <input
+                  ref={firstFieldRef}
+                  type="text"
+                  value={actionName}
+                  onChange={(e) => setActionName(e.target.value)}
+                  disabled={actionSubmitting}
+                  className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:text-[15px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)] placeholder:text-[rgba(26,22,18,0.45)]"
+                  style={{
+                    fontFamily: SANS,
+                    background: '#ffffff',
+                    border: '1px solid rgba(26,22,18,0.18)',
+                    color: PAPER_INK,
+                  }}
+                />
+              </div>
 
-          <div className="mt-5">
-            <label className="block" style={{ ...REG_A_BASE, color: PAPER_INK }}>
-              Your name <span style={{ color: BRAND_BLUE }}>*</span>
-            </label>
-            <input
-              ref={firstFieldRef}
-              type="text"
-              value={actionName}
-              onChange={(e) => setActionName(e.target.value)}
-              disabled={actionSubmitting}
-              className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:text-[15px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)] placeholder:text-[rgba(26,22,18,0.45)]"
-              style={{
-                fontFamily: SANS,
-                background: '#ffffff',
-                border: '1px solid rgba(26,22,18,0.18)',
-                color: PAPER_INK,
-              }}
-            />
-          </div>
+              <div className="mt-5">
+                <label
+                  className="block"
+                  style={{
+                    ...REG_B_BASE,
+                    fontSize: 14,
+                    fontWeight: 500,
+                    color: PAPER_INK,
+                  }}
+                >
+                  {isVariantRound
+                    ? <>Notes for the team <span style={{ color: BRAND_BLUE }}>(required)</span></>
+                    : <>What changes do you need? <span style={{ color: BRAND_BLUE }}>*</span></>}
+                </label>
+                <textarea
+                  value={actionComment}
+                  onChange={(e) => setActionComment(e.target.value)}
+                  disabled={actionSubmitting}
+                  rows={6}
+                  aria-label={textareaLabel}
+                  className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:text-[15px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)] placeholder:text-[rgba(26,22,18,0.45)]"
+                  style={{
+                    fontFamily: SANS,
+                    background: '#ffffff',
+                    border: '1px solid rgba(26,22,18,0.18)',
+                    color: PAPER_INK,
+                  }}
+                />
+              </div>
 
-          <div className="mt-5">
-            <label
-              className="block"
-              style={{
-                ...REG_B_BASE,
-                fontSize: 14,
-                fontWeight: 500,
-                color: PAPER_INK,
-              }}
+              {actionError && (
+                <p
+                  className="mt-4 max-w-[60ch] text-[14px] leading-[1.55]"
+                  style={{ fontFamily: SANS, color: BRAND_BLUE }}
+                >
+                  {actionError}
+                </p>
+              )}
+            </div>
+
+            {/* Footer: Cancel + Send pinned to the bottom of the panel. */}
+            <div
+              className="flex items-center justify-end gap-3 px-5 py-4 sm:px-6 sm:py-5"
+              style={{ borderTop: '1px solid rgba(26,22,18,0.10)' }}
             >
-              {isVariantRound
-                ? <>Notes for the team <span style={{ color: BRAND_BLUE }}>(required)</span></>
-                : <>What changes do you need? <span style={{ color: BRAND_BLUE }}>*</span></>}
-            </label>
-            <textarea
-              value={actionComment}
-              onChange={(e) => setActionComment(e.target.value)}
-              disabled={actionSubmitting}
-              rows={6}
-              aria-label={textareaLabel}
-              className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:text-[15px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)] placeholder:text-[rgba(26,22,18,0.45)]"
-              style={{
-                fontFamily: SANS,
-                background: '#ffffff',
-                border: '1px solid rgba(26,22,18,0.18)',
-                color: PAPER_INK,
-              }}
-            />
-          </div>
-
-          {actionError && (
-            <p
-              className="mt-4 max-w-[60ch] text-[14px] leading-[1.55]"
-              style={{ fontFamily: SANS, color: BRAND_BLUE }}
-            >
-              {actionError}
-            </p>
-          )}
-        </div>
-
-        {/* Footer: Cancel + Send pinned to the bottom of the panel. */}
-        <div
-          className="flex items-center justify-end gap-3 px-5 py-4 sm:px-6 sm:py-5"
-          style={{ borderTop: '1px solid rgba(26,22,18,0.10)' }}
-        >
-          <button
-            type="button"
-            onClick={closeActionPanel}
-            disabled={actionSubmitting}
-            onMouseEnter={(e) => {
-              if (actionSubmitting) return
-              e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-              e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = CTA_GHOST_BG
-              e.currentTarget.style.borderColor = CTA_GHOST_BORDER
-            }}
-            onMouseDown={(e) => {
-              if (actionSubmitting) return
-              e.currentTarget.style.background = CTA_GHOST_PRESSED_BG
-            }}
-            onMouseUp={(e) => {
-              if (actionSubmitting) return
-              e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-            }}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-5 py-3 transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)]"
-            style={{
-              background: CTA_GHOST_BG,
-              border: `1.5px solid ${CTA_GHOST_BORDER}`,
-              color: CTA_GHOST_TEXT,
-              fontFamily: MONO,
-              fontSize: 13,
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-            }}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={submitAction}
-            disabled={actionSubmitting}
-            aria-label={
-              isVariantRound
-                ? `Send selection — ${actionPanel.roundVariant?.displayName ?? ''}`
-                : 'Send change request'
-            }
-            onMouseEnter={(e) => {
-              if (actionSubmitting) return
-              e.currentTarget.style.background = SEND_HOVER_BG
-            }}
-            onMouseLeave={(e) => {
-              if (actionSubmitting) return
-              e.currentTarget.style.background = SEND_BG
-            }}
-            onMouseDown={(e) => {
-              if (actionSubmitting) return
-              e.currentTarget.style.background = SEND_PRESSED_BG
-            }}
-            onMouseUp={(e) => {
-              if (actionSubmitting) return
-              e.currentTarget.style.background = SEND_HOVER_BG
-            }}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-6 py-3 transition-colors disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2"
-            style={{
-              background: SEND_BG,
-              border: 'none',
-              color: '#ffffff',
-              fontFamily: MONO,
-              fontSize: 13,
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-              ['--tw-ring-color' as string]: SEND_RING,
-            }}
-          >
-            {sendButtonLabel}
-          </button>
-        </div>
+              <button
+                type="button"
+                onClick={closeActionPanel}
+                disabled={actionSubmitting}
+                onMouseEnter={(e) => {
+                  if (actionSubmitting) return
+                  e.currentTarget.style.background = CTA_GHOST_HOVER_BG
+                  e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = CTA_GHOST_BG
+                  e.currentTarget.style.borderColor = CTA_GHOST_BORDER
+                }}
+                onMouseDown={(e) => {
+                  if (actionSubmitting) return
+                  e.currentTarget.style.background = CTA_GHOST_PRESSED_BG
+                }}
+                onMouseUp={(e) => {
+                  if (actionSubmitting) return
+                  e.currentTarget.style.background = CTA_GHOST_HOVER_BG
+                }}
+                className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-5 py-3 transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)]"
+                style={{
+                  background: CTA_GHOST_BG,
+                  border: `1.5px solid ${CTA_GHOST_BORDER}`,
+                  color: CTA_GHOST_TEXT,
+                  fontFamily: MONO,
+                  fontSize: 13,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitAction}
+                disabled={actionSubmitting}
+                aria-label={
+                  isVariantRound
+                    ? `Send selection — ${actionPanel.roundVariant?.displayName ?? ''}`
+                    : 'Send change request'
+                }
+                onMouseEnter={(e) => {
+                  if (actionSubmitting) return
+                  e.currentTarget.style.background = SEND_HOVER_BG
+                }}
+                onMouseLeave={(e) => {
+                  if (actionSubmitting) return
+                  e.currentTarget.style.background = SEND_BG
+                }}
+                onMouseDown={(e) => {
+                  if (actionSubmitting) return
+                  e.currentTarget.style.background = SEND_PRESSED_BG
+                }}
+                onMouseUp={(e) => {
+                  if (actionSubmitting) return
+                  e.currentTarget.style.background = SEND_HOVER_BG
+                }}
+                className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-6 py-3 transition-colors disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2"
+                style={{
+                  background: SEND_BG,
+                  border: 'none',
+                  color: '#ffffff',
+                  fontFamily: MONO,
+                  fontSize: 13,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                  ['--tw-ring-color' as string]: SEND_RING,
+                }}
+              >
+                {sendButtonLabel}
+              </button>
+            </div>
+          </>
+        )}
       </aside>
     </>
   )

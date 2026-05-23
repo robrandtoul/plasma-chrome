@@ -226,6 +226,13 @@ export default function CustomerProofPage() {
     >
   >({})
   const [successMessages, setSuccessMessages] = useState<Record<string, string>>({})
+  // Confirmation-screen flag for the standard request-changes
+  // panel. When true, RequestChangesPanel swaps its form body
+  // for a "thanks, we'll be in touch" view that the customer
+  // dismisses with Done. Approve and variant-round "Choose this
+  // direction" close on success as before — they never set this
+  // flag. Cleared in closeActionPanel and reset at every open.
+  const [requestChangesSubmitted, setRequestChangesSubmitted] = useState(false)
 
   useEffect(() => {
     if (!id) { setNotFound(true); return }
@@ -482,6 +489,10 @@ export default function CustomerProofPage() {
     setActionDisclaimerAcked(false)
     setActionDisclaimerExpanded(false)
     setActionQrConfirmed(false)
+    // Defensive reset — closeActionPanel already clears the flag,
+    // but a fresh open should never inherit a stale confirmation
+    // view if state ever drifts (e.g. component remount).
+    setRequestChangesSubmitted(false)
   }
 
   // Variant-round equivalent of openActionPanel (build-plan step 4).
@@ -508,11 +519,20 @@ export default function CustomerProofPage() {
     setActionDisclaimerAcked(false)
     setActionDisclaimerExpanded(false)
     setActionQrConfirmed(false)
+    // Same defensive reset as openActionPanel — variant-round opens
+    // close on success anyway, but a state-drifted "submitted" flag
+    // would render a confirmation view on top of a fresh form.
+    setRequestChangesSubmitted(false)
   }
 
   function closeActionPanel() {
     setActionPanel(null)
     setActionError(null)
+    // Drop the confirmation flag so the next open starts on the
+    // form. The next open also resets it, but clearing here keeps
+    // state consistent if anything else inspects the flag while
+    // actionPanel transitions.
+    setRequestChangesSubmitted(false)
     const trigger = actionPanelTriggerRef.current
     actionPanelTriggerRef.current = null
     if (trigger && typeof trigger.focus === 'function') {
@@ -698,7 +718,18 @@ export default function CustomerProofPage() {
       if (type === 'approve') {
         setDisclaimerAckedThisSession(true)
       }
-      closeActionPanel()
+      // Standard request_changes leaves the panel open and swaps
+      // it to a post-submit confirmation view (the admin-configured
+      // confirmation copy used to render before submit, which read
+      // wrong). Approve and the variant-round "Choose this
+      // direction" path close as before — approve already has its
+      // own per-recipient banner downstream, and variant-round's
+      // success is signalled by the locked-grid state.
+      if (type === 'request_changes' && !actionPanel.roundVariant) {
+        setRequestChangesSubmitted(true)
+      } else {
+        closeActionPanel()
+      }
     } catch {
       setActionError(
         'We\'re having trouble processing your request right now. Please reply to the email you received with this proof link — the team will pick it up there.',
@@ -4457,6 +4488,7 @@ export default function CustomerProofPage() {
           introCopy={publicSettings?.request_changes_confirmation_copy ?? null}
           closeActionPanel={closeActionPanel}
           submitAction={() => void submitAction()}
+          submitted={requestChangesSubmitted}
         />
       )}
     </div>
