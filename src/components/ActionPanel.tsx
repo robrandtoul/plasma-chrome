@@ -446,7 +446,7 @@ export function ActionPanel({
                 longer than the request-changes form; the customer
                 scrolls it inside the panel without the proof or
                 detail view going anywhere. */}
-            <div className="flex-1 overflow-y-auto px-5 pb-4 pt-4 sm:px-6">
+            <div className="flex-1 overflow-y-auto px-5 pb-4 pt-4 sm:flex sm:flex-col sm:min-h-0 sm:px-6">
               <div className="mt-1">
                 <label className="block" style={{ ...REG_A_BASE, color: PAPER_INK }}>
                   Your name <span style={{ color: accentInk }}>*</span>
@@ -501,7 +501,16 @@ export function ActionPanel({
                   />
                 </div>
               ) : (
-                <div className="mt-5">
+                // Desktop (sm+): the wrapper and the textarea flex to
+                // fill the remaining vertical space in the panel body
+                // so the message box uses the full panel height rather
+                // than its rows={6} content size. min-h-0 on every step
+                // of the flex chain (body container, this wrapper, the
+                // textarea) lets the textarea actually shrink and grow
+                // by flex rather than by its rows attribute. On mobile
+                // the rows={6} fixed height is kept — the 50vh sheet
+                // has no spare room to give.
+                <div className="mt-5 sm:flex sm:flex-1 sm:flex-col sm:min-h-0">
                   <label
                     className="block"
                     style={{
@@ -521,7 +530,7 @@ export function ActionPanel({
                     disabled={actionSubmitting}
                     rows={6}
                     aria-label={textareaLabel}
-                    className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:text-[15px] outline-none transition-colors focus-visible:ring-2 placeholder:text-[rgba(26,22,18,0.45)]"
+                    className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:flex-1 sm:min-h-0 sm:text-[15px] outline-none transition-colors focus-visible:ring-2 placeholder:text-[rgba(26,22,18,0.45)]"
                     style={{
                       fontFamily: SANS,
                       background: '#ffffff',
