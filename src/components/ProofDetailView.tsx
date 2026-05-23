@@ -76,6 +76,20 @@ export function ProofDetailView({
   )
   const closeButtonRef = useRef<HTMLButtonElement | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
+  // PR #127 made the middle image region edge-to-edge so the proof
+  // fills the viewport width in portrait. The caption + Request
+  // changes row underneath used to carry the same horizontal padding
+  // the image region had (px-4 sm:px-8) — once that padding came off
+  // the image, the row's right edge no longer lined up with the
+  // proof's right edge. We measure the rendered image and clamp the
+  // caption + filename rows to the same width: in portrait the image
+  // is viewport-wide so the row runs edge-to-edge; in landscape the
+  // image is centred with side gaps and the row sits within the
+  // image's bounds, with the chevron buttons (absolutely positioned
+  // over the image region above) sitting beside the image in the
+  // same way.
+  const imageRef = useRef<HTMLElement | null>(null)
+  const [imageWidth, setImageWidth] = useState<number | null>(null)
 
   const current = images[index]
   const total = images.length
@@ -150,6 +164,32 @@ export function ProofDetailView({
   function step(direction: 1 | -1) {
     setIndex((i) => (i + direction + total) % total)
   }
+
+  // Observe the rendered image (or its fallback placeholder) and
+  // track its width so the caption + filename rows below can match.
+  // Re-runs when current.signed_url flips between img and fallback
+  // — the DOM node imageRef points at changes, so we tear down the
+  // previous observer and rebind. Reads the initial size synchronously
+  // (ResizeObserver only fires on changes, not on first attach) so
+  // there's no flash of unconstrained-width rows before the first
+  // observer callback.
+  useEffect(() => {
+    const el = imageRef.current
+    if (!el) {
+      setImageWidth(null)
+      return
+    }
+    const initial = el.getBoundingClientRect().width
+    if (initial > 0) setImageWidth(initial)
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const w = e.contentRect.width
+        if (w > 0) setImageWidth(w)
+      }
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [current?.signed_url, index])
 
   return (
     <div
@@ -245,13 +285,23 @@ export function ProofDetailView({
         )}
         {current?.signed_url ? (
           <img
+            ref={(el) => { imageRef.current = el }}
             src={current.signed_url}
             alt={altText}
             className="block max-h-full max-w-full rounded-md object-contain"
             style={{ background: PAPER_CREAM }}
+            onLoad={(e) => {
+              // Pick up the post-load width — the ResizeObserver
+              // also catches this via the natural-size-driven
+              // layout change, but an explicit read here removes
+              // any cross-browser race.
+              const w = (e.currentTarget as HTMLImageElement).getBoundingClientRect().width
+              if (w > 0) setImageWidth(w)
+            }}
           />
         ) : (
           <div
+            ref={(el) => { imageRef.current = el }}
             className="h-64 w-full max-w-md rounded-md"
             style={{ background: PAPER_CREAM, border: '1px solid rgba(26,22,18,0.12)' }}
           />
@@ -275,7 +325,8 @@ export function ProofDetailView({
           is already in the flow and a second entry point would
           read as redundant. */}
       <div
-        className="flex flex-col items-center justify-between gap-3 px-4 pb-6 pt-4 sm:flex-row sm:px-8 sm:pb-8"
+        className="mx-auto flex w-full flex-col items-center justify-between gap-3 pb-6 pt-4 sm:flex-row sm:pb-8"
+        style={{ maxWidth: imageWidth ?? undefined }}
       >
         <p
           className="text-center font-paper-mono uppercase sm:text-left"
@@ -322,18 +373,18 @@ export function ProofDetailView({
         )}
       </div>
 
-      {/* Filename + tertiary hint sits quietly below — gives the
-          customer the same filename context the overview shows
-          under each plate, without the Download chip (downloads
-          stay on the overview to keep the detail view focused on
-          the visual). */}
+      {/* Filename + tertiary hint sits quietly below. Width-matched
+          to the proof image above (same maxWidth treatment as the
+          caption row) so it stays inside the proof's bounds rather
+          than running edge-to-edge in landscape. */}
       {current?.original_filename && (
         <p
-          className="pointer-events-none px-4 pb-3 text-center sm:px-8"
+          className="pointer-events-none mx-auto w-full pb-3 text-center"
           style={{
             fontFamily: SANS,
             fontSize: 12,
             color: PAPER_TERTIARY,
+            maxWidth: imageWidth ?? undefined,
           }}
         >
           {current.original_filename}
