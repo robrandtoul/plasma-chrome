@@ -153,29 +153,29 @@ export function RequestChangesPanel({
         }
         className={[
           'fixed z-40 flex flex-col',
-          // Mobile: bottom sheet, full width, rounded top corners.
+          // Mobile: bottom sheet, full width, rounded top corners,
+          // top hairline + upward shadow lifting the sheet above the
+          // page.
           'inset-x-0 bottom-0 max-h-[70vh] w-full rounded-t-2xl',
+          'border-t border-t-[rgba(26,22,18,0.18)] shadow-[0_-8px_32px_rgba(0,0,0,0.15)]',
           // Desktop (sm+): fixed to the right edge, full height, ~400px
-          // wide, square corners against the viewport edge.
+          // wide, square corners against the viewport edge, left
+          // hairline + leftward shadow.
           'sm:inset-y-0 sm:right-0 sm:left-auto sm:bottom-auto sm:top-0',
           'sm:h-[100dvh] sm:max-h-none sm:w-[400px] sm:rounded-none',
+          'sm:border-t-0 sm:border-l sm:border-l-[rgba(26,22,18,0.18)] sm:shadow-[-8px_0_32px_rgba(0,0,0,0.12)]',
           // Subtle slide-in.
           'motion-safe:animate-[rcp-in_180ms_ease-out]',
         ].join(' ')}
         style={{
           background: PAPER_TINT_1,
           color: PAPER_INK,
-          // Mobile: top hairline + soft shadow lifting the sheet
-          // above the page. Desktop: a single left hairline; the
-          // shadow is overridden below.
-          borderTop: '1px solid rgba(26,22,18,0.18)',
-          boxShadow: '0 -8px 32px rgba(0,0,0,0.15)',
         }}
       >
-        {/* Desktop swaps the top hairline for a left hairline and
-            drops the upward shadow in favour of a left-side one.
-            Done in a child <style> so we don't need a Tailwind plugin
-            for border-direction toggling. */}
+        {/* Subtle slide-in: translate-Y on mobile (up from below the
+            viewport), translate-X on desktop (in from the right
+            edge). Defined inline so the panel doesn't depend on a
+            shared keyframe registered elsewhere. */}
         <style>{`
           @keyframes rcp-in {
             from { transform: translateY(16px); opacity: 0.6; }
