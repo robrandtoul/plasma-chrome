@@ -18,6 +18,7 @@ import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LayeredConstructionPanel } from '../components/LayeredConstructionPanel'
 import { MetalThicknessPanel } from '../components/MetalThicknessPanel'
 import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
+import { RequestChangesPanel } from '../components/RequestChangesPanel'
 import { firstName } from '../lib/firstName'
 import {
   INK,
@@ -266,7 +267,11 @@ export default function CustomerProofPage() {
   // re-set to zero.
   const actionPanelTriggerRef = useRef<HTMLElement | null>(null)
   useEffect(() => {
-    if (!actionPanel) return
+    // Approve flow only — the request-changes flow now renders as a
+    // non-modal docked panel that owns its own Escape handler and
+    // deliberately does NOT trap Tab (the page underneath must stay
+    // reachable so the customer can scroll the proof while typing).
+    if (!actionPanel || actionPanel.type !== 'approve') return
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         if (!actionSubmitting) closeActionPanel()
@@ -297,12 +302,15 @@ export default function CustomerProofPage() {
     return () => document.removeEventListener('keydown', onKey)
   }, [actionPanel, actionSubmitting])
 
-  // Body scroll lock while the action modal is open. Without this the
-  // page underneath scrolls on touch / wheel — the disclaimer block
-  // can be tall enough on mobile that scrolling within the modal
-  // "leaks" into the page. Same pattern as VersionDetailModal.
+  // Body scroll lock while the approve modal is open. Without this
+  // the page underneath scrolls on touch / wheel — the disclaimer
+  // block can be tall enough on mobile that scrolling within the
+  // modal "leaks" into the page. Same pattern as VersionDetailModal.
+  // Deliberately skipped for the request-changes panel (Phase 1 docked
+  // panel rework): the customer must be able to see and scroll the
+  // proof while typing their comment.
   useEffect(() => {
-    if (!actionPanel) return
+    if (!actionPanel || actionPanel.type !== 'approve') return
     const previous = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = previous }
@@ -2341,8 +2349,22 @@ export default function CustomerProofPage() {
       })
     : null
 
+  // While the request-changes panel is open, push the page content
+  // away from it so nothing is hidden: right-side gutter on desktop
+  // (panel width = 400px), bottom gutter on mobile (sheet max-height
+  // = 70vh — the bottom-padding lets the page scroll its full
+  // content into the visible area above the sheet). Approve path is
+  // unaffected; it still renders as a centred modal over the page.
+  const requestChangesOpen = actionPanel?.type === 'request_changes'
+
   return (
-    <div className="antialiased" style={{ fontFamily: SANS, background: INK }}>
+    <div
+      className={[
+        'antialiased',
+        requestChangesOpen ? 'pb-[70vh] sm:pb-0 sm:pr-[400px]' : '',
+      ].join(' ')}
+      style={{ fontFamily: SANS, background: INK }}
+    >
 
       {/* ───── Top: ink masthead strip ─────
           DocketBar (logo + caption + proof ref) on INK,
@@ -3817,8 +3839,13 @@ export default function CustomerProofPage() {
           when it doesn't. The disclaimer block + tick box can
           push total height past 740px on a 360-wide viewport in
           the full-text state; without the scroll the bottom of
-          the card (Confirm button) was unreachable. */}
-      {actionPanel && (
+          the card (Confirm button) was unreachable.
+
+          Approve flow only — the request-changes flow renders below
+          as a non-modal docked panel / bottom sheet (Phase 1
+          rework). The two paths share submitAction and all form
+          state; only the container presentation differs. */}
+      {actionPanel && actionPanel.type === 'approve' && (
         <div
           className="fixed inset-0 z-50 overflow-y-auto bg-black/80"
           onClick={() => { if (!actionSubmitting) closeActionPanel() }}
@@ -3874,15 +3901,6 @@ export default function CustomerProofPage() {
                     ? 'Request changes'
                     : `Request changes for ${actionPanel.name}`}
             </h2>
-            {actionPanel.type === 'request_changes' && !actionPanel.roundVariant && (
-              <p
-                className="mt-4 max-w-[60ch] whitespace-pre-line text-[14px] leading-[1.65] sm:text-[15px] sm:leading-[1.7]"
-                style={{ fontFamily: SERIF, color: PAPER_INK }}
-              >
-                {publicSettings?.request_changes_confirmation_copy ?? ''}
-              </p>
-            )}
-
             <div className="mt-6">
               <label
                 className="block"
@@ -3905,37 +3923,6 @@ export default function CustomerProofPage() {
                 }}
               />
             </div>
-
-            {actionPanel.type === 'request_changes' && (
-              <div className="mt-5">
-                <label
-                  className="block"
-                  style={{
-                    ...REG_B_BASE,
-                    fontSize: 14,
-                    fontWeight: 500,
-                    color: PAPER_INK,
-                  }}
-                >
-                  {actionPanel.roundVariant
-                    ? <>Notes for the team <span style={{ color: '#3a2c91' }}>(required)</span></>
-                    : <>What changes do you need? <span style={{ color: '#3a2c91' }}>*</span></>}
-                </label>
-                <textarea
-                  value={actionComment}
-                  onChange={(e) => setActionComment(e.target.value)}
-                  disabled={actionSubmitting}
-                  rows={8}
-                  className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:text-[15px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)] placeholder:text-[rgba(26,22,18,0.45)]"
-                  style={{
-                    fontFamily: SANS,
-                    background: '#ffffff',
-                    border: '1px solid rgba(26,22,18,0.18)',
-                    color: PAPER_INK,
-                  }}
-                />
-              </div>
-            )}
 
             {actionPanel.type === 'approve' && (
               <div className="mt-5">
@@ -4388,6 +4375,33 @@ export default function CustomerProofPage() {
           </div>
           </div>
         </div>
+      )}
+
+      {/* Phase 1 docked panel / bottom sheet for the request-changes
+          flow. Shares actionName / actionComment / actionError /
+          submitAction with the approve modal above so the optimistic
+          per-recipient state machine (actionResults / successMessages
+          keyed by bandKey / variantBandKey) is preserved verbatim.
+          Non-modal — see RequestChangesPanel for the rationale and
+          the gated focus-trap / scroll-lock effects above. */}
+      {actionPanel && actionPanel.type === 'request_changes' && (
+        <RequestChangesPanel
+          actionPanel={actionPanel as {
+            versionId: string
+            name: string
+            type: 'request_changes'
+            roundVariant?: { id: string; displayName: string } | null
+          }}
+          actionName={actionName}
+          setActionName={setActionName}
+          actionComment={actionComment}
+          setActionComment={setActionComment}
+          actionError={actionError}
+          actionSubmitting={actionSubmitting}
+          introCopy={publicSettings?.request_changes_confirmation_copy ?? null}
+          closeActionPanel={closeActionPanel}
+          submitAction={() => void submitAction()}
+        />
       )}
     </div>
   )
