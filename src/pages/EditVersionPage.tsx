@@ -1410,7 +1410,7 @@ export default function EditVersionPage() {
     if (qrSetMutated) {
       const { error: qrConfirmInvalidateErr } = await supabase
         .from('proof_name_approvals')
-        .update({ qr_confirmed_at: null })
+        .update({ qr_confirmed_at: null, qr_snapshot: null })
         .eq('proof_version_id', versionId!)
         .not('qr_confirmed_at', 'is', null)
       if (qrConfirmInvalidateErr) {
