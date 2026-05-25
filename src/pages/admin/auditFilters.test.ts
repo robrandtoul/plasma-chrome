@@ -7,14 +7,18 @@
 // without a human-readable label and fall through to the raw code in
 // the admin Activity page dropdown (PV-2026W21-041).
 //
+// The same scan runs for `targetType: '<code>'` literals against
+// TARGET_TYPE_OPTIONS, so a new target type can't ship without a
+// filterable dropdown entry either (PV-2026W22-081).
+//
 // Codes built from variables, ternaries, or lookup maps can't be
 // extracted statically — those are audited by hand whenever new ones
 // land. This test catches the easy 95% case: a plain string literal
-// next to `action:` inside a logAudit({ ... }) call.
+// next to `action:` / `targetType:` inside a logAudit({ ... }) call.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { ACTION_LABELS } from './auditFilters.ts'
+import { ACTION_LABELS, TARGET_TYPE_OPTIONS } from './auditFilters.ts'
 
 let passed = 0
 let failed = 0
@@ -44,7 +48,7 @@ function walk(dir: string, out: string[] = []): string[] {
   return out
 }
 
-function collectActionLiteralsFromSrc(): Set<string> {
+function collectKeyLiteralsFromSrc(key: 'action' | 'targetType'): Set<string> {
   // Resolve src/ relative to this test file so the script is robust
   // to where it's launched from.
   const here = new URL(import.meta.url).pathname
@@ -52,11 +56,10 @@ function collectActionLiteralsFromSrc(): Set<string> {
   const srcDir = join(here, '..', '..', '..')
   const files = walk(srcDir)
   const codes = new Set<string>()
-  // Match action: 'code'  or  action: "code". Single-line literals
-  // only; intentional, since multi-line / template-literal action
-  // codes are vanishingly rare and would just be false-positive
-  // pollution.
-  const re = /action:\s*['"]([a-zA-Z0-9_.]+)['"]/g
+  // Match `<key>: 'code'` or `<key>: "code"`. Single-line literals
+  // only; intentional, since multi-line / template-literal codes are
+  // vanishingly rare and would just be false-positive pollution.
+  const re = new RegExp(`${key}:\\s*['"]([a-zA-Z0-9_.]+)['"]`, 'g')
   for (const f of files) {
     // Skip self to avoid the test's own literals.
     if (f.endsWith('auditFilters.test.ts')) continue
@@ -72,7 +75,7 @@ function collectActionLiteralsFromSrc(): Set<string> {
 console.log('\nauditFilters taxonomy coverage')
 
 test('every action code literal emitted from src/ appears in ACTION_LABELS', () => {
-  const emitted = collectActionLiteralsFromSrc()
+  const emitted = collectKeyLiteralsFromSrc('action')
   const missing: string[] = []
   for (const code of emitted) {
     if (!(code in ACTION_LABELS)) missing.push(code)
@@ -81,6 +84,21 @@ test('every action code literal emitted from src/ appears in ACTION_LABELS', () 
     throw new Error(
       `${missing.length} code(s) emitted from src/ but absent from ACTION_LABELS:\n  ${missing.sort().join('\n  ')}\n\n` +
         'Add an entry under the appropriate group in src/pages/admin/auditFilters.ts ACTION_GROUPS.',
+    )
+  }
+})
+
+test('every target type literal emitted from src/ appears in TARGET_TYPE_OPTIONS', () => {
+  const known = new Set(TARGET_TYPE_OPTIONS.map((o) => o.code))
+  const emitted = collectKeyLiteralsFromSrc('targetType')
+  const missing: string[] = []
+  for (const code of emitted) {
+    if (!known.has(code)) missing.push(code)
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `${missing.length} target type(s) emitted from src/ but absent from TARGET_TYPE_OPTIONS:\n  ${missing.sort().join('\n  ')}\n\n` +
+        'Add an entry to src/pages/admin/auditFilters.ts TARGET_TYPE_OPTIONS.',
     )
   }
 })
