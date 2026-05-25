@@ -2166,7 +2166,7 @@ export default function ProofDetailPage() {
             open
             onClose={() => setShowReplyModal(false)}
             ariaLabel="Send customer reply"
-            panelClassName="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-xl"
+            panelClassName="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
           >
                 <MessageSendPanel
                   proofId={proof.id}
