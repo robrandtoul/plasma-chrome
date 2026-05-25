@@ -354,12 +354,12 @@ export function QrCodeUploadSection({
         <div className="mt-2 text-sm text-gray-700">
           Drop QR images here, or <span className="font-semibold text-violet-700">browse</span>
         </div>
-        <div className="mt-1 text-xs text-gray-500">JPEG or PNG, one file per QR code</div>
+        <div className="mt-1 text-xs text-gray-500">JPEG only, one file per QR code</div>
         <input
           id={inputId}
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="image/jpeg"
           multiple
           className="sr-only"
           disabled={disabled}

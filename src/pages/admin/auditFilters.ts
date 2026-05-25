@@ -115,6 +115,10 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'profile.updated',           label: 'Profile updated' },
     { code: 'profile.avatar_uploaded',   label: 'Profile avatar uploaded' },
     { code: 'profile.avatar_removed',    label: 'Profile avatar removed' },
+    { code: 'user.helpscout_user_id_set',     label: 'Help Scout user ID set' },
+    { code: 'user.helpscout_user_id_cleared', label: 'Help Scout user ID cleared' },
+    { code: 'user.password_reset_email_sent', label: 'Password reset email sent' },
+    { code: 'user.password_set_directly',     label: 'Password set directly' },
   ]},
   { name: 'Materials', actions: [
     { code: 'material_created',                          label: 'Material created' },
@@ -217,10 +221,13 @@ export const TARGET_TYPE_OPTIONS: ActionDef[] = [
   { code: 'material',      label: 'Material surcharge' },
   { code: 'add_on_price',  label: 'Add-on price' },
   { code: 'add_on',        label: 'Add-on' },
+  { code: 'material_variant',        label: 'Material variant' },
+  { code: 'letterpress_core_colour', label: 'Letterpress core colour' },
   { code: 'company',       label: 'Company' },
   { code: 'contact',       label: 'Contact' },
   { code: 'pricing',       label: 'Pricing import' },
   { code: 'setting',       label: 'Setting' },
+  { code: 'template',      label: 'Reply template' },
 ]
 
 /** Flat lookup: action code → human label. Falls back to the raw code. */

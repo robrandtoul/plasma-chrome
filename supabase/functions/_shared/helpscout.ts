@@ -28,8 +28,11 @@
 //
 // What stays in callers (deliberately not extracted):
 //   * POST /v2/conversations/{id}/customer  — proof-action only.
-//   * Mailbox listing (/v2/mailboxes)       — match-helpscout-conversation
-//     and admin-test-helpscout each use it for different purposes.
+//   * POST /v2/conversations (create)       — contact-form-submit only;
+//     no shared createConversation helper exists.
+//   * Mailbox listing (/v2/mailboxes)       — match-helpscout-conversation,
+//     admin-test-helpscout, and contact-form-submit each use it for
+//     different purposes.
 //   * Conversation search by email or number — single-caller utilities.
 //   * Threads embed (?embed=threads)        — fetch-helpscout-conversation-
 //     context's richer shape; pulling it in would force a branching

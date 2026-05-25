@@ -726,6 +726,7 @@ export default function CustomerProofPage() {
     setVersions([])
     setActiveVersion(null)
     setVersionImages({})
+    setVersionQrImages({})
     setMaterialOptions([])
     setOptionSurcharges([])
     setVariantRows([])

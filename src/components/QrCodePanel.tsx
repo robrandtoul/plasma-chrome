@@ -16,9 +16,9 @@
 //     their own printed copy.
 //   * Shared-only proofs (names empty): one merged panel with
 //     every QR on the version.
-//   * Variant rounds: panels are scoped to the active variant tab
-//     — selection is a parent-page concern; this component just
-//     filters by round_variant_id.
+//   * Variant rounds: QR rows are version-wide (round_variant_id is
+//     never set on QR rows), so every QR renders in one flat list
+//     regardless of which variant the customer is viewing.
 //
 // PHOTO fields are stripped at parse time (qrCodes.ts). vCard
 // embedded photos make QRs too dense for letterpress / metal
@@ -64,9 +64,9 @@ interface QrCodePanelProps {
    */
   names: string[]
   /**
-   * True when the version is a variant round. The panel relies on
-   * the parent page to filter qrImages by active variant before
-   * passing them in.
+   * True when the version is a variant round. QR rows are not
+   * variant-scoped (round_variant_id is never set on QR rows), so
+   * the panel renders every QR flat in this case.
    */
   isVariantRound: boolean
 }
@@ -74,10 +74,9 @@ interface QrCodePanelProps {
 export function QrCodePanel({ qrImages, names, isVariantRound }: QrCodePanelProps) {
   if (qrImages.length === 0) return null
 
-  // Variant rounds keep the parent's tab semantics: the parent has
-  // already filtered qrImages to the active variant before passing
-  // them in, so we render a flat list here. The per-recipient
-  // grouping doesn't apply within a variant.
+  // Variant rounds: QR rows are version-wide (no round_variant_id on
+  // QR rows), so we render every QR in one flat list. The
+  // per-recipient grouping doesn't apply to variant rounds.
   if (isVariantRound) {
     return (
       <QrSection>
