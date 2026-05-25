@@ -44,8 +44,9 @@ alter table proof_events
 comment on column proof_events.side is
   'Card side the customer had open in the detail view at the moment '
   'they submitted this event. Null when no detail view was open or '
-  'when the event predates the Phase 3 customer-page rework. Only '
-  'change_request events carry meaningful values today; approvals '
-  'and other event types currently leave it null.';
+  'when the event predates the Phase 3 customer-page rework. Most '
+  'often populated on change_request events; an approve submitted '
+  'with the detail view still open also records the side that was '
+  'visible, since the customer page sends side on every action.';
 
 commit;
