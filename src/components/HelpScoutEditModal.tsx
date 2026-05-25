@@ -222,6 +222,9 @@ export default function HelpScoutEditModal({
             afterValue: {
               helpscout_conversation_id: resolvedConvoId,
               helpscout_conversation_url: resolvedConvoUrl,
+              // Setting a link clears any prior override reason; record
+              // that in the afterValue so it mirrors the beforeValue.
+              helpscout_override_reason: null,
             },
             metadata: {
               // Picker selections clear hsPickerMatches via
