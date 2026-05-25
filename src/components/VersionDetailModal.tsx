@@ -15,6 +15,7 @@ import type {
   PublicMaterialOptionSurcharge,
   PublicMaterialVariant,
   PublicPriceTier,
+  RoundVariant,
 } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { DEFAULT_DISPLAY_QUANTITIES } from '../lib/constants'
@@ -112,6 +113,13 @@ interface ModalImage {
   // Added for the name-grouped rendering introduced alongside the
   // approval section. Null = shared image (applies to every name).
   associated_name: string | null
+  // Variant-round columns (migrations 000138 / 000143). round_variant_id
+  // is the direction this image belongs to; side is which face of the
+  // card. Both null on standard versions; populated when the parent
+  // version has is_variant_round = true, so the modal can group images
+  // per direction instead of one flat grid (PV-2026W22-060).
+  round_variant_id: string | null
+  side: 'front' | 'back' | null
 }
 
 
@@ -158,6 +166,10 @@ export default function VersionDetailModal({
   const navigate = useNavigate()
   const [images, setImages] = useState<ModalImage[]>([])
   const [loadingImages, setLoadingImages] = useState(true)
+  // Directions on a variant-round version (proof_round_variants).
+  // Empty on every standard version; drives the per-direction image
+  // grouping below (PV-2026W22-060).
+  const [roundVariants, setRoundVariants] = useState<RoundVariant[]>([])
   // Live pricing rebuild (000117). proof_versions.pricing_snapshot
   // became nullable when the customer page moved to live pricing
   // from price_tiers; this modal followed up later. Loaded lazily
@@ -215,6 +227,7 @@ export default function VersionDetailModal({
   useEffect(() => {
     loadImages()
     loadApprovals()
+    loadRoundVariants()
     // Per-direction-pricing versions don't have a docket — material_id
     // and currency are null on the row, and each direction is priced
     // out-of-band. Calling loadPricing would query
@@ -244,7 +257,7 @@ export default function VersionDetailModal({
     setLoadingImages(true)
     const { data } = await supabase
       .from('proof_version_images')
-      .select('id, proof_version_id, image_path, sort_order, associated_name, material_option')
+      .select('id, proof_version_id, image_path, sort_order, associated_name, material_option, round_variant_id, side')
       .eq('proof_version_id', version.id)
       .eq('is_qr_code', false)
       .order('sort_order')
@@ -289,6 +302,25 @@ export default function VersionDetailModal({
     )
     setImages(withUrls as ModalImage[])
     setLoadingImages(false)
+  }
+
+  // Directions on a variant-round version (proof_round_variants,
+  // migration 000138). Read directly from the table — this is a
+  // designer-side surface. Empty result on every standard version;
+  // the per-direction image grouping below only renders when the
+  // version row's is_variant_round flag is set, so an empty fetch
+  // on a standard version is harmless.
+  async function loadRoundVariants() {
+    if (!version.is_variant_round) {
+      setRoundVariants([])
+      return
+    }
+    const { data } = await supabase
+      .from('proof_round_variants')
+      .select('id, code, display_name, sort_order')
+      .eq('proof_version_id', version.id)
+      .order('sort_order')
+    setRoundVariants((data ?? []) as RoundVariant[])
   }
 
   // Live pricing rebuild for this version (000117). Mirrors the
@@ -749,6 +781,61 @@ export default function VersionDetailModal({
               {loadingImages ? (
                 <div className="flex h-32 items-center justify-center rounded-2xl bg-white ring-1 ring-gray-200">
                   <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+                </div>
+              ) : version.is_variant_round ? (
+                <div className="space-y-6">
+                  {/* Variant-round images, grouped per direction. Variant
+                      rounds carry names=[] so without this branch they fall
+                      through to the flat ImageGrid below, mixing every
+                      direction's front/back images into one undifferentiated
+                      grid (PV-2026W22-060). One section per
+                      proof_round_variants row, ordered by sort_order, each
+                      image captioned Front / Back from its side column.
+                      Mirrors the customer page's renderVariantRound. */}
+                  {roundVariants.map((rv) => {
+                    const variantImages = images
+                      .filter((img) => img.round_variant_id === rv.id)
+                      .slice()
+                      .sort((a, b) =>
+                        (a.side === 'back' ? 1 : 0) - (b.side === 'back' ? 1 : 0)
+                        || a.sort_order - b.sort_order,
+                      )
+                      .map((img) => ({ ...img, label: img.side === 'back' ? 'Back' : 'Front' }))
+                    return (
+                      <div key={rv.id} className="rounded-2xl bg-white p-4 ring-1 ring-gray-200">
+                        <p className="mb-3 text-sm font-semibold text-gray-900">{rv.display_name}</p>
+                        {variantImages.length > 0 ? (
+                          <ImageGrid
+                            images={variantImages}
+                            versionNumber={version.version_number}
+                            onImageClick={setLightboxSrc}
+                          />
+                        ) : (
+                          <p className="text-xs text-gray-400">No images for this direction.</p>
+                        )}
+                      </div>
+                    )
+                  })}
+                  {/* Defensive: images with no round_variant_id shouldn't
+                      exist on a well-formed variant round, but surface any
+                      so a data issue is visible rather than silently hidden. */}
+                  {(() => {
+                    const orphans = images.filter((img) => !img.round_variant_id)
+                    if (orphans.length === 0) return null
+                    return (
+                      <div className="rounded-2xl bg-amber-50 p-4 ring-1 ring-amber-200">
+                        <p className="mb-3 text-sm font-semibold text-amber-800">Unassigned images</p>
+                        <ImageGrid
+                          images={orphans}
+                          versionNumber={version.version_number}
+                          onImageClick={setLightboxSrc}
+                        />
+                      </div>
+                    )
+                  })()}
+                  {roundVariants.length === 0 && (
+                    <p className="text-xs text-gray-400">No directions on this variant round.</p>
+                  )}
                 </div>
               ) : version.names.length === 0 ? (
                 <ImageGrid
