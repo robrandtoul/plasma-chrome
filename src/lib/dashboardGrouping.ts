@@ -40,6 +40,11 @@ export interface DashboardProject {
   latest_event_at: string | null
   latest_event_type: 'approve' | 'request_changes' | 'view' | 'designer_override_approve' | null
   latest_event_actor: string | null
+  // Latest event excluding synthetic 'view' rows (migration 000198). Used by
+  // the Changes-requested tile so a customer re-opening the proof after a
+  // change request doesn't mask the outstanding request.
+  latest_non_view_event_at: string | null
+  latest_non_view_event_type: 'approve' | 'request_changes' | 'designer_override_approve' | null
   current_version_viewed_at: string | null
   rule_code: NeedsAttentionRule | null
   rule_meta: { days?: number } | null

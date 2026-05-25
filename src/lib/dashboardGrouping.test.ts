@@ -63,6 +63,8 @@ function makeProject(overrides: Partial<DashboardProject> = {}): DashboardProjec
     latest_event_at:            null,
     latest_event_type:          null,
     latest_event_actor:         null,
+    latest_non_view_event_at:   null,
+    latest_non_view_event_type: null,
     current_version_viewed_at:  null,
     rule_code:                  null,
     rule_meta:                  null,

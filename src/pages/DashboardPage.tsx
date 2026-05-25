@@ -46,17 +46,17 @@ type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved
 function reasonChipText(code: NeedsAttentionRule, days: number | undefined): string {
   switch (code) {
     case 'request_changes_no_version':
-      return `Customer requested changes ${days ?? '—'} working days ago, no new version`
+      return `Customer requested changes ${days ?? '—'} days ago, no new version`
     case 'helpscout_follow_up_tag':
       return 'Help Scout conversation tagged "follow up"'
     case 'sent_never_viewed':
-      return `Sent ${days ?? '—'} working days ago, never opened`
+      return `Sent ${days ?? '—'} days ago, never opened`
     case 'viewed_not_actioned':
-      return `Last viewed ${days ?? '—'} working days ago, no action since`
+      return `Last viewed ${days ?? '—'} days ago, no action since`
     case 'approaching_dormant':
       return `Approaching dormant — ${days ?? '—'} days since last activity`
     case 'stuck_in_progress':
-      return `Stuck in progress — no activity for ${days ?? '—'} working days`
+      return `Stuck in progress — no activity for ${days ?? '—'} days`
   }
 }
 
@@ -651,11 +651,11 @@ function ProjectRow({
           ? `Viewed ${relativeTime(project.current_version_viewed_at)}`
           : viewedStateTitle(viewedStateFor(project)),
         project.rule_code ? reasonChipText(project.rule_code, project.rule_meta?.days) : null,
-        !project.rule_code && project.snoozed_until ? `Snoozed until ${formatSnoozeUntil(project.snoozed_until)}` : null,
+        !project.rule_code && isCurrentlySnoozed(project) ? `Snoozed until ${formatSnoozeUntil(project.snoozed_until!)}` : null,
       ].filter(Boolean).join(' · ')}
       className={[
         'flex cursor-pointer items-center gap-3 border-l-[6px] pl-4 pr-5 py-3 transition-colors hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900',
-        project.snoozed_until                                                          ? 'border-l-violet-400'  :
+        isCurrentlySnoozed(project)                                                    ? 'border-l-violet-400'  :
         project.rule_code                                                              ? 'border-l-rose-500'    :
         project.status === 'approved'                                                  ? 'border-l-emerald-500' :
         project.status === 'dormant'                                                   ? 'border-l-gray-300'    :
@@ -884,10 +884,11 @@ function ActionStrip({ proof, canAddVersion, minePinned, onToggleMinePin, onSnoo
         <PinIcon className="h-4 w-4" filled={minePinned} />
       </RowActionButton>
 
-      {/* Snooze / Unsnooze — show Unsnooze when the proof is currently
-          snoozed (rule_code is cleared by the rules engine while a snooze
-          is active), otherwise show Snooze when there's a live attention
-          rule_code to snooze. */}
+      {/* Snooze / Unsnooze — show Unsnooze whenever the proof carries a
+          snooze row (snoozed_until + snooze_rule_code). Post-000186 that
+          also covers the 24-hour post-expiry grace window, so a designer
+          can still clear a freshly-expired snooze. Otherwise show Snooze
+          when there's a live attention rule_code to snooze. */}
       {proof.snoozed_until && proof.snooze_rule_code ? (
         <UnsnoozeButton proof={proof} onUnsnooze={onUnsnooze} />
       ) : proof.rule_code ? (
@@ -1372,13 +1373,16 @@ export default function DashboardPage() {
   // surface snoozed_until for the 24-hour grace window that powers
   // recentlyAwakened(). Needs-attention projects are excluded from every
   // other tile so each project belongs to exactly one tile.
+  // No abandoned-status guard: every rule in proofs_needing_attention()
+  // is gated on an active status, so rule_code is always null on an
+  // abandoned proof. The count therefore depends only on `projects`,
+  // matching the needs_attention click-through filter predicate.
   const needsAttentionCount = useMemo(() =>
     projects.filter((p) =>
       p.rule_code != null &&
-      !isCurrentlySnoozed(p) &&
-      (showAbandoned || p.status !== 'abandoned')
+      !isCurrentlySnoozed(p)
     ).length,
-  [projects, showAbandoned])
+  [projects])
 
   const notViewedCount = useMemo(() =>
     projects.filter((p) => {
@@ -1405,20 +1409,23 @@ export default function DashboardPage() {
 
   // Changes requested — proofs where the customer's most recent action on the
   // current version was a change request and no newer version has been shipped
-  // since. Detection: latest_event_type='request_changes' AND latest_event_at
-  // is after version_created_at (which would be later if the designer had
-  // uploaded a revision in response). Needs-attention proofs (the overdue
-  // subset, captured by the request_changes_no_version rule) are excluded so
-  // each proof belongs to exactly one tile — overdue change requests escalate
-  // to the Needs attention tile.
+  // since. Detection uses latest_non_view_event_* (migration 000198), not
+  // latest_event_*: the latter includes synthetic 'view' rows, so a customer
+  // simply re-opening the proof after requesting changes would otherwise mask
+  // the outstanding request (PV-2026W22-087). The change request's own
+  // timestamp is compared against version_created_at — a newer version uploaded
+  // in response would be later. Needs-attention proofs (the overdue subset,
+  // captured by the request_changes_no_version rule) are excluded so each proof
+  // belongs to exactly one tile — overdue change requests escalate to the Needs
+  // attention tile.
   const changesRequestedCount = useMemo(() =>
     projects.filter((p) => {
       if (p.rule_code != null) return false
       if (isCurrentlySnoozed(p)) return false
       if (p.status !== 'in_progress') return false
-      if (p.latest_event_type !== 'request_changes') return false
-      if (!p.latest_event_at || !p.version_created_at) return false
-      return new Date(p.latest_event_at).getTime() > new Date(p.version_created_at).getTime()
+      if (p.latest_non_view_event_type !== 'request_changes') return false
+      if (!p.latest_non_view_event_at || !p.version_created_at) return false
+      return new Date(p.latest_non_view_event_at).getTime() > new Date(p.version_created_at).getTime()
     }).length,
   [projects])
 
@@ -1482,15 +1489,17 @@ export default function DashboardPage() {
         if (p.rule_code != null || !isActive || !p.current_version_id || p.current_version_viewed_at !== null) return false
       }
       if (tileFilter === 'changes_requested') {
-        // Mirror of changesRequestedCount: latest customer event on the proof is
-        // a change request, with no newer version uploaded since. The overdue
-        // subset is captured by the request_changes_no_version needs-attention
-        // rule and shown there instead — rule_code != null excludes them here.
+        // Mirror of changesRequestedCount: latest non-view customer event on the
+        // proof is a change request, with no newer version uploaded since. Uses
+        // latest_non_view_event_* (migration 000198) so a later page-view doesn't
+        // mask the request (PV-2026W22-087). The overdue subset is captured by
+        // the request_changes_no_version needs-attention rule and shown there
+        // instead — rule_code != null excludes them here.
         if (p.rule_code != null) return false
         if (p.status !== 'in_progress') return false
-        if (p.latest_event_type !== 'request_changes') return false
-        if (!p.latest_event_at || !p.version_created_at) return false
-        if (new Date(p.latest_event_at).getTime() <= new Date(p.version_created_at).getTime()) return false
+        if (p.latest_non_view_event_type !== 'request_changes') return false
+        if (!p.latest_non_view_event_at || !p.version_created_at) return false
+        if (new Date(p.latest_non_view_event_at).getTime() <= new Date(p.version_created_at).getTime()) return false
       }
       // Hide abandoned proofs unless the designer has toggled them on,
       // or has explicitly selected "Abandoned" from the status filter.
