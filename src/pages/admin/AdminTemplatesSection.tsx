@@ -122,6 +122,14 @@ export default function AdminTemplatesSection() {
     setTemplates((templatesResult.data ?? []) as ReplyTemplate[])
     if (!settingsResult.error && settingsResult.data) {
       setRepliesEnabled(!!settingsResult.data.replies_enabled)
+    } else if (settingsResult.error) {
+      // Don't leave the Send-replies toggle stuck on a silent
+      // 'Loading…' — surface the failure so the admin can retry.
+      console.error(
+        '[admin-templates] Failed to load replies_enabled setting:',
+        settingsResult.error.message,
+      )
+      setToggleError('Could not load the reply-templates on/off state. Reload to retry.')
     }
   }
 
