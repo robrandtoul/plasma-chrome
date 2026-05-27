@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Download, Send, Check, Layers } from 'lucide-react'
+import { Download, Send, Check, Layers, PoundSterling, BookOpen } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { PlasmaWordmark, Pill, ProofStatusPill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, tokens, type PillColour, type ProofStatus } from '../design'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
@@ -3073,241 +3073,139 @@ export default function CustomerProofPage() {
               in production today, so this gate is a no-op for
               every existing proof. */}
           {!activeVersion?.is_variant_round && (
-          <section
-            aria-labelledby="section-pricing-heading"
-            style={{
-              background: PAPER_CREAM,
-              color: PAPER_INK,
-              borderTop: '1px solid rgba(26,22,18,0.10)',
-            }}
-          >
-            <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-              <div
-                className="mb-10 flex flex-wrap items-baseline justify-between gap-3 border-b-2 pb-4"
-                style={{ borderColor: 'rgba(26,22,18,0.8)' }}
-              >
-                <div>
-                  <h2
-                    id="section-pricing-heading"
-                    className="leading-none break-words"
-                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(40px, 9vw, 56px)', color: PAPER_INK }}
-                  >
-                    Pricing
-                  </h2>
-                </div>
-                <div className="text-right">
-                  {!activeVersion.custom_quote &&
-                    activeOption &&
-                    versionOptions.length > 0 &&
-                    materialHasSurcharges && (
-                      <p
-                        className="font-paper-mono uppercase"
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 500,
-                          letterSpacing: '0.22em',
-                          color: PAPER_TERTIARY,
-                        }}
-                      >
-                        Prices shown for {activeOption.display_name} {optionLabelSingular.toLowerCase()}
+            <section
+              aria-labelledby="section-pricing-heading"
+              className="bg-canvas"
+            >
+              <div className="mx-auto max-w-[1180px] px-6 py-8">
+                {/* Currency + VAT label sits at text-ink rather than
+                    text-ink-mute because it's business-critical
+                    disclosure (the customer needs to know prices
+                    include VAT before placing an order). The
+                    "Prices shown for {finish}" line below it stays
+                    in the eyebrow-mute palette since it's
+                    supplementary context. */}
+                <PanelShell
+                  eyebrow={
+                    !activeVersion.custom_quote && activeOption && versionOptions.length > 0 && materialHasSurcharges
+                      ? `Prices shown for ${activeOption.display_name} ${optionLabelSingular.toLowerCase()}`
+                      : 'Inclusive of VAT'
+                  }
+                  title="Pricing"
+                  icon={PoundSterling}
+                  accent={tokens.ink}
+                  action={
+                    !activeVersion.custom_quote ? (
+                      <span className="num text-[12px] font-medium text-ink uppercase tracking-[0.18em]">
+                        {activeVersion.currency}
+                        {activeVersion.currency === 'GBP' ? ' · VAT included' : ''}
+                      </span>
+                    ) : undefined
+                  }
+                >
+                  <h2 id="section-pricing-heading" className="sr-only">Pricing</h2>
+                  {activeVersion.custom_quote ? (
+                    <div className="py-6 text-center">
+                      <p className="mx-auto max-w-md font-display text-[20px] leading-snug text-ink-soft">
+                        This proof requires a custom quote. We'll be in touch separately with pricing.
                       </p>
-                    )}
-                  {!activeVersion.custom_quote && (
-                    // Currency + VAT label sits at PAPER_INK rather than
-                    // the kicker-family PAPER_TERTIARY because it's
-                    // business-critical disclosure (the customer needs
-                    // to know prices include VAT before placing an
-                    // order), not supplementary context like "Prices
-                    // shown for {finish}". Don't migrate back to
-                    // PAPER_TERTIARY in a consistency sweep — the
-                    // divergence is intentional.
-                    <p
-                      className="mt-1 font-paper-mono uppercase"
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 500,
-                        letterSpacing: '0.22em',
-                        color: PAPER_INK,
-                      }}
-                    >
-                      {activeVersion.currency}
-                      {activeVersion.currency === 'GBP' ? ' · VAT included' : ''}
-                    </p>
+                    </div>
+                  ) : (
+                    <>
+                      <PaperPricingTable
+                        snapshot={livePricingSnapshot}
+                        // Inside the !is_per_direction_pricing gate; see
+                        // sibling call above for the migration 000142 reference.
+                        currency={activeVersion.currency!}
+                        displayQuantities={activeVersion.display_quantities}
+                        quoteMinQuantity={activeVersion.quote_min_quantity}
+                        quoteMaxQuantity={activeVersion.quote_max_quantity}
+                        quantitySurcharges={quantitySurcharges}
+                        personalisationPricing={activePersonalisationPricing}
+                      />
+                      {personalisationBreakevenQty != null && (
+                        <p className="mt-3 text-[13px] text-ink-mute leading-relaxed">
+                          A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
+                        </p>
+                      )}
+                    </>
                   )}
-                </div>
-              </div>
+                </PanelShell>
 
-              {activeVersion.custom_quote ? (
-                <div className="py-6 text-center">
-                  <p
-                    className="mx-auto max-w-md"
-                    style={{
-                      fontFamily: SERIF,
-                      fontWeight: 400,
-                      fontSize: 22,
-                      color: PAPER_SECONDARY,
-                    }}
-                  >
-                    This proof requires a custom quote. We'll be in touch separately with pricing.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <PaperPricingTable
-                    snapshot={livePricingSnapshot}
-                    // Inside the !is_per_direction_pricing gate; see
-                    // sibling call above for the migration 000142 reference.
-                    currency={activeVersion.currency!}
-                    displayQuantities={activeVersion.display_quantities}
-                    quoteMinQuantity={activeVersion.quote_min_quantity}
-                    quoteMaxQuantity={activeVersion.quote_max_quantity}
-                    quantitySurcharges={quantitySurcharges}
-                    personalisationPricing={activePersonalisationPricing}
-                  />
-                  {personalisationBreakevenQty != null && (
-                    <p
-                      className="mt-3 font-body"
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 400,
-                        color: PAPER_TERTIARY,
-                      }}
+                {/* Split-name + shipping callouts — two side-by-
+                    side cards. Split-name only renders when there's
+                    an extra-name surcharge to apply; shipping
+                    renders whenever the version has a shipping_note
+                    set. Hidden in custom-quote mode (no prices to
+                    modify). Restyled to quiet surface cards using
+                    design-system tokens. */}
+                {!activeVersion.custom_quote &&
+                  (((activeVersion.names.length >= 2 &&
+                    activeVersion.split_name_surcharge_snapshot != null &&
+                    activeVersion.split_name_surcharge_snapshot > 0) ||
+                    !!activeVersion.shipping_note)) && (
+                    <div
+                      className={[
+                        'mt-5 grid gap-5',
+                        activeVersion.names.length >= 2 &&
+                        activeVersion.split_name_surcharge_snapshot != null &&
+                        activeVersion.split_name_surcharge_snapshot > 0 &&
+                        activeVersion.shipping_note
+                          ? 'sm:grid-cols-2'
+                          : 'sm:grid-cols-1',
+                      ].join(' ')}
                     >
-                      A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
-                    </p>
-                  )}
-                </>
-              )}
-
-              {/* Split-name + shipping callouts — two side-by-
-                  side cards on paper. Split-name only renders
-                  when there's an extra-name surcharge to apply;
-                  shipping renders whenever the version has a
-                  shipping_note set. Hidden in custom-quote mode
-                  (no prices to modify). */}
-              {!activeVersion.custom_quote &&
-                (((activeVersion.names.length >= 2 &&
-                  activeVersion.split_name_surcharge_snapshot != null &&
-                  activeVersion.split_name_surcharge_snapshot > 0) ||
-                  !!activeVersion.shipping_note)) && (
-                  <div
-                    className={[
-                      'mt-8 grid gap-6',
-                      activeVersion.names.length >= 2 &&
-                      activeVersion.split_name_surcharge_snapshot != null &&
-                      activeVersion.split_name_surcharge_snapshot > 0 &&
-                      activeVersion.shipping_note
-                        ? 'sm:grid-cols-2'
-                        : 'sm:grid-cols-1',
-                    ].join(' ')}
-                  >
-                    {activeVersion.names.length >= 2 &&
-                      activeVersion.split_name_surcharge_snapshot != null &&
-                      activeVersion.split_name_surcharge_snapshot > 0 && (
-                        <div
-                          className="p-6"
-                          style={{ border: '1px solid rgba(26,22,18,0.12)' }}
-                        >
-                          <p
-                            className="font-paper-mono uppercase"
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 500,
-                              letterSpacing: '0.32em',
-                              color: ACCENT,
-                            }}
-                          >
-                            Split-name tooling
-                          </p>
-                          <p
-                            className="mt-3"
-                            style={{
-                              fontFamily: SERIF,
-                              fontWeight: 400,
-                              fontSize: 26,
-                              lineHeight: 1.25,
-                              color: PAPER_INK,
-                            }}
-                          >
-                            Add{' '}
-                            <span style={{ fontFamily: MONO, fontSize: 22 }}>
+                      {activeVersion.names.length >= 2 &&
+                        activeVersion.split_name_surcharge_snapshot != null &&
+                        activeVersion.split_name_surcharge_snapshot > 0 && (
+                          <div className="rounded-[10px] bg-surface border border-line p-5">
+                            <span className="eyebrow text-brand">Split-name tooling</span>
+                            <p className="mt-2 text-[18px] leading-snug text-ink font-medium">
+                              Add{' '}
+                              <span className="num font-medium">
+                                {formatPrice(
+                                  (activeVersion.names.length - 1) *
+                                    activeVersion.split_name_surcharge_snapshot,
+                                  // !is_per_direction_pricing gate; null
+                                  // unreachable here (migration 000142).
+                                  activeVersion.currency!,
+                                )}
+                              </span>{' '}
+                              to the prices above
+                            </p>
+                            {/* Multiplier semantics: the surcharge
+                                applies to each name *beyond the first*,
+                                so the multiplier is names.length - 1
+                                not names.length. The earlier copy
+                                ("{N} names × £15 tooling each beyond
+                                the first") read as N × £15 to anyone
+                                not parsing the trailing clause — this
+                                phrasing puts the count of *extra* names
+                                in the multiplier slot so the math reads
+                                right at a glance. */}
+                            <p className="mt-1.5 text-[13px] text-ink-mute">
+                              {activeVersion.names.length - 1} extra{' '}
+                              {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
                               {formatPrice(
-                                (activeVersion.names.length - 1) *
-                                  activeVersion.split_name_surcharge_snapshot,
-                                // !is_per_direction_pricing gate; null
-                                // unreachable here (migration 000142).
+                                activeVersion.split_name_surcharge_snapshot,
                                 activeVersion.currency!,
-                              )}
-                            </span>{' '}
-                            to the prices above
-                          </p>
-                          <p
-                            className="mt-2 font-body"
-                            style={{
-                              fontSize: 13,
-                              fontWeight: 400,
-                              color: PAPER_TERTIARY,
-                            }}
-                          >
-                            {/*
-                              Multiplier semantics: the surcharge
-                              applies to each name *beyond the first*,
-                              so the multiplier is names.length - 1
-                              not names.length. The earlier copy
-                              ("{N} names × £15 tooling each beyond
-                              the first") read as N × £15 to anyone
-                              not parsing the trailing clause —
-                              e.g. for 2 names it scanned as £30
-                              even though the +£X total above is £15.
-                              This phrasing puts the count of *extra*
-                              names in the multiplier slot so the
-                              math reads right at a glance.
-                            */}
-                            {activeVersion.names.length - 1} extra{' '}
-                            {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
-                            {formatPrice(
-                              activeVersion.split_name_surcharge_snapshot,
-                              // Same gate as the parent formatPrice call.
-                              activeVersion.currency!,
-                            )}{' '}
-                            tooling
+                              )}{' '}
+                              tooling
+                            </p>
+                          </div>
+                        )}
+                      {activeVersion.shipping_note && (
+                        <div className="rounded-[10px] bg-surface border border-line p-5">
+                          <span className="eyebrow">Shipping</span>
+                          <p className="mt-2 whitespace-pre-line text-[15px] leading-snug text-ink-soft">
+                            {activeVersion.shipping_note}
                           </p>
                         </div>
                       )}
-                    {activeVersion.shipping_note && (
-                      <div
-                        className="p-6"
-                        style={{ border: '1px solid rgba(26,22,18,0.12)' }}
-                      >
-                        <p
-                          className="font-paper-mono uppercase"
-                          style={{
-                            fontSize: 10,
-                            fontWeight: 500,
-                            letterSpacing: '0.32em',
-                            color: PAPER_TERTIARY,
-                          }}
-                        >
-                          Shipping
-                        </p>
-                        <p
-                          className="mt-3 whitespace-pre-line"
-                          style={{
-                            fontFamily: SERIF,
-                            fontWeight: 400,
-                            fontSize: 22,
-                            lineHeight: 1.3,
-                            color: PAPER_INK,
-                          }}
-                        >
-                          {activeVersion.shipping_note}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-            </div>
-          </section>
+                    </div>
+                  )}
+              </div>
+            </section>
           )}
 
           {/* ───── About {material} ─────
@@ -3326,70 +3224,28 @@ export default function CustomerProofPage() {
           {!activeVersion.is_per_direction_pricing && activeVersion.material_description && (
             <section
               aria-labelledby="section-material-heading"
-              style={{ background: PAPER_TINT_1, color: PAPER_INK }}
+              className="bg-canvas"
             >
-              {/* Outer padding matches the Plates section's
-                  py-20 sm:py-24 rhythm. Section sits in the
-                  PAPER_TINT_1 slot just above the footer — same
-                  cream variant the Revision timeline uses, the
-                  README's "tinted bands break visual fatigue"
-                  pattern at the top and bottom of the long-scroll
-                  page. */}
-              <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-                {/* Mono kicker above the h2 — editorial frame
-                    for the About section. Always renders,
-                    regardless of whether the material has
-                    curated key_features, because it's section
-                    chrome rather than feature-list chrome. */}
-                <p
-                  className="mb-3 font-paper-mono uppercase"
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 500,
-                    letterSpacing: '0.32em',
-                    color: ACCENT,
-                  }}
+              <div className="mx-auto max-w-[1180px] px-6 py-8">
+                <PanelShell
+                  eyebrow="Material notes"
+                  title={`About our ${activeVersion.material_display.toLowerCase()} cards`}
+                  icon={BookOpen}
+                  accent={tokens.brand}
                 >
-                  Material notes
-                </p>
-                <h2
-                  id="section-material-heading"
-                  className="leading-none border-b-2 pb-4 break-words"
-                  style={{
-                    fontFamily: SERIF,
-                    fontWeight: 400,
-                    fontSize: 'clamp(40px, 9vw, 56px)',
-                    color: PAPER_INK,
-                    borderColor: 'rgba(26,22,18,0.8)',
-                  }}
-                >
-                  About our {activeVersion.material_display.toLowerCase()} cards
-                </h2>
-                {/* Hairline ACCENT rule between heading and the
-                    content grid. Replaces the grid's former mt-8
-                    with its own vertical margins (mt-6 mb-5).
-                    Pairs with the kicker as section chrome; both
-                    render unconditionally. */}
-                <div
-                  aria-hidden
-                  className="mt-6 mb-5 h-px w-12"
-                  style={{ background: ACCENT }}
-                />
+                  <h2 id="section-material-heading" className="sr-only">
+                    About our {activeVersion.material_display.toLowerCase()} cards
+                  </h2>
                   {/* Balanced two-column grid at md+ (narrative
-                      left, key features right). Stacks to a
-                      single column below the breakpoint in
-                      reading order: narrative → features. When
-                      key_features is null or empty the right
-                      column renders an empty <div>; the grid
-                      keeps its two-column shape so narrative
-                      width (max-w-[62ch]) stays stable and the
-                      right side reads as deliberate breathing
-                      room rather than the layout reshaping. */}
-                  <div className="grid gap-10 md:grid-cols-2">
-                    <p
-                      className="max-w-[62ch] whitespace-pre-line font-body"
-                      style={{ fontSize: 15, lineHeight: 1.7, color: PAPER_SECONDARY }}
-                    >
+                      left, key features right). Stacks to a single
+                      column below the breakpoint in reading order:
+                      narrative → features. When key_features is
+                      null or empty the right column renders an
+                      empty <div> so the grid shape stays stable
+                      and narrative width (max-w-[62ch]) doesn't
+                      reshape across materials. */}
+                  <div className="grid gap-8 md:grid-cols-2">
+                    <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-ink-soft">
                       {activeVersion.material_description}
                     </p>
                     <div>
@@ -3398,33 +3254,23 @@ export default function CustomerProofPage() {
                           {title, body} pair. Gated on presence
                           of curated features; right column
                           wrapper stays regardless so the grid
-                          shape stays stable across materials.
-                          items-baseline aligns the 24px serif
-                          numeral's baseline with the title's
-                          baseline — standard editorial
-                          treatment, numeral reads tall. */}
+                          shape stays stable across materials. */}
                       {activeVersion.key_features && activeVersion.key_features.length > 0 && (
-                        <ul className="max-w-[62ch] space-y-[1.15rem]">
+                        <ul className="max-w-[62ch] space-y-4">
                           {activeVersion.key_features.map((feature, i) => (
-                            <li key={i} className="grid grid-cols-[40px_1fr] items-baseline gap-3">
+                            <li key={i} className="grid grid-cols-[36px_1fr] items-baseline gap-3">
                               <span
-                                aria-hidden
-                                className="leading-none"
-                                style={{ fontFamily: SERIF, fontSize: 24, color: ACCENT }}
+                                aria-hidden="true"
+                                className="num font-medium text-brand leading-none"
+                                style={{ fontSize: 22 }}
                               >
                                 {String(i + 1).padStart(2, '0')}
                               </span>
                               <div>
-                                <p
-                                  className="mb-0.5 font-body"
-                                  style={{ fontSize: 14, fontWeight: 500, color: PAPER_INK }}
-                                >
+                                <p className="mb-0.5 text-[14px] font-medium text-ink">
                                   {feature.title}
                                 </p>
-                                <p
-                                  className="font-body"
-                                  style={{ fontSize: 13, lineHeight: 1.55, color: PAPER_TERTIARY }}
-                                >
+                                <p className="text-[13px] leading-[1.55] text-ink-mute">
                                   {feature.body}
                                 </p>
                               </div>
@@ -3436,21 +3282,15 @@ export default function CustomerProofPage() {
                   </div>
 
                   {/* Material disclaimer — full-width below the
-                      grid, conditional. Stronger vertical break
-                      (mt-10) than the previous single-column
-                      layout's mt-6 so the disclaimer reads as a
-                      summary row rather than a continuation of
-                      either column above it. max-w-[62ch] keeps
-                      the reading width sensible within the
-                      wider container. */}
+                      grid, conditional. Sits inside the same
+                      PanelShell so it reads as part of the same
+                      surface rather than a separate block. */}
                   {activeVersion.material_disclaimer && (
-                    <p
-                      className="mt-10 max-w-[62ch] whitespace-pre-line font-body"
-                      style={{ fontSize: 13, lineHeight: 1.6, color: PAPER_TERTIARY }}
-                    >
+                    <p className="mt-8 max-w-[62ch] whitespace-pre-line text-[13px] leading-[1.6] text-ink-mute border-t border-line-soft pt-5">
                       {activeVersion.material_disclaimer}
                     </p>
                   )}
+                </PanelShell>
               </div>
             </section>
           )}
