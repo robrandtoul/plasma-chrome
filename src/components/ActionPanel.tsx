@@ -1,55 +1,7 @@
 import { useEffect, useRef } from 'react'
+import { X, Check, Send } from 'lucide-react'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
-import {
-  PAPER_TINT_1,
-  PAPER_INK,
-  PAPER_SECONDARY,
-  PAPER_TERTIARY,
-  CTA_GHOST_BORDER,
-  CTA_GHOST_TEXT,
-  CTA_GHOST_BG,
-  CTA_GHOST_HOVER_BG,
-  CTA_GHOST_PRESSED_BG,
-  CTA_GHOST_HOVER_BORDER,
-  CTA_TEAL,
-  CTA_TEAL_HOVER,
-  CTA_TEAL_PRESSED,
-  CTA_TEAL_RING,
-  SERIF,
-  SANS,
-  MONO,
-} from '../lib/theme'
-
-const REG_A_BASE = {
-  fontFamily: SANS,
-  fontSize: 12,
-  fontWeight: 600,
-  letterSpacing: '0.12em',
-  textTransform: 'uppercase' as const,
-}
-
-const REG_B_BASE = {
-  fontFamily: SANS,
-  letterSpacing: '-0.005em',
-}
-
-// Brand blue used by the request-changes family — same colour the
-// modal header used before this panel landed (theme.ts deviation #9).
-const BRAND_BLUE = '#3a2c91'
-
-// Send-request CTA: solid brand-blue fill, white text. A small
-// hover/pressed darken keeps the affordance consistent with the
-// other paper-register buttons without inventing a new token.
-const SEND_BG = BRAND_BLUE
-const SEND_HOVER_BG = '#2f2476'
-const SEND_PRESSED_BG = '#251c5b'
-const SEND_RING = 'rgba(58,44,145,0.45)'
-
-// Approve eyebrow ink — the same deep teal the previous approve
-// modal used for its dialog-title kicker, so the visual register the
-// customer associates with the approve flow carries across the
-// modal → docked panel move.
-const APPROVE_EYEBROW = '#1f5640'
+import { ButtonInk, ButtonCoral, ButtonGhost, Pill } from '../design'
 
 export type ActionPanelProps = {
   // The same actionPanel state shape CustomerProofPage uses.
@@ -129,6 +81,55 @@ export type ActionPanelProps = {
   setActionEarlierVersionAcked: (value: boolean) => void
 }
 
+// Reusable checkbox-card row used by the three approve-only gates
+// (earlier-version ack, disclaimer ack, QR-contents ack). Renders a
+// label-wrapped sr-only checkbox + visible 20px tick + body copy,
+// with focus-within ring on the wrapper so keyboard focus is
+// visible (the real input is hidden). The wrapper border darkens
+// when checked so the customer can see the state at a glance.
+function CheckboxRow({
+  checked,
+  disabled,
+  onChange,
+  label,
+}: {
+  checked: boolean
+  disabled: boolean
+  onChange: (value: boolean) => void
+  label: React.ReactNode
+}) {
+  return (
+    <label
+      className={[
+        'mt-4 flex w-fit items-center gap-3 rounded-[10px] bg-surface px-4 py-3 transition-colors',
+        'focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--c-brand)]',
+        disabled ? 'cursor-wait' : 'cursor-pointer hover:border-ink-soft',
+        checked ? 'border-[1.5px] border-ink' : 'border-[1.5px] border-line',
+      ].join(' ')}
+    >
+      <input
+        type="checkbox"
+        className="sr-only"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span
+        aria-hidden="true"
+        className={[
+          'grid h-5 w-5 shrink-0 place-items-center rounded-[4px]',
+          checked
+            ? 'bg-ink border-[1.5px] border-ink text-on-ink'
+            : 'bg-canvas border-[1.5px] border-line',
+        ].join(' ')}
+      >
+        {checked && <Check size={12} strokeWidth={3} />}
+      </span>
+      <span className="text-[14px] font-medium text-ink">{label}</span>
+    </label>
+  )
+}
+
 // Docked panel (desktop, right edge) / bottom sheet (mobile) host
 // for both customer actions — request changes and approve. Replaces
 // the previous dark-backdrop approve modal so the proof and the
@@ -170,12 +171,6 @@ export function ActionPanel({
   setActionEarlierVersionAcked,
 }: ActionPanelProps) {
   const isApprove = actionPanel.type === 'approve'
-  // Accent ink for the header eyebrow and the brand-blue ring on the
-  // request-changes flow. Approve switches to the teal register so
-  // the customer reads the panel as the approve surface, not as a
-  // recoloured request-changes form.
-  const accentInk = isApprove ? APPROVE_EYEBROW : BRAND_BLUE
-  const accentRing = isApprove ? CTA_TEAL_RING : SEND_RING
   const firstFieldRef = useRef<HTMLInputElement | null>(null)
   // Focused on transition to the confirmation view so a keyboard
   // user lands on Done and can dismiss with Enter.
@@ -296,6 +291,15 @@ export function ActionPanel({
         : `Approve ${actionPanel.name}'s design`
       : 'Request changes'
 
+  // Approve uses the design system's ButtonInk (ink fill) as the
+  // primary "Confirm" CTA. request-changes / variant-round use
+  // ButtonCoral so the panel reads as the brand "designer action
+  // needed" surface, mirroring the per-recipient action band on the
+  // overview. The previous Direction-B brand-blue (#3a2c91) Send CTA
+  // is retired — it predated the design system and no other surface
+  // uses that hue.
+  const PrimaryCTA = isApprove ? ButtonInk : ButtonCoral
+
   return (
     <>
       {/* Bottom-sheet (mobile) / side-dock (desktop) container.
@@ -306,25 +310,21 @@ export function ActionPanel({
         role="dialog"
         aria-label={dialogAriaLabel}
         className={[
-          'fixed z-40 flex flex-col',
+          'fixed z-40 flex flex-col bg-surface text-ink',
           // Mobile: bottom sheet, full width, rounded top corners,
           // top hairline + upward shadow lifting the sheet above the
           // page.
-          'inset-x-0 bottom-0 h-[50vh] w-full rounded-t-2xl',
-          'border-t border-t-[rgba(26,22,18,0.18)] shadow-[0_-8px_32px_rgba(0,0,0,0.15)]',
+          'inset-x-0 bottom-0 h-[50vh] w-full rounded-t-[14px]',
+          'border-t border-line shadow-[0_-8px_32px_rgba(22,19,17,0.12)]',
           // Desktop (sm+): fixed to the right edge, full height, ~400px
           // wide, square corners against the viewport edge, left
           // hairline + leftward shadow.
           'sm:inset-y-0 sm:right-0 sm:left-auto sm:bottom-auto sm:top-0',
           'sm:h-[100dvh] sm:max-h-none sm:w-[400px] sm:rounded-none',
-          'sm:border-t-0 sm:border-l sm:border-l-[rgba(26,22,18,0.18)] sm:shadow-[-8px_0_32px_rgba(0,0,0,0.12)]',
+          'sm:border-t-0 sm:border-l sm:border-line sm:shadow-[-8px_0_32px_rgba(22,19,17,0.10)]',
           // Subtle slide-in.
           'motion-safe:animate-[rcp-in_180ms_ease-out]',
         ].join(' ')}
-        style={{
-          background: PAPER_TINT_1,
-          color: PAPER_INK,
-        }}
       >
         {/* Subtle slide-in: translate-Y on mobile (up from below the
             viewport), translate-X on desktop (in from the right
@@ -344,26 +344,17 @@ export function ActionPanel({
         `}</style>
 
         {/* Mobile drag-handle bar — purely decorative; the panel
-            is not actually drag-dismissable in Phase 1. Hidden on
-            desktop. */}
+            is not actually drag-dismissable. Hidden on desktop. */}
         <div className="flex justify-center pt-3 sm:hidden" aria-hidden="true">
-          <span
-            className="block h-1 w-10 rounded-full"
-            style={{ background: 'rgba(26,22,18,0.20)' }}
-          />
+          <span className="block h-1 w-10 rounded-full bg-line" />
         </div>
 
         {/* Header: eyebrow + recipient line + close button. */}
         <div className="flex items-start justify-between gap-3 px-5 pt-5 sm:px-6 sm:pt-6">
           <div>
-            <p className="m-0" style={{ ...REG_A_BASE, fontSize: 11, color: accentInk }}>
-              {headerEyebrow}
-            </p>
+            <span className="eyebrow">{headerEyebrow}</span>
             {recipientLine && (
-              <p
-                className="mt-1 text-[15px] leading-[1.3]"
-                style={{ fontFamily: SERIF, color: PAPER_INK }}
-              >
+              <p className="mt-1 font-display text-[18px] leading-tight text-ink">
                 {recipientLine}
               </p>
             )}
@@ -373,13 +364,9 @@ export function ActionPanel({
             aria-label="Close"
             onClick={closeActionPanel}
             disabled={actionSubmitting}
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-full transition-colors hover:bg-[rgba(26,22,18,0.06)] disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus-visible:ring-2"
-            style={{
-              color: 'rgba(26,22,18,0.55)',
-              ['--tw-ring-color' as string]: accentRing,
-            }}
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-ink-mute transition-colors hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
           >
-            <span aria-hidden="true" className="text-xl leading-none">×</span>
+            <X size={16} aria-hidden="true" />
           </button>
         </div>
 
@@ -395,26 +382,11 @@ export function ActionPanel({
             <div className="flex-1 overflow-y-auto px-5 pb-4 pt-6 sm:px-6 sm:pt-8">
               <div
                 aria-hidden="true"
-                className="grid h-12 w-12 place-items-center rounded-full"
-                style={{
-                  background: 'rgba(58,44,145,0.12)',
-                  color: BRAND_BLUE,
-                }}
+                className="grid h-12 w-12 place-items-center rounded-full bg-brand-50 text-brand"
               >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                  <path
-                    d="M5 12.5L10 17.5L19 7"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                <Check size={22} strokeWidth={2.5} />
               </div>
-              <p
-                className="mt-5 max-w-[60ch] whitespace-pre-line text-[15px] leading-[1.65] sm:text-[16px] sm:leading-[1.7]"
-                style={{ fontFamily: SERIF, color: PAPER_INK }}
-              >
+              <p className="mt-5 max-w-[60ch] whitespace-pre-line text-[15px] leading-[1.6] text-ink sm:text-[16px]">
                 {/* Admin-configured copy reads as the confirmation
                     of a request already made — exactly where it
                     belongs now. Generic fallback covers the case
@@ -425,42 +397,12 @@ export function ActionPanel({
               </p>
             </div>
 
-            {/* Footer — single Done button, primary brand-blue
-                styling so it reads as the natural next action. */}
-            <div
-              className="flex items-center justify-end px-5 py-4 sm:px-6 sm:py-5"
-              style={{ borderTop: '1px solid rgba(26,22,18,0.10)' }}
-            >
-              <button
-                ref={doneButtonRef}
-                type="button"
-                onClick={closeActionPanel}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = SEND_HOVER_BG
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = SEND_BG
-                }}
-                onMouseDown={(e) => {
-                  e.currentTarget.style.background = SEND_PRESSED_BG
-                }}
-                onMouseUp={(e) => {
-                  e.currentTarget.style.background = SEND_HOVER_BG
-                }}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-6 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2"
-                style={{
-                  background: SEND_BG,
-                  border: 'none',
-                  color: '#ffffff',
-                  fontFamily: MONO,
-                  fontSize: 13,
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                  ['--tw-ring-color' as string]: SEND_RING,
-                }}
-              >
+            {/* Footer — single Done button, ink primary so it reads
+                as the natural next action. */}
+            <div className="flex items-center justify-end px-5 py-4 border-t border-line-soft sm:px-6 sm:py-5">
+              <ButtonInk ref={doneButtonRef} onClick={closeActionPanel}>
                 Done
-              </button>
+              </ButtonInk>
             </div>
           </>
         ) : (
@@ -473,117 +415,40 @@ export function ActionPanel({
                 scrolls it inside the panel without the proof or
                 detail view going anywhere. */}
             <div className="flex-1 overflow-y-auto px-5 pb-4 pt-4 sm:flex sm:flex-col sm:min-h-0 sm:px-6">
-              {/* ── Approve-only earlier-version warning + tick ─────
-                  Renders first in the body — the customer should
-                  see this before reaching the name field, because
-                  it changes the meaning of the whole action.
-                  Approving a superseded design is supported but
-                  not the default expectation; the amber treatment
-                  mirrors the "Heads up" block on the overview's
-                  action band so the customer reads the same
-                  visual register here. The tick gates Confirm
-                  alongside the disclaimer and QR ticks. */}
+              {/* Approve-only earlier-version warning + tick. Renders
+                  first in the body — the customer should see this
+                  before reaching the name field, because it changes
+                  the meaning of the whole action. Approving a
+                  superseded design is supported but not the default
+                  expectation; the low (amber) palette mirrors the
+                  "Heads up" block on the overview's action band so
+                  the customer reads the same visual register here.
+                  The tick gates Confirm alongside the disclaimer
+                  and QR ticks. */}
               {isApprove && isEarlierVersion && (
-                <div
-                  className="mt-1 flex flex-col gap-3 rounded-md px-4 py-4"
-                  style={{
-                    background: 'rgba(217,119,6,0.10)',
-                    border: '1px solid rgba(217,119,6,0.45)',
-                    color: PAPER_INK,
-                  }}
-                >
-                  <span
-                    className="uppercase"
-                    style={{
-                      fontFamily: MONO,
-                      fontSize: 11,
-                      letterSpacing: '0.22em',
-                      color: '#92400e',
-                    }}
-                  >
-                    Earlier version
-                  </span>
-                  <p
-                    style={{
-                      fontFamily: SANS,
-                      fontSize: 14,
-                      lineHeight: 1.55,
-                      color: PAPER_INK,
-                    }}
-                  >
+                <div className="mt-1 flex flex-col gap-3 rounded-[10px] bg-low-soft border border-low px-4 py-4">
+                  <Pill colour="low">Earlier version</Pill>
+                  <p className="text-[14px] leading-[1.55] text-ink">
                     {earlierVersionNumber != null && latestVersionNumber != null
                       ? `You are approving version ${earlierVersionNumber}. Version ${latestVersionNumber} is the most recent.`
                       : 'You are approving an earlier version. A more recent version exists.'}
                   </p>
-                  <label
-                    className={[
-                      'flex w-fit items-center gap-3 rounded-lg px-4 py-3 transition-colors',
-                      'focus-within:ring-2 focus-within:ring-offset-2',
-                      actionSubmitting
-                        ? 'cursor-wait'
-                        : 'cursor-pointer hover:border-[rgba(26,22,18,0.6)]',
-                    ].join(' ')}
-                    style={{
-                      background: '#ffffff',
-                      border: actionEarlierVersionAcked
-                        ? `1.5px solid ${PAPER_INK}`
-                        : '1.5px solid rgba(26,22,18,0.4)',
-                      ['--tw-ring-color' as string]: accentRing,
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      className="sr-only"
-                      checked={actionEarlierVersionAcked}
-                      disabled={actionSubmitting}
-                      onChange={(e) => setActionEarlierVersionAcked(e.target.checked)}
-                    />
-                    <span
-                      aria-hidden
-                      className="grid h-5 w-5 shrink-0 place-items-center rounded-[4px]"
-                      style={
-                        actionEarlierVersionAcked
-                          ? {
-                              background: PAPER_INK,
-                              border: `1.5px solid ${PAPER_INK}`,
-                            }
-                          : {
-                              background: 'transparent',
-                              border: '1.5px solid rgba(26,22,18,0.4)',
-                            }
-                      }
-                    >
-                      {actionEarlierVersionAcked && (
-                        <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-                          <path
-                            d="M2.5 6.5L5 9L9.5 3.5"
-                            stroke="#ffffff"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      )}
-                    </span>
-                    <span
-                      style={{
-                        ...REG_B_BASE,
-                        fontSize: 14,
-                        fontWeight: 500,
-                        color: PAPER_INK,
-                      }}
-                    >
-                      {earlierVersionNumber != null
+                  <CheckboxRow
+                    checked={actionEarlierVersionAcked}
+                    disabled={actionSubmitting}
+                    onChange={setActionEarlierVersionAcked}
+                    label={
+                      earlierVersionNumber != null
                         ? `I understand I am approving version ${earlierVersionNumber}, not the latest`
-                        : 'I understand I am approving an earlier version, not the latest'}
-                    </span>
-                  </label>
+                        : 'I understand I am approving an earlier version, not the latest'
+                    }
+                  />
                 </div>
               )}
 
               <div className={isApprove && isEarlierVersion ? 'mt-5' : 'mt-1'}>
-                <label className="block" style={{ ...REG_A_BASE, color: PAPER_INK }}>
-                  Your name <span style={{ color: accentInk }}>*</span>
+                <label className="eyebrow block">
+                  Your name <span className="text-brand">*</span>
                 </label>
                 <input
                   ref={firstFieldRef}
@@ -591,32 +456,14 @@ export function ActionPanel({
                   value={actionName}
                   onChange={(e) => setActionName(e.target.value)}
                   disabled={actionSubmitting}
-                  className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:text-[15px] outline-none transition-colors focus-visible:ring-2 placeholder:text-[rgba(26,22,18,0.45)]"
-                  style={{
-                    fontFamily: SANS,
-                    background: '#ffffff',
-                    border: '1px solid rgba(26,22,18,0.18)',
-                    color: PAPER_INK,
-                    ['--tw-ring-color' as string]: accentRing,
-                  }}
+                  className="mt-2 w-full rounded-[8px] bg-surface border border-line text-ink px-3 py-3 text-[17px] sm:text-[15px] placeholder:text-ink-dim focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)] transition-colors disabled:bg-canvas disabled:text-ink-mute disabled:cursor-not-allowed"
                 />
               </div>
 
               {isApprove ? (
                 <div className="mt-5">
-                  <label
-                    className="block"
-                    style={{
-                      ...REG_B_BASE,
-                      fontSize: 14,
-                      fontWeight: 500,
-                      color: PAPER_INK,
-                    }}
-                  >
-                    Anything to add?{' '}
-                    <span style={{ fontWeight: 400, color: PAPER_TERTIARY }}>
-                      (optional)
-                    </span>
+                  <label className="eyebrow block">
+                    Anything to add? <span className="text-ink-mute normal-case tracking-normal text-[12px]">(optional)</span>
                   </label>
                   <textarea
                     value={actionComment}
@@ -624,14 +471,7 @@ export function ActionPanel({
                     disabled={actionSubmitting}
                     rows={3}
                     aria-label={textareaLabel}
-                    className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:text-[15px] outline-none transition-colors focus-visible:ring-2 placeholder:text-[rgba(26,22,18,0.45)]"
-                    style={{
-                      fontFamily: SANS,
-                      background: '#ffffff',
-                      border: '1px solid rgba(26,22,18,0.18)',
-                      color: PAPER_INK,
-                      ['--tw-ring-color' as string]: accentRing,
-                    }}
+                    className="mt-2 w-full rounded-[8px] bg-surface border border-line text-ink p-3 text-[17px] sm:text-[15px] leading-[1.5] resize-y placeholder:text-ink-dim focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)] transition-colors disabled:bg-canvas disabled:text-ink-mute disabled:cursor-not-allowed"
                   />
                 </div>
               ) : (
@@ -645,18 +485,10 @@ export function ActionPanel({
                 // the rows={6} fixed height is kept — the 50vh sheet
                 // has no spare room to give.
                 <div className="mt-5 sm:flex sm:flex-1 sm:flex-col sm:min-h-0">
-                  <label
-                    className="block"
-                    style={{
-                      ...REG_B_BASE,
-                      fontSize: 14,
-                      fontWeight: 500,
-                      color: PAPER_INK,
-                    }}
-                  >
+                  <label className="eyebrow block">
                     {isVariantRound
-                      ? <>Notes for the team <span style={{ color: accentInk }}>(required)</span></>
-                      : <>What changes do you need? <span style={{ color: accentInk }}>*</span></>}
+                      ? <>Notes for the team <span className="text-brand normal-case tracking-normal text-[12px]">(required)</span></>
+                      : <>What changes do you need? <span className="text-brand">*</span></>}
                   </label>
                   <textarea
                     value={actionComment}
@@ -664,353 +496,119 @@ export function ActionPanel({
                     disabled={actionSubmitting}
                     rows={6}
                     aria-label={textareaLabel}
-                    className="mt-2 w-full rounded-md px-4 py-3 text-[17px] sm:flex-1 sm:min-h-0 sm:text-[15px] outline-none transition-colors focus-visible:ring-2 placeholder:text-[rgba(26,22,18,0.45)]"
-                    style={{
-                      fontFamily: SANS,
-                      background: '#ffffff',
-                      border: '1px solid rgba(26,22,18,0.18)',
-                      color: PAPER_INK,
-                      ['--tw-ring-color' as string]: accentRing,
-                    }}
+                    className="mt-2 w-full rounded-[8px] bg-surface border border-line text-ink p-3 text-[17px] sm:flex-1 sm:min-h-0 sm:text-[15px] leading-[1.5] resize-y placeholder:text-ink-dim focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)] transition-colors disabled:bg-canvas disabled:text-ink-mute disabled:cursor-not-allowed"
                   />
                 </div>
               )}
 
-              {/* ── Approve-only disclaimer block ───────────────────
-                  Lifted verbatim from the previous approve modal so
-                  the customer-facing friction (must tick to confirm)
-                  is unchanged — only the container moves. The
-                  session-scoped flag still collapses the body to a
-                  one-liner after the first approve, with a "Show
-                  disclaimer" affordance on subsequent opens. */}
+              {/* Approve-only disclaimer block. Lifted verbatim from
+                  the previous modal so the customer-facing friction
+                  (must tick to confirm) is unchanged — only the
+                  container moves. The session-scoped flag collapses
+                  the body to a one-liner after the first approve,
+                  with a "Show disclaimer" affordance on subsequent
+                  opens. */}
               {isApprove && disclaimerText && (
                 <div className="mt-6">
-                  <p style={{ ...REG_A_BASE, color: PAPER_INK }}>
-                    Disclaimer
-                  </p>
+                  <span className="eyebrow block">Disclaimer</span>
                   {disclaimerAckedThisSession && !actionDisclaimerExpanded ? (
                     <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
-                      <p
-                        className="text-[14px] leading-[1.6]"
-                        style={{ fontFamily: SANS, color: PAPER_SECONDARY }}
-                      >
+                      <p className="text-[14px] leading-[1.6] text-ink-soft">
                         By confirming, you reaffirm you have read the disclaimer.
                       </p>
                       <button
                         type="button"
                         onClick={() => setActionDisclaimerExpanded(true)}
-                        className="self-start underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 rounded-sm"
-                        style={{
-                          ...REG_A_BASE,
-                          color: PAPER_INK,
-                          ['--tw-ring-color' as string]: accentRing,
-                        }}
+                        className="eyebrow self-start text-ink hover:underline underline-offset-4 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)] focus:outline-none"
                       >
                         Show disclaimer
                       </button>
                     </div>
                   ) : (
                     <p
-                      className="mt-2 max-w-[60ch] whitespace-pre-line rounded-md px-3 py-3 text-[13px] leading-[1.6] sm:px-4 sm:text-[14px] sm:leading-[1.65]"
-                      style={{
-                        fontFamily: SANS,
-                        background: '#ffffff',
-                        border: '0.5px solid rgba(26,22,18,0.18)',
-                        color: PAPER_INK,
-                        overflowWrap: 'anywhere',
-                      }}
+                      className="mt-2 max-w-[60ch] whitespace-pre-line rounded-[8px] bg-surface border border-line px-3 py-3 text-[13px] leading-[1.6] text-ink sm:px-4 sm:text-[14px] sm:leading-[1.65]"
+                      style={{ overflowWrap: 'anywhere' }}
                     >
                       {disclaimerText}
                     </p>
                   )}
-                  <label
-                    className={[
-                      'mt-4 flex w-fit items-center gap-3 rounded-lg px-4 py-3 transition-colors',
-                      // The real <input> is sr-only so its focus
-                      // ring is invisible; surface keyboard focus on
-                      // the wrapping label so this control isn't a
-                      // Focus Visible (WCAG 2.4.7) failure.
-                      'focus-within:ring-2 focus-within:ring-offset-2',
-                      actionSubmitting
-                        ? 'cursor-wait'
-                        : 'cursor-pointer hover:border-[rgba(26,22,18,0.6)]',
-                    ].join(' ')}
-                    style={{
-                      border: actionDisclaimerAcked
-                        ? `1.5px solid ${PAPER_INK}`
-                        : '1.5px solid rgba(26,22,18,0.4)',
-                      ['--tw-ring-color' as string]: accentRing,
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      className="sr-only"
-                      checked={actionDisclaimerAcked}
-                      disabled={actionSubmitting}
-                      onChange={(e) => setActionDisclaimerAcked(e.target.checked)}
-                    />
-                    <span
-                      aria-hidden
-                      className="grid h-5 w-5 shrink-0 place-items-center rounded-[4px]"
-                      style={
-                        actionDisclaimerAcked
-                          ? {
-                              background: PAPER_INK,
-                              border: `1.5px solid ${PAPER_INK}`,
-                            }
-                          : {
-                              background: 'transparent',
-                              border: '1.5px solid rgba(26,22,18,0.4)',
-                            }
-                      }
-                    >
-                      {actionDisclaimerAcked && (
-                        <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-                          <path
-                            d="M2.5 6.5L5 9L9.5 3.5"
-                            stroke="#ffffff"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      )}
-                    </span>
-                    <span
-                      style={{
-                        ...REG_B_BASE,
-                        fontSize: 14,
-                        fontWeight: 500,
-                        color: PAPER_INK,
-                      }}
-                    >
-                      I confirm I have read the disclaimer above
-                    </span>
-                  </label>
+                  <CheckboxRow
+                    checked={actionDisclaimerAcked}
+                    disabled={actionSubmitting}
+                    onChange={setActionDisclaimerAcked}
+                    label="I confirm I have read the disclaimer above"
+                  />
                 </div>
               )}
 
-              {/* ── Approve-only QR-confirmation tick (000169) ──────
-                  Renders only when the slot has at least one QR row
-                  visible to it. Parent passes the count using the
-                  same qrRowsForSlot predicate that submitAction's
+              {/* Approve-only QR-confirmation tick (000169). Renders
+                  only when the slot has at least one QR row visible
+                  to it. Parent passes the count using the same
+                  qrRowsForSlot predicate that submitAction's
                   server-mirror guard uses, so the tick + the
                   Confirm-disabled gate stay in lockstep. */}
               {isApprove && slotQrCount > 0 && (
                 <div className="mt-6">
-                  <p style={{ ...REG_A_BASE, color: PAPER_INK }}>
-                    QR code contents
-                  </p>
-                  <p
-                    className="mt-2 max-w-[60ch] text-[13px] leading-[1.6] sm:text-[14px] sm:leading-[1.65]"
-                    style={{ fontFamily: SANS, color: PAPER_SECONDARY }}
-                  >
+                  <span className="eyebrow block">QR code contents</span>
+                  <p className="mt-2 max-w-[60ch] text-[13px] leading-[1.6] text-ink-soft sm:text-[14px] sm:leading-[1.65]">
                     {slotQrCount === 1
                       ? 'Please double-check the contents of the QR code shown above before approving.'
                       : `Please double-check the contents of the ${slotQrCount} QR codes shown above before approving.`}
                   </p>
-                  <label
-                    className={[
-                      'mt-4 flex w-fit items-center gap-3 rounded-lg px-4 py-3 transition-colors',
-                      'focus-within:ring-2 focus-within:ring-offset-2',
-                      actionSubmitting
-                        ? 'cursor-wait'
-                        : 'cursor-pointer hover:border-[rgba(26,22,18,0.6)]',
-                    ].join(' ')}
-                    style={{
-                      border: actionQrConfirmed
-                        ? `1.5px solid ${PAPER_INK}`
-                        : '1.5px solid rgba(26,22,18,0.4)',
-                      ['--tw-ring-color' as string]: accentRing,
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      className="sr-only"
-                      checked={actionQrConfirmed}
-                      disabled={actionSubmitting}
-                      onChange={(e) => setActionQrConfirmed(e.target.checked)}
-                    />
-                    <span
-                      aria-hidden
-                      className="grid h-5 w-5 shrink-0 place-items-center rounded-[4px]"
-                      style={
-                        actionQrConfirmed
-                          ? {
-                              background: PAPER_INK,
-                              border: `1.5px solid ${PAPER_INK}`,
-                            }
-                          : {
-                              background: 'transparent',
-                              border: '1.5px solid rgba(26,22,18,0.4)',
-                            }
-                      }
-                    >
-                      {actionQrConfirmed && (
-                        <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-                          <path
-                            d="M2.5 6.5L5 9L9.5 3.5"
-                            stroke="#ffffff"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      )}
-                    </span>
-                    <span
-                      style={{
-                        ...REG_B_BASE,
-                        fontSize: 14,
-                        fontWeight: 500,
-                        color: PAPER_INK,
-                      }}
-                    >
-                      I've verified my QR code contents
-                    </span>
-                  </label>
+                  <CheckboxRow
+                    checked={actionQrConfirmed}
+                    disabled={actionSubmitting}
+                    onChange={setActionQrConfirmed}
+                    label="I've verified my QR code contents"
+                  />
                 </div>
               )}
 
               {actionError && (
-                <p
-                  className="mt-4 max-w-[60ch] text-[14px] leading-[1.55]"
-                  style={{ fontFamily: SANS, color: accentInk }}
-                >
+                <p className="mt-4 max-w-[60ch] text-[14px] leading-[1.55] text-out">
                   {actionError}
                 </p>
               )}
 
               {/* Helper hints — only render when Confirm is gated
                   by a tick (not by submit-in-flight), so the
-                  customer knows exactly what unlocks the action.
-                  Same tone as the rest of the body copy; sits
-                  below the form fields so it reads as a footnote
-                  rather than a primary instruction. */}
+                  customer knows exactly what unlocks the action. */}
               {disclaimerGate && !actionSubmitting && (
-                <p
-                  className="mt-3 text-[12px] sm:text-[13px]"
-                  style={{ fontFamily: SANS, color: 'rgba(26,22,18,0.65)' }}
-                >
+                <p className="mt-3 text-[12px] text-ink-mute sm:text-[13px]">
                   Tick the disclaimer above to enable Confirm.
                 </p>
               )}
               {qrGate && !actionSubmitting && (
-                <p
-                  className="mt-2 text-[12px] sm:text-[13px]"
-                  style={{ fontFamily: SANS, color: 'rgba(26,22,18,0.65)' }}
-                >
+                <p className="mt-2 text-[12px] text-ink-mute sm:text-[13px]">
                   Tick the QR code confirmation to enable Confirm.
                 </p>
               )}
               {earlierVersionGate && !actionSubmitting && (
-                <p
-                  className="mt-2 text-[12px] sm:text-[13px]"
-                  style={{ fontFamily: SANS, color: 'rgba(26,22,18,0.65)' }}
-                >
+                <p className="mt-2 text-[12px] text-ink-mute sm:text-[13px]">
                   Tick the version acknowledgement to enable Confirm.
                 </p>
               )}
             </div>
 
             {/* Footer: Cancel + primary CTA pinned to the bottom of
-                the panel. Primary fill switches on the type — brand
-                blue for request-changes / variant rounds, teal for
-                approve. Approve also honours the disclaimer + QR
-                gates (computed once at the top of the render). */}
-            <div
-              className="flex items-center justify-end gap-3 px-5 py-4 sm:px-6 sm:py-5"
-              style={{ borderTop: '1px solid rgba(26,22,18,0.10)' }}
-            >
-              <button
-                type="button"
-                onClick={closeActionPanel}
-                disabled={actionSubmitting}
-                onMouseEnter={(e) => {
-                  if (actionSubmitting) return
-                  e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-                  e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = CTA_GHOST_BG
-                  e.currentTarget.style.borderColor = CTA_GHOST_BORDER
-                }}
-                onMouseDown={(e) => {
-                  if (actionSubmitting) return
-                  e.currentTarget.style.background = CTA_GHOST_PRESSED_BG
-                }}
-                onMouseUp={(e) => {
-                  if (actionSubmitting) return
-                  e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-                }}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-5 py-3 transition-colors disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2"
-                style={{
-                  background: CTA_GHOST_BG,
-                  border: `1.5px solid ${CTA_GHOST_BORDER}`,
-                  color: CTA_GHOST_TEXT,
-                  fontFamily: MONO,
-                  fontSize: 13,
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                  ['--tw-ring-color' as string]: accentRing,
-                }}
-              >
+                the panel. Primary fill switches on the type — coral
+                for request-changes / variant rounds, ink for approve.
+                Approve also honours the disclaimer + QR +
+                earlier-version gates (computed once at the top of
+                the render). */}
+            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-line-soft sm:px-6 sm:py-5">
+              <ButtonGhost onClick={closeActionPanel} disabled={actionSubmitting}>
                 Cancel
-              </button>
-              <button
-                type="button"
+              </ButtonGhost>
+              <PrimaryCTA
+                icon={isApprove ? Check : Send}
                 onClick={submitAction}
                 disabled={confirmDisabled}
+                busy={actionSubmitting}
                 aria-label={sendButtonAriaLabel}
-                onMouseEnter={(e) => {
-                  if (confirmDisabled) return
-                  e.currentTarget.style.background = isApprove ? CTA_TEAL_HOVER : SEND_HOVER_BG
-                }}
-                onMouseLeave={(e) => {
-                  if (confirmDisabled) return
-                  e.currentTarget.style.background = isApprove ? CTA_TEAL : SEND_BG
-                }}
-                onMouseDown={(e) => {
-                  if (confirmDisabled) return
-                  e.currentTarget.style.background = isApprove ? CTA_TEAL_PRESSED : SEND_PRESSED_BG
-                }}
-                onMouseUp={(e) => {
-                  if (confirmDisabled) return
-                  e.currentTarget.style.background = isApprove ? CTA_TEAL_HOVER : SEND_HOVER_BG
-                }}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-6 py-3 transition-colors disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2"
-                style={{
-                  // Disabled state on approve renders as a ghost
-                  // outline matching Cancel rather than a faded
-                  // primary fill — matches the previous modal's
-                  // treatment so the dimmed-teal-still-looks-clickable
-                  // problem doesn't reappear. The disabled state
-                  // never fires on request_changes (no gates beyond
-                  // submit-in-flight), so the simple SEND_BG fill +
-                  // opacity-60 path is preserved there.
-                  background: confirmDisabled
-                    ? isApprove
-                      ? 'transparent'
-                      : SEND_BG
-                    : isApprove
-                      ? CTA_TEAL
-                      : SEND_BG,
-                  border: confirmDisabled && isApprove
-                    ? '1.5px solid rgba(26,22,18,0.20)'
-                    : 'none',
-                  color: confirmDisabled && isApprove
-                    ? 'rgba(26,22,18,0.35)'
-                    : '#ffffff',
-                  opacity: confirmDisabled && !isApprove ? 0.6 : 1,
-                  fontFamily: MONO,
-                  fontSize: 13,
-                  letterSpacing: '0.06em',
-                  textTransform: 'uppercase',
-                  ['--tw-ring-color' as string]: accentRing,
-                }}
               >
                 {sendButtonLabel}
-              </button>
+              </PrimaryCTA>
             </div>
           </>
         )}
