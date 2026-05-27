@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Download } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { PlasmaWordmark } from '../design'
+import { PlasmaWordmark, Pill, ProofStatusPill, type PillColour, type ProofStatus } from '../design'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
 import { compilePersonalisationSurcharges, personalisationBreakeven } from '../lib/personalisation'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
@@ -10,8 +10,6 @@ import type { ProofEventState } from '../lib/types'
 import { deriveSharedApprovalState } from '../lib/sharedApproval'
 import { formatPrice } from '../lib/currency'
 import { type GridImage } from '../components/ImageGrid'
-import { BrandRule } from '../components/BrandRule'
-import { DocketCell } from '../components/DocketCell'
 import { MaterialOptionTabs } from '../components/MaterialOptionTabs'
 import { PaperRecipientBand } from '../components/PaperRecipientBand'
 import { PaperRevisionTimeline } from '../components/PaperRevisionTimeline'
@@ -2515,327 +2513,116 @@ export default function CustomerProofPage() {
         </div>
       </header>
 
-      {/* Hero — paper-first editorial register. Sits in its own
-          PAPER_CREAM band below the dark masthead. */}
-      <div style={{ background: PAPER_CREAM }}>
+      {/* Approval banner — surfaces above the hero when the proof
+          has been fully signed off or carries forward-approved slots
+          from earlier versions. Preserves the live heroApprovalStrip
+          data hook (kind='approved' | 'partial') and the
+          aria-readable signed-off / partial copy; restyled onto the
+          design system using a Pill plus a quiet rounded card. */}
+      {heroApprovalStrip && activeVersion && (() => {
+        const total = versionImages[activeVersion.id]?.length ?? 0
+        const isApprovedKind = heroApprovalStrip.kind === 'approved'
+        const pillColour: PillColour = isApprovedKind ? 'in-stock' : 'allocated'
+        const label = isApprovedKind ? 'Approved' : 'Partially approved'
+        // Mirrors the previous secondary copy + screen-reader spelling
+        // (middle dot becomes a comma, "5 / 5" becomes "5 of 5").
+        const detailVisible = isApprovedKind
+          ? [
+              heroApprovalStrip.dateLabel ? `Signed off ${heroApprovalStrip.dateLabel}` : 'Signed off',
+              total > 0 ? `${total} / ${total} proof${total === 1 ? '' : 's'}` : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')
+          : 'Some proofs already signed off, others awaiting review'
+        const detailAria = isApprovedKind
+          ? [
+              heroApprovalStrip.dateLabel ? `Signed off ${heroApprovalStrip.dateLabel}` : 'Signed off',
+              total > 0 ? `${total} of ${total} proof${total === 1 ? '' : 's'}` : null,
+            ]
+              .filter(Boolean)
+              .join(', ')
+          : 'Some proofs already signed off, others awaiting review'
+        return (
+          <div className="mx-auto max-w-[1180px] px-6 pt-6">
+            <div className="flex flex-wrap items-center gap-3 rounded-[10px] bg-surface border border-line px-4 py-3">
+              <Pill colour={pillColour}>{label}</Pill>
+              <span className="text-[13px] text-ink-soft" aria-label={detailAria}>
+                {detailVisible}
+              </span>
+            </div>
+          </div>
+        )
+      })()}
 
-          {/* Hero — approval chip (when applicable) + "Proofs for"
-              eyebrow + customer name + italic company + quick-
-              facts row (material / revision / names). Scaled so
-              the name reads as the page's dominant object at
-              61px. The approval chip sits INSIDE the hero,
-              above the eyebrow, so it's the first thing the
-              customer sees on landing — replaces the old
-              between-masthead-and-hero banner. */}
-          <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8">
-            {/* Approval-chip slot — always rendered as a
-                fixed-height wrapper regardless of approval
-                state, so switching versions via the revisions
-                timeline (approved ↔ unapproved) doesn't shift
-                the "Proofs for" eyebrow + customer name up
-                and down.
-                Desktop (sm+): h-7 dot (28px) + py-2 vertical
-                padding (16px) + 1px top border + 1px bottom
-                border = 46px single-row pill. sm:min-h-[46px]
-                matches that exactly.
-                Mobile (<sm): the c521f7c restructure stacks
-                the chip vertically — dot/label cluster on
-                row 1, secondary text on row 2. Height adds
-                the second row's ~18px line-height + 8px
-                inter-row gap (~72px baseline). At narrow
-                viewports the secondary text wraps to 2 lines
-                (partial-approval copy, or approved copy
-                below ~390px) pushing rendered height to
-                ~90px. min-h-[96px] reserves a 6px buffer
-                above that worst case so the layout stays
-                locked across approved ↔ unapproved flips
-                on phone, without burning the extra ~24px
-                of dead dark ink that the prior 120px floor
-                left under in-progress proofs (the most
-                common state).
-                display: flex (not default block) keeps the
-                chip out of line-box formatting so baseline-
-                alignment + ambient line-height don't add
-                half-leading on top of the box. */}
-            <div className="mb-10 flex min-h-[96px] items-start sm:min-h-[46px]">
-              {heroApprovalStrip && activeVersion && (() => {
-                const total = versionImages[activeVersion.id]?.length ?? 0
-                const isApprovedKind = heroApprovalStrip.kind === 'approved'
-                // Colour tokens for the chip. Green for full
-                // approval, sky-blue for the carry-forward
-                // partial state — same palette the old banner
-                // used, now in one unified chip pattern.
-                // Paper-register tone palette. The chip used to
-                // sit on INK with translucent fills + outer glows;
-                // on PAPER_CREAM the tints lift to 0.18 opacity for
-                // legibility, glows zero out (cream + halo reads
-                // muddy), and label colours move to deep
-                // green/sky values that hit ≥4.5:1 against PAPER_
-                // CREAM. Sky derivation noted in handoff: README
-                // specifies green-on-paper but defers the partial-
-                // approval sky variant; #0369a1 (Tailwind sky-700)
-                // is the chosen pair, parity with the green pill
-                // border at 0.5 alpha.
-                const tone = isApprovedKind
-                  ? {
-                      bg: 'rgba(81,180,148,0.18)',
-                      border: 'rgba(81,180,148,0.4)',
-                      glow: 'none',
-                      dotBg: APPROVED_GREEN,
-                      dotGlow: 'none',
-                      label: '#176b3f',
-                      divider: 'rgba(26,22,18,0.15)',
-                    }
-                  : {
-                      bg: 'rgba(125,211,252,0.18)',
-                      border: 'rgba(125,211,252,0.5)',
-                      glow: 'none',
-                      dotBg: '#7dd3fc',
-                      dotGlow: 'none',
-                      label: '#0369a1',
-                      divider: 'rgba(26,22,18,0.15)',
-                    }
-                return (
-                  // Stacks vertically at narrow viewports —
-                  // dot + label cluster on one row, secondary
-                  // text on the next — so the secondary text
-                  // doesn't wrap awkwardly inside a single-row
-                  // pill and leave the | separator orphaned.
-                  // At sm+ the layout returns to the original
-                  // single-row pattern verbatim.
-                  //
-                  // Mobile also swaps the shape tokens:
-                  //   * rounded-3xl (24px) instead of the
-                  //     desktop's rounded-full semicircle —
-                  //     straightens the pill's top/bottom
-                  //     edges so the stacked content isn't
-                  //     fighting a tight curve.
-                  //   * pl-4 pr-6 instead of the desktop's
-                  //     tight pl-2 pr-5 — gives the tick
-                  //     circle and the end of the secondary
-                  //     text real breathing room from the
-                  //     inner edges. Desktop padding stays
-                  //     asymmetric because the dot sits flush
-                  //     against the semicircle's curve.
-                  <div
-                    className="inline-flex flex-col items-start gap-2 rounded-3xl py-2 pl-4 pr-6 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4 sm:rounded-full sm:pl-2 sm:pr-5"
-                    style={{
-                      background: tone.bg,
-                      border: `1px solid ${tone.border}`,
-                      boxShadow: tone.glow,
-                    }}
+      {/* Hero strip — prototype V1 layout. Two columns at desktop:
+          left has "Proof for [— company]" eyebrow row, display-sized
+          customer name, optional italic subline (when the company
+          name takes the prominent slot the contact name drops to
+          subline, same priority rule the live page already uses);
+          right has VERSION eyebrow + the active version specimen in
+          tabular mono + the proof status pill. Stacks vertically
+          under md.
+
+          The hero docket (Material / Option / Revision / Names) the
+          old layout carried beneath the H1 is intentionally dropped
+          — every field shows up again in the Specification panel
+          further down the page, and the prototype keeps the hero
+          for identity rather than meta. */}
+      <section className="mx-auto max-w-[1180px] px-6 pt-8 pb-6 border-b border-line">
+        {(() => {
+          const trimmedCompany = proof.company?.trim() ?? ''
+          const trimmedName = proof.customer_name?.trim() ?? ''
+          const companyProminent = trimmedCompany.length > 0
+          const primary = companyProminent ? proof.company! : proof.customer_name
+          const subline = companyProminent && trimmedName.length > 0
+            ? proof.customer_name
+            : null
+          const eyebrowLabel = (activeVersion?.names?.length ?? 0) >= 2 ? 'Proof for' : 'Proof for'
+          return (
+            <div className="flex flex-col gap-6 md:flex-row md:items-end md:gap-8">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2.5 mb-3 flex-wrap">
+                  <span className="eyebrow">{eyebrowLabel}</span>
+                  {companyProminent && !subline && (
+                    <>
+                      <span className="inline-block h-px w-6 bg-line" aria-hidden="true" />
+                      <span className="eyebrow text-brand">{proof.company}</span>
+                    </>
+                  )}
+                </div>
+                <h1
+                  className="font-display font-medium tracking-[-0.02em] text-ink break-words leading-[1.02]"
+                  style={{ fontSize: 'clamp(36px, 7vw, 56px)' }}
+                >
+                  {primary}
+                </h1>
+                {subline && (
+                  <p
+                    className="mt-3 font-display text-ink-soft"
+                    style={{ fontSize: 22, lineHeight: 1.3 }}
                   >
-                    {/* Dot + label cluster — always stays
-                        inline regardless of viewport so the
-                        mobile stacked shape is a clean 2-row
-                        layout rather than dot / label / text
-                        on three separate rows. */}
-                    <div className="flex items-center gap-4">
-                      <span
-                        aria-hidden
-                        className="grid h-7 w-7 shrink-0 place-items-center rounded-full"
-                        style={{ background: tone.dotBg, boxShadow: tone.dotGlow }}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                          <path
-                            d="M3 7L6 10L11 4"
-                            stroke="white"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </span>
-                      <span style={{ ...REG_A_BASE, color: tone.label }}>
-                        {isApprovedKind ? 'Approved' : 'Partially approved'}
-                      </span>
-                    </div>
-                    {/* Divider — only meaningful between
-                        adjacent inline items on the desktop
-                        row. Hidden (display:none) on mobile so
-                        it both disappears visually and drops
-                        out of the flex layout (no ghost gap). */}
-                    <span
-                      aria-hidden
-                      className="hidden h-4 w-px shrink-0 sm:inline-block"
-                      style={{ background: tone.divider }}
-                    />
-                    <span
-                      // aria-label spells out the secondary text in a
-                      // form a screen reader can speak cleanly: middle
-                      // dot becomes a comma, "5 / 5" becomes "5 of 5".
-                      // Visible text is unchanged. Without this the
-                      // chip reads as "Signed off … middle dot 5
-                      // slash 5 proofs" on VoiceOver / NVDA.
-                      aria-label={
-                        isApprovedKind
-                          ? [
-                              'Signed off',
-                              heroApprovalStrip.dateLabel,
-                              total > 0
-                                ? `, ${total} of ${total} proof${total === 1 ? '' : 's'}`
-                                : null,
-                            ]
-                              .filter(Boolean)
-                              .join(' ')
-                              .replace(' ,', ',')
-                          : 'Some proofs already signed off, others awaiting review'
-                      }
-                      style={{ ...REG_A_BASE, color: PAPER_TERTIARY }}
-                    >
-                      {isApprovedKind
-                        // Drop the date phrase when dateLabel is
-                        // missing rather than hard-coding "today" —
-                        // approved_at can be null on rare race
-                        // conditions, and a stale visit a week
-                        // later shouldn't read "Signed off today".
-                        // Gate the proof-count phrase on total > 0
-                        // so an empty version doesn't render the
-                        // tautological "0 / 0 proofs".
-                        ? [
-                            'Signed off',
-                            heroApprovalStrip.dateLabel,
-                            total > 0 ? `· ${total} / ${total} proof${total === 1 ? '' : 's'}` : null,
-                          ].filter(Boolean).join(' ')
-                        : 'Some proofs already signed off, others awaiting review'}
+                    {subline}
+                  </p>
+                )}
+              </div>
+              {activeVersion && (
+                <div className="flex flex-col items-start md:items-end gap-2 shrink-0">
+                  <span className="eyebrow">Version</span>
+                  <div className="flex items-baseline gap-1">
+                    <span className="num num-2xl text-ink">
+                      {String(activeVersion.version_number).padStart(2, '0')}
+                    </span>
+                    <span className="num text-ink-mute" style={{ fontSize: 18 }}>
+                      /{String(versions.length).padStart(2, '0')}
                     </span>
                   </div>
-                )
-              })()}
+                  <ProofStatusPill status={proof.status as ProofStatus} />
+                </div>
+              )}
             </div>
-            <p
-              className="font-paper-mono uppercase"
-              style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
-            >
-              {(activeVersion?.names?.length ?? 0) >= 2 ? 'Proofs for' : 'Proof for'}
-            </p>
-            {/* Masthead heading rule: when the customer is a
-                company, promote the company name to the prominent
-                serif H1 and demote the contact's full name to the
-                italic sub-line. When there is no company, fall back
-                to the contact name in the prominent slot with no
-                sub-line.
-                Truthy check trims so an empty or whitespace-only
-                company string falls back to contact-prominent. The
-                sub-line is suppressed when the demoted value is
-                also empty or whitespace, so the masthead never
-                renders a stranded italic line. */}
-            {(() => {
-              const trimmedCompany = proof.company?.trim() ?? ''
-              const trimmedName = proof.customer_name?.trim() ?? ''
-              const companyProminent = trimmedCompany.length > 0
-              const primary = companyProminent ? proof.company! : proof.customer_name
-              const subline = companyProminent && trimmedName.length > 0
-                ? proof.customer_name
-                : null
-              return (
-                <>
-                  {/* Hero H1 — deliberate deviation from the
-                      README's 104px spec (paper-first handoff
-                      §"Visual Language → Typography" line 157).
-                      Reduced 20% to 84px after design review;
-                      tracking, line-height, and italic subline
-                      stay at the README values. */}
-                  <h1
-                    className="mt-4 leading-[0.96] tracking-[-0.02em] break-words"
-                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(48px, 12vw, 84px)', color: PAPER_INK }}
-                  >
-                    {primary}
-                  </h1>
-                  {subline && (
-                    <p
-                      className="mt-3 italic"
-                      style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, color: PAPER_TERTIARY }}
-                    >
-                      {subline}
-                    </p>
-                  )}
-                </>
-              )
-            })()}
-
-            {/* Brand 4-band signature rule under the H1. README §2
-                positions it between the italic subline and the
-                docket meta at mt-12, height 3px. Default BrandRule
-                height (2) is undisturbed elsewhere. */}
-            <div className="mt-12">
-              <BrandRule height={3} />
-            </div>
-
-            {/* Hero docket — Material / Sides|Option / Revision /
-                Names. Hidden on per-direction-pricing variant rounds
-                (000142): every per-direction material is decided
-                out-of-band so a version-level MATERIAL cell on the
-                row would either be misleading ("Per-direction pricing"
-                read as a real material) or empty. The H1 + italic
-                subline + BrandRule above already read as a complete
-                hero header on their own; the variant grid below
-                supplies its own py-20 / py-24 breathing room when
-                the section starts. */}
-            {activeVersion && !activeVersion.is_per_direction_pricing && (() => {
-              // Cell 2 — adaptive branching. Option-having materials
-              // show the option label + value (Finish / Brushed,
-              // Species / Black Walnut, etc.). No-option materials
-              // fall back to Sides, derived from the image set the
-              // same way the Specs section does (any image with
-              // side='back' → "Front and back").
-              const sidesValue =
-                (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
-                  ? 'Front and back'
-                  : 'Front only'
-              // Cell 4 — full names joined with " + ". Mirrors the
-              // Specification section's "Names on card" treatment
-              // a few sections down (no truncation). Empty array →
-              // em-dash placeholder so the 4-cell grid stays intact.
-              // Recipient-band headings ("Marie's card") at line
-              // ~1789 still use firstName() for the possessive form
-              // — separate surface, separate concern.
-              const namesLabel = activeVersion.names.length >= 2 ? 'Names' : 'Name'
-              const namesValue =
-                activeVersion.names.length === 0
-                  ? '—'
-                  : activeVersion.names.join(' + ')
-              // Cell 4 swaps to a Personalisation signpost when the
-              // version is personalised: a single recipient name (or
-              // a list of tier variants) doesn't describe a card
-              // where every recipient gets unique data. Drops the
-              // Names cell entirely in that case; the spec section
-              // does the same.
-              return (
-                <dl className="mt-12 grid grid-cols-2 border-b border-[rgba(26,22,18,0.10)] sm:grid-cols-4">
-                  <DocketCell label="Material" value={activeVersion.material_display} />
-                  {activeOption ? (
-                    <DocketCell
-                      label={optionLabelSingular}
-                      value={activeOption.display_name}
-                    />
-                  ) : (
-                    <DocketCell label="Sides" value={sidesValue} />
-                  )}
-                  <DocketCell
-                    label="Revision"
-                    value={`v${activeVersion.version_number}${heroRevisionDate ? ` · ${heroRevisionDate}` : ''}`}
-                  />
-                  {/* Personalisation cell only displaces Names
-                      when has_personalisation is on AND the live
-                      pricing payload actually resolved for this
-                      currency. Defends against the rare drift
-                      case where the proof's currency has no
-                      personalisation_pricing row (admin deletion,
-                      RPC drift) — without the second gate the
-                      customer would see a Personalisation label
-                      with no cost disclosed below. */}
-                  {activeVersion.has_personalisation && activePersonalisationPricing ? (
-                    <DocketCell label="Personalisation" value="Unique per card" />
-                  ) : (
-                    <DocketCell label={namesLabel} value={namesValue} />
-                  )}
-                </dl>
-              )
-            })()}
-          </div>
-
-      </div>
+          )
+        })()}
+      </section>
 
       {/* ───── Revision history band ─────
           Dedicated zone below the hero — a header row, a
