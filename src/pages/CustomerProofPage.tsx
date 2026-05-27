@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { Download } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { PlasmaWordmark } from '../design'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
 import { compilePersonalisationSurcharges, personalisationBreakeven } from '../lib/personalisation'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
@@ -9,7 +11,6 @@ import { deriveSharedApprovalState } from '../lib/sharedApproval'
 import { formatPrice } from '../lib/currency'
 import { type GridImage } from '../components/ImageGrid'
 import { BrandRule } from '../components/BrandRule'
-import { DocketBar } from '../components/DocketBar'
 import { DocketCell } from '../components/DocketCell'
 import { MaterialOptionTabs } from '../components/MaterialOptionTabs'
 import { PaperRecipientBand } from '../components/PaperRecipientBand'
@@ -22,7 +23,6 @@ import { ActionPanel } from '../components/ActionPanel'
 import { ProofDetailView } from '../components/ProofDetailView'
 import { firstName } from '../lib/firstName'
 import {
-  INK,
   PAPER_CREAM,
   PAPER_TINT_1,
   PAPER_TINT_2,
@@ -30,7 +30,6 @@ import {
   PAPER_SECONDARY,
   PAPER_TERTIARY,
   ACCENT,
-  ACCENT_GLOW,
   APPROVED_GREEN,
   BRAND_ORDER,
   CTA_TEAL,
@@ -2412,7 +2411,9 @@ export default function CustomerProofPage() {
   // Coloured highlights (status pills, brand-teal kickers) keep
   // their existing colour and only swap typography — the brief
   // is explicit on that.
-  const LABEL_DARK = '#c8c8c8'
+  // LABEL_DARK was the dark-masthead/footer label colour; removed
+  // alongside the dark-ink masthead + footer replacements. LABEL_LIGHT
+  // stays in use inside the paper-cream inner panels.
   const LABEL_LIGHT = '#5f564d'
 
   // Short customer-facing reference — the proof's Help Scout
@@ -2467,30 +2468,52 @@ export default function CustomerProofPage() {
   // the sheet).
   const actionPanelOpen = actionPanel != null
 
+  // Header meta: anti-enumeration design (public_get_customer_proof
+  // doesn't expose the customer's email or proof.sent_at), so the
+  // "Sent X to Y" line from the prototype becomes a "Last updated
+  // {date}" carrying the active version's created_at — the most
+  // recent customer-visible date on the proof.
+  const lastUpdated = activeVersion
+    ? new Date(activeVersion.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    : null
+
   return (
     <div
       className={[
-        'antialiased',
+        'antialiased bg-canvas text-ink',
         actionPanelOpen ? 'pb-[50vh] sm:pb-0 sm:pr-[400px]' : '',
       ].join(' ')}
-      style={{ fontFamily: SANS, background: INK }}
+      style={{ fontFamily: SANS }}
     >
 
-      {/* ───── Top: ink masthead strip ─────
-          DocketBar (logo + caption + proof ref) on INK,
-          followed by the BrandRule's 4-colour signature.
-          The hero used to sit inside this wrapper too, on a
-          tinted gradient over the ink; both the gradient
-          overlay and the hero have moved out (the hero into
-          its own PAPER_CREAM band below). */}
-      <div className="text-white" style={{ background: INK }}>
-        <DocketBar
-          proofRef={proofRef}
-          accentGlow={ACCENT_GLOW}
-          captionStyle={{ ...REG_A_BASE, color: LABEL_DARK }}
-        />
-        <BrandRule />
-      </div>
+      {/* Sticky public header. PlasmaWordmark left, "Last updated"
+          eyebrow + hairline + Save a copy (window.print) right.
+          Replaces the Direction-B dark-ink DocketBar + BrandRule
+          masthead. Cream canvas, hairline bottom border, max-width
+          1180px to match the prototype layout. */}
+      <header
+        className="sticky top-0 z-[5] bg-canvas border-b border-line"
+      >
+        <div className="mx-auto max-w-[1180px] flex items-center gap-4 px-6 py-3.5">
+          <PlasmaWordmark size="md" tagline="Proofs" />
+          <div className="ml-auto flex items-center gap-4">
+            {lastUpdated && (
+              <>
+                <span className="eyebrow hidden sm:inline">Last updated {lastUpdated}</span>
+                <span className="hidden sm:inline w-px h-4 bg-line" aria-hidden="true" />
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-1.5 text-[13px] text-ink-soft hover:text-ink transition-colors"
+            >
+              <Download size={14} aria-hidden="true" />
+              <span>Save a copy</span>
+            </button>
+          </div>
+        </div>
+      </header>
 
       {/* Hero — paper-first editorial register. Sits in its own
           PAPER_CREAM band below the dark masthead. */}
@@ -3894,31 +3917,26 @@ export default function CustomerProofPage() {
         </>
       )}
 
-      {/* ───── Footer ───── */}
-      <footer className="text-white" style={{ background: INK }}>
-        {/* Brand rule again on top of the footer — bookends the
-            page with the 4-colour signature. */}
-        <BrandRule />
-        <div className="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-3 px-8 py-10 sm:px-8">
-          <div className="flex items-center gap-3">
-            <img src="/logo-cards.png" alt="Plasma" className="h-8 w-auto opacity-70" />
-            <span style={{ ...REG_A_BASE, color: LABEL_DARK }}>
-              © PlasmaDesign
-            </span>
-          </div>
-          {/* Proof ref · version — drops either piece when its
-              underlying value isn't available (override proofs
-              with null helpscout_conversation_id; the rare
-              no-version page state). Full collapse when both
-              are missing so the footer doesn't render an empty
-              paragraph. */}
-          {(proofRef || activeVersion) && (
-            <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
-              {proofRef}
-              {proofRef && activeVersion ? ' · ' : ''}
-              {activeVersion ? `v${activeVersion.version_number}` : ''}
-            </p>
-          )}
+      {/* Footer — replaces the dark-ink BrandRule footer with the
+          prototype's quiet two-column line on canvas. Left: eyebrow-
+          styled brand mark. Right: privacy reminder + version ref.
+          Both lines sit at 12px in ink-mute on the warm-cream canvas. */}
+      <footer className="mx-auto max-w-[1180px] px-6 mt-6 mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 py-4 border-t border-line text-[12px] text-ink-mute">
+          <span className="eyebrow">PlasmaDesign · craft-press business cards</span>
+          <span className="flex items-center gap-3">
+            <span>This proof URL is private. Please don't share publicly.</span>
+            {(proofRef || activeVersion) && (
+              <span className="hidden sm:inline-flex items-center gap-2">
+                <span className="w-px h-3 bg-line" aria-hidden="true" />
+                <span className="font-mono">
+                  {proofRef}
+                  {proofRef && activeVersion ? ' · ' : ''}
+                  {activeVersion ? `v${activeVersion.version_number}` : ''}
+                </span>
+              </span>
+            )}
+          </span>
         </div>
       </footer>
 
@@ -5085,44 +5103,37 @@ function buildImageGroups(images: GridImage[]): ImageGroup[] {
   return groups
 }
 
-// Loading / 404 / abandoned screens. All three share the paper
-// register of the live page so the customer never lands on a
-// surface that looks like a different site. Eyebrow → headline
-// → quiet body, on PAPER_CREAM, with the same SERIF / MONO
-// hierarchy.
+// Loading / 404 / abandoned screens. Restyled to the PlasmaDesign
+// Stock Control design system landed in reskin PRs 1-2: warm-cream
+// canvas, IBM Plex Sans display headings, mono eyebrows, hairline
+// borders. Same content, new chrome.
 function PlasmaEyebrow() {
   return (
-    <p
-      className="font-paper-mono uppercase"
-      style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
-    >
-      Plasma Design
-    </p>
+    <div className="inline-flex items-center gap-2">
+      <PlasmaWordmark size="sm" tagline="Proofs" />
+    </div>
   )
 }
 
 function LoadingScreen() {
   return (
-    <div className="flex min-h-dvh items-center justify-center" style={{ background: PAPER_CREAM }}>
+    <div className="flex min-h-dvh items-center justify-center bg-canvas text-ink">
       <div className="text-center">
         <PlasmaEyebrow />
+        {/* motion-reduce:animate-none disables the rotation for users
+            with `prefers-reduced-motion: reduce`. The static ring still
+            renders so the layout doesn't collapse — paired with the
+            visible "Loading proof" text below it the loading state
+            remains comprehensible without motion. role/aria-label give
+            SR users an explicit cue that loading is in progress
+            (the .animate-spin div alone isn't announced). */}
         <div
-          // motion-reduce:animate-none disables the rotation for users
-          // with `prefers-reduced-motion: reduce`. The static ring still
-          // renders so the layout doesn't collapse — paired with the
-          // visible "Loading proof" text below it the loading state
-          // remains comprehensible without motion. role/aria-label give
-          // SR users an explicit cue that loading is in progress
-          // (the .animate-spin div alone isn't announced).
           role="status"
           aria-label="Loading"
-          className="mx-auto mt-6 h-7 w-7 animate-spin motion-reduce:animate-none rounded-full border-2"
-          style={{ borderColor: 'rgba(26,22,18,0.15)', borderTopColor: PAPER_INK }}
+          className="mx-auto mt-8 h-7 w-7 animate-spin motion-reduce:animate-none rounded-full border-2 border-line"
+          style={{ borderTopColor: 'var(--c-ink)' }}
         />
-        <p
-          className="mt-4 font-paper-mono uppercase"
-          style={{ fontSize: 10, letterSpacing: '0.24em', color: PAPER_TERTIARY }}
-        >
+        <p className="eyebrow mt-5" style={{ letterSpacing: '0.24em' }}>
           Loading proof
         </p>
       </div>
@@ -5132,24 +5143,16 @@ function LoadingScreen() {
 
 function NotFoundScreen() {
   return (
-    <div className="flex min-h-dvh items-center justify-center" style={{ background: PAPER_CREAM }}>
+    <div className="flex min-h-dvh items-center justify-center bg-canvas text-ink">
       <div className="text-center px-6">
         <PlasmaEyebrow />
-        <h1
-          className="mt-6"
-          style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(48px, 9vw, 72px)', lineHeight: 1, color: PAPER_INK }}
-        >
-          Not found
-        </h1>
-        <p
-          className="mx-auto mt-4 max-w-sm"
-          style={{ fontFamily: SERIF, fontSize: 18, lineHeight: 1.45, color: PAPER_TERTIARY }}
-        >
+        <h1 className="h-display mt-8">Not found</h1>
+        <p className="body-soft mx-auto mt-4 max-w-sm">
           This proof link isn't valid or has expired. If you were sent here recently, please get in touch.
         </p>
         <p
-          className="mt-8 font-paper-mono uppercase"
-          style={{ fontSize: 10, letterSpacing: '0.32em', color: 'rgba(26,22,18,0.30)' }}
+          className="eyebrow mt-10"
+          style={{ letterSpacing: '0.32em', color: 'var(--c-ink-dim)' }}
         >
           404
         </p>
@@ -5159,69 +5162,35 @@ function NotFoundScreen() {
 }
 
 function AbandonedScreen({ proof }: { proof: PublicProof }) {
+  // Same masthead rule as the live page: company prominent when
+  // present (with the contact name as a muted sub-line), contact
+  // name prominent when no company. Keeps the customer's brand
+  // presence coherent across the live and abandoned screens.
+  const trimmedCompany = proof.company?.trim() ?? ''
+  const trimmedName = proof.customer_name?.trim() ?? ''
+  const companyProminent = trimmedCompany.length > 0
+  const primary = companyProminent ? proof.company! : proof.customer_name
+  const subline = companyProminent && trimmedName.length > 0 ? proof.customer_name : null
   return (
-    <div className="min-h-dvh" style={{ background: PAPER_CREAM }}>
+    <div className="min-h-dvh bg-canvas text-ink">
       <div className="mx-auto max-w-4xl px-4 py-12 sm:px-6 sm:py-16 lg:px-8">
         <header className="mb-12">
-          <p
-            className="font-paper-mono uppercase"
-            style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
-          >
-            Proof for
-          </p>
-          {/* Same masthead rule as the live page: company prominent
-              when present (with the contact name as a muted sub-
-              line), contact name prominent when no company. Keeps
-              the customer's brand presence coherent across the live
-              and abandoned screens. */}
-          {(() => {
-            const trimmedCompany = proof.company?.trim() ?? ''
-            const trimmedName = proof.customer_name?.trim() ?? ''
-            const companyProminent = trimmedCompany.length > 0
-            const primary = companyProminent ? proof.company! : proof.customer_name
-            const subline = companyProminent && trimmedName.length > 0
-              ? proof.customer_name
-              : null
-            return (
-              <>
-                <h1
-                  className="mt-3"
-                  style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(36px, 7vw, 56px)', lineHeight: 1.05, color: PAPER_INK }}
-                >
-                  {primary}
-                </h1>
-                {subline && (
-                  <p
-                    className="mt-2"
-                    style={{ fontFamily: SERIF, fontSize: 22, color: PAPER_TERTIARY }}
-                  >
-                    {subline}
-                  </p>
-                )}
-              </>
-            )
-          })()}
+          <span className="eyebrow">Proof for</span>
+          <h1 className="h1 mt-3" style={{ fontSize: 'clamp(36px, 7vw, 56px)' }}>
+            {primary}
+          </h1>
+          {subline && (
+            <p className="body-soft mt-2" style={{ fontSize: 22 }}>
+              {subline}
+            </p>
+          )}
         </header>
-        <div
-          className="rounded-2xl p-10 text-center"
-          style={{ background: PAPER_TINT_1, border: '1px solid rgba(26,22,18,0.10)' }}
-        >
-          <p
-            className="font-paper-mono uppercase"
-            style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
-          >
+        <div className="rounded-[14px] p-10 text-center bg-surface border border-line">
+          <span className="eyebrow" style={{ letterSpacing: '0.32em' }}>
             Closed
-          </p>
-          <h2
-            className="mt-3"
-            style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, color: PAPER_INK }}
-          >
-            This proof is closed
-          </h2>
-          <p
-            className="mx-auto mt-3 max-w-md"
-            style={{ fontFamily: SERIF, fontSize: 17, lineHeight: 1.5, color: PAPER_TERTIARY }}
-          >
+          </span>
+          <h2 className="h2 mt-3">This proof is closed</h2>
+          <p className="body-soft mx-auto mt-3 max-w-md" style={{ fontSize: 16 }}>
             If you'd like to revisit your business cards, please get in touch.
           </p>
         </div>
