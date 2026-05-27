@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Download, Send, Check, Layers, PoundSterling, BookOpen, Info } from 'lucide-react'
+import { Download, Send, Check, Layers, PoundSterling, BookOpen, Info, Eye } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { PlasmaWordmark, Pill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, StatusRule, tokens, type PillColour } from '../design'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
@@ -11,7 +11,6 @@ import { deriveSharedApprovalState } from '../lib/sharedApproval'
 import { formatPrice } from '../lib/currency'
 import { type GridImage } from '../components/ImageGrid'
 import { MaterialOptionTabs } from '../components/MaterialOptionTabs'
-import { PaperRecipientBand } from '../components/PaperRecipientBand'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LayeredConstructionPanel } from '../components/LayeredConstructionPanel'
 import { MetalThicknessPanel } from '../components/MetalThicknessPanel'
@@ -2159,13 +2158,11 @@ export default function CustomerProofPage() {
   // CTA buttons, pricing-grid numerals, file names, segmented
   // pill toggles, the DOWNLOAD chip, and the FRONT/BACK side
   // label — all locked-in keep-on-mono per the inventory.
-  const REG_A_BASE = {
-    fontFamily: SANS,
-    fontSize: 12,
-    fontWeight: 600,
-    letterSpacing: '0.12em',
-    textTransform: 'uppercase' as const,
-  }
+  // REG_A_BASE (Direction-B uppercase-mono label register) dropped
+  // when the recipient-band pill rendering moved to the .eyebrow
+  // class in PR 12c. Last consumer was the per-recipient approval
+  // pill which now uses .eyebrow + an explicit letter-spacing
+  // override.
   // Surface colour palette for the new registers. Dark sections
   // use #C8C8C8 for primary labels (one stop above the previous
   // text-white/45 ≈ #737373); light cream sections use #5F564D
@@ -2729,7 +2726,10 @@ export default function CustomerProofPage() {
             // per injected instance. Keeps "N proofs · M
             // recipients" accurate when a single shared front
             // renders inside two named pairs.
-            const plateCount = [...(sharedGroup?.images ?? []), ...namedGroups.flatMap((g) => g.images)].length
+            // plateCount (was used to drive the "(NN)" count chip
+            // in the V1 section header) dropped in PR 12c —
+            // the V2 "The set" header uses names · sides framing
+            // instead of unique-proofs count.
             // Recipient count derives from activeVersion.names —
             // the canonical list of who the proof is for — rather
             // than namedGroups (which is filtered by the active
@@ -2758,64 +2758,44 @@ export default function CustomerProofPage() {
                 aria-labelledby="section-proofs-heading"
                 className="bg-canvas text-ink"
               >
-                {/* Section header — left cluster is the Proofs
-                      heading + count subtitle; right cluster is the
-                      MaterialOptionTabs (finish / option selector
-                      preserved from the live data model — only the
-                      surrounding chrome restyles in this PR). The
-                      heading drops the dominant 56px serif used in
-                      the Direction-B "newspaper masthead" treatment
-                      to a quieter 32-40px display-sans, since the
-                      page hero already carries the customer name
-                      as the dominant object above. */}
-                  <div className="mb-8 flex flex-wrap items-end justify-between gap-4 border-b border-line pb-4">
-                    <div>
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <h2
-                          id="section-proofs-heading"
-                          className="font-display font-medium tracking-[-0.02em] text-ink leading-tight"
-                          style={{ fontSize: 'clamp(28px, 4vw, 36px)' }}
-                        >
-                          Proofs
-                        </h2>
-                        {activeVersion.card_type !== 'membership' && (
-                          <span className="num num-sm text-ink-mute">
-                            ({String(plateCount).padStart(2, '0')})
-                          </span>
-                        )}
-                      </div>
-                      {/* Count subtitle — rendered for business
-                          cards only. Membership cards hide the
-                          whole line (the "proof count vs people"
-                          framing doesn't map to membership tiers).
-                          The special "Shared" branch survives for
-                          the rare all-shared business card (shared
-                          group only, no named groups). */}
-                      {activeVersion.card_type !== 'membership' && (
-                        <p className="mt-2 text-[13px] text-ink-soft">
-                          {plateCount === 1 ? '1 unique proof' : `${plateCount} unique proofs`}
-                          {recipientCount > 0 && (
-                            <>
-                              {' · '}
-                              {recipientCount === 1
-                                ? sharedGroup && namedGroups.length === 0
-                                  ? 'Shared'
-                                  : '1 person'
-                                : `${recipientCount} people`}
-                            </>
-                          )}
-                        </p>
-                      )}
-                    </div>
-                    {/* Material-option tabs — paper-register
-                        underlined tab strip per README §4. The
-                        tabs[] array maps versionOptions through
-                        the existing optionFromPrice derivation;
-                        no new pricing logic. Gate stays at
-                        versionOptions.length >= 2 (showOption-
-                        Switcher), so single-option materials
-                        don't render the strip. */}
-                    {showOptionSwitcher && (
+                {/* V2 section header: "The set" h2 + count eyebrow
+                    + gradient hairline. Right slot still hosts the
+                    MaterialOptionTabs strip when the version has 2+
+                    material options. Replaces the V1 "Proofs (NN) /
+                    N unique proofs · N people" treatment. Count copy
+                    moves to the eyebrow slot and trades the "N people"
+                    framing for "front + back" / sides description,
+                    closer to the V2 prototype's contact-sheet brief.
+                    Membership cards still skip the count entirely. */}
+                <div className="mb-6 flex flex-wrap items-baseline gap-3 sm:gap-4">
+                  <h2
+                    id="section-proofs-heading"
+                    className="font-display font-medium tracking-[-0.02em] text-ink leading-tight"
+                    style={{ fontSize: 'clamp(22px, 3vw, 28px)' }}
+                  >
+                    The set
+                  </h2>
+                  {activeVersion.card_type !== 'membership' && (() => {
+                    const namesLabel = recipientCount === 1
+                      ? sharedGroup && namedGroups.length === 0
+                        ? 'Shared'
+                        : '1 name'
+                      : `${String(recipientCount).padStart(2, '0')} names`
+                    const sidesLabel = augmentedNamedGroups.some(groupIsPair) ||
+                      (sharedStandaloneGroup && groupIsPair(sharedStandaloneGroup))
+                      ? 'front + back'
+                      : 'front only'
+                    return (
+                      <span className="eyebrow">{namesLabel} · {sidesLabel}</span>
+                    )
+                  })()}
+                  <span
+                    aria-hidden="true"
+                    className="hidden sm:block flex-1 h-px"
+                    style={{ background: 'linear-gradient(to right, var(--c-line), transparent)' }}
+                  />
+                  {showOptionSwitcher && (
+                    <div className="basis-full sm:basis-auto sm:ml-auto">
                       <MaterialOptionTabs
                         label={optionLabelSingular}
                         // Inside the !is_per_direction_pricing gate; null
@@ -2838,187 +2818,233 @@ export default function CustomerProofPage() {
                           }
                         })}
                       />
-                    )}
-                  </div>
+                    </div>
+                  )}
+                </div>
 
-                  {/* Shared group — renders alone when there
-                      are unconsumed shared images (either no
-                      named groups exist, or named groups exist
-                      but didn't need every shared image for
-                      virtual pairing). Heading stays suppressed;
-                      the approval banner in the hero strip
-                      carries that signal. Width matches the
-                      named groups below for a consistent
-                      section-wide image size. */}
-                  {sharedStandaloneGroup && (
-                    <PaperRecipientBand
-                      heading={sharedHeading}
-                      topRule={false}
-                    >
+                {/* V2 contact-sheet card layout. Each recipient
+                    (or the shared-standalone group) renders as a
+                    self-contained card panel: header band with a
+                    chip / heading / sides indicator, image grid
+                    with a hairline divider between front + back,
+                    per-recipient action band below. Replaces the
+                    Direction-B PaperRecipientBand wrapper.
+                    Renders in a vertical stack with consistent
+                    spacing between recipients. */}
+                <div className="space-y-5">
+                  {/* Shared standalone group — renders when there
+                      are unconsumed shared images. Uses a "Shared"
+                      eyebrow heading instead of a numbered chip
+                      since it's not a recipient. */}
+                  {sharedStandaloneGroup && (() => {
+                    const sharedPrimary = sharedHeading.split(' · ')[0] ?? 'Shared'
+                    const sharedDetail = sharedHeading.includes(' · ')
+                      ? sharedHeading.split(' · ').slice(1).join(' · ')
+                      : null
+                    return (
+                    <div className="bg-surface border border-line rounded-[14px] overflow-hidden">
+                      <div className="flex items-center gap-3 px-5 py-4 border-b border-line-soft">
+                        {/* No numbered chip on the shared block —
+                            "Shared" doesn't belong in a recipient
+                            sequence. Use a quieter icon-only chip
+                            to keep the visual rhythm with numbered
+                            cards below. */}
+                        <span className="grid place-items-center h-9 w-9 rounded-full bg-canvas border border-line text-ink-mute">
+                          <Layers size={14} aria-hidden="true" />
+                        </span>
+                        <div className="min-w-0">
+                          <div className="font-display font-medium text-ink text-[17px] leading-tight truncate">
+                            {sharedPrimary}
+                          </div>
+                          {sharedDetail && (
+                            <div className="eyebrow mt-0.5">{sharedDetail}</div>
+                          )}
+                        </div>
+                        <span className="ml-auto inline-flex items-center gap-1.5 eyebrow text-ink-mute">
+                          <Eye size={12} aria-hidden="true" />
+                          {groupIsPair(sharedStandaloneGroup) ? '2 sides' : `${sharedStandaloneGroup.images.length} ${sharedStandaloneGroup.images.length === 1 ? 'side' : 'sides'}`}
+                        </span>
+                      </div>
                       <div
                         className={
                           groupIsPair(sharedStandaloneGroup)
-                            ? 'grid grid-cols-1 gap-6 md:grid-cols-2'
-                            : 'space-y-6'
+                            ? 'grid grid-cols-1 gap-px bg-line-soft md:grid-cols-2'
+                            : 'space-y-5 p-5'
                         }
                       >
                         {sharedStandaloneGroup.images.map((img, idx) => (
-                          <PlateCard
+                          <div
                             key={img.id}
-                            image={img}
-                            brandColor={BRAND_ORDER[idx % BRAND_ORDER.length]}
-                            alt={`Proof version ${activeVersion.version_number}`}
-                            onClick={() => openDetailView({
-                              images: sharedStandaloneGroup.images,
-                              index: idx,
-                              displayLabel: 'Shared',
-                              versionId: activeVersion.id,
-                              recipientName: SHARED_APPROVAL_KEY,
-                            })}
-                            recipientLabel="Shared"
-                          />
+                            className={groupIsPair(sharedStandaloneGroup) ? 'bg-surface p-5' : ''}
+                          >
+                            <PlateCard
+                              image={img}
+                              brandColor={BRAND_ORDER[idx % BRAND_ORDER.length]}
+                              alt={`Proof version ${activeVersion.version_number}`}
+                              onClick={() => openDetailView({
+                                images: sharedStandaloneGroup.images,
+                                index: idx,
+                                displayLabel: 'Shared',
+                                versionId: activeVersion.id,
+                                recipientName: SHARED_APPROVAL_KEY,
+                              })}
+                              recipientLabel="Shared"
+                            />
+                          </div>
                         ))}
                       </div>
-                      {/* Shared band routing.
-                          * names.length > 0 → renderSharedInfoBand().
-                            Status-only panel; the shared section is
-                            approved-by-implication when every named
-                            recipient approves. No Approve button on
-                            this surface in the split-name case.
-                          * names.length === 0 → renderActionBand().
-                            All-shared one-off proof — the shared
-                            section IS the proof, so the customer
-                            still hits Approve here and the
-                            approved_* columns get written on the
-                            __shared__ row directly. */}
-                      {(activeVersion?.names.length ?? 0) > 0
-                        ? renderSharedInfoBand()
-                        : renderActionBand(SHARED_APPROVAL_KEY)}
-                    </PaperRecipientBand>
-                  )}
-
-                  {augmentedNamedGroups.length > 0 && (
-                    <div>
-                      {(() => {
-                        // Running colour-rotation index across
-                        // all groups in reading order so each
-                        // rendered image-instance on the page
-                        // gets a distinct bullet colour from
-                        // BRAND_ORDER (red → pink → indigo →
-                        // teal). Counted starts at the number of
-                        // images actually rendered in the
-                        // standalone shared section — NOT the
-                        // full shared-group size — so shared
-                        // images consumed into named groups via
-                        // virtual pairing don't inflate the
-                        // offset. A shared image injected into
-                        // two different named groups therefore
-                        // picks up two different colours (one
-                        // per rendered instance), which keeps
-                        // the palette cycling visibly across
-                        // every card rather than clustering two
-                        // cards onto the same hue.
-                        let colorIdx = sharedStandaloneGroup
-                          ? sharedStandaloneGroup.images.length
-                          : 0
-                        // When a shared-standalone group sits
-                        // above the named-groups block, keep the
-                        // rule + padding on the first named
-                        // group too — treats the shared block as
-                        // the preceding sibling so the shared →
-                        // first-named boundary reads as a proper
-                        // divider, not a floating introduction.
-                        // When there's no shared block above,
-                        // the first named group opens the list
-                        // and shouldn't sit behind a rule
-                        // (would read as a bracket).
-                        const firstNamedGroupSkipsRule = !sharedStandaloneGroup
-                        return augmentedNamedGroups.map((group, groupIdx) => {
-                          const pill =
-                            group.heading != null ? approvalPillFor(group.heading) : null
-                          const startIdx = colorIdx
-                          colorIdx += group.images.length
-                          // Top rule: 2px ink-at-80% per README §4
-                          // line 319. Suppressed on the very first
-                          // named band when no shared block sits
-                          // above it (firstNamedGroupSkipsRule), so
-                          // the list opens flush rather than under a
-                          // floating bracket.
-                          const showTopRule = !(firstNamedGroupSkipsRule && groupIdx === 0)
-                          const heading = group.heading
-                          const bandHeading =
-                            heading != null ? `${firstName(heading)}'s card` : ''
-                          return (
-                            <PaperRecipientBand
-                              key={group.heading ?? ''}
-                              heading={bandHeading}
-                              topRule={showTopRule}
-                              pillSlot={
-                                pill ? (
-                                  <span
-                                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1"
-                                    style={{
-                                      ...REG_A_BASE,
-                                      background: 'rgba(81,180,148,0.14)',
-                                      color: '#176b3f',
-                                      border: '1px solid rgba(81,180,148,0.45)',
-                                    }}
-                                  >
-                                    <svg
-                                      width="9"
-                                      height="9"
-                                      viewBox="0 0 12 12"
-                                      fill="none"
-                                      aria-hidden="true"
-                                    >
-                                      <path
-                                        d="M2.5 6.5L5 9L9.5 3.5"
-                                        stroke="#176b3f"
-                                        strokeWidth="1.8"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                      />
-                                    </svg>
-                                    {pill}
-                                  </span>
-                                ) : null
-                              }
-                            >
-                              <div
-                                className={
-                                  groupIsPair(group)
-                                    ? 'grid grid-cols-1 gap-10 md:grid-cols-2'
-                                    : 'space-y-10'
-                                }
-                              >
-                                {group.images.map((img, localIdx) => {
-                                  const dotIdx = startIdx + localIdx
-                                  return (
-                                    <PlateCard
-                                      key={img.id}
-                                      image={img}
-                                      brandColor={BRAND_ORDER[dotIdx % BRAND_ORDER.length]}
-                                      alt={`${group.heading} — proof version ${activeVersion.version_number}`}
-                                      onClick={() => openDetailView({
-                                        images: group.images,
-                                        index: localIdx,
-                                        displayLabel: group.heading ?? null,
-                                        versionId: activeVersion.id,
-                                        recipientName: group.heading ?? SHARED_APPROVAL_KEY,
-                                      })}
-                                      recipientLabel={group.heading ?? undefined}
-                                    />
-                                  )
-                                })}
-                              </div>
-                              {/* Phase 2.5 per-recipient action band. */}
-                              {group.heading != null && renderActionBand(group.heading)}
-                            </PaperRecipientBand>
-                          )
-                        })
-                      })()}
+                      {/* Shared band routing — preserved verbatim
+                          from the prior layout. names.length > 0 →
+                          renderSharedInfoBand (status-only, shared
+                          section approved-by-implication once every
+                          named recipient approves). names empty →
+                          renderActionBand (all-shared one-off, the
+                          shared section IS the proof). */}
+                      <div className="border-t border-line-soft px-5 py-4">
+                        {(activeVersion?.names.length ?? 0) > 0
+                          ? renderSharedInfoBand()
+                          : renderActionBand(SHARED_APPROVAL_KEY)}
+                      </div>
                     </div>
-                  )}
+                    )
+                  })()}
+
+                  {augmentedNamedGroups.length > 0 && (() => {
+                    // Running colour-rotation index across all groups
+                    // in reading order so each rendered image-instance
+                    // on the page gets a distinct bullet colour from
+                    // BRAND_ORDER (red → pink → indigo → teal). Starts
+                    // at the number of images actually rendered in the
+                    // standalone shared section — NOT the full shared-
+                    // group size — so shared images consumed into named
+                    // groups via virtual pairing don't inflate the
+                    // offset. A shared image injected into two
+                    // different named groups therefore picks up two
+                    // different colours (one per rendered instance).
+                    let colorIdx = sharedStandaloneGroup
+                      ? sharedStandaloneGroup.images.length
+                      : 0
+                    return augmentedNamedGroups.map((group, groupIdx) => {
+                      const pill =
+                        group.heading != null ? approvalPillFor(group.heading) : null
+                      const startIdx = colorIdx
+                      colorIdx += group.images.length
+                      const heading = group.heading
+                      const bandHeading =
+                        heading != null ? `${firstName(heading)}'s card` : ''
+                      // Numbered chip — recipient index in the
+                      // augmented sequence, zero-padded to two digits.
+                      // Shared block above doesn't carry a number, so
+                      // we count named groups from 01 regardless of
+                      // whether a shared block precedes them.
+                      const chipLabel = String(groupIdx + 1).padStart(2, '0')
+                      const isPair = groupIsPair(group)
+                      const sidesLabel = isPair
+                        ? '2 sides'
+                        : `${group.images.length} ${group.images.length === 1 ? 'side' : 'sides'}`
+                      return (
+                        <div
+                          key={group.heading ?? ''}
+                          className="bg-surface border border-line rounded-[14px] overflow-hidden"
+                        >
+                          {/* Card header band: numbered chip + name +
+                              optional approval pill on its right + sides
+                              indicator far right. Replaces the
+                              PaperRecipientBand wrapper. */}
+                          <div className="flex items-center gap-3 px-5 py-4 border-b border-line-soft">
+                            <span className="grid place-items-center h-9 w-9 rounded-full bg-canvas border border-line eyebrow text-ink">
+                              {chipLabel}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="font-display font-medium text-ink text-[17px] leading-tight truncate">
+                                {bandHeading}
+                              </div>
+                            </div>
+                            {pill && (
+                              <span
+                                className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 eyebrow"
+                                style={{
+                                  background: 'rgba(14,155,78,0.14)',
+                                  color: 'var(--c-in-stock)',
+                                  border: '1px solid rgba(14,155,78,0.3)',
+                                  letterSpacing: '0.14em',
+                                }}
+                              >
+                                <svg
+                                  width="9"
+                                  height="9"
+                                  viewBox="0 0 12 12"
+                                  fill="none"
+                                  aria-hidden="true"
+                                >
+                                  <path
+                                    d="M2.5 6.5L5 9L9.5 3.5"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                </svg>
+                                {pill}
+                              </span>
+                            )}
+                            <span className="inline-flex items-center gap-1.5 eyebrow text-ink-mute">
+                              <Eye size={12} aria-hidden="true" />
+                              {sidesLabel}
+                            </span>
+                          </div>
+                          {/* Image grid — front + back side-by-side at
+                              md+, stacked at smaller widths. The gap-px
+                              + bg-line-soft creates the hairline divider
+                              between cells without per-cell borders. */}
+                          <div
+                            className={
+                              isPair
+                                ? 'grid grid-cols-1 gap-px bg-line-soft md:grid-cols-2'
+                                : 'space-y-5 p-5'
+                            }
+                          >
+                            {group.images.map((img, localIdx) => {
+                              const dotIdx = startIdx + localIdx
+                              return (
+                                <div
+                                  key={img.id}
+                                  className={isPair ? 'bg-surface p-5' : ''}
+                                >
+                                  <PlateCard
+                                    image={img}
+                                    brandColor={BRAND_ORDER[dotIdx % BRAND_ORDER.length]}
+                                    alt={`${group.heading} — proof version ${activeVersion.version_number}`}
+                                    onClick={() => openDetailView({
+                                      images: group.images,
+                                      index: localIdx,
+                                      displayLabel: group.heading ?? null,
+                                      versionId: activeVersion.id,
+                                      recipientName: group.heading ?? SHARED_APPROVAL_KEY,
+                                    })}
+                                    recipientLabel={group.heading ?? undefined}
+                                  />
+                                </div>
+                              )
+                            })}
+                          </div>
+                          {/* Per-recipient action band — Phase 2.5
+                              approve / request-changes pair with its
+                              state-machine renderer. Lives inside the
+                              card with its own top border so the
+                              divider reads as "now act on this
+                              recipient" rather than as a free-floating
+                              afterthought. */}
+                          {group.heading != null && (
+                            <div className="border-t border-line-soft px-5 py-4">
+                              {renderActionBand(group.heading)}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })
+                  })()}
+                </div>
               </section>
             )
           })()}
