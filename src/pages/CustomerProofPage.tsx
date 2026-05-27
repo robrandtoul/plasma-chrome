@@ -2489,16 +2489,14 @@ export default function CustomerProofPage() {
             )}
 
             {/* Pricing PanelShell + split-name / shipping callouts.
-                Single-variant pricing renders here in the left rail
-                (the V2 design intent — narrow column with one row
-                per quantity). Multi-variant pricing tables don't
-                fit in the 360px rail (qty + 3+ variant price
-                columns overflow), so they conditionally render in
-                the right column instead via the same JSX block
-                below. The gate keys off livePricingSnapshot.variants
-                .length > 1 — variant-round versions skip the panel
+                Renders here in the left rail when the table is
+                narrow enough to fit (up to 3 columns total = qty +
+                2 variant prices, i.e. variants.length <= 2). Wider
+                tables (4+ columns) overflow the 360px rail and
+                render in the right column via the same JSX block
+                below. Variant-round versions skip the panel
                 entirely. */}
-            {!activeVersion.is_variant_round && livePricingSnapshot.variants.length <= 1 && (
+            {!activeVersion.is_variant_round && livePricingSnapshot.variants.length <= 2 && (
               <>
                 <PanelShell
                   eyebrow={
@@ -3122,13 +3120,15 @@ export default function CustomerProofPage() {
               duplicate. is_variant_round is false on every row
               in production today, so this gate is a no-op for
               every existing proof. */}
-          {/* Multi-variant Pricing — renders here in the right
-              column when the snapshot has more than one priced
-              variant, since the qty + N variant-price columns
-              don't fit in the 360px left rail. Single-variant
-              pricing keeps its V2 position in the left rail. The
-              JSX shape mirrors the aside's Pricing block above. */}
-          {!activeVersion.is_variant_round && livePricingSnapshot.variants.length > 1 && (
+          {/* Wide-table Pricing — renders here in the right column
+              when the snapshot has 3 or more priced variants
+              (4+ total columns: qty + N variant prices). The
+              360px left rail comfortably fits up to 3 columns
+              (qty + 2 prices); anything wider overflows.
+              Single- and two-variant pricing stay in the left
+              rail per V2 design intent. JSX shape mirrors the
+              aside's Pricing block above. */}
+          {!activeVersion.is_variant_round && livePricingSnapshot.variants.length > 2 && (
             <>
               <PanelShell
                 eyebrow={
