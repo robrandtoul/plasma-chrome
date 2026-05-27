@@ -45,7 +45,7 @@ export function PanelShell({
   return (
     <section className={sectionCls}>
       {(title || eyebrow) && (
-        <header className="flex items-center gap-[10px] px-[14px] py-3 bg-surface border-b border-line-soft">
+        <header className="flex items-center gap-[10px] px-[14px] pt-5 pb-3 bg-surface border-b border-line-soft">
           {Icon && (
             <span
               className="inline-flex items-center justify-center w-7 h-7 rounded-[6px] flex-shrink-0 border border-line-soft"
