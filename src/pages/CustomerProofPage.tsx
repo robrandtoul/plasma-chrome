@@ -19,11 +19,6 @@ import { ActionPanel } from '../components/ActionPanel'
 import { ProofDetailView } from '../components/ProofDetailView'
 import { firstName } from '../lib/firstName'
 import {
-  PAPER_CREAM,
-  PAPER_INK,
-  PAPER_SECONDARY,
-  PAPER_TERTIARY,
-  ACCENT,
   BRAND_ORDER,
   SERIF,
   SANS,
@@ -1457,13 +1452,10 @@ export default function CustomerProofPage() {
     const isLocked = lockState.kind === 'locked'
     const isChosen = isLocked && lockState.chosenVariantId === variant.id
 
-    const KICKER_STYLE = {
-      fontFamily: MONO,
-      fontSize: 11,
-      letterSpacing: '0.22em',
-      textTransform: 'uppercase' as const,
-    }
-
+    // Chosen direction — green Selected pill + headline + optional
+    // comment. Uses the same in-stock token as the per-recipient
+    // approval pill in PR 12c so the two "this has been confirmed"
+    // signals read as the same colour register across the page.
     if (isLocked && isChosen) {
       const actor = lockState.actorName ?? ''
       const dateStr = formatBandDate(lockState.createdAt)
@@ -1473,38 +1465,38 @@ export default function CustomerProofPage() {
           ? `Chosen by ${actor}.`
           : 'This direction was selected.'
       return (
-        <div
-          className="mt-6 flex flex-col gap-2 rounded-md py-[18px] px-[22px]"
-          style={{
-            background: 'rgba(81,180,148,0.18)',
-            border: '1px solid rgba(81,180,148,0.45)',
-            color: '#1a1612',
-          }}
-        >
-          <span style={{ ...KICKER_STYLE, color: '#176b3f' }}>
-            Selected
-          </span>
+        <div className="flex flex-col gap-2">
           <span
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 eyebrow self-start"
             style={{
-              fontFamily: SERIF,
-              fontWeight: 400,
-              fontSize: 22,
-              lineHeight: 1.35,
-              color: '#1a1612',
+              background: 'rgba(14,155,78,0.14)',
+              color: 'var(--c-in-stock)',
+              border: '1px solid rgba(14,155,78,0.3)',
+              letterSpacing: '0.14em',
             }}
           >
+            <svg
+              width="9"
+              height="9"
+              viewBox="0 0 12 12"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M2.5 6.5L5 9L9.5 3.5"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Selected
+          </span>
+          <span className="font-display font-medium text-ink text-[17px] leading-snug">
             {headlineText}
           </span>
           {lockState.comment && (
-            <p
-              className="mt-1"
-              style={{
-                fontFamily: SANS,
-                fontSize: 14,
-                lineHeight: 1.55,
-                color: '#1a1612',
-              }}
-            >
+            <p className="text-[14px] text-ink-soft leading-[1.55]">
               "{lockState.comment}"
             </p>
           )}
@@ -1514,17 +1506,7 @@ export default function CustomerProofPage() {
 
     if (isLocked && !isChosen) {
       return (
-        <div
-          className="mt-6 flex items-center rounded-md py-[14px] px-[18px]"
-          style={{
-            background: 'rgba(0,0,0,0.04)',
-            border: '1px solid rgba(0,0,0,0.10)',
-          }}
-        >
-          <span style={{ ...KICKER_STYLE, color: 'rgba(26,22,18,0.55)' }}>
-            Not selected
-          </span>
-        </div>
+        <span className="eyebrow text-ink-mute">Not selected</span>
       )
     }
 
@@ -1542,19 +1524,17 @@ export default function CustomerProofPage() {
       return null
     }
     return (
-      <div className="mt-6">
-        <ButtonGhost
-          block
-          onClick={() =>
-            openVariantActionPanel(activeVersion.id, {
-              id: variant.id,
-              display_name: variant.display_name,
-            })
-          }
-        >
-          Choose this direction
-        </ButtonGhost>
-      </div>
+      <ButtonGhost
+        block
+        onClick={() =>
+          openVariantActionPanel(activeVersion.id, {
+            id: variant.id,
+            display_name: variant.display_name,
+          })
+        }
+      >
+        Choose this direction
+      </ButtonGhost>
     )
   }
 
@@ -1610,316 +1590,236 @@ export default function CustomerProofPage() {
     const isLocked = lockState.kind === 'locked'
 
     return (
-      <>
-        {/* ───── Variant comparison ───────────────────────────────────
-            Side-by-side variant cards. Each card carries its own
-            heading (display_name), image cluster, and action band.
-            Renders ahead of the pricing card so the customer scans
-            and chooses a direction before scrolling to price detail.
-            The whole grid locks once any selection lands; the chosen
-            variant gets the emerald "Selected" banner, others go to
-            muted "Not selected" + reduced opacity. */}
-        <section
-          aria-labelledby="section-variant-grid-heading"
-          style={{
-            background: PAPER_CREAM,
-            color: PAPER_INK,
-          }}
-        >
-          <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-            <div
-              className="mb-10 flex flex-wrap items-end justify-between gap-4 border-b-2 pb-4"
-              style={{ borderColor: 'rgba(26,22,18,0.8)' }}
+      <div className="space-y-6">
+        {/* V2 contact-sheet treatment for the variant comparison.
+            Inline section header ("Choose a direction" + count
+            eyebrow + gradient hairline) matches the plates section
+            from PR 12c. Each variant renders as a V2 numbered card
+            panel: header band with chip + display_name + sides
+            indicator, image grid below, per-variant action band on
+            a top border at the bottom. */}
+        <div>
+          <div className="mb-6 flex flex-wrap items-baseline gap-3 sm:gap-4">
+            <h2
+              id="section-variant-grid-heading"
+              className="font-display font-medium tracking-[-0.02em] text-ink leading-tight"
+              style={{ fontSize: 'clamp(22px, 3vw, 28px)' }}
             >
-              <div>
-                <h2
-                  id="section-variant-grid-heading"
-                  className="leading-none break-words"
+              Choose a direction
+            </h2>
+            <span className="eyebrow">
+              {variants.length === 1
+                ? '01 direction'
+                : `${String(variants.length).padStart(2, '0')} directions · pick one`}
+            </span>
+            <span
+              aria-hidden="true"
+              className="hidden sm:block flex-1 h-px"
+              style={{ background: 'linear-gradient(to right, var(--c-line), transparent)' }}
+            />
+          </div>
+          {/* Per-direction-pricing pointer (000142, renamed 000144).
+              Sits between the header and the variant cards so the
+              customer reads it as part of the section's framing.
+              Per-direction pricing also fires when directions differ
+              in thickness/tier within the same material family, so
+              the by-material framing was sometimes inaccurate. */}
+          {activeVersion.is_per_direction_pricing && (
+            <p className="mb-5 text-[14px] text-ink-soft leading-[1.55]">
+              Each direction is priced individually. See your email for details.
+            </p>
+          )}
+          <div className={gridClass}>
+            {variants.map((variant, variantIdx) => {
+              const variantImages = imagesByVariant.get(variant.id) ?? []
+              // Per-variant 2-sided support. Front images include
+              // any legacy side=null rows so existing variant
+              // rounds without a side stamp render unchanged
+              // (000143 backfilled production rows to 'front', so
+              // the null-tolerant filter is belt-and-braces for
+              // any future drift). Back images render as a second
+              // cluster below the front, separated by a small
+              // eyebrow label — only when the designer actually
+              // uploaded a back side for this variant.
+              const frontImages = variantImages.filter(
+                (img) => img.side === 'front' || img.side == null,
+              )
+              const backImages = variantImages.filter(
+                (img) => img.side === 'back',
+              )
+              const hasBack = backImages.length > 0
+              // Variant-round navigable set — what the detail view
+              // (Phase 2) walks through with its chevrons. Front-
+              // then-back across this single variant card; the
+              // rest of the page (other variants, the shared
+              // section) is not part of the same set, so chevron
+              // navigation never escapes the variant the customer
+              // clicked into.
+              const variantNavigableImages: GridImage[] = hasBack
+                ? [...frontImages, ...backImages]
+                : frontImages
+              const isChosen =
+                isLocked && lockState.chosenVariantId === variant.id
+              const dimmed = isLocked && !isChosen
+              const chipLabel = String(variantIdx + 1).padStart(2, '0')
+              const sidesLabel = hasBack
+                ? '2 sides'
+                : `${frontImages.length} ${frontImages.length === 1 ? 'side' : 'sides'}`
+              let colorIdx = 0
+              return (
+                <article
+                  key={variant.id}
+                  className="bg-surface border rounded-[14px] overflow-hidden flex flex-col"
                   style={{
-                    fontFamily: SERIF,
-                    fontWeight: 400,
-                    fontSize: 'clamp(40px, 9vw, 56px)',
-                    color: PAPER_INK,
+                    borderColor: isChosen
+                      ? 'rgba(14,155,78,0.4)'
+                      : 'var(--c-line)',
+                    opacity: dimmed ? 0.55 : 1,
+                    transition: 'opacity 200ms ease-out',
                   }}
                 >
-                  Choose a direction
-                </h2>
-                <p
-                  className="mt-3 block"
-                  style={{
-                    fontFamily: SANS,
-                    fontSize: 15,
-                    color: PAPER_TERTIARY,
-                  }}
-                >
-                  {variants.length === 1
-                    ? '1 direction'
-                    : `${variants.length} directions · pick one`}
-                </p>
-                {/* Per-direction-pricing pointer (000142, renamed 000144).
-                    Sits under the count subtitle so the customer reads
-                    it as part of the section's framing, not as an alert.
-                    The per-direction pricing decisions live in the email
-                    thread; this line is just the signpost. Copy moved
-                    away from "Pricing varies by material…" — per-
-                    direction pricing also fires when directions differ
-                    in thickness or tier within the same material family,
-                    so the by-material framing was sometimes inaccurate. */}
-                {activeVersion.is_per_direction_pricing && (
-                  <p
-                    className="mt-2"
-                    style={{
-                      fontFamily: SANS,
-                      fontSize: 14,
-                      color: PAPER_SECONDARY,
-                    }}
-                  >
-                    Each direction is priced individually. See your email for details.
-                  </p>
-                )}
-              </div>
-            </div>
-            <div className={gridClass}>
-              {variants.map((variant) => {
-                const variantImages = imagesByVariant.get(variant.id) ?? []
-                // Per-variant 2-sided support. Front images include
-                // any legacy side=null rows so existing variant
-                // rounds without a side stamp render unchanged
-                // (000143 backfilled production rows to 'front', so
-                // the null-tolerant filter is belt-and-braces for
-                // any future drift). Back images render as a second
-                // cluster below the front, separated by a small
-                // mono kicker — only when the designer actually
-                // uploaded a back side for this variant.
-                const frontImages = variantImages.filter(
-                  (img) => img.side === 'front' || img.side == null,
-                )
-                const backImages = variantImages.filter(
-                  (img) => img.side === 'back',
-                )
-                const hasBack = backImages.length > 0
-                // Variant-round navigable set — what the detail view
-                // (Phase 2) walks through with its chevrons. Front-
-                // then-back across this single variant card; the
-                // rest of the page (other variants, the shared
-                // section) is not part of the same set, so chevron
-                // navigation never escapes the variant the customer
-                // clicked into.
-                const variantNavigableImages: GridImage[] = hasBack
-                  ? [...frontImages, ...backImages]
-                  : frontImages
-                const isChosen =
-                  isLocked && lockState.chosenVariantId === variant.id
-                const dimmed = isLocked && !isChosen
-                let colorIdx = 0
-                return (
-                  <article
-                    key={variant.id}
-                    className="flex flex-col p-6 sm:p-7"
-                    style={{
-                      background: '#ffffff',
-                      border: isChosen
-                        ? '1px solid rgba(81,180,148,0.45)'
-                        : '1px solid rgba(26,22,18,0.12)',
-                      opacity: dimmed ? 0.55 : 1,
-                      transition: 'opacity 200ms ease-out',
-                    }}
-                  >
-                    <h3
-                      className="break-words"
-                      style={{
-                        fontFamily: SERIF,
-                        fontWeight: 400,
-                        fontSize: 'clamp(24px, 5vw, 30px)',
-                        lineHeight: 1.05,
-                        color: PAPER_INK,
-                      }}
-                    >
-                      {variant.display_name}
-                    </h3>
-                    {variantImages.length === 0 ? (
-                      <p
-                        className="mt-6"
-                        style={{
-                          fontFamily: SANS,
-                          fontSize: 14,
-                          color: PAPER_TERTIARY,
-                        }}
-                      >
+                  {/* Card header band: numbered chip + display_name
+                      + sides indicator. Mirrors the per-recipient
+                      card pattern from PR 12c. */}
+                  <div className="flex items-center gap-3 px-5 py-4 border-b border-line-soft">
+                    <span className="grid place-items-center h-9 w-9 rounded-full bg-canvas border border-line eyebrow text-ink">
+                      {chipLabel}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-display font-medium text-ink text-[17px] leading-tight truncate">
+                        {variant.display_name}
+                      </div>
+                    </div>
+                    {variantImages.length > 0 && (
+                      <span className="inline-flex items-center gap-1.5 eyebrow text-ink-mute">
+                        <Eye size={12} aria-hidden="true" />
+                        {sidesLabel}
+                      </span>
+                    )}
+                  </div>
+                  {/* Image area. Empty state, two-sided sub-grid,
+                      or single cluster. */}
+                  {variantImages.length === 0 ? (
+                    <div className="p-5">
+                      <p className="text-[14px] text-ink-mute">
                         No images uploaded for this direction yet.
                       </p>
-                    ) : hasBack ? (
-                      // Two-sided: Front and Back render side-by-side
-                      // at sm+ (≥ 640px) so the variant card stays
-                      // roughly the same height as a single-sided card
-                      // alongside it. Below sm, fall back to vertical
-                      // stacking — side-by-side inside a comparison-
-                      // grid column at <640px would crush each image
-                      // too small to read. Order is fixed Front-Left,
-                      // Back-Right regardless of image sort_order.
-                      <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2">
-                        <div>
-                          <p
-                            className="font-paper-mono uppercase"
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 500,
-                              letterSpacing: '0.32em',
-                              color: PAPER_TERTIARY,
-                            }}
-                          >
-                            Front
-                          </p>
-                          <div className="mt-2 space-y-5">
-                            {frontImages.map((img) => (
-                              <PlateCard
-                                key={img.id}
-                                image={img}
-                                brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
-                                alt={`${variant.display_name} — proof version ${activeVersion.version_number}`}
-                                onClick={() => openDetailView({
-                                  images: variantNavigableImages,
-                                  index: variantNavigableImages.findIndex((x) => x.id === img.id),
-                                  displayLabel: variant.display_name,
-                                  versionId: activeVersion.id,
-                                  recipientName: SHARED_APPROVAL_KEY,
-                                  roundVariant: { id: variant.id, displayName: variant.display_name },
-                                })}
-                              />
-                            ))}
-                          </div>
-                        </div>
-                        <div>
-                          <p
-                            className="font-paper-mono uppercase"
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 500,
-                              letterSpacing: '0.32em',
-                              color: PAPER_TERTIARY,
-                            }}
-                          >
-                            Back
-                          </p>
-                          <div className="mt-2 space-y-5">
-                            {backImages.map((img) => (
-                              <PlateCard
-                                key={img.id}
-                                image={img}
-                                brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
-                                alt={`${variant.display_name} (back) — proof version ${activeVersion.version_number}`}
-                                onClick={() => openDetailView({
-                                  images: variantNavigableImages,
-                                  index: variantNavigableImages.findIndex((x) => x.id === img.id),
-                                  displayLabel: variant.display_name,
-                                  versionId: activeVersion.id,
-                                  recipientName: SHARED_APPROVAL_KEY,
-                                  roundVariant: { id: variant.id, displayName: variant.display_name },
-                                })}
-                              />
-                            ))}
-                          </div>
+                    </div>
+                  ) : hasBack ? (
+                    // Two-sided: Front and Back render side-by-side
+                    // at sm+ (≥ 640px) so the variant card stays
+                    // roughly the same height as a single-sided card
+                    // alongside it. Below sm, fall back to vertical
+                    // stacking — side-by-side inside a comparison-
+                    // grid column at <640px would crush each image
+                    // too small to read. Order is fixed Front-Left,
+                    // Back-Right regardless of image sort_order.
+                    <div className="grid grid-cols-1 gap-px bg-line-soft sm:grid-cols-2">
+                      <div className="bg-surface p-5">
+                        <p className="eyebrow text-ink-mute mb-2">Front</p>
+                        <div className="space-y-5">
+                          {frontImages.map((img) => (
+                            <PlateCard
+                              key={img.id}
+                              image={img}
+                              brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
+                              alt={`${variant.display_name} — proof version ${activeVersion.version_number}`}
+                              onClick={() => openDetailView({
+                                images: variantNavigableImages,
+                                index: variantNavigableImages.findIndex((x) => x.id === img.id),
+                                displayLabel: variant.display_name,
+                                versionId: activeVersion.id,
+                                recipientName: SHARED_APPROVAL_KEY,
+                                roundVariant: { id: variant.id, displayName: variant.display_name },
+                              })}
+                            />
+                          ))}
                         </div>
                       </div>
-                    ) : (
-                      // Single-sided: full-width Front cluster, no
-                      // kicker. Byte-identical to the pre-2-sided
-                      // render path.
-                      <div className="mt-5 space-y-5">
-                        {frontImages.map((img) => (
-                          <PlateCard
-                            key={img.id}
-                            image={img}
-                            brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
-                            alt={`${variant.display_name} — proof version ${activeVersion.version_number}`}
-                            onClick={() => openDetailView({
-                              images: variantNavigableImages,
-                              index: variantNavigableImages.findIndex((x) => x.id === img.id),
-                              displayLabel: variant.display_name,
-                              versionId: activeVersion.id,
-                              recipientName: SHARED_APPROVAL_KEY,
-                              roundVariant: { id: variant.id, displayName: variant.display_name },
-                            })}
-                          />
-                        ))}
+                      <div className="bg-surface p-5">
+                        <p className="eyebrow text-ink-mute mb-2">Back</p>
+                        <div className="space-y-5">
+                          {backImages.map((img) => (
+                            <PlateCard
+                              key={img.id}
+                              image={img}
+                              brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
+                              alt={`${variant.display_name} (back) — proof version ${activeVersion.version_number}`}
+                              onClick={() => openDetailView({
+                                images: variantNavigableImages,
+                                index: variantNavigableImages.findIndex((x) => x.id === img.id),
+                                displayLabel: variant.display_name,
+                                versionId: activeVersion.id,
+                                recipientName: SHARED_APPROVAL_KEY,
+                                roundVariant: { id: variant.id, displayName: variant.display_name },
+                              })}
+                            />
+                          ))}
+                        </div>
                       </div>
-                    )}
+                    </div>
+                  ) : (
+                    // Single-sided: full-width Front cluster, no eyebrow.
+                    <div className="p-5 space-y-5">
+                      {frontImages.map((img) => (
+                        <PlateCard
+                          key={img.id}
+                          image={img}
+                          brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
+                          alt={`${variant.display_name} — proof version ${activeVersion.version_number}`}
+                          onClick={() => openDetailView({
+                            images: variantNavigableImages,
+                            index: variantNavigableImages.findIndex((x) => x.id === img.id),
+                            displayLabel: variant.display_name,
+                            versionId: activeVersion.id,
+                            recipientName: SHARED_APPROVAL_KEY,
+                            roundVariant: { id: variant.id, displayName: variant.display_name },
+                          })}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {/* Per-variant action band — sits on a top border
+                      so the divider reads as "now act on this
+                      direction". Matches the per-recipient action
+                      band layout from PR 12c. */}
+                  <div className="mt-auto border-t border-line-soft px-5 py-4">
                     {renderVariantBand(variant)}
-                  </article>
-                )
-              })}
-            </div>
+                  </div>
+                </article>
+              )
+            })}
           </div>
-        </section>
+        </div>
 
-        {/* ───── Pricing (variant-round view) ─────────────────────────
-            Variant rounds are single-material/single-currency so the
-            pricing card is shared across every variant card. Sits
-            below the variant grid — the customer compares directions
-            first, then sees price context once they're ready to act.
-            PaperPricingTable is the same component the standard view
-            uses; quantitySurcharges is empty on this branch (no
-            option dimension).
+        {/* Pricing card. Variant rounds are single-material /
+            single-currency so the pricing card is shared across
+            every variant card. Sits below the variant grid — the
+            customer compares directions first, then sees price
+            context once they're ready to act.
 
-            Per-direction-pricing variant rounds (000142, renamed 000144) hide this card
-            entirely — pricing is per-variant and handled out-of-
-            band. The pointer line above the variant grid signposts
-            that decision to the customer. */}
+            Per-direction-pricing variant rounds (000142, renamed
+            000144) hide this card entirely — pricing is per-variant
+            and handled out-of-band. The pointer line above the
+            variant grid signposts that decision to the customer. */}
         {!activeVersion.is_per_direction_pricing && (
-        <section
-          aria-labelledby="section-variant-pricing-heading"
-          style={{
-            background: PAPER_CREAM,
-            color: PAPER_INK,
-            borderTop: '1px solid rgba(26,22,18,0.10)',
-          }}
-        >
-          <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-            <div
-              className="mb-10 flex flex-wrap items-baseline justify-between gap-3 border-b-2 pb-4"
-              style={{ borderColor: 'rgba(26,22,18,0.8)' }}
-            >
-              <h2
-                id="section-variant-pricing-heading"
-                className="leading-none break-words"
-                style={{
-                  fontFamily: SERIF,
-                  fontWeight: 400,
-                  fontSize: 'clamp(40px, 9vw, 56px)',
-                  color: PAPER_INK,
-                }}
-              >
-                Pricing
-              </h2>
-              {!activeVersion.custom_quote && (
-                <p
-                  className="font-paper-mono uppercase"
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 500,
-                    letterSpacing: '0.22em',
-                    color: PAPER_INK,
-                  }}
-                >
+          <PanelShell
+            title="Pricing"
+            icon={PoundSterling}
+            accent={tokens.brand}
+            action={
+              !activeVersion.custom_quote ? (
+                <span className="eyebrow text-ink-mute">
                   {activeVersion.currency}
                   {activeVersion.currency === 'GBP' ? ' · VAT included' : ''}
-                </p>
-              )}
-            </div>
+                </span>
+              ) : null
+            }
+          >
             {activeVersion.custom_quote ? (
-              <div className="py-6 text-center">
-                <p
-                  className="mx-auto max-w-md"
-                  style={{
-                    fontFamily: SERIF,
-                    fontWeight: 400,
-                    fontSize: 22,
-                    color: PAPER_SECONDARY,
-                  }}
-                >
-                  This proof requires a custom quote. We'll be in touch separately with pricing.
-                </p>
-              </div>
+              <p className="text-[14px] text-ink-soft leading-[1.55] py-2">
+                This proof requires a custom quote. We'll be in touch separately with pricing.
+              </p>
             ) : (
               <PaperPricingTable
                 snapshot={livePricingSnapshot}
@@ -1940,33 +1840,16 @@ export default function CustomerProofPage() {
               />
             )}
             {!activeVersion.custom_quote && activeVersion.shipping_note && (
-              <div
-                className="mt-8 p-6"
-                style={{ border: '1px solid rgba(26,22,18,0.12)' }}
-              >
-                <p
-                  className="font-paper-mono uppercase"
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 500,
-                    letterSpacing: '0.32em',
-                    color: ACCENT,
-                  }}
-                >
-                  Shipping
-                </p>
-                <p
-                  className="mt-2"
-                  style={{ fontFamily: SERIF, fontSize: 18, color: PAPER_INK }}
-                >
+              <div className="mt-4 pt-4 border-t border-line-soft">
+                <p className="eyebrow text-ink-mute mb-1">Shipping</p>
+                <p className="text-[14px] text-ink-soft leading-[1.55]">
                   {activeVersion.shipping_note}
                 </p>
               </div>
             )}
-          </div>
-        </section>
+          </PanelShell>
         )}
-      </>
+      </div>
     )
   }
 
