@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import { DesignerHeader, ButtonCoral, ButtonGhost, ButtonInk, ProofStatusPill, type DesignerHeaderColour } from '../design'
-import { Plus, Filter, X, Maximize2 } from 'lucide-react'
+import { Plus, Filter, X, Maximize2, Bell, MessageSquare, Eye, Check } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -1368,6 +1368,44 @@ function buildPinSections(
 
 // ── Latest activity sidebar ──────────────────────────────────────────────────
 
+// Per-event-type visual mapping. Each entry picks the Lucide icon
+// and the colour token used for the icon-square tint + the icon
+// itself. The icon-square sits inside a 32x32 rounded-md block with
+// the colour at 14% opacity — same register as the per-recipient
+// approval pill on the customer page (PR 12c) so the dashboard's
+// "what happened" cues match the customer's "what state am I in"
+// cues.
+type ActivityVisual = {
+  icon: typeof Bell
+  // CSS colour (token var or hex). Used for both the icon and the
+  // square's tinted background via color-mix.
+  tint: string
+  verbCopy: (versionNumber: number) => string
+}
+
+const ACTIVITY_VISUAL: Record<DashboardLatestEvent['event_type'], ActivityVisual> = {
+  view: {
+    icon: Eye,
+    tint: 'var(--c-allocated)',
+    verbCopy: (v) => `opened v${v}`,
+  },
+  approve: {
+    icon: Check,
+    tint: 'var(--c-in-stock)',
+    verbCopy: (v) => `signed off v${v}`,
+  },
+  designer_override_approve: {
+    icon: Check,
+    tint: 'var(--c-ink-mute)',
+    verbCopy: (v) => `marked v${v} approved`,
+  },
+  request_changes: {
+    icon: MessageSquare,
+    tint: 'var(--c-low)',
+    verbCopy: (v) => `requested changes on v${v}`,
+  },
+}
+
 function LatestActivityPanel({
   events,
   navigate,
@@ -1376,49 +1414,43 @@ function LatestActivityPanel({
   navigate: (to: string) => void
 }) {
   return (
-    <div className="rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-      <div className="border-b border-gray-100 px-5 py-4">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500">Latest activity</h2>
-        <p className="mt-0.5 text-xs text-gray-400">Last 20 events</p>
+    <div className="rounded-[14px] bg-surface border border-line overflow-hidden">
+      {/* Header: bell icon in a coral-tinted square + LAST 24 HOURS
+          eyebrow + Today's activity h-display. The bell ties the
+          panel to the per-event icon-square idiom below — same
+          14% tint + solid icon treatment, same 32px box. */}
+      <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-line-soft">
+        <span
+          aria-hidden="true"
+          className="inline-flex items-center justify-center w-8 h-8 rounded-md shrink-0"
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--c-brand) 14%, transparent)',
+            color: 'var(--c-brand)',
+          }}
+        >
+          <Bell size={16} />
+        </span>
+        <div className="min-w-0">
+          <div className="eyebrow text-ink-mute">Last 24 hours</div>
+          <h2 className="font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0 text-[20px]">
+            Today's activity
+          </h2>
+        </div>
       </div>
       {events.length === 0 ? (
-        <p className="px-5 py-8 text-center text-sm text-gray-400">No customer activity yet.</p>
+        <p className="px-5 py-8 text-center text-sm text-ink-mute">
+          No customer activity yet.
+        </p>
       ) : (
-        <ul>
-          {events.map((e, i) => {
-            const isView = e.event_type === 'view'
-            const isApprove = e.event_type === 'approve'
-            const isOverride = e.event_type === 'designer_override_approve'
-            const verb = isView
-              ? `viewed v${e.version_number}`
-              : isApprove
-                ? 'approved'
-                : isOverride
-                  ? 'marked as approved (override)'
-                  : 'requested changes on'
-            const projectLabel = [e.contact_name, e.company_name].filter(Boolean).join(' · ') || '(no contact)'
-            const recipient = e.recipient_name && e.recipient_name !== '__shared__' ? e.recipient_name : 'shared'
-            const subline = isView
-              ? projectLabel
-              : `${projectLabel} · v${e.version_number} · ${recipient}`
-            const failed = !isView && !isOverride && e.helpscout_thread_id == null
-            const accent = isView
-              ? 'border-l-4 border-sky-500'
-              : isApprove
-                ? 'border-l-4 border-emerald-500'
-                : isOverride
-                  ? 'border-l-4 border-slate-600'
-                  : 'border-l-4 border-amber-500'
-            const dotClass = isView
-              ? 'bg-sky-500'
-              : isApprove
-                ? 'bg-emerald-500'
-                : isOverride
-                  ? 'bg-slate-600'
-                  : 'bg-amber-500'
-            const rowBg = (isApprove || isOverride)
-              ? 'bg-emerald-50 hover:bg-emerald-100 focus-visible:bg-emerald-100'
-              : 'hover:bg-gray-50 focus-visible:bg-gray-50'
+        <ul className="divide-y divide-line-soft">
+          {events.map((e) => {
+            const visual = ACTIVITY_VISUAL[e.event_type]
+            const Icon = visual.icon
+            const verb = visual.verbCopy(e.version_number)
+            const failed =
+              e.event_type !== 'view' &&
+              e.event_type !== 'designer_override_approve' &&
+              e.helpscout_thread_id == null
             return (
               <li
                 key={e.id}
@@ -1431,29 +1463,42 @@ function LatestActivityPanel({
                     navigate(`/proofs/${e.proof_id}`)
                   }
                 }}
-                className={[
-                  'flex cursor-pointer gap-3 py-3 pl-4 pr-5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900',
-                  rowBg,
-                  accent,
-                  i > 0 ? 'border-t border-t-gray-100' : '',
-                ].join(' ')}
+                className="flex cursor-pointer items-start gap-3 px-5 py-4 transition-colors hover:bg-canvas focus:outline-none focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]"
               >
-                <span aria-hidden className={['mt-1.5 h-2 w-2 shrink-0 rounded-full', dotClass].join(' ')} />
+                {/* Event-type icon in a tinted 32x32 square. */}
+                <span
+                  aria-hidden="true"
+                  className="inline-flex items-center justify-center w-8 h-8 rounded-md shrink-0 mt-0.5"
+                  style={{
+                    backgroundColor: `color-mix(in srgb, ${visual.tint} 14%, transparent)`,
+                    color: visual.tint,
+                  }}
+                >
+                  <Icon size={16} />
+                </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm leading-snug text-gray-900">
+                  <p className="text-[14px] leading-snug text-ink">
                     <span className="font-semibold">{e.actor_name}</span>{' '}
-                    <span className="text-gray-500">{verb}</span>
+                    <span className="text-ink-soft">{verb}</span>
                   </p>
-                  <p className="mt-0.5 truncate text-xs text-gray-500">{subline}</p>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <span className="text-[11px] text-gray-400" title={formatAbsoluteDateTime(e.created_at)}>
+                    <span
+                      className="eyebrow text-ink-mute"
+                      title={formatAbsoluteDateTime(e.created_at)}
+                    >
                       {relativeTime(e.created_at)}
                     </span>
                     {failed && (
                       <span
-                        className="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
+                        className="inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold"
+                        style={{
+                          backgroundColor: 'var(--c-low-soft)',
+                          color: 'var(--c-low)',
+                        }}
                         title="Help Scout notification failed — customer was asked to email."
-                      >notification failed</span>
+                      >
+                        notification failed
+                      </span>
                     )}
                   </div>
                 </div>
