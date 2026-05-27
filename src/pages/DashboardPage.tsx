@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
-import { DesignerHeader, ButtonCoral, ButtonGhost, ProofStatusPill, type DesignerHeaderColour } from '../design'
-import { Plus, Filter } from 'lucide-react'
+import { DesignerHeader, ButtonCoral, ButtonGhost, ButtonInk, ProofStatusPill, type DesignerHeaderColour } from '../design'
+import { Plus, Filter, X, Maximize2 } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -657,6 +658,121 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
   )
 }
 
+// ── Thumbnail hover preview popover ──────────────────────────────────────────
+//
+// Floating preview anchored to the dashboard row's thumbnail. Renders
+// at ~320px wide via createPortal so it escapes the row's
+// overflow-hidden clipping and any parent stacking contexts. Positions
+// itself to the right of the anchor when there's room, otherwise to
+// the left; vertical alignment biases up so most rows have headroom.
+// The popover is presentation-only: no click handlers, no focus
+// management, no aria-modal. The lightbox covers the "I want to act
+// on this" case.
+
+interface ThumbnailPopoverProps {
+  anchor: HTMLElement
+  imageUrl: string
+  projectName: string
+}
+
+function ThumbnailPopover({ anchor, imageUrl, projectName }: ThumbnailPopoverProps) {
+  const rect = anchor.getBoundingClientRect()
+  // 12px gap between the anchor and the popover; the popover's
+  // shadow ensures it reads as a separate floating surface.
+  const GAP = 12
+  const POPOVER_W = 320
+  const POPOVER_H_GUESS = 240 // assumed before paint; only used for edge tests
+  const wouldOverflowRight = rect.right + GAP + POPOVER_W > window.innerWidth - 16
+  const left = wouldOverflowRight
+    ? Math.max(16, rect.left - GAP - POPOVER_W)
+    : rect.right + GAP
+  // Vertical: try to center on the anchor; clamp to viewport.
+  const idealTop = rect.top + rect.height / 2 - POPOVER_H_GUESS / 2
+  const top = Math.max(16, Math.min(idealTop, window.innerHeight - POPOVER_H_GUESS - 16))
+  return createPortal(
+    <div
+      role="presentation"
+      aria-hidden="true"
+      className="fixed z-[60] rounded-[10px] bg-surface border border-line shadow-md p-2 pointer-events-none"
+      style={{ left, top, width: POPOVER_W }}
+    >
+      <img
+        src={imageUrl}
+        alt=""
+        className="block w-full h-auto max-h-[300px] object-contain rounded-[6px] bg-canvas"
+      />
+      <div className="mt-2 px-1 pb-0.5 text-[12px] text-ink-mute truncate">
+        {projectName}
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+// ── Thumbnail click lightbox ──────────────────────────────────────────────────
+//
+// Fullscreen modal. ESC + backdrop click both close. The Open project
+// CTA navigates through to the proof detail page where the
+// customer-page-style full image set + actions live. Click on the image
+// itself does nothing — separated from the close affordance so the
+// designer can rest the cursor on the image without dismissing the
+// modal accidentally.
+
+interface ThumbnailLightboxProps {
+  imageUrl: string
+  projectName: string
+  onClose: () => void
+  onOpenProject: () => void
+}
+
+function ThumbnailLightbox({ imageUrl, projectName, onClose, onOpenProject }: ThumbnailLightboxProps) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    // Lock background scroll so the lightbox feels modal.
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [onClose])
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${projectName} preview`}
+      className="fixed inset-0 z-[70] flex flex-col items-center justify-center bg-black/80 p-8"
+      onClick={onClose}
+    >
+      <button
+        type="button"
+        aria-label="Close preview"
+        onClick={(e) => { e.stopPropagation(); onClose() }}
+        className="absolute top-4 right-4 inline-flex items-center justify-center w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-white"
+      >
+        <X size={16} />
+      </button>
+      <img
+        src={imageUrl}
+        alt={projectName}
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[80vh] max-w-[90vw] object-contain rounded-[8px] shadow-lg"
+      />
+      <div className="mt-6 flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
+        <span className="text-[14px] text-white/70">{projectName}</span>
+        <ButtonInk onClick={() => { onOpenProject(); onClose() }}>
+          Open project
+        </ButtonInk>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 // ── Project row ──────────────────────────────────────────────────────────────
 
 interface ProjectRowProps {
@@ -690,6 +806,43 @@ function ProjectRow({
   onSnooze,
   onUnsnooze,
 }: ProjectRowProps) {
+  // Hover popover + click lightbox state. Both gate on a real
+  // thumbnailUrl — when no image is available (placeholder rendering)
+  // the thumb is non-interactive and shows nothing on hover/click.
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
+  const hoverTimerRef = useRef<number | null>(null)
+  const thumbRef = useRef<HTMLDivElement>(null)
+
+  function handleThumbMouseEnter() {
+    if (!thumbnailUrl) return
+    // 400ms delay matches the standard tooltip pattern — long enough
+    // to skip accidental flyovers, short enough to feel responsive
+    // when a designer pauses to look.
+    hoverTimerRef.current = window.setTimeout(() => setPreviewOpen(true), 400)
+  }
+  function handleThumbMouseLeave() {
+    if (hoverTimerRef.current != null) {
+      window.clearTimeout(hoverTimerRef.current)
+      hoverTimerRef.current = null
+    }
+    setPreviewOpen(false)
+  }
+  function handleThumbClick(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!thumbnailUrl) return
+    setLightboxOpen(true)
+    // Close the hover popover when the click takes over.
+    setPreviewOpen(false)
+  }
+
+  // Clean up the hover timer on unmount so a virtualised row leaving
+  // the viewport doesn't fire a stale setPreviewOpen.
+  useEffect(() => {
+    return () => {
+      if (hoverTimerRef.current != null) window.clearTimeout(hoverTimerRef.current)
+    }
+  }, [])
   const navigate = useNavigate()
   const canAddVersion = project.status === 'in_progress' || project.status === 'dormant'
   const { verb, ts } = activityVerb(project)
@@ -776,22 +929,65 @@ function ProjectRow({
             (no version yet, no images uploaded, or fetch still in
             flight). loading="lazy" defers off-screen image fetches
             so opening the dashboard doesn't blast 100+ requests at
-            once. */}
+            once.
+            Hover (400ms delay) opens the floating preview popover;
+            click opens the lightbox. The group/peer-hover Maximize
+            glyph hints clickability when an image is present. */}
         <div
-          aria-hidden="true"
-          className="flex items-center justify-center w-[56px] h-[36px] rounded-[4px] bg-ink text-on-ink font-mono font-medium text-[10px] tracking-wider overflow-hidden"
+          ref={thumbRef}
+          onClick={handleThumbClick}
+          onMouseEnter={handleThumbMouseEnter}
+          onMouseLeave={handleThumbMouseLeave}
+          className={[
+            'relative flex items-center justify-center w-[56px] h-[36px] rounded-[4px] bg-ink text-on-ink font-mono font-medium text-[10px] tracking-wider overflow-hidden',
+            thumbnailUrl ? 'cursor-zoom-in' : '',
+          ].join(' ')}
         >
           {thumbnailUrl ? (
-            <img
-              src={thumbnailUrl}
-              alt=""
-              loading="lazy"
-              className="w-full h-full object-cover"
-            />
+            <>
+              <img
+                src={thumbnailUrl}
+                alt=""
+                loading="lazy"
+                className="w-full h-full object-cover"
+              />
+              {/* Hover affordance — a Maximize glyph in a dark scrim
+                  appears on thumb hover so designers know the thumb
+                  is interactive. The row's wider hover state isn't
+                  enough — that's also true for the action overlay,
+                  which lives elsewhere. */}
+              <span
+                aria-hidden="true"
+                className="absolute inset-0 flex items-center justify-center bg-black/55 text-white opacity-0 hover:opacity-100 transition-opacity"
+              >
+                <Maximize2 size={14} />
+              </span>
+            </>
           ) : (
             thumbInitials
           )}
         </div>
+        {/* Hover popover — portal-rendered so it can escape the row's
+            overflow-hidden and the section's stacking context. Anchored
+            to the thumb's bounding rect via the helper below. */}
+        {previewOpen && thumbnailUrl && thumbRef.current && (
+          <ThumbnailPopover
+            anchor={thumbRef.current}
+            imageUrl={thumbnailUrl}
+            projectName={projectName}
+          />
+        )}
+        {/* Click lightbox — fullscreen modal with the same image at
+            max viewport size. Click backdrop or ESC to close; the
+            Open project button navigates to the proof detail page. */}
+        {lightboxOpen && thumbnailUrl && (
+          <ThumbnailLightbox
+            imageUrl={thumbnailUrl}
+            projectName={projectName}
+            onClose={() => setLightboxOpen(false)}
+            onOpenProject={() => navigate(`/proofs/${project.proof_id}`)}
+          />
+        )}
 
         {/* Customer: name on row 1, company sub-line on row 2.
             The version label moves to its own column on md+. */}
