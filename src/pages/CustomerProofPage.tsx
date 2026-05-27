@@ -2488,12 +2488,17 @@ export default function CustomerProofPage() {
               </PanelShell>
             )}
 
-            {/* Pricing PanelShell + split-name / shipping callouts —
-                preserved verbatim from PR 8 except the outer
-                section + max-w-1180 wrappers. Renders below Specs
-                in the aside. Variant-round versions skip the panel
+            {/* Pricing PanelShell + split-name / shipping callouts.
+                Single-variant pricing renders here in the left rail
+                (the V2 design intent — narrow column with one row
+                per quantity). Multi-variant pricing tables don't
+                fit in the 360px rail (qty + 3+ variant price
+                columns overflow), so they conditionally render in
+                the right column instead via the same JSX block
+                below. The gate keys off livePricingSnapshot.variants
+                .length > 1 — variant-round versions skip the panel
                 entirely. */}
-            {!activeVersion.is_variant_round && (
+            {!activeVersion.is_variant_round && livePricingSnapshot.variants.length <= 1 && (
               <>
                 <PanelShell
                   eyebrow={
@@ -3117,8 +3122,104 @@ export default function CustomerProofPage() {
               duplicate. is_variant_round is false on every row
               in production today, so this gate is a no-op for
               every existing proof. */}
-          {/* Pricing PanelShell + split-name/shipping callouts
-              moved into the left-rail aside in V2. */}
+          {/* Multi-variant Pricing — renders here in the right
+              column when the snapshot has more than one priced
+              variant, since the qty + N variant-price columns
+              don't fit in the 360px left rail. Single-variant
+              pricing keeps its V2 position in the left rail. The
+              JSX shape mirrors the aside's Pricing block above. */}
+          {!activeVersion.is_variant_round && livePricingSnapshot.variants.length > 1 && (
+            <>
+              <PanelShell
+                eyebrow={
+                  !activeVersion.custom_quote && activeOption && versionOptions.length > 0 && materialHasSurcharges
+                    ? `Prices shown for ${activeOption.display_name} ${optionLabelSingular.toLowerCase()}`
+                    : 'Inclusive of VAT'
+                }
+                title="Pricing"
+                icon={PoundSterling}
+                accent={tokens.ink}
+                action={
+                  !activeVersion.custom_quote ? (
+                    <span className="num text-[12px] font-medium text-ink uppercase tracking-[0.18em]">
+                      {activeVersion.currency}
+                      {activeVersion.currency === 'GBP' ? ' · VAT included' : ''}
+                    </span>
+                  ) : undefined
+                }
+              >
+                <h2 id="section-pricing-heading" className="sr-only">Pricing</h2>
+                {activeVersion.custom_quote ? (
+                  <div className="py-6 text-center">
+                    <p className="mx-auto max-w-md font-display text-[18px] leading-snug text-ink-soft">
+                      This proof requires a custom quote. We'll be in touch separately with pricing.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <PaperPricingTable
+                      snapshot={livePricingSnapshot}
+                      currency={activeVersion.currency!}
+                      displayQuantities={activeVersion.display_quantities}
+                      quoteMinQuantity={activeVersion.quote_min_quantity}
+                      quoteMaxQuantity={activeVersion.quote_max_quantity}
+                      quantitySurcharges={quantitySurcharges}
+                      personalisationPricing={activePersonalisationPricing}
+                    />
+                    {personalisationBreakevenQty != null && (
+                      <p className="mt-3 text-[13px] text-ink-mute leading-relaxed">
+                        A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
+                      </p>
+                    )}
+                  </>
+                )}
+              </PanelShell>
+
+              {!activeVersion.custom_quote &&
+                (((activeVersion.names.length >= 2 &&
+                  activeVersion.split_name_surcharge_snapshot != null &&
+                  activeVersion.split_name_surcharge_snapshot > 0) ||
+                  !!activeVersion.shipping_note)) && (
+                  <div className="grid gap-3 mt-4 sm:grid-cols-2">
+                    {activeVersion.names.length >= 2 &&
+                      activeVersion.split_name_surcharge_snapshot != null &&
+                      activeVersion.split_name_surcharge_snapshot > 0 && (
+                        <div className="rounded-[10px] bg-surface border border-line p-4">
+                          <span className="eyebrow text-brand">Split-name tooling</span>
+                          <p className="mt-2 text-[15px] leading-snug text-ink font-medium">
+                            Add{' '}
+                            <span className="num font-medium">
+                              {formatPrice(
+                                (activeVersion.names.length - 1) *
+                                  activeVersion.split_name_surcharge_snapshot,
+                                activeVersion.currency!,
+                              )}
+                            </span>{' '}
+                            to the prices above
+                          </p>
+                          <p className="mt-1.5 text-[12px] text-ink-mute">
+                            {activeVersion.names.length - 1} extra{' '}
+                            {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
+                            {formatPrice(
+                              activeVersion.split_name_surcharge_snapshot,
+                              activeVersion.currency!,
+                            )}{' '}
+                            tooling
+                          </p>
+                        </div>
+                      )}
+                    {activeVersion.shipping_note && (
+                      <div className="rounded-[10px] bg-surface border border-line p-4">
+                        <span className="eyebrow">Shipping</span>
+                        <p className="mt-2 whitespace-pre-line text-[14px] leading-snug text-ink-soft">
+                          {activeVersion.shipping_note}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+            </>
+          )}
 
           {/* ───── About {material} ─────
               Two-column layout: copy on the left, swatch orb on
