@@ -1,6 +1,6 @@
 // Customer-facing QR code verification panel.
 //
-// Renders a dedicated docket section above the spec summary for
+// Renders a dedicated PanelShell section above the spec summary for
 // any proof version that has QR images. Customers see the original
 // uploaded JPEG (not a re-render — what's on screen is the same
 // artefact that gets printed) alongside a plain-English breakdown
@@ -25,6 +25,7 @@
 // printing, so we never produce them.
 
 import { useEffect, useState } from 'react'
+import { QrCode } from 'lucide-react'
 import {
   classifyQrData,
   isShortenedUrl,
@@ -38,17 +39,7 @@ import {
   type VcardBundle,
   VcardConfigError,
 } from '../lib/vcardClient'
-import {
-  MONO,
-  PAPER_BORDER,
-  PAPER_HAIRLINE,
-  PAPER_INK,
-  PAPER_SECONDARY,
-  PAPER_TERTIARY,
-  PAPER_TINT_1,
-  SANS,
-  SERIF,
-} from '../lib/theme'
+import { PanelShell, tokens } from '../design'
 import type { GridImage } from './ImageGrid'
 
 interface QrCodePanelProps {
@@ -80,8 +71,7 @@ export function QrCodePanel({ qrImages, names, isVariantRound }: QrCodePanelProp
   if (isVariantRound) {
     return (
       <QrSection>
-        <QrSectionIntro />
-        <div className="space-y-12">
+        <div className="space-y-6">
           {qrImages.map((img) => (
             <QrCodeCard key={img.id} image={img} />
           ))}
@@ -98,8 +88,7 @@ export function QrCodePanel({ qrImages, names, isVariantRound }: QrCodePanelProp
   if (names.length === 0) {
     return (
       <QrSection>
-        <QrSectionIntro />
-        <div className="space-y-12">
+        <div className="space-y-6">
           {qrImages.map((img) => (
             <QrCodeCard key={img.id} image={img} />
           ))}
@@ -124,8 +113,7 @@ export function QrCodePanel({ qrImages, names, isVariantRound }: QrCodePanelProp
 
   return (
     <QrSection>
-      <QrSectionIntro />
-      <div className="space-y-14">
+      <div className="space-y-8">
         {perRecipient.map(({ name, qrs }) => {
           // Skip recipients with no QRs visible to them (no
           // own QRs, no shared QRs). Mostly only happens during
@@ -133,19 +121,10 @@ export function QrCodePanel({ qrImages, names, isVariantRound }: QrCodePanelProp
           if (qrs.length === 0 && sharedQrs.length === 0) return null
           return (
             <div key={name}>
-              <h3
-                className="leading-tight pb-3"
-                style={{
-                  fontFamily: SERIF,
-                  fontWeight: 400,
-                  fontSize: 'clamp(28px, 5vw, 36px)',
-                  color: PAPER_INK,
-                  borderBottom: `1px solid ${PAPER_BORDER}`,
-                }}
-              >
+              <h3 className="font-display font-medium text-ink leading-tight pb-3 border-b border-line-soft text-[18px]">
                 {name}'s QR codes
               </h3>
-              <div className="mt-6 space-y-10">
+              <div className="mt-5 space-y-5">
                 {qrs.map((img) => (
                   <QrCodeCard key={img.id} image={img} />
                 ))}
@@ -169,57 +148,28 @@ export function QrCodePanel({ qrImages, names, isVariantRound }: QrCodePanelProp
 
 function QrSection({ children }: { children: React.ReactNode }) {
   return (
-    <section
-      aria-labelledby="section-qr-heading"
-      style={{
-        // PAPER_TINT_1 distinguishes the QR verification section
-        // from the artwork band above (PAPER_CREAM). Matches the
-        // tonal rhythm Construction uses; for non-letterpress
-        // proofs the band-progression reads cream → tint_1 (QR) →
-        // tint_2 (Spec) → cream (Pricing).
-        background: PAPER_TINT_1,
-        color: PAPER_INK,
-        borderTop: `1px solid ${PAPER_HAIRLINE}`,
-      }}
+    <PanelShell
+      eyebrow="Before approving"
+      title="QR code contents"
+      icon={QrCode}
+      accent={tokens.brand}
     >
-      <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-        <div className="grid gap-10 sm:grid-cols-[1fr_2fr] sm:gap-16">
-          <div>
-            <h2
-              id="section-qr-heading"
-              className="leading-[1.02] border-b-2 pb-4 break-words"
-              style={{
-                fontFamily: SERIF,
-                fontWeight: 400,
-                fontSize: 'clamp(40px, 9vw, 56px)',
-                color: PAPER_INK,
-                borderColor: 'rgba(26,22,18,0.8)',
-              }}
-            >
-              QR code contents
-            </h2>
-            <p
-              className="mt-5 max-w-[30ch] text-[14px] leading-[1.55]"
-              style={{ color: PAPER_TERTIARY }}
-            >
-              Before approving, please double-check the contents of each QR code. Scan with your phone or read the decoded text alongside each one. The on-screen QR is the exact image we'll print.
-            </p>
-            <p
-              className="mt-3 max-w-[30ch] text-[13px] leading-[1.55]"
-              style={{ color: PAPER_TERTIARY }}
-            >
-              For Plasma vCards, scanning the QR saves the contact details below to a phone. The look of the page it opens, the photo, colours and layout, is yours to personalise after your cards arrive.
-            </p>
-          </div>
-          <div>{children}</div>
-        </div>
+      <div className="space-y-4">
+        <p className="text-[14px] leading-[1.6] text-ink-soft max-w-[62ch] m-0">
+          Please double-check the contents of each QR code. Scan with your
+          phone or read the decoded text alongside each one. The on-screen
+          QR is the exact image we'll print.
+        </p>
+        <p className="text-[13px] leading-[1.55] text-ink-mute max-w-[62ch] m-0">
+          For Plasma vCards, scanning the QR saves the contact details
+          below to a phone. The look of the page it opens — the photo,
+          colours, and layout — is yours to personalise after your cards
+          arrive.
+        </p>
+        <div className="pt-2">{children}</div>
       </div>
-    </section>
+    </PanelShell>
   )
-}
-
-function QrSectionIntro() {
-  return null
 }
 
 // ── Per-QR card ──────────────────────────────────────────────────────
@@ -239,57 +189,24 @@ function QrCodeCard({
   const kind: QrKind = image.qr_kind ?? classifyQrData(decoded)
 
   return (
-    <article
-      className="grid gap-6 sm:grid-cols-[180px_1fr]"
-      style={{
-        background: 'rgba(255,255,255,0.55)',
-        border: `1px solid ${PAPER_BORDER}`,
-        borderRadius: 6,
-        padding: 20,
-      }}
-    >
+    <article className="grid gap-5 sm:grid-cols-[160px_1fr] rounded-[10px] bg-canvas border border-line p-5">
       <div>
         {image.signed_url ? (
           <img
             src={image.signed_url}
             alt="QR code"
-            width={180}
-            height={180}
-            style={{
-              width: '100%',
-              maxWidth: 180,
-              aspectRatio: '1 / 1',
-              objectFit: 'contain',
-              display: 'block',
-              background: '#fff',
-              border: `1px solid ${PAPER_HAIRLINE}`,
-              borderRadius: 4,
-            }}
+            width={160}
+            height={160}
+            className="block w-full max-w-[160px] aspect-square object-contain bg-surface rounded-[6px] border border-line-soft"
           />
         ) : (
           // Edge-function signing failure — graceful empty box.
           // The decoded panel still renders so the customer can
           // verify the contents even without the visible QR.
-          <div
-            style={{
-              width: '100%',
-              maxWidth: 180,
-              aspectRatio: '1 / 1',
-              background: '#f4f1eb',
-              border: `1px dashed ${PAPER_BORDER}`,
-              borderRadius: 4,
-            }}
-          />
+          <div className="block w-full max-w-[160px] aspect-square bg-canvas border border-dashed border-line rounded-[6px]" />
         )}
         {sharedLabel && (
-          <div
-            className="mt-2 text-[11px] tracking-wide uppercase"
-            style={{
-              fontFamily: MONO,
-              color: PAPER_TERTIARY,
-              letterSpacing: '0.05em',
-            }}
-          >
+          <div className="eyebrow mt-2" style={{ letterSpacing: '0.16em' }}>
             Shared across all cards
           </div>
         )}
@@ -320,15 +237,7 @@ const KIND_LABELS: Record<QrKind, string> = {
 
 function KindBadge({ kind }: { kind: QrKind }) {
   return (
-    <span
-      className="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] uppercase tracking-wide"
-      style={{
-        fontFamily: MONO,
-        background: 'rgba(26,22,18,0.06)',
-        color: PAPER_SECONDARY,
-        letterSpacing: '0.05em',
-      }}
-    >
+    <span className="inline-flex items-center rounded-full bg-line-soft text-ink-soft px-2.5 py-1 eyebrow" style={{ letterSpacing: '0.14em' }}>
       {KIND_LABELS[kind]}
     </span>
   )
@@ -387,22 +296,12 @@ function VCardView({ raw }: { raw: string }) {
   return (
     <div className="space-y-3">
       {v.formattedName && (
-        <div
-          style={{
-            fontFamily: SERIF,
-            fontSize: 22,
-            lineHeight: 1.2,
-            color: PAPER_INK,
-          }}
-        >
+        <div className="font-display text-ink leading-tight" style={{ fontSize: 20 }}>
           {v.formattedName}
         </div>
       )}
       {(v.title || v.org) && (
-        <div
-          className="text-[14px]"
-          style={{ fontFamily: SANS, color: PAPER_SECONDARY, lineHeight: 1.45 }}
-        >
+        <div className="text-[14px] leading-[1.45] text-ink-soft">
           {[v.title, v.org].filter(Boolean).join(' · ')}
         </div>
       )}
@@ -410,12 +309,9 @@ function VCardView({ raw }: { raw: string }) {
         <FieldGroup label="Phone">
           {v.tels.map((tel, i) => (
             <div key={i}>
-              <span style={{ fontFamily: MONO, color: PAPER_INK }}>{tel.value}</span>
+              <span className="font-mono text-ink">{tel.value}</span>
               {tel.types.length > 0 && (
-                <span
-                  className="ml-2 text-[11px] uppercase tracking-wide"
-                  style={{ color: PAPER_TERTIARY, fontFamily: MONO }}
-                >
+                <span className="ml-2 eyebrow" style={{ letterSpacing: '0.14em' }}>
                   {tel.types.map((t) => t.toLowerCase()).join(', ')}
                 </span>
               )}
@@ -427,12 +323,9 @@ function VCardView({ raw }: { raw: string }) {
         <FieldGroup label="Email">
           {v.emails.map((em, i) => (
             <div key={i}>
-              <span style={{ fontFamily: MONO, color: PAPER_INK }}>{em.value}</span>
+              <span className="font-mono text-ink">{em.value}</span>
               {em.types.length > 0 && (
-                <span
-                  className="ml-2 text-[11px] uppercase tracking-wide"
-                  style={{ color: PAPER_TERTIARY, fontFamily: MONO }}
-                >
+                <span className="ml-2 eyebrow" style={{ letterSpacing: '0.14em' }}>
                   {em.types.map((t) => t.toLowerCase()).join(', ')}
                 </span>
               )}
@@ -443,7 +336,7 @@ function VCardView({ raw }: { raw: string }) {
       {v.urls.length > 0 && (
         <FieldGroup label="Website">
           {v.urls.map((url, i) => (
-            <div key={i} style={{ fontFamily: MONO, color: PAPER_INK, wordBreak: 'break-all' }}>
+            <div key={i} className="font-mono text-ink break-all">
               {url}
               {isShortenedUrl(url) && <ShortenedBadge />}
             </div>
@@ -453,7 +346,7 @@ function VCardView({ raw }: { raw: string }) {
       {v.addresses.length > 0 && (
         <FieldGroup label="Address">
           {v.addresses.map((addr, i) => (
-            <div key={i} style={{ color: PAPER_INK }}>{addr}</div>
+            <div key={i} className="text-ink">{addr}</div>
           ))}
         </FieldGroup>
       )}
@@ -527,9 +420,7 @@ function HostedVcardView({ slug, url }: { slug: string | null; url: string }) {
   // the destination back to themselves.
   const urlLine = (
     <FieldGroup label="QR link">
-      <span style={{ fontFamily: MONO, color: PAPER_INK, wordBreak: 'break-all' }}>
-        {url}
-      </span>
+      <span className="font-mono text-ink break-all">{url}</span>
     </FieldGroup>
   )
 
@@ -537,7 +428,7 @@ function HostedVcardView({ slug, url }: { slug: string | null; url: string }) {
     return (
       <div className="space-y-3">
         {urlLine}
-        <div className="text-[13px]" style={{ color: PAPER_TERTIARY, fontFamily: SANS }}>
+        <div className="text-[13px] text-ink-mute">
           Loading the contact details for this Plasma vCard…
         </div>
       </div>
@@ -548,7 +439,7 @@ function HostedVcardView({ slug, url }: { slug: string | null; url: string }) {
     return (
       <div className="space-y-3">
         {urlLine}
-        <div className="text-[13px]" style={{ color: PAPER_TERTIARY, fontFamily: SANS }}>
+        <div className="text-[13px] text-ink-mute">
           The Plasma vCard for this QR hasn't been published yet. The
           link is correct and will resolve as soon as the card is live.
         </div>
@@ -560,7 +451,7 @@ function HostedVcardView({ slug, url }: { slug: string | null; url: string }) {
     return (
       <div className="space-y-3">
         {urlLine}
-        <div className="text-[13px]" style={{ color: PAPER_TERTIARY, fontFamily: SANS }}>
+        <div className="text-[13px] text-ink-mute">
           The contact details for this Plasma vCard are temporarily
           unavailable. Try refreshing this page; you can still approve
           once you've reviewed the link above.
@@ -591,56 +482,31 @@ function HostedVcardView({ slug, url }: { slug: string | null; url: string }) {
   return (
     <div className="space-y-3">
       {formattedName && (
-        <div
-          style={{
-            fontFamily: SERIF,
-            fontSize: 22,
-            lineHeight: 1.2,
-            color: PAPER_INK,
-          }}
-        >
+        <div className="font-display text-ink leading-tight" style={{ fontSize: 20 }}>
           {formattedName}
         </div>
       )}
       {card.nickname && formattedName && card.nickname !== formattedName && (
-        <div
-          className="text-[13px]"
-          style={{ fontFamily: SANS, color: PAPER_SECONDARY }}
-        >
-          Also known as {card.nickname}
-        </div>
+        <div className="text-[13px] text-ink-soft">Also known as {card.nickname}</div>
       )}
       {titleLine && (
-        <div
-          className="text-[14px]"
-          style={{ fontFamily: SANS, color: PAPER_SECONDARY, lineHeight: 1.45 }}
-        >
-          {titleLine}
-        </div>
+        <div className="text-[14px] leading-[1.45] text-ink-soft">{titleLine}</div>
       )}
       {card.primary_phone && (
         <FieldGroup label="Phone">
           <div>
-            <span style={{ fontFamily: MONO, color: PAPER_INK }}>
-              {card.primary_phone}
-            </span>
+            <span className="font-mono text-ink">{card.primary_phone}</span>
             {card.phone_label && (
-              <span
-                className="ml-2 text-[11px] uppercase tracking-wide"
-                style={{ color: PAPER_TERTIARY, fontFamily: MONO }}
-              >
+              <span className="ml-2 eyebrow" style={{ letterSpacing: '0.14em' }}>
                 {card.phone_label}
               </span>
             )}
           </div>
           {extraPhones.map((p) => (
             <div key={p.id}>
-              <span style={{ fontFamily: MONO, color: PAPER_INK }}>{p.value}</span>
+              <span className="font-mono text-ink">{p.value}</span>
               {p.label && (
-                <span
-                  className="ml-2 text-[11px] uppercase tracking-wide"
-                  style={{ color: PAPER_TERTIARY, fontFamily: MONO }}
-                >
+                <span className="ml-2 eyebrow" style={{ letterSpacing: '0.14em' }}>
                   {p.label}
                 </span>
               )}
@@ -651,26 +517,18 @@ function HostedVcardView({ slug, url }: { slug: string | null; url: string }) {
       {card.primary_email && (
         <FieldGroup label="Email">
           <div>
-            <span style={{ fontFamily: MONO, color: PAPER_INK }}>
-              {card.primary_email}
-            </span>
+            <span className="font-mono text-ink">{card.primary_email}</span>
             {card.email_label && (
-              <span
-                className="ml-2 text-[11px] uppercase tracking-wide"
-                style={{ color: PAPER_TERTIARY, fontFamily: MONO }}
-              >
+              <span className="ml-2 eyebrow" style={{ letterSpacing: '0.14em' }}>
                 {card.email_label}
               </span>
             )}
           </div>
           {extraEmails.map((em) => (
             <div key={em.id}>
-              <span style={{ fontFamily: MONO, color: PAPER_INK }}>{em.value}</span>
+              <span className="font-mono text-ink">{em.value}</span>
               {em.label && (
-                <span
-                  className="ml-2 text-[11px] uppercase tracking-wide"
-                  style={{ color: PAPER_TERTIARY, fontFamily: MONO }}
-                >
+                <span className="ml-2 eyebrow" style={{ letterSpacing: '0.14em' }}>
                   {em.label}
                 </span>
               )}
@@ -680,17 +538,17 @@ function HostedVcardView({ slug, url }: { slug: string | null; url: string }) {
       )}
       {addressLine && (
         <FieldGroup label="Address">
-          <span style={{ color: PAPER_INK }}>{addressLine}</span>
+          <span className="text-ink">{addressLine}</span>
         </FieldGroup>
       )}
       {card.birthday && (
         <FieldGroup label="Birthday">
-          <span style={{ color: PAPER_INK, fontFamily: MONO }}>{card.birthday}</span>
+          <span className="font-mono text-ink">{card.birthday}</span>
         </FieldGroup>
       )}
       {card.bio && (
         <FieldGroup label="Bio">
-          <span style={{ color: PAPER_INK }}>{card.bio}</span>
+          <span className="text-ink">{card.bio}</span>
         </FieldGroup>
       )}
       {links.length > 0 && (
@@ -699,7 +557,7 @@ function HostedVcardView({ slug, url }: { slug: string | null; url: string }) {
             .slice()
             .sort((a, b) => a.sort_order - b.sort_order)
             .map((l) => (
-              <div key={l.id} style={{ fontFamily: MONO, color: PAPER_INK, wordBreak: 'break-all' }}>
+              <div key={l.id} className="font-mono text-ink break-all">
                 {l.label ? `${l.label} — ` : ''}
                 {l.url}
               </div>
@@ -719,14 +577,11 @@ function FieldGroup({
   children: React.ReactNode
 }) {
   return (
-    <div className="grid grid-cols-[80px_1fr] gap-x-3 gap-y-1 text-[14px]" style={{ fontFamily: SANS, lineHeight: 1.55 }}>
-      <div
-        className="text-[11px] uppercase tracking-wide pt-1"
-        style={{ color: PAPER_TERTIARY, fontFamily: MONO, letterSpacing: '0.05em' }}
-      >
+    <div className="grid grid-cols-[80px_1fr] gap-x-3 gap-y-1 text-[14px] leading-[1.55]">
+      <div className="eyebrow pt-1" style={{ letterSpacing: '0.14em' }}>
         {label}
       </div>
-      <div style={{ color: PAPER_INK }}>{children}</div>
+      <div className="text-ink">{children}</div>
     </div>
   )
 }
@@ -736,25 +591,23 @@ function MecardView({ raw }: { raw: string }) {
   return (
     <div className="space-y-3">
       {m.name && (
-        <div
-          style={{ fontFamily: SERIF, fontSize: 22, lineHeight: 1.2, color: PAPER_INK }}
-        >
+        <div className="font-display text-ink leading-tight" style={{ fontSize: 20 }}>
           {m.name}
         </div>
       )}
       {m.tel && (
         <FieldGroup label="Phone">
-          <span style={{ fontFamily: MONO }}>{m.tel}</span>
+          <span className="font-mono">{m.tel}</span>
         </FieldGroup>
       )}
       {m.email && (
         <FieldGroup label="Email">
-          <span style={{ fontFamily: MONO }}>{m.email}</span>
+          <span className="font-mono">{m.email}</span>
         </FieldGroup>
       )}
       {m.url && (
         <FieldGroup label="Website">
-          <span style={{ fontFamily: MONO, wordBreak: 'break-all' }}>
+          <span className="font-mono break-all">
             {m.url}
             {isShortenedUrl(m.url) && <ShortenedBadge />}
           </span>
@@ -773,12 +626,9 @@ function WifiView({ raw }: { raw: string }) {
     <div className="space-y-3">
       {w.ssid && (
         <FieldGroup label="Network">
-          <span style={{ fontFamily: MONO }}>{w.ssid}</span>
+          <span className="font-mono">{w.ssid}</span>
           {w.hidden && (
-            <span
-              className="ml-2 text-[11px] uppercase tracking-wide"
-              style={{ color: PAPER_TERTIARY, fontFamily: MONO }}
-            >
+            <span className="ml-2 eyebrow" style={{ letterSpacing: '0.14em' }}>
               hidden
             </span>
           )}
@@ -786,14 +636,14 @@ function WifiView({ raw }: { raw: string }) {
       )}
       {w.security && (
         <FieldGroup label="Security">
-          <span style={{ fontFamily: MONO }}>
+          <span className="font-mono">
             {w.security === 'nopass' ? 'Open (no password)' : w.security}
           </span>
         </FieldGroup>
       )}
       {w.password && (
         <FieldGroup label="Password">
-          <span style={{ fontFamily: MONO }}>{w.password}</span>
+          <span className="font-mono">{w.password}</span>
         </FieldGroup>
       )}
       <RawDataDisclosure raw={raw} />
@@ -804,14 +654,9 @@ function WifiView({ raw }: { raw: string }) {
 function UrlView({ raw }: { raw: string }) {
   return (
     <div className="space-y-2">
-      <div style={{ fontFamily: MONO, color: PAPER_INK, wordBreak: 'break-all', fontSize: 14 }}>
-        {raw}
-      </div>
+      <div className="font-mono text-ink break-all text-[14px]">{raw}</div>
       {isShortenedUrl(raw) && (
-        <div
-          className="text-[12px]"
-          style={{ color: PAPER_SECONDARY, fontFamily: SANS }}
-        >
+        <div className="text-[12px] text-ink-soft">
           This is a shortened link, which redirects to a different address.<ShortenedBadge inline />
         </div>
       )}
@@ -822,7 +667,7 @@ function UrlView({ raw }: { raw: string }) {
 function SimpleLineView({ label, value }: { label: string; value: string }) {
   return (
     <FieldGroup label={label}>
-      <span style={{ fontFamily: MONO }}>{value}</span>
+      <span className="font-mono">{value}</span>
     </FieldGroup>
   )
 }
@@ -837,11 +682,11 @@ function SmsView({ raw }: { raw: string }) {
   return (
     <div className="space-y-3">
       <FieldGroup label="Sends to">
-        <span style={{ fontFamily: MONO }}>{number}</span>
+        <span className="font-mono">{number}</span>
       </FieldGroup>
       {body && (
         <FieldGroup label="Message">
-          <span style={{ color: PAPER_INK }}>{body}</span>
+          <span className="text-ink">{body}</span>
         </FieldGroup>
       )}
     </div>
@@ -850,10 +695,7 @@ function SmsView({ raw }: { raw: string }) {
 
 function RawTextView({ raw }: { raw: string }) {
   return (
-    <pre
-      className="whitespace-pre-wrap text-[13px] leading-[1.55]"
-      style={{ fontFamily: MONO, color: PAPER_INK }}
-    >
+    <pre className="whitespace-pre-wrap text-[13px] leading-[1.55] font-mono text-ink m-0">
       {raw}
     </pre>
   )
@@ -870,43 +712,19 @@ function RawDataDisclosure({
 }) {
   const showExtra = extraRawLines && extraRawLines.length > 0
   return (
-    <details className="mt-3 text-[12px]" style={{ color: PAPER_TERTIARY }}>
-      <summary
-        className="cursor-pointer select-none"
-        style={{ fontFamily: SANS, color: PAPER_SECONDARY }}
-      >
+    <details className="mt-3 text-[12px] text-ink-mute">
+      <summary className="cursor-pointer select-none text-ink-soft">
         View raw QR data
       </summary>
-      <pre
-        className="mt-2 whitespace-pre-wrap break-all p-3"
-        style={{
-          fontFamily: MONO,
-          background: 'rgba(26,22,18,0.04)',
-          color: PAPER_INK,
-          borderRadius: 4,
-          fontSize: 11,
-        }}
-      >
+      <pre className="mt-2 whitespace-pre-wrap break-all p-3 font-mono text-ink rounded-[6px] bg-canvas border border-line-soft text-[11px]">
         {raw}
       </pre>
       {showExtra && (
         <div className="mt-2">
-          <div
-            className="text-[11px] uppercase tracking-wide mb-1"
-            style={{ fontFamily: MONO, letterSpacing: '0.05em' }}
-          >
+          <div className="eyebrow mb-1" style={{ letterSpacing: '0.14em' }}>
             Other vCard fields
           </div>
-          <pre
-            className="whitespace-pre-wrap break-all p-3"
-            style={{
-              fontFamily: MONO,
-              background: 'rgba(26,22,18,0.04)',
-              color: PAPER_INK,
-              borderRadius: 4,
-              fontSize: 11,
-            }}
-          >
+          <pre className="whitespace-pre-wrap break-all p-3 font-mono text-ink rounded-[6px] bg-canvas border border-line-soft text-[11px]">
             {extraRawLines.join('\n')}
           </pre>
         </div>
@@ -920,17 +738,11 @@ function RawDataDisclosure({
 function ShortenedBadge({ inline = false }: { inline?: boolean }) {
   return (
     <span
-      className={
-        (inline ? 'inline-flex' : 'ml-2 inline-flex') +
-        ' items-center rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide align-middle'
-      }
-      style={{
-        fontFamily: MONO,
-        background: 'rgba(225,23,53,0.10)',
-        color: '#a01124',
-        letterSpacing: '0.05em',
-        marginLeft: inline ? 8 : undefined,
-      }}
+      className={[
+        inline ? 'inline-flex' : 'ml-2 inline-flex',
+        'items-center rounded-full bg-out-soft text-out px-2 py-0.5 eyebrow align-middle',
+      ].join(' ')}
+      style={{ letterSpacing: '0.14em', marginLeft: inline ? 8 : undefined }}
     >
       shortened link
     </span>
