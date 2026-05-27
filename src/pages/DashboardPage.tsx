@@ -199,54 +199,47 @@ interface StatTileProps {
   onClick: () => void
 }
 
+// Tone → CSS colour mapping. Design-system tokens where they map
+// cleanly to the seven dashboard tones; explicit hues for the two
+// (turquoise, violet) where the token palette doesn't reach. The
+// neutral tone uses the ink-mute token rather than a saturated
+// colour so Dormant reads as a backwater rather than an alert.
+const TILE_COLOUR: Record<StatTileProps['tone'], string> = {
+  rose:      'var(--c-out)',
+  amber:     'var(--c-low)',
+  sky:       'var(--c-allocated)',
+  turquoise: '#0d9488',
+  green:     'var(--c-in-stock)',
+  violet:    '#7c3aed',
+  neutral:   'var(--c-ink-mute)',
+}
+
 function StatTile({ label, count, active, tone, description, onClick }: StatTileProps) {
-  // Top accent border colour — saturated, no fill on the card body.
-  // 'turquoise' maps to Tailwind teal-500 (#14b8a6) — Tailwind doesn't ship a
-  // literal turquoise utility, and teal-500 reads as visibly distinct from
-  // sky-500 (the Awaiting customer neighbour) thanks to its green tint, where
-  // cyan-500 would sit too close to sky.
-  const accentBorder =
-    tone === 'rose'      ? 'border-t-rose-500'
-    : tone === 'amber'   ? 'border-t-amber-500'
-    : tone === 'sky'     ? 'border-t-sky-500'
-    : tone === 'turquoise' ? 'border-t-teal-500'
-    : tone === 'green'   ? 'border-t-emerald-500'
-    : tone === 'violet'  ? 'border-t-violet-500'
-    :                      'border-t-gray-400'
-  // Count colour matches the accent
-  const countColour =
-    tone === 'rose'      ? 'text-rose-600'
-    : tone === 'amber'   ? 'text-amber-500'
-    : tone === 'sky'     ? 'text-sky-500'
-    : tone === 'turquoise' ? 'text-teal-500'
-    : tone === 'green'   ? 'text-emerald-600'
-    : tone === 'violet'  ? 'text-violet-600'
-    :                      'text-gray-500'
-  // Active state: thicker ring in the matching tone; inactive: quiet border
-  const activeRing = active
-    ? tone === 'rose'      ? 'ring-2 ring-rose-400'
-      : tone === 'amber'   ? 'ring-2 ring-amber-400'
-      : tone === 'sky'     ? 'ring-2 ring-sky-400'
-      : tone === 'turquoise' ? 'ring-2 ring-teal-400'
-      : tone === 'green'   ? 'ring-2 ring-emerald-500'
-      : tone === 'violet'  ? 'ring-2 ring-violet-400'
-      :                      'ring-2 ring-gray-400'
-    : 'ring-1 ring-gray-200'
+  const tint = TILE_COLOUR[tone]
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={[
-        'flex flex-col items-start gap-1 rounded-xl border-t-4 bg-white px-5 py-4 text-left transition-colors hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
-        accentBorder,
-        activeRing,
-      ].join(' ')}
+      className="flex flex-col items-start gap-1 rounded-[14px] bg-surface px-5 py-4 text-left border transition-colors hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
+      style={{
+        borderTopWidth: 4,
+        borderTopColor: tint,
+        borderRightColor: 'var(--c-line)',
+        borderBottomColor: 'var(--c-line)',
+        borderLeftColor: 'var(--c-line)',
+        boxShadow: active ? `inset 0 0 0 1px ${tint}` : undefined,
+      }}
     >
-      <span className="min-h-8 text-xs font-semibold uppercase tracking-wider text-gray-500">{label}</span>
-      <span className={['text-2xl font-bold tabular-nums', countColour].join(' ')}>{count}</span>
+      <span className="min-h-8 eyebrow text-ink-mute">{label}</span>
+      <span
+        className="text-2xl font-medium tabular-nums font-mono"
+        style={{ color: tint, fontFeatureSettings: 'var(--num-features)' }}
+      >
+        {count}
+      </span>
       {description && (
-        <span className="text-xs text-gray-400">{description}</span>
+        <span className="text-[12px] text-ink-dim">{description}</span>
       )}
     </button>
   )
@@ -1562,7 +1555,7 @@ export default function DashboardPage() {
   const noResults = !loading && sections.every((s) => s.projects.length === 0)
 
   return (
-    <div className="min-h-dvh bg-gray-50">
+    <div className="min-h-dvh bg-canvas">
       {/* Shared designer chrome. Search lifted out of the list-card
           and into the header per the reskin handoff. The QuoteLink
           (new-tab "phone rings, jump to quote" link with ⌘K hint)
@@ -1613,7 +1606,7 @@ export default function DashboardPage() {
 
             {loading ? (
               <div className="flex justify-center py-20">
-                <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-line motion-reduce:animate-none" style={{ borderTopColor: 'var(--c-ink)' }} />
               </div>
             ) : (
               <>
@@ -1628,22 +1621,31 @@ export default function DashboardPage() {
                     Palette: rose → amber → sky → turquoise → green → violet → gray */}
 
                 {/* Section labels — xl only, one label per group aligned to
-                    the matching tile column(s) via the same 7-col grid */}
+                    the matching tile column(s) via the same 7-col grid.
+                    Alert label keeps its red accent (matches the Needs
+                    attention tile's tone); the other two stay quiet so
+                    the rose label reads as the urgent one. */}
                 <div className="mb-1.5 hidden xl:grid xl:grid-cols-7 xl:gap-3">
-                  {/* Alert group — spans column 1 */}
                   <div className="flex items-center gap-2 px-0.5">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-rose-500">Alert</span>
-                    <span className="h-px flex-1 bg-rose-300" aria-hidden="true" />
+                    <span
+                      className="eyebrow"
+                      style={{ color: 'var(--c-out)', letterSpacing: '0.16em' }}
+                    >
+                      Alert
+                    </span>
+                    <span
+                      className="h-px flex-1"
+                      aria-hidden="true"
+                      style={{ background: 'var(--c-out-soft)' }}
+                    />
                   </div>
-                  {/* Workflow group — spans columns 2–5 */}
                   <div className="col-span-4 flex items-center gap-2 px-0.5">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">Workflow</span>
-                    <span className="h-px flex-1 bg-gray-300" aria-hidden="true" />
+                    <span className="eyebrow text-ink-mute">Workflow</span>
+                    <span className="h-px flex-1 bg-line" aria-hidden="true" />
                   </div>
-                  {/* On hold group — spans columns 6–7 */}
                   <div className="col-span-2 flex items-center gap-2 px-0.5">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">On hold</span>
-                    <span className="h-px flex-1 bg-gray-300" aria-hidden="true" />
+                    <span className="eyebrow text-ink-mute">On hold</span>
+                    <span className="h-px flex-1 bg-line" aria-hidden="true" />
                   </div>
                 </div>
 
@@ -1721,12 +1723,12 @@ export default function DashboardPage() {
                     keeps its own standalone card since the controls would
                     have nothing to act on. */}
                 {projects.length === 0 ? (
-                  <div className="rounded-2xl bg-white py-20 text-center shadow-sm ring-1 ring-gray-200">
-                    <p className="text-gray-400">No projects yet.</p>
-                    <Link to="/proofs/new" className="mt-3 inline-block text-sm font-medium text-gray-900 underline">Create the first one</Link>
+                  <div className="rounded-[14px] bg-surface py-20 text-center border border-line">
+                    <p className="text-ink-mute">No projects yet.</p>
+                    <Link to="/proofs/new" className="mt-3 inline-block text-[14px] font-medium text-ink underline">Create the first one</Link>
                   </div>
                 ) : (
-                  <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+                  <div className="overflow-hidden rounded-[14px] bg-surface border border-line">
                     {/* Controls block — divider below separates it from
                         the list. Search on row 1, three matching
                         dropdowns (Status, Sort, Group) on row 2. The
@@ -1736,7 +1738,7 @@ export default function DashboardPage() {
                         competing styles. Per-status counts live in the
                         dropdown options so they appear when the menu
                         opens without crowding the closed control. */}
-                    <div className="border-b border-gray-100 px-5 py-4">
+                    <div className="border-b border-line-soft px-5 py-4">
                       <div className="flex flex-wrap items-center gap-2">
                         {/* Status filter */}
                         <SelectField
