@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { PlasmaWordmark } from '../design'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
 import { compilePersonalisationSurcharges, personalisationBreakeven } from '../lib/personalisation'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
@@ -5085,44 +5086,37 @@ function buildImageGroups(images: GridImage[]): ImageGroup[] {
   return groups
 }
 
-// Loading / 404 / abandoned screens. All three share the paper
-// register of the live page so the customer never lands on a
-// surface that looks like a different site. Eyebrow → headline
-// → quiet body, on PAPER_CREAM, with the same SERIF / MONO
-// hierarchy.
+// Loading / 404 / abandoned screens. Restyled to the PlasmaDesign
+// Stock Control design system landed in reskin PRs 1-2: warm-cream
+// canvas, IBM Plex Sans display headings, mono eyebrows, hairline
+// borders. Same content, new chrome.
 function PlasmaEyebrow() {
   return (
-    <p
-      className="font-paper-mono uppercase"
-      style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
-    >
-      Plasma Design
-    </p>
+    <div className="inline-flex items-center gap-2">
+      <PlasmaWordmark size="sm" tagline="Proofs" />
+    </div>
   )
 }
 
 function LoadingScreen() {
   return (
-    <div className="flex min-h-dvh items-center justify-center" style={{ background: PAPER_CREAM }}>
+    <div className="flex min-h-dvh items-center justify-center bg-canvas text-ink">
       <div className="text-center">
         <PlasmaEyebrow />
+        {/* motion-reduce:animate-none disables the rotation for users
+            with `prefers-reduced-motion: reduce`. The static ring still
+            renders so the layout doesn't collapse — paired with the
+            visible "Loading proof" text below it the loading state
+            remains comprehensible without motion. role/aria-label give
+            SR users an explicit cue that loading is in progress
+            (the .animate-spin div alone isn't announced). */}
         <div
-          // motion-reduce:animate-none disables the rotation for users
-          // with `prefers-reduced-motion: reduce`. The static ring still
-          // renders so the layout doesn't collapse — paired with the
-          // visible "Loading proof" text below it the loading state
-          // remains comprehensible without motion. role/aria-label give
-          // SR users an explicit cue that loading is in progress
-          // (the .animate-spin div alone isn't announced).
           role="status"
           aria-label="Loading"
-          className="mx-auto mt-6 h-7 w-7 animate-spin motion-reduce:animate-none rounded-full border-2"
-          style={{ borderColor: 'rgba(26,22,18,0.15)', borderTopColor: PAPER_INK }}
+          className="mx-auto mt-8 h-7 w-7 animate-spin motion-reduce:animate-none rounded-full border-2 border-line"
+          style={{ borderTopColor: 'var(--c-ink)' }}
         />
-        <p
-          className="mt-4 font-paper-mono uppercase"
-          style={{ fontSize: 10, letterSpacing: '0.24em', color: PAPER_TERTIARY }}
-        >
+        <p className="eyebrow mt-5" style={{ letterSpacing: '0.24em' }}>
           Loading proof
         </p>
       </div>
@@ -5132,24 +5126,16 @@ function LoadingScreen() {
 
 function NotFoundScreen() {
   return (
-    <div className="flex min-h-dvh items-center justify-center" style={{ background: PAPER_CREAM }}>
+    <div className="flex min-h-dvh items-center justify-center bg-canvas text-ink">
       <div className="text-center px-6">
         <PlasmaEyebrow />
-        <h1
-          className="mt-6"
-          style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(48px, 9vw, 72px)', lineHeight: 1, color: PAPER_INK }}
-        >
-          Not found
-        </h1>
-        <p
-          className="mx-auto mt-4 max-w-sm"
-          style={{ fontFamily: SERIF, fontSize: 18, lineHeight: 1.45, color: PAPER_TERTIARY }}
-        >
+        <h1 className="h-display mt-8">Not found</h1>
+        <p className="body-soft mx-auto mt-4 max-w-sm">
           This proof link isn't valid or has expired. If you were sent here recently, please get in touch.
         </p>
         <p
-          className="mt-8 font-paper-mono uppercase"
-          style={{ fontSize: 10, letterSpacing: '0.32em', color: 'rgba(26,22,18,0.30)' }}
+          className="eyebrow mt-10"
+          style={{ letterSpacing: '0.32em', color: 'var(--c-ink-dim)' }}
         >
           404
         </p>
@@ -5159,69 +5145,35 @@ function NotFoundScreen() {
 }
 
 function AbandonedScreen({ proof }: { proof: PublicProof }) {
+  // Same masthead rule as the live page: company prominent when
+  // present (with the contact name as a muted sub-line), contact
+  // name prominent when no company. Keeps the customer's brand
+  // presence coherent across the live and abandoned screens.
+  const trimmedCompany = proof.company?.trim() ?? ''
+  const trimmedName = proof.customer_name?.trim() ?? ''
+  const companyProminent = trimmedCompany.length > 0
+  const primary = companyProminent ? proof.company! : proof.customer_name
+  const subline = companyProminent && trimmedName.length > 0 ? proof.customer_name : null
   return (
-    <div className="min-h-dvh" style={{ background: PAPER_CREAM }}>
+    <div className="min-h-dvh bg-canvas text-ink">
       <div className="mx-auto max-w-4xl px-4 py-12 sm:px-6 sm:py-16 lg:px-8">
         <header className="mb-12">
-          <p
-            className="font-paper-mono uppercase"
-            style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
-          >
-            Proof for
-          </p>
-          {/* Same masthead rule as the live page: company prominent
-              when present (with the contact name as a muted sub-
-              line), contact name prominent when no company. Keeps
-              the customer's brand presence coherent across the live
-              and abandoned screens. */}
-          {(() => {
-            const trimmedCompany = proof.company?.trim() ?? ''
-            const trimmedName = proof.customer_name?.trim() ?? ''
-            const companyProminent = trimmedCompany.length > 0
-            const primary = companyProminent ? proof.company! : proof.customer_name
-            const subline = companyProminent && trimmedName.length > 0
-              ? proof.customer_name
-              : null
-            return (
-              <>
-                <h1
-                  className="mt-3"
-                  style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(36px, 7vw, 56px)', lineHeight: 1.05, color: PAPER_INK }}
-                >
-                  {primary}
-                </h1>
-                {subline && (
-                  <p
-                    className="mt-2"
-                    style={{ fontFamily: SERIF, fontSize: 22, color: PAPER_TERTIARY }}
-                  >
-                    {subline}
-                  </p>
-                )}
-              </>
-            )
-          })()}
+          <span className="eyebrow">Proof for</span>
+          <h1 className="h1 mt-3" style={{ fontSize: 'clamp(36px, 7vw, 56px)' }}>
+            {primary}
+          </h1>
+          {subline && (
+            <p className="body-soft mt-2" style={{ fontSize: 22 }}>
+              {subline}
+            </p>
+          )}
         </header>
-        <div
-          className="rounded-2xl p-10 text-center"
-          style={{ background: PAPER_TINT_1, border: '1px solid rgba(26,22,18,0.10)' }}
-        >
-          <p
-            className="font-paper-mono uppercase"
-            style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
-          >
+        <div className="rounded-[14px] p-10 text-center bg-surface border border-line">
+          <span className="eyebrow" style={{ letterSpacing: '0.32em' }}>
             Closed
-          </p>
-          <h2
-            className="mt-3"
-            style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, color: PAPER_INK }}
-          >
-            This proof is closed
-          </h2>
-          <p
-            className="mx-auto mt-3 max-w-md"
-            style={{ fontFamily: SERIF, fontSize: 17, lineHeight: 1.5, color: PAPER_TERTIARY }}
-          >
+          </span>
+          <h2 className="h2 mt-3">This proof is closed</h2>
+          <p className="body-soft mx-auto mt-3 max-w-md" style={{ fontSize: 16 }}>
             If you'd like to revisit your business cards, please get in touch.
           </p>
         </div>
