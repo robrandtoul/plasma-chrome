@@ -148,28 +148,41 @@ function viewedStateFor(p: DashboardProject): ViewedState {
 }
 
 // ── Designer avatar ──────────────────────────────────────────────────────────
+//
+// Per-designer colour bg / text. Soft 14% tint background with a solid
+// text colour matches the readability you want at 24px — solid bg +
+// white text (the DesignerHeader UserPill pattern) reads too heavy
+// when 20+ avatars stack in a dashboard list. Same four-colour palette
+// as DesignerHeader's COLOUR_BG so the header pill and row avatars
+// share the same designer-identity register.
 
-const COLOUR_CLASSES: Record<DesignerColour, string> = {
-  blue:   'bg-sky-100 text-sky-800 ring-sky-200',
-  teal:   'bg-teal-100 text-teal-800 ring-teal-200',
-  coral:  'bg-orange-100 text-orange-800 ring-orange-200',
-  purple: 'bg-violet-100 text-violet-800 ring-violet-200',
+const AVATAR_COLOUR: Record<DesignerColour, string> = {
+  blue:   'var(--c-allocated)',
+  teal:   'var(--c-in-stock)',
+  coral:  'var(--c-brand)',
+  purple: '#7b3ff2',
 }
 
 function DesignerAvatar({ p }: { p: DashboardProject }) {
   const initials = (p.designer_initials ?? '').slice(0, 2) || '—'
   const colour = (p.designer_colour ?? 'teal') as DesignerColour
+  const tint = AVATAR_COLOUR[colour]
   const tooltip = p.designer_name && p.current_version_number != null && p.version_created_at
     ? `${p.designer_name} — v${p.current_version_number} created ${formatAbsoluteDateTime(p.version_created_at)}`
     : p.designer_name ?? ''
+  const tintedStyle = p.designer_avatar_url
+    ? undefined
+    : {
+        backgroundColor: `color-mix(in srgb, ${tint} 14%, transparent)`,
+        color: tint,
+        boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${tint} 30%, transparent)`,
+      }
   return (
     <span
       title={tooltip}
       aria-label={tooltip}
-      className={[
-        'flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold ring-1',
-        p.designer_avatar_url ? 'bg-transparent ring-gray-200' : COLOUR_CLASSES[colour],
-      ].join(' ')}
+      className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold"
+      style={tintedStyle}
     >
       {p.designer_avatar_url
         ? <img src={p.designer_avatar_url} alt="" className="h-full w-full object-cover" />
@@ -310,14 +323,14 @@ function OverflowMenu({
         aria-expanded={open}
         aria-label="Project actions"
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
-        className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+        className="flex h-8 w-8 items-center justify-center rounded-md text-ink-mute hover:bg-canvas hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
       >
         <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor"><circle cx="3" cy="8" r="1.5" /><circle cx="8" cy="8" r="1.5" /><circle cx="13" cy="8" r="1.5" /></svg>
       </button>
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-9 z-10 w-56 rounded-lg bg-white py-1 text-sm shadow-lg ring-1 ring-gray-200"
+          className="absolute right-0 top-9 z-10 w-56 rounded-[10px] bg-surface py-1 text-sm shadow-md border border-line"
           onClick={(e) => e.stopPropagation()}
         >
           {proof.current_version_id ? (
@@ -326,21 +339,21 @@ function OverflowMenu({
               href={designerPreviewPath(proof.proof_id)}
               target="_blank"
               rel="noopener noreferrer"
-              className="block px-3 py-2 text-gray-700 hover:bg-gray-100"
+              className="block px-3 py-2 text-ink-soft hover:bg-canvas"
               onClick={() => setOpen(false)}
             >Preview</a>
           ) : (
-            <span role="menuitem" aria-disabled className="block cursor-not-allowed px-3 py-2 text-gray-300">Preview</span>
+            <span role="menuitem" aria-disabled className="block cursor-not-allowed px-3 py-2 text-ink-dim">Preview</span>
           )}
           {canAddVersion ? (
             <Link
               role="menuitem"
               to={`/proofs/${proof.proof_id}/versions/new`}
-              className="block px-3 py-2 text-gray-700 hover:bg-gray-100"
+              className="block px-3 py-2 text-ink-soft hover:bg-canvas"
               onClick={() => setOpen(false)}
             >Add version</Link>
           ) : (
-            <span role="menuitem" aria-disabled className="block cursor-not-allowed px-3 py-2 text-gray-300">Add version</span>
+            <span role="menuitem" aria-disabled className="block cursor-not-allowed px-3 py-2 text-ink-dim">Add version</span>
           )}
           {proof.helpscout_conversation_url && (
             <a
@@ -348,7 +361,7 @@ function OverflowMenu({
               href={proof.helpscout_conversation_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="block px-3 py-2 text-gray-700 hover:bg-gray-100"
+              className="block px-3 py-2 text-ink-soft hover:bg-canvas"
               onClick={() => setOpen(false)}
             >Open in Help Scout</a>
           )}
@@ -356,7 +369,7 @@ function OverflowMenu({
             role="menuitem"
             type="button"
             onClick={() => { setOpen(false); onToggleMinePin(proof.proof_id) }}
-            className="block w-full border-t border-gray-100 px-3 py-2 text-left text-gray-700 hover:bg-gray-100"
+            className="block w-full border-t border-line-soft px-3 py-2 text-left text-ink-soft hover:bg-canvas"
           >
             {minePinned ? 'Unpin from your list' : 'Pin to your list'}
           </button>
@@ -364,7 +377,7 @@ function OverflowMenu({
             role="menuitem"
             type="button"
             onClick={() => { setOpen(false); onToggleTeamPin(proof.proof_id) }}
-            className="block w-full px-3 py-2 text-left text-gray-700 hover:bg-gray-100"
+            className="block w-full px-3 py-2 text-left text-ink-soft hover:bg-canvas"
           >
             {teamPinned ? 'Unpin from the team list' : 'Pin for the team'}
           </button>
@@ -378,13 +391,14 @@ function OverflowMenu({
                   void onUnsnooze(proof.proof_id, proof.snooze_rule_code)
                 }
               }}
-              className="block w-full border-t border-gray-100 px-3 py-2 text-left text-violet-700 hover:bg-violet-50"
+              className="block w-full border-t border-line-soft px-3 py-2 text-left hover:bg-canvas"
+              style={{ color: '#7b3ff2' }}
             >
               Unsnooze
             </button>
           )}
           {proof.rule_code && !proof.snoozed_until && (
-            <div className="border-t border-gray-100">
+            <div className="border-t border-line-soft">
               <SnoozeButton proof={proof} onSnooze={onSnooze} menuStyle />
             </div>
           )}
@@ -504,9 +518,9 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
           role="menuitem"
           aria-label="Snooze this alert"
           onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
-          className="flex w-full items-center gap-2 px-3 py-2 text-left text-gray-700 hover:bg-gray-100"
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-ink-soft hover:bg-canvas"
         >
-          <ClockIcon className="h-4 w-4 shrink-0 text-gray-400" />
+          <ClockIcon className="h-4 w-4 shrink-0 text-ink-mute" />
           <span>Snooze</span>
         </button>
       ) : (
@@ -517,8 +531,8 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
           onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
           className={
             stripStyle
-              ? 'flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900'
-              : 'flex h-5 w-5 items-center justify-center rounded-full text-amber-600 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500'
+              ? 'flex h-7 w-7 items-center justify-center rounded-md text-ink-mute hover:bg-canvas hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]'
+              : 'flex h-5 w-5 items-center justify-center rounded-full text-low hover:bg-low-soft focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-low)]'
           }
         >
           <ClockIcon className={stripStyle ? 'h-4 w-4' : 'h-3 w-3'} />
@@ -529,7 +543,7 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
           role="dialog"
           aria-label="Snooze options"
           className={[
-            'absolute z-30 w-56 overflow-hidden rounded-lg bg-white py-2 shadow-lg ring-1 ring-gray-200',
+            'absolute z-30 w-56 overflow-hidden rounded-[10px] bg-surface py-2 shadow-md border border-line',
             menuStyle ? 'right-0 top-full mt-1' : stripStyle ? 'right-0 top-8' : 'left-0 top-6',
           ].join(' ')}
           onClick={(e) => e.stopPropagation()}
@@ -537,62 +551,62 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
           {customMode ? (
             /* ── Custom date picker ── */
             <div className="px-3 py-2">
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Snooze until</p>
+              <p className="mb-2 eyebrow text-ink-mute">Snooze until</p>
               <input
                 type="date"
                 min={minDate()}
                 value={customDate}
                 onChange={(e) => setCustomDate(e.target.value)}
-                className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-gray-700 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                className="w-full rounded border border-line px-2 py-1.5 text-sm text-ink-soft focus:border-[var(--c-brand)] focus:outline-none focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
                 onClick={(e) => e.stopPropagation()}
               />
               <button
                 type="button"
                 disabled={saving || !customDate}
                 onClick={() => handleSnooze(hoursUntilEndOfDate(customDate))}
-                className="mt-2 w-full rounded bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-40"
+                className="mt-2 w-full rounded bg-ink px-3 py-1.5 text-sm font-medium text-on-ink hover:opacity-90 disabled:opacity-40"
               >{saving ? 'Saving…' : 'Snooze'}</button>
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); setCustomMode(false); setCustomDate('') }}
-                className="mt-1 w-full py-1 text-xs text-gray-400 hover:text-gray-700"
+                className="mt-1 w-full py-1 text-xs text-ink-mute hover:text-ink-soft"
               >← Back</button>
             </div>
           ) : (
             /* ── Preset list ── */
             <>
-              <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Snooze for</p>
+              <p className="px-3 pb-1.5 eyebrow text-ink-mute">Snooze for</p>
               {PRESETS.map(({ label, hours }) => (
                 <button
                   key={hours}
                   type="button"
                   disabled={saving}
                   onClick={() => handleSnooze(hours)}
-                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                  className="w-full px-3 py-2 text-left text-sm text-ink-soft hover:bg-canvas disabled:opacity-50"
                 >{label}</button>
               ))}
               <button
                 type="button"
                 disabled={saving}
                 onClick={(e) => { e.stopPropagation(); setCustomMode(true) }}
-                className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                className="w-full px-3 py-2 text-left text-sm text-ink-soft hover:bg-canvas disabled:opacity-50"
               >Custom date…</button>
             </>
           )}
           {/* Note + cancel — shown in both modes */}
-          <div className="mt-1 border-t border-gray-100 px-3 pt-2">
+          <div className="mt-1 border-t border-line-soft px-3 pt-2">
             <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
               placeholder="Add a note (optional)"
               rows={2}
-              className="w-full resize-none rounded border border-gray-200 px-2 py-1.5 text-xs text-gray-700 placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              className="w-full resize-none rounded border border-line px-2 py-1.5 text-xs text-ink-soft placeholder:text-ink-dim focus:border-[var(--c-brand)] focus:outline-none focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
               onClick={(e) => e.stopPropagation()}
             />
             <button
               type="button"
               onClick={handleClose}
-              className="mt-1 w-full py-1 text-xs text-gray-400 hover:text-gray-700"
+              className="mt-1 w-full py-1 text-xs text-ink-mute hover:text-ink-soft"
             >Cancel</button>
           </div>
         </div>
@@ -800,11 +814,14 @@ interface RowActionButtonProps {
 function RowActionButton({ label, children, href, to, onClick, active }: RowActionButtonProps) {
   const cls = [
     'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
-    'focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
+    'focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]',
     active
-      ? 'bg-violet-100 text-violet-600 hover:bg-violet-200'
-      : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700',
+      ? 'text-ink hover:opacity-90'
+      : 'text-ink-mute hover:bg-canvas hover:text-ink',
   ].join(' ')
+  const activeStyle = active
+    ? { backgroundColor: 'color-mix(in srgb, #7b3ff2 14%, transparent)', color: '#7b3ff2' }
+    : undefined
 
   if (href) {
     return (
@@ -816,6 +833,7 @@ function RowActionButton({ label, children, href, to, onClick, active }: RowActi
         title={label}
         onClick={(e) => { e.stopPropagation(); onClick?.(e) }}
         className={cls}
+        style={activeStyle}
       >{children}</a>
     )
   }
@@ -827,6 +845,7 @@ function RowActionButton({ label, children, href, to, onClick, active }: RowActi
         title={label}
         onClick={(e) => { e.stopPropagation(); onClick?.(e) }}
         className={cls}
+        style={activeStyle}
       >{children}</Link>
     )
   }
@@ -837,6 +856,7 @@ function RowActionButton({ label, children, href, to, onClick, active }: RowActi
       title={label}
       onClick={(e) => { e.stopPropagation(); onClick?.(e) }}
       className={cls}
+      style={activeStyle}
     >{children}</button>
   )
 }
@@ -950,7 +970,16 @@ function UnsnoozeButton({ proof, onUnsnooze }: UnsnoozeButtonProps) {
       title="Unsnooze"
       disabled={saving}
       onClick={handleClick}
-      className="flex h-7 w-7 items-center justify-center rounded-md text-violet-500 hover:bg-violet-100 hover:text-violet-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 disabled:opacity-50"
+      className="flex h-7 w-7 items-center justify-center rounded-md hover:opacity-100 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 disabled:opacity-50"
+      style={{
+        color: '#7b3ff2',
+        // Hover/focus tint sits at a higher source order than the
+        // pseudo-classes, so apply via class would lose. Inline-style
+        // ring + bg via :hover would need a sibling stylesheet. Keep
+        // it as a flat coloured icon button — when the row hover state
+        // changes the surface bg, the violet stays vivid against it.
+        outlineColor: '#7b3ff2',
+      }}
     >
       <UnsnoozeIcon className="h-4 w-4" />
     </button>
