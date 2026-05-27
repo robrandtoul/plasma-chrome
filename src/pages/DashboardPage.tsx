@@ -255,7 +255,6 @@ interface StatTileProps {
   count: number
   active: boolean
   tone: 'rose' | 'amber' | 'sky' | 'neutral' | 'violet' | 'green' | 'turquoise'
-  description?: string
   onClick: () => void
 }
 
@@ -274,19 +273,20 @@ const TILE_COLOUR: Record<StatTileProps['tone'], string> = {
   neutral:   'var(--c-ink-mute)',
 }
 
-function StatTile({ label, count, active, tone, description, onClick }: StatTileProps) {
+function StatTile({ label, count, active, tone, onClick }: StatTileProps) {
   const tint = TILE_COLOUR[tone]
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className="flex flex-col items-start gap-2 rounded-[12px] bg-surface px-5 py-4 text-left border border-line transition-colors hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
+      className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative"
       style={{
-        // Active state: subtle inset ring in the tile's tone, no border colour
-        // swap. Matches the mockup's quieter active treatment — the dot up top
-        // carries the colour signal, no need to outline the whole card.
-        boxShadow: active ? `inset 0 0 0 2px ${tint}` : undefined,
+        // Active state: a soft tint of the tile's tone fills the cell
+        // background. Cleaner than an inset ring when each cell sits
+        // inside a unified panel — the ring would compete with the
+        // panel border and the dividing hairlines.
+        backgroundColor: active ? `color-mix(in srgb, ${tint} 8%, transparent)` : undefined,
       }}
     >
       {/* Dot + label row. Dot picks up the tile's tone; label uses the
@@ -311,9 +311,6 @@ function StatTile({ label, count, active, tone, description, onClick }: StatTile
       >
         {String(count).padStart(2, '0')}
       </span>
-      {description && (
-        <span className="text-[12px] text-ink-mute leading-snug">{description}</span>
-      )}
     </button>
   )
 }
@@ -1781,13 +1778,22 @@ export default function DashboardPage() {
                     grouping via colour (rose for Needs attention,
                     amber→sky→turquoise→green for workflow,
                     violet/neutral for on-hold). */}
-                <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-7">
+                {/* Unified tile panel — single bordered card containing
+                    all 7 status tiles, separated by vertical hairlines
+                    on >= xl widths. Below xl the panel rewraps to a 2/3-
+                    column grid so the tiles remain readable on narrow
+                    viewports; the hairlines drop on the wrapped layout
+                    since tiles no longer share a single row. Per-tile
+                    descriptions are dropped to match the mockup — the
+                    dot+label+count carries the meaning, and the
+                    descriptions were duplicating what hovering over the
+                    tile already explains. */}
+                <div className="mb-6 rounded-[14px] border border-line bg-surface overflow-hidden grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 xl:divide-x xl:divide-line">
                   <StatTile
                     label="Needs attention"
                     count={needsAttentionCount}
                     active={tileFilter === 'needs_attention'}
                     tone="rose"
-                    description="action required from you"
                     onClick={() => toggleTile('needs_attention')}
                   />
                   <StatTile
@@ -1795,7 +1801,6 @@ export default function DashboardPage() {
                     count={notViewedCount}
                     active={tileFilter === 'not_viewed'}
                     tone="amber"
-                    description="current version unopened"
                     onClick={() => toggleTile('not_viewed')}
                   />
                   <StatTile
@@ -1803,7 +1808,6 @@ export default function DashboardPage() {
                     count={awaitingCustomerCount}
                     active={tileFilter === 'awaiting_customer'}
                     tone="sky"
-                    description="viewed, no response yet"
                     onClick={() => toggleTile('awaiting_customer')}
                   />
                   <StatTile
@@ -1811,7 +1815,6 @@ export default function DashboardPage() {
                     count={changesRequestedCount}
                     active={tileFilter === 'changes_requested'}
                     tone="turquoise"
-                    description="awaiting new version from you"
                     onClick={() => toggleTile('changes_requested')}
                   />
                   <StatTile
@@ -1819,7 +1822,6 @@ export default function DashboardPage() {
                     count={approvedThisWeekCount}
                     active={tileFilter === 'approved_this_week'}
                     tone="green"
-                    description="approved in last 7 days"
                     onClick={() => toggleTile('approved_this_week')}
                   />
                   <StatTile
@@ -1827,7 +1829,6 @@ export default function DashboardPage() {
                     count={snoozedSections[0]?.projects.length ?? 0}
                     active={showSnoozed}
                     tone="violet"
-                    description="temporarily hidden"
                     onClick={() => {
                       setShowSnoozed((v) => {
                         const next = !v
@@ -1843,7 +1844,6 @@ export default function DashboardPage() {
                     count={dormantCount}
                     active={tileFilter === 'dormant'}
                     tone="neutral"
-                    description="no activity for 30+ days"
                     onClick={() => toggleTile('dormant')}
                   />
                 </div>
