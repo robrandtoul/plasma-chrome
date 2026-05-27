@@ -231,7 +231,22 @@ function StatTile({ label, count, active, tone, description, onClick }: StatTile
         boxShadow: active ? `inset 0 0 0 1px ${tint}` : undefined,
       }}
     >
-      <span className="min-h-8 eyebrow text-ink-mute">{label}</span>
+      {/* The .eyebrow class in design-tokens.css sets white-space: nowrap
+          for every other consumer (inline pills, kickers next to data),
+          and it's imported AFTER tailwindcss in index.css — so utility
+          classes like whitespace-normal lose the cascade race on equal
+          specificity. Inline style is the only way to override without
+          changing the global rule's behaviour for those other call
+          sites. Two lines fit at 10px font with line-height 1.2; the
+          min-h reserves the second-line slot so short-label tiles
+          (Snoozed, Dormant) match the row height of their wrapping
+          neighbours and the row stays flush. */}
+      <span
+        className="eyebrow text-ink-mute min-h-[28px]"
+        style={{ whiteSpace: 'normal', lineHeight: 1.2 }}
+      >
+        {label}
+      </span>
       <span
         className="text-2xl font-medium tabular-nums font-mono"
         style={{ color: tint, fontFeatureSettings: 'var(--num-features)' }}
