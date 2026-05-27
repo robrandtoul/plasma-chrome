@@ -1722,73 +1722,63 @@ export default function DashboardPage() {
           />
         )}
 
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
-          <div className="min-w-0">
-
-            {loading ? (
-              <div className="flex justify-center py-20">
-                <div className="h-8 w-8 animate-spin rounded-full border-2 border-line motion-reduce:animate-none" style={{ borderTopColor: 'var(--c-ink)' }} />
+        {loading ? (
+          <div className="flex justify-center py-20">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-line motion-reduce:animate-none" style={{ borderTopColor: 'var(--c-ink)' }} />
+          </div>
+        ) : (
+          <>
+            {/* Unified hero + tile panel. One bordered card spanning
+                the full page width: hero header (eyebrow + greeting +
+                date+count line + Saved views + New proof) at the top,
+                7-tile row below, divided by a hairline. The Latest
+                activity sidebar (rendered further down inside the
+                2-col grid) now starts below this unified area rather
+                than aligning with the hero, matching the mockup. */}
+            <section className="mb-6 rounded-[14px] bg-surface border border-line overflow-hidden">
+              {/* Hero header */}
+              <div className="px-6 py-5 flex flex-wrap items-end justify-between gap-4 border-b border-line-soft">
+                <div>
+                  <div className="eyebrow">Proofs at a glance</div>
+                  <h1 className="mt-1 font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0" style={{ fontSize: 'clamp(22px, 3vw, 28px)' }}>
+                    {greetingFor(new Date())}, {myProfile?.firstName ?? 'there'}
+                  </h1>
+                  <p className="mt-1.5 text-[14px] text-ink-soft leading-snug">
+                    {todayLabel(new Date())}
+                    {needsAttentionCount > 0 && (
+                      <>
+                        {' · '}
+                        <span className="font-medium" style={{ color: 'var(--c-brand)' }}>
+                          {String(needsAttentionCount).padStart(2, '0')} {needsAttentionCount === 1 ? 'job' : 'jobs'}
+                        </span>
+                        {' need your attention this morning.'}
+                      </>
+                    )}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {/* Saved views — placeholder for the still-to-build
+                      feature. No handler; renders as a disabled-looking
+                      button so the visual matches the mockup but the
+                      affordance reads as "coming soon". */}
+                  <ButtonGhost icon={Filter} disabled>Saved views</ButtonGhost>
+                  <ButtonCoral icon={Plus} onClick={() => navigate('/proofs/new')}>
+                    New proof
+                  </ButtonCoral>
+                </div>
               </div>
-            ) : (
-              <>
-                {/* Hero strip — "Good morning, Rob" greeting + today's
-                    date + a count of jobs needing attention, with Saved
-                    views + New proof CTAs on the right. Lifts the New
-                    proof button out of the DesignerHeader actions slot
-                    (where it sat in PR 16) and puts it next to the
-                    primary call-to-attention copy. Saved views is a
-                    placeholder for the still-to-build feature — no
-                    handler yet, just the visual chrome per the mockup. */}
-                <section className="mb-6 rounded-[14px] bg-surface border border-line px-6 py-5 flex flex-wrap items-end justify-between gap-4">
-                  <div>
-                    <div className="eyebrow">Proofs at a glance</div>
-                    <h1 className="mt-1 font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0" style={{ fontSize: 'clamp(22px, 3vw, 28px)' }}>
-                      {greetingFor(new Date())}, {myProfile?.firstName ?? 'there'}
-                    </h1>
-                    <p className="mt-1.5 text-[14px] text-ink-soft leading-snug">
-                      {todayLabel(new Date())}
-                      {needsAttentionCount > 0 && (
-                        <>
-                          {' · '}
-                          <span className="font-medium" style={{ color: 'var(--c-brand)' }}>
-                            {String(needsAttentionCount).padStart(2, '0')} {needsAttentionCount === 1 ? 'job' : 'jobs'}
-                          </span>
-                          {' need your attention this morning.'}
-                        </>
-                      )}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {/* Saved views — placeholder for the still-to-build
-                        feature. No handler; renders as a disabled-looking
-                        button so the visual matches the mockup but the
-                        affordance reads as "coming soon". */}
-                    <ButtonGhost icon={Filter} disabled>Saved views</ButtonGhost>
-                    <ButtonCoral icon={Plus} onClick={() => navigate('/proofs/new')}>
-                      New proof
-                    </ButtonCoral>
-                  </div>
-                </section>
 
-                {/* Stat tile row. Seven tiles in priority order — the
-                    Alert / Workflow / On hold group labels from the
-                    earlier dashboard shape are dropped here so the row
-                    reads as a single horizontal sweep, matching the
-                    mockup. The tile palette still encodes the same
-                    grouping via colour (rose for Needs attention,
-                    amber→sky→turquoise→green for workflow,
-                    violet/neutral for on-hold). */}
-                {/* Unified tile panel — single bordered card containing
-                    all 7 status tiles, separated by vertical hairlines
-                    on >= xl widths. Below xl the panel rewraps to a 2/3-
-                    column grid so the tiles remain readable on narrow
-                    viewports; the hairlines drop on the wrapped layout
-                    since tiles no longer share a single row. Per-tile
-                    descriptions are dropped to match the mockup — the
-                    dot+label+count carries the meaning, and the
-                    descriptions were duplicating what hovering over the
-                    tile already explains. */}
-                <div className="mb-6 rounded-[14px] border border-line bg-surface overflow-hidden grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 xl:divide-x xl:divide-line">
+              {/* Tile row. Seven tiles in priority order, separated by
+                  vertical hairlines at xl widths via xl:divide-x. Below
+                  xl the tiles wrap into 2 / 3 column grids so they
+                  remain readable on narrow viewports; the hairlines
+                  drop on the wrapped layout since tiles no longer share
+                  a single row. The tile palette encodes the
+                  Alert/Workflow/On-hold grouping via colour
+                  (rose for Needs attention,
+                  amber→sky→turquoise→green for workflow,
+                  violet/neutral for on-hold). */}
+              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 xl:divide-x xl:divide-line">
                   <StatTile
                     label="Needs attention"
                     count={needsAttentionCount}
@@ -1846,7 +1836,15 @@ export default function DashboardPage() {
                     tone="neutral"
                     onClick={() => toggleTile('dormant')}
                   />
-                </div>
+              </div>
+            </section>
+
+            {/* 2-column grid for the rest of the page: list card on the
+                left, Latest activity sidebar on the right. Lives below
+                the unified hero+tile panel so the sidebar starts under
+                the tile row rather than aligning with the hero. */}
+            <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
+              <div className="min-w-0">
 
                 {/* List card. Search, status chips and sort/group toggles
                     sit inside the same card as the project list so they
@@ -2030,16 +2028,14 @@ export default function DashboardPage() {
                     )}
                   </div>
                 )}
-              </>
-            )}
-          </div>
+              </div>
 
-          {!loading && (
-            <aside className="hidden lg:sticky lg:top-10 lg:block lg:self-start xl:pt-4">
-              <LatestActivityPanel events={latestEvents} navigate={navigate} />
-            </aside>
-          )}
-        </div>
+              <aside className="hidden lg:sticky lg:top-10 lg:block lg:self-start xl:pt-4">
+                <LatestActivityPanel events={latestEvents} navigate={navigate} />
+              </aside>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
