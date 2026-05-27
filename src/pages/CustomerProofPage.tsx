@@ -2758,8 +2758,7 @@ export default function CustomerProofPage() {
                 aria-labelledby="section-proofs-heading"
                 className="bg-canvas text-ink"
               >
-                <div className="mx-auto max-w-[1180px] px-6 py-10">
-                  {/* Section header — left cluster is the Proofs
+                {/* Section header — left cluster is the Proofs
                       heading + count subtitle; right cluster is the
                       MaterialOptionTabs (finish / option selector
                       preserved from the live data model — only the
@@ -3020,7 +3019,6 @@ export default function CustomerProofPage() {
                       })()}
                     </div>
                   )}
-                </div>
               </section>
             )
           })()}
@@ -3233,17 +3231,13 @@ export default function CustomerProofPage() {
               !is_per_direction_pricing gate makes that explicit and
               survives any future schema drift. */}
           {!activeVersion.is_per_direction_pricing && activeVersion.material_description && (
-            <section
-              aria-labelledby="section-material-heading"
-              className="bg-canvas"
-            >
-              <div className="mx-auto max-w-[1180px] px-6 py-8">
-                <PanelShell
-                  eyebrow="Material notes"
-                  title={`About our ${activeVersion.material_display.toLowerCase()} cards`}
-                  icon={BookOpen}
-                  accent={tokens.brand}
-                >
+            <section aria-labelledby="section-material-heading">
+              <PanelShell
+                eyebrow="Material notes"
+                title={`About our ${activeVersion.material_display.toLowerCase()} cards`}
+                icon={BookOpen}
+                accent={tokens.brand}
+              >
                   <h2 id="section-material-heading" className="sr-only">
                     About our {activeVersion.material_display.toLowerCase()} cards
                   </h2>
@@ -3301,8 +3295,7 @@ export default function CustomerProofPage() {
                       {activeVersion.material_disclaimer}
                     </p>
                   )}
-                </PanelShell>
-              </div>
+              </PanelShell>
             </section>
           )}
 
