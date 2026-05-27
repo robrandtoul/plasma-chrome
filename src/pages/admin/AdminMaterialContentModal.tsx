@@ -922,9 +922,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                       key={i}
                       className="grid grid-cols-[32px_1fr_auto] items-start gap-3 rounded-lg border border-gray-200 p-3"
                     >
-                      {/* Plain gray sans-serif numeral — admin
-                          chrome tone, not the customer page's
-                          serif ACCENT editorial treatment. */}
+                      {/* Plain gray sans-serif numeral — admin chrome tone. */}
                       <span className="pt-2 text-sm font-semibold text-gray-400 tabular-nums">
                         {String(i + 1).padStart(2, '0')}
                       </span>

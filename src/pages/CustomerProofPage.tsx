@@ -18,12 +18,7 @@ import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
 import { ActionPanel } from '../components/ActionPanel'
 import { ProofDetailView } from '../components/ProofDetailView'
 import { firstName } from '../lib/firstName'
-import {
-  BRAND_ORDER,
-  SERIF,
-  SANS,
-  MONO,
-} from '../lib/theme'
+import { BRAND_ORDER } from '../lib/theme'
 import { getPublicSettings, type PublicSettings } from '../lib/publicSettings'
 import type { PricingSnapshot, PricingVariant, Currency } from '../lib/types'
 
@@ -1281,15 +1276,11 @@ export default function CustomerProofPage() {
       timestampByName,
     })
 
-    const bannerBase =
-      'mt-6 flex flex-col gap-2 rounded-md px-5 py-4 text-[#1a1612]'
-    const KICKER_STYLE = {
-      fontFamily: MONO,
-      fontSize: 11,
-      letterSpacing: '0.22em',
-    } as const
-    const BODY_STYLE = { fontFamily: SERIF, fontWeight: 400, fontSize: 18, lineHeight: 1.35 } as const
-
+    // Two-state info banner for the shared-section block — used
+    // when the proof has named recipients (the shared section is
+    // approved-by-implication, never the customer's direct action).
+    // 'approved' → green register matching the per-recipient
+    // approval pill from PR 12c; otherwise → quiet eyebrow.
     if (derived.state === 'approved') {
       const dateStr = derived.latestApprovedAt
         ? new Date(derived.latestApprovedAt).toLocaleDateString('en-GB', {
@@ -1299,17 +1290,34 @@ export default function CustomerProofPage() {
           })
         : null
       return (
-        <div
-          className={bannerBase}
-          style={{
-            background: 'rgba(81,180,148,0.08)',
-            border: '1px solid rgba(81,180,148,0.30)',
-          }}
-        >
-          <span className="uppercase" style={{ ...KICKER_STYLE, color: '#176b3f' }}>
-            APPROVED
+        <div className="flex flex-col gap-1.5">
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 eyebrow self-start"
+            style={{
+              background: 'rgba(14,155,78,0.14)',
+              color: 'var(--c-in-stock)',
+              border: '1px solid rgba(14,155,78,0.3)',
+              letterSpacing: '0.14em',
+            }}
+          >
+            <svg
+              width="9"
+              height="9"
+              viewBox="0 0 12 12"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M2.5 6.5L5 9L9.5 3.5"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Approved
           </span>
-          <span style={{ ...BODY_STYLE, fontSize: 15, color: '#1a1612' }}>
+          <span className="text-[14px] text-ink-soft leading-snug">
             {dateStr ? `Approved on ${dateStr}.` : 'Approved.'}
           </span>
         </div>
@@ -1317,17 +1325,9 @@ export default function CustomerProofPage() {
     }
 
     return (
-      <div
-        className={bannerBase}
-        style={{
-          background: 'rgba(0,0,0,0.04)',
-          border: '1px solid rgba(0,0,0,0.10)',
-        }}
-      >
-        <span className="uppercase" style={{ ...KICKER_STYLE, color: '#1a1612' }}>
-          PENDING REVIEW
-        </span>
-        <span style={{ ...BODY_STYLE, fontSize: 15, color: '#1a1612' }}>
+      <div className="flex flex-col gap-1.5">
+        <span className="eyebrow text-ink-mute">Pending review</span>
+        <span className="text-[14px] text-ink-soft leading-snug">
           Approved automatically once every recipient approves their design.
         </span>
       </div>
@@ -2028,37 +2028,6 @@ export default function CustomerProofPage() {
   // form is needed on the customer page (no section heading for options).
   const optionLabelSingular = activeVersion?.option_label ?? 'Finish'
 
-  // ── Editorial treatment tokens (Variant B) ────────────────────
-  // All design tokens (surface colours, typography stacks, CTA
-  // palette, brand-rule colours) live in src/lib/theme.ts. This
-  // page imports them at the top of the file. The constants used
-  // to live inline here; they were lifted to a shared module in
-  // the janitor pass so the components can reference the same
-  // values without prop pass-through.
-  // Customer-page typographic registers. Replace the small
-  // uppercase-mono treatment for short editorial labels (Register
-  // A) and sentence-fragment text (Register B). Mono stays for
-  // CTA buttons, pricing-grid numerals, file names, segmented
-  // pill toggles, the DOWNLOAD chip, and the FRONT/BACK side
-  // label — all locked-in keep-on-mono per the inventory.
-  // REG_A_BASE (Direction-B uppercase-mono label register) dropped
-  // when the recipient-band pill rendering moved to the .eyebrow
-  // class in PR 12c. Last consumer was the per-recipient approval
-  // pill which now uses .eyebrow + an explicit letter-spacing
-  // override.
-  // Surface colour palette for the new registers. Dark sections
-  // use #C8C8C8 for primary labels (one stop above the previous
-  // text-white/45 ≈ #737373); light cream sections use #5F564D
-  // for primary, #3F362D for kickers needing more presence.
-  // Coloured highlights (status pills, brand-teal kickers) keep
-  // their existing colour and only swap typography — the brief
-  // is explicit on that.
-  // LABEL_DARK / LABEL_LIGHT were the Direction-B masthead/footer
-  // and inner-panel label colours; removed as the reskin replaces
-  // those surfaces section by section. Any remaining label-style
-  // copy reads `text-ink-soft` / `text-ink-mute` from the design
-  // system rather than these constants.
-
   // Short customer-facing reference — the proof's Help Scout
   // conversation id, prefixed with PL · for the editorial feel.
   // Exposed on public_proofs by migration 000089. Hidden
@@ -2123,10 +2092,9 @@ export default function CustomerProofPage() {
   return (
     <div
       className={[
-        'antialiased bg-canvas text-ink',
+        'antialiased bg-canvas text-ink font-body',
         actionPanelOpen ? 'pb-[50vh] sm:pb-0 sm:pr-[400px]' : '',
       ].join(' ')}
-      style={{ fontFamily: SANS }}
     >
 
       {/* Sticky public header. PlasmaWordmark left, "Last updated"
@@ -2710,10 +2678,9 @@ export default function CustomerProofPage() {
                     self-contained card panel: header band with a
                     chip / heading / sides indicator, image grid
                     with a hairline divider between front + back,
-                    per-recipient action band below. Replaces the
-                    Direction-B PaperRecipientBand wrapper.
-                    Renders in a vertical stack with consistent
-                    spacing between recipients. */}
+                    per-recipient action band below. Renders in a
+                    vertical stack with consistent spacing between
+                    recipients. */}
                 <div className="space-y-5">
                   {/* Shared standalone group — renders when there
                       are unconsumed shared images. Uses a "Shared"
@@ -2832,8 +2799,7 @@ export default function CustomerProofPage() {
                         >
                           {/* Card header band: numbered chip + name +
                               optional approval pill on its right + sides
-                              indicator far right. Replaces the
-                              PaperRecipientBand wrapper. */}
+                              indicator far right. */}
                           <div className="flex items-center gap-3 px-5 py-4 border-b border-line-soft">
                             <span className="grid place-items-center h-9 w-9 rounded-full bg-canvas border border-line eyebrow text-ink">
                               {chipLabel}
