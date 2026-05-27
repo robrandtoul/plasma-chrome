@@ -23,7 +23,6 @@ import { ActionPanel } from '../components/ActionPanel'
 import { ProofDetailView } from '../components/ProofDetailView'
 import { firstName } from '../lib/firstName'
 import {
-  INK,
   PAPER_CREAM,
   PAPER_TINT_1,
   PAPER_TINT_2,
@@ -2412,7 +2411,9 @@ export default function CustomerProofPage() {
   // Coloured highlights (status pills, brand-teal kickers) keep
   // their existing colour and only swap typography — the brief
   // is explicit on that.
-  const LABEL_DARK = '#c8c8c8'
+  // LABEL_DARK was the dark-masthead/footer label colour; removed
+  // alongside the dark-ink masthead + footer replacements. LABEL_LIGHT
+  // stays in use inside the paper-cream inner panels.
   const LABEL_LIGHT = '#5f564d'
 
   // Short customer-facing reference — the proof's Help Scout
@@ -3916,31 +3917,26 @@ export default function CustomerProofPage() {
         </>
       )}
 
-      {/* ───── Footer ───── */}
-      <footer className="text-white" style={{ background: INK }}>
-        {/* Brand rule again on top of the footer — bookends the
-            page with the 4-colour signature. */}
-        <BrandRule />
-        <div className="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-3 px-8 py-10 sm:px-8">
-          <div className="flex items-center gap-3">
-            <img src="/logo-cards.png" alt="Plasma" className="h-8 w-auto opacity-70" />
-            <span style={{ ...REG_A_BASE, color: LABEL_DARK }}>
-              © PlasmaDesign
-            </span>
-          </div>
-          {/* Proof ref · version — drops either piece when its
-              underlying value isn't available (override proofs
-              with null helpscout_conversation_id; the rare
-              no-version page state). Full collapse when both
-              are missing so the footer doesn't render an empty
-              paragraph. */}
-          {(proofRef || activeVersion) && (
-            <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
-              {proofRef}
-              {proofRef && activeVersion ? ' · ' : ''}
-              {activeVersion ? `v${activeVersion.version_number}` : ''}
-            </p>
-          )}
+      {/* Footer — replaces the dark-ink BrandRule footer with the
+          prototype's quiet two-column line on canvas. Left: eyebrow-
+          styled brand mark. Right: privacy reminder + version ref.
+          Both lines sit at 12px in ink-mute on the warm-cream canvas. */}
+      <footer className="mx-auto max-w-[1180px] px-6 mt-6 mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 py-4 border-t border-line text-[12px] text-ink-mute">
+          <span className="eyebrow">PlasmaDesign · craft-press business cards</span>
+          <span className="flex items-center gap-3">
+            <span>This proof URL is private. Please don't share publicly.</span>
+            {(proofRef || activeVersion) && (
+              <span className="hidden sm:inline-flex items-center gap-2">
+                <span className="w-px h-3 bg-line" aria-hidden="true" />
+                <span className="font-mono">
+                  {proofRef}
+                  {proofRef && activeVersion ? ' · ' : ''}
+                  {activeVersion ? `v${activeVersion.version_number}` : ''}
+                </span>
+              </span>
+            )}
+          </span>
         </div>
       </footer>
 
