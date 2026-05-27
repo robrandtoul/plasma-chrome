@@ -2408,10 +2408,11 @@ export default function CustomerProofPage() {
   // Coloured highlights (status pills, brand-teal kickers) keep
   // their existing colour and only swap typography — the brief
   // is explicit on that.
-  // LABEL_DARK was the dark-masthead/footer label colour; removed
-  // alongside the dark-ink masthead + footer replacements. LABEL_LIGHT
-  // stays in use inside the paper-cream inner panels.
-  const LABEL_LIGHT = '#5f564d'
+  // LABEL_DARK / LABEL_LIGHT were the Direction-B masthead/footer
+  // and inner-panel label colours; removed as the reskin replaces
+  // those surfaces section by section. Any remaining label-style
+  // copy reads `text-ink-soft` / `text-ink-mute` from the design
+  // system rather than these constants.
 
   // Short customer-facing reference — the proof's Help Scout
   // conversation id, prefixed with PL · for the editorial feel.
@@ -2790,46 +2791,44 @@ export default function CustomerProofPage() {
             return (
               <section
                 aria-labelledby="section-proofs-heading"
-                style={{ background: PAPER_CREAM, color: PAPER_INK }}
+                className="bg-canvas text-ink"
               >
-                <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-                  {/* Section header — left cluster is the
-                      Proofs heading + count subtitle stacked
-                      vertically; right cluster is the Finish
-                      selector. Finish pills live here (not in
-                      the revisions band) because they change
-                      which proofs are visible, so they belong
-                      adjacent to the proofs they affect rather
-                      than grouped with time-based revision
-                      metadata. items-end so the pill row hugs
-                      the bottom edge of the heading cluster
-                      regardless of whether the subtitle
-                      renders. */}
-                  <div
-                    className="mb-10 flex flex-wrap items-end justify-between gap-4 border-b-2 pb-4"
-                    style={{ borderColor: 'rgba(26,22,18,0.8)' }}
-                  >
+                <div className="mx-auto max-w-[1180px] px-6 py-10">
+                  {/* Section header — left cluster is the Proofs
+                      heading + count subtitle; right cluster is the
+                      MaterialOptionTabs (finish / option selector
+                      preserved from the live data model — only the
+                      surrounding chrome restyles in this PR). The
+                      heading drops the dominant 56px serif used in
+                      the Direction-B "newspaper masthead" treatment
+                      to a quieter 32-40px display-sans, since the
+                      page hero already carries the customer name
+                      as the dominant object above. */}
+                  <div className="mb-8 flex flex-wrap items-end justify-between gap-4 border-b border-line pb-4">
                     <div>
-                      <h2
-                        id="section-proofs-heading"
-                        className="leading-none break-words"
-                        style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(40px, 9vw, 56px)', color: PAPER_INK }}
-                      >
-                        Proofs
-                      </h2>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <h2
+                          id="section-proofs-heading"
+                          className="font-display font-medium tracking-[-0.02em] text-ink leading-tight"
+                          style={{ fontSize: 'clamp(28px, 4vw, 36px)' }}
+                        >
+                          Proofs
+                        </h2>
+                        {activeVersion.card_type !== 'membership' && (
+                          <span className="num num-sm text-ink-mute">
+                            ({String(plateCount).padStart(2, '0')})
+                          </span>
+                        )}
+                      </div>
                       {/* Count subtitle — rendered for business
                           cards only. Membership cards hide the
-                          whole line (the "proof count vs
-                          people" framing doesn't map to
-                          membership tiers). The special
-                          "Shared" branch survives for the rare
-                          all-shared business card (shared group
-                          only, no named groups). */}
+                          whole line (the "proof count vs people"
+                          framing doesn't map to membership tiers).
+                          The special "Shared" branch survives for
+                          the rare all-shared business card (shared
+                          group only, no named groups). */}
                       {activeVersion.card_type !== 'membership' && (
-                        <span
-                          className="mt-3 block"
-                          style={{ ...REG_A_BASE, color: LABEL_LIGHT }}
-                        >
+                        <p className="mt-2 text-[13px] text-ink-soft">
                           {plateCount === 1 ? '1 unique proof' : `${plateCount} unique proofs`}
                           {recipientCount > 0 && (
                             <>
@@ -2841,7 +2840,7 @@ export default function CustomerProofPage() {
                                 : `${recipientCount} people`}
                             </>
                           )}
-                        </span>
+                        </p>
                       )}
                     </div>
                     {/* Material-option tabs — paper-register
