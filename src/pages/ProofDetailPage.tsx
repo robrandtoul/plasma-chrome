@@ -23,8 +23,8 @@ import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, designerPreviewPath } from '../lib/customerProofUrl'
 // QuoteLink now lives inside DesignerChrome (PR 31).
-import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill } from '../design'
-import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil } from 'lucide-react'
+import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
+import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers } from 'lucide-react'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -112,6 +112,11 @@ export default function ProofDetailPage() {
   const { role, session } = useAuth()
   const [proof, setProof] = useState<Proof | null>(null)
   const [versions, setVersions] = useState<ModalVersion[]>([])
+  // proof_version_id → signed thumbnail URL. Populated alongside
+  // versions inside loadProof by batch-signing the first front image
+  // of each version. Empty entries (no images uploaded yet) fall
+  // through to the placeholder in the version card.
+  const [versionThumbs, setVersionThumbs] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
   const [selectedVersion, setSelectedVersion] = useState<ModalVersion | null>(null)
   // Real (non-bot) view times per version id for the dot indicators
@@ -271,6 +276,55 @@ export default function ProofDetailPage() {
     },
   })
 
+  // Per-version thumbnail fetch + sign. Same shape as the
+  // dashboard's loadThumbnails (PR 26) — one .in() query for first
+  // front image per version_id, one createSignedUrls round-trip.
+  // Returns a Map keyed on version id so the version card can look
+  // up its thumb by id.
+  async function loadVersionThumbnails(rows: ModalVersion[]): Promise<Map<string, string>> {
+    const versionIds = rows.map((v) => v.id)
+    if (versionIds.length === 0) return new Map()
+
+    const { data: imageRows, error } = await supabase
+      .from('proof_version_images')
+      .select('proof_version_id, image_path, sort_order, side')
+      .in('proof_version_id', versionIds)
+      .eq('is_qr_code', false)
+      .order('sort_order', { ascending: true })
+    if (error || !imageRows) return new Map()
+
+    const pathByVersion = new Map<string, string>()
+    for (const r of imageRows as Array<{ proof_version_id: string; image_path: string; side: string | null }>) {
+      if (pathByVersion.has(r.proof_version_id)) continue
+      if (r.side === 'back') continue
+      pathByVersion.set(r.proof_version_id, r.image_path)
+    }
+    // Fill versions that only have back-side images.
+    for (const r of imageRows as Array<{ proof_version_id: string; image_path: string }>) {
+      if (!pathByVersion.has(r.proof_version_id)) {
+        pathByVersion.set(r.proof_version_id, r.image_path)
+      }
+    }
+    if (pathByVersion.size === 0) return new Map()
+
+    const paths = Array.from(pathByVersion.values())
+    const { data: signedData } = await supabase.storage
+      .from('proof-images')
+      .createSignedUrls(paths, 3600)
+    if (!signedData) return new Map()
+
+    const urlByPath = new Map<string, string>()
+    for (const r of signedData) {
+      if (r.path && r.signedUrl) urlByPath.set(r.path, r.signedUrl)
+    }
+    const urlByVersion = new Map<string, string>()
+    for (const [versionId, path] of pathByVersion) {
+      const url = urlByPath.get(path)
+      if (url) urlByVersion.set(versionId, url)
+    }
+    return urlByVersion
+  }
+
   async function loadProof(proofId: string) {
     const myLoadId = ++loadIdRef.current
     const isStale = () => myLoadId !== loadIdRef.current
@@ -299,6 +353,18 @@ export default function ProofDetailPage() {
     setProof(proofResult.data as unknown as Proof)
     setVersions(loadedVersions)
     setLoading(false)
+
+    // Per-version thumbnails. Same pattern as the dashboard
+    // (loadThumbnails in PR 26): collect every version id, fetch
+    // first front image per version in one .in() query, batch-sign
+    // through Supabase Storage in one round-trip. Errors are
+    // tolerated silently — missing thumbs fall through to the
+    // placeholder in the version card. Doesn't await — the
+    // versions panel renders immediately and thumbs swap in.
+    void loadVersionThumbnails(loadedVersions).then((m) => {
+      if (isStale()) return
+      setVersionThumbs(m)
+    })
 
     // Pull non-bot view rows for every version on this proof. Same
     // query shape as the dashboard's map; kept separate so reload
@@ -1989,56 +2055,86 @@ export default function ProofDetailPage() {
           )
         })()}
 
-        {/* Versions */}
-        <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Versions</h2>
-
+        {/* Versions panel — PanelShell with icon + count + eyebrow per
+            the handoff brief. Body is a stack of version cards; each
+            card is clickable and opens the existing VersionDetailModal
+            for the heavy-action surface (Edit, Delete, Make current,
+            full pricing view). The dashboard-style columnar layout +
+            inline action buttons can land in a follow-up if needed —
+            this PR is the chrome + visual rhythm pass. */}
         {versions.length === 0 ? (
-          <div className="rounded-2xl bg-white py-16 text-center shadow-sm ring-1 ring-gray-200">
-            <p className="text-gray-400">No versions yet.</p>
+          <div className="rounded-[14px] bg-surface py-16 text-center border border-line">
+            <p className="text-ink-mute">No versions yet.</p>
             {!isApproved && (
-              <Link to={`/proofs/${proof.id}/versions/new`}
-                className="mt-3 inline-block text-sm font-medium text-gray-900 underline">
+              <Link
+                to={`/proofs/${proof.id}/versions/new`}
+                className="mt-3 inline-block text-[14px] font-medium text-ink underline"
+              >
                 Add the first version
               </Link>
             )}
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-            <table className="w-full table-fixed text-sm">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="w-36 truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Version</th>
-                  <th className="w-36 truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Material</th>
-                  <th className="w-28 truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Currency</th>
-                  <th className="truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Notes</th>
-                  <th className="w-28 truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Added</th>
-                  <th className="w-40 truncate px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Status</th>
-                  <th className="w-12 px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody>
-                {versions.map((v) => {
-                  const viewsForThis = viewsByVersion.get(v.id) ?? []
-                  const hasReal = viewsForThis.length > 0
-                  let rowState: ViewedState
-                  if (v.is_current) {
-                    // Current version: three-state based on whether
-                    // any real view exists anywhere on the project
-                    // and whether this specific version is viewed.
-                    const viewedSet = new Set<string>()
-                    for (const [id, list] of viewsByVersion) {
-                      if (list.length > 0) viewedSet.add(id)
-                    }
-                    rowState = computeViewedState({ currentVersionId: v.id, viewedVersionIds: viewedSet })
-                  } else {
-                    // Older version: two-state. Green when the
-                    // customer actually opened that specific
-                    // version, grey when not.
-                    rowState = hasReal ? 'viewed_current' : 'unviewed'
+          <PanelShell
+            title="Versions"
+            count={versions.length}
+            icon={Layers}
+            accent={tokens.ink}
+            eyebrow="Newest first"
+            padded={false}
+            action={
+              !isLocked && (
+                <ButtonGhost
+                  size="sm"
+                  icon={Plus}
+                  onClick={() => navigate(`/proofs/${proof.id}/versions/new`)}
+                >
+                  New version
+                </ButtonGhost>
+              )
+            }
+          >
+            {/* Stack of version cards. divide-y rather than per-card
+                border keeps the visual mass within the panel rather
+                than fragmenting it into 5 separate cards. */}
+            <ul className="divide-y divide-line-soft">
+              {versions.map((v) => {
+                const viewsForThis = viewsByVersion.get(v.id) ?? []
+                const hasReal = viewsForThis.length > 0
+                let rowState: ViewedState
+                if (v.is_current) {
+                  const viewedSet = new Set<string>()
+                  for (const [id, list] of viewsByVersion) {
+                    if (list.length > 0) viewedSet.add(id)
                   }
-                  const latest = viewsForThis[0]?.viewed_at ?? null
-                  return (
-                  <tr
+                  rowState = computeViewedState({ currentVersionId: v.id, viewedVersionIds: viewedSet })
+                } else {
+                  rowState = hasReal ? 'viewed_current' : 'unviewed'
+                }
+                const latest = viewsForThis[0]?.viewed_at ?? null
+                const thumb = versionThumbs.get(v.id)
+                // Per-version pill mapping. Current + approved
+                // proof → "Approved" (in-stock); current + active
+                // → "In review" (allocated); current + dormant →
+                // "Dormant" (muted). Non-current → "Archived"
+                // (muted) — old versions are always archived from
+                // the customer's POV.
+                const versionPillLabel = !v.is_current
+                  ? 'Archived'
+                  : isApproved
+                    ? 'Approved'
+                    : isAbandoned
+                      ? 'Abandoned'
+                      : isDormant
+                        ? 'Dormant'
+                        : 'In review'
+                const versionPillStyle = !v.is_current || isAbandoned || isDormant
+                  ? { color: 'var(--c-ink-mute)', backgroundColor: 'var(--c-line-soft)' }
+                  : isApproved
+                    ? { color: 'var(--c-in-stock)', backgroundColor: 'var(--c-in-stock-soft)' }
+                    : { color: 'var(--c-allocated)', backgroundColor: 'var(--c-allocated-soft)' }
+                return (
+                  <li
                     key={v.id}
                     role="button"
                     tabIndex={0}
@@ -2050,52 +2146,78 @@ export default function ProofDetailPage() {
                         setSelectedVersion(v)
                       }
                     }}
-                    className="cursor-pointer border-b border-gray-50 last:border-0 hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900"
+                    className="flex cursor-pointer gap-4 px-5 py-4 transition-colors hover:bg-canvas focus:outline-none focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]"
                   >
-                    <td className="truncate px-4 py-4 font-medium text-gray-900">
-                      <span className="flex items-center gap-2">
-                        <span
-                          aria-label={viewedStateTitle(rowState)}
-                          title={v.is_current ? viewedStateTitle(rowState) : (hasReal ? 'Viewed' : 'Not viewed')}
-                          className={['inline-block h-2.5 w-2.5 shrink-0 rounded-full', viewedStateDotClass(rowState)].join(' ')}
+                    {/* Thumbnail — 120×72 with the same dark-plate
+                        placeholder fallback the dashboard rows use
+                        when no signed URL has resolved yet. */}
+                    <div
+                      aria-hidden="true"
+                      className="shrink-0 w-[120px] h-[72px] rounded-[6px] bg-ink overflow-hidden"
+                    >
+                      {thumb ? (
+                        <img
+                          src={thumb}
+                          alt=""
+                          loading="lazy"
+                          className="w-full h-full object-cover"
                         />
-                        <span>v{v.version_number}</span>
-                        {latest && (
-                          <span className="ml-1 text-xs font-normal text-gray-400" title={formatAbsoluteDateTime(latest)}>· {relativeTime(latest)}</span>
-                        )}
-                      </span>
-                    </td>
-                    <td className="truncate px-4 py-4 text-gray-700" title={v.material_display}>{v.material_display}</td>
-                    <td className="truncate px-4 py-4 text-gray-500">{v.currency ?? '—'}</td>
-                    <td className="truncate px-4 py-4 text-gray-500" title={v.change_notes ?? undefined}>{v.change_notes ?? '—'}</td>
-                    <td className="truncate px-4 py-4 text-gray-500">
-                      {new Date(v.created_at).toLocaleDateString('en-GB')}
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex flex-wrap gap-1">
-                        {v.is_current && (
-                          <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
-                            Current
-                          </span>
-                        )}
+                      ) : null}
+                    </div>
+                    {/* Right cluster: v# row + material/inks + change notes. */}
+                    <div className="min-w-0 flex-1 flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[15px] font-semibold text-ink">v{v.version_number}</span>
+                        <span className="text-[12px] text-ink-mute">
+                          {new Date(v.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                        </span>
+                        <span
+                          className="pill"
+                          style={versionPillStyle}
+                          title={`${versionPillLabel}${latest ? ` · last viewed ${relativeTime(latest)}` : ''}`}
+                        >
+                          {versionPillLabel}
+                        </span>
                         {v.custom_quote && (
-                          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
+                          <span
+                            className="pill"
+                            style={{ color: 'var(--c-ink-mute)', backgroundColor: 'var(--c-line-soft)' }}
+                          >
                             Custom quote
                           </span>
                         )}
+                        {/* View-state dot — preserves the existing
+                            three-state semantic at a glance. */}
+                        <span
+                          aria-label={viewedStateTitle(rowState)}
+                          title={v.is_current ? viewedStateTitle(rowState) : (hasReal ? 'Viewed' : 'Not viewed')}
+                          className={['inline-block h-2 w-2 shrink-0 rounded-full ml-auto', viewedStateDotClass(rowState)].join(' ')}
+                        />
                       </div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <svg className="h-4 w-4 text-gray-300" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 3l5 5-5 5" />
-                      </svg>
-                    </td>
-                  </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+                      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-[13px]">
+                        <span className="text-ink-soft truncate" title={v.material_display}>
+                          {v.material_display}
+                        </span>
+                        {v.currency && (
+                          <span className="eyebrow text-ink-mute">{v.currency}</span>
+                        )}
+                        {v.ink_names.length > 0 && (
+                          <span className="text-ink-mute text-[12px] truncate" title={v.ink_names.join(' · ')}>
+                            {v.ink_names.join(' · ')}
+                          </span>
+                        )}
+                      </div>
+                      {v.change_notes && (
+                        <p className="text-[13px] text-ink-soft leading-[1.55] line-clamp-2">
+                          {v.change_notes}
+                        </p>
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          </PanelShell>
         )}
 
         {/* Approved artwork — production handoff bundle. Gated on
