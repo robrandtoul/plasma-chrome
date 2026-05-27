@@ -2279,6 +2279,67 @@ export default function CustomerProofPage() {
         </div>
       </header>
 
+      {/* V2 dark masthead strip — newspaper-rule horizontal band
+          beneath the cream sticky header. Left cluster: company
+          name (when present) + divider + VERSION {nn} · CURRENT /
+          HISTORY · status (mapped from proof.status). Right cluster:
+          {nn} NAMES · {n} SIDES · {variant} {MATERIAL} stats.
+          All mono uppercase tracked. Hides until activeVersion
+          resolves so we don't flash placeholder copy. */}
+      {activeVersion && (() => {
+        const company = proof.company?.trim() ?? ''
+        const versionLabel = `Version ${String(activeVersion.version_number).padStart(2, '0')}`
+        const currencyLabel = activeVersion.is_current ? 'Current' : 'History'
+        // proof.status === 'abandoned' is handled by the AbandonedScreen
+        // early-return above, so it's unreachable here.
+        const statusLabel = proof.status === 'approved'
+          ? 'Approved'
+          : proof.status === 'dormant'
+            ? 'Dormant'
+            : 'In review'
+        const namesCount = activeVersion.names.length
+        const namesLabel = namesCount > 0
+          ? `${String(namesCount).padStart(2, '0')} ${namesCount === 1 ? 'Name' : 'Names'}`
+          : null
+        const hasBack = (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
+        const sidesLabel = `${hasBack ? '02' : '01'} ${hasBack ? 'Sides' : 'Side'}`
+        // Variant label — when exactly one variant is priced on this
+        // version (the common case for thickness / finish / default
+        // materials), pull its display string from the snapshot.
+        // Multi-variant materials (e.g. ink-count grids) collapse to
+        // null and the stats line reads with just material name.
+        const variantLabel =
+          livePricingSnapshot.variants.length === 1
+            ? livePricingSnapshot.variants[0].display
+            : null
+        const materialLabel = activeVersion.material_display
+        const statsPieces = [namesLabel, sidesLabel,
+          [variantLabel, materialLabel].filter(Boolean).join(' '),
+        ].filter(Boolean) as string[]
+        return (
+          <div className="bg-ink text-on-ink">
+            <div className="mx-auto max-w-[1280px] flex flex-wrap items-center gap-3 sm:gap-4 px-6 sm:px-7 py-3.5">
+              {company && (
+                <>
+                  <span className="eyebrow" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                    {company}
+                  </span>
+                  <span aria-hidden="true" className="hidden sm:inline-block w-px h-3 bg-white/25" />
+                </>
+              )}
+              <span className="eyebrow" style={{ color: '#ffffff' }}>
+                {[versionLabel, currencyLabel, statusLabel].join(' · ')}
+              </span>
+              {statsPieces.length > 0 && (
+                <span className="eyebrow sm:ml-auto" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                  {statsPieces.join(' · ')}
+                </span>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Approval banner — surfaces above the hero when the proof
           has been fully signed off or carries forward-approved slots
           from earlier versions. Preserves the live heroApprovalStrip
