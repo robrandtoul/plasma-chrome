@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
-import { DesignerHeader, ButtonCoral, ButtonGhost, ButtonInk, ProofStatusPill, type DesignerHeaderColour } from '../design'
+import { DesignerChrome, useDesignerProfile, ButtonCoral, ButtonGhost, ButtonInk, ProofStatusPill } from '../design'
 import { Plus, Filter, X, Maximize2, Bell, MessageSquare, Eye, Check } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
@@ -20,8 +20,12 @@ import {
 } from '../lib/viewedState'
 import { designerPreviewPath } from '../lib/customerProofUrl'
 import { logAudit } from '../lib/audit'
-import { QuoteLink } from '../components/QuoteLink'
-import EditProfileModal, { type EditProfileSavedPayload } from '../components/EditProfileModal'
+// QuoteLink imported + rendered inside DesignerChrome (PR 31) so
+// every designer page surfaces the same new-tab "phone rings"
+// affordance without re-importing.
+// EditProfileModal + sign-out wiring moved into DesignerChrome in
+// PR 31 — that wrapper owns the profile fetch and the modal so
+// individual designer pages don't each reimplement ~40 lines.
 import {
   groupByTime,
   groupByCompany,
@@ -1515,7 +1519,7 @@ function LatestActivityPanel({
 
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const { session, role } = useAuth()
+  const { session } = useAuth()
   const userId = session?.user.id ?? null
   const [projects, setProjects]           = useState<DashboardProject[]>([])
   // current_version_id → signed thumbnail URL. Populated in
@@ -1525,11 +1529,10 @@ export default function DashboardPage() {
   // placeholder rendered inside ProjectRow.
   const [thumbnailUrls, setThumbnailUrls] = useState<Map<string, string>>(new Map())
   const [latestEvents, setLatestEvents]   = useState<DashboardLatestEvent[]>([])
-  const [myProfile, setMyProfile]         = useState<{ initials: string; colour: DesignerColour; avatarUrl: string | null; firstName: string | null } | null>(null)
-  // Avatar popover state moved into DesignerHeader's internal
-  // UserPill in PR 16. Edit profile / Sign out actions are wired
-  // through the onEditProfile / onSignOut props.
-  const [editProfileOpen, setEditProfileOpen] = useState(false)
+  // myProfile / editProfileOpen / handleSignOut state moved into
+  // DesignerChrome in PR 31. The hero greeting reads via
+  // useDesignerProfile() below.
+  const profile = useDesignerProfile()
   // Pin state — proof_id → pinned_at ISO. Two maps because the
   // dashboard cares about each scope independently (mine drives the
   // Pinned section, team drives the Team section, and both feed the
@@ -1556,24 +1559,8 @@ export default function DashboardPage() {
 
   useEffect(() => { loadDashboard() }, [])
 
-  // Fetch the signed-in designer's own profile for the header avatar
-  useEffect(() => {
-    if (!userId) return
-    supabase
-      .from('profiles')
-      .select('designer_initials, designer_colour, full_name, avatar_url')
-      .eq('id', userId)
-      .single()
-      .then(({ data }) => {
-        if (!data) return
-        setMyProfile({
-          initials: (data.designer_initials ?? data.full_name?.split(' ').map((n: string) => n[0]).join('') ?? '?').slice(0, 2),
-          colour: (data.designer_colour ?? 'blue') as DesignerColour,
-          avatarUrl: data.avatar_url ?? null,
-          firstName: data.full_name?.split(' ')[0] ?? null,
-        })
-      })
-  }, [userId])
+  // Profile fetch lives inside DesignerChrome — the wrapper owns
+  // it so other designer pages don't each reimplement it.
 
   // Refetch when the tab becomes visible — designers context-switching
   // (Help Scout, email) come back to a fresh page without a manual reload.
@@ -1843,11 +1830,6 @@ export default function DashboardPage() {
     setTileFilter((prev) => (prev === t ? null : t))
   }
 
-  async function handleSignOut() {
-    await supabase.auth.signOut()
-    navigate('/login')
-  }
-
   // Tile counts — all computed client-side so counts and filters use exactly
   // the same predicates. Currently-snoozed projects are always excluded:
   // they live in the dedicated Snoozed section regardless of their other
@@ -2077,52 +2059,19 @@ export default function DashboardPage() {
   const noResults = !loading && sections.every((s) => s.projects.length === 0)
 
   return (
+    <DesignerChrome
+      active="proofs"
+      search={{ value: search, onChange: setSearch }}
+      onProfileSaved={() => {
+        // Refetch dashboard rows so the designer-avatar columns on
+        // every project tile pick up the new avatar/initials/colour
+        // immediately rather than waiting for the next
+        // visibilitychange tick (PV-2026W21-071).
+        void loadDashboard()
+      }}
+    >
     <div className="min-h-dvh bg-canvas">
-      {/* Shared designer chrome. Search lifted out of the list-card
-          and into the header per the reskin handoff. The QuoteLink
-          (new-tab "phone rings, jump to quote" link with ⌘K hint)
-          rides in the actions slot so the new-tab behaviour stays;
-          DesignerHeader's canonical nav uses in-tab Links. */}
-      <DesignerHeader
-        active="proofs"
-        role={role}
-        user={{
-          initials: myProfile?.initials ?? '…',
-          colour: (myProfile?.colour ?? 'teal') as DesignerHeaderColour,
-          avatarUrl: myProfile?.avatarUrl ?? null,
-          name: myProfile?.initials ? undefined : 'Account',
-        }}
-        search={{ value: search, onChange: setSearch }}
-        actions={<QuoteLink />}
-        onEditProfile={() => setEditProfileOpen(true)}
-        onSignOut={handleSignOut}
-      />
-
       <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
-
-        {/* Edit profile modal */}
-        {editProfileOpen && userId && (
-          <EditProfileModal
-            userId={userId}
-            onClose={() => setEditProfileOpen(false)}
-            onSaved={(payload: EditProfileSavedPayload) => {
-              setMyProfile((prev) => ({
-                initials: payload.initials,
-                colour: payload.colour,
-                avatarUrl: payload.avatarUrl,
-                // EditProfileModal's payload doesn't carry firstName,
-                // so keep the previously-loaded value rather than
-                // wiping the hero greeting after a profile save.
-                firstName: prev?.firstName ?? null,
-              }))
-              // Refetch dashboard rows so the designer-avatar columns on
-              // every project tile pick up the new avatar/initials/colour
-              // immediately rather than waiting for the next
-              // visibilitychange tick (PV-2026W21-071).
-              void loadDashboard()
-            }}
-          />
-        )}
 
         {loading ? (
           <div className="flex justify-center py-20">
@@ -2143,7 +2092,7 @@ export default function DashboardPage() {
                 <div>
                   <div className="eyebrow">Proofs at a glance</div>
                   <h1 className="mt-1 font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0" style={{ fontSize: 'clamp(22px, 3vw, 28px)' }}>
-                    {greetingFor(new Date())}, {myProfile?.firstName ?? 'there'}
+                    {greetingFor(new Date())}, {profile?.firstName ?? 'there'}
                   </h1>
                   <p className="mt-1.5 text-[14px] text-ink-soft leading-snug">
                     {todayLabel(new Date())}
@@ -2450,6 +2399,7 @@ export default function DashboardPage() {
         )}
       </div>
     </div>
+    </DesignerChrome>
   )
 }
 
