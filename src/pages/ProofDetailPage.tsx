@@ -24,7 +24,7 @@ import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, designerPreviewPath } from '../lib/customerProofUrl'
 // QuoteLink now lives inside DesignerChrome (PR 31).
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill } from '../design'
-import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon } from 'lucide-react'
+import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil } from 'lucide-react'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -163,6 +163,13 @@ export default function ProofDetailPage() {
   const statusActionInFlightRef = useRef(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [showHelpscoutEdit, setShowHelpscoutEdit] = useState(false)
+  // Internal-notes inline edit state. notesEditing flips the panel
+  // into textarea mode; notesDraft holds the editing buffer so Cancel
+  // can revert without touching proof.internal_notes; notesSaving
+  // gates the Save button to prevent double-submits.
+  const [notesEditing, setNotesEditing] = useState(false)
+  const [notesDraft, setNotesDraft]     = useState('')
+  const [notesSaving, setNotesSaving]   = useState(false)
   // Customer reply re-send modal + confirm-on-resend state. Both
   // local-only — no URL or persisted state. The confirm-then-open
   // sequence runs entirely client-side; opening the modal commits
@@ -1069,6 +1076,42 @@ export default function ProofDetailPage() {
     )
   }
 
+  // Inline-edit save handler for internal_notes. Writes the trimmed
+  // draft (empty → null) back to the proofs row, audit-logs the
+  // change, and refetches the proof so the panel renders the saved
+  // value. Errors are surfaced via the existing showToast helper.
+  async function saveInternalNotes() {
+    if (!proof || notesSaving) return
+    const before = proof.internal_notes ?? null
+    const trimmed = notesDraft.trim()
+    const next = trimmed === '' ? null : trimmed
+    if (next === before) {
+      // No change — exit edit mode without a write.
+      setNotesEditing(false)
+      return
+    }
+    setNotesSaving(true)
+    const { error } = await supabase
+      .from('proofs')
+      .update({ internal_notes: next })
+      .eq('id', proof.id)
+    setNotesSaving(false)
+    if (error) {
+      showToast('Failed to save internal notes')
+      return
+    }
+    void logAudit({
+      action: 'proof.internal_notes_updated',
+      targetType: 'proof',
+      targetId: proof.id,
+      targetLabel: proof.contacts.full_name,
+      beforeValue: { internal_notes: before },
+      afterValue: { internal_notes: next },
+    })
+    setNotesEditing(false)
+    if (id) loadProof(id)
+  }
+
   async function copyCustomerUrl() {
     const url = `${window.location.origin}${customerProofPath(proof!.id)}`
     let copiedOk = false
@@ -1218,7 +1261,7 @@ export default function ProofDetailPage() {
                 </div>
                 <div className="min-w-0">
                   <dt className="eyebrow text-ink-mute">Help Scout</dt>
-                  <dd className="mt-1 text-[13px]">
+                  <dd className="mt-1 flex items-center gap-2 text-[13px]">
                     {proof.helpscout_conversation_url ? (
                       <a
                         href={proof.helpscout_conversation_url}
@@ -1239,9 +1282,25 @@ export default function ProofDetailPage() {
                         Open thread
                         <ExternalLink size={11} aria-hidden="true" />
                       </a>
+                    ) : proof.helpscout_override_reason ? (
+                      <span
+                        className="italic text-ink-mute"
+                        title={`Override reason: ${proof.helpscout_override_reason}`}
+                      >
+                        Override: {proof.helpscout_override_reason}
+                      </span>
                     ) : (
                       <span className="italic text-ink-mute">Not linked</span>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => setShowHelpscoutEdit(true)}
+                      title="Change Help Scout conversation"
+                      aria-label="Change Help Scout conversation"
+                      className="inline-flex items-center justify-center w-6 h-6 rounded text-ink-mute hover:text-ink hover:bg-canvas transition-colors"
+                    >
+                      <Pencil size={12} />
+                    </button>
                   </dd>
                 </div>
                 <div className="min-w-0">
@@ -1320,54 +1379,90 @@ export default function ProofDetailPage() {
             </div>
           </div>
 
+          {/* Internal notes — tinted panel inside the header card per
+              the mockup. FileText icon + eyebrow up top, edit pencil
+              on the right. Display mode shows the saved notes (or a
+              "Add notes" placeholder when null); edit mode swaps to
+              a textarea + Save / Cancel buttons. NOT visible to the
+              customer — the panel exists purely so the designer can
+              jot reminders against a project without scattering them
+              across Help Scout threads. */}
+          <div className="mx-7 mb-6 rounded-[10px] bg-canvas border border-line-soft px-4 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText size={13} className="text-ink-mute shrink-0" aria-hidden="true" />
+                <span
+                  className="eyebrow text-ink-mute truncate"
+                  style={{ letterSpacing: '0.16em' }}
+                >
+                  Internal notes — not visible to the customer
+                </span>
+              </div>
+              {!notesEditing && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNotesDraft(proof.internal_notes ?? '')
+                    setNotesEditing(true)
+                  }}
+                  title={proof.internal_notes ? 'Edit notes' : 'Add notes'}
+                  aria-label={proof.internal_notes ? 'Edit internal notes' : 'Add internal notes'}
+                  className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded text-ink-mute hover:text-ink hover:bg-surface transition-colors"
+                >
+                  <Pencil size={12} />
+                </button>
+              )}
+            </div>
+            {notesEditing ? (
+              <div className="mt-2">
+                <textarea
+                  value={notesDraft}
+                  onChange={(e) => setNotesDraft(e.target.value)}
+                  rows={4}
+                  placeholder="Notes about this project — only visible to designers."
+                  className="w-full resize-none rounded-md border border-line bg-surface px-3 py-2 text-[13px] text-ink-soft leading-[1.55] placeholder:text-ink-dim focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
+                />
+                <div className="mt-2 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNotesEditing(false)
+                      setNotesDraft('')
+                    }}
+                    disabled={notesSaving}
+                    className="text-[12px] text-ink-mute hover:text-ink-soft disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void saveInternalNotes()}
+                    disabled={notesSaving}
+                    className="rounded-md bg-ink px-3 py-1.5 text-[12px] font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
+                  >
+                    {notesSaving ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            ) : proof.internal_notes ? (
+              <p className="mt-1.5 whitespace-pre-wrap text-[13px] text-ink-soft leading-[1.55]">
+                {proof.internal_notes}
+              </p>
+            ) : (
+              <p className="mt-1.5 text-[13px] italic text-ink-mute">
+                No internal notes yet. Click the pencil to add some.
+              </p>
+            )}
+          </div>
+
           {/* Hidden input for clipboard fallback. */}
           <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
         </section>
 
-        {/* Internal metadata. Always rendered so the Change Help
-            Scout button is always reachable — even proofs with
-            nothing recorded can have their link set from here. */}
-        <div className="mb-8 rounded-2xl bg-amber-50 p-5 ring-1 ring-amber-100">
-          <div className="flex items-start justify-between gap-4">
-            <p className="text-xs font-semibold uppercase tracking-wider text-amber-600">Internal</p>
-            <button
-              type="button"
-              onClick={() => setShowHelpscoutEdit(true)}
-              className="shrink-0 text-xs text-amber-700 underline hover:text-amber-900"
-            >
-              Change Help Scout conversation
-            </button>
-          </div>
-          <div className="mt-2 space-y-1 text-sm">
-            {proof.helpscout_conversation_url ? (
-              <p>
-                <span className="text-gray-500">Help Scout: </span>
-                <a href={proof.helpscout_conversation_url} target="_blank" rel="noopener noreferrer"
-                  className="text-amber-800 underline">
-                  {proof.helpscout_conversation_url}
-                </a>
-              </p>
-            ) : proof.helpscout_override_reason ? (
-              <p className="text-amber-900">
-                <span className="text-gray-500">Help Scout override: </span>
-                <span className="italic">{proof.helpscout_override_reason}</span>
-              </p>
-            ) : proof.helpscout_thread_url ? (
-              <p>
-                <span className="text-gray-500">Help Scout (legacy): </span>
-                <a href={proof.helpscout_thread_url} target="_blank" rel="noopener noreferrer"
-                  className="text-amber-800 underline">
-                  {proof.helpscout_thread_url}
-                </a>
-              </p>
-            ) : (
-              <p className="italic text-gray-500">No Help Scout conversation linked.</p>
-            )}
-            {proof.internal_notes && (
-              <p className="text-amber-900">{proof.internal_notes}</p>
-            )}
-          </div>
-        </div>
+        {/* Amber Internal metadata panel retired in PR 33. Help Scout
+            link + Change affordance now live in the header card's
+            KV row; internal notes have their own inline-edit panel
+            inside the card. */}
 
         {/* Customer reply (Ship 3 of intervention 3). Re-send
             affordance scoped to the current version. Shows whether a
