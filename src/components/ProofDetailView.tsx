@@ -1,17 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { ChevronLeft, Send } from 'lucide-react'
 import type { GridImage } from './ImageGrid'
-import {
-  PAPER_CREAM,
-  PAPER_INK,
-  PAPER_SECONDARY,
-  CTA_AMBER_BG,
-  CTA_AMBER_HOVER_BG,
-  CTA_AMBER_PRESSED_BG,
-  CTA_AMBER_BORDER,
-  CTA_AMBER_HOVER_BORDER,
-  CTA_AMBER_TEXT,
-  MONO,
-} from '../lib/theme'
+import { ButtonCoral } from '../design'
 
 export type ProofDetailViewProps = {
   // Navigable set — typically the clicked image's group (front +
@@ -50,22 +40,15 @@ export type ProofDetailViewProps = {
 }
 
 // Non-modal, light-register replacement for the previous dark
-// fullscreen lightbox (Phase 2 of the customer-page action rework).
+// fullscreen lightbox. Coexists with the request-changes panel:
+// when `panelOpen` is true the detail view insets so it doesn't
+// cover the panel, letting the customer zoom in on the proof and
+// describe a change at the same time. z-index sits below the panel
+// (z-40) and the approve modal (z-50) so both win when stacked.
 //
-// Coexists with the request-changes panel: when `panelOpen` is true
-// the detail view insets so it doesn't cover the panel, letting the
-// customer zoom in on the proof and describe a change at the same
-// time. z-index sits below the panel (z-40) and the approve modal
-// (z-50) so both win when stacked.
-//
-// The chrome (Both sides, caption, Request changes) floats absolutely
-// over the proof so the image region claims every available pixel of
-// the detail-view area. With the panel open on a phone the detail
-// view only gets 50vh, so the previous "top bar + flex-1 image +
-// caption + filename" stack squeezed the proof down to ~30% of the
-// viewport with cream pillarboxing; floating the chrome lifts that
-// constraint and lets object-contain reach full screen width in
-// portrait (and gain height in landscape).
+// The chrome (Both sides, caption, Request changes) floats
+// absolutely over the proof so the image region claims every
+// available pixel of the detail-view area.
 export function ProofDetailView({
   images,
   initialIndex,
@@ -162,7 +145,7 @@ export function ProofDetailView({
       role="dialog"
       aria-label={altText ? `Proof detail — ${altText}` : 'Proof detail'}
       className={[
-        'fixed z-30',
+        'fixed z-30 text-ink',
         // Panel-aware inset via positional constraints rather than
         // padding. Padding would shrink the *content* area, but
         // absolutely-positioned chrome (the Both sides, caption,
@@ -177,16 +160,13 @@ export function ProofDetailView({
         // settles in with the parent transition.
         'motion-safe:animate-[pdv-in_140ms_ease-out]',
       ].join(' ')}
-      style={{
-        // Near-opaque cream scrim — light, not dark. ~96% opacity
-        // so a hint of the page below shows through and the
-        // detail view reads as an overlay rather than as a
-        // navigation. The customer page background is also
-        // PAPER_CREAM, so the visible difference is mostly the
-        // dimming of any non-cream sections that were on screen.
-        background: 'rgba(254,253,250,0.96)',
-        color: PAPER_INK,
-      }}
+      // Near-opaque cream scrim — light, not dark. ~96% opacity so
+      // a hint of the page below shows through and the detail view
+      // reads as an overlay rather than as navigation. The customer
+      // page background is also canvas-cream, so the visible
+      // difference is mostly the dimming of any non-cream sections
+      // that were on screen.
+      style={{ background: 'color-mix(in srgb, var(--c-bg) 96%, transparent)' }}
     >
       <style>{`
         @keyframes pdv-in {
@@ -195,16 +175,11 @@ export function ProofDetailView({
         }
       `}</style>
 
-      {/* Image region: fills the full detail-view area. With the
-          chrome (Both sides, caption, CTA) lifted out of the flex
-          flow and floated absolutely on top, the proof gets every
-          available pixel — reaching full screen width in portrait
-          and gaining height in landscape.
-
-          Self-click closes the detail view — the empty letterbox
-          space around the object-contain image acts as the
-          backdrop. Clicks on the image or chevrons fail the
-          target===currentTarget check and don't close. */}
+      {/* Image region: fills the full detail-view area. Self-click
+          closes the detail view — the empty letterbox space around
+          the object-contain image acts as the backdrop. Clicks on
+          the image or chevrons fail the target===currentTarget
+          check and don't close. */}
       <div
         className="absolute inset-0 flex items-center justify-center"
         onClick={(e) => { if (e.target === e.currentTarget) close() }}
@@ -214,8 +189,8 @@ export function ProofDetailView({
             type="button"
             aria-label="Previous side"
             onClick={() => step(-1)}
-            className="absolute left-2 top-1/2 z-10 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full transition-colors hover:bg-[rgba(26,22,18,0.08)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)] sm:left-4 sm:h-14 sm:w-14"
-            style={{ color: PAPER_INK, background: 'rgba(255,255,255,0.6)', border: '1px solid rgba(26,22,18,0.18)' }}
+            className="absolute left-2 top-1/2 z-10 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full bg-surface/70 border border-line text-ink transition-colors hover:bg-surface focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)] sm:left-4 sm:h-14 sm:w-14"
+            style={{ backdropFilter: 'blur(4px)' }}
           >
             <span aria-hidden="true" className="text-2xl leading-none">‹</span>
           </button>
@@ -224,22 +199,18 @@ export function ProofDetailView({
           <img
             src={current.signed_url}
             alt={altText}
-            className="block max-h-full max-w-full rounded-md object-contain"
-            style={{ background: PAPER_CREAM }}
+            className="block max-h-full max-w-full rounded-[8px] object-contain bg-canvas"
           />
         ) : (
-          <div
-            className="h-64 w-full max-w-md rounded-md"
-            style={{ background: PAPER_CREAM, border: '1px solid rgba(26,22,18,0.12)' }}
-          />
+          <div className="h-64 w-full max-w-md rounded-[8px] bg-canvas border border-line" />
         )}
         {canStep && (
           <button
             type="button"
             aria-label="Next side"
             onClick={() => step(1)}
-            className="absolute right-2 top-1/2 z-10 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full transition-colors hover:bg-[rgba(26,22,18,0.08)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)] sm:right-4 sm:h-14 sm:w-14"
-            style={{ color: PAPER_INK, background: 'rgba(255,255,255,0.6)', border: '1px solid rgba(26,22,18,0.18)' }}
+            className="absolute right-2 top-1/2 z-10 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-full bg-surface/70 border border-line text-ink transition-colors hover:bg-surface focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)] sm:right-4 sm:h-14 sm:w-14"
+            style={{ backdropFilter: 'blur(4px)' }}
           >
             <span aria-hidden="true" className="text-2xl leading-none">›</span>
           </button>
@@ -247,43 +218,25 @@ export function ProofDetailView({
       </div>
 
       {/* "Both sides" — floats top-left over the proof. The semi-
-          opaque cream pill keeps it legible whatever the proof
-          looks like underneath: in portrait the proof typically
-          leaves letterbox space above so the pill mostly sits in
-          the gap; in landscape it sits over the proof's top-left
-          corner, where the backing earns its place. */}
+          opaque surface pill keeps it legible whatever the proof
+          looks like underneath. */}
       <button
         ref={closeButtonRef}
         type="button"
         onClick={close}
-        className="absolute left-4 top-4 z-20 inline-flex min-h-[44px] items-center gap-2 rounded-full px-4 py-2 transition-colors hover:bg-[rgba(255,255,255,0.85)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)] sm:left-6 sm:top-6"
-        style={{
-          fontFamily: MONO,
-          fontSize: 13,
-          letterSpacing: '0.06em',
-          textTransform: 'uppercase',
-          color: PAPER_INK,
-          background: 'rgba(255,255,255,0.7)',
-          border: '1px solid rgba(26,22,18,0.18)',
-          backdropFilter: 'blur(4px)',
-        }}
+        className="absolute left-4 top-4 z-20 inline-flex min-h-[44px] items-center gap-2 rounded-full bg-surface/75 border border-line px-4 py-2 eyebrow text-ink transition-colors hover:bg-surface focus-visible:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)] sm:left-6 sm:top-6"
+        style={{ backdropFilter: 'blur(4px)', letterSpacing: '0.18em' }}
       >
-        <span aria-hidden="true">‹</span>
+        <ChevronLeft size={14} aria-hidden="true" />
         Both sides
       </button>
 
       {/* Bottom-centred stack: caption on top, Request changes CTA
-          below it with a small gap. Putting both in one container
-          guarantees they never overlap at any screen width (the
-          previous layout had caption bottom-centred and CTA
-          bottom-right; on a phone with both visible the two
-          collided). When the CTA is hidden (panel docked) the
-          container just holds the caption, unchanged from before.
-
-          pointer-events-none on the container + caption so taps in
-          the bottom letterbox space pass through to the image-
-          region backdrop (which closes). The CTA opts back into
-          pointer-events because it's interactive. */}
+          below it with a small gap. pointer-events-none on the
+          container + caption so taps in the bottom letterbox space
+          pass through to the image-region backdrop (which closes).
+          The CTA opts back into pointer-events because it's
+          interactive. */}
       {(captionPieces.length > 0 || !hideRequestChanges) && (
         <div
           className="pointer-events-none absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 flex-col items-center gap-3 sm:bottom-6"
@@ -291,57 +244,18 @@ export function ProofDetailView({
         >
           {captionPieces.length > 0 && (
             <p
-              className="pointer-events-none rounded-full px-4 py-1.5 text-center uppercase"
-              style={{
-                fontFamily: MONO,
-                fontSize: 12,
-                fontWeight: 500,
-                letterSpacing: '0.22em',
-                color: PAPER_SECONDARY,
-                background: 'rgba(255,255,255,0.7)',
-                border: '1px solid rgba(26,22,18,0.14)',
-                backdropFilter: 'blur(4px)',
-                maxWidth: '100%',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                margin: 0,
-              }}
+              className="pointer-events-none rounded-full bg-surface/75 border border-line px-4 py-1.5 text-center eyebrow text-ink-soft m-0 whitespace-nowrap overflow-hidden text-ellipsis max-w-full"
+              style={{ backdropFilter: 'blur(4px)' }}
             >
               {captionPieces.join(' · ')}
             </p>
           )}
           {!hideRequestChanges && (
-            <button
-              type="button"
-              onClick={onRequestChanges}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = CTA_AMBER_HOVER_BG
-                e.currentTarget.style.borderColor = CTA_AMBER_HOVER_BORDER
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = CTA_AMBER_BG
-                e.currentTarget.style.borderColor = CTA_AMBER_BORDER
-              }}
-              onMouseDown={(e) => {
-                e.currentTarget.style.background = CTA_AMBER_PRESSED_BG
-              }}
-              onMouseUp={(e) => {
-                e.currentTarget.style.background = CTA_AMBER_HOVER_BG
-              }}
-              className="pointer-events-auto inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-5 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(58,44,145,0.45)]"
-              style={{
-                background: CTA_AMBER_BG,
-                border: `1.5px solid ${CTA_AMBER_BORDER}`,
-                color: CTA_AMBER_TEXT,
-                fontFamily: MONO,
-                fontSize: 13,
-                letterSpacing: '0.06em',
-                textTransform: 'uppercase',
-              }}
-            >
-              Request changes
-            </button>
+            <div className="pointer-events-auto">
+              <ButtonCoral icon={Send} onClick={onRequestChanges}>
+                Request changes
+              </ButtonCoral>
+            </div>
           )}
         </div>
       )}
