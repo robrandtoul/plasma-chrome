@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Download, Send, Check, Layers, PoundSterling, BookOpen } from 'lucide-react'
+import { Download, Send, Check, Layers, PoundSterling, BookOpen, Info } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { PlasmaWordmark, Pill, ProofStatusPill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, tokens, type PillColour, type ProofStatus } from '../design'
+import { PlasmaWordmark, Pill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, StatusRule, tokens, type PillColour } from '../design'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
 import { compilePersonalisationSurcharges, personalisationBreakeven } from '../lib/personalisation'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
@@ -2340,171 +2340,306 @@ export default function CustomerProofPage() {
         )
       })()}
 
-      {/* Approval banner — surfaces above the hero when the proof
-          has been fully signed off or carries forward-approved slots
-          from earlier versions. Preserves the live heroApprovalStrip
-          data hook (kind='approved' | 'partial') and the
-          aria-readable signed-off / partial copy; restyled onto the
-          design system using a Pill plus a quiet rounded card. */}
-      {heroApprovalStrip && activeVersion && (() => {
-        const total = versionImages[activeVersion.id]?.length ?? 0
-        const isApprovedKind = heroApprovalStrip.kind === 'approved'
-        const pillColour: PillColour = isApprovedKind ? 'in-stock' : 'allocated'
-        const label = isApprovedKind ? 'Approved' : 'Partially approved'
-        // Mirrors the previous secondary copy + screen-reader spelling
-        // (middle dot becomes a comma, "5 / 5" becomes "5 of 5").
-        const detailVisible = isApprovedKind
-          ? [
-              heroApprovalStrip.dateLabel ? `Signed off ${heroApprovalStrip.dateLabel}` : 'Signed off',
-              total > 0 ? `${total} / ${total} proof${total === 1 ? '' : 's'}` : null,
-            ]
-              .filter(Boolean)
-              .join(' · ')
-          : 'Some proofs already signed off, others awaiting review'
-        const detailAria = isApprovedKind
-          ? [
-              heroApprovalStrip.dateLabel ? `Signed off ${heroApprovalStrip.dateLabel}` : 'Signed off',
-              total > 0 ? `${total} of ${total} proof${total === 1 ? '' : 's'}` : null,
-            ]
-              .filter(Boolean)
-              .join(', ')
-          : 'Some proofs already signed off, others awaiting review'
-        return (
-          <div className="mx-auto max-w-[1180px] px-6 pt-6">
-            <div className="flex flex-wrap items-center gap-3 rounded-[10px] bg-surface border border-line px-4 py-3">
-              <Pill colour={pillColour}>{label}</Pill>
-              <span className="text-[13px] text-ink-soft" aria-label={detailAria}>
-                {detailVisible}
-              </span>
-            </div>
-          </div>
-        )
-      })()}
+      {/* V2 customer-page main — 2-column grid on lg+: a sticky
+          left rail carrying the customer card, Specs, and Pricing;
+          a right column carrying the version pills, the contact-
+          sheet recipient panels, material-explanation panels, and
+          the About-this-proof disclaimer. Stacks to one column
+          below lg. Gated on activeVersion so the page doesn't
+          half-render while data loads. */}
+      {activeVersion && (
+        <main className="mx-auto max-w-[1280px] px-6 sm:px-7 py-8 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-8 items-start">
 
-      {/* Hero strip — prototype V1 layout. Two columns at desktop:
-          left has "Proof for [— company]" eyebrow row, display-sized
-          customer name, optional italic subline (when the company
-          name takes the prominent slot the contact name drops to
-          subline, same priority rule the live page already uses);
-          right has VERSION eyebrow + the active version specimen in
-          tabular mono + the proof status pill. Stacks vertically
-          under md.
+          {/* Left rail — sticky on lg+, scrolls with viewport on
+              smaller screens. top-[120px] accounts for sticky
+              header (~60px) + masthead band (~52px) + small gutter. */}
+          <aside className="flex flex-col gap-4 lg:sticky lg:top-[120px] order-1 lg:order-none">
 
-          The hero docket (Material / Option / Revision / Names) the
-          old layout carried beneath the H1 is intentionally dropped
-          — every field shows up again in the Specification panel
-          further down the page, and the prototype keeps the hero
-          for identity rather than meta. */}
-      <section className="mx-auto max-w-[1180px] px-6 pt-8 pb-6 border-b border-line">
-        {(() => {
-          const trimmedCompany = proof.company?.trim() ?? ''
-          const trimmedName = proof.customer_name?.trim() ?? ''
-          const companyProminent = trimmedCompany.length > 0
-          const primary = companyProminent ? proof.company! : proof.customer_name
-          const subline = companyProminent && trimmedName.length > 0
-            ? proof.customer_name
-            : null
-          const eyebrowLabel = (activeVersion?.names?.length ?? 0) >= 2 ? 'Proof for' : 'Proof for'
-          return (
-            <div className="flex flex-col gap-6 md:flex-row md:items-end md:gap-8">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2.5 mb-3 flex-wrap">
-                  <span className="eyebrow">{eyebrowLabel}</span>
-                  {companyProminent && !subline && (
-                    <>
-                      <span className="inline-block h-px w-6 bg-line" aria-hidden="true" />
-                      <span className="eyebrow text-brand">{proof.company}</span>
-                    </>
-                  )}
+            {/* Approval banner — shows when the proof has been
+                fully signed off or carries forward-approved slots
+                from earlier versions. Lifted into the left rail in
+                V2 (was a full-width top banner in V1) so it sits
+                next to the customer card it qualifies. */}
+            {heroApprovalStrip && (() => {
+              const total = versionImages[activeVersion.id]?.length ?? 0
+              const isApprovedKind = heroApprovalStrip.kind === 'approved'
+              const pillColour: PillColour = isApprovedKind ? 'in-stock' : 'allocated'
+              const label = isApprovedKind ? 'Approved' : 'Partially approved'
+              const detailVisible = isApprovedKind
+                ? [
+                    heroApprovalStrip.dateLabel ? `Signed off ${heroApprovalStrip.dateLabel}` : 'Signed off',
+                    total > 0 ? `${total} / ${total} proof${total === 1 ? '' : 's'}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
+                : 'Some proofs already signed off, others awaiting review'
+              const detailAria = isApprovedKind
+                ? [
+                    heroApprovalStrip.dateLabel ? `Signed off ${heroApprovalStrip.dateLabel}` : 'Signed off',
+                    total > 0 ? `${total} of ${total} proof${total === 1 ? '' : 's'}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(', ')
+                : 'Some proofs already signed off, others awaiting review'
+              return (
+                <div className="flex flex-wrap items-center gap-3 rounded-[10px] bg-surface border border-line px-4 py-3">
+                  <Pill colour={pillColour}>{label}</Pill>
+                  <span className="text-[13px] text-ink-soft" aria-label={detailAria}>
+                    {detailVisible}
+                  </span>
                 </div>
-                <h1
-                  className="font-display font-medium tracking-[-0.02em] text-ink break-words leading-[1.02]"
-                  style={{ fontSize: 'clamp(36px, 7vw, 56px)' }}
-                >
-                  {primary}
-                </h1>
-                {subline && (
-                  <p
-                    className="mt-3 font-display text-ink-soft"
-                    style={{ fontSize: 22, lineHeight: 1.3 }}
-                  >
-                    {subline}
-                  </p>
+              )
+            })()}
+
+            {/* Customer card with brand StatusRule on its left edge.
+                Carries "Proof for" eyebrow + display customer name +
+                optional company subline + What-changed-in-vN callout.
+                Replaces the V1 hero strip that used to sit above the
+                page main. */}
+            <div className="relative bg-surface border border-line rounded-[14px] overflow-hidden px-6 py-6">
+              <StatusRule colour={tokens.brand} />
+              <div className="pl-2">
+                {(() => {
+                  const trimmedCompany = proof.company?.trim() ?? ''
+                  const trimmedName = proof.customer_name?.trim() ?? ''
+                  const companyProminent = trimmedCompany.length > 0
+                  const primary = companyProminent ? proof.company! : proof.customer_name
+                  const subline = companyProminent && trimmedName.length > 0
+                    ? proof.customer_name
+                    : trimmedCompany || null
+                  return (
+                    <>
+                      <span className="eyebrow">Proof for</span>
+                      <h1
+                        className="mt-2 font-display font-medium tracking-[-0.02em] text-ink leading-[1.05] break-words"
+                        style={{ fontSize: 'clamp(26px, 3vw, 32px)' }}
+                      >
+                        {primary}
+                      </h1>
+                      {subline && (
+                        <p className="mt-1 text-[14px] text-ink-mute">{subline}</p>
+                      )}
+                    </>
+                  )
+                })()}
+                {activeVersion.change_notes && (
+                  <div className="mt-4 rounded-[10px] bg-canvas border border-line-soft p-4">
+                    <span className="eyebrow text-brand block mb-1.5">
+                      What changed in v{activeVersion.version_number}
+                    </span>
+                    <p className="text-[13px] leading-[1.5] text-ink-soft whitespace-pre-line m-0">
+                      {activeVersion.change_notes}
+                    </p>
+                  </div>
                 )}
               </div>
-              {activeVersion && (
-                <div className="flex flex-col items-start md:items-end gap-2 shrink-0">
-                  <span className="eyebrow">Version</span>
-                  <div className="flex items-baseline gap-1">
-                    <span className="num num-2xl text-ink">
-                      {String(activeVersion.version_number).padStart(2, '0')}
-                    </span>
-                    <span className="num text-ink-mute" style={{ fontSize: 18 }}>
-                      /{String(versions.length).padStart(2, '0')}
-                    </span>
-                  </div>
-                  <ProofStatusPill status={proof.status as ProofStatus} />
-                </div>
-              )}
             </div>
-          )
-        })()}
-      </section>
 
-      {/* Version selector — prototype pill row replacing the
-          Direction-B PaperRevisionTimeline coachmarked rail. One
-          pill per version; v{n} · {date} with a green dot on the
-          current version. Active pill is ink-filled. Date format
-          matches the rest of the page: "27 May" via en-GB locale.
-          Pills are buttons that call setActiveVersion, the same
-          handler PaperRevisionTimeline used. */}
-      {activeVersion && versions.length > 1 && (
-        <section className="mx-auto max-w-[1180px] px-6 py-5">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <span className="eyebrow mr-1.5">History</span>
-            {versions.map((v) => {
-              const active = v.id === activeVersion.id
-              const dateLabel = new Date(v.created_at).toLocaleDateString('en-GB', {
-                day: 'numeric',
-                month: 'short',
-              })
-              const cls = [
-                'inline-flex items-center gap-2 h-8 px-3 rounded-full text-[13px] transition-colors',
-                'border',
-                active
-                  ? 'bg-ink text-on-ink border-ink'
-                  : 'bg-surface text-ink-soft border-line hover:bg-canvas',
-              ].join(' ')
-              return (
-                <button
-                  key={v.id}
-                  type="button"
-                  onClick={() => setActiveVersion(v)}
-                  aria-pressed={active}
-                  aria-label={`Version ${v.version_number}, ${dateLabel}${v.is_current ? ' (current)' : ''}`}
-                  className={cls}
+            {/* Specification PanelShell — preserved verbatim from PR 7
+                except the outer <section className="bg-canvas"> and
+                max-w-1180 wrappers (the aside is the container now).
+                Renders below the customer card. Per-direction-pricing
+                versions skip the panel entirely (migration 000144). */}
+            {!activeVersion.is_per_direction_pricing && (
+              <PanelShell
+                eyebrow="As proofed"
+                title="Specification"
+                icon={Layers}
+                accent={tokens.brand}
+              >
+                <dl
+                  aria-labelledby="section-specification-heading"
+                  className="divide-y divide-line-soft"
                 >
-                  <span className="font-mono font-medium">v{v.version_number}</span>
-                  <span className={active ? 'text-on-ink/70' : 'text-ink-dim'} aria-hidden="true">
-                    ·
-                  </span>
-                  <span className="text-[12px]">{dateLabel}</span>
-                  {v.is_current && (
-                    <span
-                      aria-hidden="true"
-                      className="inline-block w-1.5 h-1.5 rounded-full ml-0.5"
-                      style={{ backgroundColor: active ? '#ffffff' : 'var(--c-in-stock)' }}
-                    />
+                  <h2 id="section-specification-heading" className="sr-only">Specification</h2>
+                  <SpecRow label="Material" value={activeVersion.material_display} />
+                  {/* Sides — derived from the image set. Two-sided
+                      iff any image on the active version carries
+                      side='back'; otherwise front only.
+                      Pre-migration-000085 data with null sides reads
+                      as front only. */}
+                  <SpecRow
+                    label="Sides"
+                    value={
+                      (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
+                        ? 'Front and back'
+                        : 'Front only'
+                    }
+                  />
+                  {lockedFinishVariant && (
+                    <SpecRow label="Finish" value={lockedFinishVariant.display_name} />
                   )}
-                </button>
-              )
-            })}
-          </div>
-        </section>
-      )}
+                  {activeOption && (
+                    <SpecRow label={optionLabelSingular} value={activeOption.display_name} />
+                  )}
+                  {activeVersion.ink_names.length > 0 && (
+                    <SpecRow label="Ink colours" value={activeVersion.ink_names.join('\n')} />
+                  )}
+                  {activeVersion.names.length > 0 && !(activeVersion.has_personalisation && activePersonalisationPricing) && (
+                    <SpecRow label="Names on card" value={activeVersion.names.join('\n')} />
+                  )}
+                  {activeVersion.has_personalisation && activePersonalisationPricing && (
+                    <SpecRow label="Personalisation" value="Unique data per card" />
+                  )}
+                  <SpecRow
+                    label="Revision"
+                    value={`v${activeVersion.version_number}${heroRevisionDate ? ` · ${heroRevisionDate}` : ''}`}
+                  />
+                </dl>
+              </PanelShell>
+            )}
 
-      {activeVersion && (
-        <>
+            {/* Pricing PanelShell + split-name / shipping callouts —
+                preserved verbatim from PR 8 except the outer
+                section + max-w-1180 wrappers. Renders below Specs
+                in the aside. Variant-round versions skip the panel
+                entirely. */}
+            {!activeVersion.is_variant_round && (
+              <>
+                <PanelShell
+                  eyebrow={
+                    !activeVersion.custom_quote && activeOption && versionOptions.length > 0 && materialHasSurcharges
+                      ? `Prices shown for ${activeOption.display_name} ${optionLabelSingular.toLowerCase()}`
+                      : 'Inclusive of VAT'
+                  }
+                  title="Pricing"
+                  icon={PoundSterling}
+                  accent={tokens.ink}
+                  action={
+                    !activeVersion.custom_quote ? (
+                      <span className="num text-[12px] font-medium text-ink uppercase tracking-[0.18em]">
+                        {activeVersion.currency}
+                        {activeVersion.currency === 'GBP' ? ' · VAT included' : ''}
+                      </span>
+                    ) : undefined
+                  }
+                >
+                  <h2 id="section-pricing-heading" className="sr-only">Pricing</h2>
+                  {activeVersion.custom_quote ? (
+                    <div className="py-6 text-center">
+                      <p className="mx-auto max-w-md font-display text-[18px] leading-snug text-ink-soft">
+                        This proof requires a custom quote. We'll be in touch separately with pricing.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <PaperPricingTable
+                        snapshot={livePricingSnapshot}
+                        currency={activeVersion.currency!}
+                        displayQuantities={activeVersion.display_quantities}
+                        quoteMinQuantity={activeVersion.quote_min_quantity}
+                        quoteMaxQuantity={activeVersion.quote_max_quantity}
+                        quantitySurcharges={quantitySurcharges}
+                        personalisationPricing={activePersonalisationPricing}
+                      />
+                      {personalisationBreakevenQty != null && (
+                        <p className="mt-3 text-[13px] text-ink-mute leading-relaxed">
+                          A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
+                        </p>
+                      )}
+                    </>
+                  )}
+                </PanelShell>
+
+                {!activeVersion.custom_quote &&
+                  (((activeVersion.names.length >= 2 &&
+                    activeVersion.split_name_surcharge_snapshot != null &&
+                    activeVersion.split_name_surcharge_snapshot > 0) ||
+                    !!activeVersion.shipping_note)) && (
+                    <div className="grid gap-3">
+                      {activeVersion.names.length >= 2 &&
+                        activeVersion.split_name_surcharge_snapshot != null &&
+                        activeVersion.split_name_surcharge_snapshot > 0 && (
+                          <div className="rounded-[10px] bg-surface border border-line p-4">
+                            <span className="eyebrow text-brand">Split-name tooling</span>
+                            <p className="mt-2 text-[15px] leading-snug text-ink font-medium">
+                              Add{' '}
+                              <span className="num font-medium">
+                                {formatPrice(
+                                  (activeVersion.names.length - 1) *
+                                    activeVersion.split_name_surcharge_snapshot,
+                                  activeVersion.currency!,
+                                )}
+                              </span>{' '}
+                              to the prices above
+                            </p>
+                            <p className="mt-1.5 text-[12px] text-ink-mute">
+                              {activeVersion.names.length - 1} extra{' '}
+                              {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
+                              {formatPrice(
+                                activeVersion.split_name_surcharge_snapshot,
+                                activeVersion.currency!,
+                              )}{' '}
+                              tooling
+                            </p>
+                          </div>
+                        )}
+                      {activeVersion.shipping_note && (
+                        <div className="rounded-[10px] bg-surface border border-line p-4">
+                          <span className="eyebrow">Shipping</span>
+                          <p className="mt-2 whitespace-pre-line text-[14px] leading-snug text-ink-soft">
+                            {activeVersion.shipping_note}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+              </>
+            )}
+
+          </aside>
+
+          {/* Right column — contact sheet */}
+          <div className="flex flex-col gap-7 min-w-0 order-2 lg:order-none">
+
+            {/* Version pill row — chronological, click switches
+                the active version via setActiveVersion (handler
+                preserved from prior PRs). Current version gets a
+                green dot; on the active (ink) pill the dot inverts
+                to white. */}
+            {versions.length > 1 && (
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="eyebrow mr-1.5">History</span>
+                {versions.map((v) => {
+                  const active = v.id === activeVersion.id
+                  const dateLabel = new Date(v.created_at).toLocaleDateString('en-GB', {
+                    day: 'numeric',
+                    month: 'short',
+                  })
+                  const cls = [
+                    'inline-flex items-center gap-2 h-8 px-3 rounded-full text-[13px] transition-colors',
+                    'border',
+                    active
+                      ? 'bg-ink text-on-ink border-ink'
+                      : 'bg-surface text-ink-soft border-line hover:bg-canvas',
+                  ].join(' ')
+                  return (
+                    <button
+                      key={v.id}
+                      type="button"
+                      onClick={() => setActiveVersion(v)}
+                      aria-pressed={active}
+                      aria-label={`Version ${v.version_number}, ${dateLabel}${v.is_current ? ' (current)' : ''}`}
+                      className={cls}
+                    >
+                      <span className="font-mono font-medium">v{v.version_number}</span>
+                      <span className={active ? 'text-on-ink/70' : 'text-ink-dim'} aria-hidden="true">
+                        ·
+                      </span>
+                      <span className="text-[12px]">{dateLabel}</span>
+                      {v.is_current && (
+                        <span
+                          aria-hidden="true"
+                          className="inline-block w-1.5 h-1.5 rounded-full ml-0.5"
+                          style={{ backgroundColor: active ? '#ffffff' : 'var(--c-in-stock)' }}
+                        />
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
           {/* ───── Plates ─────
               Near-white section. Groups come from buildImageGroups
               (shared first, then named); each named group gets a
@@ -3016,105 +3151,9 @@ export default function CustomerProofPage() {
               section — every per-direction material is a separate
               decision and the version row carries no aggregate
               material/currency to put on the spec sheet. */}
-          {!activeVersion.is_per_direction_pricing && (
-            <section
-              aria-labelledby="section-specification-heading"
-              className="bg-canvas"
-            >
-              <div className="mx-auto max-w-[1180px] px-6 py-8">
-                <PanelShell
-                  eyebrow="As proofed"
-                  title="Specification"
-                  icon={Layers}
-                  accent={tokens.brand}
-                >
-                  <dl
-                    aria-labelledby="section-specification-heading"
-                    className="divide-y divide-line-soft"
-                  >
-                    {/* visually-hidden heading anchors the
-                        aria-labelledby; PanelShell already paints
-                        the visible "Specification" h2 in its own
-                        header so we don't need a second h2 here. */}
-                    <h2 id="section-specification-heading" className="sr-only">Specification</h2>
-                    <SpecRow label="Material" value={activeVersion.material_display} />
-                    {/* Sides — derived from the image set. Two-sided
-                        iff any image on the active version carries
-                        side='back'; otherwise front only.
-                        Pre-migration-000085 data with null sides reads
-                        as front only, matching the historic single-
-                        sided proofs' reality. */}
-                    <SpecRow
-                      label="Sides"
-                      value={
-                        (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
-                          ? 'Front and back'
-                          : 'Front only'
-                      }
-                    />
-                    {lockedFinishVariant && (
-                      <SpecRow label="Finish" value={lockedFinishVariant.display_name} />
-                    )}
-                    {activeOption && (
-                      <SpecRow label={optionLabelSingular} value={activeOption.display_name} />
-                    )}
-                    {/* Core colour was previously surfaced here as a
-                        single spec row (migration 000133). Migration
-                        000135 replaced it with a dedicated
-                        LayeredConstructionPanel that renders above
-                        the Specification section and shows all three
-                        Colorplan layers as a cross-section. */}
-                    {activeVersion.ink_names.length > 0 && (
-                      <SpecRow
-                        label="Ink colours"
-                        value={activeVersion.ink_names.join('\n')}
-                      />
-                    )}
-                    {/* Names on card hidden when personalisation is on
-                        AND its pricing actually resolved (live read
-                        from personalisation_pricing for the proof's
-                        currency). The price-resolved gate matches
-                        the docket-cell defence — a Personalisation
-                        label without a Personalisation row in the
-                        pricing table below would read as a free
-                        claim. */}
-                    {activeVersion.names.length > 0 && !(activeVersion.has_personalisation && activePersonalisationPricing) && (
-                      <SpecRow
-                        label="Names on card"
-                        value={activeVersion.names.join('\n')}
-                      />
-                    )}
-                    {activeVersion.has_personalisation && activePersonalisationPricing && (
-                      <SpecRow
-                        label="Personalisation"
-                        value="Unique data per card"
-                      />
-                    )}
-                    <SpecRow
-                      label="Revision"
-                      value={`v${activeVersion.version_number}${heroRevisionDate ? ` · ${heroRevisionDate}` : ''}`}
-                    />
-                  </dl>
-                </PanelShell>
-
-                {/* Notes — quiet card with the customer's change-
-                    notes copy in italic. Sits below the spec panel
-                    when the active version has change_notes content.
-                    Replaces the Direction-B serif-quoted block that
-                    used the same paper-tint band. */}
-                {activeVersion.change_notes && (
-                  <div className="mt-5 rounded-[14px] bg-surface border border-line p-6">
-                    <span className="eyebrow text-brand">
-                      What changed in v{activeVersion.version_number}
-                    </span>
-                    <p className="mt-3 whitespace-pre-line text-[15px] leading-[1.55] text-ink-soft">
-                      {activeVersion.change_notes}
-                    </p>
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
+          {/* Specs PanelShell moved into the left-rail aside in V2.
+              Notes card was here too — its copy lives in the
+              customer card at the top of the aside now. */}
 
           {/* ───── Pricing ─────
               Darker ink section (#0f0d0b) — visually distinct
@@ -3133,141 +3172,8 @@ export default function CustomerProofPage() {
               duplicate. is_variant_round is false on every row
               in production today, so this gate is a no-op for
               every existing proof. */}
-          {!activeVersion?.is_variant_round && (
-            <section
-              aria-labelledby="section-pricing-heading"
-              className="bg-canvas"
-            >
-              <div className="mx-auto max-w-[1180px] px-6 py-8">
-                {/* Currency + VAT label sits at text-ink rather than
-                    text-ink-mute because it's business-critical
-                    disclosure (the customer needs to know prices
-                    include VAT before placing an order). The
-                    "Prices shown for {finish}" line below it stays
-                    in the eyebrow-mute palette since it's
-                    supplementary context. */}
-                <PanelShell
-                  eyebrow={
-                    !activeVersion.custom_quote && activeOption && versionOptions.length > 0 && materialHasSurcharges
-                      ? `Prices shown for ${activeOption.display_name} ${optionLabelSingular.toLowerCase()}`
-                      : 'Inclusive of VAT'
-                  }
-                  title="Pricing"
-                  icon={PoundSterling}
-                  accent={tokens.ink}
-                  action={
-                    !activeVersion.custom_quote ? (
-                      <span className="num text-[12px] font-medium text-ink uppercase tracking-[0.18em]">
-                        {activeVersion.currency}
-                        {activeVersion.currency === 'GBP' ? ' · VAT included' : ''}
-                      </span>
-                    ) : undefined
-                  }
-                >
-                  <h2 id="section-pricing-heading" className="sr-only">Pricing</h2>
-                  {activeVersion.custom_quote ? (
-                    <div className="py-6 text-center">
-                      <p className="mx-auto max-w-md font-display text-[20px] leading-snug text-ink-soft">
-                        This proof requires a custom quote. We'll be in touch separately with pricing.
-                      </p>
-                    </div>
-                  ) : (
-                    <>
-                      <PaperPricingTable
-                        snapshot={livePricingSnapshot}
-                        // Inside the !is_per_direction_pricing gate; see
-                        // sibling call above for the migration 000142 reference.
-                        currency={activeVersion.currency!}
-                        displayQuantities={activeVersion.display_quantities}
-                        quoteMinQuantity={activeVersion.quote_min_quantity}
-                        quoteMaxQuantity={activeVersion.quote_max_quantity}
-                        quantitySurcharges={quantitySurcharges}
-                        personalisationPricing={activePersonalisationPricing}
-                      />
-                      {personalisationBreakevenQty != null && (
-                        <p className="mt-3 text-[13px] text-ink-mute leading-relaxed">
-                          A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
-                        </p>
-                      )}
-                    </>
-                  )}
-                </PanelShell>
-
-                {/* Split-name + shipping callouts — two side-by-
-                    side cards. Split-name only renders when there's
-                    an extra-name surcharge to apply; shipping
-                    renders whenever the version has a shipping_note
-                    set. Hidden in custom-quote mode (no prices to
-                    modify). Restyled to quiet surface cards using
-                    design-system tokens. */}
-                {!activeVersion.custom_quote &&
-                  (((activeVersion.names.length >= 2 &&
-                    activeVersion.split_name_surcharge_snapshot != null &&
-                    activeVersion.split_name_surcharge_snapshot > 0) ||
-                    !!activeVersion.shipping_note)) && (
-                    <div
-                      className={[
-                        'mt-5 grid gap-5',
-                        activeVersion.names.length >= 2 &&
-                        activeVersion.split_name_surcharge_snapshot != null &&
-                        activeVersion.split_name_surcharge_snapshot > 0 &&
-                        activeVersion.shipping_note
-                          ? 'sm:grid-cols-2'
-                          : 'sm:grid-cols-1',
-                      ].join(' ')}
-                    >
-                      {activeVersion.names.length >= 2 &&
-                        activeVersion.split_name_surcharge_snapshot != null &&
-                        activeVersion.split_name_surcharge_snapshot > 0 && (
-                          <div className="rounded-[10px] bg-surface border border-line p-5">
-                            <span className="eyebrow text-brand">Split-name tooling</span>
-                            <p className="mt-2 text-[18px] leading-snug text-ink font-medium">
-                              Add{' '}
-                              <span className="num font-medium">
-                                {formatPrice(
-                                  (activeVersion.names.length - 1) *
-                                    activeVersion.split_name_surcharge_snapshot,
-                                  // !is_per_direction_pricing gate; null
-                                  // unreachable here (migration 000142).
-                                  activeVersion.currency!,
-                                )}
-                              </span>{' '}
-                              to the prices above
-                            </p>
-                            {/* Multiplier semantics: the surcharge
-                                applies to each name *beyond the first*,
-                                so the multiplier is names.length - 1
-                                not names.length. The earlier copy
-                                ("{N} names × £15 tooling each beyond
-                                the first") read as N × £15 to anyone
-                                not parsing the trailing clause — this
-                                phrasing puts the count of *extra* names
-                                in the multiplier slot so the math reads
-                                right at a glance. */}
-                            <p className="mt-1.5 text-[13px] text-ink-mute">
-                              {activeVersion.names.length - 1} extra{' '}
-                              {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
-                              {formatPrice(
-                                activeVersion.split_name_surcharge_snapshot,
-                                activeVersion.currency!,
-                              )}{' '}
-                              tooling
-                            </p>
-                          </div>
-                        )}
-                      {activeVersion.shipping_note && (
-                        <div className="rounded-[10px] bg-surface border border-line p-5">
-                          <span className="eyebrow">Shipping</span>
-                          <p className="mt-2 whitespace-pre-line text-[15px] leading-snug text-ink-soft">
-                            {activeVersion.shipping_note}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-              </div>
-            </section>
-          )}
+          {/* Pricing PanelShell + split-name/shipping callouts
+              moved into the left-rail aside in V2. */}
 
           {/* ───── About {material} ─────
               Two-column layout: copy on the left, swatch orb on
@@ -3356,7 +3262,22 @@ export default function CustomerProofPage() {
             </section>
           )}
 
-        </>
+          {/* About this proof — quiet disclaimer card sitting at
+              the bottom of the right column. Reads as a footer
+              note explaining the proof's screen-rendering limits
+              before the page's actual footer below. */}
+          <div className="rounded-[10px] bg-surface border border-line-soft p-5 flex items-start gap-3">
+            <Info size={18} aria-hidden="true" className="text-ink-mute mt-0.5 shrink-0" />
+            <div className="min-w-0">
+              <span className="eyebrow block mb-1.5">About this proof</span>
+              <p className="text-[13px] leading-[1.6] text-ink-soft max-w-[68ch] m-0">
+                The proof shows etching colour, ink finish, layout and copy at the closest faithful representation we can make on screen. The real card will differ slightly in the way the material catches light, the depth of any embossing or etch, and the weight in hand. Plasma Design hand-finishes every set in Stoke-on-Trent.
+              </p>
+            </div>
+          </div>
+
+          </div>
+        </main>
       )}
 
       {/* Footer — replaces the dark-ink BrandRule footer with the
