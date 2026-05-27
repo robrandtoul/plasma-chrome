@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { DesignerHeader, ButtonCoral, type DesignerHeaderColour } from '../design'
-import { Plus } from 'lucide-react'
+import { DesignerHeader, ButtonCoral, ButtonGhost, type DesignerHeaderColour } from '../design'
+import { Plus, Filter } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -201,6 +201,29 @@ function statusLabel(status: ProofStatus): string {
   return 'In progress'
 }
 
+// ── Hero strip helpers ───────────────────────────────────────────────────────
+
+// Time-of-day greeting for the hero. Splits at the standard 12 / 17 hour
+// boundaries so the greeting tracks the working day — Rob's mornings
+// run long and the cutover at noon / 5pm is what most office tools use.
+function greetingFor(d: Date): string {
+  const h = d.getHours()
+  if (h < 12) return 'Good morning'
+  if (h < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
+// "Wednesday, 27 May" — uses Intl with the default en-GB locale so the
+// day-then-month ordering matches Rob's expectations. No year; the
+// hero is for today, not historical context.
+function todayLabel(d: Date): string {
+  return d.toLocaleDateString('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  })
+}
+
 // ── Stat tile ────────────────────────────────────────────────────────────────
 
 interface StatTileProps {
@@ -234,40 +257,38 @@ function StatTile({ label, count, active, tone, description, onClick }: StatTile
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className="flex flex-col items-start gap-1 rounded-[14px] bg-surface px-5 py-4 text-left border transition-colors hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
+      className="flex flex-col items-start gap-2 rounded-[12px] bg-surface px-5 py-4 text-left border border-line transition-colors hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
       style={{
-        borderTopWidth: 4,
-        borderTopColor: tint,
-        borderRightColor: 'var(--c-line)',
-        borderBottomColor: 'var(--c-line)',
-        borderLeftColor: 'var(--c-line)',
-        boxShadow: active ? `inset 0 0 0 1px ${tint}` : undefined,
+        // Active state: subtle inset ring in the tile's tone, no border colour
+        // swap. Matches the mockup's quieter active treatment — the dot up top
+        // carries the colour signal, no need to outline the whole card.
+        boxShadow: active ? `inset 0 0 0 2px ${tint}` : undefined,
       }}
     >
-      {/* The .eyebrow class in design-tokens.css sets white-space: nowrap
-          for every other consumer (inline pills, kickers next to data),
-          and it's imported AFTER tailwindcss in index.css — so utility
-          classes like whitespace-normal lose the cascade race on equal
-          specificity. Inline style is the only way to override without
-          changing the global rule's behaviour for those other call
-          sites. Two lines fit at 10px font with line-height 1.2; the
-          min-h reserves the second-line slot so short-label tiles
-          (Snoozed, Dormant) match the row height of their wrapping
-          neighbours and the row stays flush. */}
+      {/* Dot + label row. Dot picks up the tile's tone; label uses the
+          eyebrow class (inline whitespace-normal so long labels wrap —
+          see PR 17c for why the override has to be inline). */}
+      <div className="flex items-baseline gap-2 min-h-[24px]">
+        <span
+          aria-hidden="true"
+          className="inline-block w-2 h-2 rounded-full shrink-0 translate-y-[-1px]"
+          style={{ backgroundColor: tint }}
+        />
+        <span
+          className="eyebrow text-ink-mute"
+          style={{ whiteSpace: 'normal', lineHeight: 1.2 }}
+        >
+          {label}
+        </span>
+      </div>
       <span
-        className="eyebrow text-ink-mute min-h-[28px]"
-        style={{ whiteSpace: 'normal', lineHeight: 1.2 }}
+        className="text-[32px] leading-none font-medium tabular-nums font-mono text-ink"
+        style={{ fontFeatureSettings: 'var(--num-features)' }}
       >
-        {label}
-      </span>
-      <span
-        className="text-2xl font-medium tabular-nums font-mono"
-        style={{ color: tint, fontFeatureSettings: 'var(--num-features)' }}
-      >
-        {count}
+        {String(count).padStart(2, '0')}
       </span>
       {description && (
-        <span className="text-[12px] text-ink-dim">{description}</span>
+        <span className="text-[12px] text-ink-mute leading-snug">{description}</span>
       )}
     </button>
   )
@@ -1147,7 +1168,7 @@ export default function DashboardPage() {
   const userId = session?.user.id ?? null
   const [projects, setProjects]           = useState<DashboardProject[]>([])
   const [latestEvents, setLatestEvents]   = useState<DashboardLatestEvent[]>([])
-  const [myProfile, setMyProfile]         = useState<{ initials: string; colour: DesignerColour; avatarUrl: string | null } | null>(null)
+  const [myProfile, setMyProfile]         = useState<{ initials: string; colour: DesignerColour; avatarUrl: string | null; firstName: string | null } | null>(null)
   // Avatar popover state moved into DesignerHeader's internal
   // UserPill in PR 16. Edit profile / Sign out actions are wired
   // through the onEditProfile / onSignOut props.
@@ -1188,6 +1209,7 @@ export default function DashboardPage() {
           initials: (data.designer_initials ?? data.full_name?.split(' ').map((n: string) => n[0]).join('') ?? '?').slice(0, 2),
           colour: (data.designer_colour ?? 'blue') as DesignerColour,
           avatarUrl: data.avatar_url ?? null,
+          firstName: data.full_name?.split(' ')[0] ?? null,
         })
       })
   }, [userId])
@@ -1622,14 +1644,7 @@ export default function DashboardPage() {
           name: myProfile?.initials ? undefined : 'Account',
         }}
         search={{ value: search, onChange: setSearch }}
-        actions={
-          <>
-            <QuoteLink />
-            <ButtonCoral icon={Plus} onClick={() => navigate('/proofs/new')}>
-              New proof
-            </ButtonCoral>
-          </>
-        }
+        actions={<QuoteLink />}
         onEditProfile={() => setEditProfileOpen(true)}
         onSignOut={handleSignOut}
       />
@@ -1642,7 +1657,15 @@ export default function DashboardPage() {
             userId={userId}
             onClose={() => setEditProfileOpen(false)}
             onSaved={(payload: EditProfileSavedPayload) => {
-              setMyProfile({ initials: payload.initials, colour: payload.colour, avatarUrl: payload.avatarUrl })
+              setMyProfile((prev) => ({
+                initials: payload.initials,
+                colour: payload.colour,
+                avatarUrl: payload.avatarUrl,
+                // EditProfileModal's payload doesn't carry firstName,
+                // so keep the previously-loaded value rather than
+                // wiping the hero greeting after a profile save.
+                firstName: prev?.firstName ?? null,
+              }))
               // Refetch dashboard rows so the designer-avatar columns on
               // every project tile pick up the new avatar/initials/colour
               // immediately rather than waiting for the next
@@ -1661,45 +1684,53 @@ export default function DashboardPage() {
               </div>
             ) : (
               <>
-                {/* Stat tile row */}
-                {/* Three groups, left to right:
-                    • Alert    — Needs attention (col 1)
-                    • Workflow — the happy path the proof travels through:
-                                 Not viewed → Awaiting customer →
-                                 Changes requested → Approved this week (cols 2–5)
-                    • On hold  — proofs not currently moving through the
-                                 workflow: Snoozed, Dormant (cols 6–7)
-                    Palette: rose → amber → sky → turquoise → green → violet → gray */}
+                {/* Hero strip — "Good morning, Rob" greeting + today's
+                    date + a count of jobs needing attention, with Saved
+                    views + New proof CTAs on the right. Lifts the New
+                    proof button out of the DesignerHeader actions slot
+                    (where it sat in PR 16) and puts it next to the
+                    primary call-to-attention copy. Saved views is a
+                    placeholder for the still-to-build feature — no
+                    handler yet, just the visual chrome per the mockup. */}
+                <section className="mb-6 rounded-[14px] bg-surface border border-line px-6 py-5 flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <div className="eyebrow">Proofs at a glance</div>
+                    <h1 className="mt-1 font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0" style={{ fontSize: 'clamp(22px, 3vw, 28px)' }}>
+                      {greetingFor(new Date())}, {myProfile?.firstName ?? 'there'}
+                    </h1>
+                    <p className="mt-1.5 text-[14px] text-ink-soft leading-snug">
+                      {todayLabel(new Date())}
+                      {needsAttentionCount > 0 && (
+                        <>
+                          {' · '}
+                          <span className="font-medium" style={{ color: 'var(--c-brand)' }}>
+                            {String(needsAttentionCount).padStart(2, '0')} {needsAttentionCount === 1 ? 'job' : 'jobs'}
+                          </span>
+                          {' need your attention this morning.'}
+                        </>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {/* Saved views — placeholder for the still-to-build
+                        feature. No handler; renders as a disabled-looking
+                        button so the visual matches the mockup but the
+                        affordance reads as "coming soon". */}
+                    <ButtonGhost icon={Filter} disabled>Saved views</ButtonGhost>
+                    <ButtonCoral icon={Plus} onClick={() => navigate('/proofs/new')}>
+                      New proof
+                    </ButtonCoral>
+                  </div>
+                </section>
 
-                {/* Section labels — xl only, one label per group aligned to
-                    the matching tile column(s) via the same 7-col grid.
-                    Alert label keeps its red accent (matches the Needs
-                    attention tile's tone); the other two stay quiet so
-                    the rose label reads as the urgent one. */}
-                <div className="mb-1.5 hidden xl:grid xl:grid-cols-7 xl:gap-3">
-                  <div className="flex items-center gap-2 px-0.5">
-                    <span
-                      className="eyebrow"
-                      style={{ color: 'var(--c-out)', letterSpacing: '0.16em' }}
-                    >
-                      Alert
-                    </span>
-                    <span
-                      className="h-px flex-1"
-                      aria-hidden="true"
-                      style={{ background: 'var(--c-out-soft)' }}
-                    />
-                  </div>
-                  <div className="col-span-4 flex items-center gap-2 px-0.5">
-                    <span className="eyebrow text-ink-mute">Workflow</span>
-                    <span className="h-px flex-1 bg-line" aria-hidden="true" />
-                  </div>
-                  <div className="col-span-2 flex items-center gap-2 px-0.5">
-                    <span className="eyebrow text-ink-mute">On hold</span>
-                    <span className="h-px flex-1 bg-line" aria-hidden="true" />
-                  </div>
-                </div>
-
+                {/* Stat tile row. Seven tiles in priority order — the
+                    Alert / Workflow / On hold group labels from the
+                    earlier dashboard shape are dropped here so the row
+                    reads as a single horizontal sweep, matching the
+                    mockup. The tile palette still encodes the same
+                    grouping via colour (rose for Needs attention,
+                    amber→sky→turquoise→green for workflow,
+                    violet/neutral for on-hold). */}
                 <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-7">
                   <StatTile
                     label="Needs attention"
