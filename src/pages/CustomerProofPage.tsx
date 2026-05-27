@@ -2539,51 +2539,52 @@ export default function CustomerProofPage() {
                           A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
                         </p>
                       )}
+                      {/* Shipping note as a quiet footer line inside
+                          the Pricing PanelShell — mirrors the V2
+                          prototype's "Prices exclude shipping" treatment.
+                          Avoids floating a standalone shipping card
+                          below the panel when there's no split-name
+                          tooling alongside it to pair with. */}
+                      {activeVersion.shipping_note && (
+                        <p className="mt-3 text-[12px] text-ink-mute whitespace-pre-line text-right border-t border-line-soft pt-3">
+                          {activeVersion.shipping_note}
+                        </p>
+                      )}
                     </>
                   )}
                 </PanelShell>
 
+                {/* Split-name tooling callout — full-width card below
+                    the Pricing PanelShell when applicable. Contains a
+                    multi-line calc + explanation, so it earns its own
+                    card chrome (unlike shipping, which collapses to
+                    an inline footer line above). */}
                 {!activeVersion.custom_quote &&
-                  (((activeVersion.names.length >= 2 &&
-                    activeVersion.split_name_surcharge_snapshot != null &&
-                    activeVersion.split_name_surcharge_snapshot > 0) ||
-                    !!activeVersion.shipping_note)) && (
-                    <div className="grid gap-3">
-                      {activeVersion.names.length >= 2 &&
-                        activeVersion.split_name_surcharge_snapshot != null &&
-                        activeVersion.split_name_surcharge_snapshot > 0 && (
-                          <div className="rounded-[10px] bg-surface border border-line p-4">
-                            <span className="eyebrow text-brand">Split-name tooling</span>
-                            <p className="mt-2 text-[15px] leading-snug text-ink font-medium">
-                              Add{' '}
-                              <span className="num font-medium">
-                                {formatPrice(
-                                  (activeVersion.names.length - 1) *
-                                    activeVersion.split_name_surcharge_snapshot,
-                                  activeVersion.currency!,
-                                )}
-                              </span>{' '}
-                              to the prices above
-                            </p>
-                            <p className="mt-1.5 text-[12px] text-ink-mute">
-                              {activeVersion.names.length - 1} extra{' '}
-                              {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
-                              {formatPrice(
-                                activeVersion.split_name_surcharge_snapshot,
-                                activeVersion.currency!,
-                              )}{' '}
-                              tooling
-                            </p>
-                          </div>
-                        )}
-                      {activeVersion.shipping_note && (
-                        <div className="rounded-[10px] bg-surface border border-line p-4">
-                          <span className="eyebrow">Shipping</span>
-                          <p className="mt-2 whitespace-pre-line text-[14px] leading-snug text-ink-soft">
-                            {activeVersion.shipping_note}
-                          </p>
-                        </div>
-                      )}
+                  activeVersion.names.length >= 2 &&
+                  activeVersion.split_name_surcharge_snapshot != null &&
+                  activeVersion.split_name_surcharge_snapshot > 0 && (
+                    <div className="rounded-[10px] bg-surface border border-line p-4">
+                      <span className="eyebrow text-brand">Split-name tooling</span>
+                      <p className="mt-2 text-[15px] leading-snug text-ink font-medium">
+                        Add{' '}
+                        <span className="num font-medium">
+                          {formatPrice(
+                            (activeVersion.names.length - 1) *
+                              activeVersion.split_name_surcharge_snapshot,
+                            activeVersion.currency!,
+                          )}
+                        </span>{' '}
+                        to the prices above
+                      </p>
+                      <p className="mt-1.5 text-[12px] text-ink-mute">
+                        {activeVersion.names.length - 1} extra{' '}
+                        {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
+                        {formatPrice(
+                          activeVersion.split_name_surcharge_snapshot,
+                          activeVersion.currency!,
+                        )}{' '}
+                        tooling
+                      </p>
                     </div>
                   )}
               </>
@@ -3171,51 +3172,48 @@ export default function CustomerProofPage() {
                         A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
                       </p>
                     )}
+                    {/* Shipping note as a quiet footer line inside the
+                        Pricing PanelShell (same treatment as the aside
+                        copy above). Avoids floating a stranded half-
+                        width shipping card below the panel when
+                        split-name tooling isn't applicable. */}
+                    {activeVersion.shipping_note && (
+                      <p className="mt-3 text-[12px] text-ink-mute whitespace-pre-line text-right border-t border-line-soft pt-3">
+                        {activeVersion.shipping_note}
+                      </p>
+                    )}
                   </>
                 )}
               </PanelShell>
 
+              {/* Split-name tooling callout — full-width card below
+                  the Pricing PanelShell when applicable. */}
               {!activeVersion.custom_quote &&
-                (((activeVersion.names.length >= 2 &&
-                  activeVersion.split_name_surcharge_snapshot != null &&
-                  activeVersion.split_name_surcharge_snapshot > 0) ||
-                  !!activeVersion.shipping_note)) && (
-                  <div className="grid gap-3 mt-4 sm:grid-cols-2">
-                    {activeVersion.names.length >= 2 &&
-                      activeVersion.split_name_surcharge_snapshot != null &&
-                      activeVersion.split_name_surcharge_snapshot > 0 && (
-                        <div className="rounded-[10px] bg-surface border border-line p-4">
-                          <span className="eyebrow text-brand">Split-name tooling</span>
-                          <p className="mt-2 text-[15px] leading-snug text-ink font-medium">
-                            Add{' '}
-                            <span className="num font-medium">
-                              {formatPrice(
-                                (activeVersion.names.length - 1) *
-                                  activeVersion.split_name_surcharge_snapshot,
-                                activeVersion.currency!,
-                              )}
-                            </span>{' '}
-                            to the prices above
-                          </p>
-                          <p className="mt-1.5 text-[12px] text-ink-mute">
-                            {activeVersion.names.length - 1} extra{' '}
-                            {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
-                            {formatPrice(
-                              activeVersion.split_name_surcharge_snapshot,
-                              activeVersion.currency!,
-                            )}{' '}
-                            tooling
-                          </p>
-                        </div>
-                      )}
-                    {activeVersion.shipping_note && (
-                      <div className="rounded-[10px] bg-surface border border-line p-4">
-                        <span className="eyebrow">Shipping</span>
-                        <p className="mt-2 whitespace-pre-line text-[14px] leading-snug text-ink-soft">
-                          {activeVersion.shipping_note}
-                        </p>
-                      </div>
-                    )}
+                activeVersion.names.length >= 2 &&
+                activeVersion.split_name_surcharge_snapshot != null &&
+                activeVersion.split_name_surcharge_snapshot > 0 && (
+                  <div className="rounded-[10px] bg-surface border border-line p-4 mt-4">
+                    <span className="eyebrow text-brand">Split-name tooling</span>
+                    <p className="mt-2 text-[15px] leading-snug text-ink font-medium">
+                      Add{' '}
+                      <span className="num font-medium">
+                        {formatPrice(
+                          (activeVersion.names.length - 1) *
+                            activeVersion.split_name_surcharge_snapshot,
+                          activeVersion.currency!,
+                        )}
+                      </span>{' '}
+                      to the prices above
+                    </p>
+                    <p className="mt-1.5 text-[12px] text-ink-mute">
+                      {activeVersion.names.length - 1} extra{' '}
+                      {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
+                      {formatPrice(
+                        activeVersion.split_name_surcharge_snapshot,
+                        activeVersion.currency!,
+                      )}{' '}
+                      tooling
+                    </p>
                   </div>
                 )}
             </>
