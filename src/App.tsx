@@ -25,6 +25,7 @@ import AdminCoreColoursPage from './pages/admin/AdminCoreColoursPage'
 import AdminNeedsAttentionPage from './pages/admin/AdminNeedsAttentionPage'
 import AdminLeadTimesPage from './pages/admin/AdminLeadTimesPage'
 import AdminCardWeightsPage from './pages/admin/AdminCardWeightsPage'
+import DesignDemo from './design/_demo'
 
 // Inner shell so the Cmd-K / Ctrl-K shortcut can mount inside the
 // router. Lives here rather than directly in App so the hook has
@@ -37,6 +38,13 @@ function AppShell() {
       {/* Public */}
       <Route path="/p/:id" element={<CustomerProofPage />} />
       <Route path="/login" element={<LoginPage />} />
+
+      {/* Reskin design-system demo (PR 2). Public so reviewers can
+          hit it without auth; the route name is deliberately
+          underscore-prefixed so it can't collide with a real
+          customer or admin URL. Will move under /admin or be
+          deleted once the reskin lands on main. */}
+      <Route path="/__design" element={<DesignDemo />} />
 
       {/* Authenticated */}
       <Route path="/" element={<RequireAuth><DashboardPage /></RequireAuth>} />
