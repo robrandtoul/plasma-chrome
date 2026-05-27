@@ -64,16 +64,14 @@
   --color-on-ink: var(--c-on-ink);
 
   /* Type. `font-sans` and `font-mono` are the canonical Tailwind
-     names; `font-display`, `font-body`, `font-paper-mono` are kept
-     as aliases so the Direction B call sites in DocketCell,
-     LayeredConstructionPanel, MaterialOptionTabs, MetalThicknessPanel,
-     PaperRevisionTimeline, PaperTimelineRow, CustomerProofPage, and
-     theme.ts keep compiling. They all resolve to the new families. */
+     names; `font-display` and `font-body` are kept so design-system
+     primitives that opt into them stay self-describing rather than
+     leaning on font-sans by default. The Direction-B `font-paper-mono`
+     alias retired in PR 14 alongside the last of its consumers. */
   --font-sans: var(--font-body);
   --font-mono: var(--font-mono);
   --font-display: var(--font-display);
   --font-body: var(--font-body);
-  --font-paper-mono: var(--font-mono);
 
   /* Radii */
   --radius-sm: var(--radius-sm);
