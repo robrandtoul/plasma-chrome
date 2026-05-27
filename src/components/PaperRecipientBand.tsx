@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react'
-import { PAPER_INK, SERIF } from '../lib/theme'
 
 type PaperRecipientBandProps = {
   heading: string
@@ -8,6 +7,15 @@ type PaperRecipientBandProps = {
   children: ReactNode
 }
 
+// Per-recipient band wrapping the image grid + per-band action
+// row. Heading reads "Eve's card" / "Eve and Marie's cards" etc.
+// (the parent passes the formatted string), pillSlot carries an
+// approval / changes-requested pill when the band already has a
+// recorded action.
+//
+// File name kept as Paper* during the reskin per REVISIONS.md
+// guidance — only the visual layer changes, the component stays
+// at the same import path so call sites don't need edits.
 export function PaperRecipientBand({
   heading,
   pillSlot,
@@ -17,20 +25,14 @@ export function PaperRecipientBand({
   return (
     <div
       className={[
-        topRule ? 'border-t-2 border-[rgba(26,22,18,0.8)] pt-6' : '',
-        'mb-16',
+        topRule ? 'border-t border-line pt-6' : '',
+        'mb-10',
       ].join(' ')}
     >
       <div className="mb-5 flex flex-wrap items-baseline justify-between gap-3">
         <h3
-          className="break-words"
-          style={{
-            fontFamily: SERIF,
-            fontWeight: 400,
-            fontSize: 'clamp(28px, 7vw, 38px)',
-            lineHeight: 1,
-            color: PAPER_INK,
-          }}
+          className="font-display font-medium tracking-[-0.02em] text-ink break-words leading-tight"
+          style={{ fontSize: 'clamp(22px, 4vw, 28px)' }}
         >
           {heading}
         </h3>
