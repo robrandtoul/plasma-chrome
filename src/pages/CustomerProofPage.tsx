@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { Download } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { PlasmaWordmark } from '../design'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
@@ -10,7 +11,6 @@ import { deriveSharedApprovalState } from '../lib/sharedApproval'
 import { formatPrice } from '../lib/currency'
 import { type GridImage } from '../components/ImageGrid'
 import { BrandRule } from '../components/BrandRule'
-import { DocketBar } from '../components/DocketBar'
 import { DocketCell } from '../components/DocketCell'
 import { MaterialOptionTabs } from '../components/MaterialOptionTabs'
 import { PaperRecipientBand } from '../components/PaperRecipientBand'
@@ -31,7 +31,6 @@ import {
   PAPER_SECONDARY,
   PAPER_TERTIARY,
   ACCENT,
-  ACCENT_GLOW,
   APPROVED_GREEN,
   BRAND_ORDER,
   CTA_TEAL,
@@ -2468,30 +2467,52 @@ export default function CustomerProofPage() {
   // the sheet).
   const actionPanelOpen = actionPanel != null
 
+  // Header meta: anti-enumeration design (public_get_customer_proof
+  // doesn't expose the customer's email or proof.sent_at), so the
+  // "Sent X to Y" line from the prototype becomes a "Last updated
+  // {date}" carrying the active version's created_at — the most
+  // recent customer-visible date on the proof.
+  const lastUpdated = activeVersion
+    ? new Date(activeVersion.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    : null
+
   return (
     <div
       className={[
-        'antialiased',
+        'antialiased bg-canvas text-ink',
         actionPanelOpen ? 'pb-[50vh] sm:pb-0 sm:pr-[400px]' : '',
       ].join(' ')}
-      style={{ fontFamily: SANS, background: INK }}
+      style={{ fontFamily: SANS }}
     >
 
-      {/* ───── Top: ink masthead strip ─────
-          DocketBar (logo + caption + proof ref) on INK,
-          followed by the BrandRule's 4-colour signature.
-          The hero used to sit inside this wrapper too, on a
-          tinted gradient over the ink; both the gradient
-          overlay and the hero have moved out (the hero into
-          its own PAPER_CREAM band below). */}
-      <div className="text-white" style={{ background: INK }}>
-        <DocketBar
-          proofRef={proofRef}
-          accentGlow={ACCENT_GLOW}
-          captionStyle={{ ...REG_A_BASE, color: LABEL_DARK }}
-        />
-        <BrandRule />
-      </div>
+      {/* Sticky public header. PlasmaWordmark left, "Last updated"
+          eyebrow + hairline + Save a copy (window.print) right.
+          Replaces the Direction-B dark-ink DocketBar + BrandRule
+          masthead. Cream canvas, hairline bottom border, max-width
+          1180px to match the prototype layout. */}
+      <header
+        className="sticky top-0 z-[5] bg-canvas border-b border-line"
+      >
+        <div className="mx-auto max-w-[1180px] flex items-center gap-4 px-6 py-3.5">
+          <PlasmaWordmark size="md" tagline="Proofs" />
+          <div className="ml-auto flex items-center gap-4">
+            {lastUpdated && (
+              <>
+                <span className="eyebrow hidden sm:inline">Last updated {lastUpdated}</span>
+                <span className="hidden sm:inline w-px h-4 bg-line" aria-hidden="true" />
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-1.5 text-[13px] text-ink-soft hover:text-ink transition-colors"
+            >
+              <Download size={14} aria-hidden="true" />
+              <span>Save a copy</span>
+            </button>
+          </div>
+        </div>
+      </header>
 
       {/* Hero — paper-first editorial register. Sits in its own
           PAPER_CREAM band below the dark masthead. */}
