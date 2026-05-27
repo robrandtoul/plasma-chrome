@@ -21,7 +21,6 @@ import { ProofDetailView } from '../components/ProofDetailView'
 import { firstName } from '../lib/firstName'
 import {
   PAPER_CREAM,
-  PAPER_TINT_1,
   PAPER_INK,
   PAPER_SECONDARY,
   PAPER_TERTIARY,
@@ -3036,108 +3035,54 @@ export default function CustomerProofPage() {
             isVariantRound={activeVersion.is_variant_round ?? false}
           />
 
-          {/* ───── Metal thickness guide (migration 000177) ─────
-              Contextual section explaining the three metal card
-              thickness options (300μm / 500μm / 800μm). Mirrors the
-              Construction section's two-column rhythm and sits on the
-              same PAPER_TINT_1 band. Renders only on metal proofs
-              (material_code starts with 'metal_') so no other
-              material category is affected. Metal proofs never have
-              the letterpress Construction section, so the two bands
-              never stack — each material gets at most one contextual
-              panel in this slot. */}
+          {/* Metal thickness guide (migration 000177). Contextual
+              section explaining the three metal card thickness
+              options (300μm / 500μm / 800μm). Renders only on
+              metal proofs (material_code starts with 'metal_').
+              Metal proofs never carry the letterpress Construction
+              panel, so the two never stack — each material gets at
+              most one contextual panel in this slot. */}
           {activeVersion.material_code?.startsWith('metal_') && (
-            <section
-              aria-labelledby="section-thickness-heading"
-              style={{
-                background: PAPER_TINT_1,
-                color: PAPER_INK,
-                borderTop: '1px solid rgba(26,22,18,0.10)',
-              }}
+            <PanelShell
+              eyebrow="About this material"
+              title="Thickness"
+              icon={Layers}
+              accent={tokens.brand}
             >
-              <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-                <div className="grid gap-10 sm:grid-cols-[1fr_2fr] sm:gap-16">
-                  <div>
-                    <h2
-                      id="section-thickness-heading"
-                      className="leading-[1.02] border-b-2 pb-4 break-words"
-                      style={{
-                        fontFamily: SERIF,
-                        fontWeight: 400,
-                        fontSize: 'clamp(40px, 9vw, 56px)',
-                        color: PAPER_INK,
-                        borderColor: 'rgba(26,22,18,0.8)',
-                      }}
-                    >
-                      Thickness
-                    </h2>
-                    <p
-                      className="mt-5 max-w-[30ch] text-[14px] leading-[1.55]"
-                      style={{ color: PAPER_TERTIARY }}
-                    >
-                      Metal cards are available in three thicknesses. The pricing table below shows the cost for each — choose the weight that suits you best.
-                    </p>
-                  </div>
-                  <MetalThicknessPanel materialCode={activeVersion.material_code} />
-                </div>
-              </div>
-            </section>
+              <p className="mb-4 max-w-[62ch] text-[14px] leading-[1.6] text-ink-soft">
+                Metal cards are available in three thicknesses. The
+                pricing table to the left shows the cost for each —
+                choose the weight that suits you best.
+              </p>
+              <MetalThicknessPanel materialCode={activeVersion.material_code} />
+            </PanelShell>
           )}
 
-          {/* ───── Construction (migration 000135) ─────
-              Mirrors the Specification section's two-column rhythm:
-              big serif heading on the left (1fr), panel on the
-              right (2fr). Sits on its own tinted band
-              (PAPER_TINT_1) between the proof images (PAPER_CREAM)
-              and the Specification (PAPER_TINT_2), giving a gentle
-              cream → tint_1 → tint_2 progression. Renders only when
-              all three layer fields populate, so non-letterpress
-              and gilded versions naturally drop the entire band
-              (heading included — no orphan "Construction" header
-              over an empty space). */}
+          {/* Letterpress construction guide (migration 000135).
+              Renders only when all three layer fields populate, so
+              non-letterpress and gilded versions naturally drop the
+              entire panel. */}
           {activeVersion.front_colour_name && activeVersion.core_colour_name && activeVersion.back_colour_name && (
-            <section
-              aria-labelledby="section-construction-heading"
-              style={{
-                background: PAPER_TINT_1,
-                color: PAPER_INK,
-                borderTop: '1px solid rgba(26,22,18,0.10)',
-              }}
+            <PanelShell
+              eyebrow="About this material"
+              title="Construction"
+              icon={Layers}
+              accent={tokens.brand}
             >
-              <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-                <div className="grid gap-10 sm:grid-cols-[1fr_2fr] sm:gap-16">
-                  <div>
-                    <h2
-                      id="section-construction-heading"
-                      className="leading-[1.02] border-b-2 pb-4 break-words"
-                      style={{
-                        fontFamily: SERIF,
-                        fontWeight: 400,
-                        fontSize: 'clamp(40px, 9vw, 56px)',
-                        color: PAPER_INK,
-                        borderColor: 'rgba(26,22,18,0.8)',
-                      }}
-                    >
-                      Construction
-                    </h2>
-                    <p
-                      className="mt-5 max-w-[30ch] text-[14px] leading-[1.55]"
-                      style={{ color: PAPER_TERTIARY }}
-                    >
-                      Three layers of genuine Colorplan paper, bonded together and visible along the card's edges, a signature detail of our letterpress cards.
-                    </p>
-                  </div>
-                  <LayeredConstructionPanel
-                    front_name={activeVersion.front_colour_name}
-                    front_hex={activeVersion.front_colour_hex}
-                    core_name={activeVersion.core_colour_name}
-                    core_hex={activeVersion.core_colour_hex}
-                    back_name={activeVersion.back_colour_name}
-                    back_hex={activeVersion.back_colour_hex}
-                  />
-                </div>
-              </div>
-            </section>
+              <p className="mb-4 max-w-[62ch] text-[14px] leading-[1.6] text-ink-soft">
+                Three layers of genuine Colorplan paper, bonded
+                together and visible along the card's edges — a
+                signature detail of our letterpress cards.
+              </p>
+              <LayeredConstructionPanel
+                front_name={activeVersion.front_colour_name}
+                front_hex={activeVersion.front_colour_hex}
+                core_name={activeVersion.core_colour_name}
+                core_hex={activeVersion.core_colour_hex}
+                back_name={activeVersion.back_colour_name}
+                back_hex={activeVersion.back_colour_hex}
+              />
+            </PanelShell>
           )}
 
           {/* ───── Specification + Notes on ink ─────

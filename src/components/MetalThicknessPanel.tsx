@@ -8,13 +8,6 @@
 // The panel receives the material_code as a prop and picks the correct
 // option set. Content is static and informational only.
 
-import {
-  PAPER_INK,
-  PAPER_SECONDARY,
-  PAPER_TERTIARY,
-  PAPER_BORDER,
-} from '../lib/theme'
-
 interface ThicknessOption {
   label: string          // e.g. "300μm"
   name: string           // e.g. "Slim"
@@ -65,41 +58,22 @@ export function MetalThicknessPanel({ materialCode }: MetalThicknessPanelProps) 
   const options = materialCode === 'metal_mini_steel' ? MINI_STEEL_OPTIONS : STANDARD_OPTIONS
 
   return (
-    <section
-      aria-label="Metal thickness options"
-      className="rounded-2xl"
-      style={{
-        background: '#ffffff',
-        border: `0.5px solid ${PAPER_BORDER}`,
-        padding: '24px 28px',
-      }}
-    >
-      <dl className="grid gap-4">
-        {options.map((opt) => (
-          <div key={opt.label}>
-            <div className="flex items-baseline gap-2">
-              <dt
-                className="font-paper-mono"
-                style={{ fontSize: 12, fontWeight: 500, color: PAPER_INK }}
-              >
-                {opt.label}
-              </dt>
-              <span
-                className="font-body"
-                style={{ fontSize: 13, fontWeight: 500, color: PAPER_SECONDARY }}
-              >
-                {opt.name}
-              </span>
-            </div>
-            <dd
-              className="font-body mt-0.5"
-              style={{ fontSize: 13, color: PAPER_TERTIARY, lineHeight: '1.5' }}
-            >
-              {opt.description}
-            </dd>
+    <dl className="grid gap-4">
+      {options.map((opt) => (
+        <div key={opt.label}>
+          <div className="flex items-baseline gap-2">
+            <dt className="font-mono text-[12px] font-medium text-ink">
+              {opt.label}
+            </dt>
+            <span className="text-[13px] font-medium text-ink-soft">
+              {opt.name}
+            </span>
           </div>
-        ))}
-      </dl>
-    </section>
+          <dd className="mt-0.5 text-[13px] text-ink-mute leading-[1.5]">
+            {opt.description}
+          </dd>
+        </div>
+      ))}
+    </dl>
   )
 }
