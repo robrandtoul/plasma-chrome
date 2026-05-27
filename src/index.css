@@ -1,17 +1,98 @@
+/* @import rules must precede all other rules per CSS spec. Web-font
+   load lives here (above tailwindcss + the design-tokens file) so
+   the bundled output keeps it as the first @import. */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
+@import "./styles/design-tokens.css";
+
+/* Force Tailwind v4 to emit the bridge utilities even when no source
+   file references them yet. PR 3 onwards uses bg-canvas, text-ink,
+   border-line, etc. directly; until then this guarantees the
+   utilities (and their underlying CSS custom properties on :root)
+   resolve, so the PR 1 bridge is provably wired. */
+@source inline("bg-canvas bg-surface bg-brand bg-brand-soft bg-in-stock bg-in-stock-soft bg-low bg-low-soft bg-out bg-out-soft bg-allocated bg-allocated-soft bg-critical bg-critical-soft text-ink text-ink-soft text-ink-mute text-ink-dim text-brand text-on-brand text-on-ink border-line border-line-soft");
 
 /*
-  Paper-register font tokens for the customer proof page refresh
-  (Direction B). Defined here so they generate Tailwind utility
-  classes (font-display, font-body, font-paper-mono) for use in
-  the new presentation. Not yet applied at any call site — these
-  are foundation only for the incremental rollout on the
-  proof-viewer-direction-b branch.
+  PlasmaDesign Stock Control design tokens land here as part of the
+  proof-viewer reskin. Raw `--c-*`, `--font-*`, geometry, spacing,
+  and shadow variables come from design-tokens.css; this @theme
+  block bridges them into Tailwind v4 utility names. Legacy
+  utilities (`font-display`, `font-body`, `font-paper-mono`) are
+  retargeted to the new families so existing call sites continue
+  to compile without per-file edits, per the reskin REVISIONS note.
 */
 @theme {
-  --font-display: 'Cormorant Garamond', Georgia, serif;
-  --font-body: 'Inter Tight', system-ui, sans-serif;
-  --font-paper-mono: 'Red Hat Mono', ui-monospace, monospace;
+  /* Colours */
+  --color-canvas: var(--c-bg);
+  --color-surface: var(--c-bg-panel);
+  --color-line: var(--c-line);
+  --color-line-soft: var(--c-line-soft);
+
+  --color-ink: var(--c-ink);
+  --color-ink-soft: var(--c-ink-soft);
+  --color-ink-mute: var(--c-ink-mute);
+  --color-ink-dim: var(--c-ink-dim);
+
+  --color-brand: var(--c-brand);
+  --color-brand-soft: var(--c-brand-soft);
+  --color-brand-ink: var(--c-brand-ink);
+  --color-brand-50: var(--c-brand-50);
+  --color-brand-100: var(--c-brand-100);
+  --color-brand-200: var(--c-brand-200);
+  --color-brand-300: var(--c-brand-300);
+  --color-brand-400: var(--c-brand-400);
+  --color-brand-500: var(--c-brand-500);
+  --color-brand-600: var(--c-brand-600);
+  --color-brand-700: var(--c-brand-700);
+  --color-brand-800: var(--c-brand-800);
+  --color-brand-900: var(--c-brand-900);
+
+  --color-in-stock: var(--c-in-stock);
+  --color-in-stock-soft: var(--c-in-stock-soft);
+  --color-low: var(--c-low);
+  --color-low-soft: var(--c-low-soft);
+  --color-out: var(--c-out);
+  --color-out-soft: var(--c-out-soft);
+  --color-allocated: var(--c-allocated);
+  --color-allocated-soft: var(--c-allocated-soft);
+  --color-critical: var(--c-critical);
+  --color-critical-soft: var(--c-critical-soft);
+
+  --color-on-brand: var(--c-on-brand);
+  --color-on-in-stock: var(--c-on-in-stock);
+  --color-on-out: var(--c-on-out);
+  --color-on-ink: var(--c-on-ink);
+
+  /* Type. `font-sans` and `font-mono` are the canonical Tailwind
+     names; `font-display`, `font-body`, `font-paper-mono` are kept
+     as aliases so the Direction B call sites in DocketCell,
+     LayeredConstructionPanel, MaterialOptionTabs, MetalThicknessPanel,
+     PaperRevisionTimeline, PaperTimelineRow, CustomerProofPage, and
+     theme.ts keep compiling. They all resolve to the new families. */
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-mono);
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-paper-mono: var(--font-mono);
+
+  /* Radii */
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-full: var(--radius-pill);
+
+  /* Shadows */
+  --shadow-card: var(--shadow-card);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-modal: var(--shadow-modal);
+}
+
+/* Tabular numerals helper — apply with `font-mono` + `font-tnum` */
+@layer base {
+  .font-tnum {
+    font-feature-settings: var(--num-features);
+  }
 }
 
 /*
