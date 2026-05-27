@@ -2437,7 +2437,13 @@ export default function DashboardPage() {
                 )}
               </div>
 
-              <aside className="hidden lg:sticky lg:top-10 lg:block lg:self-start xl:pt-4">
+              <aside className="hidden lg:sticky lg:top-10 lg:block lg:self-start">
+                {/* xl:pt-4 used to ride here from the older layout
+                    where the sidebar ran alongside the hero. After
+                    PR 23 unified hero + tiles into a full-width panel,
+                    the sidebar starts in the same grid row as the
+                    controls card — the pt-4 was tipping the activity
+                    panel ~16px below the controls card's top edge. */}
                 <LatestActivityPanel events={latestEvents} navigate={navigate} />
               </aside>
             </div>
