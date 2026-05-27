@@ -12,7 +12,6 @@ import { formatPrice } from '../lib/currency'
 import { type GridImage } from '../components/ImageGrid'
 import { MaterialOptionTabs } from '../components/MaterialOptionTabs'
 import { PaperRecipientBand } from '../components/PaperRecipientBand'
-import { PaperRevisionTimeline } from '../components/PaperRevisionTimeline'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LayeredConstructionPanel } from '../components/LayeredConstructionPanel'
 import { MetalThicknessPanel } from '../components/MetalThicknessPanel'
@@ -2624,23 +2623,56 @@ export default function CustomerProofPage() {
         })()}
       </section>
 
-      {/* ───── Revision history band ─────
-          Dedicated zone below the hero — a header row, a
-          spotlight column showing the active v-number + Latest/
-          History chip + date, and the timeline rail. Coachmark
-          overlays the rail on first visit to teach the rail
-          interaction (localStorage-persisted, dismisses on
-          × click or any dot click). Rationale for finish
-          pills NOT living here: they change which proofs are
-          visible, so they belong adjacent to the proofs in
-          the Plates section header — not grouped with
-          time-based revision metadata. */}
+      {/* Version selector — prototype pill row replacing the
+          Direction-B PaperRevisionTimeline coachmarked rail. One
+          pill per version; v{n} · {date} with a green dot on the
+          current version. Active pill is ink-filled. Date format
+          matches the rest of the page: "27 May" via en-GB locale.
+          Pills are buttons that call setActiveVersion, the same
+          handler PaperRevisionTimeline used. */}
       {activeVersion && versions.length > 1 && (
-        <PaperRevisionTimeline
-          versions={versions}
-          activeVersion={activeVersion}
-          onSelectVersion={setActiveVersion}
-        />
+        <section className="mx-auto max-w-[1180px] px-6 py-5">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="eyebrow mr-1.5">History</span>
+            {versions.map((v) => {
+              const active = v.id === activeVersion.id
+              const dateLabel = new Date(v.created_at).toLocaleDateString('en-GB', {
+                day: 'numeric',
+                month: 'short',
+              })
+              const cls = [
+                'inline-flex items-center gap-2 h-8 px-3 rounded-full text-[13px] transition-colors',
+                'border',
+                active
+                  ? 'bg-ink text-on-ink border-ink'
+                  : 'bg-surface text-ink-soft border-line hover:bg-canvas',
+              ].join(' ')
+              return (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => setActiveVersion(v)}
+                  aria-pressed={active}
+                  aria-label={`Version ${v.version_number}, ${dateLabel}${v.is_current ? ' (current)' : ''}`}
+                  className={cls}
+                >
+                  <span className="font-mono font-medium">v{v.version_number}</span>
+                  <span className={active ? 'text-on-ink/70' : 'text-ink-dim'} aria-hidden="true">
+                    ·
+                  </span>
+                  <span className="text-[12px]">{dateLabel}</span>
+                  {v.is_current && (
+                    <span
+                      aria-hidden="true"
+                      className="inline-block w-1.5 h-1.5 rounded-full ml-0.5"
+                      style={{ backgroundColor: active ? '#ffffff' : 'var(--c-in-stock)' }}
+                    />
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </section>
       )}
 
       {activeVersion && (
