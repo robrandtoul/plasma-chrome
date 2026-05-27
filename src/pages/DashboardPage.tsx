@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { DesignerHeader, ButtonCoral, ButtonGhost, type DesignerHeaderColour } from '../design'
+import { DesignerHeader, ButtonCoral, ButtonGhost, ProofStatusPill, type DesignerHeaderColour } from '../design'
 import { Plus, Filter } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
@@ -700,6 +700,23 @@ function ProjectRow({
   if (project.contact_name && project.contact_name !== projectName) sublineParts.push(project.contact_name)
   if (project.company_name && project.company_name !== projectName) sublineParts.push(project.company_name)
   const subline = sublineParts.join(' · ')
+  // 2-3 character thumbnail placeholder derived from the project
+  // name. First letter of each word, capped at 3, uppercased.
+  // Real thumbnails are wired in PR 25 via a public_dashboard_projects
+  // column + signed-URL fetch — until then every row shows this
+  // dark-plate placeholder per the handoff brief.
+  const thumbInitials = projectName
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w[0])
+    .slice(0, 3)
+    .join('')
+    .toUpperCase() || '—'
+
+  const updatedLabel = ts
+    ? new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    : '—'
+
   return (
     <div
       role="button"
@@ -718,9 +735,11 @@ function ProjectRow({
           : viewedStateTitle(viewedStateFor(project)),
         project.rule_code ? reasonChipText(project.rule_code, project.rule_meta?.days) : null,
         !project.rule_code && isCurrentlySnoozed(project) ? `Snoozed until ${formatSnoozeUntil(project.snoozed_until!)}` : null,
+        ts ? `${verb} ${relativeTime(ts)}` : null,
       ].filter(Boolean).join(' · ')}
       className={[
-        'flex cursor-pointer items-center gap-3 border-l-[6px] pl-4 pr-5 py-3 transition-colors hover:bg-canvas focus:outline-none focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]',
+        // group + relative for the hover-only action overlay further down.
+        'group relative cursor-pointer border-l-[6px] pl-4 pr-5 py-3 transition-colors hover:bg-canvas focus:outline-none focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]',
         project.status === 'dormant' ? 'opacity-60' : '',
       ].join(' ')}
       style={{
@@ -738,50 +757,98 @@ function ProjectRow({
                                                                               'var(--c-low)',        // matches amber Not viewed tile
       }}
     >
-      {/* No version yet → no designer to attribute → no avatar. */}
-      {project.current_version_id && <DesignerAvatar p={project} />}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-[15px] font-medium text-ink">{projectName}</span>
-          {project.current_version_number != null && (
-            <span className="shrink-0 text-xs text-ink-mute">v{project.current_version_number}</span>
+      {/* Columnar grid layout per the mockup. At md+ widths the row
+          reads as a clean six-column table; at narrower widths some
+          columns drop (Material, Versions, Updated) so Customer +
+          Status stay legible. */}
+      <div className="grid items-center gap-3 grid-cols-[56px_minmax(0,1fr)_auto_auto] sm:grid-cols-[56px_minmax(0,1fr)_140px_auto] md:grid-cols-[56px_minmax(0,1fr)_140px_60px_70px_24px_110px]">
+        {/* Thumbnail — dark plate with the project's initials.
+            Placeholder until PR 25 wires real signed URLs. */}
+        <div
+          aria-hidden="true"
+          className="flex items-center justify-center w-[56px] h-[36px] rounded-[4px] bg-ink text-on-ink font-mono font-medium text-[10px] tracking-wider"
+        >
+          {thumbInitials}
+        </div>
+
+        {/* Customer: name on row 1, company sub-line on row 2.
+            The version label moves to its own column on md+. */}
+        <div className="min-w-0">
+          <div className="truncate text-[15px] font-medium text-ink">{projectName}</div>
+          {subline && <div className="truncate text-xs text-ink-mute mt-0.5">{subline}</div>}
+          {/* Reason chip — third row line, visible only when the Needs
+              attention tile filter is active. */}
+          {showReason && project.rule_code && (
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-out">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-out" aria-hidden="true" />
+              <span className="truncate">{reasonChipText(project.rule_code, project.rule_meta?.days)}</span>
+            </div>
           )}
         </div>
-        {subline && <div className="truncate text-xs text-ink-mute">{subline}</div>}
-        {/* Reason chip — third row line, visible only when the Needs
-            attention tile filter is active. Out-coloured dot + text
-            tie the chip back to the out-toned left-border and the
-            Needs attention tile that triggered the filter. Truncates
-            to keep the row to three lines on narrow widths; full text
-            remains in the row's `title` attribute. */}
-        {showReason && project.rule_code && (
-          <div className="mt-1 flex items-center gap-1.5 text-xs text-out">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-out" aria-hidden="true" />
-            <span className="truncate">{reasonChipText(project.rule_code, project.rule_meta?.days)}</span>
+
+        {/* Material — hidden below sm. Variant sub-line will land in
+            PR 25+ once the dashboard view exposes it. */}
+        <div className="hidden sm:block min-w-0">
+          <div className="truncate text-[13px] text-ink-soft">{project.material_display ?? '—'}</div>
+        </div>
+
+        {/* Versions — only at md+ so narrow widths don't fragment. */}
+        {project.current_version_number != null ? (
+          <div className="hidden md:block text-[12px] text-ink-mute font-mono tabular-nums" style={{ fontFeatureSettings: 'var(--num-features)' }}>
+            {String(project.current_version_number).padStart(2, '0')} <span className="text-ink-dim">vers</span>
           </div>
+        ) : (
+          <div className="hidden md:block" />
         )}
+
+        {/* Updated — md+ only. Always shows the activityVerb's
+            timestamp formatted as "27 May". */}
+        <div className="hidden md:block text-[12px] text-ink-mute font-mono tabular-nums" style={{ fontFeatureSettings: 'var(--num-features)' }}>
+          {updatedLabel}
+        </div>
+
+        {/* Owner avatar — md+ only. No version yet → no designer to
+            attribute → empty slot kept so the grid column stays. */}
+        <div className="hidden md:flex items-center justify-center">
+          {project.current_version_id && <DesignerAvatar p={project} />}
+        </div>
+
+        {/* Status pill — always visible on all widths. Fades out on
+            row hover/focus-within so the action overlay can take over
+            the right edge without layout jump. */}
+        <div className="flex justify-end items-center transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+          <ProofStatusPill status={project.status} />
+        </div>
       </div>
-      <span className="hidden w-32 shrink-0 text-right text-xs text-ink-mute xl:block" title={ts ? formatAbsoluteDateTime(ts) : undefined}>
-        {verb}{ts ? ` ${relativeTime(ts)}` : ''}
-      </span>
-      <ActionStrip
-        proof={project}
-        canAddVersion={canAddVersion}
-        minePinned={minePinned}
-        onToggleMinePin={onToggleMinePin}
-        onSnooze={onSnooze}
-        onUnsnooze={onUnsnooze}
-      />
-      <OverflowMenu
-        proof={project}
-        canAddVersion={canAddVersion}
-        minePinned={minePinned}
-        teamPinned={teamPinned}
-        onToggleMinePin={onToggleMinePin}
-        onToggleTeamPin={onToggleTeamPin}
-        onSnooze={onSnooze}
-        onUnsnooze={onUnsnooze}
-      />
+
+      {/* Hover-only action overlay. Absolutely positioned over the
+          right edge so the status pill underneath gets covered cleanly
+          on hover/focus-within. bg-canvas matches the row's hover bg
+          so the transition reads as the same surface, no visible
+          colour-band when the actions slide in.
+          opacity-0 at rest; group-hover and group-focus-within both
+          opaque so the popover from the overflow menu doesn't close
+          when the cursor leaves the row. */}
+      <div className="absolute right-3 top-0 bottom-0 flex items-center gap-0.5 pl-3 bg-canvas opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto group-focus-within:pointer-events-auto">
+        <ActionStrip
+          proof={project}
+          canAddVersion={canAddVersion}
+          minePinned={minePinned}
+          onToggleMinePin={onToggleMinePin}
+          onSnooze={onSnooze}
+          onUnsnooze={onUnsnooze}
+        />
+        <OverflowMenu
+          proof={project}
+          canAddVersion={canAddVersion}
+          minePinned={minePinned}
+          teamPinned={teamPinned}
+          onToggleMinePin={onToggleMinePin}
+          onToggleTeamPin={onToggleTeamPin}
+          onSnooze={onSnooze}
+          onUnsnooze={onUnsnooze}
+        />
+      </div>
     </div>
   )
 }
