@@ -23,8 +23,8 @@ import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, designerPreviewPath } from '../lib/customerProofUrl'
 // QuoteLink now lives inside DesignerChrome (PR 31).
-import { DesignerChrome } from '../design'
-import { ChevronRight } from 'lucide-react'
+import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill } from '../design'
+import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon } from 'lucide-react'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -1145,53 +1145,42 @@ export default function ProofDetailPage() {
           <span className="text-ink-soft truncate">{proof.contacts.full_name}</span>
         </nav>
 
-        {/* Proof header */}
-        <div className="mb-8 flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">{proof.contacts.full_name}</h1>
-            {proof.contacts.companies?.name && (
-              <p className="mt-1 text-gray-500">{proof.contacts.companies.name}</p>
-            )}
-            <p className="mt-0.5 text-sm text-gray-400">{proof.contacts.email}</p>
-            {/* Status badge */}
-            <div className="mt-3">
-              <div className="flex flex-wrap items-center gap-2">
-                {isApproved ? (
-                  <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
-                    Approved{proof.approved_at ? ` on ${formatLongDate(proof.approved_at)}` : ''}
-                  </span>
-                ) : isAbandoned ? (
-                  <span className="inline-flex items-center rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-700">
-                    Abandoned{proof.abandoned_at ? ` on ${formatLongDate(proof.abandoned_at)}` : ''}
-                  </span>
-                ) : isDormant ? (
-                  <span className="inline-flex items-center rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-500">
-                    Dormant
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
-                    In progress
-                  </span>
-                )}
-                {currentIsCustomQuote && (
-                  <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-                    Custom quote
-                  </span>
-                )}
-              </div>
-              {isDormant && (
-                <p className="mt-1.5 text-xs text-gray-400">No activity for 30+ days. Add a version to reactivate.</p>
+        {/* Header card — bordered, status-rule on the left, customer
+            identity + KV row on the left half, status pill + actions
+            on the right half. Replaces the prior split header / status
+            badges / two-row action cluster. */}
+        <section
+          className="mb-6 relative bg-surface border border-line border-l-[10px] rounded-[14px] overflow-hidden"
+          style={{
+            // Left cap colour follows the dashboard row + tile palette
+            // so the status accent reads in the same hue everywhere it
+            // appears.
+            borderLeftColor:
+              isApproved      ? 'var(--c-in-stock)' :
+              isAbandoned     ? 'var(--c-ink-mute)' :
+              isDormant       ? 'var(--c-ink-dim)' :
+                                'var(--c-allocated)',
+          }}
+        >
+          <div className="px-7 py-6 flex flex-wrap items-start gap-6 justify-between">
+            {/* Left: identity + KV row */}
+            <div className="min-w-0 flex-1">
+              <div className="eyebrow">Customer</div>
+              <h1 className="mt-1.5 font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0" style={{ fontSize: 'clamp(28px, 4vw, 36px)' }}>
+                {proof.contacts.full_name}
+              </h1>
+              {proof.contacts.companies?.name && (
+                <p className="mt-1 text-[14px] text-ink-mute leading-snug">{proof.contacts.companies.name}</p>
               )}
-              {/* Disclaimer acknowledgement subline (migration 000091).
-                  Renders at any status once the customer ticks the
-                  "I've read this and understand the terms" box on
-                  the customer page. Copy deliberately echoes the
-                  customer-facing label — "Terms" — so the designer
-                  sees the same word the customer consented against.
-                  HH:mm in 24h en-GB to match the rest of the app's
-                  British formatting. */}
+              {/* Helper notes — dormant warning, disclaimer
+                  acknowledgement. */}
+              {isDormant && (
+                <p className="mt-2 text-[12px] text-ink-mute">
+                  No activity for 30+ days. Add a version to reactivate.
+                </p>
+              )}
               {proof.disclaimer_acknowledged_at && (
-                <p className="mt-1.5 text-xs text-gray-400">
+                <p className="mt-2 text-[12px] text-ink-mute">
                   Terms acknowledged on {formatLongDate(proof.disclaimer_acknowledged_at)} at{' '}
                   {new Date(proof.disclaimer_acknowledged_at).toLocaleTimeString('en-GB', {
                     hour: '2-digit',
@@ -1200,112 +1189,140 @@ export default function ProofDetailPage() {
                   })}
                 </p>
               )}
+
+              {/* KV row — 18-spaced columns. Each item: eyebrow label
+                  on top, value below. Public URL has a copy icon next
+                  to the path; Help Scout links out to the conversation
+                  when one's set, otherwise renders a quiet placeholder. */}
+              <dl className="mt-5 flex flex-wrap gap-x-7 gap-y-3">
+                <div className="min-w-0">
+                  <dt className="eyebrow text-ink-mute">Public URL</dt>
+                  <dd className="mt-1 flex items-center gap-2">
+                    <span className="font-mono text-[12px] text-ink-soft truncate">
+                      proofs.plasmadesign.co.uk{customerProofPath(proof.id)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={copyCustomerUrl}
+                      title="Copy customer URL"
+                      aria-label="Copy customer URL"
+                      className="inline-flex items-center justify-center w-6 h-6 rounded text-ink-mute hover:text-ink hover:bg-canvas transition-colors"
+                    >
+                      {copied ? (
+                        <CheckIcon size={13} style={{ color: 'var(--c-in-stock)' }} />
+                      ) : (
+                        <Copy size={13} />
+                      )}
+                    </button>
+                  </dd>
+                </div>
+                <div className="min-w-0">
+                  <dt className="eyebrow text-ink-mute">Help Scout</dt>
+                  <dd className="mt-1 text-[13px]">
+                    {proof.helpscout_conversation_url ? (
+                      <a
+                        href={proof.helpscout_conversation_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-ink-soft hover:text-ink"
+                      >
+                        Open conversation
+                        <ExternalLink size={11} aria-hidden="true" />
+                      </a>
+                    ) : proof.helpscout_thread_url ? (
+                      <a
+                        href={proof.helpscout_thread_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-ink-soft hover:text-ink"
+                      >
+                        Open thread
+                        <ExternalLink size={11} aria-hidden="true" />
+                      </a>
+                    ) : (
+                      <span className="italic text-ink-mute">Not linked</span>
+                    )}
+                  </dd>
+                </div>
+                <div className="min-w-0">
+                  <dt className="eyebrow text-ink-mute">Created</dt>
+                  <dd className="mt-1 text-[13px] text-ink-soft">
+                    {formatLongDate(proof.created_at)}
+                  </dd>
+                </div>
+              </dl>
             </div>
-          </div>
-          {/* Action cluster — two right-aligned rows.
-              Row 1 (day-to-day workflow): Preview, Copy, Add version.
-              Add version keeps its filled-black primary style and
-              anchors the right edge of the row.
-              Row 2 (terminal state): Abandon, Mark as approved.
-              Mark as approved (positive) anchors the right edge;
-              Abandon is placed to its left so the destructive
-              control sits furthest from the primary Add version
-              directly above.
-              Locked variant (approved/abandoned): Add version is
-              hidden on row 1, and row 2 collapses to a lone Reopen
-              button in the same right-aligned slot. */}
-          <div className="flex flex-col items-end gap-8">
-            {/* Row 1 */}
-            <div className="flex flex-wrap justify-end gap-2">
-              {/* Preview is gated on there being at least one proof
-                  version — otherwise the customer page renders
-                  near-blank. Disabled rendering keeps the affordance
-                  discoverable and teaches the unlock. */}
-              <button
-                type="button"
-                onClick={() => {
-                  // Open the customer page in a new tab rather than a
-                  // same-origin iframe modal. The previous modal
-                  // collapsed silently in some setups (parent HMR
-                  // reconnect on dev, X-Frame-Options on certain
-                  // deploys) and the external-link icon already
-                  // promised a new-window experience. noopener +
-                  // noreferrer so the customer-page tab can't reach
-                  // back into window.opener.
-                  window.open(designerPreviewPath(proof.id), '_blank', 'noopener,noreferrer')
-                }}
-                disabled={versions.length === 0}
-                title={versions.length === 0 ? 'Add a version to enable preview' : undefined}
-                className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400 disabled:ring-gray-100 disabled:hover:bg-transparent"
-              >
-                <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 3H3.5A1.5 1.5 0 002 4.5v8A1.5 1.5 0 003.5 14h8A1.5 1.5 0 0013 12.5V10M10 2h4m0 0v4m0-4L7 9" />
-                </svg>
-                Preview as customer
-              </button>
-              <button
-                onClick={copyCustomerUrl}
-                className="flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
-              >
-                {copied ? (
-                  <>
-                    <svg className="h-4 w-4 text-emerald-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l3.5 3.5 6.5-7" />
-                    </svg>
-                    <span className="text-emerald-600">Link copied</span>
-                  </>
-                ) : (
-                  <>
-                    <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <rect x="5" y="5" width="8" height="8" rx="1.5" />
-                      <path strokeLinecap="round" d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" />
-                    </svg>
-                    Copy customer URL
-                  </>
+
+            {/* Right: status pill + primary actions + destructive row. */}
+            <div className="flex flex-col items-end gap-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <ProofStatusPill status={proof.status} />
+                {currentIsCustomQuote && (
+                  <span
+                    className="pill"
+                    style={{
+                      backgroundColor: 'var(--c-line-soft)',
+                      color: 'var(--c-ink-mute)',
+                    }}
+                  >
+                    Custom quote
+                  </span>
                 )}
-              </button>
-              {!isLocked && (
-                <Link
-                  to={`/proofs/${proof.id}/versions/new`}
-                  className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+              </div>
+              {/* Primary actions — Add new version (coral, primary) +
+                  Open customer view (ghost). */}
+              <div className="flex items-center gap-2">
+                {!isLocked && (
+                  <ButtonCoral
+                    icon={Plus}
+                    onClick={() => navigate(`/proofs/${proof.id}/versions/new`)}
+                  >
+                    Add a new version
+                  </ButtonCoral>
+                )}
+                <ButtonGhost
+                  icon={ExternalLink}
+                  disabled={versions.length === 0}
+                  title={versions.length === 0 ? 'Add a version to enable preview' : undefined}
+                  onClick={() => {
+                    // Open the customer page in a new tab. The previous
+                    // modal collapsed silently in some setups (HMR
+                    // reconnect on dev, X-Frame-Options on certain
+                    // deploys). noopener + noreferrer so the customer
+                    // tab can't reach back into window.opener.
+                    window.open(designerPreviewPath(proof.id), '_blank', 'noopener,noreferrer')
+                  }}
                 >
-                  Add version
-                </Link>
+                  Open customer view
+                </ButtonGhost>
+              </div>
+              {/* Destructive / terminal row. Locked → Reopen only. */}
+              {isLocked ? (
+                <ButtonGhost onClick={() => setStatusDialog('reopen')}>
+                  Reopen
+                </ButtonGhost>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <ButtonGhost
+                    onClick={() => setStatusDialog('abandon')}
+                    className="!text-out hover:!bg-out-soft"
+                  >
+                    Abandon project
+                  </ButtonGhost>
+                  <ButtonGhost
+                    onClick={() => setStatusDialog('approve')}
+                    className="!text-in-stock hover:!bg-in-stock-soft"
+                  >
+                    Mark as approved
+                  </ButtonGhost>
+                </div>
               )}
             </div>
-
-            {/* Hidden input for clipboard fallback. Sits outside the
-                rows so it can't disturb the flex layout. */}
-            <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
-
-            {/* Row 2 */}
-            {isLocked ? (
-              <div className="flex justify-end">
-                <button
-                  onClick={() => setStatusDialog('reopen')}
-                  className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 ring-1 ring-gray-200 hover:bg-gray-50"
-                >
-                  Reopen
-                </button>
-              </div>
-            ) : (
-              <div className="flex flex-wrap justify-end gap-2">
-                <button
-                  onClick={() => setStatusDialog('abandon')}
-                  className="rounded-lg px-4 py-2 text-sm font-medium text-rose-500 ring-1 ring-rose-200 hover:bg-rose-50"
-                >
-                  Abandon project
-                </button>
-                <button
-                  onClick={() => setStatusDialog('approve')}
-                  className="rounded-lg bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
-                >
-                  Mark as approved
-                </button>
-              </div>
-            )}
           </div>
-        </div>
+
+          {/* Hidden input for clipboard fallback. */}
+          <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
+        </section>
 
         {/* Internal metadata. Always rendered so the Change Help
             Scout button is always reachable — even proofs with
