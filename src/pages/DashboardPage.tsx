@@ -2437,13 +2437,12 @@ export default function DashboardPage() {
                 )}
               </div>
 
-              <aside className="hidden lg:sticky lg:top-10 lg:block lg:self-start">
-                {/* xl:pt-4 used to ride here from the older layout
-                    where the sidebar ran alongside the hero. After
-                    PR 23 unified hero + tiles into a full-width panel,
-                    the sidebar starts in the same grid row as the
-                    controls card — the pt-4 was tipping the activity
-                    panel ~16px below the controls card's top edge. */}
+              <aside className="hidden lg:block">
+                {/* lg:sticky lg:top-10 used to ride here so the panel
+                    locked to the viewport top while the project list
+                    scrolled. Dropped in PR 30 — the project list can
+                    run many pages and a static panel hovering over
+                    nothing related is more distracting than useful. */}
                 <LatestActivityPanel events={latestEvents} navigate={navigate} />
               </aside>
             </div>
