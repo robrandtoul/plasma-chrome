@@ -3686,19 +3686,11 @@ function PaperPricingTable({
         <table className="w-full border-collapse">
           <caption className="sr-only">{`Pricing by quantity in ${currency}`}</caption>
           <thead>
-            <tr style={{ borderBottom: '1px solid rgba(26,22,18,0.15)' }}>
-              <th
-                scope="col"
-                className="py-4 text-left font-paper-mono uppercase"
-                style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
-              >
+            <tr className="border-b border-line">
+              <th scope="col" className="eyebrow py-3 text-left">
                 Total quantity
               </th>
-              <th
-                scope="col"
-                className="py-4 text-right font-paper-mono uppercase"
-                style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
-              >
+              <th scope="col" className="eyebrow py-3 text-right">
                 Price
               </th>
             </tr>
@@ -3707,24 +3699,23 @@ function PaperPricingTable({
             {rows.map(({ qty, price }) => {
               const personalisation = personalisationSurcharges[qty] ?? 0
               const total = price + personalisation
-              const groupBorder = hasPersonalisation
-                ? { borderBottom: '1px solid rgba(26,22,18,0.10)' }
-                : undefined
               return (
                 <Fragment key={qty}>
                   <tr
-                    style={hasPersonalisation ? undefined : { borderBottom: '1px solid rgba(26,22,18,0.10)' }}
+                    className={hasPersonalisation ? '' : 'border-b border-line-soft'}
                   >
                     <td
-                      className="py-5 leading-none"
-                      style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 28, color: '#1a1612' }}
+                      className="py-4 leading-none num text-ink"
+                      style={{ fontSize: 24, fontWeight: 500 }}
                       rowSpan={hasPersonalisation ? 3 : 1}
                     >
                       {qty.toLocaleString()}
                     </td>
                     <td
-                      className={hasPersonalisation ? 'pt-5 pb-1 text-right' : 'py-5 text-right'}
-                      style={{ fontFamily: MONO, fontSize: 16, color: '#1a1612' }}
+                      className={[
+                        hasPersonalisation ? 'pt-4 pb-1' : 'py-4',
+                        'text-right num text-[15px] text-ink',
+                      ].join(' ')}
                     >
                       {formatPrice(price, currency)}
                     </td>
@@ -3732,30 +3723,18 @@ function PaperPricingTable({
                   {hasPersonalisation && (
                     <>
                       <tr>
-                        <td
-                          className="py-1 text-right font-paper-mono uppercase"
-                          style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.18em', color: PAPER_TERTIARY }}
-                        >
+                        <td className="py-1 text-right eyebrow">
                           Personalisation
                         </td>
-                        <td
-                          className="py-1 text-right"
-                          style={{ fontFamily: MONO, fontSize: 13, color: PAPER_TERTIARY }}
-                        >
+                        <td className="py-1 text-right num text-[12px] text-ink-mute">
                           + {formatPrice(personalisation, currency)}
                         </td>
                       </tr>
-                      <tr style={groupBorder}>
-                        <td
-                          className="pt-1 pb-5 text-right font-paper-mono uppercase"
-                          style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.18em', color: PAPER_INK }}
-                        >
+                      <tr className={hasPersonalisation ? 'border-b border-line-soft' : ''}>
+                        <td className="pt-1 pb-4 text-right eyebrow text-ink font-semibold">
                           Total
                         </td>
-                        <td
-                          className="pt-1 pb-5 text-right"
-                          style={{ fontFamily: MONO, fontSize: 17, fontWeight: 600, color: PAPER_INK }}
-                        >
+                        <td className="pt-1 pb-4 text-right num font-semibold text-[15px] text-ink">
                           {formatPrice(total, currency)}
                         </td>
                       </tr>
@@ -3792,20 +3771,15 @@ function PaperPricingTable({
       <table className="w-full border-collapse">
         <caption className="sr-only">{`Pricing by quantity in ${currency}`}</caption>
         <thead>
-          <tr style={{ borderBottom: '1px solid rgba(26,22,18,0.15)' }}>
-            <th
-              scope="col"
-              className="py-4 pr-2 text-left font-paper-mono uppercase sm:pr-4"
-              style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
-            >
+          <tr className="border-b border-line">
+            <th scope="col" className="eyebrow py-3 pr-2 text-left sm:pr-4">
               Total quantity
             </th>
             {variants.map((v) => (
               <th
                 key={v.variant_id}
                 scope="col"
-                className="py-4 pl-2 text-right font-paper-mono uppercase sm:pl-4"
-                style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
+                className="eyebrow py-3 pl-2 text-right sm:pl-4"
               >
                 {v.display}
               </th>
@@ -3816,17 +3790,12 @@ function PaperPricingTable({
           {visibleQuantities.map((qty) => {
             const surcharge = quantitySurcharges[qty] ?? 0
             const personalisation = personalisationSurcharges[qty] ?? 0
-            const groupBorder = hasPersonalisation
-              ? { borderBottom: '1px solid rgba(26,22,18,0.10)' }
-              : undefined
             return (
               <Fragment key={qty}>
-                <tr
-                  style={hasPersonalisation ? undefined : { borderBottom: '1px solid rgba(26,22,18,0.10)' }}
-                >
+                <tr className={hasPersonalisation ? '' : 'border-b border-line-soft'}>
                   <td
-                    className="py-4 pr-2 leading-none sm:pr-4"
-                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 24, color: '#1a1612' }}
+                    className="py-4 pr-2 leading-none num text-ink sm:pr-4"
+                    style={{ fontSize: 22, fontWeight: 500 }}
                     rowSpan={hasPersonalisation ? 3 : 1}
                   >
                     {qty.toLocaleString()}
@@ -3837,8 +3806,10 @@ function PaperPricingTable({
                       return (
                         <td
                           key={v.variant_id}
-                          className={hasPersonalisation ? 'pt-4 pb-1 pl-2 text-right sm:pl-4' : 'py-4 pl-2 text-right sm:pl-4'}
-                          style={{ fontFamily: MONO, fontSize: 14, color: 'rgba(26,22,18,0.45)' }}
+                          className={[
+                            hasPersonalisation ? 'pt-4 pb-1' : 'py-4',
+                            'pl-2 text-right num text-[14px] text-ink-dim sm:pl-4',
+                          ].join(' ')}
                         >
                           —
                         </td>
@@ -3848,11 +3819,12 @@ function PaperPricingTable({
                     return (
                       <td
                         key={v.variant_id}
-                        className={hasPersonalisation ? 'pt-4 pb-1 pl-2 text-right sm:pl-4' : 'py-4 pl-2 text-right sm:pl-4'}
+                        className={[
+                          hasPersonalisation ? 'pt-4 pb-1' : 'py-4',
+                          'pl-2 text-right num text-[15px] text-ink sm:pl-4',
+                        ].join(' ')}
                       >
-                        <div style={{ fontFamily: MONO, fontSize: 15, color: '#1a1612' }}>
-                          {formatPrice(price, currency)}
-                        </div>
+                        {formatPrice(price, currency)}
                       </td>
                     )
                   })}
@@ -3863,38 +3835,26 @@ function PaperPricingTable({
                       {variants.map((v, idx) => (
                         <td
                           key={v.variant_id}
-                          className="py-1 pl-2 text-right sm:pl-4"
-                          style={{ fontFamily: MONO, fontSize: 12, color: PAPER_TERTIARY }}
+                          className="py-1 pl-2 text-right num text-[12px] text-ink-mute sm:pl-4"
                         >
                           {idx === 0 && (
-                            <span
-                              className="mr-2 font-paper-mono uppercase"
-                              style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.18em' }}
-                            >
-                              Personalisation
-                            </span>
+                            <span className="mr-2 eyebrow">Personalisation</span>
                           )}
                           + {formatPrice(personalisation, currency)}
                         </td>
                       ))}
                     </tr>
-                    <tr style={groupBorder}>
+                    <tr className="border-b border-line-soft">
                       {variants.map((v, idx) => {
                         const base = v.prices[String(qty)]
                         if (base == null) {
                           return (
                             <td
                               key={v.variant_id}
-                              className="pt-1 pb-4 pl-2 text-right sm:pl-4"
-                              style={{ fontFamily: MONO, fontSize: 13, color: 'rgba(26,22,18,0.45)' }}
+                              className="pt-1 pb-4 pl-2 text-right num text-[13px] text-ink-dim sm:pl-4"
                             >
                               {idx === 0 && (
-                                <span
-                                  className="mr-2 font-paper-mono uppercase"
-                                  style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em' }}
-                                >
-                                  Total
-                                </span>
+                                <span className="mr-2 eyebrow font-semibold">Total</span>
                               )}
                               —
                             </td>
@@ -3907,14 +3867,9 @@ function PaperPricingTable({
                             className="pt-1 pb-4 pl-2 text-right sm:pl-4"
                           >
                             {idx === 0 && (
-                              <span
-                                className="mr-2 font-paper-mono uppercase"
-                                style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em', color: PAPER_INK }}
-                              >
-                                Total
-                              </span>
+                              <span className="mr-2 eyebrow font-semibold text-ink">Total</span>
                             )}
-                            <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 600, color: PAPER_INK }}>
+                            <span className="num font-semibold text-[15px] text-ink">
                               {formatPrice(total, currency)}
                             </span>
                           </td>
@@ -4077,17 +4032,11 @@ function QuantityLookup({
   }
 
   return (
-    <div
-      className="mt-8 py-6 px-7 rounded-md"
-      style={{
-        border: '1px solid rgba(26,22,18,0.18)',
-        background: PAPER_TINT_1,
-      }}
-    >
+    <div className="mt-6 py-5 px-5 rounded-[10px] bg-canvas border border-line">
       <h3
         id="quantity-picker-heading"
-        className="mb-4"
-        style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, lineHeight: 1.1, color: PAPER_INK }}
+        className="mb-3 font-display font-medium tracking-[-0.02em] text-ink leading-tight"
+        style={{ fontSize: 22 }}
       >
         Need a price for a specific quantity?
       </h3>
@@ -4111,20 +4060,13 @@ function QuantityLookup({
           onKeyDown={(e) => { if (e.key === 'Escape') setRaw('') }}
           placeholder="Enter quantity"
           aria-labelledby="quantity-picker-heading"
-          className="font-paper-mono min-w-0 flex-1 rounded-md px-5 py-3.5 placeholder:text-[rgba(26,22,18,0.45)] focus:outline-none"
-          style={{
-            fontSize: 16,
-            color: PAPER_INK,
-            border: '1px solid rgba(26,22,18,0.25)',
-            background: '#ffffff',
-          }}
-          onFocus={(e) => { e.currentTarget.style.borderColor = 'rgba(26,22,18,0.7)' }}
-          onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(26,22,18,0.25)' }}
+          // Focus halo follows the design-system primitive pattern
+          // (see Input.tsx) — outline-2 + offset + brand colour via
+          // arbitrary-value syntax. No `outline-none` at base so the
+          // Tailwind v4 outline-style cascade lands correctly.
+          className="font-mono min-w-0 flex-1 h-[44px] rounded-[8px] px-4 text-[15px] text-ink bg-surface border border-line placeholder:text-ink-dim transition-colors focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
         />
-        <span
-          aria-hidden
-          style={{ fontFamily: SERIF, fontSize: 20, color: 'rgba(26,22,18,0.55)' }}
-        >
+        <span aria-hidden="true" className="text-ink-mute" style={{ fontSize: 18 }}>
           →
         </span>
       </div>
@@ -4138,37 +4080,30 @@ function QuantityLookup({
           ("For 1,000", "Below our listed range. Lowest tier:")
           so announcing just it is sufficient feedback. */}
       {caption && (
-        <div className="mt-8">
+        <div className="mt-6">
           <p
             aria-live="polite"
             role="status"
-            style={{
-              fontFamily: SERIF,
-              fontWeight: 400,
-              fontSize: 16,
-              lineHeight: 1.4,
-              color: PAPER_SECONDARY,
-            }}
+            className="text-[14px] leading-snug text-ink-soft"
           >
             {caption}
           </p>
           {tiers.length > 0 && (
-            <div className="mt-4 overflow-x-auto">
+            <div className="mt-3 overflow-x-auto">
               <table className="w-full border-collapse">
                 <caption className="sr-only">{`Closest pricing tiers in ${currency}`}</caption>
                 <thead>
-                  <tr style={{ borderBottom: '1px solid rgba(26,22,18,0.15)' }}>
+                  <tr className="border-b border-line">
                     {/* Blank header above the qty column — the
-                        serif quantity in each body row is
-                        self-describing, no "Total quantity"
-                        heading needed. */}
-                    <th aria-hidden className="py-3 pr-4" />
+                        large numeral in each body row is self-
+                        describing, no "Total quantity" heading
+                        needed. */}
+                    <th aria-hidden="true" className="py-3 pr-4" />
                     {variants.map((v) => (
                       <th
                         key={v.variant_id}
                         scope="col"
-                        className="py-3 pl-4 text-right font-paper-mono uppercase"
-                        style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
+                        className="eyebrow py-3 pl-4 text-right"
                       >
                         {v.display}
                       </th>
@@ -4178,17 +4113,12 @@ function QuantityLookup({
                 <tbody>
                   {tiers.map((qty) => {
                     const personalisation = personalisationAt(qty)
-                    const groupBorder = hasPersonalisation
-                      ? { borderBottom: '1px solid rgba(26,22,18,0.10)' }
-                      : undefined
                     return (
                       <Fragment key={qty}>
-                        <tr
-                          style={hasPersonalisation ? undefined : { borderBottom: '1px solid rgba(26,22,18,0.10)' }}
-                        >
+                        <tr className={hasPersonalisation ? '' : 'border-b border-line-soft'}>
                           <td
-                            className="py-4 pr-4 leading-none"
-                            style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 24, color: '#1a1612' }}
+                            className="py-4 pr-4 leading-none num text-ink"
+                            style={{ fontSize: 22, fontWeight: 500 }}
                             rowSpan={hasPersonalisation ? 3 : 1}
                           >
                             {qty.toLocaleString()}
@@ -4199,8 +4129,10 @@ function QuantityLookup({
                               return (
                                 <td
                                   key={v.variant_id}
-                                  className={hasPersonalisation ? 'pt-4 pb-1 pl-4 text-right' : 'py-4 pl-4 text-right'}
-                                  style={{ fontFamily: MONO, fontSize: 14, color: 'rgba(26,22,18,0.45)' }}
+                                  className={[
+                                    hasPersonalisation ? 'pt-4 pb-1' : 'py-4',
+                                    'pl-4 text-right num text-[14px] text-ink-dim',
+                                  ].join(' ')}
                                 >
                                   —
                                 </td>
@@ -4209,11 +4141,12 @@ function QuantityLookup({
                             return (
                               <td
                                 key={v.variant_id}
-                                className={hasPersonalisation ? 'pt-4 pb-1 pl-4 text-right' : 'py-4 pl-4 text-right'}
+                                className={[
+                                  hasPersonalisation ? 'pt-4 pb-1' : 'py-4',
+                                  'pl-4 text-right num text-[15px] text-ink',
+                                ].join(' ')}
                               >
-                                <div style={{ fontFamily: MONO, fontSize: 16, color: '#1a1612' }}>
-                                  {formatPrice(price, currency)}
-                                </div>
+                                {formatPrice(price, currency)}
                               </td>
                             )
                           })}
@@ -4224,38 +4157,26 @@ function QuantityLookup({
                               {variants.map((v, idx) => (
                                 <td
                                   key={v.variant_id}
-                                  className="py-1 pl-4 text-right"
-                                  style={{ fontFamily: MONO, fontSize: 12, color: PAPER_TERTIARY }}
+                                  className="py-1 pl-4 text-right num text-[12px] text-ink-mute"
                                 >
                                   {idx === 0 && (
-                                    <span
-                                      className="mr-2 font-paper-mono uppercase"
-                                      style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.18em' }}
-                                    >
-                                      Personalisation
-                                    </span>
+                                    <span className="mr-2 eyebrow">Personalisation</span>
                                   )}
                                   + {formatPrice(personalisation, currency)}
                                 </td>
                               ))}
                             </tr>
-                            <tr style={groupBorder}>
+                            <tr className="border-b border-line-soft">
                               {variants.map((v, idx) => {
                                 const price = priceAt(qty, v)
                                 if (price == null) {
                                   return (
                                     <td
                                       key={v.variant_id}
-                                      className="pt-1 pb-4 pl-4 text-right"
-                                      style={{ fontFamily: MONO, fontSize: 13, color: 'rgba(26,22,18,0.45)' }}
+                                      className="pt-1 pb-4 pl-4 text-right num text-[13px] text-ink-dim"
                                     >
                                       {idx === 0 && (
-                                        <span
-                                          className="mr-2 font-paper-mono uppercase"
-                                          style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em' }}
-                                        >
-                                          Total
-                                        </span>
+                                        <span className="mr-2 eyebrow font-semibold">Total</span>
                                       )}
                                       —
                                     </td>
@@ -4268,14 +4189,9 @@ function QuantityLookup({
                                     className="pt-1 pb-4 pl-4 text-right"
                                   >
                                     {idx === 0 && (
-                                      <span
-                                        className="mr-2 font-paper-mono uppercase"
-                                        style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em', color: PAPER_INK }}
-                                      >
-                                        Total
-                                      </span>
+                                      <span className="mr-2 eyebrow font-semibold text-ink">Total</span>
                                     )}
-                                    <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 600, color: PAPER_INK }}>
+                                    <span className="num font-semibold text-[15px] text-ink">
                                       {formatPrice(total, currency)}
                                     </span>
                                   </td>
