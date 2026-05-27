@@ -40,6 +40,7 @@ import {
 type SortMode  = 'activity' | 'date' | 'name'
 type GroupMode = 'time' | 'company'
 type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week' | 'not_viewed' | 'changes_requested'
+type ChipKey   = 'all' | 'mine' | 'needs_me' | 'last_7_days' | 'steel' | 'letterpress'
 
 // Reason chip text per rule. Templated against rule_meta.days where
 // the rule has a threshold. Kept here rather than in a shared lib
@@ -83,6 +84,21 @@ const SORT_KEY      = 'proofViewer.dashboard.sort'
 const GROUP_KEY     = 'proofViewer.dashboard.group'
 const ABANDONED_KEY = 'proofViewer.dashboard.showAbandoned'
 const SNOOZED_KEY   = 'proofViewer.dashboard.showSnoozed'
+const CHIP_KEY      = 'proofViewer.dashboard.chip'
+
+// Filter chip strip — six fixed chips per the mockup. Ordered left
+// to right as: clear → ownership → attention → recency → two top
+// materials. Material chips are pinned to Steel + Letterpress
+// because they cover the highest-traffic product families; a future
+// "Saved views" feature can carry per-designer custom chip sets.
+const CHIPS = [
+  { value: 'all',          label: 'All' },
+  { value: 'mine',         label: 'Mine' },
+  { value: 'needs_me',     label: 'Needs me' },
+  { value: 'last_7_days',  label: 'Last 7 days' },
+  { value: 'steel',        label: 'Steel' },
+  { value: 'letterpress',  label: 'Letterpress' },
+] as const
 
 function readSort(): SortMode {
   try {
@@ -108,6 +124,14 @@ function readShowAbandoned(): boolean {
 function readShowSnoozed(): boolean {
   try { return localStorage.getItem(SNOOZED_KEY) === 'true' } catch { /* */ }
   return false
+}
+
+function readChip(): ChipKey {
+  try {
+    const v = localStorage.getItem(CHIP_KEY)
+    if (v === 'all' || v === 'mine' || v === 'needs_me' || v === 'last_7_days' || v === 'steel' || v === 'letterpress') return v
+  } catch { /* */ }
+  return 'all'
 }
 
 
@@ -1182,12 +1206,16 @@ export default function DashboardPage() {
   const [teamPinAt, setTeamPinAt]         = useState<Map<string, string>>(new Map())
   const [loading, setLoading]             = useState(true)
   const [search, setSearch]               = useState('')
-  const [statusFilter, setStatusFilter]   = useState<Set<ProofStatus>>(new Set())
+  // statusFilter state was wired through the now-removed Status
+  // dropdown (dropped in PR 21). Tile clicks + chip filter cover
+  // the same use cases and the Abandoned checkbox handles the rare
+  // dedicated abandoned filter.
   const [tileFilter, setTileFilter]       = useState<TileKey | null>(null)
   const [sort, setSort]                   = useState<SortMode>(readSort)
   const [group, setGroup]                 = useState<GroupMode>(readGroup)
   const [showAbandoned, setShowAbandoned] = useState<boolean>(readShowAbandoned)
   const [showSnoozed,   setShowSnoozed]   = useState<boolean>(readShowSnoozed)
+  const [chipFilter,    setChipFilter]    = useState<ChipKey>(readChip)
   // When the user picks "Snoozed" from the status dropdown we want to show
   // only the Snoozed section and hide the main list. This is distinct from
   // clicking the tile, which shows the Snoozed section alongside the rest.
@@ -1399,6 +1427,11 @@ export default function DashboardPage() {
     try { localStorage.setItem(SORT_KEY, s) } catch { /* */ }
   }
 
+  function handleChipChange(c: ChipKey) {
+    setChipFilter(c)
+    try { localStorage.setItem(CHIP_KEY, c) } catch { /* */ }
+  }
+
   function handleGroupChange(g: GroupMode) {
     setGroup(g)
     try { localStorage.setItem(GROUP_KEY, g) } catch { /* */ }
@@ -1415,13 +1448,6 @@ export default function DashboardPage() {
     await supabase.auth.signOut()
     navigate('/login')
   }
-
-  // Status counts — derived from the full project list once.
-  const statusCounts = useMemo(() => {
-    const c: Record<ProofStatus, number> = { in_progress: 0, approved: 0, dormant: 0, abandoned: 0 }
-    for (const p of projects) c[p.status] = (c[p.status] ?? 0) + 1
-    return c
-  }, [projects])
 
   // Tile counts — all computed client-side so counts and filters use exactly
   // the same predicates. Currently-snoozed projects are always excluded:
@@ -1513,9 +1539,10 @@ export default function DashboardPage() {
     }).length
   }, [projects])
 
-  // Filter pipeline: search → tile → status. All AND-combined.
+  // Filter pipeline: search → chip → tile → status. All AND-combined.
   const filteredProjects = useMemo(() => {
     const q = search.trim().toLowerCase()
+    const sevenDaysAgoMs = Date.now() - 7 * 86_400_000
     return projects.filter((p) => {
       if (q) {
         const hay = [
@@ -1526,6 +1553,30 @@ export default function DashboardPage() {
           p.proof_id,
         ].filter(Boolean).join(' ').toLowerCase()
         if (!hay.includes(q)) return false
+      }
+      // Chip filter — orthogonal to tile / status. The 'all' chip is
+      // the no-op default. Other chips refine the visible set by
+      // ownership, attention rules, recency, or material family.
+      if (chipFilter === 'mine') {
+        // Mine: I'm the assigned designer on this proof's current
+        // version. Proofs with no version yet (current_version_id is
+        // null) have no designer attribution and are filtered out.
+        if (p.designer_user_id == null || p.designer_user_id !== userId) return false
+      }
+      if (chipFilter === 'needs_me') {
+        // Same predicate as the Needs attention tile.
+        if (p.rule_code == null) return false
+        if (isCurrentlySnoozed(p)) return false
+      }
+      if (chipFilter === 'last_7_days') {
+        if (!p.last_activity_at) return false
+        if (new Date(p.last_activity_at).getTime() < sevenDaysAgoMs) return false
+      }
+      if (chipFilter === 'steel') {
+        if (!p.material_display?.toLowerCase().includes('steel')) return false
+      }
+      if (chipFilter === 'letterpress') {
+        if (!p.material_display?.toLowerCase().includes('letterpress')) return false
       }
       // Currently-snoozed projects always belong to the Snoozed section —
       // exclude them from every tile filter so they don't appear in the main
@@ -1559,13 +1610,12 @@ export default function DashboardPage() {
         if (!p.latest_non_view_event_at || !p.version_created_at) return false
         if (new Date(p.latest_non_view_event_at).getTime() <= new Date(p.version_created_at).getTime()) return false
       }
-      // Hide abandoned proofs unless the designer has toggled them on,
-      // or has explicitly selected "Abandoned" from the status filter.
-      if (!showAbandoned && p.status === 'abandoned' && statusFilter.size === 0) return false
-      if (statusFilter.size > 0 && !statusFilter.has(p.status)) return false
+      // Hide abandoned proofs unless the designer has toggled them
+      // on via the Abandoned checkbox.
+      if (!showAbandoned && p.status === 'abandoned') return false
       return true
     })
-  }, [projects, search, tileFilter, statusFilter, showAbandoned])
+  }, [projects, search, tileFilter, showAbandoned, chipFilter, userId])
 
   // Sort
   const sortedProjects = useMemo(() => {
@@ -1821,46 +1871,41 @@ export default function DashboardPage() {
                         dropdown options so they appear when the menu
                         opens without crowding the closed control. */}
                     <div className="border-b border-line-soft px-5 py-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        {/* Status filter */}
-                        <SelectField
-                          label="Status"
-                          value={
-                            statusFilter.size === 0 && showSnoozed
-                              ? 'snoozed'
-                              : statusFilter.size === 0
-                                ? 'all'
-                                : Array.from(statusFilter)[0] as ProofStatus
-                          }
-                          onChange={(v) => {
-                            if (v === 'snoozed') {
-                              setSnoozedOnly(true)
-                              setStatusFilter(new Set())
-                              setShowSnoozed((prev) => {
-                                if (prev) return prev
-                                try { localStorage.setItem(SNOOZED_KEY, 'true') } catch { /* */ }
-                                return true
-                              })
-                            } else {
-                              setSnoozedOnly(false)
-                              if (v === 'all') setStatusFilter(new Set())
-                              else setStatusFilter(new Set([v as ProofStatus]))
-                            }
-                          }}
-                          options={[
-                            { value: 'all',         label: `All (${projects.length})` },
-                            { value: 'in_progress', label: `In progress (${statusCounts.in_progress})` },
-                            { value: 'approved',    label: `Approved (${statusCounts.approved})` },
-                            { value: 'dormant',     label: `Dormant (${statusCounts.dormant})` },
-                            { value: 'abandoned',   label: `Abandoned (${statusCounts.abandoned})` },
-                            { value: 'snoozed',     label: `Snoozed (${snoozedSections[0]?.projects.length ?? 0})` },
-                          ]}
-                        />
+                      {/* Filter chip strip (left) + N showing · Sort · Group ·
+                          Abandoned (right). Status dropdown removed in PR 21:
+                          the tiles cover its main use cases (Approved this
+                          week → Approved this week tile, Dormant → Dormant
+                          tile, Snoozed → Snoozed tile) and the Abandoned
+                          checkbox handles the rare abandoned filter. Chip
+                          state is single-select; 'all' is the no-op default. */}
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="eyebrow text-ink-mute pr-1">Filter</span>
+                        {(CHIPS as readonly { value: ChipKey; label: string }[]).map(({ value, label }) => {
+                          const isActive = chipFilter === value
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => handleChipChange(value)}
+                              aria-pressed={isActive}
+                              className={[
+                                'inline-flex items-center h-[30px] px-3 rounded-full text-[12px] font-medium transition-colors',
+                                isActive
+                                  ? 'bg-ink text-on-ink border border-ink'
+                                  : 'border border-line bg-surface text-ink-soft hover:bg-canvas',
+                              ].join(' ')}
+                            >
+                              {label}
+                            </button>
+                          )
+                        })}
 
-                        {/* Divider — separates filter from view controls */}
-                        <span className="h-4 w-px bg-gray-200" aria-hidden="true" />
-
-                        {/* Sort + Group */}
+                        {/* Right cluster */}
+                        <span className="flex-1" aria-hidden="true" />
+                        <span className="text-[12px] text-ink-mute tabular-nums font-mono">
+                          {filteredProjects.length} showing
+                        </span>
+                        <span className="h-4 w-px bg-line" aria-hidden="true" />
                         <SelectField
                           label="Sort"
                           value={sort}
@@ -1880,9 +1925,6 @@ export default function DashboardPage() {
                             { value: 'company', label: 'Company' },
                           ]}
                         />
-
-                        {/* Abandoned checkbox toggle — pushed to far right */}
-                        <span className="flex-1" aria-hidden="true" />
                         <button
                           onClick={() => {
                             setShowAbandoned((v) => {
@@ -1916,11 +1958,11 @@ export default function DashboardPage() {
                         <button
                           onClick={() => {
                             setSearch('')
-                            setStatusFilter(new Set())
                             setTileFilter(null)
                             setShowAbandoned(false)
                             setShowSnoozed(false)
                             setSnoozedOnly(false)
+                            handleChipChange('all')
                             try { localStorage.setItem(ABANDONED_KEY, 'false') } catch { /* */ }
                             try { localStorage.setItem(SNOOZED_KEY, 'false') } catch { /* */ }
                           }}
