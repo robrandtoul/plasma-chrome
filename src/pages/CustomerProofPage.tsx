@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Download, Send, Check } from 'lucide-react'
+import { Download, Send, Check, Layers } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { PlasmaWordmark, Pill, ProofStatusPill, ButtonInk, ButtonCoral, ButtonGhost, type PillColour, type ProofStatus } from '../design'
+import { PlasmaWordmark, Pill, ProofStatusPill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, tokens, type PillColour, type ProofStatus } from '../design'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
 import { compilePersonalisationSurcharges, personalisationBreakeven } from '../lib/personalisation'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
@@ -22,7 +22,6 @@ import { firstName } from '../lib/firstName'
 import {
   PAPER_CREAM,
   PAPER_TINT_1,
-  PAPER_TINT_2,
   PAPER_INK,
   PAPER_SECONDARY,
   PAPER_TERTIARY,
@@ -2957,146 +2956,103 @@ export default function CustomerProofPage() {
               decision and the version row carries no aggregate
               material/currency to put on the spec sheet. */}
           {!activeVersion.is_per_direction_pricing && (
-          <section
-            aria-labelledby="section-specification-heading"
-            style={{
-              background: PAPER_TINT_2,
-              color: PAPER_INK,
-              borderTop: '1px solid rgba(26,22,18,0.10)',
-            }}
-          >
-            <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-              <div className="grid gap-10 sm:grid-cols-[1fr_2fr] sm:gap-16">
-                <div>
-                  <h2
-                    id="section-specification-heading"
-                    className="leading-[1.02] border-b-2 pb-4 break-words"
-                    style={{
-                      fontFamily: SERIF,
-                      fontWeight: 400,
-                      fontSize: 'clamp(40px, 9vw, 56px)',
-                      color: PAPER_INK,
-                      borderColor: 'rgba(26,22,18,0.8)',
-                    }}
-                  >
-                    Specification
-                  </h2>
-                  <p
-                    className="mt-5 max-w-[30ch] text-[14px] leading-[1.55]"
-                    style={{ color: PAPER_TERTIARY }}
-                  >
-                    The details captured in this proof. Final thickness, options, and quantity are confirmed when you place your order.
-                  </p>
-                </div>
-                <dl>
-                  <PaperSpecRow label="Material" value={activeVersion.material_display} />
-                  {/* Sides — derived from the image set. Two-sided
-                      iff any image on the active version carries
-                      side='back'; otherwise front only. Pre-
-                      migration-000085 data with null sides reads
-                      as front only, which matches the historic
-                      single-sided proofs' reality. */}
-                  <PaperSpecRow
-                    label="Sides"
-                    value={
-                      (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
-                        ? 'Front and back'
-                        : 'Front only'
-                    }
-                  />
-                  {lockedFinishVariant && (
-                    <PaperSpecRow label="Finish" value={lockedFinishVariant.display_name} />
-                  )}
-                  {activeOption && (
-                    <PaperSpecRow label={optionLabelSingular} value={activeOption.display_name} />
-                  )}
-                  {/* Core colour was previously surfaced here as a
-                      single spec row (migration 000133). Migration
-                      000135 replaced it with a dedicated
-                      LayeredConstructionPanel that renders above
-                      the Specification section and shows all three
-                      Colorplan layers as a cross-section. */}
-                  {activeVersion.ink_names.length > 0 && (
-                    <PaperSpecRow
-                      label="Ink colours"
-                      value={activeVersion.ink_names.join('\n')}
-                    />
-                  )}
-                  {/* Names on card hidden when personalisation is on
-                      AND its pricing actually resolved (live read
-                      from personalisation_pricing for the proof's
-                      currency). The price-resolved gate matches the
-                      docket-cell defence — a Personalisation label
-                      without a Personalisation row in the pricing
-                      table below would read as a free claim. */}
-                  {activeVersion.names.length > 0 && !(activeVersion.has_personalisation && activePersonalisationPricing) && (
-                    <PaperSpecRow
-                      label="Names on card"
-                      value={activeVersion.names.join('\n')}
-                    />
-                  )}
-                  {activeVersion.has_personalisation && activePersonalisationPricing && (
-                    <PaperSpecRow
-                      label="Personalisation"
-                      value="Unique data per card"
-                    />
-                  )}
-                  <PaperSpecRow
-                    label="Revision"
-                    value={`v${activeVersion.version_number}${heroRevisionDate ? ` · ${heroRevisionDate}` : ''}`}
-                  />
-                </dl>
-              </div>
-
-              {activeVersion.change_notes && (
-                <div
-                  className="mt-20 grid gap-10 pt-14 sm:grid-cols-[1fr_2fr] sm:gap-16"
-                  style={{ borderTop: '1px solid rgba(26,22,18,0.10)' }}
+            <section
+              aria-labelledby="section-specification-heading"
+              className="bg-canvas"
+            >
+              <div className="mx-auto max-w-[1180px] px-6 py-8">
+                <PanelShell
+                  eyebrow="As proofed"
+                  title="Specification"
+                  icon={Layers}
+                  accent={tokens.brand}
                 >
-                  <div>
-                    <h2
-                      className="leading-[1.02] border-b-2 pb-4 break-words"
-                      style={{
-                        fontFamily: SERIF,
-                        fontWeight: 400,
-                        fontSize: 'clamp(40px, 9vw, 56px)',
-                        color: PAPER_INK,
-                        borderColor: 'rgba(26,22,18,0.8)',
-                      }}
-                    >
-                      Notes
-                    </h2>
-                  </div>
-                  <div>
-                    <p
-                      style={{
-                        fontFamily: SERIF,
-                        fontWeight: 400,
-                        fontSize: 26,
-                        lineHeight: 1.4,
-                        color: PAPER_INK,
-                      }}
-                    >
-                      <span style={{ color: ACCENT }}>“</span>
-                      <span className="whitespace-pre-line">{activeVersion.change_notes}</span>
-                      <span style={{ color: ACCENT }}>”</span>
+                  <dl
+                    aria-labelledby="section-specification-heading"
+                    className="divide-y divide-line-soft"
+                  >
+                    {/* visually-hidden heading anchors the
+                        aria-labelledby; PanelShell already paints
+                        the visible "Specification" h2 in its own
+                        header so we don't need a second h2 here. */}
+                    <h2 id="section-specification-heading" className="sr-only">Specification</h2>
+                    <SpecRow label="Material" value={activeVersion.material_display} />
+                    {/* Sides — derived from the image set. Two-sided
+                        iff any image on the active version carries
+                        side='back'; otherwise front only.
+                        Pre-migration-000085 data with null sides reads
+                        as front only, matching the historic single-
+                        sided proofs' reality. */}
+                    <SpecRow
+                      label="Sides"
+                      value={
+                        (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
+                          ? 'Front and back'
+                          : 'Front only'
+                      }
+                    />
+                    {lockedFinishVariant && (
+                      <SpecRow label="Finish" value={lockedFinishVariant.display_name} />
+                    )}
+                    {activeOption && (
+                      <SpecRow label={optionLabelSingular} value={activeOption.display_name} />
+                    )}
+                    {/* Core colour was previously surfaced here as a
+                        single spec row (migration 000133). Migration
+                        000135 replaced it with a dedicated
+                        LayeredConstructionPanel that renders above
+                        the Specification section and shows all three
+                        Colorplan layers as a cross-section. */}
+                    {activeVersion.ink_names.length > 0 && (
+                      <SpecRow
+                        label="Ink colours"
+                        value={activeVersion.ink_names.join('\n')}
+                      />
+                    )}
+                    {/* Names on card hidden when personalisation is on
+                        AND its pricing actually resolved (live read
+                        from personalisation_pricing for the proof's
+                        currency). The price-resolved gate matches
+                        the docket-cell defence — a Personalisation
+                        label without a Personalisation row in the
+                        pricing table below would read as a free
+                        claim. */}
+                    {activeVersion.names.length > 0 && !(activeVersion.has_personalisation && activePersonalisationPricing) && (
+                      <SpecRow
+                        label="Names on card"
+                        value={activeVersion.names.join('\n')}
+                      />
+                    )}
+                    {activeVersion.has_personalisation && activePersonalisationPricing && (
+                      <SpecRow
+                        label="Personalisation"
+                        value="Unique data per card"
+                      />
+                    )}
+                    <SpecRow
+                      label="Revision"
+                      value={`v${activeVersion.version_number}${heroRevisionDate ? ` · ${heroRevisionDate}` : ''}`}
+                    />
+                  </dl>
+                </PanelShell>
+
+                {/* Notes — quiet card with the customer's change-
+                    notes copy in italic. Sits below the spec panel
+                    when the active version has change_notes content.
+                    Replaces the Direction-B serif-quoted block that
+                    used the same paper-tint band. */}
+                {activeVersion.change_notes && (
+                  <div className="mt-5 rounded-[14px] bg-surface border border-line p-6">
+                    <span className="eyebrow text-brand">
+                      What changed in v{activeVersion.version_number}
+                    </span>
+                    <p className="mt-3 whitespace-pre-line text-[15px] leading-[1.55] text-ink-soft">
+                      {activeVersion.change_notes}
                     </p>
-                    <p
-                      className="mt-6 font-paper-mono uppercase"
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 500,
-                        letterSpacing: '0.32em',
-                        color: PAPER_TERTIARY,
-                      }}
-                    >
-                      — Plasma Design · v{activeVersion.version_number}
-                    </p>
                   </div>
-                </div>
-              )}
-            </div>
-          </section>
+                )}
+              </div>
+            </section>
           )}
 
           {/* ───── Pricing ─────
@@ -3756,13 +3712,14 @@ function PlateCard({
   )
 }
 
-// Spec sheet row on the paper-tinted Specs band. Mono label
-// (Red Hat Mono small caps) on the left, sans value (Inter Tight)
-// on the right. Hairline top border stacks multiple rows as a
-// spec sheet rather than a card grid. Type values share the
-// docket-cell tokens from the hero (4c) since both are spec-sheet
-// reads — labels small-caps mono, values body-sans.
-function PaperSpecRow({
+// Spec row inside the Specification PanelShell. Eyebrow-style mono
+// label on the left, sans value on the right. divide-y on the
+// parent <dl> paints the hairlines between rows; this component
+// just provides the label/value pair. Optional swatchHex left in
+// the API for parity with the previous PaperSpecRow shape (the
+// LayeredConstructionPanel could plug into the same component), but
+// none of the live call sites use it today.
+function SpecRow({
   label,
   value,
   swatchHex,
@@ -3772,22 +3729,11 @@ function PaperSpecRow({
   swatchHex?: string
 }) {
   return (
-    <div className="grid grid-cols-[140px_1fr] items-baseline gap-6 border-t border-[rgba(26,22,18,0.12)] py-5 sm:grid-cols-[200px_1fr] sm:gap-8">
-      <dt
-        className="font-paper-mono uppercase"
-        style={{
-          fontSize: 9,
-          fontWeight: 500,
-          letterSpacing: '0.28em',
-          color: 'rgba(26,22,18,0.5)',
-        }}
-      >
+    <div className="grid grid-cols-[130px_1fr] items-baseline gap-4 py-3 sm:grid-cols-[180px_1fr] sm:gap-6">
+      <dt className="eyebrow" style={{ letterSpacing: '0.22em' }}>
         {label}
       </dt>
-      <dd
-        className="whitespace-pre-line font-body"
-        style={{ fontSize: 15, fontWeight: 400, color: '#1a1612' }}
-      >
+      <dd className="whitespace-pre-line text-[14px] leading-[1.5] text-ink font-medium">
         {swatchHex ? (
           <span className="inline-flex items-center gap-2.5">
             <CoreColourSwatch hex={swatchHex} size={16} ariaLabel={`${value} swatch`} />
