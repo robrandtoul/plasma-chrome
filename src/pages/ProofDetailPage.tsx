@@ -22,7 +22,9 @@ import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/shar
 import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, designerPreviewPath } from '../lib/customerProofUrl'
-import { QuoteLink } from '../components/QuoteLink'
+// QuoteLink now lives inside DesignerChrome (PR 31).
+import { DesignerChrome } from '../design'
+import { ChevronRight } from 'lucide-react'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -1130,18 +1132,18 @@ export default function ProofDetailPage() {
     : 'bg-emerald-600 hover:bg-emerald-700 text-white'
 
   return (
-    <div className="min-h-dvh bg-gray-50">
-      <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
+    <DesignerChrome active="proofs">
+    <div className="min-h-dvh bg-canvas">
+      <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
 
-        {/* Back + Quote compiler. QuoteLink lives in the per-page
-            header on six pages today (Dashboard, Admin, ProofDetail,
-            NewProof, NewVersion, EditVersion). Future "extract shared
-            header" pass should inline this once and remove the
-            per-page insertions. */}
-        <div className="mb-6 flex items-center justify-between">
-          <Link to="/" className="text-sm text-gray-400 hover:text-gray-700">← Back to projects</Link>
-          <QuoteLink variant="inline" />
-        </div>
+        {/* Breadcrumb — Proofs › <Customer name>. Replaces the old
+            "← Back to projects" link; the chrome handles QuoteLink
+            and nav so this row carries the page's hierarchy only. */}
+        <nav className="mb-6 flex items-center gap-1.5 text-[13px]">
+          <Link to="/" className="text-ink-mute hover:text-ink transition-colors">Proofs</Link>
+          <ChevronRight size={14} className="text-ink-dim" aria-hidden="true" />
+          <span className="text-ink-soft truncate">{proof.contacts.full_name}</span>
+        </nav>
 
         {/* Proof header */}
         <div className="mb-8 flex items-start justify-between">
@@ -2303,6 +2305,7 @@ export default function ProofDetailPage() {
         </div>
       )}
     </div>
+    </DesignerChrome>
   )
 }
 
