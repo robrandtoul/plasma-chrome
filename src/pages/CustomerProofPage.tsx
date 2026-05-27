@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Download } from 'lucide-react'
+import { Download, Send, Check } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { PlasmaWordmark, Pill, ProofStatusPill, type PillColour, type ProofStatus } from '../design'
+import { PlasmaWordmark, Pill, ProofStatusPill, ButtonInk, ButtonCoral, ButtonGhost, type PillColour, type ProofStatus } from '../design'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
 import { compilePersonalisationSurcharges, personalisationBreakeven } from '../lib/personalisation'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
@@ -27,24 +27,7 @@ import {
   PAPER_SECONDARY,
   PAPER_TERTIARY,
   ACCENT,
-  APPROVED_GREEN,
   BRAND_ORDER,
-  CTA_TEAL,
-  CTA_TEAL_HOVER,
-  CTA_TEAL_PRESSED,
-  CTA_TEAL_RING,
-  CTA_GHOST_BORDER,
-  CTA_GHOST_TEXT,
-  CTA_GHOST_BG,
-  CTA_GHOST_HOVER_BG,
-  CTA_GHOST_PRESSED_BG,
-  CTA_GHOST_HOVER_BORDER,
-  CTA_AMBER_BG,
-  CTA_AMBER_HOVER_BG,
-  CTA_AMBER_PRESSED_BG,
-  CTA_AMBER_BORDER,
-  CTA_AMBER_HOVER_BORDER,
-  CTA_AMBER_TEXT,
   SERIF,
   SANS,
   MONO,
@@ -1061,106 +1044,59 @@ export default function CustomerProofPage() {
     const key = bandKey(activeVersion.id, name)
     const successMessage = successMessages[key] ?? null
 
-    // Older-version slot — viewing v(N) while v(M) is current. The
-    // lockout (informational message + jump-to-current button) only
-    // fires when the proof has already been approved on some
-    // version. Before any approval, the customer can still approve
-    // an earlier version they prefer; that branch falls through to
+    // Older-version hard lockout — viewing v(N) while v(M) is
+    // current AND the proof has already been approved somewhere.
+    // Informational line + ghost button to jump to the latest.
+    // Before any approval, the customer can still approve an
+    // earlier version they prefer; that branch falls through to
     // the normal pending render with an amber warning prepended
     // (see below). is_current is the single source of truth for
-    // "latest version" (set by the supersession trigger in 000068);
-    // avoid created_at so a designer-renumbered version doesn't
-    // slip through.
+    // "latest version" (set by the supersession trigger in 000068).
     if (!activeVersion.is_current && proofIsApproved) {
       const currentVersion = versions.find((v) => v.is_current) ?? null
       return (
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-start">
-          <span
-            className="text-[#1a1612]/70"
-            style={{ fontFamily: SANS, fontSize: 14, lineHeight: 1.5 }}
-          >
+          <span className="text-sm text-ink-soft">
             You're viewing version {activeVersion.version_number}.
             {currentVersion
               ? ` Version ${currentVersion.version_number} is the current proof.`
               : ''}
           </span>
           {currentVersion && (
-            <button
-              type="button"
-              onClick={() => setActiveVersion(currentVersion)}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-                e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent'
-                e.currentTarget.style.borderColor = 'rgba(26,22,18,0.25)'
-              }}
-              className="inline-flex min-h-[36px] items-center justify-center rounded-[2px] px-5 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2"
-              style={{
-                background: 'transparent',
-                border: '1px solid rgba(26,22,18,0.25)',
-                color: 'rgba(26,22,18,0.75)',
-                fontFamily: MONO,
-                fontSize: 12,
-                fontWeight: 500,
-                letterSpacing: '0.06em',
-                textTransform: 'uppercase',
-                ['--tw-ring-color' as string]: CTA_TEAL_RING,
-              }}
-            >
+            <ButtonGhost size="sm" onClick={() => setActiveVersion(currentVersion)}>
               View current version
-            </button>
+            </ButtonGhost>
           )}
         </div>
       )
     }
 
-    // Banner layouts per state. Light theme — sits inside the
-    // PAPER-backed proofs section so the editorial register is
-    // preserved.
-    const bannerBase =
-      'mt-6 flex flex-col gap-2 rounded-md px-5 py-4 text-[#1a1612]'
-    const KICKER_STYLE = {
-      fontFamily: MONO,
-      fontSize: 11,
-      letterSpacing: '0.22em',
-    } as const
-    const BODY_STYLE = { fontFamily: SERIF, fontWeight: 400, fontSize: 18, lineHeight: 1.35 } as const
-
+    // Optimistic banner — fires right after a successful action
+    // before the server-mirrored state lands on next reload.
+    // role="status" is the implicit aria-live=polite + atomic so
+    // screen readers announce the result; the non-optimistic
+    // states render at page load and don't need announcing.
     if (state.kind === 'optimistic') {
       const approved = state.type === 'approve'
+      const pillColour: PillColour = approved ? 'in-stock' : 'brand'
+      const label = (approved ? 'Approved' : 'Changes requested') + (named ? ` for ${name}` : '')
       return (
         <div
-          // role=status (implicit aria-live=polite, aria-atomic=true) so
-          // screen readers announce the just-recorded approval / change
-          // request when this banner replaces the action buttons. The
-          // non-optimistic states render at initial page load and don't
-          // need to be announced; only this branch is dynamic.
           role="status"
-          className={bannerBase}
-          style={{
-            background: approved ? 'rgba(81,180,148,0.14)' : 'rgba(58,44,145,0.14)',
-            border: `1px solid ${approved ? 'rgba(81,180,148,0.45)' : 'rgba(58,44,145,0.45)'}`,
-          }}
+          className="mt-6 flex flex-col gap-2 rounded-[10px] bg-surface border border-line px-5 py-4"
         >
-          <span
-            className="uppercase"
-            style={{ ...KICKER_STYLE, color: approved ? '#176b3f' : '#3a2c91' }}
-          >
-            {(approved ? 'APPROVED' : 'CHANGES REQUESTED') + (named ? ` FOR ${name}` : '')}
-          </span>
-          <span style={BODY_STYLE}>
+          <Pill colour={pillColour}>{label}</Pill>
+          <span className="text-[15px] text-ink leading-snug">
             by {state.actorName}
             {formatBandDate(state.createdAt) ? ` on ${formatBandDate(state.createdAt)}` : ''}.
           </span>
           {state.comment && (
-            <p className="text-[14px] leading-[1.55] text-[#1a1612]/80" style={{ fontFamily: SANS }}>
-              "{state.comment}"
+            <p className="text-[14px] leading-[1.55] text-ink-soft">
+              &ldquo;{state.comment}&rdquo;
             </p>
           )}
           {successMessage && (
-            <p className="text-[13px] leading-[1.55] text-[#1a1612]/70" style={{ fontFamily: SANS }}>
+            <p className="text-[13px] leading-[1.55] text-ink-mute">
               {successMessage}
             </p>
           )}
@@ -1168,100 +1104,56 @@ export default function CustomerProofPage() {
       )
     }
 
+    // Carried — green carry-forward banner. Reads "Approved
+    // (carried from v{N})" so the customer understands the slot
+    // was approved on an earlier version and pulled through.
     if (state.kind === 'carried') {
       const subtitle =
         state.carriedFromVersionNumber != null
-          ? `Approved (carried from v${state.carriedFromVersionNumber})`
-          : 'Approved (carried from a previous version)'
+          ? `Carried from v${state.carriedFromVersionNumber}`
+          : 'Carried from a previous version'
       return (
-        <div
-          className={bannerBase}
-          style={{
-            background: 'rgba(81,180,148,0.08)',
-            border: '1px solid rgba(81,180,148,0.30)',
-          }}
-        >
-          <span className="uppercase" style={{ ...KICKER_STYLE, color: '#176b3f' }}>
-            {('Approved' + forSuffix).toUpperCase()}
-          </span>
-          <span style={{ ...BODY_STYLE, fontSize: 15, color: '#1a1612' }}>
-            {subtitle}
-          </span>
+        <div className="mt-6 flex flex-col gap-2 rounded-[10px] bg-surface border border-line px-5 py-4">
+          <Pill colour="in-stock">{'Approved' + forSuffix}</Pill>
+          <span className="text-[14px] text-ink-soft">{subtitle}</span>
         </div>
       )
     }
 
+    // Approved — minimal status line in the same horizontal slot
+    // the buttons would occupy. Pill + actor/date/comment.
+    // Quieter than the carried banner because the slot reads as
+    // "done" rather than as a state to act on.
     if (state.kind === 'approved') {
-      // Latest version, approved — minimal status line in the same
-      // horizontal slot the buttons would occupy. Green dot
-      // (APPROVED_GREEN, matched to the Approve CTA accent) +
-      // uppercase tracked label, with a muted DD MMM YYYY secondary
-      // line beneath. No tinted card, no border — keeps the slot
-      // visually quiet so the customer reads it as "done" rather
-      // than as a fresh thing to act on.
       const approvedDate = formatApprovedDate(state.createdAt)
       return (
-        <div className="mt-6 flex flex-col gap-1 sm:items-start">
-          <div className="flex items-center gap-2">
-            <span
-              aria-hidden="true"
-              className="inline-block rounded-full"
-              style={{ width: 8, height: 8, background: APPROVED_GREEN }}
-            />
-            <span
-              className="uppercase"
-              style={{
-                fontFamily: MONO,
-                fontSize: 11,
-                letterSpacing: '0.22em',
-                color: '#1a1612',
-              }}
-            >
-              APPROVED
-            </span>
-          </div>
+        <div className="mt-6 flex flex-col gap-1.5 sm:items-start">
+          <Pill colour="in-stock">{'Approved' + forSuffix}</Pill>
           {(state.actorName || approvedDate) && (
-            <span
-              className="text-[#1a1612]/70"
-              style={{ fontFamily: SANS, fontSize: 14, lineHeight: 1.5 }}
-            >
+            <span className="text-sm text-ink-soft">
               {state.actorName ? `Approved by ${state.actorName}` : 'Approved'}
               {approvedDate ? ` on ${approvedDate}` : ''}
             </span>
           )}
           {state.comment && (
-            <p className="text-[14px] leading-[1.55] text-[#1a1612]/80" style={{ fontFamily: SANS }}>
-              "{state.comment}"
+            <p className="text-[14px] leading-[1.55] text-ink-soft">
+              &ldquo;{state.comment}&rdquo;
             </p>
           )}
         </div>
       )
     }
 
+    // Changes requested — coral / brand pill on a quiet card.
+    // brand-soft for the changes-requested treatment so it sits
+    // on the page as a clear "action needed" state without
+    // shouting at the customer who already submitted feedback.
     if (state.kind === 'changes_requested') {
-      // Coral / request-changes banner stays on the saturated
-      // treatment — the spec only reworks the approved state.
       return (
-        <div
-          className="mt-6 flex flex-col gap-2 rounded-md py-[18px] px-[22px] text-[#1a1612]"
-          style={{
-            background: 'rgba(58,44,145,0.18)',
-            border: '1px solid rgba(58,44,145,0.4)',
-          }}
-        >
-          <span
-            className="uppercase"
-            style={{
-              ...KICKER_STYLE,
-              fontSize: 16,
-              fontWeight: 600,
-              color: '#3a2c91',
-            }}
-          >
-            CHANGES REQUESTED
-          </span>
+        <div className="mt-6 flex flex-col gap-2 rounded-[10px] bg-brand-50 border border-brand-200 px-5 py-4">
+          <Pill colour="brand">Changes requested</Pill>
           {(state.actorName || state.createdAt) && (
-            <span style={{ ...BODY_STYLE, fontSize: 22, color: '#3a2c91' }}>
+            <span className="text-[15px] text-ink leading-snug">
               {state.actorName ? `by ${state.actorName}` : ''}
               {state.actorName && formatBandDate(state.createdAt) ? ' ' : ''}
               {formatBandDate(state.createdAt)
@@ -1271,25 +1163,25 @@ export default function CustomerProofPage() {
             </span>
           )}
           {state.comment && (
-            <p className="text-[14px] leading-[1.55] text-[#1a1612]/80" style={{ fontFamily: SANS }}>
-              "{state.comment}"
+            <p className="text-[14px] leading-[1.55] text-ink-soft">
+              &ldquo;{state.comment}&rdquo;
             </p>
           )}
         </div>
       )
     }
 
-    // pending — render the two buttons. When the customer is viewing
+    // Pending — render the two buttons. When the customer is viewing
     // an earlier version on a not-yet-approved proof, prepend an
     // amber warning so they know they're not on the most recent
     // proof but can still approve this one if they prefer it.
     //
-    // If the action panel is already open for this slot (same version
-    // and recipient, and not the variant-round path), suppress the
-    // whole pending block — eyebrow, warning, both buttons. The panel
-    // IS the form now; rendering a second pair of buttons below it
-    // reads as redundant and confusing. The block reappears if the
-    // customer cancels.
+    // If the action panel is already open for this slot (same
+    // version and recipient, and not the variant-round path),
+    // suppress the whole pending block — eyebrow, warning, both
+    // buttons. The panel IS the form now; rendering a second pair
+    // of buttons below it reads as redundant. The block reappears
+    // if the customer cancels.
     if (
       actionPanel &&
       !actionPanel.roundVariant &&
@@ -1304,32 +1196,14 @@ export default function CustomerProofPage() {
     return (
       <div className="mt-6 flex flex-col gap-3 sm:items-start">
         {showEarlierVersionWarning && latestVersion && (
-          <div
-            className="flex flex-col gap-1 rounded-md px-5 py-4 text-[#1a1612]"
-            style={{
-              background: 'rgba(217,119,6,0.10)',
-              border: '1px solid rgba(217,119,6,0.45)',
-            }}
-          >
-            <span
-              className="uppercase"
-              style={{
-                fontFamily: MONO,
-                fontSize: 11,
-                letterSpacing: '0.22em',
-                color: '#92400e',
-              }}
-            >
-              Heads up
-            </span>
-            <p
-              style={{
-                fontFamily: SANS,
-                fontSize: 14,
-                lineHeight: 1.55,
-                color: '#1a1612',
-              }}
-            >
+          // "Heads up" earlier-version warning. Quiet low-soft
+          // (amber) card with a pill + body copy. Was Direction-B
+          // amber tint + bespoke colour values; now uses the
+          // design system's low / low-soft tokens which match
+          // the same semantic (warning, not error).
+          <div className="flex flex-col gap-2 rounded-[10px] bg-low-soft border border-low px-5 py-4">
+            <Pill colour="low">Heads up</Pill>
+            <p className="text-sm text-ink leading-relaxed">
               You're viewing version {activeVersion.version_number} of{' '}
               {versions.length}. Version {latestVersion.version_number} is
               the most recent proof. You can still approve this version if
@@ -1340,122 +1214,39 @@ export default function CustomerProofPage() {
         {/* "Request changes or approve" eyebrow only makes sense
             when both actions are on offer. On an earlier version
             Request changes is suppressed (capturing feedback
-            against a superseded design is illogical — the customer
-            should be on the latest version to do that), so the
-            eyebrow goes too. The amber "Heads up" block above
-            already frames the earlier-version choice. */}
+            against a superseded design is illogical — the
+            customer should be on the latest version to do that),
+            so the eyebrow goes too. */}
         {!showEarlierVersionWarning && (
-          <span
-            className="uppercase"
-            style={{
-              fontFamily: MONO,
-              fontSize: 11,
-              letterSpacing: '0.22em',
-              textTransform: 'uppercase',
-              color: PAPER_SECONDARY,
-            }}
-          >
-            Request changes or approve
-          </span>
+          <span className="eyebrow">Request changes or approve</span>
         )}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           {showEarlierVersionWarning && latestVersion ? (
-            // Earlier version — secondary navigation, not the
-            // primary action. Style matches the "View current
-            // version" button in the hard-lockout branch above so
-            // the same affordance reads as the same control. The
-            // teal Approve button to the right is the primary
-            // action; this gives the customer a quiet way to
-            // switch off the earlier version if they didn't mean
-            // to be on it.
-            <button
-              type="button"
-              onClick={() => setActiveVersion(latestVersion)}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-                e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent'
-                e.currentTarget.style.borderColor = 'rgba(26,22,18,0.25)'
-              }}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-5 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2"
-              style={{
-                background: 'transparent',
-                border: '1px solid rgba(26,22,18,0.25)',
-                color: 'rgba(26,22,18,0.75)',
-                fontFamily: MONO,
-                fontSize: 12,
-                fontWeight: 500,
-                letterSpacing: '0.06em',
-                textTransform: 'uppercase',
-                ['--tw-ring-color' as string]: CTA_TEAL_RING,
-              }}
-            >
+            // Earlier version, no approval yet — secondary
+            // navigation, not the primary action. ButtonGhost
+            // lets the customer switch to the latest version
+            // quietly while the Approve CTA stays available for
+            // the deliberate "I want this earlier version" case.
+            <ButtonGhost onClick={() => setActiveVersion(latestVersion)}>
               Go to the latest version
-            </button>
+            </ButtonGhost>
           ) : (
-            <button
-              type="button"
+            // Request changes — coral / brand-tinted CTA, paired
+            // with the ink Approve to its right. The two CTAs
+            // sit side-by-side at sm+ and stack at <sm.
+            <ButtonCoral
+              icon={Send}
               onClick={() => openActionPanel(activeVersion.id, name, 'request_changes')}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = CTA_AMBER_HOVER_BG
-                e.currentTarget.style.borderColor = CTA_AMBER_HOVER_BORDER
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = CTA_AMBER_BG
-                e.currentTarget.style.borderColor = CTA_AMBER_BORDER
-              }}
-              onMouseDown={(e) => {
-                e.currentTarget.style.background = CTA_AMBER_PRESSED_BG
-              }}
-              onMouseUp={(e) => {
-                e.currentTarget.style.background = CTA_AMBER_HOVER_BG
-              }}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-7 py-4 transition-colors focus-visible:outline-none focus-visible:ring-2"
-              style={{
-                background: CTA_AMBER_BG,
-                border: `1.5px solid ${CTA_AMBER_BORDER}`,
-                color: CTA_AMBER_TEXT,
-                fontFamily: MONO,
-                fontSize: 13,
-                fontWeight: 500,
-                letterSpacing: '0.06em',
-                textTransform: 'uppercase',
-                ['--tw-ring-color' as string]: CTA_TEAL_RING,
-              }}
             >
               Request changes
-            </button>
+            </ButtonCoral>
           )}
-          <button
-            type="button"
+          <ButtonInk
+            icon={Check}
             onClick={() => openActionPanel(activeVersion.id, name, 'approve')}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = CTA_TEAL_HOVER
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = CTA_TEAL
-            }}
-            onMouseDown={(e) => {
-              e.currentTarget.style.background = CTA_TEAL_PRESSED
-            }}
-            onMouseUp={(e) => {
-              e.currentTarget.style.background = CTA_TEAL_HOVER
-            }}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-7 py-4 text-white transition-colors focus-visible:outline-none focus-visible:ring-2"
-            style={{
-              background: CTA_TEAL,
-              fontFamily: MONO,
-              fontSize: 13,
-              fontWeight: 500,
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-              ['--tw-ring-color' as string]: CTA_TEAL_RING,
-            }}
           >
             {approveLabel}
-          </button>
+          </ButtonInk>
         </div>
       </div>
     )
@@ -1755,41 +1546,17 @@ export default function CustomerProofPage() {
     }
     return (
       <div className="mt-6">
-        <button
-          type="button"
+        <ButtonGhost
+          block
           onClick={() =>
             openVariantActionPanel(activeVersion.id, {
               id: variant.id,
               display_name: variant.display_name,
             })
           }
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-            e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = CTA_GHOST_BG
-            e.currentTarget.style.borderColor = CTA_GHOST_BORDER
-          }}
-          onMouseDown={(e) => {
-            e.currentTarget.style.background = CTA_GHOST_PRESSED_BG
-          }}
-          onMouseUp={(e) => {
-            e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-          }}
-          className="inline-flex min-h-[44px] w-full items-center justify-center rounded-[2px] px-7 py-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)]"
-          style={{
-            background: CTA_GHOST_BG,
-            border: `1.5px solid ${CTA_GHOST_BORDER}`,
-            color: CTA_GHOST_TEXT,
-            fontFamily: MONO,
-            fontSize: 13,
-            letterSpacing: '0.06em',
-            textTransform: 'uppercase',
-          }}
         >
           Choose this direction
-        </button>
+        </ButtonGhost>
       </div>
     )
   }
