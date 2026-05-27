@@ -738,8 +738,11 @@ function ProjectRow({
         ts ? `${verb} ${relativeTime(ts)}` : null,
       ].filter(Boolean).join(' · ')}
       className={[
-        // group + relative for the hover-only action overlay further down.
-        'group relative cursor-pointer border-l-[6px] pl-4 pr-5 py-3 transition-colors hover:bg-canvas focus:outline-none focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]',
+        // Each row is now a standalone card: bg-surface + hairline
+        // border + rounded corners + wide coloured left cap that the
+        // overflow-hidden lets respect the rounding. group + relative
+        // for the hover-only action overlay further down.
+        'group relative cursor-pointer overflow-hidden rounded-[10px] bg-surface border border-line border-l-[10px] pl-4 pr-5 py-3 transition-colors hover:bg-canvas focus:outline-none focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]',
         project.status === 'dormant' ? 'opacity-60' : '',
       ].join(' ')}
       style={{
@@ -1913,29 +1916,21 @@ export default function DashboardPage() {
             <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
               <div className="min-w-0">
 
-                {/* List card. Search, status chips and sort/group toggles
-                    sit inside the same card as the project list so they
-                    visibly belong to the list rather than floating in the
-                    page margin. The truly-empty state (no projects yet)
-                    keeps its own standalone card since the controls would
-                    have nothing to act on. */}
+                {/* PR 25: the outer list-card wrapper retired here. Controls
+                    sit in their own bordered card above; rows flow as
+                    standalone cards below, each with a wide coloured left
+                    cap. Section headers become loose eyebrows between
+                    groups. Matches the mockup's loose-card-list pattern. */}
                 {projects.length === 0 ? (
                   <div className="rounded-[14px] bg-surface py-20 text-center border border-line">
                     <p className="text-ink-mute">No projects yet.</p>
                     <Link to="/proofs/new" className="mt-3 inline-block text-[14px] font-medium text-ink underline">Create the first one</Link>
                   </div>
                 ) : (
-                  <div className="overflow-hidden rounded-[14px] bg-surface border border-line">
-                    {/* Controls block — divider below separates it from
-                        the list. Search on row 1, three matching
-                        dropdowns (Status, Sort, Group) on row 2. The
-                        Status dropdown replaced a row of five chips —
-                        identical visual treatment to Sort/Group means
-                        the row reads as a single unit rather than two
-                        competing styles. Per-status counts live in the
-                        dropdown options so they appear when the menu
-                        opens without crowding the closed control. */}
-                    <div className="border-b border-line-soft px-5 py-4">
+                  <>
+                    {/* Controls card — filter chips on the left,
+                        N showing + Sort + Group + Abandoned on the right. */}
+                    <div className="rounded-[14px] bg-surface border border-line px-5 py-4 mb-4">
                       {/* Filter chip strip (left) + N showing · Sort · Group ·
                           Abandoned (right). Status dropdown removed in PR 21:
                           the tiles cover its main use cases (Approved this
@@ -2035,7 +2030,7 @@ export default function DashboardPage() {
                         >Clear filters</button>
                       </div>
                     ) : (
-                      sections.map((section, si) => {
+                      sections.map((section) => {
                         // Virtualise the Older drawer only — Today /
                         // This week / Pinned / Team / Company sections
                         // are bounded in size and don't need it. The
@@ -2044,39 +2039,50 @@ export default function DashboardPage() {
                         // keyboard interaction behave identically.
                         const virtualise = section.kind === 'time' && section.key === 'older' && section.projects.length > 30
                         return (
-                          <div key={section.key} className={si > 0 ? 'border-t border-line-soft' : ''}>
-                            <div className="flex items-center gap-3 bg-canvas px-5 py-2 pt-10 border-b border-line-soft">
+                          <div key={section.key} className="mt-6 first:mt-0">
+                            {/* Loose section header — eyebrow on the
+                                cream bg above the stack of row cards.
+                                No bg / no border, just the label and
+                                a small icon when the section kind has
+                                one. */}
+                            <div className="flex items-center gap-2 px-1 pb-3">
                               {section.kind === 'pinned'  && <PinIcon className="h-3.5 w-3.5 shrink-0 text-ink-mute" />}
                               {section.kind === 'team'    && <UsersIcon className="h-3.5 w-3.5 shrink-0 text-ink-mute" />}
                               {section.kind === 'snoozed' && <ClockIcon className="h-3.5 w-3.5 shrink-0 text-ink-mute" />}
                               <span className="eyebrow text-ink-soft">{section.title}</span>
                               <span className="text-xs font-medium text-ink-mute tabular-nums">{section.projects.length}</span>
                             </div>
-                            {virtualise ? (
-                              <Virtuoso
-                                useWindowScroll
-                                data={section.projects}
-                                overscan={400}
-                                computeItemKey={(_, p) => p.proof_id}
-                                itemContent={(ri, p) => (
-                                  <div className={ri > 0 ? 'border-t border-line-soft' : ''}>
-                                    <ProjectRow
-                                      project={p}
-                                      minePinned={minePinAt.has(p.proof_id)}
-                                      teamPinned={teamPinAt.has(p.proof_id)}
-                                      onToggleMinePin={toggleMinePin}
-                                      onToggleTeamPin={toggleTeamPin}
-                                      onSnooze={handleSnooze}
-                                      onUnsnooze={handleUnsnooze}
-                                      showReason={tileFilter === 'needs_attention'}
-                                    />
-                                  </div>
-                                )}
-                              />
-                            ) : (
-                              section.projects.map((p, ri) => (
-                                <div key={p.proof_id} className={ri > 0 ? 'border-t border-line-soft' : ''}>
+                            {/* Row cards. space-y-2 puts a small gap
+                                between cards; each card now carries its
+                                own border + rounded corners + bg-surface
+                                + wide left status cap. The inter-row
+                                hairline borders dropped here. */}
+                            <div className="space-y-2">
+                              {virtualise ? (
+                                <Virtuoso
+                                  useWindowScroll
+                                  data={section.projects}
+                                  overscan={400}
+                                  computeItemKey={(_, p) => p.proof_id}
+                                  itemContent={(_, p) => (
+                                    <div className="mb-2 last:mb-0">
+                                      <ProjectRow
+                                        project={p}
+                                        minePinned={minePinAt.has(p.proof_id)}
+                                        teamPinned={teamPinAt.has(p.proof_id)}
+                                        onToggleMinePin={toggleMinePin}
+                                        onToggleTeamPin={toggleTeamPin}
+                                        onSnooze={handleSnooze}
+                                        onUnsnooze={handleUnsnooze}
+                                        showReason={tileFilter === 'needs_attention'}
+                                      />
+                                    </div>
+                                  )}
+                                />
+                              ) : (
+                                section.projects.map((p) => (
                                   <ProjectRow
+                                    key={p.proof_id}
                                     project={p}
                                     minePinned={minePinAt.has(p.proof_id)}
                                     teamPinned={teamPinAt.has(p.proof_id)}
@@ -2086,14 +2092,14 @@ export default function DashboardPage() {
                                     onUnsnooze={handleUnsnooze}
                                     showReason={tileFilter === 'needs_attention'}
                                   />
-                                </div>
-                              ))
-                            )}
+                                ))
+                              )}
+                            </div>
                           </div>
                         )
                       })
                     )}
-                  </div>
+                  </>
                 )}
               </div>
 
