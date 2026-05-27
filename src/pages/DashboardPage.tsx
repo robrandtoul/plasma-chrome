@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { DesignerHeader, ButtonCoral, type DesignerHeaderColour } from '../design'
+import { Plus } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -1102,9 +1104,10 @@ export default function DashboardPage() {
   const [projects, setProjects]           = useState<DashboardProject[]>([])
   const [latestEvents, setLatestEvents]   = useState<DashboardLatestEvent[]>([])
   const [myProfile, setMyProfile]         = useState<{ initials: string; colour: DesignerColour; avatarUrl: string | null } | null>(null)
-  const [avatarOpen, setAvatarOpen]       = useState(false)
+  // Avatar popover state moved into DesignerHeader's internal
+  // UserPill in PR 16. Edit profile / Sign out actions are wired
+  // through the onEditProfile / onSignOut props.
   const [editProfileOpen, setEditProfileOpen] = useState(false)
-  const avatarRef                         = useRef<HTMLDivElement>(null)
   // Pin state — proof_id → pinned_at ISO. Two maps because the
   // dashboard cares about each scope independently (mine drives the
   // Pinned section, team drives the Team section, and both feed the
@@ -1144,17 +1147,6 @@ export default function DashboardPage() {
         })
       })
   }, [userId])
-
-  // Close avatar popover on outside click
-  useEffect(() => {
-    function onPointerDown(e: PointerEvent) {
-      if (avatarRef.current && !avatarRef.current.contains(e.target as Node)) {
-        setAvatarOpen(false)
-      }
-    }
-    document.addEventListener('pointerdown', onPointerDown)
-    return () => document.removeEventListener('pointerdown', onPointerDown)
-  }, [])
 
   // Refetch when the tab becomes visible — designers context-switching
   // (Help Scout, email) come back to a fresh page without a manual reload.
@@ -1571,83 +1563,34 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-dvh bg-gray-50">
-      <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
-
-        {/* Header */}
-        <div className="mb-8 flex items-center justify-between gap-4">
-
-          {/* Identity */}
-          <div>
-            <p className="text-xs font-medium uppercase tracking-widest text-gray-400">Proof viewer</p>
-            <h1 className="text-xl font-semibold text-gray-900">Projects</h1>
-          </div>
-
-          {/* Nav actions */}
-          <div className="flex items-center gap-1">
-
-            {/* Utility tools */}
+      {/* Shared designer chrome. Search lifted out of the list-card
+          and into the header per the reskin handoff. The QuoteLink
+          (new-tab "phone rings, jump to quote" link with ⌘K hint)
+          rides in the actions slot so the new-tab behaviour stays;
+          DesignerHeader's canonical nav uses in-tab Links. */}
+      <DesignerHeader
+        active="proofs"
+        role={role}
+        user={{
+          initials: myProfile?.initials ?? '…',
+          colour: (myProfile?.colour ?? 'teal') as DesignerHeaderColour,
+          avatarUrl: myProfile?.avatarUrl ?? null,
+          name: myProfile?.initials ? undefined : 'Account',
+        }}
+        search={{ value: search, onChange: setSearch }}
+        actions={
+          <>
             <QuoteLink />
-            {role === 'admin' && (
-              <Link
-                to="/admin/users"
-                className="rounded-lg px-3 py-2 text-sm font-medium text-gray-900 ring-1 ring-gray-300 hover:bg-white"
-              >
-                Admin
-              </Link>
-            )}
+            <ButtonCoral icon={Plus} onClick={() => navigate('/proofs/new')}>
+              New proof
+            </ButtonCoral>
+          </>
+        }
+        onEditProfile={() => setEditProfileOpen(true)}
+        onSignOut={handleSignOut}
+      />
 
-            {/* Divider */}
-            <span className="mx-2 h-5 w-px bg-gray-200" aria-hidden="true" />
-
-            {/* Primary action */}
-            <Link
-              to="/proofs/new"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-gray-700 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-600"
-            >
-              <svg className="h-3.5 w-3.5" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M7 1v12M1 7h12"/></svg>
-              New project
-            </Link>
-
-            {/* Divider */}
-            <span className="mx-2 h-5 w-px bg-gray-200" aria-hidden="true" />
-
-            {/* Avatar — sign-out popover */}
-            <div ref={avatarRef} className="relative">
-              <button
-                onClick={() => setAvatarOpen((v) => !v)}
-                aria-label="Account menu"
-                aria-expanded={avatarOpen}
-                className={[
-                  'flex h-8 w-8 items-center justify-center overflow-hidden rounded-full text-xs font-semibold ring-1 transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
-                  myProfile && !myProfile.avatarUrl ? COLOUR_CLASSES[myProfile.colour] : 'bg-gray-100 text-gray-500 ring-gray-200',
-                ].join(' ')}
-              >
-                {myProfile?.avatarUrl
-                  ? <img src={myProfile.avatarUrl} alt="Profile" className="h-full w-full object-cover" />
-                  : (myProfile?.initials ?? '…')
-                }
-              </button>
-              {avatarOpen && (
-                <div className="absolute right-0 top-10 z-20 min-w-[10rem] rounded-xl bg-white py-1 shadow-md ring-1 ring-gray-200">
-                  <button
-                    onClick={() => { setAvatarOpen(false); setEditProfileOpen(true) }}
-                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Edit profile
-                  </button>
-                  <div className="mx-3 my-1 border-t border-gray-100" />
-                  <button
-                    onClick={handleSignOut}
-                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Sign out
-                  </button>
-                </div>
-              )}
-            </div>
-
-          </div>
-        </div>
+      <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
 
         {/* Edit profile modal */}
         {editProfileOpen && userId && (
@@ -1794,15 +1737,6 @@ export default function DashboardPage() {
                         dropdown options so they appear when the menu
                         opens without crowding the closed control. */}
                     <div className="border-b border-gray-100 px-5 py-4">
-                      <div className="mb-3">
-                        <input
-                          type="search"
-                          placeholder="Search project, contact, company, email, or Help Scout id"
-                          value={search}
-                          onChange={(e) => setSearch(e.target.value)}
-                          className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900"
-                        />
-                      </div>
                       <div className="flex flex-wrap items-center gap-2">
                         {/* Status filter */}
                         <SelectField
