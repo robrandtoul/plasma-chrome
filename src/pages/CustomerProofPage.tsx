@@ -2408,10 +2408,11 @@ export default function CustomerProofPage() {
   // Coloured highlights (status pills, brand-teal kickers) keep
   // their existing colour and only swap typography — the brief
   // is explicit on that.
-  // LABEL_DARK was the dark-masthead/footer label colour; removed
-  // alongside the dark-ink masthead + footer replacements. LABEL_LIGHT
-  // stays in use inside the paper-cream inner panels.
-  const LABEL_LIGHT = '#5f564d'
+  // LABEL_DARK / LABEL_LIGHT were the Direction-B masthead/footer
+  // and inner-panel label colours; removed as the reskin replaces
+  // those surfaces section by section. Any remaining label-style
+  // copy reads `text-ink-soft` / `text-ink-mute` from the design
+  // system rather than these constants.
 
   // Short customer-facing reference — the proof's Help Scout
   // conversation id, prefixed with PL · for the editorial feel.
@@ -2790,46 +2791,44 @@ export default function CustomerProofPage() {
             return (
               <section
                 aria-labelledby="section-proofs-heading"
-                style={{ background: PAPER_CREAM, color: PAPER_INK }}
+                className="bg-canvas text-ink"
               >
-                <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-                  {/* Section header — left cluster is the
-                      Proofs heading + count subtitle stacked
-                      vertically; right cluster is the Finish
-                      selector. Finish pills live here (not in
-                      the revisions band) because they change
-                      which proofs are visible, so they belong
-                      adjacent to the proofs they affect rather
-                      than grouped with time-based revision
-                      metadata. items-end so the pill row hugs
-                      the bottom edge of the heading cluster
-                      regardless of whether the subtitle
-                      renders. */}
-                  <div
-                    className="mb-10 flex flex-wrap items-end justify-between gap-4 border-b-2 pb-4"
-                    style={{ borderColor: 'rgba(26,22,18,0.8)' }}
-                  >
+                <div className="mx-auto max-w-[1180px] px-6 py-10">
+                  {/* Section header — left cluster is the Proofs
+                      heading + count subtitle; right cluster is the
+                      MaterialOptionTabs (finish / option selector
+                      preserved from the live data model — only the
+                      surrounding chrome restyles in this PR). The
+                      heading drops the dominant 56px serif used in
+                      the Direction-B "newspaper masthead" treatment
+                      to a quieter 32-40px display-sans, since the
+                      page hero already carries the customer name
+                      as the dominant object above. */}
+                  <div className="mb-8 flex flex-wrap items-end justify-between gap-4 border-b border-line pb-4">
                     <div>
-                      <h2
-                        id="section-proofs-heading"
-                        className="leading-none break-words"
-                        style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(40px, 9vw, 56px)', color: PAPER_INK }}
-                      >
-                        Proofs
-                      </h2>
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <h2
+                          id="section-proofs-heading"
+                          className="font-display font-medium tracking-[-0.02em] text-ink leading-tight"
+                          style={{ fontSize: 'clamp(28px, 4vw, 36px)' }}
+                        >
+                          Proofs
+                        </h2>
+                        {activeVersion.card_type !== 'membership' && (
+                          <span className="num num-sm text-ink-mute">
+                            ({String(plateCount).padStart(2, '0')})
+                          </span>
+                        )}
+                      </div>
                       {/* Count subtitle — rendered for business
                           cards only. Membership cards hide the
-                          whole line (the "proof count vs
-                          people" framing doesn't map to
-                          membership tiers). The special
-                          "Shared" branch survives for the rare
-                          all-shared business card (shared group
-                          only, no named groups). */}
+                          whole line (the "proof count vs people"
+                          framing doesn't map to membership tiers).
+                          The special "Shared" branch survives for
+                          the rare all-shared business card (shared
+                          group only, no named groups). */}
                       {activeVersion.card_type !== 'membership' && (
-                        <span
-                          className="mt-3 block"
-                          style={{ ...REG_A_BASE, color: LABEL_LIGHT }}
-                        >
+                        <p className="mt-2 text-[13px] text-ink-soft">
                           {plateCount === 1 ? '1 unique proof' : `${plateCount} unique proofs`}
                           {recipientCount > 0 && (
                             <>
@@ -2841,7 +2840,7 @@ export default function CustomerProofPage() {
                                 : `${recipientCount} people`}
                             </>
                           )}
-                        </span>
+                        </p>
                       )}
                     </div>
                     {/* Material-option tabs — paper-register
@@ -3907,11 +3906,13 @@ function PlateCard({
         <button
           type="button"
           onClick={() => image.signed_url && onClick()}
-          // ring colour set explicitly to the ACCENT-50 token used
-          // across the page; without it Tailwind falls back to its
-          // default blue ring. ring-offset-2 sits against PAPER_CREAM
-          // (default white offset reads correctly on cream).
-          className="block w-full overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[rgba(123,63,242,0.5)]"
+          // Focus halo uses outline-2 + outline-offset-1 to match the
+          // design-system primitive pattern (see Input.tsx for the
+          // Tailwind v4 ring-vs-outline rationale). Colour: brand
+          // coral, pulled via arbitrary-value syntax so the focused
+          // halo lands consistently across the bridged custom
+          // properties.
+          className="block w-full overflow-hidden rounded-[6px] border border-line bg-canvas focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)] cursor-zoom-in"
           // captionLabel carries recipient + side ("MARIE · FRONT") so
           // every plate on the page has a distinct accessible name. The
           // page-level descriptor (`alt`, e.g. "Marie — proof version 2")
@@ -3924,39 +3925,30 @@ function PlateCard({
             .join(', ')}
         >
           {image.signed_url ? (
-            <img
-              src={image.signed_url}
-              alt={alt}
-              className="block w-full"
-              style={{ background: '#f4f1ea' }}
-            />
+            <img src={image.signed_url} alt={alt} className="block w-full bg-canvas" />
           ) : (
-            <div className="aspect-[5/3] w-full" style={{ background: '#f4f1ea' }} />
+            <div className="aspect-[5/3] w-full bg-canvas" />
           )}
         </button>
-        {/* Three-column caption per README §4 screenshot:
-            dot + RECIPIENT · SIDE on the left, filename in muted
-            mono in the middle, plain "Download ↓" link on the
-            right. items-start so each column anchors at the top
-            of the row; the Download link's invisible 44px tap
-            target extends downward without pushing the other
-            columns out of vertical register. */}
-        <figcaption className="mt-4 grid grid-cols-1 items-start gap-2 border-t border-[rgba(26,22,18,0.10)] pt-3 text-[12px] leading-[18px] lg:grid-cols-[auto_1fr_auto] lg:gap-6">
+        {/* Three-column caption: brand-dot + RECIPIENT · SIDE on the
+            left, filename in muted mono in the middle, plain
+            "Download ↓" link on the right. items-start so each
+            column anchors at the top of the row; the Download link's
+            invisible 44px tap target extends downward without
+            pushing the other columns out of vertical register. All
+            label-style copy reads `.eyebrow` typography (mono,
+            uppercase, 0.18em tracking). */}
+        <figcaption className="mt-3 grid grid-cols-1 items-start gap-2 border-t border-line-soft pt-3 lg:grid-cols-[auto_1fr_auto] lg:gap-6">
           <div className="flex items-start gap-2 min-w-0">
             <span
-              aria-hidden
-              className="mt-[6px] h-[6px] w-[6px] shrink-0 rounded-[1px]"
+              aria-hidden="true"
+              className="mt-[5px] h-[6px] w-[6px] shrink-0 rounded-[2px]"
               style={{ background: brandColor }}
             />
             {captionLabel && (
               <span
-                className="font-paper-mono uppercase break-words"
-                style={{
-                  fontSize: 12,
-                  fontWeight: 500,
-                  letterSpacing: '0.22em',
-                  color: '#1a1612',
-                }}
+                className="eyebrow text-ink break-words"
+                style={{ letterSpacing: '0.18em' }}
               >
                 {captionLabel}
               </span>
@@ -3965,8 +3957,7 @@ function PlateCard({
           <div className="flex items-start min-w-0">
             {image.original_filename && (
               <span
-                className="font-paper-mono truncate min-w-0"
-                style={{ fontSize: 12, color: 'rgba(26,22,18,0.45)' }}
+                className="font-mono text-[12px] text-ink-dim truncate min-w-0"
                 title={image.original_filename}
               >
                 {image.original_filename}
@@ -3981,18 +3972,12 @@ function PlateCard({
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                // Plain mono text link — no pill, no border.
-                // min-h-[44px] + items-start gives a 44px tap
-                // target while keeping the visible text aligned
-                // at the top of the column, in register with the
-                // dot/label and filename baselines in cols 1-2.
-                className="inline-flex min-h-[44px] items-start font-paper-mono uppercase transition-colors hover:text-[#1a1612] focus-visible:outline-none focus-visible:underline"
-                style={{
-                  fontSize: 12,
-                  fontWeight: 500,
-                  letterSpacing: '0.22em',
-                  color: PAPER_TERTIARY,
-                }}
+                // min-h-[44px] + items-start gives a 44px tap target
+                // while keeping the visible text aligned at the top
+                // of the column, in register with the dot/label and
+                // filename baselines in cols 1-2.
+                className="inline-flex min-h-[44px] items-start eyebrow text-ink-mute hover:text-ink transition-colors focus:outline-none focus-visible:underline"
+                style={{ letterSpacing: '0.18em' }}
               >
                 Download ↓
               </a>
