@@ -664,41 +664,48 @@ function ProjectRow({
         !project.rule_code && isCurrentlySnoozed(project) ? `Snoozed until ${formatSnoozeUntil(project.snoozed_until!)}` : null,
       ].filter(Boolean).join(' · ')}
       className={[
-        'flex cursor-pointer items-center gap-3 border-l-[6px] pl-4 pr-5 py-3 transition-colors hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900',
-        isCurrentlySnoozed(project)                                                    ? 'border-l-violet-400'  :
-        project.rule_code                                                              ? 'border-l-rose-500'    :
-        project.status === 'approved'                                                  ? 'border-l-emerald-500' :
-        project.status === 'dormant'                                                   ? 'border-l-gray-300'    :
-        project.status === 'abandoned'                                                 ? 'border-l-slate-400'   :
-        project.current_version_id && project.current_version_viewed_at               ? 'border-l-sky-500'     :
-                                                                                         'border-l-amber-400',
+        'flex cursor-pointer items-center gap-3 border-l-[6px] pl-4 pr-5 py-3 transition-colors hover:bg-canvas focus:outline-none focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]',
         project.status === 'dormant' ? 'opacity-60' : '',
       ].join(' ')}
+      style={{
+        // Left-border colour map. Each rule maps to a design-system
+        // token so the row's status accent reads in the same palette
+        // as the stat tile that filters to it. Snooze + dormant
+        // overrides use the same hues their corresponding tiles use.
+        borderLeftColor:
+          isCurrentlySnoozed(project)                                       ? '#7c3aed' :  // matches violet tile
+          project.rule_code                                                 ? 'var(--c-out)' :  // matches rose Needs attention tile
+          project.status === 'approved'                                     ? 'var(--c-in-stock)' :  // matches green Approved tile
+          project.status === 'dormant'                                      ? 'var(--c-ink-dim)' :   // matches neutral Dormant tile
+          project.status === 'abandoned'                                    ? 'var(--c-ink-mute)' :  // quieter still
+          project.current_version_id && project.current_version_viewed_at  ? 'var(--c-allocated)' : // matches sky Awaiting tile
+                                                                              'var(--c-low)',        // matches amber Not viewed tile
+      }}
     >
       {/* No version yet → no designer to attribute → no avatar. */}
       {project.current_version_id && <DesignerAvatar p={project} />}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="truncate text-[15px] font-medium text-gray-900">{projectName}</span>
+          <span className="truncate text-[15px] font-medium text-ink">{projectName}</span>
           {project.current_version_number != null && (
-            <span className="shrink-0 text-xs text-gray-400">v{project.current_version_number}</span>
+            <span className="shrink-0 text-xs text-ink-mute">v{project.current_version_number}</span>
           )}
         </div>
-        {subline && <div className="truncate text-xs text-gray-500">{subline}</div>}
-        {/* Reason chip — third row line, visible only when the
-            Needs attention tile filter is active. Rose dot ties the
-            chip back to the rose left-border and the rose tile that
-            triggered the filter. Truncates to keep the row to three
-            lines on narrow widths; full text remains in the row's
-            `title` attribute. */}
+        {subline && <div className="truncate text-xs text-ink-mute">{subline}</div>}
+        {/* Reason chip — third row line, visible only when the Needs
+            attention tile filter is active. Out-coloured dot + text
+            tie the chip back to the out-toned left-border and the
+            Needs attention tile that triggered the filter. Truncates
+            to keep the row to three lines on narrow widths; full text
+            remains in the row's `title` attribute. */}
         {showReason && project.rule_code && (
-          <div className="mt-1 flex items-center gap-1.5 text-xs text-rose-700">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-500" aria-hidden="true" />
+          <div className="mt-1 flex items-center gap-1.5 text-xs text-out">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-out" aria-hidden="true" />
             <span className="truncate">{reasonChipText(project.rule_code, project.rule_meta?.days)}</span>
           </div>
         )}
       </div>
-      <span className="hidden w-32 shrink-0 text-right text-xs text-gray-400 xl:block" title={ts ? formatAbsoluteDateTime(ts) : undefined}>
+      <span className="hidden w-32 shrink-0 text-right text-xs text-ink-mute xl:block" title={ts ? formatAbsoluteDateTime(ts) : undefined}>
         {verb}{ts ? ` ${relativeTime(ts)}` : ''}
       </span>
       <ActionStrip
@@ -1824,16 +1831,16 @@ export default function DashboardPage() {
                               return next
                             })
                           }}
-                          className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                          className={`inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs font-medium transition-colors ${
                             showAbandoned
-                              ? 'border-gray-400 bg-gray-100 text-gray-800'
-                              : 'border-gray-300 bg-white text-gray-500 shadow-sm hover:bg-gray-50 hover:text-gray-700'
+                              ? 'border-line bg-canvas text-ink'
+                              : 'border-line bg-surface text-ink-mute hover:bg-canvas hover:text-ink-soft'
                           }`}
                         >
                           {/* Checkbox indicator */}
-                          <span className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border ${showAbandoned ? 'border-gray-600 bg-gray-700' : 'border-gray-300'}`}>
+                          <span className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border ${showAbandoned ? 'border-ink bg-ink' : 'border-line'}`}>
                             {showAbandoned && (
-                              <svg viewBox="0 0 10 10" className="h-2.5 w-2.5 text-white" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <svg viewBox="0 0 10 10" className="h-2.5 w-2.5 text-on-ink" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <polyline points="1.5 5 4 7.5 8.5 2.5" />
                               </svg>
                             )}
@@ -1845,7 +1852,7 @@ export default function DashboardPage() {
 
                     {noResults ? (
                       <div className="py-16 text-center">
-                        <p className="text-gray-400">No projects match the current filters.</p>
+                        <p className="text-ink-mute">No projects match the current filters.</p>
                         <button
                           onClick={() => {
                             setSearch('')
@@ -1857,7 +1864,7 @@ export default function DashboardPage() {
                             try { localStorage.setItem(ABANDONED_KEY, 'false') } catch { /* */ }
                             try { localStorage.setItem(SNOOZED_KEY, 'false') } catch { /* */ }
                           }}
-                          className="mt-2 text-sm text-gray-500 underline underline-offset-2 hover:text-gray-900"
+                          className="mt-2 text-sm text-ink-soft underline underline-offset-2 hover:text-ink"
                         >Clear filters</button>
                       </div>
                     ) : (
@@ -1870,13 +1877,13 @@ export default function DashboardPage() {
                         // keyboard interaction behave identically.
                         const virtualise = section.kind === 'time' && section.key === 'older' && section.projects.length > 30
                         return (
-                          <div key={section.key} className={si > 0 ? 'border-t border-gray-100' : ''}>
-                            <div className="flex items-center gap-3 bg-gray-50/80 px-5 py-2 pt-12">
-                              {section.kind === 'pinned'  && <PinIcon className="h-3.5 w-3.5 shrink-0 text-gray-600" />}
-                              {section.kind === 'team'    && <UsersIcon className="h-3.5 w-3.5 shrink-0 text-gray-600" />}
-                              {section.kind === 'snoozed' && <ClockIcon className="h-3.5 w-3.5 shrink-0 text-gray-600" />}
-                              <span className="text-sm font-bold uppercase tracking-wider text-gray-700">{section.title}</span>
-                              <span className="text-xs font-medium text-gray-500 tabular-nums">{section.projects.length}</span>
+                          <div key={section.key} className={si > 0 ? 'border-t border-line-soft' : ''}>
+                            <div className="flex items-center gap-3 bg-canvas px-5 py-2 pt-10 border-b border-line-soft">
+                              {section.kind === 'pinned'  && <PinIcon className="h-3.5 w-3.5 shrink-0 text-ink-mute" />}
+                              {section.kind === 'team'    && <UsersIcon className="h-3.5 w-3.5 shrink-0 text-ink-mute" />}
+                              {section.kind === 'snoozed' && <ClockIcon className="h-3.5 w-3.5 shrink-0 text-ink-mute" />}
+                              <span className="eyebrow text-ink-soft">{section.title}</span>
+                              <span className="text-xs font-medium text-ink-mute tabular-nums">{section.projects.length}</span>
                             </div>
                             {virtualise ? (
                               <Virtuoso
@@ -1885,7 +1892,7 @@ export default function DashboardPage() {
                                 overscan={400}
                                 computeItemKey={(_, p) => p.proof_id}
                                 itemContent={(ri, p) => (
-                                  <div className={ri > 0 ? 'border-t border-gray-100' : ''}>
+                                  <div className={ri > 0 ? 'border-t border-line-soft' : ''}>
                                     <ProjectRow
                                       project={p}
                                       minePinned={minePinAt.has(p.proof_id)}
@@ -1901,7 +1908,7 @@ export default function DashboardPage() {
                               />
                             ) : (
                               section.projects.map((p, ri) => (
-                                <div key={p.proof_id} className={ri > 0 ? 'border-t border-gray-100' : ''}>
+                                <div key={p.proof_id} className={ri > 0 ? 'border-t border-line-soft' : ''}>
                                   <ProjectRow
                                     project={p}
                                     minePinned={minePinAt.has(p.proof_id)}
@@ -1954,16 +1961,16 @@ function SelectField<T extends string>({
   label?: string
 }) {
   return (
-    <div className="relative inline-flex items-center rounded-md border border-gray-300 bg-white shadow-sm hover:bg-gray-50 focus-within:ring-2 focus-within:ring-gray-900">
+    <div className="relative inline-flex items-center rounded-[8px] border border-line bg-surface hover:bg-canvas focus-within:border-[var(--c-brand)] focus-within:outline focus-within:outline-2 focus-within:outline-offset-[-1px] focus-within:outline-[var(--c-brand)] transition-colors">
       {label && (
-        <span className="pointer-events-none select-none pl-2.5 text-xs font-medium text-gray-400">
+        <span className="pointer-events-none select-none pl-2.5 text-xs font-medium text-ink-mute">
           {label}
         </span>
       )}
       <select
         value={value}
         onChange={(e) => onChange(e.target.value as T)}
-        className="cursor-pointer appearance-none bg-transparent py-1.5 pl-1 pr-7 text-xs font-medium text-gray-800 focus:outline-none"
+        className="cursor-pointer appearance-none bg-transparent py-1.5 pl-1 pr-7 text-xs font-medium text-ink focus:outline-none"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
@@ -1972,7 +1979,7 @@ function SelectField<T extends string>({
       <svg
         aria-hidden
         viewBox="0 0 16 16"
-        className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-gray-400"
+        className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ink-mute"
         fill="none"
         stroke="currentColor"
         strokeWidth="2"
