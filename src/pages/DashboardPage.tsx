@@ -669,6 +669,10 @@ interface ProjectRowProps {
   // on hover via the `title` attribute (kept for keyboard / screen-reader
   // parity).
   showReason: boolean
+  /** Signed URL for the project's first front image. Undefined while
+   *  loadThumbnails is in flight or when the version has no images;
+   *  the row falls through to the dark-plate initials placeholder. */
+  thumbnailUrl?: string
   onToggleMinePin: (proofId: string) => void
   onToggleTeamPin: (proofId: string) => void
   onSnooze: (proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) => Promise<void>
@@ -680,6 +684,7 @@ function ProjectRow({
   minePinned,
   teamPinned,
   showReason,
+  thumbnailUrl,
   onToggleMinePin,
   onToggleTeamPin,
   onSnooze,
@@ -765,13 +770,27 @@ function ProjectRow({
           columns drop (Material, Versions, Updated) so Customer +
           Status stay legible. */}
       <div className="grid items-center gap-3 grid-cols-[56px_minmax(0,1fr)_auto_auto] sm:grid-cols-[56px_minmax(0,1fr)_140px_auto] md:grid-cols-[56px_minmax(0,1fr)_140px_60px_70px_24px_110px]">
-        {/* Thumbnail — dark plate with the project's initials.
-            Placeholder until PR 25 wires real signed URLs. */}
+        {/* Thumbnail — real signed-URL image when loadThumbnails has
+            produced one for this version. Falls through to a dark
+            plate with the project's initials when no URL is available
+            (no version yet, no images uploaded, or fetch still in
+            flight). loading="lazy" defers off-screen image fetches
+            so opening the dashboard doesn't blast 100+ requests at
+            once. */}
         <div
           aria-hidden="true"
-          className="flex items-center justify-center w-[56px] h-[36px] rounded-[4px] bg-ink text-on-ink font-mono font-medium text-[10px] tracking-wider"
+          className="flex items-center justify-center w-[56px] h-[36px] rounded-[4px] bg-ink text-on-ink font-mono font-medium text-[10px] tracking-wider overflow-hidden"
         >
-          {thumbInitials}
+          {thumbnailUrl ? (
+            <img
+              src={thumbnailUrl}
+              alt=""
+              loading="lazy"
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            thumbInitials
+          )}
         </div>
 
         {/* Customer: name on row 1, company sub-line on row 2.
@@ -1258,6 +1277,12 @@ export default function DashboardPage() {
   const { session, role } = useAuth()
   const userId = session?.user.id ?? null
   const [projects, setProjects]           = useState<DashboardProject[]>([])
+  // current_version_id → signed thumbnail URL. Populated in
+  // loadDashboard after the projects fetch by batch-signing the
+  // first front image of each version. Empty entries (no version
+  // yet, or no images uploaded) fall through to the dark-plate
+  // placeholder rendered inside ProjectRow.
+  const [thumbnailUrls, setThumbnailUrls] = useState<Map<string, string>>(new Map())
   const [latestEvents, setLatestEvents]   = useState<DashboardLatestEvent[]>([])
   const [myProfile, setMyProfile]         = useState<{ initials: string; colour: DesignerColour; avatarUrl: string | null; firstName: string | null } | null>(null)
   // Avatar popover state moved into DesignerHeader's internal
@@ -1323,6 +1348,62 @@ export default function DashboardPage() {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [])
 
+  // Fetch + sign the row thumbnails for a list of dashboard projects.
+  // Returns a current_version_id → signed-URL Map. Designed to never
+  // throw — every failure path returns an empty Map so missing
+  // thumbnails fall through to the placeholder. The proof-images
+  // bucket is private, so signed URLs are required; createSignedUrls
+  // does the batch in one round-trip with a 1-hour expiry (long
+  // enough that a normally-engaged designer never sees stale URLs
+  // since the next visibility tick refetches the dashboard).
+  async function loadThumbnails(rows: DashboardProject[]): Promise<Map<string, string>> {
+    const versionIds = rows
+      .map((p) => p.current_version_id)
+      .filter((id): id is string => id != null)
+    if (versionIds.length === 0) return new Map()
+
+    const { data: imageRows, error } = await supabase
+      .from('proof_version_images')
+      .select('proof_version_id, image_path, sort_order, side')
+      .in('proof_version_id', versionIds)
+      .eq('is_qr_code', false)
+      .order('sort_order', { ascending: true })
+    if (error || !imageRows) return new Map()
+
+    // First image per version, preferring front / null side over back.
+    const pathByVersion = new Map<string, string>()
+    for (const r of imageRows as Array<{ proof_version_id: string; image_path: string; side: string | null }>) {
+      if (pathByVersion.has(r.proof_version_id)) continue
+      if (r.side === 'back') continue // skip backs; pick a front below
+      pathByVersion.set(r.proof_version_id, r.image_path)
+    }
+    // Fill any versions with only back-side images so they get
+    // something rather than nothing.
+    for (const r of imageRows as Array<{ proof_version_id: string; image_path: string }>) {
+      if (!pathByVersion.has(r.proof_version_id)) {
+        pathByVersion.set(r.proof_version_id, r.image_path)
+      }
+    }
+    if (pathByVersion.size === 0) return new Map()
+
+    const paths = Array.from(pathByVersion.values())
+    const { data: signedData } = await supabase.storage
+      .from('proof-images')
+      .createSignedUrls(paths, 3600)
+    if (!signedData) return new Map()
+
+    const urlByPath = new Map<string, string>()
+    for (const r of signedData) {
+      if (r.path && r.signedUrl) urlByPath.set(r.path, r.signedUrl)
+    }
+    const urlByVersion = new Map<string, string>()
+    for (const [versionId, path] of pathByVersion) {
+      const url = urlByPath.get(path)
+      if (url) urlByVersion.set(versionId, url)
+    }
+    return urlByVersion
+  }
+
   async function loadDashboard() {
     // Note: the four queries below depend on migration 000152
     // (public_dashboard_projects view + dashboard_tile_counts() +
@@ -1359,9 +1440,19 @@ export default function DashboardPage() {
       { data: pinRows },
     ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise])
 
-    setProjects((projectRows ?? []) as DashboardProject[])
+    const typedProjects = (projectRows ?? []) as DashboardProject[]
+    setProjects(typedProjects)
 
     setLatestEvents((events ?? []) as DashboardLatestEvent[])
+
+    // ── Per-row thumbnails ──────────────────────────────────────
+    // Fetch the first front (or side=null) image for each project's
+    // current_version_id, then batch-sign their paths through
+    // Supabase Storage in a single round-trip. QR-code rows are
+    // excluded so a vCard row doesn't masquerade as the proof
+    // thumbnail. Errors are tolerated silently — missing thumbnails
+    // fall through to the dark-plate placeholder in ProjectRow.
+    void loadThumbnails(typedProjects).then(setThumbnailUrls)
 
     // Split pins into the two scope-specific maps. Mine pins are
     // filtered to the current user (RLS lets every authenticated user
@@ -2070,6 +2161,7 @@ export default function DashboardPage() {
                                         project={p}
                                         minePinned={minePinAt.has(p.proof_id)}
                                         teamPinned={teamPinAt.has(p.proof_id)}
+                                        thumbnailUrl={p.current_version_id ? thumbnailUrls.get(p.current_version_id) : undefined}
                                         onToggleMinePin={toggleMinePin}
                                         onToggleTeamPin={toggleTeamPin}
                                         onSnooze={handleSnooze}
@@ -2086,6 +2178,7 @@ export default function DashboardPage() {
                                     project={p}
                                     minePinned={minePinAt.has(p.proof_id)}
                                     teamPinned={teamPinAt.has(p.proof_id)}
+                                    thumbnailUrl={p.current_version_id ? thumbnailUrls.get(p.current_version_id) : undefined}
                                     onToggleMinePin={toggleMinePin}
                                     onToggleTeamPin={toggleTeamPin}
                                     onSnooze={handleSnooze}
