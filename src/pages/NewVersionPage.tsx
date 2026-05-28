@@ -4527,6 +4527,7 @@ export default function NewVersionPage() {
                   onChange={setPricingDisplay}
                   invalid={shouldHighlight('pricingDisplay')}
                   forwardRef={pricingDisplayRef}
+                  tone={chipTone(carry.pricingDisplay.isCarried, carry.pricingDisplay.isEdited)}
                 />
               </div>
             </div>
@@ -4548,7 +4549,7 @@ export default function NewVersionPage() {
                     value={currency}
                     onChange={(c) => setCurrency(c)}
                     invalid={shouldHighlight('currency')}
-                    edited={carry.currency.isEdited}
+                    tone={chipTone(carry.currency.isCarried, carry.currency.isEdited)}
                   />
                   {shouldHighlight('currency') && (
                     <p className="mt-1.5 text-xs font-medium text-out">Required</p>
@@ -4626,7 +4627,7 @@ export default function NewVersionPage() {
                                 ? ''
                                 : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
                             ].join(' ')}
-                            style={checked ? selectedChipStyle(carry.variants.isEdited) : undefined}>
+                            style={checked ? selectedChipStyle(carry.variants.isCarried, carry.variants.isEdited) : undefined}>
                             {v.display_name}
                           </button>
                         )
@@ -4703,7 +4704,7 @@ export default function NewVersionPage() {
                               ? ''
                               : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
                           ].join(' ')}
-                          style={selected ? selectedChipStyle(carry.options.isEdited) : undefined}
+                          style={selected ? selectedChipStyle(carry.options.isCarried, carry.options.isEdited) : undefined}
                         >
                           {o.display_name}
                         </button>
@@ -4887,7 +4888,7 @@ export default function NewVersionPage() {
                           'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
                           selected ? '' : 'text-ink-mute hover:text-ink',
                         ].join(' ')}
-                        style={selected ? selectedChipStyle(carry.cardType.isEdited) : undefined}
+                        style={selected ? selectedChipStyle(carry.cardType.isCarried, carry.cardType.isEdited) : undefined}
                       >
                         <input
                           type="radio"
@@ -4981,7 +4982,7 @@ export default function NewVersionPage() {
                             'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
                             selected ? '' : 'text-ink-mute hover:text-ink',
                           ].join(' ')}
-                          style={selected ? selectedChipStyle(carry.sidedness.isEdited) : undefined}
+                          style={selected ? selectedChipStyle(carry.sidedness.isCarried, carry.sidedness.isEdited) : undefined}
                         >
                           <input
                             type="radio"
@@ -6330,15 +6331,29 @@ const hybridChipEditedSelectedStyle: CSSProperties = {
   boxShadow: 'inset 0 0 0 1.5px var(--c-low)',
 }
 
-// Picks the right hue for a selected chip / segmented button based
-// on whether the field has been edited away from its inherited
-// value. Call sites pass the field's carry.X.isEdited; when the
-// field isn't carried at all (v1 creation) the flag is false so
-// violet wins, which is correct because v1 has no inheritance and
-// the violet/amber distinction collapses to "just the selected
-// look".
-function selectedChipStyle(edited: boolean): CSSProperties {
-  return edited ? hybridChipEditedSelectedStyle : hybridChipSelectedStyle
+// Neutral selected state for a carried-but-unchanged field. An ink
+// outline reads clearly as "selected" without coral, so coral stays
+// reserved for fresh (non-carried) selections rather than implying
+// "unchanged".
+const hybridChipNeutralSelectedStyle: CSSProperties = {
+  background: 'var(--c-canvas)',
+  color: 'var(--c-ink)',
+  boxShadow: 'inset 0 0 0 1.5px var(--c-ink)',
+}
+
+// Three-state selected tone for carried fields:
+//   fresh (not carried)   -> brand/coral  (just the "selected" look)
+//   carried & unchanged   -> neutral      ("as before")
+//   carried & changed     -> low/amber    (flags the edit)
+function chipTone(carried: boolean, edited: boolean): 'brand' | 'neutral' | 'low' {
+  if (!carried) return 'brand'
+  return edited ? 'low' : 'neutral'
+}
+function selectedChipStyle(carried: boolean, edited: boolean): CSSProperties {
+  const tone = chipTone(carried, edited)
+  if (tone === 'low') return hybridChipEditedSelectedStyle
+  if (tone === 'neutral') return hybridChipNeutralSelectedStyle
+  return hybridChipSelectedStyle
 }
 
 // Validates a batch of files against the new-version constraints

@@ -23,6 +23,14 @@ const SUBTITLE_FOR_VALUE: Record<PricingDisplayValue, string> = {
 }
 const SUBTITLE_UNSET = 'Choose how customers see pricing.'
 
+// Selected-pill hue. On carried fields the host passes a tone so the
+// pill reads as coral (fresh), neutral ("as before") or amber (changed).
+const SELECTED_TONE: Record<'brand' | 'neutral' | 'low', string> = {
+  brand: 'bg-brand-50 text-brand ring-1 ring-inset ring-brand',
+  neutral: 'bg-canvas text-ink ring-1 ring-inset ring-ink',
+  low: 'bg-low-soft text-low ring-1 ring-inset ring-low',
+}
+
 export function PricingDisplayField({
   value,
   onChange,
@@ -30,11 +38,15 @@ export function PricingDisplayField({
   forwardRef,
   standardDisabled = false,
   disabledReason,
+  tone = 'brand',
 }: {
   value: PricingDisplayValue | null
   onChange: (value: PricingDisplayValue) => void
   invalid?: boolean
   forwardRef?: RefObject<HTMLElement | null>
+  // Selected-pill tone for carried fields: brand (fresh), neutral
+  // (carried & unchanged), low (changed). Defaults to brand.
+  tone?: 'brand' | 'neutral' | 'low'
   // Disable the "Standard pricing" option. Used on EditVersionPage
   // when the loaded version's pricing_snapshot carries no per-tier
   // prices — selecting Standard would produce a version marked as
@@ -69,7 +81,7 @@ export function PricingDisplayField({
                 disabled ? 'cursor-not-allowed text-ink-dim' : 'cursor-pointer',
                 !disabled &&
                   (selected
-                    ? 'bg-brand-50 text-brand ring-1 ring-inset ring-brand'
+                    ? SELECTED_TONE[tone]
                     : 'text-ink-mute hover:text-ink'),
               ].join(' ')}
             >

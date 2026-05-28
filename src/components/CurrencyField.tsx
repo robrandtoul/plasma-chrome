@@ -2,20 +2,28 @@ import type { Currency } from '../lib/types'
 
 const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
 
+// Selected-pill hue. Carried fields pass a tone so the pill reads as
+// coral (fresh), neutral ("as before") or amber (changed).
+const SELECTED_TONE: Record<'brand' | 'neutral' | 'low', string> = {
+  brand: 'bg-brand-50 text-brand ring-1 ring-inset ring-brand',
+  neutral: 'bg-canvas text-ink ring-1 ring-inset ring-ink',
+  low: 'bg-low-soft text-low ring-1 ring-inset ring-low',
+}
+
 export function CurrencyField({
   value,
   onChange,
   disabled = false,
   invalid = false,
+  tone = 'brand',
 }: {
   value: Currency | null
   onChange: (value: Currency) => void
   disabled?: boolean
   invalid?: boolean
-  // Accepted for call-site compatibility. The carried / edited state is
-  // now conveyed by the field wrapper + "from vN" / "edited" badge, not
-  // by the selected pill — coral always means "selected".
-  edited?: boolean
+  // Selected-pill tone for carried fields: brand (fresh), neutral
+  // (carried & unchanged), low (changed). Defaults to brand.
+  tone?: 'brand' | 'neutral' | 'low'
 }) {
   return (
     <fieldset
@@ -37,7 +45,7 @@ export function CurrencyField({
               'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
               disabled ? 'cursor-not-allowed' : 'cursor-pointer',
               selected
-                ? 'bg-brand-50 text-brand ring-1 ring-inset ring-brand'
+                ? SELECTED_TONE[tone]
                 : disabled
                   ? 'text-ink-dim'
                   : 'text-ink-mute hover:text-ink',
