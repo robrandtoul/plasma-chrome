@@ -389,4 +389,4 @@ export default function AdminPricingPage() {
   )
 }
 
-const pricingInputClass = 'rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]'
+const pricingInputClass = 'rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'

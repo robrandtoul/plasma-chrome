@@ -487,5 +487,5 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-const selectClass = 'min-w-[10rem] rounded-lg border border-gray-300 bg-white px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
-const inputClass  = 'rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+const selectClass = 'min-w-[10rem] rounded-lg border border-gray-300 bg-white px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
+const inputClass  = 'rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'

@@ -339,8 +339,8 @@ export default function AdminLeadTimesPage() {
 }
 
 function leadTimeInputClass(showError: boolean): string {
-  const base = 'w-24 rounded-lg border px-3 py-2 text-[17px] sm:text-sm focus:outline-none focus:ring-1'
+  const base = 'w-24 rounded-lg border px-3 py-2 text-[17px] sm:text-sm focus:outline-none'
   return showError
-    ? `${base} border-out focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-out)]`
-    : `${base} border-line focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]`
+    ? `${base} border-out focus:border-[var(--c-out)] focus:bg-[var(--c-out-soft)]`
+    : `${base} border-line focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)]`
 }

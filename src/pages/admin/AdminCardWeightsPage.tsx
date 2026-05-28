@@ -544,10 +544,10 @@ export default function AdminCardWeightsPage() {
 }
 
 function weightInputClass(showError: boolean): string {
-  const base = 'w-24 rounded-lg border px-3 py-2 text-[17px] sm:text-sm focus:outline-none focus:ring-1'
+  const base = 'w-24 rounded-lg border px-3 py-2 text-[17px] sm:text-sm focus:outline-none'
   return showError
-    ? `${base} border-rose-400 focus:border-rose-500 focus:ring-rose-400`
-    : `${base} border-gray-300 focus:border-gray-900 focus:ring-gray-900`
+    ? `${base} border-out focus:border-[var(--c-out)] focus:bg-[var(--c-out-soft)]`
+    : `${base} border-line focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)]`
 }
 
 // Extract the leading integer from a thickness label like "300 micron".

@@ -638,7 +638,7 @@ function AddTierRow({ availableQuantities, onSave, onCancel }: {
             value={quantity}
             onChange={(ev) => setQuantity(ev.target.value)}
             disabled={saving}
-            className="rounded border border-gray-200 px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-gray-900 focus:outline-none"
+            className="rounded border border-gray-200 px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
           >
             <option value="">Pick a qty</option>
             {availableQuantities.map((q) => (
@@ -662,7 +662,7 @@ function AddTierRow({ availableQuantities, onSave, onCancel }: {
                   placeholder="0.00"
                   onChange={(ev) => setter(ev.target.value)}
                   disabled={saving}
-                  className="w-24 rounded border border-gray-200 px-2 py-1 pl-5 text-[17px] sm:text-sm tabular-nums focus:border-gray-900 focus:outline-none"
+                  className="w-24 rounded border border-gray-200 px-2 py-1 pl-5 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                 />
               </div>
             </td>
@@ -766,7 +766,7 @@ function SeedQuantitiesDialog({ onSeed, onCancel }: {
             type="text"
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
             placeholder="100, 250, 500, 750, 1000"
           />
         </div>

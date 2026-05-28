@@ -208,10 +208,10 @@ export default function PersonalisationPricingSection() {
                         onChange={(e) => setDraft(c, 'rate', e.target.value)}
                         onBlur={() => void saveField(c, 'rate')}
                         className={[
-                          'w-full rounded-lg border px-3 py-2 pl-7 text-[17px] sm:text-sm focus:outline-none focus:ring-1',
+                          'w-full rounded-lg border px-3 py-2 pl-7 text-[17px] sm:text-sm focus:outline-none',
                           rateError
-                            ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-300'
-                            : 'border-gray-300 focus:border-gray-900 focus:ring-gray-900',
+                            ? 'border-out focus:border-[var(--c-out)] focus:bg-[var(--c-out-soft)]'
+                            : 'border-line focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)]',
                         ].join(' ')}
                       />
                     </div>
@@ -234,10 +234,10 @@ export default function PersonalisationPricingSection() {
                         onChange={(e) => setDraft(c, 'min', e.target.value)}
                         onBlur={() => void saveField(c, 'min')}
                         className={[
-                          'w-full rounded-lg border px-3 py-2 pl-7 text-[17px] sm:text-sm focus:outline-none focus:ring-1',
+                          'w-full rounded-lg border px-3 py-2 pl-7 text-[17px] sm:text-sm focus:outline-none',
                           minError
-                            ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-300'
-                            : 'border-gray-300 focus:border-gray-900 focus:ring-gray-900',
+                            ? 'border-out focus:border-[var(--c-out)] focus:bg-[var(--c-out-soft)]'
+                            : 'border-line focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)]',
                         ].join(' ')}
                       />
                     </div>
