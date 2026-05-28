@@ -9,7 +9,6 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import EditProfileModal, { type EditProfileSavedPayload } from '../components/EditProfileModal'
-import { QuoteLink } from '../components/QuoteLink'
 import { DesignerHeader, type DesignerNavId, type DesignerHeaderColour } from './DesignerHeader'
 
 // Shared chrome wrapper for every designer-facing page. Owns the
@@ -18,10 +17,11 @@ import { DesignerHeader, type DesignerNavId, type DesignerHeaderColour } from '.
 // lines. Exposes the profile to children via useDesignerProfile() so
 // e.g. the dashboard hero greeting can read firstName.
 //
-// The QuoteLink (new-tab "phone rings, jump to quote" affordance with
-// the ⌘K shortcut) rides in the header's actions slot on every page —
-// pages pass their own page-specific CTAs through the `actions` prop
-// and they sit alongside QuoteLink.
+// Pages pass their own page-specific CTAs through the `actions` prop;
+// they render in the header's actions slot. (The old persistent
+// "Quote compiler" link that used to ride here was removed — it
+// duplicated the "Quote" nav pill. The ⌘K jump-to-quote shortcut is
+// still wired globally in App.tsx via useQuoteShortcut().)
 
 export interface DesignerProfile {
   initials: string
@@ -41,8 +41,7 @@ interface DesignerChromeProps {
    *  highlight nothing (rare — proof-detail / new-version etc.
    *  still reside under the Proofs nav). */
   active: DesignerNavId | null
-  /** Page-specific CTAs rendered to the right of the QuoteLink in
-   *  the header's actions slot. */
+  /** Page-specific CTAs rendered in the header's actions slot. */
   actions?: ReactNode
   /** Optional controlled search field. Omit to hide. */
   search?: { value: string; onChange: (v: string) => void; placeholder?: string }
@@ -95,14 +94,11 @@ export function DesignerChrome({
     navigate('/login')
   }
 
-  const headerActions = actions ? (
-    <>
-      <QuoteLink />
-      {actions}
-    </>
-  ) : (
-    <QuoteLink />
-  )
+  // Header CTAs are page-specific only now. The persistent "Quote
+  // compiler" link was removed (it duplicated the "Quote" nav pill in
+  // the header); the ⌘K shortcut still works — it's registered
+  // globally in App.tsx via useQuoteShortcut(), not by this link.
+  const headerActions = actions ?? null
 
   return (
     <DesignerProfileContext.Provider value={profile}>

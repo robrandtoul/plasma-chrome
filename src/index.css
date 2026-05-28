@@ -1,7 +1,7 @@
 /* @import rules must precede all other rules per CSS spec. Web-font
    load lives here (above tailwindcss + the design-tokens file) so
    the bundled output keeps it as the first @import. */
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 @import "./styles/design-tokens.css";
 
