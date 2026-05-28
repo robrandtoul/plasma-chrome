@@ -1580,7 +1580,7 @@ export default function EditVersionPage() {
           </button>
         </div>
       )}
-      <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6">
+      <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
 
         {/* Back + Quote compiler. QuoteLink lives in the per-page
             header on six pages today. Future "extract shared header"
@@ -1635,6 +1635,13 @@ export default function EditVersionPage() {
         {!isVariantRound && (
         <form id="edit-version-form" onSubmit={handleSubmit} className="space-y-6">
           <fieldset disabled={false} className="contents">
+
+          {/* Two-column body: spec/setup on the left, proof images +
+              QR + change notes on the right. Personalisation, the
+              pricing-reference tables and the action row sit
+              full-width below. Stacks to one column below lg. */}
+          <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+          <div className="space-y-6">
 
           {/* Pricing display — required choice between standard grid and custom quote.
               Standard is disabled when the saved snapshot carries no
@@ -1818,6 +1825,8 @@ export default function EditVersionPage() {
 
           </section>
 
+          </div>
+          <div className="space-y-6">
           {/* Images */}
           <section ref={imageSectionRef} className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">
@@ -1953,18 +1962,6 @@ export default function EditVersionPage() {
             )}
           </section>
 
-          {/* Bottom-of-form mirror of the top action row. Same
-              Cancel + Save pair, same form="edit-version-form"
-              wiring, so clicking Save here routes through the
-              same handleSubmit → validation path as the top
-              button. Right-aligned to match the top row's
-              visual position within the content column. Not
-              sticky — the image-editing section above needs the
-              vertical space. */}
-          <div className="flex justify-end">
-            {actionRow}
-          </div>
-
           {/* QR codes (migrations 000168 / 000169).
               Standard-edit-form parity with NewVersionPage. Hidden
               in variant-round mode for v1 — variant-round QR
@@ -1990,6 +1987,9 @@ export default function EditVersionPage() {
               className={inputClass}
             />
           </section>
+
+          </div>
+          </div>
 
           {/* Personalisation add-on (migration 000172). Visible only
               when the material supports personalisation AND this is a
@@ -2057,6 +2057,13 @@ export default function EditVersionPage() {
 
           {error && <p className="rounded-lg bg-out-soft px-4 py-3 text-sm text-out">{error}</p>}
 
+          {/* Bottom action row — full-width Cancel + Save below the
+              two-column body. Mirrors the top row; same handleSubmit
+              path via form="edit-version-form". */}
+          <div className="flex justify-end">
+            {actionRow}
+          </div>
+
           </fieldset>
         </form>
         )}
@@ -2075,7 +2082,7 @@ export default function EditVersionPage() {
             here and bailing in handleSubmit if a payload tries to
             change them. */}
         {isVariantRound && !isLocked && (
-        <form id="edit-version-form" onSubmit={handleSubmit} className="space-y-6">
+        <form id="edit-version-form" onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
           <section className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
             <div className="mb-6">
               <h2 className="text-base font-semibold text-ink">Variants</h2>
