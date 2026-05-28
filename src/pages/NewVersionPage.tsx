@@ -6279,7 +6279,7 @@ function CarriedPill({ edited, versionNumber }: { edited: boolean; versionNumber
   return (
     <span
       className="inline-flex items-center rounded-full text-[11px] font-medium"
-      style={{ background: 'var(--c-brand-50)', color: 'var(--c-brand)', padding: '2px 8px' }}
+      style={{ background: 'var(--c-line-soft)', color: 'var(--c-ink-mute)', padding: '2px 8px' }}
     >
       from v{versionNumber}
     </span>
@@ -6293,8 +6293,12 @@ function CarriedPill({ edited, versionNumber }: { edited: boolean; versionNumber
 function carriedFieldStyle(carried: boolean, edited: boolean): CSSProperties {
   if (!carried) return {}
   return {
-    borderLeft: edited ? '4px solid var(--c-low)' : '4px solid var(--c-brand)',
-    background: edited ? 'var(--c-low-soft)' : 'var(--c-brand-50)',
+    // Carried-but-unchanged is neutral ("as before") — a transparent
+    // rule reserves the geometry so nothing shifts. Only a change from
+    // the prior version lights up amber. Coral is reserved for the
+    // selected-value indicator, not for "carried".
+    borderLeft: edited ? '4px solid var(--c-low)' : '4px solid transparent',
+    background: edited ? 'var(--c-low-soft)' : 'transparent',
     paddingLeft: '12px',
     paddingTop: '8px',
     paddingBottom: '8px',

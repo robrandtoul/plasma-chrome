@@ -7,17 +7,14 @@ export function CurrencyField({
   onChange,
   disabled = false,
   invalid = false,
-  edited = false,
 }: {
   value: Currency | null
   onChange: (value: Currency) => void
   disabled?: boolean
   invalid?: boolean
-  // True when the parent field is in the carried-but-edited state.
-  // Drives the selected-button hue: brand on a clean carried field,
-  // low (amber) once the designer has changed the currency away from
-  // the value carried from the prior version. Defaults to false so v1
-  // creation and any non-carried context just see brand.
+  // Accepted for call-site compatibility. The carried / edited state is
+  // now conveyed by the field wrapper + "from vN" / "edited" badge, not
+  // by the selected pill — coral always means "selected".
   edited?: boolean
 }) {
   return (
@@ -40,9 +37,7 @@ export function CurrencyField({
               'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
               disabled ? 'cursor-not-allowed' : 'cursor-pointer',
               selected
-                ? edited
-                  ? 'bg-low-soft text-low ring-1 ring-inset ring-low'
-                  : 'bg-brand-50 text-brand ring-1 ring-inset ring-brand'
+                ? 'bg-brand-50 text-brand ring-1 ring-inset ring-brand'
                 : disabled
                   ? 'text-ink-dim'
                   : 'text-ink-mute hover:text-ink',
