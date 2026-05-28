@@ -967,11 +967,12 @@ export default function QuotePage() {
 
           {/* ── Price column ─────────────────────────────────────────────── */}
           <div className="space-y-4">
-            {/* Designer-only view switch. Suppressed in spread mode
-                (shipping card is never rendered in spread, so the
-                toggle has nothing to gate) and in the custom-quote
-                bailout (no product price to hide either). The price-
-                column blocks below honour quoteView so the toggle
+            {/* Designer-only view switch, sat just above the results so it
+                reads as a header for the Total/shipping cards it controls.
+                Suppressed in spread mode (shipping card is never rendered
+                in spread, so the toggle has nothing to gate) and in the
+                custom-quote bailout (no product price to hide either). The
+                price-column blocks below honour quoteView so the toggle
                 actually flips what's rendered. */}
             {!spreadMode && !customQuote && selectedMaterialId && (
               <div className="flex items-center justify-end">
