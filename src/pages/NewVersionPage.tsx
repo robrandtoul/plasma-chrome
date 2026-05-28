@@ -4614,7 +4614,7 @@ export default function NewVersionPage() {
                         return (
                           <button key={v.id} type="button" onClick={() => toggleVariant(v.id)}
                             className={[
-                              'rounded-full px-5 py-2 text-sm font-medium transition-colors',
+                              'rounded px-5 py-2 text-sm font-medium transition-colors',
                               checked
                                 ? ''
                                 : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
@@ -4691,7 +4691,7 @@ export default function NewVersionPage() {
                           type="button"
                           onClick={() => toggleOption(o.code)}
                           className={[
-                            'rounded-full px-5 py-2 text-sm font-medium transition-colors',
+                            'rounded px-5 py-2 text-sm font-medium transition-colors',
                             selected
                               ? ''
                               : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
@@ -5346,7 +5346,7 @@ export default function NewVersionPage() {
                         type="button"
                         onClick={() => handleCarryVariantChange(variant.id)}
                         className={[
-                          'inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors',
+                          'inline-flex items-center gap-1.5 rounded border px-3.5 py-1.5 text-sm font-medium transition-colors',
                           isSelected
                             ? 'border-low bg-low text-on-ink shadow-sm'
                             : 'border-low bg-surface text-low hover:border-low hover:bg-low-soft',
@@ -5386,7 +5386,7 @@ export default function NewVersionPage() {
                         type="button"
                         onClick={() => handleCarryVariantChange(START_FRESH_SENTINEL)}
                         className={[
-                          'inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors',
+                          'inline-flex items-center gap-1.5 rounded border px-3.5 py-1.5 text-sm font-medium transition-colors',
                           isSelected
                             ? 'border-ink bg-ink text-on-ink shadow-sm'
                             : 'border-dashed border-line bg-transparent text-ink-soft hover:border-ink hover:bg-canvas',
@@ -6172,8 +6172,8 @@ function material_display_for(id: string, materials: Material[]) {
   return materials.find((m) => m.id === id)?.display_name ?? ''
 }
 
-const inputClass = 'w-full rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand'
-const selectClass = 'w-full rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand bg-surface'
+const inputClass = 'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand'
+const selectClass = 'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand bg-surface'
 
 // One row of the Paper layers picker block. Pulled out as a helper
 // so the three layers (Front/Core/Back) share the same swatch-+-

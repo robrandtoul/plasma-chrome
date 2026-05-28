@@ -1685,7 +1685,7 @@ export default function EditVersionPage() {
                         type="button"
                         onClick={() => toggleOption(o.code)}
                         className={[
-                          'rounded-full px-4 py-1.5 text-sm font-medium ring-1 transition-colors',
+                          'rounded px-4 py-1.5 text-sm font-medium ring-1 transition-colors',
                           selected
                             ? 'bg-ink text-on-ink ring-ink'
                             : 'bg-surface text-ink-soft ring-line hover:bg-canvas',
@@ -2268,7 +2268,7 @@ export default function EditVersionPage() {
   )
 }
 
-const inputClass = 'w-full rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand'
+const inputClass = 'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand'
 
 // One row of the Paper layers picker block. Mirrors the
 // LayerColourPicker helper in NewVersionPage but uses inputClass

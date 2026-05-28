@@ -13,7 +13,7 @@
 // working (the Standard button greys out and the reason renders as
 // an additional subtitle when set).
 
-import type { CSSProperties } from 'react'
+import type { RefObject } from 'react'
 
 export type PricingDisplayValue = 'standard' | 'custom'
 
@@ -22,17 +22,6 @@ const SUBTITLE_FOR_VALUE: Record<PricingDisplayValue, string> = {
   custom: "Pricing is hidden. Customer sees a note saying you'll quote separately.",
 }
 const SUBTITLE_UNSET = 'Choose how customers see pricing.'
-
-// Inline selected-state style. Mirrors the violet hybrid used by
-// the other segmented controls on the new-version form (variant
-// chips, Card type, Sidedness, Currency). Kept inline here rather
-// than reaching across to NewVersionPage so PricingDisplayField
-// stays self-contained for EditVersionPage's usage too.
-const SELECTED_STYLE: CSSProperties = {
-  background: 'rgba(123,63,242,0.16)',
-  color: '#5b2bba',
-  boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
-}
 
 export function PricingDisplayField({
   value,
@@ -45,7 +34,7 @@ export function PricingDisplayField({
   value: PricingDisplayValue | null
   onChange: (value: PricingDisplayValue) => void
   invalid?: boolean
-  forwardRef?: React.RefObject<HTMLElement | null>
+  forwardRef?: RefObject<HTMLElement | null>
   // Disable the "Standard pricing" option. Used on EditVersionPage
   // when the loaded version's pricing_snapshot carries no per-tier
   // prices — selecting Standard would produce a version marked as
@@ -60,11 +49,11 @@ export function PricingDisplayField({
   const subtitle = value == null ? SUBTITLE_UNSET : SUBTITLE_FOR_VALUE[value]
 
   return (
-    <section ref={forwardRef as React.RefObject<HTMLElement>}>
+    <section ref={forwardRef as RefObject<HTMLElement>}>
       <fieldset
         className={[
-          'inline-flex rounded-xl border bg-white p-0.5',
-          invalid ? 'border-rose-300' : 'border-gray-200',
+          'inline-flex rounded-md border bg-surface p-0.5',
+          invalid ? 'border-out' : 'border-line',
         ].join(' ')}
       >
         <legend className="sr-only">Pricing display</legend>
@@ -75,12 +64,14 @@ export function PricingDisplayField({
             <label
               key={opt}
               className={[
-                'rounded-lg px-5 py-2 text-sm font-semibold transition-colors',
-                'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
-                disabled ? 'cursor-not-allowed text-gray-300' : 'cursor-pointer',
-                !disabled && (selected ? '' : 'text-gray-500 hover:text-gray-900'),
+                'rounded px-5 py-2 text-sm font-semibold transition-colors',
+                'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
+                disabled ? 'cursor-not-allowed text-ink-dim' : 'cursor-pointer',
+                !disabled &&
+                  (selected
+                    ? 'bg-brand-50 text-brand ring-1 ring-inset ring-brand'
+                    : 'text-ink-mute hover:text-ink'),
               ].join(' ')}
-              style={selected && !disabled ? SELECTED_STYLE : undefined}
             >
               <input
                 type="radio"
@@ -96,11 +87,11 @@ export function PricingDisplayField({
           )
         })}
       </fieldset>
-      <p className="mt-1.5 text-xs text-gray-500">{subtitle}</p>
+      <p className="mt-1.5 text-xs text-ink-mute">{subtitle}</p>
       {standardDisabled && disabledReason && (
-        <p className="mt-1.5 text-xs text-gray-500">{disabledReason}</p>
+        <p className="mt-1.5 text-xs text-ink-mute">{disabledReason}</p>
       )}
-      {invalid && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
+      {invalid && <p className="mt-1.5 text-xs font-medium text-out">Required</p>}
     </section>
   )
 }
