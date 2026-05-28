@@ -448,7 +448,7 @@ export default function AdminCoreColoursPage() {
                         value={draft.draftName}
                         onChange={(e) => setEditField(c.id, 'draftName', e.target.value)}
                         disabled={draft.saving}
-                        className="w-40 rounded border border-gray-200 px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                        className="w-40 rounded-md border border-gray-200 px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                       />
                     ) : (
                       <span className={c.is_active ? 'font-medium text-gray-900' : 'text-gray-500'}>
@@ -473,7 +473,7 @@ export default function AdminCoreColoursPage() {
                           onChange={(e) => setEditField(c.id, 'draftHex', e.target.value)}
                           disabled={draft.saving}
                           placeholder="#1a2b3c"
-                          className="w-24 rounded border border-gray-200 px-2 py-1 font-mono text-xs focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                          className="w-24 rounded-md border border-gray-200 px-2 py-1 font-mono text-xs focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                         />
                       </div>
                     ) : (
@@ -487,7 +487,7 @@ export default function AdminCoreColoursPage() {
                         value={draft.draftSortOrder}
                         onChange={(e) => setEditField(c.id, 'draftSortOrder', e.target.value)}
                         disabled={draft.saving}
-                        className="w-20 rounded border border-gray-200 px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                        className="w-20 rounded-md border border-gray-200 px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                       />
                     ) : (
                       <span className={c.is_active ? 'text-gray-700' : 'text-gray-400'}>{c.sort_order}</span>
@@ -579,7 +579,7 @@ export default function AdminCoreColoursPage() {
                     onChange={(e) => setAdding({ ...adding, draftName: e.target.value, rowError: null })}
                     disabled={adding.saving}
                     placeholder="e.g. Sage"
-                    className="w-40 rounded border border-gray-200 px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                    className="w-40 rounded-md border border-gray-200 px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                   />
                 </td>
                 <td className="px-4 py-3">
@@ -598,7 +598,7 @@ export default function AdminCoreColoursPage() {
                       onChange={(e) => setAdding({ ...adding, draftHex: e.target.value, rowError: null })}
                       disabled={adding.saving}
                       placeholder="#1a2b3c"
-                      className="w-24 rounded border border-gray-200 px-2 py-1 font-mono text-xs focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                      className="w-24 rounded-md border border-gray-200 px-2 py-1 font-mono text-xs focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                     />
                   </div>
                 </td>
@@ -608,7 +608,7 @@ export default function AdminCoreColoursPage() {
                     value={adding.draftSortOrder}
                     onChange={(e) => setAdding({ ...adding, draftSortOrder: e.target.value, rowError: null })}
                     disabled={adding.saving}
-                    className="w-20 rounded border border-gray-200 px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                    className="w-20 rounded-md border border-gray-200 px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                   />
                 </td>
                 <td className="px-4 py-3 text-xs text-gray-500">New</td>

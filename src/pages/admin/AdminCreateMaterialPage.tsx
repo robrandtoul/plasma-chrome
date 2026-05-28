@@ -425,4 +425,4 @@ function SurchargeInput({ label, value, onChange }: { label: string; value: stri
   )
 }
 
-const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
+const inputClass = 'w-full rounded-md border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
