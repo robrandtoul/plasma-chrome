@@ -29,15 +29,15 @@ export function LeadTimeCard({ state, materialDisplayName }: LeadTimeCardProps) 
     return (
       <div
         role="status"
-        className="rounded-2xl bg-amber-50 p-8 shadow-sm ring-1 ring-amber-200"
+        className="rounded-2xl bg-low-soft p-8 shadow-sm ring-1 ring-low"
       >
-        <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+        <p className="text-xs font-semibold uppercase tracking-widest text-low">
           Lead time
         </p>
-        <p className="mt-2 text-3xl font-bold leading-tight tracking-tight text-amber-900">
+        <p className="mt-2 text-3xl font-bold leading-tight tracking-tight text-low">
           Custom quote
         </p>
-        <p className="mt-3 text-sm text-amber-800">
+        <p className="mt-3 text-sm text-low">
           Confirm lead time with Production before quoting.
         </p>
       </div>
@@ -53,17 +53,17 @@ export function LeadTimeCard({ state, materialDisplayName }: LeadTimeCardProps) 
   return (
     <div
       role="status"
-      className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200"
+      className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line"
     >
-      <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+      <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim">
         Lead time
       </p>
       <div className="mt-2 flex flex-wrap items-baseline gap-x-4">
-        <span className="text-6xl font-bold tracking-tight tabular-nums leading-none text-gray-900">
+        <span className="text-6xl font-bold tracking-tight tabular-nums leading-none text-ink">
           {range}
         </span>
       </div>
-      <p className="mt-3 text-sm text-gray-500">
+      <p className="mt-3 text-sm text-ink-mute">
         business days for {lowered}
       </p>
     </div>

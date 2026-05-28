@@ -1,11 +1,4 @@
-import type { CSSProperties } from 'react'
 import { type QuoteVariant, variantSectionLabel } from '../../lib/quote/types'
-
-const selectedChipStyle: CSSProperties = {
-  background: 'rgba(123,63,242,0.16)',
-  color: '#5b2bba',
-  boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
-}
 
 // Variant chip group. Section heading reads "Thickness", "Ink count"
 // or "Finish" depending on the chosen material's variant_type. The
@@ -31,10 +24,10 @@ export function VariantPicker({
     if (!loading) return null
     return (
       <fieldset>
-        <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-gray-400">
+        <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-ink-dim">
           Variant
         </legend>
-        <p className="text-sm text-gray-400">Loading variants…</p>
+        <p className="text-sm text-ink-dim">Loading variants…</p>
       </fieldset>
     )
   }
@@ -51,7 +44,7 @@ export function VariantPicker({
 
   return (
     <fieldset>
-      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-gray-400">
+      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-ink-dim">
         {label}
       </legend>
       <div className="flex flex-wrap gap-2">
@@ -63,13 +56,12 @@ export function VariantPicker({
               type="button"
               onClick={() => onChange(v.id)}
               className={[
-                'rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors',
-                'focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 focus-visible:ring-offset-1',
+                'rounded border px-3 py-1.5 text-sm font-medium transition-colors',
+                'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
                 selected
-                  ? 'border-transparent'
-                  : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50',
+                  ? 'border-brand bg-brand-50 text-brand'
+                  : 'border-line bg-surface text-ink-soft hover:bg-canvas',
               ].join(' ')}
-              style={selected ? selectedChipStyle : undefined}
             >
               {v.display_name}
             </button>

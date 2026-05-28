@@ -19,11 +19,11 @@ export function DiscountInput({
 }) {
   const isActive = value > 0
   return (
-    <fieldset className="rounded-lg border border-gray-200 bg-gray-50/60 p-4">
-      <legend className="block px-1 text-xs font-semibold uppercase tracking-widest text-gray-500">
+    <fieldset className="rounded-lg border border-line bg-canvas p-4">
+      <legend className="block px-1 text-xs font-semibold uppercase tracking-widest text-ink-mute">
         Internal discount
       </legend>
-      <p className="mb-2 text-xs text-gray-500">
+      <p className="mb-2 text-xs text-ink-mute">
         Optional. Reduces the headline price, copy-quote total, and
         spread-quote totals by this percentage. Resets when the
         material changes.
@@ -58,15 +58,15 @@ export function DiscountInput({
             placeholder="0"
             className={[
               'w-28 rounded-lg border px-3 py-2 pr-8 text-[17px] sm:text-sm tabular-nums shadow-sm',
-              'focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-1',
+              'focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-1',
               isActive
-                ? 'border-gray-400 bg-white text-gray-900'
-                : 'border-gray-200 bg-white text-gray-700',
+                ? 'border-line bg-surface text-ink'
+                : 'border-line bg-surface text-ink-soft',
             ].join(' ')}
           />
           <span
             aria-hidden
-            className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-gray-400"
+            className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-ink-dim"
           >
             %
           </span>
@@ -75,7 +75,7 @@ export function DiscountInput({
           <button
             type="button"
             onClick={() => onChange(0)}
-            className="text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-700 hover:underline"
+            className="text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink-soft hover:underline"
           >
             Clear
           </button>

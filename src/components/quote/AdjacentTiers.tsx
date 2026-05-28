@@ -5,8 +5,8 @@ import type { PriceTier } from '../../lib/quote/calculate'
 import { getPublicTiers } from '../../lib/quote/headlineTiers'
 
 const currentCellStyle: CSSProperties = {
-  background: 'rgba(123,63,242,0.08)',
-  boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
+  background: 'var(--c-brand-50)',
+  boxShadow: 'inset 0 0 0 1.5px var(--c-brand)',
 }
 
 // Adjacent quantity tiers — neighbour-below / current / neighbour-
@@ -105,8 +105,8 @@ export function AdjacentTiers({
   const currentUnit = ((current.totalPrice + extraTotalAt(current.quantity)) * discountMultiplier) / current.quantity
 
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
-      <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+    <div className="rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-line">
+      <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim">
         Adjacent quantities
       </p>
       <div className="mt-3 grid grid-cols-3 gap-2">
@@ -164,8 +164,8 @@ function Cell({
     // grid layout stays stable and the designer sees "no neighbour
     // this side" without ambiguity.
     return (
-      <div className="rounded-lg border border-dashed border-gray-100 px-3 py-3 text-center">
-        <p className="text-xs text-gray-300">—</p>
+      <div className="rounded-lg border border-dashed border-line-soft px-3 py-3 text-center">
+        <p className="text-xs text-ink-dim">—</p>
       </div>
     )
   }
@@ -175,11 +175,11 @@ function Cell({
     <div
       className={[
         'rounded-lg border px-3 py-3',
-        isCurrent ? 'border-transparent text-gray-900' : 'border-gray-200 text-gray-700',
+        isCurrent ? 'border-transparent text-ink' : 'border-line text-ink-soft',
       ].join(' ')}
       style={isCurrent ? currentCellStyle : undefined}
     >
-      <p className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-gray-400">
+      <p className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-ink-dim">
         {!arrowRight && arrow && <span aria-hidden>{arrow}</span>}
         <span>{tier.quantity.toLocaleString()}</span>
         {arrowRight && arrow && <span aria-hidden>{arrow}</span>}
@@ -187,14 +187,14 @@ function Cell({
       <p className="mt-1 text-base font-semibold tabular-nums">
         {formatPrice(total, currency)}
       </p>
-      <p className="mt-0.5 text-xs text-gray-500 tabular-nums">
+      <p className="mt-0.5 text-xs text-ink-mute tabular-nums">
         {formatPrice(unit, currency, 2)}/card
       </p>
       {deltaUnit != null && Math.abs(deltaUnit) > 0.005 && (
         <p
           className={[
             'mt-1 text-xs font-medium tabular-nums',
-            deltaUnit < 0 ? 'text-emerald-700' : 'text-amber-700',
+            deltaUnit < 0 ? 'text-in-stock' : 'text-low',
           ].join(' ')}
         >
           {deltaUnit < 0 ? '−' : '+'}{formatPrice(Math.abs(deltaUnit), currency, 2)}/card

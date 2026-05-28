@@ -26,13 +26,13 @@ export function SpreadQuoteToggle({
     <div className="flex items-center gap-3">
       <label
         className={[
-          'inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors',
-          'focus-within:ring-2 focus-within:ring-violet-400 focus-within:ring-offset-1',
+          'inline-flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-sm font-medium transition-colors',
+          'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
           disabled
-            ? 'cursor-not-allowed border-gray-100 bg-gray-50 text-gray-400'
+            ? 'cursor-not-allowed border-line-soft bg-canvas text-ink-dim'
             : value
-              ? 'border-violet-200 bg-violet-50 text-violet-900'
-              : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50',
+              ? 'border-brand-200 bg-brand-50 text-brand'
+              : 'border-line bg-surface text-ink-soft hover:bg-canvas',
         ].join(' ')}
       >
         <input
@@ -48,8 +48,8 @@ export function SpreadQuoteToggle({
           className={[
             'flex h-4 w-4 shrink-0 items-center justify-center rounded border',
             value
-              ? 'border-violet-600 bg-violet-600 text-white'
-              : 'border-gray-300 bg-white',
+              ? 'border-brand bg-brand text-on-ink'
+              : 'border-line bg-surface',
           ].join(' ')}
         >
           {value && (
