@@ -1136,8 +1136,8 @@ export default function ProofDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-dvh items-center justify-center bg-gray-50">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+      <div className="flex min-h-dvh items-center justify-center bg-canvas">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-gray-900" />
       </div>
     )
   }
@@ -1237,8 +1237,8 @@ export default function ProofDetailPage() {
     ? `${pendingChangeRequestsCount} recipient${pendingChangeRequestsCount === 1 ? '' : 's'} requested changes on the current version. Mark as approved anyway? This records an override on the timeline. The customer's feedback stays visible in the names rollup.`
     : 'Mark this project as approved? This locks the project — no more proof versions can be added.'
   const approveConfirmClass = isApproveOverride
-    ? 'bg-slate-700 hover:bg-slate-800 text-white'
-    : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+    ? 'bg-ink hover:opacity-90 text-on-ink'
+    : 'bg-in-stock hover:opacity-90 text-on-ink'
 
   return (
     <DesignerChrome active="proofs">
@@ -1555,28 +1555,28 @@ export default function ProofDetailPage() {
               ? 'Replies are currently paused. Enable in Settings.'
               : 'Replies are currently paused.'
           return (
-            <section className="mb-8 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
+            <section className="mb-8 rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-line">
               <div className="flex items-center gap-2">
-                <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Customer reply</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-ink-dim">Customer reply</p>
               </div>
               {!hasHs ? (
                 <div className="mt-2 flex items-start justify-between gap-4">
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-ink-mute">
                     No Help Scout conversation linked. Add one in the Internal panel above to enable replies.
                   </p>
                   <button
                     type="button"
                     disabled
-                    className="shrink-0 rounded-lg bg-gray-200 px-4 py-2 text-sm font-semibold text-gray-400 cursor-not-allowed"
+                    className="shrink-0 rounded-lg bg-line px-4 py-2 text-sm font-semibold text-ink-dim cursor-not-allowed"
                   >
                     Send reply
                   </button>
                 </div>
               ) : lastSentIso ? (
                 <div className="mt-2 flex items-center justify-between gap-4">
-                  <p className="text-sm text-gray-700">
+                  <p className="text-sm text-ink-soft">
                     Reply sent{' '}
-                    <span title={formatAbsoluteDateTime(lastSentIso)} className="font-medium text-gray-900">
+                    <span title={formatAbsoluteDateTime(lastSentIso)} className="font-medium text-ink">
                       {relativeTime(lastSentIso)}
                     </span>{' '}
                     for v{currentVersion.version_number}.
@@ -1589,8 +1589,8 @@ export default function ProofDetailPage() {
                     className={[
                       'shrink-0 rounded-lg px-4 py-2 text-sm font-medium ring-1',
                       repliesPaused
-                        ? 'bg-gray-100 text-gray-400 ring-gray-100 cursor-not-allowed'
-                        : 'text-gray-600 ring-gray-200 hover:bg-gray-50',
+                        ? 'bg-canvas text-ink-dim ring-line-soft cursor-not-allowed'
+                        : 'text-ink-soft ring-line hover:bg-canvas',
                     ].join(' ')}
                   >
                     Send again
@@ -1598,7 +1598,7 @@ export default function ProofDetailPage() {
                 </div>
               ) : (
                 <div className="mt-2 flex items-center justify-between gap-4">
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-ink-mute">
                     No reply sent yet for v{currentVersion.version_number}.
                   </p>
                   <button
@@ -1609,8 +1609,8 @@ export default function ProofDetailPage() {
                     className={[
                       'shrink-0 rounded-lg px-4 py-2 text-sm font-semibold',
                       repliesPaused
-                        ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                        : 'bg-gray-900 text-white hover:bg-gray-700',
+                        ? 'bg-line text-ink-dim cursor-not-allowed'
+                        : 'bg-ink text-on-ink hover:opacity-90',
                     ].join(' ')}
                   >
                     Send reply
@@ -1618,7 +1618,7 @@ export default function ProofDetailPage() {
                 </div>
               )}
               {repliesPaused && hasHs && (
-                <p className="mt-2 text-xs text-amber-700">{pausedNote}</p>
+                <p className="mt-2 text-xs text-low">{pausedNote}</p>
               )}
             </section>
           )
@@ -1668,10 +1668,10 @@ export default function ProofDetailPage() {
             currentVersion.card_type === 'membership' ? 'Membership card' : 'Shared'
           return (
             <section className="mb-8">
-              <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
+              <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-ink-dim">
                 Approved vCard contents
               </h2>
-              <p className="mb-4 text-xs text-gray-500">
+              <p className="mb-4 text-xs text-ink-mute">
                 Captured at approval time. The live vCard may have changed since.
               </p>
               <div className="space-y-3">
@@ -1682,11 +1682,11 @@ export default function ProofDetailPage() {
                   return (
                     <div
                       key={approval.id}
-                      className="overflow-hidden rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200"
+                      className="overflow-hidden rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-line"
                     >
                       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
-                        <p className="text-sm font-semibold text-gray-900">{heading}</p>
-                        <p className="text-xs text-gray-500">
+                        <p className="text-sm font-semibold text-ink">{heading}</p>
+                        <p className="text-xs text-ink-mute">
                           Approved {when} by {approval.actor_name}
                         </p>
                       </div>
@@ -1791,8 +1791,8 @@ export default function ProofDetailPage() {
 
           return (
             <section className="mb-8">
-              <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Names</h2>
-              <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+              <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">Names</h2>
+              <div className="overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
                 {rollupEntries.map((entry, i) => {
                   const isSharedRow = entry.kind === 'shared'
                   // Row separator: a stronger border above Shared
@@ -1802,8 +1802,8 @@ export default function ProofDetailPage() {
                   const separator = i === 0
                     ? ''
                     : isSharedRow
-                    ? 'border-t border-gray-200'
-                    : 'border-t border-gray-100'
+                    ? 'border-t border-line'
+                    : 'border-t border-line-soft'
 
                   if (entry.kind === 'shared') {
                     // Derived row — no actor name, no carry pill, no
@@ -1839,19 +1839,19 @@ export default function ProofDetailPage() {
                     return (
                       <div key={entry.key} className={['px-5 py-3', separator].join(' ')}>
                         <div className="flex flex-wrap items-center justify-between gap-3">
-                          <p className="text-sm font-semibold text-gray-900">{entry.heading}</p>
+                          <p className="text-sm font-semibold text-ink">{entry.heading}</p>
                           {!sharedSelection && entry.derived.state === 'pending' && (
-                            <span className="text-xs font-medium text-gray-500">Pending</span>
+                            <span className="text-xs font-medium text-ink-mute">Pending</span>
                           )}
                           {!sharedSelection && entry.derived.state === 'approved' && (
-                            <span className="inline-flex items-center gap-2 text-xs font-medium text-emerald-800">
-                              <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
+                            <span className="inline-flex items-center gap-2 text-xs font-medium text-in-stock">
+                              <span className="inline-block h-2 w-2 rounded-full bg-in-stock" aria-hidden="true" />
                               Approved in v{entry.versionNumber}{when ? `, ${when}` : ''}
                             </span>
                           )}
                           {sharedSelection && (
-                            <span className="inline-flex items-center gap-2 text-xs font-medium text-amber-800">
-                              <span className="inline-block h-2 w-2 rounded-full bg-amber-500" aria-hidden="true" />
+                            <span className="inline-flex items-center gap-2 text-xs font-medium text-low">
+                              <span className="inline-block h-2 w-2 rounded-full bg-low" aria-hidden="true" />
                               {sharedSelectionEvent?.variant_display_name ? (
                                 <>
                                   Direction selected:{' '}
@@ -1873,7 +1873,7 @@ export default function ProofDetailPage() {
                           )}
                         </div>
                         {sharedSelection?.change_request && (
-                          <p className="mt-1 text-xs text-gray-500">{sharedSelection.change_request}</p>
+                          <p className="mt-1 text-xs text-ink-mute">{sharedSelection.change_request}</p>
                         )}
                       </div>
                     )
@@ -1922,17 +1922,17 @@ export default function ProofDetailPage() {
                       className={['px-5 py-3', separator].join(' ')}
                     >
                       <div className="flex flex-wrap items-center justify-between gap-3">
-                        <p className="text-sm font-semibold text-gray-900">{heading}</p>
+                        <p className="text-sm font-semibold text-ink">{heading}</p>
                         {!approval && (
-                          <span className="text-xs font-medium text-gray-500">Pending</span>
+                          <span className="text-xs font-medium text-ink-mute">Pending</span>
                         )}
                         {approval?.state === 'approved' && (
-                          <span className="inline-flex items-center gap-2 text-xs font-medium text-emerald-800">
-                            <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" aria-hidden="true" />
+                          <span className="inline-flex items-center gap-2 text-xs font-medium text-in-stock">
+                            <span className="inline-block h-2 w-2 rounded-full bg-in-stock" aria-hidden="true" />
                             {isOverride ? (
                               <>
                                 Approved in {vRef}, {when} by {overrideActorName}
-                                <span className="font-normal text-gray-500">
+                                <span className="font-normal text-ink-mute">
                                   — originally requested changes by {approval.actor_name}
                                 </span>
                               </>
@@ -1960,7 +1960,7 @@ export default function ProofDetailPage() {
                               const srcNum = versionNumberById.get(src)
                               if (srcNum == null) return null
                               return (
-                                <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-normal text-gray-500">
+                                <span className="rounded-full bg-canvas px-2 py-0.5 text-xs font-normal text-ink-mute">
                                   Carried from v{srcNum}
                                 </span>
                               )
@@ -1968,8 +1968,8 @@ export default function ProofDetailPage() {
                           </span>
                         )}
                         {approval?.state === 'changes_requested' && (
-                          <span className="inline-flex items-center gap-2 text-xs font-medium text-amber-800">
-                            <span className="inline-block h-2 w-2 rounded-full bg-amber-500" aria-hidden="true" />
+                          <span className="inline-flex items-center gap-2 text-xs font-medium text-low">
+                            <span className="inline-block h-2 w-2 rounded-full bg-low" aria-hidden="true" />
                             {auditEvent?.variant_display_name ? (
                               // Variant-round selection (000139). The
                               // customer "Choose this direction" surface
@@ -1998,7 +1998,7 @@ export default function ProofDetailPage() {
                                     the same value for non-summary
                                     surfaces. */}
                                 {auditEvent?.side && (
-                                  <span className="font-normal text-amber-700/80">
+                                  <span className="font-normal text-low">
                                     {' '}({auditEvent.side === 'front' ? 'front' : 'back'})
                                   </span>
                                 )}
@@ -2014,7 +2014,7 @@ export default function ProofDetailPage() {
                           to 'approved' but the customer's original
                           feedback is preserved on the row. */}
                       {(approval?.state === 'changes_requested' || isOverride) && approval?.change_request && (
-                        <p className="mt-1 text-xs text-gray-500">{approval.change_request}</p>
+                        <p className="mt-1 text-xs text-ink-mute">{approval.change_request}</p>
                       )}
                       {/* Phase 2 Prompt 8 — audit detail toggle.
                           Renders only when there's a matching
@@ -2029,14 +2029,14 @@ export default function ProofDetailPage() {
                             onClick={() =>
                               setExpandedAuditKey((prev) => (prev === auditKey ? null : auditKey))
                             }
-                            className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-500 hover:text-gray-900"
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-mute hover:text-ink"
                           >
                             {expanded ? 'Hide details' : 'View details'}
                             {hsFailed && (
                               <span
                                 title="Help Scout notification failed — customer was asked to email."
                                 aria-label="Help Scout notification failed"
-                                className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold text-amber-700"
+                                className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-low-soft text-[10px] font-bold text-low"
                               >
                                 !
                               </span>
@@ -2262,28 +2262,28 @@ export default function ProofDetailPage() {
           })
           return (
             <section className="mt-12">
-              <h2 className="mb-2 text-sm font-semibold uppercase tracking-widest text-gray-400">Approved artwork</h2>
-              <p className="mb-4 text-xs text-gray-500">
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-widest text-ink-dim">Approved artwork</h2>
+              <p className="mb-4 text-xs text-ink-mute">
                 These filenames match the source Illustrator files — do not rename.
               </p>
               {sorted.length === 0 ? (
-                <div className="rounded-2xl bg-white py-10 text-center shadow-sm ring-1 ring-gray-200">
-                  <p className="text-sm text-gray-400">No approved images found.</p>
+                <div className="rounded-2xl bg-surface py-10 text-center shadow-sm ring-1 ring-line">
+                  <p className="text-sm text-ink-dim">No approved images found.</p>
                 </div>
               ) : (
                 <>
-                  <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+                  <div className="overflow-x-auto rounded-2xl bg-surface shadow-sm ring-1 ring-line">
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="border-b border-gray-100">
+                        <tr className="border-b border-line-soft">
                           {!isAllShared && (
-                            <th className="w-36 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">{identityColumnLabel}</th>
+                            <th className="w-36 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">{identityColumnLabel}</th>
                           )}
                           {!isOneSided && (
-                            <th className="w-24 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Side</th>
+                            <th className="w-24 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Side</th>
                           )}
-                          <th className="w-24 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Version</th>
-                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Filename</th>
+                          <th className="w-24 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Version</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Filename</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2291,18 +2291,18 @@ export default function ProofDetailPage() {
                           const nameCol = row.associatedName ?? 'Shared'
                           const sideCol = (row.side ?? 'front') === 'front' ? 'Front' : 'Back'
                           const fileLabel = row.originalFilename ?? (
-                            <span className="italic text-gray-400">— (no filename captured)</span>
+                            <span className="italic text-ink-dim">— (no filename captured)</span>
                           )
                           return (
-                            <tr key={row.imageId} className="border-b border-gray-50 last:border-0">
+                            <tr key={row.imageId} className="border-b border-line-soft last:border-0">
                               {!isAllShared && (
-                                <td className="px-4 py-3 font-medium text-gray-900">{nameCol}</td>
+                                <td className="px-4 py-3 font-medium text-ink">{nameCol}</td>
                               )}
                               {!isOneSided && (
-                                <td className="px-4 py-3 text-gray-500">{sideCol}</td>
+                                <td className="px-4 py-3 text-ink-mute">{sideCol}</td>
                               )}
-                              <td className="px-4 py-3 text-gray-500">v{row.versionNumber}</td>
-                              <td className="px-4 py-3 text-gray-700">{fileLabel}</td>
+                              <td className="px-4 py-3 text-ink-mute">v{row.versionNumber}</td>
+                              <td className="px-4 py-3 text-ink-soft">{fileLabel}</td>
                             </tr>
                           )
                         })}
@@ -2315,15 +2315,15 @@ export default function ProofDetailPage() {
                       onClick={handleDownloadZip}
                       disabled={zipPreparing}
                       className={[
-                        'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
-                        zipPreparing ? 'bg-gray-900/60' : 'bg-gray-900 hover:bg-gray-700',
+                        'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
+                        zipPreparing ? 'bg-ink/60' : 'bg-ink hover:opacity-90',
                         'disabled:cursor-not-allowed disabled:opacity-60',
                       ].join(' ')}
                     >
                       {zipPreparing && (
                         <span
                           aria-hidden="true"
-                          className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                          className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-on-ink/40 border-t-white"
                         />
                       )}
                       {zipPreparing ? 'Preparing ZIP…' : 'Download all as ZIP'}
@@ -2341,13 +2341,13 @@ export default function ProofDetailPage() {
             clicking here would get an RLS error — hiding the control is
             the clean frontend mirror of that. */}
         {role === 'admin' && (
-          <div className="mt-12 flex flex-col gap-3 border-t border-gray-100 pt-6 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-xs text-gray-400">
+          <div className="mt-12 flex flex-col gap-3 border-t border-line-soft pt-6 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-ink-dim">
               Permanently remove this project and all its proof versions. Different from abandon, this cannot be undone.
             </p>
             <button
               onClick={() => { setDeleteError(null); setStatusDialog('delete') }}
-              className="shrink-0 self-start rounded-lg border border-rose-200 px-4 py-2 text-sm font-medium text-rose-600 hover:bg-rose-50 sm:self-auto"
+              className="shrink-0 self-start rounded-lg border border-out px-4 py-2 text-sm font-medium text-out hover:bg-out-soft sm:self-auto"
             >
               Delete project
             </button>
@@ -2402,7 +2402,7 @@ export default function ProofDetailPage() {
             open
             onClose={() => setShowReplyModal(false)}
             ariaLabel="Send customer reply"
-            panelClassName="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-y-auto rounded-2xl bg-white p-6 shadow-xl"
+            panelClassName="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-y-auto rounded-2xl bg-surface p-6 shadow-xl"
           >
                 <MessageSendPanel
                   proofId={proof.id}
@@ -2446,7 +2446,7 @@ export default function ProofDetailPage() {
           <ConfirmDialog
             message={`A reply was sent ${lastSentIso ? relativeTime(lastSentIso) : 'previously'}. Send another?`}
             confirmLabel="Send another"
-            confirmClass="bg-gray-900 hover:bg-gray-700 text-white"
+            confirmClass="bg-ink hover:opacity-90 text-on-ink"
             working={false}
             onConfirm={() => {
               setShowResendConfirm(false)
@@ -2496,7 +2496,7 @@ export default function ProofDetailPage() {
         <ConfirmDialog
           message="Abandon this project? This will lock the project. No new proof versions can be added, and the customer-facing page will show a closed state. You can reopen the project later if needed."
           confirmLabel="Abandon project"
-          confirmClass="bg-slate-700 hover:bg-slate-800 text-white"
+          confirmClass="bg-ink hover:opacity-90 text-on-ink"
           working={statusWorking}
           onConfirm={guardStatusAction(handleAbandon)}
           onCancel={() => setStatusDialog(null)}
@@ -2508,7 +2508,7 @@ export default function ProofDetailPage() {
         <ConfirmDialog
           message={`Permanently delete this project and all ${versions.length} proof version${versions.length === 1 ? '' : 's'}? This cannot be undone.`}
           confirmLabel="Delete project"
-          confirmClass="bg-rose-600 hover:bg-rose-700 text-white"
+          confirmClass="bg-out hover:opacity-90 text-on-ink"
           working={statusWorking}
           errorMsg={deleteError}
           onConfirm={guardStatusAction(handleDelete)}
@@ -2525,7 +2525,7 @@ export default function ProofDetailPage() {
               : 'Reopen this project? It will go back to in progress and you\'ll be able to add new proof versions.'
           }
           confirmLabel="Reopen"
-          confirmClass="bg-gray-900 hover:bg-gray-700 text-white"
+          confirmClass="bg-ink hover:opacity-90 text-on-ink"
           working={statusWorking}
           onConfirm={guardStatusAction(handleReopen)}
           onCancel={() => setStatusDialog(null)}
@@ -2534,7 +2534,7 @@ export default function ProofDetailPage() {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-gray-900 px-5 py-2.5 text-sm font-medium text-white shadow-lg">
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-on-ink shadow-lg">
           {toast}
         </div>
       )}
@@ -2561,16 +2561,16 @@ function AuditPanel({
     ? event.created_at
     : `${ts.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} at ${ts.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}`
   return (
-    <div className="mt-3 rounded-lg bg-gray-50 px-3 py-3 text-xs ring-1 ring-gray-200">
-      <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1.5 text-gray-600">
-        <dt className="font-semibold text-gray-700">Actor</dt>
-        <dd className="text-gray-900">{event.actor_name}</dd>
-        <dt className="font-semibold text-gray-700">Recorded</dt>
-        <dd className="text-gray-900">{tsLabel}</dd>
+    <div className="mt-3 rounded-lg bg-canvas px-3 py-3 text-xs ring-1 ring-line">
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1.5 text-ink-soft">
+        <dt className="font-semibold text-ink-soft">Actor</dt>
+        <dd className="text-ink">{event.actor_name}</dd>
+        <dt className="font-semibold text-ink-soft">Recorded</dt>
+        <dd className="text-ink">{tsLabel}</dd>
         {event.comment && (
           <>
-            <dt className="font-semibold text-gray-700">Comment</dt>
-            <dd className="whitespace-pre-line text-gray-900">{event.comment}</dd>
+            <dt className="font-semibold text-ink-soft">Comment</dt>
+            <dd className="whitespace-pre-line text-ink">{event.comment}</dd>
           </>
         )}
         {/* Phase 3 (000196): which card face the customer had open
@@ -2580,50 +2580,50 @@ function AuditPanel({
             view closed, simply omit the row. */}
         {event.side && (
           <>
-            <dt className="font-semibold text-gray-700">Side</dt>
-            <dd className="text-gray-900">{event.side === 'front' ? 'Front' : 'Back'}</dd>
+            <dt className="font-semibold text-ink-soft">Side</dt>
+            <dd className="text-ink">{event.side === 'front' ? 'Front' : 'Back'}</dd>
           </>
         )}
         {event.event_type === 'designer_override_approve' ? (
           <>
-            <dt className="font-semibold text-gray-700">Notification</dt>
-            <dd className="text-gray-500">
+            <dt className="font-semibold text-ink-soft">Notification</dt>
+            <dd className="text-ink-mute">
               <span className="text-[11px]">n/a — designer override (no customer notification)</span>
             </dd>
           </>
         ) : (
           <>
-            <dt className="font-semibold text-gray-700">Help Scout</dt>
+            <dt className="font-semibold text-ink-soft">Help Scout</dt>
             <dd>
               {event.helpscout_thread_id ? (
-                <span className="text-gray-900">Thread {event.helpscout_thread_id}</span>
+                <span className="text-ink">Thread {event.helpscout_thread_id}</span>
               ) : (
-                <span className="inline-flex items-center gap-1.5 text-amber-700">
-                  <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold">!</span>
+                <span className="inline-flex items-center gap-1.5 text-low">
+                  <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-low-soft text-[10px] font-bold">!</span>
                   Notification failed — customer was asked to email
                 </span>
               )}
               {!hsFailed && event.helpscout_thread_id && (
-                <span className="ml-2 text-[11px] text-gray-400">(thread id, no public link)</span>
+                <span className="ml-2 text-[11px] text-ink-dim">(thread id, no public link)</span>
               )}
             </dd>
           </>
         )}
       </dl>
-      <div className="mt-2 border-t border-gray-200 pt-2">
+      <div className="mt-2 border-t border-line pt-2">
         <button
           type="button"
           onClick={() => setShowAudit((v) => !v)}
-          className="text-[11px] font-medium uppercase tracking-wider text-gray-400 hover:text-gray-700"
+          className="text-[11px] font-medium uppercase tracking-wider text-ink-dim hover:text-ink-soft"
         >
           {showAudit ? 'Hide audit (IP / UA)' : 'View audit (IP / UA)'}
         </button>
         {showAudit && (
-          <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1.5 text-gray-500">
+          <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1.5 text-ink-mute">
             <dt>IP</dt>
-            <dd className="font-mono text-[11px] text-gray-700">{event.from_ip ?? '—'}</dd>
+            <dd className="font-mono text-[11px] text-ink-soft">{event.from_ip ?? '—'}</dd>
             <dt>User-agent</dt>
-            <dd className="break-all font-mono text-[11px] text-gray-700">{event.from_ua ?? '—'}</dd>
+            <dd className="break-all font-mono text-[11px] text-ink-soft">{event.from_ua ?? '—'}</dd>
           </dl>
         )}
       </div>
@@ -2649,7 +2649,7 @@ function VcardSnapshotPanel({ snapshot }: { snapshot: QrSnapshot }) {
   if (entries.length === 0) return null
   const showHeading = entries.length > 1
   return (
-    <div className="mt-3 rounded-lg bg-gray-50 px-3 py-3 text-xs ring-1 ring-gray-200">
+    <div className="mt-3 rounded-lg bg-canvas px-3 py-3 text-xs ring-1 ring-line">
       <div className="space-y-3">
         {entries.map(([slug, entry]) => (
           <VcardSnapshotEntryView
@@ -2687,19 +2687,19 @@ function VcardSnapshotEntryView({
     return (
       <div>
         {showHeading && (
-          <p className="mb-1 text-[11px] font-semibold text-gray-700">
+          <p className="mb-1 text-[11px] font-semibold text-ink-soft">
             qcrd.uk/{slug}
           </p>
         )}
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-gray-600">
-          <dt className="font-semibold text-gray-700">Type</dt>
-          <dd className="text-gray-900">URL redirect</dd>
-          <dt className="font-semibold text-gray-700">Redirects to</dt>
-          <dd className="break-all font-mono text-gray-900">
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-ink-soft">
+          <dt className="font-semibold text-ink-soft">Type</dt>
+          <dd className="text-ink">URL redirect</dd>
+          <dt className="font-semibold text-ink-soft">Redirects to</dt>
+          <dd className="break-all font-mono text-ink">
             {entry.external_url ?? '(no destination recorded)'}
           </dd>
-          <dt className="font-semibold text-gray-700">Captured</dt>
-          <dd className="text-gray-500">{capturedDate}</dd>
+          <dt className="font-semibold text-ink-soft">Captured</dt>
+          <dd className="text-ink-mute">{capturedDate}</dd>
         </dl>
       </div>
     )
@@ -2726,37 +2726,37 @@ function VcardSnapshotEntryView({
   return (
     <div>
       {showHeading && (
-        <p className="mb-1 text-[11px] font-semibold text-gray-700">
+        <p className="mb-1 text-[11px] font-semibold text-ink-soft">
           qcrd.uk/{slug}
         </p>
       )}
-      <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-gray-600">
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-ink-soft">
         {formattedName && (
           <>
-            <dt className="font-semibold text-gray-700">Name</dt>
-            <dd className="text-gray-900">{formattedName}</dd>
+            <dt className="font-semibold text-ink-soft">Name</dt>
+            <dd className="text-ink">{formattedName}</dd>
           </>
         )}
         {entry.nickname && entry.nickname !== formattedName && (
           <>
-            <dt className="font-semibold text-gray-700">Nickname</dt>
-            <dd className="text-gray-900">{entry.nickname}</dd>
+            <dt className="font-semibold text-ink-soft">Nickname</dt>
+            <dd className="text-ink">{entry.nickname}</dd>
           </>
         )}
         {titleLine && (
           <>
-            <dt className="font-semibold text-gray-700">Role</dt>
-            <dd className="text-gray-900">{titleLine}</dd>
+            <dt className="font-semibold text-ink-soft">Role</dt>
+            <dd className="text-ink">{titleLine}</dd>
           </>
         )}
         {entry.primary_phone && (
           <>
-            <dt className="font-semibold text-gray-700">Phone</dt>
-            <dd className="text-gray-900">
+            <dt className="font-semibold text-ink-soft">Phone</dt>
+            <dd className="text-ink">
               <div className="font-mono">
                 {entry.primary_phone}
                 {entry.phone_label && (
-                  <span className="ml-2 text-[10px] uppercase tracking-wider text-gray-500">
+                  <span className="ml-2 text-[10px] uppercase tracking-wider text-ink-mute">
                     {entry.phone_label}
                   </span>
                 )}
@@ -2765,7 +2765,7 @@ function VcardSnapshotEntryView({
                 <div key={`${p.value}-${p.sort_order}`} className="font-mono">
                   {p.value}
                   {p.label && (
-                    <span className="ml-2 text-[10px] uppercase tracking-wider text-gray-500">
+                    <span className="ml-2 text-[10px] uppercase tracking-wider text-ink-mute">
                       {p.label}
                     </span>
                   )}
@@ -2776,12 +2776,12 @@ function VcardSnapshotEntryView({
         )}
         {entry.primary_email && (
           <>
-            <dt className="font-semibold text-gray-700">Email</dt>
-            <dd className="text-gray-900">
+            <dt className="font-semibold text-ink-soft">Email</dt>
+            <dd className="text-ink">
               <div className="font-mono">
                 {entry.primary_email}
                 {entry.email_label && (
-                  <span className="ml-2 text-[10px] uppercase tracking-wider text-gray-500">
+                  <span className="ml-2 text-[10px] uppercase tracking-wider text-ink-mute">
                     {entry.email_label}
                   </span>
                 )}
@@ -2790,7 +2790,7 @@ function VcardSnapshotEntryView({
                 <div key={`${m.value}-${m.sort_order}`} className="font-mono">
                   {m.value}
                   {m.label && (
-                    <span className="ml-2 text-[10px] uppercase tracking-wider text-gray-500">
+                    <span className="ml-2 text-[10px] uppercase tracking-wider text-ink-mute">
                       {m.label}
                     </span>
                   )}
@@ -2801,26 +2801,26 @@ function VcardSnapshotEntryView({
         )}
         {addressLine && (
           <>
-            <dt className="font-semibold text-gray-700">Address</dt>
-            <dd className="text-gray-900">{addressLine}</dd>
+            <dt className="font-semibold text-ink-soft">Address</dt>
+            <dd className="text-ink">{addressLine}</dd>
           </>
         )}
         {entry.birthday && (
           <>
-            <dt className="font-semibold text-gray-700">Birthday</dt>
-            <dd className="font-mono text-gray-900">{entry.birthday}</dd>
+            <dt className="font-semibold text-ink-soft">Birthday</dt>
+            <dd className="font-mono text-ink">{entry.birthday}</dd>
           </>
         )}
         {entry.bio && (
           <>
-            <dt className="font-semibold text-gray-700">Bio</dt>
-            <dd className="whitespace-pre-line text-gray-900">{entry.bio}</dd>
+            <dt className="font-semibold text-ink-soft">Bio</dt>
+            <dd className="whitespace-pre-line text-ink">{entry.bio}</dd>
           </>
         )}
         {sortedLinks.length > 0 && (
           <>
-            <dt className="font-semibold text-gray-700">Links</dt>
-            <dd className="text-gray-900">
+            <dt className="font-semibold text-ink-soft">Links</dt>
+            <dd className="text-ink">
               {sortedLinks.map((l) => (
                 <div key={l.url + l.sort_order} className="break-all font-mono">
                   {l.label ? `${l.label} — ` : ''}
@@ -2830,8 +2830,8 @@ function VcardSnapshotEntryView({
             </dd>
           </>
         )}
-        <dt className="font-semibold text-gray-700">Captured</dt>
-        <dd className="text-gray-500">{capturedDate}</dd>
+        <dt className="font-semibold text-ink-soft">Captured</dt>
+        <dd className="text-ink-mute">{capturedDate}</dd>
       </dl>
     </div>
   )
@@ -2871,17 +2871,17 @@ function ConfirmDialog({
       preventClose={working}
       ariaLabel="Confirm action"
       ariaDescribedBy={messageId}
-      panelClassName="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl"
+      panelClassName="w-full max-w-sm rounded-2xl bg-surface p-6 shadow-xl"
     >
-      <p id={messageId} className="text-sm text-gray-700">{message}</p>
+      <p id={messageId} className="text-sm text-ink-soft">{message}</p>
       {errorMsg && (
-        <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>
+        <p className="mt-3 rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{errorMsg}</p>
       )}
       <div className="mt-5 flex justify-end gap-2">
         <button
           onClick={onCancel}
           disabled={working}
-          className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+          className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
         >
           Cancel
         </button>

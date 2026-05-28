@@ -4380,7 +4380,7 @@ export default function NewVersionPage() {
                     key={String(opt.value)}
                     className={[
                       'cursor-pointer rounded border px-4 py-3 transition-colors',
-                      'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
+                      'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
                       selected
                         ? 'border-ink bg-ink text-on-ink'
                         : 'border-line bg-surface text-ink-soft hover:border-line',
@@ -4466,7 +4466,7 @@ export default function NewVersionPage() {
                         key={String(opt.value)}
                         className={[
                           'cursor-pointer rounded border px-4 py-3 transition-colors',
-                          'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
+                          'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
                           selected
                             ? 'border-ink bg-ink text-on-ink'
                             : 'border-line bg-surface text-ink-soft hover:border-line',
@@ -4885,7 +4885,7 @@ export default function NewVersionPage() {
                         key={opt}
                         className={[
                           'cursor-pointer rounded px-5 py-2 text-sm font-semibold transition-colors',
-                          'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
+                          'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
                           selected ? '' : 'text-ink-mute hover:text-ink',
                         ].join(' ')}
                         style={selected ? selectedChipStyle(carry.cardType.isCarried, carry.cardType.isEdited) : undefined}
@@ -4979,7 +4979,7 @@ export default function NewVersionPage() {
                           key={opt}
                           className={[
                             'cursor-pointer rounded px-5 py-2 text-sm font-semibold transition-colors',
-                            'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
+                            'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
                             selected ? '' : 'text-ink-mute hover:text-ink',
                           ].join(' ')}
                           style={selected ? selectedChipStyle(carry.sidedness.isCarried, carry.sidedness.isEdited) : undefined}

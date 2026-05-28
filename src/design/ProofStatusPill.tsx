@@ -15,8 +15,8 @@ interface StatusEntry {
 // Hierarchy preserved from the production styling in ProofDetailPage:
 //   in_progress was amber → now allocated-blue ("In review")
 //   approved   stays green
-//   dormant    quietest grey (matches bg-gray-100 / text-gray-500)
-//   abandoned  notch stronger grey (matches bg-slate-200 / text-slate-700)
+//   dormant    quietest grey (matches bg-canvas / text-ink-mute)
+//   abandoned  notch stronger grey (matches bg-line / text-ink-soft)
 // Both dormant and abandoned remain muted; abandoned is a step
 // darker, mirroring how the live pill differentiates them.
 const STATUS_MAP: Record<ProofStatus, StatusEntry> = {
