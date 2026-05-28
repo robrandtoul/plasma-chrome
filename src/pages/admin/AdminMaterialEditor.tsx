@@ -720,7 +720,7 @@ export default function AdminMaterialEditor() {
                           {/* Quantity + sequential tier letter (A = smallest). */}
                           <td className="px-5 py-3 whitespace-nowrap">
                             <div className="font-mono text-[14px] font-medium text-ink tabular-nums">
-                              {String(qty).padStart(4, '0')}
+                              {qty.toLocaleString()}
                             </div>
                             <div className="eyebrow text-ink-dim">tier {String.fromCharCode(65 + ri)}</div>
                           </td>
