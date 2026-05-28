@@ -4020,11 +4020,11 @@ export default function NewVersionPage() {
   }
 
   return (
-    <div className="min-h-dvh bg-gray-50">
+    <div className="min-h-dvh bg-canvas">
       {toast?.kind === 'validation' && (
         <div
           role="status"
-          className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full bg-rose-50 px-5 py-2.5 text-sm font-medium text-rose-700 shadow-lg ring-1 ring-rose-200"
+          className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full bg-out-soft px-5 py-2.5 text-sm font-medium text-out shadow-lg ring-1 ring-out"
         >
           {toast.text}
         </div>
@@ -4032,13 +4032,13 @@ export default function NewVersionPage() {
       {toast?.kind === 'undo' && (
         <div
           role="status"
-          className="fixed left-1/2 top-6 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full bg-slate-700 px-5 py-2.5 text-sm font-medium text-white shadow-lg"
+          className="fixed left-1/2 top-6 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-on-ink shadow-lg"
         >
           <span>{toast.text}</span>
           <button
             type="button"
             onClick={() => toast.onUndo()}
-            className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wider hover:bg-white/25"
+            className="rounded-full bg-on-ink/15 px-3 py-1 text-xs font-semibold uppercase tracking-wider hover:bg-on-ink/25"
           >
             Undo
           </button>
@@ -4060,7 +4060,7 @@ export default function NewVersionPage() {
             pass should inline this once and remove the per-page
             insertions. */}
         <div className="mb-6 flex items-center justify-between">
-          <Link to={`/proofs/${proofId}`} className="text-sm text-gray-400 hover:text-gray-700">← Back to project</Link>
+          <Link to={`/proofs/${proofId}`} className="text-sm text-ink-dim hover:text-ink-soft">← Back to project</Link>
           <QuoteLink variant="inline" />
         </div>
 
@@ -4068,11 +4068,11 @@ export default function NewVersionPage() {
             action bar (see end of return) so they're reachable
             from any scroll position on the long-form layout. */}
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">
+          <h1 className="text-2xl font-bold text-ink">
             {savedVersion ? `Version v${savedVersion.number} saved` : 'Add version'}
           </h1>
-          {proofName && <p className="mt-1 text-gray-500">{proofName}</p>}
-          {proofCompany && <p className="text-sm text-gray-400">{proofCompany}</p>}
+          {proofName && <p className="mt-1 text-ink-mute">{proofName}</p>}
+          {proofCompany && <p className="text-sm text-ink-dim">{proofCompany}</p>}
         </div>
 
         {savedVersion && !previewApproved && (
@@ -4286,20 +4286,20 @@ export default function NewVersionPage() {
             }
 
             return (
-              <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
-                <h3 className="mb-3 text-sm font-semibold uppercase tracking-widest text-gray-400">
+              <section className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
+                <h3 className="mb-3 text-sm font-semibold uppercase tracking-widest text-ink-dim">
                   Carried from v{inheritedVersionNumber}
                 </h3>
                 <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5">
                   {rows.map(({ label, value }) => (
                     <Fragment key={label}>
-                      <dt className="text-right text-sm font-medium text-gray-500">{label}:</dt>
-                      <dd className="text-sm text-gray-900">{value}</dd>
+                      <dt className="text-right text-sm font-medium text-ink-mute">{label}:</dt>
+                      <dd className="text-sm text-ink">{value}</dd>
                     </Fragment>
                   ))}
                 </dl>
                 {inheritedMaterialArchived && (
-                  <p className="mt-3 text-sm text-amber-700">
+                  <p className="mt-3 text-sm text-low">
                     The material has been archived. Edit details to pick a current one, or keep this for continuity.
                   </p>
                 )}
@@ -4313,7 +4313,7 @@ export default function NewVersionPage() {
                   const items = missingFieldItems(validations, optionLabelSingular)
                   if (items.length === 0) return null
                   return (
-                    <ul className="mt-3 list-disc space-y-1 pl-5 text-sm font-medium text-rose-600">
+                    <ul className="mt-3 list-disc space-y-1 pl-5 text-sm font-medium text-out">
                       {items.map((item) => (
                         <li key={item}>{item}</li>
                       ))}
@@ -4325,7 +4325,7 @@ export default function NewVersionPage() {
                     <button
                       type="button"
                       onClick={() => setFormExpanded(true)}
-                      className="text-sm text-gray-600 underline underline-offset-4 hover:text-gray-900"
+                      className="text-sm text-ink-soft underline underline-offset-4 hover:text-ink"
                     >
                       Edit details
                     </button>
@@ -4351,10 +4351,10 @@ export default function NewVersionPage() {
               editor below and hides the Layout sub-section + image
               bucket. The two modes are mutually exclusive — variant
               rounds are single-bucket-only by design. */}
-          <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
+          <section className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
             <div className="mb-5">
-              <h3 className="text-base font-semibold text-gray-900">Round mode</h3>
-              <p className="mt-0.5 text-xs text-gray-500">
+              <h3 className="text-base font-semibold text-ink">Round mode</h3>
+              <p className="mt-0.5 text-xs text-ink-mute">
                 Standard proof or a variant round (parallel directions for the customer to choose between).
               </p>
             </div>
@@ -4372,8 +4372,8 @@ export default function NewVersionPage() {
                       'cursor-pointer rounded-xl border px-4 py-3 transition-colors',
                       'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
                       selected
-                        ? 'border-gray-900 bg-gray-900 text-white'
-                        : 'border-gray-200 bg-white text-gray-700 hover:border-gray-400',
+                        ? 'border-ink bg-ink text-on-ink'
+                        : 'border-line bg-surface text-ink-soft hover:border-line',
                     ].join(' ')}
                   >
                     <input
@@ -4419,7 +4419,7 @@ export default function NewVersionPage() {
                     <div
                       className={[
                         'mt-1 text-xs',
-                        selected ? 'text-gray-200' : 'text-gray-500',
+                        selected ? 'text-ink-dim' : 'text-ink-mute',
                       ].join(' ')}
                     >
                       {opt.sub}
@@ -4438,10 +4438,10 @@ export default function NewVersionPage() {
                 sections. State preserved across mode flips. */}
             {isVariantRound && (
               <div className="mt-5">
-                <p className="mb-1 text-sm font-medium text-gray-700">
+                <p className="mb-1 text-sm font-medium text-ink-soft">
                   Pricing mode
                 </p>
-                <p className="mb-2 text-xs text-gray-500">
+                <p className="mb-2 text-xs text-ink-mute">
                   Do all directions share one price, or are they priced individually?
                 </p>
                 <fieldset className="grid gap-3 sm:grid-cols-2">
@@ -4458,8 +4458,8 @@ export default function NewVersionPage() {
                           'cursor-pointer rounded-xl border px-4 py-3 transition-colors',
                           'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
                           selected
-                            ? 'border-gray-900 bg-gray-900 text-white'
-                            : 'border-gray-200 bg-white text-gray-700 hover:border-gray-400',
+                            ? 'border-ink bg-ink text-on-ink'
+                            : 'border-line bg-surface text-ink-soft hover:border-line',
                         ].join(' ')}
                       >
                         <input
@@ -4473,7 +4473,7 @@ export default function NewVersionPage() {
                         <div
                           className={[
                             'mt-1 text-xs',
-                            selected ? 'text-gray-200' : 'text-gray-500',
+                            selected ? 'text-ink-dim' : 'text-ink-mute',
                           ].join(' ')}
                         >
                           {opt.sub}
@@ -4498,14 +4498,14 @@ export default function NewVersionPage() {
               out-of-band, so there's no version-level currency
               decision to make. */}
           {!isPerDirectionRound && (
-          <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
+          <section className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
             <div className="mb-7">
-              <h3 className="text-base font-semibold text-gray-900">Commercial</h3>
-              <p className="mt-0.5 text-xs text-gray-500">Currency and how customers see pricing.</p>
+              <h3 className="text-base font-semibold text-ink">Commercial</h3>
+              <p className="mt-0.5 text-xs text-ink-mute">Currency and how customers see pricing.</p>
             </div>
 
             <div className="mb-8">
-              <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+              <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-ink-soft">
                 <span>Pricing display</span>
                 {carry.pricingDisplay.isCarried && inheritedVersionNumber != null && (
                   <CarriedPill edited={carry.pricingDisplay.isEdited} versionNumber={inheritedVersionNumber} />
@@ -4527,7 +4527,7 @@ export default function NewVersionPage() {
                 Commercial card. */}
             {!isCustomQuote && (
               <div ref={currencyRef}>
-                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-ink-soft">
                   <span>Currency</span>
                   {carry.currency.isCarried && inheritedVersionNumber != null && (
                     <CarriedPill edited={carry.currency.isEdited} versionNumber={inheritedVersionNumber} />
@@ -4541,7 +4541,7 @@ export default function NewVersionPage() {
                     edited={carry.currency.isEdited}
                   />
                   {shouldHighlight('currency') && (
-                    <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>
+                    <p className="mt-1.5 text-xs font-medium text-out">Required</p>
                   )}
                 </div>
               </div>
@@ -4559,14 +4559,14 @@ export default function NewVersionPage() {
               decided out-of-band. The variant editor below carries
               the design info for each direction. */}
           {!isPerDirectionRound && (
-          <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
+          <section className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
             <div className="mb-7">
-              <h3 className="text-base font-semibold text-gray-900">Design</h3>
-              <p className="mt-0.5 text-xs text-gray-500">Material and finish.</p>
+              <h3 className="text-base font-semibold text-ink">Design</h3>
+              <p className="mt-0.5 text-xs text-ink-mute">Material and finish.</p>
             </div>
 
             <div className="mb-8">
-              <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+              <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-ink-soft">
                 <span>Material</span>
                 {carry.material.isCarried && inheritedVersionNumber != null && !inheritedMaterialArchived && (
                   <CarriedPill edited={carry.material.isEdited} versionNumber={inheritedVersionNumber} />
@@ -4577,14 +4577,14 @@ export default function NewVersionPage() {
                   ref={materialRef}
                   value={selectedMaterialId}
                   onChange={(e) => handleMaterialChange(e.target.value)}
-                  className={[selectClass, shouldHighlight('material') ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
+                  className={[selectClass, shouldHighlight('material') ? 'border-out focus:border-out focus:ring-out' : ''].join(' ')}
                 >
                   <option value="">Select a material…</option>
                   {materials.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
                 </select>
-                {shouldHighlight('material') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
+                {shouldHighlight('material') && <p className="mt-1.5 text-xs font-medium text-out">Required</p>}
                 {inheritedMaterialArchived && inheritedVersionNumber != null && (
-                  <p className="mt-1.5 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+                  <p className="mt-1.5 rounded-md bg-low-soft px-3 py-2 text-xs text-low ring-1 ring-low">
                     The material used in v{inheritedVersionNumber} has been archived. Pick a current material or keep this one.
                   </p>
                 )}
@@ -4593,7 +4593,7 @@ export default function NewVersionPage() {
 
             {variantRequired && variants.length > 0 && variantType !== 'default' && (
               <div ref={variantRef} className="mb-8">
-                <label className="mb-2.5 flex flex-wrap items-center gap-2 text-sm font-medium text-gray-700">
+                <label className="mb-2.5 flex flex-wrap items-center gap-2 text-sm font-medium text-ink-soft">
                   <span>{variantLabel(variantType)}</span>
                   {carry.variants.isCarried && inheritedVersionNumber != null && (
                     <CarriedPill edited={carry.variants.isEdited} versionNumber={inheritedVersionNumber} />
@@ -4604,7 +4604,7 @@ export default function NewVersionPage() {
                   {isMultiVariant ? (
                     <div className={[
                       'flex flex-wrap gap-2 rounded-lg',
-                      shouldHighlight('variant') ? 'p-2 ring-1 ring-rose-300' : '',
+                      shouldHighlight('variant') ? 'p-2 ring-1 ring-out' : '',
                     ].join(' ')}>
                       {variants.map((v) => {
                         const checked = selectedVariantIds.includes(v.id)
@@ -4614,7 +4614,7 @@ export default function NewVersionPage() {
                               'rounded-full px-5 py-2 text-sm font-medium transition-colors',
                               checked
                                 ? ''
-                                : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
+                                : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
                             ].join(' ')}
                             style={checked ? selectedChipStyle(carry.variants.isEdited) : undefined}>
                             {v.display_name}
@@ -4628,7 +4628,7 @@ export default function NewVersionPage() {
                       onChange={(e) => {
                         setSelectedVariantIds(e.target.value ? [e.target.value] : [])
                       }}
-                      className={[selectClass, shouldHighlight('variant') ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
+                      className={[selectClass, shouldHighlight('variant') ? 'border-out focus:border-out focus:ring-out' : ''].join(' ')}
                     >
                       <option value="">Select…</option>
                       {variants.map((v) => <option key={v.id} value={v.id}>{v.display_name}</option>)}
@@ -4642,11 +4642,11 @@ export default function NewVersionPage() {
                       Only renders for multi-variant materials —
                       single-variant select shows nothing extra. */}
                   {isMultiVariant && (
-                    <p className="mt-1.5 text-xs text-gray-500">
+                    <p className="mt-1.5 text-xs text-ink-mute">
                       Customer sees a column for each {variantLabel(variantType).toLowerCase()} you tick.
                     </p>
                   )}
-                  {shouldHighlight('variant') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
+                  {shouldHighlight('variant') && <p className="mt-1.5 text-xs font-medium text-out">Required</p>}
                   {/* Auto-custom-quote notice. Surfaces when the
                       current variant selection has no price_tiers
                       for the active currency — happens for 5+ ink
@@ -4657,7 +4657,7 @@ export default function NewVersionPage() {
                       so a user who explicitly chose Custom quote
                       doesn't see a redundant notice. */}
                   {autoCustomQuote && (
-                    <p className="mt-1.5 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+                    <p className="mt-1.5 rounded-md bg-low-soft px-3 py-2 text-xs text-low ring-1 ring-low">
                       This ink count has no standard pricing, saving as a custom quote. Price and quantity will be agreed separately.
                     </p>
                   )}
@@ -4669,14 +4669,14 @@ export default function NewVersionPage() {
                 (finishes on metals, species on wood, etc.) */}
             {hasOptions && (
               <div ref={optionsRef} className="mb-8">
-                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-ink-soft">
                   <span>{optionLabelPlural}</span>
                   {carry.options.isCarried && inheritedVersionNumber != null && (
                     <CarriedPill edited={carry.options.isEdited} versionNumber={inheritedVersionNumber} />
                   )}
                 </label>
                 <div
-                  className={shouldHighlight('options') ? 'rounded-xl p-2 ring-1 ring-rose-300' : ''}
+                  className={shouldHighlight('options') ? 'rounded-xl p-2 ring-1 ring-out' : ''}
                   style={carriedFieldStyle(carry.options.isCarried, carry.options.isEdited)}
                 >
                   <div className="flex flex-wrap gap-2">
@@ -4691,7 +4691,7 @@ export default function NewVersionPage() {
                             'rounded-full px-5 py-2 text-sm font-medium transition-colors',
                             selected
                               ? ''
-                              : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
+                              : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
                           ].join(' ')}
                           style={selected ? selectedChipStyle(carry.options.isEdited) : undefined}
                         >
@@ -4700,11 +4700,11 @@ export default function NewVersionPage() {
                       )
                     })}
                   </div>
-                  <p className="mt-1.5 text-xs text-gray-500">
+                  <p className="mt-1.5 text-xs text-ink-mute">
                     Each {optionLabelSingular.toLowerCase()} becomes a tab on the customer's view, with its own proof images and pricing.
                   </p>
                   {shouldHighlight('options') && (
-                    <p className="mt-1.5 text-xs font-medium text-rose-500">
+                    <p className="mt-1.5 text-xs font-medium text-out">
                       {v1Carry?.sourceIsVariantRound
                         ? `Pick the ${optionLabelSingular.toLowerCase()} this version is for.`
                         : `Pick at least one ${optionLabelSingular.toLowerCase()}.`}
@@ -4725,11 +4725,11 @@ export default function NewVersionPage() {
                 so the designer reads it as one decision rather
                 than three independent fields. */}
             {requiresLayerColours && (
-              <div className="mb-8 rounded-xl bg-gray-50 p-4 ring-1 ring-gray-100">
-                <label className="mb-1 flex items-center gap-2 text-sm font-medium text-gray-700">
+              <div className="mb-8 rounded-xl bg-canvas p-4 ring-1 ring-line-soft">
+                <label className="mb-1 flex items-center gap-2 text-sm font-medium text-ink-soft">
                   <span>Paper layers</span>
                 </label>
-                <p className="mb-3 text-xs text-gray-500">
+                <p className="mb-3 text-xs text-ink-mute">
                   The three Colorplan layers visible at the card's edge. Pick a colour for each.
                 </p>
                 <div className="space-y-3">
@@ -4769,7 +4769,7 @@ export default function NewVersionPage() {
 
             {requiresInkNames ? (
               <div ref={inkNamesRef} className="mb-8">
-                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-ink-soft">
                   <span>Ink names</span>
                   {carry.inkNames.isCarried && inheritedVersionNumber != null && (
                     <CarriedPill edited={carry.inkNames.isEdited} versionNumber={inheritedVersionNumber} />
@@ -4777,14 +4777,14 @@ export default function NewVersionPage() {
                 </label>
                 <div style={carriedFieldStyle(carry.inkNames.isCarried, carry.inkNames.isEdited)}>
                   {inkCount === 0 ? (
-                    <p className="text-sm text-gray-400">Select a variant to enter ink names.</p>
+                    <p className="text-sm text-ink-dim">Select a variant to enter ink names.</p>
                   ) : (
                     <div className="space-y-2">
                       {Array.from({ length: inkCount }).map((_, i) => {
                         const fieldInvalid = submitAttempted && !inkNameValidities[i]
                         return (
                           <div key={i}>
-                            <label className="mb-0.5 block text-xs font-medium text-gray-500">Ink {i + 1}</label>
+                            <label className="mb-0.5 block text-xs font-medium text-ink-mute">Ink {i + 1}</label>
                             <input
                               type="text"
                               placeholder="e.g. Pantone 185 C"
@@ -4796,10 +4796,10 @@ export default function NewVersionPage() {
                               }}
                               className={[
                                 inputClass,
-                                fieldInvalid ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : '',
+                                fieldInvalid ? 'border-out focus:border-out focus:ring-out' : '',
                               ].join(' ')}
                             />
-                            {fieldInvalid && <p className="mt-1 text-xs font-medium text-rose-500">Required</p>}
+                            {fieldInvalid && <p className="mt-1 text-xs font-medium text-out">Required</p>}
                           </div>
                         )
                       })}
@@ -4809,7 +4809,7 @@ export default function NewVersionPage() {
               </div>
             ) : (
               <div className="mb-8">
-                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-ink-soft">
                   <span>Ink names</span>
                   {carry.inkNames.isCarried && inheritedVersionNumber != null && (
                     <CarriedPill edited={carry.inkNames.isEdited} versionNumber={inheritedVersionNumber} />
@@ -4818,7 +4818,7 @@ export default function NewVersionPage() {
                 <div style={carriedFieldStyle(carry.inkNames.isCarried, carry.inkNames.isEdited)}>
                   <input type="text" placeholder="e.g. Pantone 185 C, Metallic Gold" value={inkNamesText}
                     onChange={(e) => setInkNamesText(e.target.value)} className={inputClass} />
-                  <p className="mt-1.5 text-xs text-gray-500">Optional. Comma-separated.</p>
+                  <p className="mt-1.5 text-xs text-ink-mute">Optional. Comma-separated.</p>
                 </div>
               </div>
             )}
@@ -4846,8 +4846,8 @@ export default function NewVersionPage() {
                 their layout config. */}
             {!isVariantRound && (<>
             <div className="mt-10 mb-7">
-              <h3 className="text-base font-semibold text-gray-900">Layout</h3>
-              <p className="mt-0.5 text-xs text-gray-500">Names, sides, and how the card splits.</p>
+              <h3 className="text-base font-semibold text-ink">Layout</h3>
+              <p className="mt-0.5 text-xs text-ink-mute">Names, sides, and how the card splits.</p>
             </div>
 
             {/* Card type — segmented pill mirroring Sidedness. v1
@@ -4858,14 +4858,14 @@ export default function NewVersionPage() {
                 the same approval-invalidation confirm as the
                 other shape flips before applying. */}
             <div className="mb-8">
-              <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+              <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-ink-soft">
                 <span>Card type</span>
                 {carry.cardType.isCarried && inheritedVersionNumber != null && (
                   <CarriedPill edited={carry.cardType.isEdited} versionNumber={inheritedVersionNumber} />
                 )}
               </label>
               <div style={carriedFieldStyle(carry.cardType.isCarried, carry.cardType.isEdited)}>
-                <fieldset className="inline-flex rounded-xl border border-gray-200 bg-white p-0.5">
+                <fieldset className="inline-flex rounded-xl border border-line bg-surface p-0.5">
                   <legend className="sr-only">Card type</legend>
                   {(['business', 'membership'] as const).map((opt) => {
                     const selected = cardType === opt
@@ -4875,7 +4875,7 @@ export default function NewVersionPage() {
                         className={[
                           'cursor-pointer rounded-lg px-5 py-2 text-sm font-semibold transition-colors',
                           'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
-                          selected ? '' : 'text-gray-500 hover:text-gray-900',
+                          selected ? '' : 'text-ink-mute hover:text-ink',
                         ].join(' ')}
                         style={selected ? selectedChipStyle(carry.cardType.isEdited) : undefined}
                       >
@@ -4908,7 +4908,7 @@ export default function NewVersionPage() {
                 surcharge onto the version on save (runs
                 regardless of mode). */}
             <div ref={namesRef} className="mb-8">
-              <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+              <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-ink-soft">
                 <span>{cardType === 'business' ? 'Names on this order' : 'Variants'}</span>
                 {carry.names.isCarried && inheritedVersionNumber != null && (
                   <CarriedPill edited={carry.names.isEdited} versionNumber={inheritedVersionNumber} />
@@ -4932,10 +4932,10 @@ export default function NewVersionPage() {
                     annotation. Keeps the label clean and harmonises
                     with the rest of the form's helper rhythm. */}
                 {cardType === 'membership' && (
-                  <p className="mt-1.5 text-xs text-gray-500">Optional.</p>
+                  <p className="mt-1.5 text-xs text-ink-mute">Optional.</p>
                 )}
                 {shouldHighlight('names') && (
-                  <p className="mt-1.5 text-xs font-medium text-rose-500">
+                  <p className="mt-1.5 text-xs font-medium text-out">
                     Add at least one name.
                   </p>
                 )}
@@ -4952,14 +4952,14 @@ export default function NewVersionPage() {
                 confirm first. */}
             <div className="space-y-3">
               <div className="mb-2">
-                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-gray-700">
+                <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-ink-soft">
                   <span>Sidedness</span>
                   {carry.sidedness.isCarried && inheritedVersionNumber != null && (
                     <CarriedPill edited={carry.sidedness.isEdited} versionNumber={inheritedVersionNumber} />
                   )}
                 </label>
                 <div style={carriedFieldStyle(carry.sidedness.isCarried, carry.sidedness.isEdited)}>
-                  <fieldset className="inline-flex rounded-xl border border-gray-200 bg-white p-0.5">
+                  <fieldset className="inline-flex rounded-xl border border-line bg-surface p-0.5">
                     <legend className="sr-only">Sidedness</legend>
                     {(['one-sided', 'two-sided'] as const).map((opt) => {
                       const selected = sidedness === opt
@@ -4969,7 +4969,7 @@ export default function NewVersionPage() {
                           className={[
                             'cursor-pointer rounded-lg px-5 py-2 text-sm font-semibold transition-colors',
                             'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
-                            selected ? '' : 'text-gray-500 hover:text-gray-900',
+                            selected ? '' : 'text-ink-mute hover:text-ink',
                           ].join(' ')}
                           style={selected ? selectedChipStyle(carry.sidedness.isEdited) : undefined}
                         >
@@ -5007,15 +5007,15 @@ export default function NewVersionPage() {
                   toggle with its prior value. */}
               {sidedness === 'two-sided' && names.length >= 2 && (
                 <div style={carriedFieldStyle(carry.shared.isCarried, carry.shared.isEdited)}>
-                  <div className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3">
+                  <div className="flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-3">
                     <div>
-                      <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                      <div className="flex items-center gap-2 text-sm font-medium text-ink-soft">
                         <span>Shared</span>
                         {carry.shared.isCarried && inheritedVersionNumber != null && (
                           <CarriedPill edited={carry.shared.isEdited} versionNumber={inheritedVersionNumber} />
                         )}
                       </div>
-                      <div className="text-xs text-gray-500">
+                      <div className="text-xs text-ink-mute">
                         One side shared across all cards, the other personalised per name.
                       </div>
                     </div>
@@ -5027,12 +5027,12 @@ export default function NewVersionPage() {
                       aria-label="Shared design"
                       className={[
                         'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors',
-                        shared ? 'bg-gray-900' : 'bg-gray-200',
+                        shared ? 'bg-ink' : 'bg-line',
                       ].join(' ')}
                     >
                       <span
                         className={[
-                          'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-white transition-transform',
+                          'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-surface transition-transform',
                           shared ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
                         ].join(' ')}
                       />
@@ -5055,22 +5055,22 @@ export default function NewVersionPage() {
               && !isCustomQuote
               && !isVariantRound && (
               <div className="mt-10">
-                <h3 className="text-base font-semibold text-gray-900">Personalisation</h3>
-                <p className="mt-0.5 text-xs text-gray-500">
+                <h3 className="text-base font-semibold text-ink">Personalisation</h3>
+                <p className="mt-0.5 text-xs text-ink-mute">
                   Unique data per card, like member numbers or names.
                 </p>
-                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-line bg-surface px-4 py-3">
                   <input
                     type="checkbox"
                     checked={hasPersonalisation}
                     onChange={(e) => setHasPersonalisation(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 text-gray-900 focus:ring-gray-400"
+                    className="mt-0.5 h-4 w-4 cursor-pointer rounded border-line text-ink focus:ring-brand"
                   />
                   <div>
-                    <div className="text-sm font-medium text-gray-700">
+                    <div className="text-sm font-medium text-ink-soft">
                       Add personalisation
                     </div>
-                    <div className="text-xs text-gray-500">
+                    <div className="text-xs text-ink-mute">
                       {personalisationHelperText(currency, personalisationPricing)}
                     </div>
                   </div>
@@ -5095,11 +5095,11 @@ export default function NewVersionPage() {
           {isVariantRound && (
             <section
               ref={variantEditorRef}
-              className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200"
+              className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line"
             >
               <div className="mb-6">
-                <h2 className="text-base font-semibold text-gray-900">Variants</h2>
-                <p className="mt-0.5 text-xs text-gray-500">
+                <h2 className="text-base font-semibold text-ink">Variants</h2>
+                <p className="mt-0.5 text-xs text-ink-mute">
                   Each row is a parallel direction. The customer compares them side-by-side and picks one. Names show on the customer page exactly as typed; the variant ID is fixed when you first save and won't change with renames.
                 </p>
               </div>
@@ -5123,14 +5123,14 @@ export default function NewVersionPage() {
                   return (
                     <li
                       key={row.key}
-                      className="rounded-xl border border-gray-200 bg-gray-50 p-5"
+                      className="rounded-xl border border-line bg-canvas p-5"
                     >
                       <div className="flex items-start gap-3">
-                        <span className="mt-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold text-white">
+                        <span className="mt-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink text-xs font-semibold text-on-ink">
                           {idx + 1}
                         </span>
                         <div className="min-w-0 flex-1">
-                          <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                          <label className="mb-1.5 block text-sm font-medium text-ink-soft">
                             Direction name
                           </label>
                           <input
@@ -5139,14 +5139,14 @@ export default function NewVersionPage() {
                             placeholder={placeholder}
                             onChange={(e) => updateRow({ display_name: e.target.value })}
                             className={[
-                              'w-full rounded-lg border bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2',
+                              'w-full rounded-lg border bg-surface px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2',
                               labelInvalid
-                                ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300'
-                                : 'border-gray-200 focus:border-gray-400 focus:ring-gray-300',
+                                ? 'border-out focus:border-out focus:ring-out'
+                                : 'border-line focus:border-brand focus:ring-brand',
                             ].join(' ')}
                           />
                           {labelInvalid && (
-                            <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>
+                            <p className="mt-1.5 text-xs font-medium text-out">Required</p>
                           )}
 
                           {/* Front drop zone — always visible. */}
@@ -5203,7 +5203,7 @@ export default function NewVersionPage() {
                                   backFiles: backEnabled ? null : [],
                                 })
                               }
-                              className="text-xs font-medium text-gray-600 underline underline-offset-4 hover:text-gray-900"
+                              className="text-xs font-medium text-ink-soft underline underline-offset-4 hover:text-ink"
                             >
                               {backEnabled ? '− Remove back side' : '+ Add back side'}
                             </button>
@@ -5221,7 +5221,7 @@ export default function NewVersionPage() {
                               })
                             }
                             disabled={idx === 0}
-                            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink-soft hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
                             aria-label="Move up"
                           >
                             ↑
@@ -5237,7 +5237,7 @@ export default function NewVersionPage() {
                               })
                             }
                             disabled={idx === variantRows.length - 1}
-                            className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink-soft hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
                             aria-label="Move down"
                           >
                             ↓
@@ -5248,7 +5248,7 @@ export default function NewVersionPage() {
                               setVariantRows((prev) => prev.filter((_, i) => i !== idx))
                             }
                             disabled={variantRows.length <= 2}
-                            className="rounded-md border border-rose-200 bg-white px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="rounded-md border border-out bg-surface px-2 py-1 text-xs text-out hover:bg-out-soft disabled:cursor-not-allowed disabled:opacity-40"
                             aria-label={`Remove direction ${idx + 1}`}
                           >
                             ✕
@@ -5268,14 +5268,14 @@ export default function NewVersionPage() {
                       { key: uuidv4(), display_name: '', frontFiles: [], backFiles: null },
                     ])
                   }
-                  className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm hover:border-gray-400"
+                  className="rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink-soft shadow-sm hover:border-line"
                 >
                   + Add direction
                 </button>
                 {(shouldHighlight('variantsCount') ||
                   shouldHighlight('variantsLabels') ||
                   shouldHighlight('variantsImages')) && (
-                  <p className="text-xs font-medium text-rose-500">
+                  <p className="text-xs font-medium text-out">
                     {!variantsCountValid
                       ? 'Add at least 2 directions.'
                       : !variantsLabelsValid
@@ -5301,8 +5301,8 @@ export default function NewVersionPage() {
               Hidden on variant rounds (build-plan step 5) — the
               variant editor above handles image attribution there. */}
           {!isVariantRound && (
-          <section ref={imageSectionRef} className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
+          <section ref={imageSectionRef} className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">
               {v1Carry ? `Proof images, carrying from v${v1Carry.versionNumber}` : 'Proof images'}
             </h2>
 
@@ -5324,12 +5324,12 @@ export default function NewVersionPage() {
                 pre-pick before saving, since the DB has no signal
                 about which direction was agreed by email. */}
             {v1Carry && v1Carry.sourceIsVariantRound && v1Carry.sourceVariants.length > 0 && (
-              <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3.5">
+              <div className="mb-6 rounded-xl border border-low bg-low-soft px-4 py-3.5">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <p className="text-sm font-semibold text-amber-900">
+                  <p className="text-sm font-semibold text-low">
                     Continuing from which direction?
                   </p>
-                  <p className="text-xs text-amber-800">
+                  <p className="text-xs text-low">
                     v{v1Carry.versionNumber} was a variant round — only the chosen direction&apos;s images carry across.
                   </p>
                 </div>
@@ -5345,8 +5345,8 @@ export default function NewVersionPage() {
                         className={[
                           'inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors',
                           isSelected
-                            ? 'border-amber-700 bg-amber-700 text-white shadow-sm'
-                            : 'border-amber-300 bg-white text-amber-900 hover:border-amber-500 hover:bg-amber-100',
+                            ? 'border-low bg-low text-on-ink shadow-sm'
+                            : 'border-low bg-surface text-low hover:border-low hover:bg-low-soft',
                         ].join(' ')}
                       >
                         <span>{variant.display_name}</span>
@@ -5354,7 +5354,7 @@ export default function NewVersionPage() {
                           <span
                             className={[
                               'rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
-                              isSelected ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800',
+                              isSelected ? 'bg-on-ink/20 text-on-ink' : 'bg-in-stock-soft text-in-stock',
                             ].join(' ')}
                           >
                             Customer pick
@@ -5385,8 +5385,8 @@ export default function NewVersionPage() {
                         className={[
                           'inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors',
                           isSelected
-                            ? 'border-gray-700 bg-gray-700 text-white shadow-sm'
-                            : 'border-dashed border-gray-400 bg-transparent text-gray-700 hover:border-gray-600 hover:bg-gray-100',
+                            ? 'border-ink bg-ink text-on-ink shadow-sm'
+                            : 'border-dashed border-line bg-transparent text-ink-soft hover:border-ink hover:bg-canvas',
                         ].join(' ')}
                       >
                         Start fresh
@@ -5395,11 +5395,11 @@ export default function NewVersionPage() {
                   })()}
                 </div>
                 {carryVariantSelection === START_FRESH_SENTINEL ? (
-                  <p className="mt-2.5 text-xs text-amber-800">
+                  <p className="mt-2.5 text-xs text-low">
                     Starting from scratch — no images from v{v1Carry.versionNumber} carry across. Every slot below is empty; upload new artwork for this version.
                   </p>
                 ) : v1Carry.customerLockedVariantId == null && (
-                  <p className="mt-2.5 text-xs text-amber-800">
+                  <p className="mt-2.5 text-xs text-low">
                     No customer selection on file — defaulted to <strong>{v1Carry.sourceVariants[0]?.display_name}</strong>. Switch above if the agreed direction was different, or pick <strong>Start fresh</strong> if none of v{v1Carry.versionNumber}&apos;s artwork should carry across.
                   </p>
                 )}
@@ -5413,7 +5413,7 @@ export default function NewVersionPage() {
                 {carryVariantSelection !== START_FRESH_SENTINEL &&
                   v1Carry.images.length > 0 &&
                   !hasAnySlot && (
-                  <p className="mt-2.5 text-xs text-amber-800">
+                  <p className="mt-2.5 text-xs text-low">
                     Add a recipient name below to see your carry images from this direction.
                   </p>
                 )}
@@ -5450,8 +5450,8 @@ export default function NewVersionPage() {
               const isDragActive = isZoneDragOver || isPageDragOver
               const dropZoneStyle: CSSProperties = isDragActive
                 ? {
-                    background: 'rgba(123,63,242,0.045)',
-                    boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
+                    background: 'var(--c-brand-50)',
+                    boxShadow: 'inset 0 0 0 1.5px var(--c-brand)',
                   }
                 : {}
               return (
@@ -5475,10 +5475,10 @@ export default function NewVersionPage() {
                     className={[
                       'flex flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-7 text-center transition-colors',
                       dropDisabled
-                        ? 'cursor-not-allowed border-gray-200 bg-gray-50/60 text-gray-400'
+                        ? 'cursor-not-allowed border-line bg-canvas text-ink-dim'
                         : isDragActive
-                          ? 'cursor-copy border-transparent text-gray-900'
-                          : 'cursor-pointer border-gray-300 bg-gray-50/40 text-gray-600 hover:border-gray-400 hover:bg-gray-50',
+                          ? 'cursor-copy border-transparent text-ink'
+                          : 'cursor-pointer border-line bg-canvas text-ink-soft hover:border-line hover:bg-canvas',
                     ].join(' ')}
                     style={dropZoneStyle}
                   >
@@ -5489,7 +5489,7 @@ export default function NewVersionPage() {
                     ) : (
                       <>
                         <p className="text-sm font-medium">Drop images here, or click to browse</p>
-                        <p className="mt-1 text-xs text-gray-400">
+                        <p className="mt-1 text-xs text-ink-dim">
                           {v1Carry
                             ? `We will tag each file by name and side, then place it. Drop on a card below to replace a v${v1Carry.versionNumber} image instead.`
                             : 'We will tag each file by name and side, then place it. JPEG up to 10 MB each.'}
@@ -5514,7 +5514,7 @@ export default function NewVersionPage() {
 
             {/* Option tabs */}
             {optionMode && selectedOptions.length > 0 && (
-              <div className="mb-4 flex gap-0 border-b border-gray-100">
+              <div className="mb-4 flex gap-0 border-b border-line-soft">
                 {selectedOptions.map(fCode => {
                   const f = availableOptions.find(x => x.code === fCode)
                   const isActive = activeImageOption === fCode
@@ -5526,12 +5526,12 @@ export default function NewVersionPage() {
                       className={[
                         '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
                         isActive
-                          ? 'border-gray-900 text-gray-900'
-                          : 'border-transparent text-gray-400 hover:text-gray-700',
+                          ? 'border-ink text-ink'
+                          : 'border-transparent text-ink-dim hover:text-ink-soft',
                       ].join(' ')}
                     >
                       {f?.display_name ?? fCode}
-                      <span className={['ml-1.5 text-xs', isActive ? 'text-gray-400' : 'text-gray-300'].join(' ')}>
+                      <span className={['ml-1.5 text-xs', isActive ? 'text-ink-dim' : 'text-ink-dim'].join(' ')}>
                         ({(imagesByOption[fCode] ?? []).length})
                       </span>
                     </button>
@@ -5813,13 +5813,13 @@ export default function NewVersionPage() {
               const approvedLabels = computeLabelVisibility(approvedCells)
               return (
                 <>
-                  <p className="mb-3 mt-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+                  <p className="mb-3 mt-2 text-xs font-medium uppercase tracking-wide text-ink-mute">
                     Open
                   </p>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {openCells.map((cell, i) => renderCell(cell, openLabels[i]))}
                   </div>
-                  <p className="mb-3 mt-8 text-xs font-medium uppercase tracking-wide text-gray-500">
+                  <p className="mb-3 mt-8 text-xs font-medium uppercase tracking-wide text-ink-mute">
                     Previously approved
                   </p>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -5841,16 +5841,16 @@ export default function NewVersionPage() {
               )
               if (dropped.length === 0) return null
               return (
-                <p className="mt-4 border-t border-gray-100 pt-4 text-xs text-gray-500">
+                <p className="mt-4 border-t border-line-soft pt-4 text-xs text-ink-mute">
                   v{v1Carry.versionNumber} had images on {dropped.join(', ')}, these won't carry since v2 doesn't offer {dropped.length === 1 ? 'that option' : 'those options'}.
                 </p>
               )
             })()}
 
-            {fileError && <p className="mt-2 text-sm text-red-600">{fileError}</p>}
-            {fileNote && <p className="mt-2 text-sm text-gray-500">{fileNote}</p>}
+            {fileError && <p className="mt-2 text-sm text-out">{fileError}</p>}
+            {fileNote && <p className="mt-2 text-sm text-ink-mute">{fileNote}</p>}
             {shouldHighlight('images') && (
-              <p className="mt-2 text-xs font-medium text-rose-500">{imagesHint}</p>
+              <p className="mt-2 text-xs font-medium text-out">{imagesHint}</p>
             )}
           </section>
           )}
@@ -5894,8 +5894,8 @@ export default function NewVersionPage() {
           )}
 
           {/* Change notes */}
-          <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Change notes</h2>
+          <section className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">Change notes</h2>
             <textarea rows={3} placeholder="What changed in this version? Shown to the customer."
               value={changeNotes} onChange={(e) => setChangeNotes(e.target.value)} className={inputClass} />
           </section>
@@ -5926,11 +5926,11 @@ export default function NewVersionPage() {
               : variant.display_name
 
             return (
-              <section key={vid} className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
-                <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
+              <section key={vid} className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
+                <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-ink-dim">
                   Pricing: {variantLabel}
                 </h2>
-                <p className="mb-4 text-xs text-gray-400">
+                <p className="mb-4 text-xs text-ink-dim">
                   {tiers.length > 0
                     ? `Reference pricing for ${variantLabel} (${currency}).`
                     : 'No price tiers found for this variant and currency.'}
@@ -5939,7 +5939,7 @@ export default function NewVersionPage() {
                   <>
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="border-b border-gray-100">
+                        <tr className="border-b border-line-soft">
                           {/* Mirrors the shared PricingDisplay
                               component's headers so designer and
                               customer views stay in lockstep.
@@ -5947,19 +5947,19 @@ export default function NewVersionPage() {
                               price column — the cell values
                               already carry the currency via
                               formatPrice. */}
-                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Total quantity</th>
-                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Price</th>
-                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Per card</th>
+                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Total quantity</th>
+                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Price</th>
+                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Per card</th>
                         </tr>
                       </thead>
                       <tbody>
                         {visibleTiers.map((tier) => (
-                          <tr key={tier.quantity} className="border-b border-gray-50 last:border-0">
-                            <td className="py-2 pr-4 font-medium text-gray-900">{tier.quantity.toLocaleString()}</td>
-                            <td className="py-2 pr-4 text-gray-900">
+                          <tr key={tier.quantity} className="border-b border-line-soft last:border-0">
+                            <td className="py-2 pr-4 font-medium text-ink">{tier.quantity.toLocaleString()}</td>
+                            <td className="py-2 pr-4 text-ink">
                               {formatPrice(tier.total_price, currency, 2)}
                             </td>
-                            <td className="py-2 text-xs text-gray-500">
+                            <td className="py-2 text-xs text-ink-mute">
                               {tier.total_price > 0 ? formatPrice(tier.total_price / tier.quantity, currency, 2) : '—'}
                             </td>
                           </tr>
@@ -5970,7 +5970,7 @@ export default function NewVersionPage() {
                       <button
                         type="button"
                         onClick={() => setExpandedVariants(prev => ({ ...prev, [vid]: !prev[vid] }))}
-                        className="mt-3 text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+                        className="mt-3 text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
                       >
                         {userExpanded
                           ? 'Hide extra tiers'
@@ -5983,7 +5983,7 @@ export default function NewVersionPage() {
             )
           })}
 
-          {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+          {error && <p className="rounded-lg bg-out-soft px-4 py-3 text-sm text-out">{error}</p>}
 
         </form>
       </div>
@@ -5999,11 +5999,11 @@ export default function NewVersionPage() {
           The form's wrapper carries pb-32 so the last form
           content scrolls clear of this bar. */}
       {!savedVersion && (
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 backdrop-blur">
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 backdrop-blur">
           <div className="mx-auto flex max-w-2xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
             <Link
               to={`/proofs/${proofId}`}
-              className="text-sm font-medium text-gray-500 hover:text-gray-700"
+              className="text-sm font-medium text-ink-mute hover:text-ink-soft"
             >
               Cancel
             </Link>
@@ -6014,8 +6014,8 @@ export default function NewVersionPage() {
               title={!isValid ? missingFieldsHint(validations, optionLabelSingular) : undefined}
               aria-label={!isValid ? `Save version, ${missingFieldsHint(validations, optionLabelSingular)}` : undefined}
               className={[
-                'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
-                isValid ? 'bg-gray-900 hover:bg-gray-700' : 'bg-gray-900/60',
+                'rounded-lg px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
+                isValid ? 'bg-ink hover:opacity-90' : 'bg-ink/60',
                 'disabled:cursor-not-allowed disabled:opacity-50',
               ].join(' ')}
             >
@@ -6168,8 +6168,8 @@ function material_display_for(id: string, materials: Material[]) {
   return materials.find((m) => m.id === id)?.display_name ?? ''
 }
 
-const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
-const selectClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900 bg-white'
+const inputClass = 'w-full rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand'
+const selectClass = 'w-full rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand bg-surface'
 
 // One row of the Paper layers picker block. Pulled out as a helper
 // so the three layers (Front/Core/Back) share the same swatch-+-
@@ -6204,7 +6204,7 @@ function LayerColourPicker({
   return (
     <div ref={refEl}>
       <div className="grid grid-cols-[60px_1fr] items-center gap-3">
-        <label className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">
+        <label className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-ink-mute">
           <span>{label}</span>
           {carriedFromVersionNumber !== null && (
             <CarriedPill edited={isEdited} versionNumber={carriedFromVersionNumber} />
@@ -6226,7 +6226,7 @@ function LayerColourPicker({
           <select
             value={selectedId ?? ''}
             onChange={(e) => onChange(e.target.value || null)}
-            className={[selectClass, invalid ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
+            className={[selectClass, invalid ? 'border-out focus:border-out focus:ring-out' : ''].join(' ')}
           >
             <option value="">Select a colour…</option>
             {colours.map((c) => (
@@ -6235,7 +6235,7 @@ function LayerColourPicker({
           </select>
         </div>
       </div>
-      {invalid && <p className="mt-1.5 text-xs font-medium text-rose-500" style={{ paddingLeft: 72 }}>Required</p>}
+      {invalid && <p className="mt-1.5 text-xs font-medium text-out" style={{ paddingLeft: 72 }}>Required</p>}
     </div>
   )
 }
@@ -6255,7 +6255,7 @@ function CarriedPill({ edited, versionNumber }: { edited: boolean; versionNumber
     return (
       <span
         className="inline-flex items-center rounded-full text-[11px] font-medium"
-        style={{ background: '#fef3c7', color: '#92400e', padding: '2px 8px' }}
+        style={{ background: 'var(--c-low-soft)', color: 'var(--c-low)', padding: '2px 8px' }}
       >
         edited
       </span>
@@ -6264,7 +6264,7 @@ function CarriedPill({ edited, versionNumber }: { edited: boolean; versionNumber
   return (
     <span
       className="inline-flex items-center rounded-full text-[11px] font-medium"
-      style={{ background: 'rgba(123,63,242,0.12)', color: '#5b2bba', padding: '2px 8px' }}
+      style={{ background: 'var(--c-brand-50)', color: 'var(--c-brand)', padding: '2px 8px' }}
     >
       from v{versionNumber}
     </span>
@@ -6278,8 +6278,8 @@ function CarriedPill({ edited, versionNumber }: { edited: boolean; versionNumber
 function carriedFieldStyle(carried: boolean, edited: boolean): CSSProperties {
   if (!carried) return {}
   return {
-    borderLeft: edited ? '4px solid #f59e0b' : '4px solid #7b3ff2',
-    background: edited ? 'rgba(245,158,11,0.06)' : 'rgba(123,63,242,0.045)',
+    borderLeft: edited ? '4px solid var(--c-low)' : '4px solid var(--c-brand)',
+    background: edited ? 'var(--c-low-soft)' : 'var(--c-brand-50)',
     paddingLeft: '12px',
     paddingTop: '8px',
     paddingBottom: '8px',
@@ -6294,9 +6294,9 @@ function carriedFieldStyle(carried: boolean, edited: boolean): CSSProperties {
 // chips, card-type segmented, sidedness segmented, and the currency
 // segmented (CurrencyField.tsx).
 const hybridChipSelectedStyle: CSSProperties = {
-  background: 'rgba(123,63,242,0.16)',
-  color: '#5b2bba',
-  boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
+  background: 'var(--c-brand-50)',
+  color: 'var(--c-brand)',
+  boxShadow: 'inset 0 0 0 1.5px var(--c-brand)',
 }
 
 // Same shape as the violet hybrid above, retinted amber for the
@@ -6306,9 +6306,9 @@ const hybridChipSelectedStyle: CSSProperties = {
 // and pill instead of leaving a violet active selection inside
 // an amber wrapper.
 const hybridChipEditedSelectedStyle: CSSProperties = {
-  background: 'rgba(245,158,11,0.16)',
-  color: '#92400e',
-  boxShadow: 'inset 0 0 0 1.5px #f59e0b',
+  background: 'var(--c-low-soft)',
+  color: 'var(--c-low)',
+  boxShadow: 'inset 0 0 0 1.5px var(--c-low)',
 }
 
 // Picks the right hue for a selected chip / segmented button based
@@ -6478,11 +6478,11 @@ function CarryCard({
       className={[
         'rounded-xl p-2.5 transition-all',
         hasReplacement
-          ? 'bg-amber-50 ring-1 ring-amber-200'
+          ? 'bg-low-soft ring-1 ring-low'
           : approval?.state === 'approved'
-            ? 'bg-emerald-50 ring-1 ring-emerald-200'
-            : 'bg-gray-50 ring-1 ring-gray-200',
-        dragOver ? 'ring-2 ring-indigo-400 ring-offset-1' : '',
+            ? 'bg-in-stock-soft ring-1 ring-in-stock'
+            : 'bg-canvas ring-1 ring-line',
+        dragOver ? 'ring-2 ring-brand ring-offset-1' : '',
       ].join(' ')}
     >
       {/* Label row — sits above the thumbnail. Shared cards get
@@ -6503,12 +6503,12 @@ function CarryCard({
         >
           {nameLabel !== undefined && (
             nameLabel == null ? (
-              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+              <span className="rounded-full bg-canvas px-2 py-0.5 text-xs font-medium text-ink-mute">
                 Shared
               </span>
             ) : (
               <span
-                className="truncate text-sm font-medium text-gray-700"
+                className="truncate text-sm font-medium text-ink-soft"
                 title={nameLabel}
               >
                 {nameLabel}
@@ -6516,12 +6516,12 @@ function CarryCard({
             )
           )}
           {sideLabel != null && (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600">
+            <span className="rounded-full bg-line-soft px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-mute">
               {sideLabel === 'front' ? 'Front' : 'Back'}
             </span>
           )}
           {approval?.state === 'changes_requested' && (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-low-soft px-2 py-0.5 text-xs font-medium text-low ring-1 ring-low">
               v{v1VersionNumber} changes requested
             </span>
           )}
@@ -6538,7 +6538,7 @@ function CarryCard({
       <p
         className={[
           'mt-2 truncate text-xs font-normal',
-          hasReplacement ? 'text-gray-500' : 'text-gray-400',
+          hasReplacement ? 'text-ink-mute' : 'text-ink-dim',
         ].join(' ')}
         title={displayLabel}
       >
@@ -6546,11 +6546,11 @@ function CarryCard({
       </p>
       {hasReplacement && (
         <div className="mt-1">
-          <p className="text-[10px] font-medium uppercase tracking-wide text-amber-700">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-low">
             Replacing with
           </p>
           <p
-            className="truncate text-xs text-amber-800"
+            className="truncate text-xs text-low"
             title={replacement!.file.name}
           >
             {replacement!.file.name}
@@ -6569,13 +6569,13 @@ function CarryCard({
           onClick={() => onKeepChange(!keep)}
           className={[
             'relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors',
-            effectiveKeepOn ? 'bg-gray-900' : 'bg-gray-300',
+            effectiveKeepOn ? 'bg-ink' : 'bg-line',
             hasReplacement ? 'cursor-not-allowed opacity-40' : 'cursor-pointer',
           ].join(' ')}
         >
           <span
             className={[
-              'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+              'inline-block h-4 w-4 transform rounded-full bg-surface transition-transform',
               effectiveKeepOn ? 'translate-x-[1.125rem] translate-y-0.5' : 'translate-x-0.5 translate-y-0.5',
             ].join(' ')}
           />
@@ -6584,7 +6584,7 @@ function CarryCard({
           <button
             type="button"
             onClick={onReplacementClear}
-            className="shrink-0 text-xs font-medium text-amber-800 underline-offset-2 hover:text-amber-900 hover:underline"
+            className="shrink-0 text-xs font-medium text-low underline-offset-2 hover:text-low hover:underline"
           >
             Undo
           </button>
@@ -6592,7 +6592,7 @@ function CarryCard({
           <label
             className={[
               'shrink-0 cursor-pointer text-xs font-medium underline-offset-2 hover:underline',
-              showGhosted ? 'text-gray-400 hover:text-gray-600' : 'text-gray-500 hover:text-gray-900',
+              showGhosted ? 'text-ink-dim hover:text-ink-soft' : 'text-ink-mute hover:text-ink',
             ].join(' ')}
           >
             Replace
@@ -6641,17 +6641,17 @@ function FreshImageCard({
   const currentSide: 'front' | 'back' = entry.side ?? 'front'
   const flipTargetLabel = currentSide === 'front' ? 'back' : 'front'
   return (
-    <div className="rounded-xl bg-gray-50 p-2.5 ring-1 ring-gray-200 transition-all">
+    <div className="rounded-xl bg-canvas p-2.5 ring-1 ring-line transition-all">
       {(nameLabel !== undefined || sideLabel != null) && (
         <div className="mb-2 flex items-center gap-2">
           {nameLabel !== undefined && (
             nameLabel == null ? (
-              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+              <span className="rounded-full bg-canvas px-2 py-0.5 text-xs font-medium text-ink-mute">
                 Shared
               </span>
             ) : (
               <span
-                className="truncate text-sm font-medium text-gray-700"
+                className="truncate text-sm font-medium text-ink-soft"
                 title={nameLabel}
               >
                 {nameLabel}
@@ -6659,7 +6659,7 @@ function FreshImageCard({
             )
           )}
           {sideLabel != null && (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600">
+            <span className="rounded-full bg-line-soft px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-mute">
               {sideLabel === 'front' ? 'Front' : 'Back'}
             </span>
           )}
@@ -6670,7 +6670,7 @@ function FreshImageCard({
         alt={entry.file.name}
         className="aspect-[16/10] w-full rounded-lg object-cover"
       />
-      <p className="mt-2 truncate text-xs text-gray-400" title={entry.file.name}>
+      <p className="mt-2 truncate text-xs text-ink-dim" title={entry.file.name}>
         {entry.file.name}
       </p>
       <div className="mt-2.5 flex items-center justify-between gap-2">
@@ -6678,7 +6678,7 @@ function FreshImageCard({
           <button
             type="button"
             onClick={onFlipSide}
-            className="shrink-0 text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+            className="shrink-0 text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
             aria-label={`Move to ${flipTargetLabel}`}
           >
             Move to {flipTargetLabel}
@@ -6689,7 +6689,7 @@ function FreshImageCard({
         <button
           type="button"
           onClick={onRemove}
-          className="shrink-0 text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+          className="shrink-0 text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
         >
           Remove
         </button>
@@ -6749,20 +6749,20 @@ function EmptySlot({
       className={[
         'flex cursor-pointer flex-col rounded-xl border-2 border-dashed p-2.5 transition-all',
         dragOver
-          ? 'border-indigo-400 bg-indigo-50 ring-2 ring-indigo-400 ring-offset-1'
-          : 'border-gray-200 bg-gray-50/50 hover:border-gray-300 hover:bg-gray-50',
+          ? 'border-brand bg-brand-50 ring-2 ring-brand ring-offset-1'
+          : 'border-line bg-canvas hover:border-line hover:bg-canvas',
       ].join(' ')}
     >
       {(nameLabel !== undefined || sideLabel != null) && (
         <div className="mb-2 flex items-center gap-2">
           {nameLabel !== undefined && (
             nameLabel == null ? (
-              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500">
+              <span className="rounded-full bg-canvas px-2 py-0.5 text-xs font-medium text-ink-mute">
                 Shared
               </span>
             ) : (
               <span
-                className="truncate text-sm font-medium text-gray-700"
+                className="truncate text-sm font-medium text-ink-soft"
                 title={nameLabel}
               >
                 {nameLabel}
@@ -6770,7 +6770,7 @@ function EmptySlot({
             )
           )}
           {sideLabel != null && (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-600">
+            <span className="rounded-full bg-line-soft px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-mute">
               {sideLabel === 'front' ? 'Front' : 'Back'}
             </span>
           )}
@@ -6779,7 +6779,7 @@ function EmptySlot({
       <div
         className={[
           'flex aspect-[16/10] w-full items-center justify-center rounded-lg text-center text-xs',
-          dragOver ? 'text-indigo-700' : 'text-gray-400',
+          dragOver ? 'text-brand' : 'text-ink-dim',
         ].join(' ')}
       >
         {dragOver ? 'Drop to add' : 'Drop image here or click to upload'}
