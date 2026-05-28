@@ -41,10 +41,10 @@ export function CustomQuoteFlags({
 
   return (
     <fieldset className="rounded-lg border border-low bg-low-soft p-4">
-      <legend className="block px-1 text-xs font-semibold uppercase tracking-widest text-low">
+      <p className="text-xs font-semibold uppercase tracking-widest text-low">
         Special card types
-      </legend>
-      <p className="mb-2 text-xs text-low">
+      </p>
+      <p className="mb-3 mt-1 text-xs text-low">
         Pick if this applies — it always needs a custom quote, no live pricing.
       </p>
       <div className="flex flex-col gap-2">
