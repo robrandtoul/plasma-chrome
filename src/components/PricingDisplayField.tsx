@@ -64,7 +64,7 @@ export function PricingDisplayField({
     <section ref={forwardRef as RefObject<HTMLElement>}>
       <fieldset
         className={[
-          'inline-flex rounded-md border bg-surface p-0.5',
+          'inline-flex rounded border bg-surface p-0.5',
           invalid ? 'border-out' : 'border-line',
         ].join(' ')}
       >

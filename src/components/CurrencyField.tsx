@@ -29,7 +29,7 @@ export function CurrencyField({
     <fieldset
       disabled={disabled}
       className={[
-        'inline-flex rounded-md border p-0.5',
+        'inline-flex rounded border p-0.5',
         invalid ? 'border-out bg-out-soft' : 'border-line bg-surface',
         disabled ? 'opacity-70' : '',
       ].join(' ')}

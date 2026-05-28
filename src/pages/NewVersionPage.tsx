@@ -4876,7 +4876,7 @@ export default function NewVersionPage() {
                 )}
               </label>
               <div style={carriedFieldStyle(carry.cardType.isCarried, carry.cardType.isEdited)}>
-                <fieldset className="inline-flex rounded-md border border-line bg-surface p-0.5">
+                <fieldset className="inline-flex rounded border border-line bg-surface p-0.5">
                   <legend className="sr-only">Card type</legend>
                   {(['business', 'membership'] as const).map((opt) => {
                     const selected = cardType === opt
@@ -4970,7 +4970,7 @@ export default function NewVersionPage() {
                   )}
                 </label>
                 <div style={carriedFieldStyle(carry.sidedness.isCarried, carry.sidedness.isEdited)}>
-                  <fieldset className="inline-flex rounded-md border border-line bg-surface p-0.5">
+                  <fieldset className="inline-flex rounded border border-line bg-surface p-0.5">
                     <legend className="sr-only">Sidedness</legend>
                     {(['one-sided', 'two-sided'] as const).map((opt) => {
                       const selected = sidedness === opt
