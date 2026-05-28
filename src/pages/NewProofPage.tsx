@@ -5,8 +5,10 @@ import { useAuth } from '../lib/auth'
 import { logAudit } from '../lib/audit'
 import { parseHelpscoutUrl, MIN_OVERRIDE_REASON_LENGTH } from '../lib/helpscout'
 import { titleCase } from '../lib/titleCase'
-import { QuoteLink } from '../components/QuoteLink'
+// QuoteLink now rendered inside DesignerChrome (PR 35).
 import Modal from '../components/Modal'
+import { DesignerChrome, ButtonInk } from '../design'
+import { ChevronRight } from 'lucide-react'
 
 // ── Local types ───────────────────────────────────────────────────────────────
 
@@ -825,28 +827,28 @@ export default function NewProofPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-dvh bg-gray-50">
-      <div className="mx-auto max-w-xl px-4 py-10 sm:px-6">
+    <DesignerChrome active="proofs">
+    <div className="min-h-dvh bg-canvas">
+      <div className="mx-auto max-w-xl px-4 py-8 sm:px-6">
 
-        {/* Back + Quote compiler. QuoteLink lives in the per-page
-            header on six pages today. Future "extract shared header"
-            pass should inline this once and remove the per-page
-            insertions. */}
-        <div className="mb-6 flex items-center justify-between">
-          <Link to="/" className="text-sm text-gray-400 hover:text-gray-700">← Back to projects</Link>
-          <QuoteLink variant="inline" />
-        </div>
+        {/* Breadcrumb — Proofs › New project. DesignerChrome carries
+            QuoteLink + nav, so this row is hierarchy only. */}
+        <nav className="mb-6 flex items-center gap-1.5 text-[13px]">
+          <Link to="/" className="text-ink-mute hover:text-ink transition-colors">Proofs</Link>
+          <ChevronRight size={14} className="text-ink-dim" aria-hidden="true" />
+          <span className="text-ink-soft">New project</span>
+        </nav>
 
-        <h1 className="mb-8 text-2xl font-bold text-gray-900">New project</h1>
+        <h1 className="mb-8 font-display font-medium tracking-[-0.02em] text-ink leading-tight" style={{ fontSize: 'clamp(24px, 4vw, 32px)' }}>New project</h1>
 
         <form onSubmit={handleSubmit} className="space-y-6">
 
           {/* ── Paste from Help Scout (primary entry point) ───────────────── */}
-          <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-            <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-gray-400">
+          <section className="rounded-[14px] bg-surface p-6 border border-line">
+            <h2 className="mb-1 eyebrow text-ink-mute">
               Start from Help Scout
             </h2>
-            <p className="mb-3 text-xs text-gray-500">
+            <p className="mb-3 text-xs text-ink-mute">
               Paste the conversation URL or number from Help Scout. We'll pull the customer and company across.
             </p>
             <div className="flex flex-col gap-2 sm:flex-row">
@@ -859,20 +861,20 @@ export default function NewProofPage() {
                 disabled={pasteInFlight}
                 className={inputClass + ' sm:flex-1'}
               />
-              <button
-                type="button"
+              <ButtonInk
                 onClick={() => void handlePasteLookup()}
                 disabled={pasteInFlight || !pasteInput.trim()}
-                className="shrink-0 rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+                busy={pasteInFlight}
+                className="shrink-0"
               >
                 {pasteInFlight ? 'Looking up…' : 'Look up'}
-              </button>
+              </ButtonInk>
             </div>
             {pasteError && (
-              <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{pasteError}</p>
+              <p className="mt-2 rounded-lg bg-out-soft px-3 py-2 text-sm text-out">{pasteError}</p>
             )}
             {pasteSubject && !pasteError && (
-              <p className="mt-2 text-xs text-emerald-700">
+              <p className="mt-2 text-xs text-in-stock">
                 Found: <span className="font-medium">{pasteSubject}</span>. Review the details below.
               </p>
             )}
@@ -885,7 +887,7 @@ export default function NewProofPage() {
             <button
               type="button"
               onClick={() => setManualOpen(true)}
-              className="text-sm text-gray-500 underline hover:text-gray-900"
+              className="text-sm text-ink-mute underline hover:text-ink"
             >
               Or enter customer details manually
             </button>
@@ -894,13 +896,13 @@ export default function NewProofPage() {
           {manualOpen && (
             <>
           {/* Review nudge above the name + company fields. */}
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-ink-mute">
             This is what the customer will see on their proof page.
           </p>
 
           {/* ── Company ──────────────────────────────────────────────────── */}
-          <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Company</h2>
+          <section className="rounded-[14px] bg-surface p-6 border border-line">
+            <h2 className="mb-4 eyebrow text-ink-mute">Company</h2>
 
             {!isIndividual && !selectedCompany && (
               <div ref={companyRef} className="relative mb-3">
@@ -914,16 +916,16 @@ export default function NewProofPage() {
                   autoComplete="off"
                 />
                 {companyOpen && (
-                  <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                  <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-56 overflow-y-auto rounded-lg border border-line bg-white shadow-md">
                     {filteredCompanies.length === 0 && !companySearch.trim() && (
-                      <p className="px-3 py-3 text-sm text-gray-400">No companies yet — type to add one.</p>
+                      <p className="px-3 py-3 text-sm text-ink-mute">No companies yet — type to add one.</p>
                     )}
                     {filteredCompanies.map((c) => (
                       <button
                         key={c.id}
                         type="button"
                         onClick={() => selectCompany(c)}
-                        className="flex w-full px-3 py-2.5 text-left text-sm text-gray-900 hover:bg-gray-50"
+                        className="flex w-full px-3 py-2.5 text-left text-sm text-ink hover:bg-canvas"
                       >
                         {c.name}
                       </button>
@@ -933,13 +935,13 @@ export default function NewProofPage() {
                         type="button"
                         onClick={addNewCompany}
                         className={[
-                          'flex w-full items-center gap-1.5 px-3 py-2.5 text-left text-sm text-gray-500 hover:bg-gray-50',
-                          filteredCompanies.length > 0 ? 'border-t border-gray-100' : '',
+                          'flex w-full items-center gap-1.5 px-3 py-2.5 text-left text-sm text-ink-mute hover:bg-canvas',
+                          filteredCompanies.length > 0 ? 'border-t border-line-soft' : '',
                         ].join(' ')}
                       >
-                        <span className="text-gray-400">+</span>
+                        <span className="text-ink-mute">+</span>
                         Add new company:{' '}
-                        <span className="font-medium text-gray-900">"{companySearch.trim()}"</span>
+                        <span className="font-medium text-ink">"{companySearch.trim()}"</span>
                       </button>
                     )}
                   </div>
@@ -957,22 +959,28 @@ export default function NewProofPage() {
                   // "First project" — the first project in this
                   // tool for a customer we may well have worked
                   // with for years via email.
-                  <div className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-1.5 ring-1 ring-amber-100">
+                  <div
+                    className="flex items-center gap-2 rounded-lg px-3 py-1.5"
+                    style={{
+                      backgroundColor: 'var(--c-low-soft)',
+                      boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--c-low) 30%, transparent)',
+                    }}
+                  >
                     <input
                       type="text"
                       value={selectedCompany.name}
                       onChange={(e) => setSelectedCompany({ id: null, name: e.target.value })}
                       placeholder="Company name"
-                      className="min-w-0 flex-1 rounded border border-amber-200 bg-white px-2 py-1 text-[17px] sm:text-sm font-medium text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      className="min-w-0 flex-1 rounded border border-line bg-surface px-2 py-1 text-[17px] sm:text-sm font-medium text-ink focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
                       aria-label="Company name"
                     />
-                    <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
+                    <span className="shrink-0 rounded-full bg-line-soft px-2 py-0.5 text-xs font-medium text-ink-soft">
                       First project
                     </span>
                     <button
                       type="button"
                       onClick={clearCompany}
-                      className="shrink-0 text-xs text-gray-500 underline hover:text-gray-900"
+                      className="shrink-0 text-xs text-ink-mute underline hover:text-ink"
                     >
                       Change
                     </button>
@@ -981,12 +989,12 @@ export default function NewProofPage() {
                   // Matched existing company: read-only. Editing
                   // the name here would rename it for every other
                   // proof that references it.
-                  <div className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2.5">
-                    <span className="text-sm font-medium text-gray-900">{selectedCompany.name}</span>
+                  <div className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2.5">
+                    <span className="text-sm font-medium text-ink">{selectedCompany.name}</span>
                     <button
                       type="button"
                       onClick={clearCompany}
-                      className="ml-3 shrink-0 text-xs text-gray-400 underline hover:text-gray-700"
+                      className="ml-3 shrink-0 text-xs text-ink-mute underline hover:text-ink-soft"
                     >
                       Change
                     </button>
@@ -998,7 +1006,7 @@ export default function NewProofPage() {
                 {(() => {
                   const year = parseCustomerSinceYear(customerCreatedAt)
                   return year ? (
-                    <p className="text-xs text-gray-500">Customer since {year}</p>
+                    <p className="text-xs text-ink-mute">Customer since {year}</p>
                   ) : null
                 })()}
               </div>
@@ -1009,16 +1017,16 @@ export default function NewProofPage() {
                 type="checkbox"
                 checked={isIndividual}
                 onChange={(e) => handleIndividualToggle(e.target.checked)}
-                className="rounded border-gray-300"
+                className="rounded border-line"
               />
-              <span className="text-sm text-gray-600">No company (individual)</span>
+              <span className="text-sm text-ink-soft">No company (individual)</span>
             </label>
           </section>
 
           {/* ── Contact (shown once company is resolved) ─────────────────── */}
           {companyResolved && (
-            <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-              <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Contact</h2>
+            <section className="rounded-[14px] bg-surface p-6 border border-line">
+              <h2 className="mb-4 eyebrow text-ink-mute">Contact</h2>
 
               {/* Combobox input — only when no contact resolved */}
               {!selectedContact && !addingContact && (
@@ -1034,39 +1042,39 @@ export default function NewProofPage() {
                     autoComplete="off"
                   />
                   {contactOpen && (
-                    <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                    <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-56 overflow-y-auto rounded-lg border border-line bg-white shadow-md">
                       {filteredContacts.length === 0 && !contactSearch.trim() && (
-                        <p className="px-3 py-3 text-sm text-gray-400">
+                        <p className="px-3 py-3 text-sm text-ink-mute">
                           No contacts{selectedCompany?.id === null ? ' yet (new company)' : ' for this company'}.
                         </p>
                       )}
                       {filteredContacts.length === 0 && contactSearch.trim() && (
-                        <p className="px-3 py-3 text-sm text-gray-400">No matches.</p>
+                        <p className="px-3 py-3 text-sm text-ink-mute">No matches.</p>
                       )}
                       {filteredContacts.map((c) => (
                         <button
                           key={c.id}
                           type="button"
                           onClick={() => selectContact(c)}
-                          className="flex w-full flex-col px-3 py-2.5 text-left hover:bg-gray-50"
+                          className="flex w-full flex-col px-3 py-2.5 text-left hover:bg-canvas"
                         >
-                          <span className="text-sm font-medium text-gray-900">{c.full_name}</span>
-                          <span className="text-xs text-gray-500">{c.email}</span>
+                          <span className="text-sm font-medium text-ink">{c.full_name}</span>
+                          <span className="text-xs text-ink-mute">{c.email}</span>
                         </button>
                       ))}
                       <button
                         type="button"
                         onClick={chooseAddContact}
                         className={[
-                          'flex w-full items-center gap-1.5 px-3 py-2.5 text-left text-sm text-gray-500 hover:bg-gray-50',
-                          filteredContacts.length > 0 ? 'border-t border-gray-100' : '',
+                          'flex w-full items-center gap-1.5 px-3 py-2.5 text-left text-sm text-ink-mute hover:bg-canvas',
+                          filteredContacts.length > 0 ? 'border-t border-line-soft' : '',
                         ].join(' ')}
                       >
-                        <span className="text-gray-400">+</span>
+                        <span className="text-ink-mute">+</span>
                         {contactSearch.trim() ? (
                           <>
                             Add new contact:{' '}
-                            <span className="font-medium text-gray-900">"{contactSearch.trim()}"</span>
+                            <span className="font-medium text-ink">"{contactSearch.trim()}"</span>
                           </>
                         ) : (
                           'Add new contact'
@@ -1079,15 +1087,15 @@ export default function NewProofPage() {
 
               {/* Selected contact pill */}
               {selectedContact && (
-                <div className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2.5">
+                <div className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2.5">
                   <div>
-                    <span className="text-sm font-medium text-gray-900">{selectedContact.full_name}</span>
-                    <span className="ml-2 text-sm text-gray-500">{selectedContact.email}</span>
+                    <span className="text-sm font-medium text-ink">{selectedContact.full_name}</span>
+                    <span className="ml-2 text-sm text-ink-mute">{selectedContact.email}</span>
                   </div>
                   <button
                     type="button"
                     onClick={clearContact}
-                    className="ml-3 shrink-0 text-xs text-gray-400 underline hover:text-gray-700"
+                    className="ml-3 shrink-0 text-xs text-ink-mute underline hover:text-ink-soft"
                   >
                     Change
                   </button>
@@ -1098,21 +1106,21 @@ export default function NewProofPage() {
               {addingContact && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-700">New contact</span>
+                    <span className="text-sm font-medium text-ink-soft">New contact</span>
                     {/* Only show Cancel when there are existing contacts to revert to */}
                     {allContacts.length > 0 && (
                       <button
                         type="button"
                         onClick={clearContact}
-                        className="text-xs text-gray-400 underline hover:text-gray-700"
+                        className="text-xs text-ink-mute underline hover:text-ink-soft"
                       >
                         Cancel
                       </button>
                     )}
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                      Full name <span className="text-red-500">*</span>
+                    <label className="mb-1.5 block text-sm font-medium text-ink-soft">
+                      Full name <span className="text-out">*</span>
                     </label>
                     <input
                       type="text"
@@ -1123,8 +1131,8 @@ export default function NewProofPage() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                      Email <span className="text-red-500">*</span>
+                    <label className="mb-1.5 block text-sm font-medium text-ink-soft">
+                      Email <span className="text-out">*</span>
                     </label>
                     <input
                       type="email"
@@ -1143,13 +1151,13 @@ export default function NewProofPage() {
           )}
 
           {/* ── Internal fields ───────────────────────────────────────────── */}
-          <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Internal</h2>
+          <section className="rounded-[14px] bg-surface p-6 border border-line">
+            <h2 className="mb-4 eyebrow text-ink-mute">Internal</h2>
 
             <div ref={helpscoutSectionRef} className="mb-4">
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+              <label className="mb-1.5 block text-sm font-medium text-ink-soft">
                 Help Scout conversation URL{' '}
-                <span className="text-red-500">*</span>
+                <span className="text-out">*</span>
               </label>
               <input
                 type="url"
@@ -1197,10 +1205,10 @@ export default function NewProofPage() {
                 className={inputClass}
               />
               {hsLookupInFlight && (
-                <p className="mt-1.5 text-xs text-gray-400">Checking Help Scout…</p>
+                <p className="mt-1.5 text-xs text-ink-mute">Checking Help Scout…</p>
               )}
               {!hsLookupInFlight && hsLinkedSubject && hsConversationId && (
-                <p className="mt-1.5 text-xs text-emerald-600">
+                <p className="mt-1.5 text-xs text-in-stock">
                   Linked to Help Scout thread: <span className="font-medium">{hsLinkedSubject}</span>
                 </p>
               )}
@@ -1208,16 +1216,17 @@ export default function NewProofPage() {
                 <button
                   type="button"
                   onClick={() => setHsPickerOpen(true)}
-                  className="mt-1.5 text-xs text-amber-600 underline hover:text-amber-700"
+                  className="mt-1.5 text-xs underline"
+                  style={{ color: 'var(--c-low)' }}
                 >
                   Multiple Help Scout threads found — choose one
                 </button>
               )}
               {urlFormatError && (
-                <p className="mt-1.5 text-xs text-red-600">{urlFormatError}</p>
+                <p className="mt-1.5 text-xs text-out">{urlFormatError}</p>
               )}
               {hsLookupError && (
-                <p className="mt-1.5 text-xs text-gray-400">
+                <p className="mt-1.5 text-xs text-ink-mute">
                   Couldn't check Help Scout — {hsLookupError}. Paste a URL manually or provide an override reason.
                 </p>
               )}
@@ -1228,27 +1237,33 @@ export default function NewProofPage() {
                 right" on the picker. Must be at least
                 MIN_OVERRIDE_REASON_LENGTH chars to submit. */}
             {hsLookupReturnedZero && !hsConversationId && (
-              <div className="mb-4 rounded-lg bg-amber-50 p-4 ring-1 ring-amber-100">
-                <p className="text-sm font-medium text-amber-900">
+              <div
+                className="mb-4 rounded-lg p-4"
+                style={{
+                  backgroundColor: 'var(--c-low-soft)',
+                  boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--c-low) 30%, transparent)',
+                }}
+              >
+                <p className="text-sm font-medium text-ink">
                   No Help Scout conversation linked
                 </p>
-                <p className="mt-1 text-xs text-amber-800">
+                <p className="mt-1 text-xs text-ink-soft">
                   {hsLookupEmail
                     ? `No matches found for ${hsLookupEmail}.`
                     : ''}{' '}
                   Paste a conversation URL above, or provide a reason to continue without one.
                 </p>
-                <label className="mt-3 block text-xs font-medium text-amber-900">
-                  Why is this proof not linked to a Help Scout conversation? <span className="text-red-500">*</span>
+                <label className="mt-3 block text-xs font-medium text-ink-soft">
+                  Why is this proof not linked to a Help Scout conversation? <span className="text-out">*</span>
                 </label>
                 <textarea
                   rows={2}
                   value={overrideReason}
                   onChange={(e) => setOverrideReason(e.target.value)}
                   placeholder={`At least ${MIN_OVERRIDE_REASON_LENGTH} characters.`}
-                  className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-[17px] sm:text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2 text-[17px] sm:text-sm text-ink focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
                 />
-                <p className="mt-1 text-xs text-amber-700">
+                <p className="mt-1 text-xs text-ink-mute">
                   {overrideReason.trim().length < MIN_OVERRIDE_REASON_LENGTH
                     ? `${overrideReason.trim().length} / ${MIN_OVERRIDE_REASON_LENGTH} characters`
                     : 'OK'}
@@ -1257,9 +1272,9 @@ export default function NewProofPage() {
             )}
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+              <label className="mb-1.5 block text-sm font-medium text-ink-soft">
                 Internal notes{' '}
-                <span className="font-normal text-gray-400">(optional, never shown to customers)</span>
+                <span className="font-normal text-ink-mute">(optional, never shown to customers)</span>
               </label>
               <textarea
                 rows={3}
@@ -1271,7 +1286,7 @@ export default function NewProofPage() {
           </section>
 
           {error && (
-            <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
+            <p className="rounded-lg bg-out-soft px-4 py-3 text-sm text-out">{error}</p>
           )}
 
           {/* Disable while either Help Scout lookup is in flight —
@@ -1286,17 +1301,18 @@ export default function NewProofPage() {
               selected — same shape of race against unpopulated fields.
               "Looking up…" mirrors the Look up button's busy copy so
               the visual language is consistent across both. */}
-          <button
+          <ButtonInk
             type="submit"
-            disabled={submitting || pasteInFlight || hsLookupInFlight}
-            className="w-full rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+            block
+            busy={submitting || pasteInFlight || hsLookupInFlight}
+            className="h-11"
           >
             {submitting
               ? 'Creating…'
               : (pasteInFlight || hsLookupInFlight)
                 ? 'Looking up…'
                 : 'Create project'}
-          </button>
+          </ButtonInk>
         </form>
       </div>
 
@@ -1316,6 +1332,7 @@ export default function NewProofPage() {
         />
       )}
     </div>
+    </DesignerChrome>
   )
 }
 
@@ -1338,19 +1355,19 @@ function HelpScoutPicker({
       ariaLabelledBy="hs-picker-title"
       backdropClassName="bg-black/40"
     >
-      <h3 id="hs-picker-title" className="text-sm font-semibold text-gray-900">Multiple Help Scout threads found</h3>
-      <p className="mt-1 text-xs text-gray-500">Pick the conversation this proof relates to.</p>
+      <h3 id="hs-picker-title" className="text-sm font-semibold text-ink">Multiple Help Scout threads found</h3>
+      <p className="mt-1 text-xs text-ink-mute">Pick the conversation this proof relates to.</p>
       <div className="mt-4 max-h-72 space-y-1.5 overflow-y-auto">
         {matches.map((m) => (
           <button
             key={m.id}
             type="button"
             onClick={() => onPick(m)}
-            className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left text-sm hover:bg-gray-50 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+            className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-line px-3 py-2.5 text-left text-sm hover:bg-canvas focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
           >
-            <span className="font-medium text-gray-900">{m.subject ?? `Conversation #${m.id}`}</span>
-            <span className="text-xs text-gray-500">
-              <span className={m.status === 'active' ? 'font-medium text-emerald-600' : 'text-gray-500'}>
+            <span className="font-medium text-ink">{m.subject ?? `Conversation #${m.id}`}</span>
+            <span className="text-xs text-ink-mute">
+              <span className={m.status === 'active' ? 'font-medium text-in-stock' : 'text-ink-mute'}>
                 {m.status ?? 'unknown'}
               </span>
               {m.mailboxName && ` · ${m.mailboxName}`}
@@ -1363,14 +1380,14 @@ function HelpScoutPicker({
         <button
           type="button"
           onClick={onOverride}
-          className="text-xs text-gray-500 underline hover:text-gray-900"
+          className="text-xs text-ink-mute underline hover:text-ink"
         >
           These aren't right — I'll provide a reason
         </button>
         <button
           type="button"
           onClick={onClose}
-          className="rounded-lg px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100"
+          className="rounded-lg px-3 py-1.5 text-sm text-ink-mute hover:bg-line-soft"
         >
           Close
         </button>
@@ -1380,7 +1397,7 @@ function HelpScoutPicker({
 }
 
 const inputClass =
-  'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+  'w-full rounded-[8px] border border-line bg-surface px-3 py-2 text-[17px] sm:text-sm text-ink placeholder:text-ink-dim focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]'
 
 // Pull a four-digit year out of a Help Scout createdAt timestamp.
 // Returns null for missing input, unparseable strings, or nonsense
