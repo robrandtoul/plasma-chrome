@@ -5,8 +5,8 @@ import type { PriceTier } from '../../lib/quote/calculate'
 import { getPublicTiers } from '../../lib/quote/headlineTiers'
 
 const currentCellStyle: CSSProperties = {
-  background: 'rgba(123,63,242,0.08)',
-  boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
+  background: 'var(--c-brand-50)',
+  boxShadow: 'inset 0 0 0 1.5px var(--c-brand)',
 }
 
 // Adjacent quantity tiers — neighbour-below / current / neighbour-

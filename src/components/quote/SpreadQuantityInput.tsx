@@ -129,7 +129,7 @@ export function SpreadQuantityInput({
       </legend>
       <div
         className={[
-          'flex flex-wrap items-center gap-1.5 rounded-lg border px-2 py-2 text-sm transition-colors',
+          'flex flex-wrap items-center gap-1.5 rounded-md border px-2 py-2 text-sm transition-colors',
           'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
           chrome
             ? 'cursor-not-allowed border-line-soft bg-canvas'
@@ -143,7 +143,7 @@ export function SpreadQuantityInput({
             <span
               key={`${q}-${i}`}
               className={[
-                'inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm font-medium tabular-nums',
+                'inline-flex items-center gap-1 rounded px-2 py-1 text-sm font-medium tabular-nums',
                 valid
                   ? 'bg-brand-50 text-brand ring-1 ring-brand-200'
                   : 'bg-low-soft text-low ring-1 ring-low',

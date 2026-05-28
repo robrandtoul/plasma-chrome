@@ -26,7 +26,7 @@ export function SpreadQuoteToggle({
     <div className="flex items-center gap-3">
       <label
         className={[
-          'inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors',
+          'inline-flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-sm font-medium transition-colors',
           'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
           disabled
             ? 'cursor-not-allowed border-line-soft bg-canvas text-ink-dim'

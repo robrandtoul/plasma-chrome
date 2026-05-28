@@ -2,9 +2,9 @@ import type { CSSProperties } from 'react'
 import type { QuoteMaterialOption } from '../../lib/quote/types'
 
 const selectedChipStyle: CSSProperties = {
-  background: 'rgba(123,63,242,0.16)',
-  color: '#5b2bba',
-  boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
+  background: 'var(--c-brand-50)',
+  color: 'var(--c-brand)',
+  boxShadow: 'inset 0 0 0 1.5px var(--c-brand)',
 }
 
 // Optional finish picker for materials that bill a quantity-tiered
@@ -49,7 +49,7 @@ export function FinishToggle({
               type="button"
               onClick={() => onChange(o.code)}
               className={[
-                'rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors',
+                'rounded border px-3 py-1.5 text-sm font-medium transition-colors',
                 'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
                 selected
                   ? 'border-transparent'

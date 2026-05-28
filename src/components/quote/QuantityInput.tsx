@@ -132,11 +132,11 @@ export function QuantityInput({
           // primary action without dominating the column on wide
           // viewports. Slight box-shadow on focus-within so the
           // hero state is unmistakable.
-          'relative flex max-w-[320px] items-stretch overflow-hidden rounded-[10px] border-2 transition-shadow',
-          'focus-within:shadow-[0_0_0_3px_rgba(127,119,221,0.25)]',
+          'relative flex max-w-[320px] items-stretch overflow-hidden rounded border-2 transition-shadow',
+          'focus-within:shadow-[0_0_0_3px_var(--c-brand-100)]',
           disabled || variantTiers.length === 0
             ? 'cursor-not-allowed border-line bg-canvas'
-            : 'border-[#7F77DD] bg-[#EEEDFE]',
+            : 'border-brand bg-brand-50',
         ].join(' ')}
       >
         <input
@@ -158,14 +158,14 @@ export function QuantityInput({
             'focus:outline-none',
             disabled || variantTiers.length === 0
               ? 'cursor-not-allowed text-ink-dim placeholder:text-ink-dim'
-              : 'text-ink placeholder:text-[#9994d6]',
+              : 'text-ink placeholder:text-brand/50',
           ].join(' ')}
         />
         {/* Stepper column on the right edge. Two stacked buttons,
             each ~24px tall, divided by a thin line. Same logic as
             keyboard ↑/↓ — single setQuantity entry point via
             step(). */}
-        <div className="flex w-9 flex-col border-l border-[#7F77DD]/40">
+        <div className="flex w-9 flex-col border-l border-brand/40">
           <button
             type="button"
             onClick={() => step('up')}
@@ -175,13 +175,13 @@ export function QuantityInput({
               'flex h-1/2 items-center justify-center transition-colors',
               stepUpDisabled
                 ? 'cursor-not-allowed text-ink-dim'
-                : 'text-[#5b2bba] hover:bg-[#dfdcfb]',
+                : 'text-brand hover:bg-brand-100',
             ].join(' ')}
             tabIndex={-1}
           >
             <Chevron direction="up" />
           </button>
-          <div className="h-px bg-[#7F77DD]/40" aria-hidden />
+          <div className="h-px bg-brand/40" aria-hidden />
           <button
             type="button"
             onClick={() => step('down')}
@@ -191,7 +191,7 @@ export function QuantityInput({
               'flex h-1/2 items-center justify-center transition-colors',
               stepDownDisabled
                 ? 'cursor-not-allowed text-ink-dim'
-                : 'text-[#5b2bba] hover:bg-[#dfdcfb]',
+                : 'text-brand hover:bg-brand-100',
             ].join(' ')}
             tabIndex={-1}
           >

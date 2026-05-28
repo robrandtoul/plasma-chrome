@@ -14,9 +14,9 @@ import {
 } from '../../lib/quote/types'
 
 const selectedChipStyle: CSSProperties = {
-  background: 'rgba(123,63,242,0.16)',
-  color: '#5b2bba',
-  boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
+  background: 'var(--c-brand-50)',
+  color: 'var(--c-brand)',
+  boxShadow: 'inset 0 0 0 1.5px var(--c-brand)',
 }
 
 // Peer-pair groupings. Visual-only — the picker still produces
@@ -176,7 +176,7 @@ export function MaterialPicker({
           placeholder="Type to filter materials…"
           aria-label="Filter materials"
           autoComplete="off"
-          className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-[17px] sm:text-sm text-ink placeholder:text-ink-mute focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+          className="w-full rounded border border-line bg-surface px-3 py-2 text-[17px] sm:text-sm text-ink placeholder:text-ink-mute focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
         />
       </div>
 
@@ -288,7 +288,7 @@ function MaterialChip({
       data-material-chip
       onClick={onClick}
       className={[
-        'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+        'rounded px-3 py-1.5 text-sm font-medium transition-colors',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
         inPair
           ? selected

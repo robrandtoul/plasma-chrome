@@ -73,7 +73,7 @@ export function NamesInput({
         onKeyDown={handleKey}
         aria-label="Number of unique names"
         className={[
-          'w-24 rounded-lg border px-3 py-2 text-[17px] sm:text-base font-medium tabular-nums',
+          'w-24 rounded border px-3 py-2 text-[17px] sm:text-base font-medium tabular-nums',
           'border-line bg-surface text-ink',
           'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
         ].join(' ')}
