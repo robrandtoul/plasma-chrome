@@ -60,9 +60,11 @@ interface QrCodePanelProps {
    * the panel renders every QR flat in this case.
    */
   isVariantRound: boolean
+  /** Optional classes for the panel root (e.g. responsive order-*). */
+  className?: string
 }
 
-export function QrCodePanel({ qrImages, names, isVariantRound }: QrCodePanelProps) {
+export function QrCodePanel({ qrImages, names, isVariantRound, className }: QrCodePanelProps) {
   if (qrImages.length === 0) return null
 
   // Variant rounds: QR rows are version-wide (no round_variant_id on
@@ -70,7 +72,7 @@ export function QrCodePanel({ qrImages, names, isVariantRound }: QrCodePanelProp
   // per-recipient grouping doesn't apply to variant rounds.
   if (isVariantRound) {
     return (
-      <QrSection>
+      <QrSection className={className}>
         <div className="space-y-6">
           {qrImages.map((img) => (
             <QrCodeCard key={img.id} image={img} />
@@ -87,7 +89,7 @@ export function QrCodePanel({ qrImages, names, isVariantRound }: QrCodePanelProp
   // panel.
   if (names.length === 0) {
     return (
-      <QrSection>
+      <QrSection className={className}>
         <div className="space-y-6">
           {qrImages.map((img) => (
             <QrCodeCard key={img.id} image={img} />
@@ -112,7 +114,7 @@ export function QrCodePanel({ qrImages, names, isVariantRound }: QrCodePanelProp
   if (!hasAnyContent) return null
 
   return (
-    <QrSection>
+    <QrSection className={className}>
       <div className="space-y-8">
         {perRecipient.map(({ name, qrs }) => {
           // Skip recipients with no QRs visible to them (no
@@ -146,13 +148,14 @@ export function QrCodePanel({ qrImages, names, isVariantRound }: QrCodePanelProp
 
 // ── Section wrapper ──────────────────────────────────────────────────
 
-function QrSection({ children }: { children: React.ReactNode }) {
+function QrSection({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <PanelShell
       eyebrow="Before approving"
       title="QR code contents"
       icon={QrCode}
       accent={tokens.brand}
+      className={className}
     >
       <div className="space-y-4">
         <p className="text-[14px] leading-[1.6] text-ink-soft max-w-[62ch] m-0">

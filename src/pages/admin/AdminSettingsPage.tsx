@@ -5,6 +5,7 @@ import { invalidatePublicSettings } from '../../lib/publicSettings'
 import { invalidateApprovalSettings } from '../../lib/approvalSettings'
 import { invalidateShippingSettings } from '../../lib/shippingSettings'
 import AdminTemplatesSection from './AdminTemplatesSection'
+import MetalThicknessNotesSection from './MetalThicknessNotesSection'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -15,6 +16,8 @@ interface Settings {
   disclaimer_text: string
   company_name: string
   reply_email: string
+  /** "About this proof" footer note on the customer page (000199). */
+  about_proof_copy: string
   /** null means "no default — force the designer to choose". */
   default_pricing_display: PricingDisplayValue | null
   default_currency: CurrencyValue | null
@@ -49,6 +52,7 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   disclaimer_text:                   'setting.disclaimer_updated',
   company_name:                      'setting.company_name_updated',
   reply_email:                       'setting.reply_email_updated',
+  about_proof_copy:                  'setting.about_proof_copy_updated',
   default_pricing_display:           'setting.default_pricing_display_updated',
   default_currency:                  'setting.default_currency_updated',
   approvals_enabled:                 'setting.approvals_enabled_updated',
@@ -354,6 +358,22 @@ export default function AdminSettingsPage() {
               placeholder="hello@plasmadesign.co.uk"
             />
           </FieldRow>
+
+          <FieldRow
+            label="About this proof note"
+            help="The quiet note at the bottom of every customer proof page, explaining that on-screen colours and finish are an approximation of the real card."
+            saved={recentlySaved('about_proof_copy')}
+            working={working.about_proof_copy}
+            error={errors.about_proof_copy}
+          >
+            <textarea
+              value={drafts.about_proof_copy ?? settings.about_proof_copy}
+              onChange={(e) => setDrafts((d) => ({ ...d, about_proof_copy: e.target.value }))}
+              onBlur={() => onTextBlur('about_proof_copy')}
+              rows={5}
+              className={inputClass}
+            />
+          </FieldRow>
         </div>
       </section>
 
@@ -575,6 +595,9 @@ export default function AdminSettingsPage() {
         </div>
       </section>
 
+      {/* ── Metal thickness notes ────────────────────────────── */}
+      <MetalThicknessNotesSection />
+
       {/* ── Reply templates ──────────────────────────────────── */}
       <AdminTemplatesSection />
     </div>
@@ -752,6 +775,7 @@ function humanFieldLabel(field: keyof Settings): string {
     disclaimer_text: 'Disclaimer copy',
     company_name: 'Company name',
     reply_email: 'Reply email',
+    about_proof_copy: 'About this proof note',
     default_pricing_display: 'Default pricing display',
     default_currency: 'Default currency',
     approvals_enabled: 'Customer-facing approval flow enabled',

@@ -16,15 +16,17 @@ type MaterialOptionTabsProps = {
   showSurcharges: boolean
 }
 
-// Material option / finish tab strip. Sits in the right slot of
-// the Plates section header. Active tab carries a solid ink
-// underline; idle tabs hover into a soft line-coloured underline.
-// All copy is mono-uppercase via the .eyebrow class from the
-// design tokens so the strip reads as a continuation of the
-// page's eyebrow system rather than a bespoke component.
+// Material option / finish selector. Sits in the right slot of the
+// Plates section header. Rendered as a segmented control (the same
+// idiom as CurrencyField on the designer side) so it reads
+// unmistakably as a "pick one" toggle rather than as quiet caption
+// text — the whole strip is one bordered track on a surface fill,
+// and the active segment lifts out with a soft-coral fill + inset
+// coral ring. The "Finish" / "Species" label leads in as a mono
+// eyebrow.
 //
-// Behaviour preserved verbatim from the Direction-B version —
-// only the visual chrome changes in this reskin pass.
+// Behaviour preserved verbatim from the Direction-B version — only
+// the visual chrome changes.
 export function MaterialOptionTabs({
   label,
   tabs,
@@ -33,41 +35,39 @@ export function MaterialOptionTabs({
   showSurcharges,
 }: MaterialOptionTabsProps) {
   return (
-    <div className="flex flex-wrap items-baseline gap-x-6 gap-y-3">
-      <span className="eyebrow">{label}</span>
-      {tabs.map((tab) => (
-        <button
-          key={tab.code}
-          type="button"
-          aria-pressed={tab.isActive}
-          onClick={() => onSelect(tab.code)}
-          className={[
-            'flex items-baseline gap-2 pb-2 border-b-2 transition-colors',
-            tab.isActive
-              ? 'border-ink'
-              : 'border-transparent hover:border-line',
-            'focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]',
-          ].join(' ')}
-        >
-          <span
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <span className="eyebrow text-ink-mute">{label}</span>
+      <div className="inline-flex flex-wrap rounded border border-line bg-surface p-0.5">
+        {tabs.map((tab) => (
+          <button
+            key={tab.code}
+            type="button"
+            aria-pressed={tab.isActive}
+            onClick={() => onSelect(tab.code)}
             className={[
-              'eyebrow',
-              tab.isActive ? 'text-ink' : 'text-ink-mute',
+              'inline-flex items-baseline gap-1.5 rounded px-3 py-1.5 transition-colors',
+              tab.isActive
+                ? 'bg-brand-50 text-brand ring-1 ring-inset ring-brand'
+                : 'text-ink-mute hover:text-ink',
+              'focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]',
             ].join(' ')}
-            style={{ letterSpacing: '0.18em' }}
           >
-            {tab.displayName}
-          </span>
-          {showSurcharges && tab.surchargeFromPrice != null && (
-            <span
-              className="eyebrow text-ink-dim whitespace-nowrap"
-              style={{ letterSpacing: '0.05em' }}
-            >
-              From +{formatPrice(tab.surchargeFromPrice, currency, 0)}
+            <span className="text-[13px] font-medium leading-none">
+              {tab.displayName}
             </span>
-          )}
-        </button>
-      ))}
+            {showSurcharges && tab.surchargeFromPrice != null && (
+              <span
+                className={[
+                  'text-[11px] font-mono font-tnum leading-none whitespace-nowrap',
+                  tab.isActive ? 'text-brand/70' : 'text-ink-dim',
+                ].join(' ')}
+              >
+                +{formatPrice(tab.surchargeFromPrice, currency, 0)}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
