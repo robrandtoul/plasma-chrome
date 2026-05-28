@@ -115,7 +115,7 @@ export default function NameChipInput({
   return (
     <div
       onClick={() => { if (editingIndex == null) inputRef.current?.focus() }}
-      className="flex min-h-[2.5rem] cursor-text flex-wrap items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm focus-within:border-gray-900 focus-within:ring-1 focus-within:ring-gray-900"
+      className="flex min-h-[2.5rem] cursor-text flex-wrap items-center gap-1.5 rounded-lg border border-line bg-surface px-2 py-1.5 text-sm focus-within:border-brand focus-within:ring-1 focus-within:ring-brand"
       role="group"
       aria-label={ariaLabel}
     >
@@ -133,14 +133,14 @@ export default function NameChipInput({
                 if (e.key === 'Enter') { e.preventDefault(); commitEdit() }
                 if (e.key === 'Escape') { e.preventDefault(); cancelEdit() }
               }}
-              className="min-w-[6rem] rounded border border-gray-300 bg-white px-1.5 py-0.5 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              className="min-w-[6rem] rounded border border-line bg-surface px-1.5 py-0.5 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
             />
           )
         }
         return (
           <span
             key={i}
-            className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-sm text-gray-700 hover:bg-gray-200"
+            className="inline-flex items-center gap-1 rounded-full bg-canvas px-2 py-0.5 text-sm text-ink-soft hover:bg-line"
           >
             <button
               type="button"
@@ -154,7 +154,7 @@ export default function NameChipInput({
               type="button"
               onClick={(e) => { e.stopPropagation(); removeAt(i) }}
               aria-label={`Remove ${name}`}
-              className="text-gray-400 hover:text-gray-700"
+              className="text-ink-dim hover:text-ink-soft"
             >
               ×
             </button>

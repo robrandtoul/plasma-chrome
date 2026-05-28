@@ -258,8 +258,8 @@ export default function MessageSendPanel({
   if (!hasHelpScoutConversation) {
     return (
       <div className="space-y-4">
-        <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-          <p className="text-sm text-gray-500">
+        <div className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+          <p className="text-sm text-ink-mute">
             No Help Scout conversation is linked to this proof. The customer-facing
             URL has been saved with the version; you can copy it from the project
             page and reply manually.
@@ -269,7 +269,7 @@ export default function MessageSendPanel({
           <button
             type="button"
             onClick={onSkip}
-            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+            className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
           >
             Continue to project
           </button>
@@ -287,17 +287,17 @@ export default function MessageSendPanel({
   return (
     <div className="space-y-4">
       {/* Context panel */}
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-        <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-gray-400">
+      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+        <h3 className="mb-4 text-xs font-semibold uppercase tracking-wider text-ink-dim">
           Conversation context
         </h3>
 
         {contextLoading && (
-          <p className="text-sm text-gray-400">Loading recent messages…</p>
+          <p className="text-sm text-ink-dim">Loading recent messages…</p>
         )}
 
         {contextError && (
-          <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-amber-200">
+          <div className="rounded-lg bg-low-soft px-3 py-2 text-sm text-low ring-1 ring-low">
             Couldn't load conversation history: {contextError}
           </div>
         )}
@@ -307,7 +307,7 @@ export default function MessageSendPanel({
             {lastCustomerThread ? (
               <ThreadCard label="Customer's last message" thread={lastCustomerThread} />
             ) : (
-              <p className="text-sm text-gray-400">No customer messages yet.</p>
+              <p className="text-sm text-ink-dim">No customer messages yet.</p>
             )}
             {lastReplyThread && (
               <ThreadCard label="Your last reply" thread={lastReplyThread} muted />
@@ -316,7 +316,7 @@ export default function MessageSendPanel({
               <button
                 type="button"
                 onClick={() => setShowOlder(true)}
-                className="text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+                className="text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
               >
                 Show more of the thread ({olderThreads.length})
               </button>
@@ -329,7 +329,7 @@ export default function MessageSendPanel({
                 href={contextData.url}
                 target="_blank"
                 rel="noreferrer"
-                className="text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+                className="text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
               >
                 Open in Help Scout
               </a>
@@ -339,21 +339,21 @@ export default function MessageSendPanel({
       </section>
 
       {/* Editor */}
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
         <div className="mb-2 flex items-center gap-3">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-ink-dim">
             Reply
           </h3>
           {editorState === 'sent' && (
-            <span className="text-xs font-medium text-emerald-600">Sent</span>
+            <span className="text-xs font-medium text-in-stock">Sent</span>
           )}
           {templateFallback && (
-            <span className="text-xs text-gray-400">Using built-in default</span>
+            <span className="text-xs text-ink-dim">Using built-in default</span>
           )}
         </div>
 
         {sendError && (
-          <div className="mb-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-200">
+          <div className="mb-3 rounded-lg bg-out-soft px-3 py-2 text-sm text-out ring-1 ring-out">
             {sendError}
           </div>
         )}
@@ -363,7 +363,7 @@ export default function MessageSendPanel({
           onChange={(e) => setBody(e.target.value)}
           disabled={editorDisabled || !bodyReady}
           rows={12}
-          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm leading-relaxed focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900 disabled:bg-gray-50 disabled:text-gray-400"
+          className="w-full rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm leading-relaxed focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand disabled:bg-canvas disabled:text-ink-dim"
           placeholder={bodyReady ? '' : 'Loading template…'}
         />
       </section>
@@ -371,7 +371,7 @@ export default function MessageSendPanel({
       {/* Actions */}
       <div>
         {repliesEnabled === false && (
-          <p className="mb-2 text-right text-xs text-amber-700">
+          <p className="mb-2 text-right text-xs text-low">
             Replies are currently paused by an admin.
           </p>
         )}
@@ -380,7 +380,7 @@ export default function MessageSendPanel({
             type="button"
             onClick={onSkip}
             disabled={editorState === 'sending'}
-            className="text-sm font-medium text-gray-500 hover:text-gray-900 disabled:opacity-50"
+            className="text-sm font-medium text-ink-mute hover:text-ink disabled:opacity-50"
           >
             {skipLabel}
           </button>
@@ -390,10 +390,10 @@ export default function MessageSendPanel({
             disabled={editorDisabled || !bodyReady || repliesEnabled === false}
             title={repliesEnabled === false ? 'Replies are currently paused by an admin.' : undefined}
             className={[
-              'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
+              'rounded-lg px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
               editorState === 'sending' || editorState === 'sent' || repliesEnabled === false
-                ? 'bg-gray-900/60 cursor-not-allowed'
-                : 'bg-gray-900 hover:bg-gray-700',
+                ? 'bg-ink/60 cursor-not-allowed'
+                : 'bg-ink hover:opacity-90',
             ].join(' ')}
           >
             {editorState === 'sending' ? 'Sending…' : editorState === 'sent' ? 'Sent ✓' : 'Send reply'}
@@ -419,21 +419,21 @@ function ThreadCard({
     <div
       className={[
         'rounded-xl border p-4',
-        muted ? 'border-gray-100 bg-gray-50/40' : 'border-gray-200 bg-white',
+        muted ? 'border-line-soft bg-canvas' : 'border-line bg-surface',
       ].join(' ')}
     >
       {label && (
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-ink-dim">
           {label}
         </p>
       )}
-      <div className="mb-2 flex items-center gap-2 text-xs text-gray-500">
-        <span className="font-medium text-gray-700">{thread.authorName}</span>
+      <div className="mb-2 flex items-center gap-2 text-xs text-ink-mute">
+        <span className="font-medium text-ink-soft">{thread.authorName}</span>
         <span>·</span>
         <span>{formatThreadTimestamp(thread.createdAt)}</span>
       </div>
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-800">
-        {thread.bodyText || <span className="italic text-gray-400">(empty body)</span>}
+      <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink">
+        {thread.bodyText || <span className="italic text-ink-dim">(empty body)</span>}
       </p>
     </div>
   )

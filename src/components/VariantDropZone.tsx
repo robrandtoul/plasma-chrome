@@ -97,7 +97,7 @@ export function VariantDropZone({
   return (
     <div>
       <label
-        className="mb-1.5 block text-sm font-medium text-gray-700"
+        className="mb-1.5 block text-sm font-medium text-ink-soft"
         style={{ letterSpacing: '0.02em' }}
       >
         {label}
@@ -117,12 +117,12 @@ export function VariantDropZone({
         onDragLeave={onDragLeave}
         onDrop={onDrop}
         className={[
-          'flex min-h-[88px] cursor-pointer items-center justify-center rounded-lg border-2 border-dashed px-4 py-6 text-center text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400',
+          'flex min-h-[88px] cursor-pointer items-center justify-center rounded-lg border-2 border-dashed px-4 py-6 text-center text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand',
           dragOver
-            ? 'border-gray-900 bg-gray-50 text-gray-900'
+            ? 'border-ink bg-canvas text-ink'
             : invalid
-              ? 'border-rose-300 bg-white text-rose-500 hover:border-rose-400'
-              : 'border-gray-300 bg-white text-gray-500 hover:border-gray-400 hover:text-gray-700',
+              ? 'border-out bg-surface text-out hover:border-out'
+              : 'border-line bg-surface text-ink-mute hover:border-line hover:text-ink-soft',
         ].join(' ')}
       >
         {dragOver
@@ -144,7 +144,7 @@ export function VariantDropZone({
         />
       </div>
       {(dropError || (invalid && invalidText)) && (
-        <p className="mt-1.5 text-xs font-medium text-rose-500">
+        <p className="mt-1.5 text-xs font-medium text-out">
           {dropError ?? invalidText}
         </p>
       )}
@@ -160,18 +160,18 @@ export function VariantDropZone({
             return (
               <li
                 key={`${f.name}-${fi}`}
-                className="flex items-center gap-3 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs"
+                className="flex items-center gap-3 rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
               >
                 {blobUrl ? (
                   <img
                     src={blobUrl}
                     alt=""
                     aria-hidden="true"
-                    className="h-32 w-32 shrink-0 rounded-md border border-gray-200 object-cover"
+                    className="h-32 w-32 shrink-0 rounded-md border border-line object-cover"
                   />
                 ) : (
                   <div
-                    className="h-32 w-32 shrink-0 rounded-md border border-gray-200 bg-gray-50"
+                    className="h-32 w-32 shrink-0 rounded-md border border-line bg-canvas"
                     aria-hidden="true"
                   />
                 )}
@@ -179,7 +179,7 @@ export function VariantDropZone({
                 <button
                   type="button"
                   onClick={() => onRemoveFile(fi)}
-                  className="ml-2 shrink-0 text-gray-500 hover:text-rose-600"
+                  className="ml-2 shrink-0 text-ink-mute hover:text-out"
                   aria-label={`Remove ${f.name}`}
                 >
                   Remove
