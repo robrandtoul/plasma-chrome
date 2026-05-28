@@ -18,7 +18,7 @@ import MessageSendPanel from '../components/MessageSendPanel'
 import VersionPreviewGate from '../components/VersionPreviewGate'
 import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
-import { QuoteLink } from '../components/QuoteLink'
+import { DesignerChrome } from '../design'
 import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSection'
 import type { QrKind } from '../lib/qrCodes'
 import type { Currency, LetterpressCoreColour, ProofNameApproval } from '../lib/types'
@@ -4020,6 +4020,7 @@ export default function NewVersionPage() {
   }
 
   return (
+    <DesignerChrome active="proofs">
     <div className="min-h-dvh bg-canvas">
       {toast?.kind === 'validation' && (
         <div
@@ -4059,20 +4060,22 @@ export default function NewVersionPage() {
             header on six pages today. Future "extract shared header"
             pass should inline this once and remove the per-page
             insertions. */}
-        <div className="mb-6 flex items-center justify-between">
-          <Link to={`/proofs/${proofId}`} className="text-sm text-ink-dim hover:text-ink-soft">← Back to project</Link>
-          <QuoteLink variant="inline" />
-        </div>
+        <nav className="mb-6 flex items-center gap-1.5 text-[13px] text-ink-mute">
+          <Link to="/" className="hover:text-ink">Proofs</Link>
+          <span className="text-ink-dim">›</span>
+          <Link to={`/proofs/${proofId}`} className="max-w-[24ch] truncate hover:text-ink">{proofName ?? 'Project'}</Link>
+          <span className="text-ink-dim">›</span>
+          <span className="text-ink">{savedVersion ? `v${savedVersion.number}` : 'Add version'}</span>
+        </nav>
 
         {/* Page heading. Cancel + Save live in the sticky bottom
             action bar (see end of return) so they're reachable
             from any scroll position on the long-form layout. */}
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-ink">
+          <h1 className="font-display font-medium tracking-[-0.02em] text-ink leading-tight" style={{ fontSize: 'clamp(24px, 4vw, 32px)' }}>
             {savedVersion ? `Version v${savedVersion.number} saved` : 'Add version'}
           </h1>
-          {proofName && <p className="mt-1 text-ink-mute">{proofName}</p>}
-          {proofCompany && <p className="text-sm text-ink-dim">{proofCompany}</p>}
+          {proofCompany && <p className="mt-1 text-sm text-ink-dim">{proofCompany}</p>}
         </div>
 
         {savedVersion && !previewApproved && (
@@ -6025,6 +6028,7 @@ export default function NewVersionPage() {
         </div>
       )}
     </div>
+    </DesignerChrome>
   )
 }
 

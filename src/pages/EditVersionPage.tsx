@@ -8,7 +8,7 @@ import { DEFAULT_DISPLAY_QUANTITIES } from '../lib/constants'
 import { PricingDisplay } from '../components/PricingDisplay'
 import { PricingDisplayField, type PricingDisplayValue } from '../components/PricingDisplayField'
 import { CurrencyField } from '../components/CurrencyField'
-import { QuoteLink } from '../components/QuoteLink'
+import { DesignerChrome } from '../design'
 import { PageDropOverlay } from '../components/PageDropOverlay'
 import NameChipInput from '../components/NameChipInput'
 import { matchImageToName } from '../lib/matchImageToName'
@@ -1437,7 +1437,7 @@ export default function EditVersionPage() {
   if (loading) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-canvas">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-gray-900" />
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-ink" />
       </div>
     )
   }
@@ -1487,13 +1487,14 @@ export default function EditVersionPage() {
       designer_first_name: '',
     }
     return (
+      <DesignerChrome active="proofs">
+      <div className="min-h-dvh bg-canvas">
       <div className="mx-auto max-w-2xl px-4 py-10 pb-32 sm:px-6">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-ink">
+          <h1 className="font-display font-medium tracking-[-0.02em] text-ink leading-tight" style={{ fontSize: 'clamp(24px, 4vw, 32px)' }}>
             Version v{versionNumber} saved
           </h1>
-          {proofName && <p className="mt-1 text-ink-mute">{proofName}</p>}
-          {proofCompany && <p className="text-sm text-ink-dim">{proofCompany}</p>}
+          {proofCompany && <p className="mt-1 text-sm text-ink-dim">{proofCompany}</p>}
         </div>
         <MessageSendPanel
           proofId={proofId}
@@ -1506,6 +1507,8 @@ export default function EditVersionPage() {
           onSkip={() => navigate(`/proofs/${proofId}`)}
         />
       </div>
+      </div>
+      </DesignerChrome>
     )
   }
 
@@ -1551,6 +1554,7 @@ export default function EditVersionPage() {
   )
 
   return (
+    <DesignerChrome active="proofs">
     <div className="min-h-dvh bg-canvas">
       <PageDropOverlay visible={isPageDragOver} />
       {toast?.kind === 'validation' && (
@@ -1582,10 +1586,13 @@ export default function EditVersionPage() {
             header on six pages today. Future "extract shared header"
             pass should inline this once and remove the per-page
             insertions. */}
-        <div className="mb-6 flex items-center justify-between">
-          <Link to={`/proofs/${proofId}`} className="text-sm text-ink-dim hover:text-ink-soft">← Back to project</Link>
-          <QuoteLink variant="inline" />
-        </div>
+        <nav className="mb-6 flex items-center gap-1.5 text-[13px] text-ink-mute">
+          <Link to="/" className="hover:text-ink">Proofs</Link>
+          <span className="text-ink-dim">›</span>
+          <Link to={`/proofs/${proofId}`} className="max-w-[24ch] truncate hover:text-ink">{proofName ?? 'Project'}</Link>
+          <span className="text-ink-dim">›</span>
+          <span className="text-ink">Edit v{versionNumber}</span>
+        </nav>
 
         {/* Page heading + top actions. Cancel + Save pair is
             defined as `actionRow` above the render and emitted
@@ -1593,9 +1600,8 @@ export default function EditVersionPage() {
             the image-editing section at the bottom of the form. */}
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-ink">Edit v{versionNumber}</h1>
-            {proofName && <p className="mt-1 text-ink-mute">{proofName}</p>}
-            {proofCompany && <p className="text-sm text-ink-dim">{proofCompany}</p>}
+            <h1 className="font-display font-medium tracking-[-0.02em] text-ink leading-tight" style={{ fontSize: 'clamp(24px, 4vw, 32px)' }}>Edit v{versionNumber}</h1>
+            {proofCompany && <p className="mt-1 text-sm text-ink-dim">{proofCompany}</p>}
           </div>
           {actionRow}
         </div>
@@ -2258,6 +2264,7 @@ export default function EditVersionPage() {
         )}
       </div>
     </div>
+    </DesignerChrome>
   )
 }
 
