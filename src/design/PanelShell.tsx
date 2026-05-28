@@ -45,7 +45,7 @@ export function PanelShell({
   return (
     <section className={sectionCls}>
       {(title || eyebrow) && (
-        <header className="flex items-center gap-[10px] px-[14px] pt-5 pb-3 bg-surface border-b border-line-soft">
+        <header className="flex flex-wrap items-center gap-[10px] px-[14px] pt-9 pb-3 bg-surface border-b border-line-soft">
           {Icon && (
             <span
               className="inline-flex items-center justify-center w-7 h-7 rounded-[6px] flex-shrink-0 border border-line-soft"
@@ -72,7 +72,11 @@ export function PanelShell({
               ({String(count).padStart(2, '0')})
             </span>
           )}
-          {action && <div className="ml-auto flex items-center gap-2">{action}</div>}
+          {/* ml-auto keeps the action right-aligned; when the header
+              wraps on a narrow card the action drops to its own line
+              (still right-aligned) rather than colliding with a long
+              eyebrow. whitespace-nowrap keeps its text on one line. */}
+          {action && <div className="ml-auto flex items-center gap-2 whitespace-nowrap">{action}</div>}
         </header>
       )}
       <div className={padded ? 'p-[14px]' : ''}>{children}</div>

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Download, Send, Check, Layers, PoundSterling, BookOpen, Info, Eye } from 'lucide-react'
+import { Send, Check, Layers, PoundSterling, BookOpen, Info, Eye } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { PlasmaWordmark, Pill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, StatusRule, tokens, type PillColour } from '../design'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
@@ -14,12 +14,13 @@ import { MaterialOptionTabs } from '../components/MaterialOptionTabs'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LayeredConstructionPanel } from '../components/LayeredConstructionPanel'
 import { MetalThicknessPanel } from '../components/MetalThicknessPanel'
+import { DEFAULT_METAL_THICKNESS_NOTES, thicknessSetForMaterial } from '../lib/metalThicknessNotes'
 import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
 import { ActionPanel } from '../components/ActionPanel'
 import { ProofDetailView } from '../components/ProofDetailView'
 import { firstName } from '../lib/firstName'
 import { BRAND_ORDER } from '../lib/theme'
-import { getPublicSettings, type PublicSettings } from '../lib/publicSettings'
+import { getPublicSettings, ABOUT_PROOF_COPY_DEFAULT, type PublicSettings } from '../lib/publicSettings'
 import type { PricingSnapshot, PricingVariant, Currency } from '../lib/types'
 
 export default function CustomerProofPage() {
@@ -2028,6 +2029,11 @@ export default function CustomerProofPage() {
   // form is needed on the customer page (no section heading for options).
   const optionLabelSingular = activeVersion?.option_label ?? 'Finish'
 
+  // Admin-editable metal Thickness card copy (migration 000199). Falls
+  // back to the shipped defaults while publicSettings is still loading
+  // or if the column / RPC is unavailable, so the panel never blanks.
+  const thicknessNotes = publicSettings?.metal_thickness_notes ?? DEFAULT_METAL_THICKNESS_NOTES
+
   // Short customer-facing reference — the proof's Help Scout
   // conversation id, prefixed with PL · for the editorial feel.
   // Exposed on public_proofs by migration 000089. Hidden
@@ -2098,30 +2104,30 @@ export default function CustomerProofPage() {
     >
 
       {/* Sticky public header. PlasmaWordmark left, "Last updated"
-          eyebrow + hairline + Save a copy (window.print) right.
-          Replaces the Direction-B dark-ink DocketBar + BrandRule
-          masthead. Cream canvas, hairline bottom border, max-width
-          1180px to match the prototype layout. */}
+          eyebrow right. Replaces the Direction-B dark-ink DocketBar +
+          BrandRule masthead. Cream canvas, hairline bottom border.
+          Container width + padding match the dark masthead and <main>
+          below (max-w-1280 / px-6 sm:px-7) so the wordmark's left edge
+          lines up with the cards rather than sitting inboard. */}
       <header
         className="sticky top-0 z-[5] bg-canvas border-b border-line"
       >
-        <div className="mx-auto max-w-[1180px] flex items-center gap-4 px-6 py-3.5">
-          <PlasmaWordmark size="md" tagline="Proofs" />
+        <div className="mx-auto max-w-[1280px] flex items-center gap-4 px-6 sm:px-7 py-3.5">
+          {/* Wordmark steps down to the standard md size on phones,
+              where the enlarged xl lockup feels oversized; xl returns
+              at sm+. PlasmaWordmark takes a single size, so we render
+              both and toggle via wrapper spans (visibility lives on the
+              span so it can't fight the component's own inline-flex). */}
+          <span className="inline-flex sm:hidden">
+            <PlasmaWordmark size="md" tagline="Proofs" />
+          </span>
+          <span className="hidden sm:inline-flex">
+            <PlasmaWordmark size="xl" tagline="Proofs" />
+          </span>
           <div className="ml-auto flex items-center gap-4">
             {lastUpdated && (
-              <>
-                <span className="eyebrow hidden sm:inline">Last updated {lastUpdated}</span>
-                <span className="hidden sm:inline w-px h-4 bg-line" aria-hidden="true" />
-              </>
+              <span className="eyebrow hidden sm:inline">Last updated {lastUpdated}</span>
             )}
-            <button
-              type="button"
-              onClick={() => window.print()}
-              className="inline-flex items-center gap-1.5 text-[13px] text-ink-soft hover:text-ink transition-colors"
-            >
-              <Download size={14} aria-hidden="true" />
-              <span>Save a copy</span>
-            </button>
           </div>
         </div>
       </header>
@@ -2195,12 +2201,20 @@ export default function CustomerProofPage() {
           below lg. Gated on activeVersion so the page doesn't
           half-render while data loads. */}
       {activeVersion && (
-        <main className="mx-auto max-w-[1280px] px-6 sm:px-7 py-8 grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-8 items-start">
+        /* Layout: single flex column on narrow screens, two-column
+           grid on lg+. On mobile both column wrappers below are
+           `display: contents` so every card becomes a direct flex
+           child of <main> and can be re-sequenced with order-* into
+           the customer-preferred reading order (Proof for -> The set ->
+           QR -> Spec -> Thickness/Construction -> Pricing -> Material
+           notes -> About this proof). Each card resets to lg:order-none
+           so the desktop two-column layout is untouched. */
+        <main className="mx-auto max-w-[1280px] px-6 sm:px-7 py-8 flex flex-col gap-6 lg:grid lg:grid-cols-[360px_1fr] lg:gap-8 lg:items-start">
 
           {/* Left rail — sticky on lg+, scrolls with viewport on
               smaller screens. top-[120px] accounts for sticky
               header (~60px) + masthead band (~52px) + small gutter. */}
-          <aside className="flex flex-col gap-4 lg:sticky lg:top-[120px] order-1 lg:order-none">
+          <aside className="contents lg:flex lg:flex-col lg:gap-4 lg:sticky lg:top-[120px]">
 
             {/* Approval banner — shows when the proof has been
                 fully signed off or carries forward-approved slots
@@ -2229,7 +2243,7 @@ export default function CustomerProofPage() {
                     .join(', ')
                 : 'Some proofs already signed off, others awaiting review'
               return (
-                <div className="flex flex-wrap items-center gap-3 rounded-[10px] bg-surface border border-line px-4 py-3">
+                <div className="order-1 lg:order-none flex flex-wrap items-center gap-3 rounded-[10px] bg-surface border border-line px-4 py-3">
                   <Pill colour={pillColour}>{label}</Pill>
                   <span className="text-[13px] text-ink-soft" aria-label={detailAria}>
                     {detailVisible}
@@ -2243,7 +2257,7 @@ export default function CustomerProofPage() {
                 optional company subline + What-changed-in-vN callout.
                 Replaces the V1 hero strip that used to sit above the
                 page main. */}
-            <div className="relative bg-surface border border-line rounded-[14px] overflow-hidden px-6 py-6">
+            <div className="order-2 lg:order-none relative bg-surface border border-line rounded-[14px] overflow-hidden px-6 py-6">
               <StatusRule colour={tokens.brand} />
               <div className="pl-2">
                 {(() => {
@@ -2293,6 +2307,7 @@ export default function CustomerProofPage() {
                 title="Specification"
                 icon={Layers}
                 accent={tokens.brand}
+                className="order-6 lg:order-none"
               >
                 <dl
                   aria-labelledby="section-specification-heading"
@@ -2355,6 +2370,7 @@ export default function CustomerProofPage() {
                   title="Pricing"
                   icon={PoundSterling}
                   accent={tokens.ink}
+                  className="order-8 lg:order-none"
                   action={
                     !activeVersion.custom_quote ? (
                       <span className="num text-[12px] font-medium text-ink uppercase tracking-[0.18em]">
@@ -2411,7 +2427,7 @@ export default function CustomerProofPage() {
                   activeVersion.names.length >= 2 &&
                   activeVersion.split_name_surcharge_snapshot != null &&
                   activeVersion.split_name_surcharge_snapshot > 0 && (
-                    <div className="rounded-[10px] bg-surface border border-line p-4">
+                    <div className="order-8 lg:order-none rounded-[10px] bg-surface border border-line p-4">
                       <span className="eyebrow text-brand">Split-name tooling</span>
                       <p className="mt-2 text-[15px] leading-snug text-ink font-medium">
                         Add{' '}
@@ -2438,10 +2454,26 @@ export default function CustomerProofPage() {
               </>
             )}
 
+            {/* About this proof — quiet disclaimer card. Lives in the
+                left rail as the final card so it closes the spec
+                column. Always rendered (not gated), so it sits below
+                whatever Specs/Pricing the version carries. */}
+            <div className="order-10 lg:order-none rounded-[10px] bg-surface border border-line-soft p-5 flex items-start gap-3">
+              <Info size={18} aria-hidden="true" className="text-ink-mute mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <span className="eyebrow block mb-1.5">About this proof</span>
+                <p className="whitespace-pre-line text-[13px] leading-[1.6] text-ink-soft m-0">
+                  {publicSettings?.about_proof_copy ?? ABOUT_PROOF_COPY_DEFAULT}
+                </p>
+              </div>
+            </div>
+
           </aside>
 
-          {/* Right column — contact sheet */}
-          <div className="flex flex-col gap-7 min-w-0 order-2 lg:order-none">
+          {/* Right column — contact sheet. `contents` on mobile (see
+              <main> note) so its cards re-sequence with the left rail's;
+              real two-column flex container on lg+. */}
+          <div className="contents lg:flex lg:flex-col lg:gap-7 lg:min-w-0">
 
             {/* Version pill row — chronological, click switches
                 the active version via setActiveVersion (handler
@@ -2449,7 +2481,7 @@ export default function CustomerProofPage() {
                 green dot; on the active (ink) pill the dot inverts
                 to white. */}
             {versions.length > 1 && (
-              <div className="flex flex-wrap items-center gap-2.5">
+              <div className="order-3 lg:order-none flex flex-wrap items-center gap-2.5">
                 <span className="eyebrow mr-1.5">History</span>
                 {versions.map((v) => {
                   const active = v.id === activeVersion.id
@@ -2607,7 +2639,7 @@ export default function CustomerProofPage() {
             return (
               <section
                 aria-labelledby="section-proofs-heading"
-                className="bg-canvas text-ink"
+                className="order-4 lg:order-none bg-canvas text-ink"
               >
                 {/* V2 section header: "The set" h2 + count eyebrow
                     + gradient hairline. Right slot still hosts the
@@ -2910,6 +2942,7 @@ export default function CustomerProofPage() {
             qrImages={versionQrImages[activeVersion.id] ?? []}
             names={activeVersion.names ?? []}
             isVariantRound={activeVersion.is_variant_round ?? false}
+            className="order-5 lg:order-none"
           />
 
           {/* Metal thickness guide (migration 000177). Contextual
@@ -2925,13 +2958,20 @@ export default function CustomerProofPage() {
               title="Thickness"
               icon={Layers}
               accent={tokens.brand}
+              className="order-7 lg:order-none"
             >
-              <p className="mb-4 max-w-[62ch] text-[14px] leading-[1.6] text-ink-soft">
-                Metal cards are available in three thicknesses. The
-                pricing table to the left shows the cost for each —
-                choose the weight that suits you best.
-              </p>
-              <MetalThicknessPanel materialCode={activeVersion.material_code} />
+              {/* Two-column grid mirroring the "Material notes"
+                  card: intro narrative left, the coral-accented
+                  thickness list right. Stacks to one column below md
+                  in reading order (intro → list). */}
+              <div className="grid gap-8 md:grid-cols-2">
+                <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-ink-soft">
+                  {thicknessNotes.intro}
+                </p>
+                <MetalThicknessPanel
+                  options={thicknessSetForMaterial(thicknessNotes, activeVersion.material_code)}
+                />
+              </div>
             </PanelShell>
           )}
 
@@ -2945,6 +2985,7 @@ export default function CustomerProofPage() {
               title="Construction"
               icon={Layers}
               accent={tokens.brand}
+              className="order-7 lg:order-none"
             >
               <p className="mb-4 max-w-[62ch] text-[14px] leading-[1.6] text-ink-soft">
                 Three layers of genuine Colorplan paper, bonded
@@ -3013,6 +3054,7 @@ export default function CustomerProofPage() {
                 title="Pricing"
                 icon={PoundSterling}
                 accent={tokens.ink}
+                className="order-8 lg:order-none"
                 action={
                   !activeVersion.custom_quote ? (
                     <span className="num text-[12px] font-medium text-ink uppercase tracking-[0.18em]">
@@ -3065,7 +3107,7 @@ export default function CustomerProofPage() {
                 activeVersion.names.length >= 2 &&
                 activeVersion.split_name_surcharge_snapshot != null &&
                 activeVersion.split_name_surcharge_snapshot > 0 && (
-                  <div className="rounded-[10px] bg-surface border border-line p-4 mt-4">
+                  <div className="order-8 lg:order-none rounded-[10px] bg-surface border border-line p-4 mt-4">
                     <span className="eyebrow text-brand">Split-name tooling</span>
                     <p className="mt-2 text-[15px] leading-snug text-ink font-medium">
                       Add{' '}
@@ -3106,7 +3148,7 @@ export default function CustomerProofPage() {
               !is_per_direction_pricing gate makes that explicit and
               survives any future schema drift. */}
           {!activeVersion.is_per_direction_pricing && activeVersion.material_description && (
-            <section aria-labelledby="section-material-heading">
+            <section aria-labelledby="section-material-heading" className="order-9 lg:order-none">
               <PanelShell
                 eyebrow="Material notes"
                 title={`About our ${activeVersion.material_display.toLowerCase()} cards`}
@@ -3174,20 +3216,6 @@ export default function CustomerProofPage() {
             </section>
           )}
 
-          {/* About this proof — quiet disclaimer card sitting at
-              the bottom of the right column. Reads as a footer
-              note explaining the proof's screen-rendering limits
-              before the page's actual footer below. */}
-          <div className="rounded-[10px] bg-surface border border-line-soft p-5 flex items-start gap-3">
-            <Info size={18} aria-hidden="true" className="text-ink-mute mt-0.5 shrink-0" />
-            <div className="min-w-0">
-              <span className="eyebrow block mb-1.5">About this proof</span>
-              <p className="text-[13px] leading-[1.6] text-ink-soft max-w-[68ch] m-0">
-                The proof shows etching colour, ink finish, layout and copy at the closest faithful representation we can make on screen. The real card will differ slightly in the way the material catches light, the depth of any embossing or etch, and the weight in hand. Plasma Design hand-finishes every set in Stoke-on-Trent.
-              </p>
-            </div>
-          </div>
-
           </div>
         </main>
       )}
@@ -3196,7 +3224,7 @@ export default function CustomerProofPage() {
           prototype's quiet two-column line on canvas. Left: eyebrow-
           styled brand mark. Right: privacy reminder + version ref.
           Both lines sit at 12px in ink-mute on the warm-cream canvas. */}
-      <footer className="mx-auto max-w-[1180px] px-6 mt-6 mb-4">
+      <footer className="mx-auto max-w-[1280px] px-6 sm:px-7 mt-6 mb-4">
         <div className="flex flex-wrap items-center justify-between gap-3 py-4 border-t border-line text-[12px] text-ink-mute">
           <span className="eyebrow">PlasmaDesign · craft-press business cards</span>
           <span className="flex items-center gap-3">
@@ -3582,7 +3610,7 @@ function PaperPricingTable({
           <thead>
             <tr className="border-b border-line">
               <th scope="col" className="eyebrow py-3 text-left">
-                Total quantity
+                Quantity
               </th>
               <th scope="col" className="eyebrow py-3 text-right">
                 Price
@@ -3599,8 +3627,7 @@ function PaperPricingTable({
                     className={hasPersonalisation ? '' : 'border-b border-line-soft'}
                   >
                     <td
-                      className="py-4 leading-none num text-ink"
-                      style={{ fontSize: 24, fontWeight: 500 }}
+                      className="py-4 leading-none num font-medium text-ink text-[19px] sm:text-[24px]"
                       rowSpan={hasPersonalisation ? 3 : 1}
                     >
                       {qty.toLocaleString()}
@@ -3667,7 +3694,7 @@ function PaperPricingTable({
         <thead>
           <tr className="border-b border-line">
             <th scope="col" className="eyebrow py-3 pr-2 text-left sm:pr-4">
-              Total quantity
+              Quantity
             </th>
             {variants.map((v) => (
               <th
@@ -3675,7 +3702,14 @@ function PaperPricingTable({
                 scope="col"
                 className="eyebrow py-3 pl-2 text-right sm:pl-4"
               >
-                {v.display}
+                {/* Compact unit on mobile (e.g. "300µm") so the four
+                    columns fit without horizontal scroll; full label
+                    ("300 micron") on sm+. normal-case keeps the µm unit
+                    lowercase — the eyebrow's uppercase would turn µ into
+                    a capital Mu that reads as "M". Non-micron variants
+                    (ink counts, finishes) are unaffected by the replace. */}
+                <span className="sm:hidden normal-case">{v.display.replace(/\s*microns?\b/i, 'µm')}</span>
+                <span className="hidden sm:inline">{v.display}</span>
               </th>
             ))}
           </tr>
@@ -3688,8 +3722,7 @@ function PaperPricingTable({
               <Fragment key={qty}>
                 <tr className={hasPersonalisation ? '' : 'border-b border-line-soft'}>
                   <td
-                    className="py-4 pr-2 leading-none num text-ink sm:pr-4"
-                    style={{ fontSize: 22, fontWeight: 500 }}
+                    className="py-4 pr-2 leading-none num font-medium text-ink text-[17px] sm:text-[22px] sm:pr-4"
                     rowSpan={hasPersonalisation ? 3 : 1}
                   >
                     {qty.toLocaleString()}
@@ -3715,7 +3748,7 @@ function PaperPricingTable({
                         key={v.variant_id}
                         className={[
                           hasPersonalisation ? 'pt-4 pb-1' : 'py-4',
-                          'pl-2 text-right num text-[15px] text-ink sm:pl-4',
+                          'pl-2 text-right num text-[13px] sm:text-[15px] text-ink sm:pl-4',
                         ].join(' ')}
                       >
                         {formatPrice(price, currency)}
@@ -3929,8 +3962,7 @@ function QuantityLookup({
     <div className="mt-6 py-5 px-5 rounded-[10px] bg-canvas border border-line">
       <h3
         id="quantity-picker-heading"
-        className="mb-3 font-display font-medium tracking-[-0.02em] text-ink leading-tight"
-        style={{ fontSize: 22 }}
+        className="mb-3 font-display font-medium tracking-[-0.02em] text-ink leading-tight text-[17px] sm:text-[22px]"
       >
         Need a price for a specific quantity?
       </h3>

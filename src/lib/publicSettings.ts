@@ -4,6 +4,11 @@
 // hammer the database.
 
 import { supabase } from './supabase'
+import {
+  DEFAULT_METAL_THICKNESS_NOTES,
+  normaliseMetalThicknessNotes,
+  type MetalThicknessNotes,
+} from './metalThicknessNotes'
 
 export interface PublicSettings {
   disclaimer_text: string
@@ -14,6 +19,13 @@ export interface PublicSettings {
   // returns null/empty so the modal still renders readable text.
   approve_confirmation_copy: string
   request_changes_confirmation_copy: string
+  // Metal Thickness card copy (migration 000199). Editable in admin;
+  // normalised against the defaults so a null / malformed column can
+  // never blank the panel.
+  metal_thickness_notes: MetalThicknessNotes
+  // "About this proof" footer note (migration 000199). Editable in
+  // admin; falls back to the shipped default if null/empty.
+  about_proof_copy: string
 }
 
 const TTL_MS = 60_000
@@ -25,6 +37,10 @@ const APPROVE_COPY_DEFAULT =
   "By approving, you're confirming that you've reviewed the proof and we're cleared to print as shown. Approval is final and triggers production scheduling."
 const REQUEST_CHANGES_COPY_DEFAULT =
   "We'll update your proof based on your feedback. The team will reply within one working day."
+// Mirrors the migration 000199 seed for settings.about_proof_copy and
+// the copy that previously lived inline in CustomerProofPage.tsx.
+export const ABOUT_PROOF_COPY_DEFAULT =
+  'The proof shows etching colour, ink finish, layout and copy at the closest faithful representation we can make on screen. The real card will differ slightly in the way the material catches light, the depth of any embossing or etch, and the weight in hand. Plasma Design hand-finishes every set in Stoke-on-Trent.'
 
 const DEFAULTS: PublicSettings = {
   disclaimer_text: '',
@@ -32,6 +48,8 @@ const DEFAULTS: PublicSettings = {
   reply_email: '',
   approve_confirmation_copy: APPROVE_COPY_DEFAULT,
   request_changes_confirmation_copy: REQUEST_CHANGES_COPY_DEFAULT,
+  metal_thickness_notes: DEFAULT_METAL_THICKNESS_NOTES,
+  about_proof_copy: ABOUT_PROOF_COPY_DEFAULT,
 }
 
 export async function getPublicSettings(): Promise<PublicSettings> {
@@ -55,6 +73,11 @@ export async function getPublicSettings(): Promise<PublicSettings> {
           typeof rcCopy === 'string' && rcCopy.trim().length > 0
             ? rcCopy
             : DEFAULTS.request_changes_confirmation_copy,
+        metal_thickness_notes: normaliseMetalThicknessNotes(data?.metal_thickness_notes),
+        about_proof_copy:
+          typeof data?.about_proof_copy === 'string' && data.about_proof_copy.trim().length > 0
+            ? data.about_proof_copy
+            : DEFAULTS.about_proof_copy,
       }
       cache = { value, fetchedAt: Date.now() }
       return value

@@ -1,6 +1,6 @@
 import { Layers } from 'lucide-react'
 
-type WordmarkSize = 'sm' | 'md' | 'lg'
+type WordmarkSize = 'sm' | 'md' | 'lg' | 'xl'
 
 interface PlasmaWordmarkProps {
   size?: WordmarkSize
@@ -10,10 +10,13 @@ interface PlasmaWordmarkProps {
   className?: string
 }
 
-const DIM: Record<WordmarkSize, { box: number; icon: number; font: number }> = {
-  sm: { box: 28, icon: 14, font: 14 },
-  md: { box: 32, icon: 18, font: 16 },
-  lg: { box: 40, icon: 20, font: 22 },
+const DIM: Record<WordmarkSize, { box: number; icon: number; font: number; tag: number }> = {
+  sm: { box: 28, icon: 14, font: 14, tag: 8 },
+  md: { box: 32, icon: 18, font: 16, tag: 9 },
+  lg: { box: 40, icon: 20, font: 22, tag: 11 },
+  // xl is md scaled ~1.5x — used on the customer proof page header
+  // where the wordmark is the only branding the customer sees.
+  xl: { box: 48, icon: 27, font: 24, tag: 13 },
 }
 
 // Ink-filled rounded square with a Layers glyph, "PlasmaDesign" set
@@ -40,7 +43,7 @@ export function PlasmaWordmark({ size = 'md', tagline = null, className = '' }: 
         {tagline !== null && (
           <div
             className="font-mono font-medium text-ink-mute uppercase mt-0.5"
-            style={{ fontSize: 9, letterSpacing: '0.2em' }}
+            style={{ fontSize: d.tag, letterSpacing: '0.2em' }}
           >
             {tagline}
           </div>
