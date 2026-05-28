@@ -664,11 +664,14 @@ export default function AdminMaterialEditor() {
         />
       )}
 
-      {/* Tier prices — transposed matrix (variant rows × quantity
-          columns) for the currency selected in the strip above. Each
-          cell is a click-to-edit PriceCell (its focus ring matches the
-          mockup's highlighted cell) with the per-card unit price below.
-          Quantity columns carry a small × to remove that tier. */}
+      {/* Tier prices — quantity rows × variant columns for the
+          currency selected in the strip above. Quantities run down
+          the table (tall, vertical scroll) so materials with many
+          tiers — the metal schedules have ~39 — never trigger
+          horizontal scroll. Each cell is a click-to-edit PriceCell
+          (its brand focus ring matches the mockup's highlighted cell)
+          with the per-card unit price below. The per-row Actions cell
+          removes that quantity tier across every variant. */}
       {(() => {
         const activeVariants = variants.filter((v) => v.is_active)
         const tiersForCurrency = tiers.filter((t) => t.currency === editCurrency)
@@ -702,34 +705,29 @@ export default function AdminMaterialEditor() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-line-soft">
-                        <th className="px-5 py-3 text-left eyebrow text-ink-mute">Variant</th>
-                        {qtyList.map((qty, i) => (
-                          <th key={qty} className="px-4 py-3 text-right align-bottom">
-                            <div className="eyebrow text-ink-mute">Qty {String(qty).padStart(4, '0')}</div>
-                            <div className="mt-0.5 flex items-center justify-end gap-1.5">
-                              <span className="eyebrow text-ink-dim">tier {String.fromCharCode(65 + i)}</span>
-                              <button
-                                type="button"
-                                onClick={() => { setTierError(null); setRemoveConfirmQty(qty) }}
-                                title={`Remove the ${qty.toLocaleString()} tier (all currencies)`}
-                                aria-label={`Remove ${qty} tier`}
-                                className="inline-flex items-center justify-center w-4 h-4 rounded text-ink-dim hover:text-out hover:bg-out-soft"
-                              >
-                                <X size={11} />
-                              </button>
-                            </div>
+                        <th className="px-5 py-3 text-left eyebrow text-ink-mute">Quantity</th>
+                        {activeVariants.map((v) => (
+                          <th key={v.id} className="px-4 py-3 text-right eyebrow text-ink-mute whitespace-nowrap">
+                            {v.display_name}
                           </th>
                         ))}
+                        <th className="px-4 py-3 text-center eyebrow text-ink-mute w-16">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {activeVariants.map((v, ri) => (
-                        <tr key={v.id} className={ri > 0 ? 'border-t border-line-soft' : ''}>
-                          <td className="px-5 py-3 font-mono text-[14px] font-medium text-ink whitespace-nowrap">{v.display_name}</td>
-                          {qtyList.map((qty) => {
+                      {qtyList.map((qty, ri) => (
+                        <tr key={qty} className={ri > 0 ? 'border-t border-line-soft' : ''}>
+                          {/* Quantity + sequential tier letter (A = smallest). */}
+                          <td className="px-5 py-3 whitespace-nowrap">
+                            <div className="font-mono text-[14px] font-medium text-ink tabular-nums">
+                              {String(qty).padStart(4, '0')}
+                            </div>
+                            <div className="eyebrow text-ink-dim">tier {String.fromCharCode(65 + ri)}</div>
+                          </td>
+                          {activeVariants.map((v) => {
                             const tier = tierFor(v.id, qty)
                             return (
-                              <td key={qty} className="px-4 py-3 text-right">
+                              <td key={v.id} className="px-4 py-3 text-right">
                                 <div className="flex flex-col items-end">
                                   <PriceCell
                                     value={tier ? tier.total_price : null}
@@ -746,6 +744,17 @@ export default function AdminMaterialEditor() {
                               </td>
                             )
                           })}
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => { setTierError(null); setRemoveConfirmQty(qty) }}
+                              title={`Remove the ${qty.toLocaleString()} tier (all variants)`}
+                              aria-label={`Remove ${qty} tier`}
+                              className="inline-flex items-center justify-center w-7 h-7 rounded-md text-ink-mute hover:text-out hover:bg-out-soft transition-colors"
+                            >
+                              <X size={13} />
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
