@@ -129,7 +129,7 @@ export default function PriceCell(props: Props) {
     <div className="inline-flex items-center gap-2">
       <div className="relative">
         {showSymbol && (
-          <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">
+          <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-ink-mute">
             {currencySymbol(currency)}
           </span>
         )}
@@ -152,18 +152,21 @@ export default function PriceCell(props: Props) {
           }}
           onKeyDown={handleKeyDown}
           className={[
-            'w-24 rounded border px-2 py-1 text-[17px] sm:text-sm tabular-nums',
+            // Focused/editing cell takes the brand ring + a faint
+            // brand-50 fill — the "selected cell" highlight from the
+            // pricing-editor mockup.
+            'w-24 rounded border px-2 py-1 text-[17px] sm:text-sm tabular-nums text-ink transition-colors',
             showSymbol ? 'pl-5' : '',
             error
-              ? 'border-rose-300 focus:border-rose-500 focus:outline-none'
-              : 'border-gray-200 focus:border-gray-900 focus:outline-none',
-            readOnly ? 'cursor-default bg-gray-50 text-gray-500' : '',
+              ? 'border-out focus:border-[var(--c-out)] focus:bg-[var(--c-out-soft)] focus:outline-none'
+              : 'border-line focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none',
+            readOnly ? 'cursor-default bg-canvas text-ink-mute' : 'bg-surface',
           ].join(' ')}
         />
       </div>
-      {saving && <span className="text-xs text-gray-400">Saving…</span>}
-      {justSaved && <span className="text-xs text-emerald-600">Saved</span>}
-      {error && <span className="text-xs text-rose-600">{error}</span>}
+      {saving && <span className="text-xs text-ink-mute">Saving…</span>}
+      {justSaved && <span className="text-xs text-in-stock">Saved</span>}
+      {error && <span className="text-xs text-out">{error}</span>}
     </div>
   )
 }

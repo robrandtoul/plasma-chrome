@@ -235,14 +235,14 @@ export default function AdminActivityPage() {
   return (
     <div>
       <div className="mb-4">
-        <h2 className="text-xl font-bold text-gray-900">Activity</h2>
-        <p className="mt-1 text-sm text-gray-500">
+        <h2 className="text-xl font-bold text-ink">Activity</h2>
+        <p className="mt-1 text-sm text-ink-mute">
           Every meaningful action by designers, admins and customers. Immutable record.
         </p>
       </div>
 
       {/* ── Filter bar ──────────────────────────────────────────────── */}
-      <section className="mb-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200">
+      <section className="mb-4 rounded-2xl bg-surface p-4 shadow-sm ring-1 ring-line">
         <div className="flex flex-wrap items-end gap-3">
           <Field label="Actor">
             <select
@@ -330,7 +330,7 @@ export default function AdminActivityPage() {
             && filters.to
             && filters.from > filters.to
             && (
-              <p className="-mt-1 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200">
+              <p className="-mt-1 rounded-lg bg-low-soft px-3 py-2 text-xs text-low ring-1 ring-low">
                 "From" date is after "To" — the table will be empty until the order is fixed.
               </p>
             )}
@@ -349,14 +349,14 @@ export default function AdminActivityPage() {
             <button
               onClick={handleExport}
               disabled={exporting}
-              className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-50"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-50"
             >
               {exporting ? 'Exporting…' : 'Export CSV'}
             </button>
             {anyFilter && (
               <button
                 onClick={clearFilters}
-                className="text-sm text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+                className="text-sm text-ink-mute underline-offset-2 hover:text-ink hover:underline"
               >
                 Clear filters
               </button>
@@ -364,33 +364,33 @@ export default function AdminActivityPage() {
           </div>
         </div>
         {exportError && (
-          <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{exportError}</p>
+          <p className="mt-3 rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{exportError}</p>
         )}
       </section>
 
       {/* ── List ──────────────────────────────────────────────────── */}
       {loading ? (
         <div className="flex justify-center py-20">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-gray-900" />
         </div>
       ) : loadError ? (
-        <div className="rounded-2xl bg-rose-50 p-6 text-sm text-rose-700 ring-1 ring-rose-200">
+        <div className="rounded-2xl bg-out-soft p-6 text-sm text-out ring-1 ring-out">
           Failed to load activity: {loadError}
         </div>
       ) : entries.length === 0 ? (
-        <div className="rounded-2xl bg-white py-16 text-center shadow-sm ring-1 ring-gray-200">
+        <div className="rounded-2xl bg-surface py-16 text-center shadow-sm ring-1 ring-line">
           {anyFilter ? (
             <>
-              <p className="text-gray-400">No events match these filters.</p>
+              <p className="text-ink-dim">No events match these filters.</p>
               <button
                 onClick={clearFilters}
-                className="mt-2 text-sm text-gray-500 underline underline-offset-2 hover:text-gray-900"
+                className="mt-2 text-sm text-ink-mute underline underline-offset-2 hover:text-ink"
               >
                 Clear filters
               </button>
             </>
           ) : (
-            <p className="text-gray-400">No activity logged yet. Events appear here as they happen.</p>
+            <p className="text-ink-dim">No activity logged yet. Events appear here as they happen.</p>
           )}
         </div>
       ) : (
@@ -400,14 +400,14 @@ export default function AdminActivityPage() {
               columns into illegible 70-90px slivers on narrow
               viewports (e.g. laptop with a side panel open).
               Y-axis stays clipped to keep rounded corners. */}
-          <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+          <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">When</th>
-                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Actor</th>
-                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Action</th>
-                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Target</th>
+                <tr className="border-b border-line-soft">
+                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">When</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Actor</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Action</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Target</th>
                 </tr>
               </thead>
               <tbody>
@@ -424,22 +424,22 @@ export default function AdminActivityPage() {
                         setOpenEntry(e)
                       }
                     }}
-                    className="cursor-pointer border-b border-gray-50 last:border-0 hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900"
+                    className="cursor-pointer border-b border-line-soft last:border-0 hover:bg-canvas focus:outline-none focus-visible:bg-canvas focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ink"
                   >
-                    <td className="px-5 py-3 whitespace-nowrap text-gray-500" title={formatAbsolute(e.created_at)}>
+                    <td className="px-5 py-3 whitespace-nowrap text-ink-mute" title={formatAbsolute(e.created_at)}>
                       {formatRelative(e.created_at)}
                     </td>
                     <td className="px-5 py-3">
-                      <div className="truncate text-sm font-medium text-gray-900">{e.actor_label ?? '—'}</div>
+                      <div className="truncate text-sm font-medium text-ink">{e.actor_label ?? '—'}</div>
                       {e.actor_email && e.actor_email !== e.actor_label && (
-                        <div className="truncate text-xs text-gray-400">{e.actor_email}</div>
+                        <div className="truncate text-xs text-ink-dim">{e.actor_email}</div>
                       )}
                     </td>
                     <td className="px-5 py-3">
-                      <div className="text-sm text-gray-900">{ACTION_LABELS[e.action] ?? e.action}</div>
-                      <div className="font-mono text-[11px] text-gray-400">{e.action}</div>
+                      <div className="text-sm text-ink">{ACTION_LABELS[e.action] ?? e.action}</div>
+                      <div className="font-mono text-[11px] text-ink-dim">{e.action}</div>
                     </td>
-                    <td className="px-5 py-3 text-sm text-gray-600">{e.target_label ?? '—'}</td>
+                    <td className="px-5 py-3 text-sm text-ink-soft">{e.target_label ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -447,7 +447,7 @@ export default function AdminActivityPage() {
           </div>
 
           {/* Pagination */}
-          <div className="mt-4 flex items-center justify-between text-sm text-gray-500">
+          <div className="mt-4 flex items-center justify-between text-sm text-ink-mute">
             <div>
               Showing {firstIndex} to {lastIndex} of {totalCount.toLocaleString()} events
             </div>
@@ -455,14 +455,14 @@ export default function AdminActivityPage() {
               <button
                 onClick={prevPage}
                 disabled={pageNumber <= 1}
-                className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-40"
+                className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-40"
               >
                 Previous
               </button>
               <button
                 onClick={nextPage}
                 disabled={!hasMore}
-                className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-40"
+                className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-40"
               >
                 Next
               </button>
@@ -481,11 +481,11 @@ export default function AdminActivityPage() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="flex min-w-0 flex-col gap-1">
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{label}</span>
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-ink-dim">{label}</span>
       {children}
     </label>
   )
 }
 
-const selectClass = 'min-w-[10rem] rounded-lg border border-gray-300 bg-white px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
-const inputClass  = 'rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+const selectClass = 'min-w-[10rem] rounded border border-line bg-surface px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
+const inputClass  = 'rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'

@@ -74,19 +74,19 @@ export default function AuditEntryModal({ entry, onClose }: {
       open
       onClose={onClose}
       ariaLabelledBy={titleId}
-      panelClassName="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+      panelClassName="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-surface shadow-xl"
     >
       {/* Header */}
-      <div className="flex items-start justify-between border-b border-gray-100 px-6 py-4">
+      <div className="flex items-start justify-between border-b border-line-soft px-6 py-4">
         <div>
-          <h3 id={titleId} className="text-lg font-semibold text-gray-900">{label}</h3>
-          <p className="mt-0.5 text-xs text-gray-500" title={absolute(entry.created_at)}>
+          <h3 id={titleId} className="text-lg font-semibold text-ink">{label}</h3>
+          <p className="mt-0.5 text-xs text-ink-mute" title={absolute(entry.created_at)}>
             {absolute(entry.created_at)} · {relative(entry.created_at)}
           </p>
         </div>
         <button
           onClick={onClose}
-          className="ml-4 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+          className="ml-4 rounded-lg p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft"
           aria-label="Close"
         >
           <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -99,23 +99,23 @@ export default function AuditEntryModal({ entry, onClose }: {
       <div className="space-y-5 overflow-y-auto px-6 py-5">
         {/* Actor */}
         <section>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Actor</h4>
-          <dl className="rounded-lg bg-gray-50 px-4 py-3 text-sm">
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-dim">Actor</h4>
+          <dl className="rounded-lg bg-canvas px-4 py-3 text-sm">
             <div className="flex justify-between gap-4">
-              <dt className="text-gray-500">Label</dt>
-              <dd className="text-right font-medium text-gray-900">{entry.actor_label ?? '—'}</dd>
+              <dt className="text-ink-mute">Label</dt>
+              <dd className="text-right font-medium text-ink">{entry.actor_label ?? '—'}</dd>
             </div>
             {entry.actor_email && entry.actor_email !== entry.actor_label && (
               <div className="mt-1 flex justify-between gap-4">
-                <dt className="text-gray-500">Email</dt>
-                <dd className="text-right text-gray-700">{entry.actor_email}</dd>
+                <dt className="text-ink-mute">Email</dt>
+                <dd className="text-right text-ink-soft">{entry.actor_email}</dd>
               </div>
             )}
             {entry.actor_id && (
               <div className="mt-1 flex justify-between gap-4">
-                <dt className="text-gray-500">ID</dt>
+                <dt className="text-ink-mute">ID</dt>
                 <dd className="text-right">
-                  <Link to="/admin/users" className="font-mono text-xs text-gray-500 hover:underline">
+                  <Link to="/admin/users" className="font-mono text-xs text-ink-mute hover:underline">
                     {entry.actor_id.slice(0, 8)}…
                   </Link>
                 </dd>
@@ -127,25 +127,25 @@ export default function AuditEntryModal({ entry, onClose }: {
         {/* Target */}
         {entry.target_type && (
           <section>
-            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Target</h4>
-            <dl className="rounded-lg bg-gray-50 px-4 py-3 text-sm">
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-dim">Target</h4>
+            <dl className="rounded-lg bg-canvas px-4 py-3 text-sm">
               <div className="flex justify-between gap-4">
-                <dt className="text-gray-500">Type</dt>
-                <dd className="text-right font-mono text-xs text-gray-700">{entry.target_type}</dd>
+                <dt className="text-ink-mute">Type</dt>
+                <dd className="text-right font-mono text-xs text-ink-soft">{entry.target_type}</dd>
               </div>
               {entry.target_label && (
                 <div className="mt-1 flex justify-between gap-4">
-                  <dt className="text-gray-500">Label</dt>
-                  <dd className="text-right font-medium text-gray-900">{entry.target_label}</dd>
+                  <dt className="text-ink-mute">Label</dt>
+                  <dd className="text-right font-medium text-ink">{entry.target_label}</dd>
                 </div>
               )}
               {entry.target_id && (
                 <div className="mt-1 flex justify-between gap-4">
-                  <dt className="text-gray-500">ID</dt>
+                  <dt className="text-ink-mute">ID</dt>
                   <dd className="text-right">
                     {link
-                      ? <Link to={link} className="font-mono text-xs text-gray-500 hover:underline">{entry.target_id.slice(0, 8)}…</Link>
-                      : <span className="font-mono text-xs text-gray-500">{entry.target_id.slice(0, 8)}…</span>}
+                      ? <Link to={link} className="font-mono text-xs text-ink-mute hover:underline">{entry.target_id.slice(0, 8)}…</Link>
+                      : <span className="font-mono text-xs text-ink-mute">{entry.target_id.slice(0, 8)}…</span>}
                   </dd>
                 </div>
               )}
@@ -155,19 +155,19 @@ export default function AuditEntryModal({ entry, onClose }: {
 
         {/* Diff */}
         <section>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Change</h4>
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-dim">Change</h4>
           <DiffView before={entry.before_value} after={entry.after_value} />
         </section>
 
         {/* Metadata */}
         {isObject(entry.metadata) && Object.keys(entry.metadata).length > 0 && (
           <section>
-            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Metadata</h4>
-            <dl className="rounded-lg bg-gray-50 px-4 py-3 text-sm">
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-dim">Metadata</h4>
+            <dl className="rounded-lg bg-canvas px-4 py-3 text-sm">
               {Object.entries(entry.metadata).map(([k, v]) => (
                 <div key={k} className="flex items-start justify-between gap-4 py-0.5">
-                  <dt className="font-mono text-xs text-gray-500">{k}</dt>
-                  <dd className="max-w-[60%] break-all text-right text-sm text-gray-700">{formatValue(v)}</dd>
+                  <dt className="font-mono text-xs text-ink-mute">{k}</dt>
+                  <dd className="max-w-[60%] break-all text-right text-sm text-ink-soft">{formatValue(v)}</dd>
                 </div>
               ))}
             </dl>
@@ -182,7 +182,7 @@ export default function AuditEntryModal({ entry, onClose }: {
 
 function DiffView({ before, after }: { before: unknown; after: unknown }) {
   if (before == null && after == null) {
-    return <p className="rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-500">No data changes recorded.</p>
+    return <p className="rounded-lg bg-canvas px-4 py-3 text-sm text-ink-mute">No data changes recorded.</p>
   }
   if (before == null && after != null) {
     return <CreateOrDeleteView label="Created with values" value={after} />
@@ -200,20 +200,20 @@ function DiffView({ before, after }: { before: unknown; after: unknown }) {
     const bv = formatValue(b[k])
     const av = formatValue(a[k])
     return (
-      <div className="rounded-lg bg-gray-50 px-4 py-3 text-sm">
-        <div className="text-xs text-gray-400">{k}</div>
-        <div className="mt-1 text-gray-900"><span className="text-gray-500 line-through">{bv}</span>{'  →  '}<span className="font-medium">{av}</span></div>
+      <div className="rounded-lg bg-canvas px-4 py-3 text-sm">
+        <div className="text-xs text-ink-dim">{k}</div>
+        <div className="mt-1 text-ink"><span className="text-ink-mute line-through">{bv}</span>{'  →  '}<span className="font-medium">{av}</span></div>
       </div>
     )
   }
   return (
-    <div className="overflow-hidden rounded-lg ring-1 ring-gray-200">
+    <div className="overflow-hidden rounded-lg ring-1 ring-line">
       <table className="w-full text-xs">
         <thead>
-          <tr className="border-b border-gray-100 bg-gray-50 text-left">
-            <th className="px-3 py-2 font-semibold text-gray-500">Field</th>
-            <th className="px-3 py-2 font-semibold text-gray-500">Before</th>
-            <th className="px-3 py-2 font-semibold text-gray-500">After</th>
+          <tr className="border-b border-line-soft bg-canvas text-left">
+            <th className="px-3 py-2 font-semibold text-ink-mute">Field</th>
+            <th className="px-3 py-2 font-semibold text-ink-mute">Before</th>
+            <th className="px-3 py-2 font-semibold text-ink-mute">After</th>
           </tr>
         </thead>
         <tbody>
@@ -222,10 +222,10 @@ function DiffView({ before, after }: { before: unknown; after: unknown }) {
             const av = formatValue(a[k])
             const changed = bv !== av
             return (
-              <tr key={k} className="border-b border-gray-50 last:border-0">
-                <td className="px-3 py-1.5 font-mono text-[11px] text-gray-500">{k}</td>
-                <td className={['px-3 py-1.5 tabular-nums', changed ? 'text-rose-700 line-through' : 'text-gray-500'].join(' ')}>{bv}</td>
-                <td className={['px-3 py-1.5 tabular-nums', changed ? 'font-medium text-emerald-700' : 'text-gray-500'].join(' ')}>{av}</td>
+              <tr key={k} className="border-b border-line-soft last:border-0">
+                <td className="px-3 py-1.5 font-mono text-[11px] text-ink-mute">{k}</td>
+                <td className={['px-3 py-1.5 tabular-nums', changed ? 'text-out line-through' : 'text-ink-mute'].join(' ')}>{bv}</td>
+                <td className={['px-3 py-1.5 tabular-nums', changed ? 'font-medium text-in-stock' : 'text-ink-mute'].join(' ')}>{av}</td>
               </tr>
             )
           })}
@@ -239,12 +239,12 @@ function CreateOrDeleteView({ label, value }: { label: string; value: unknown })
   const obj = isObject(value) ? value : { value }
   return (
     <div>
-      <p className="mb-2 text-xs text-gray-500">{label}:</p>
-      <dl className="rounded-lg bg-gray-50 px-4 py-3 text-sm">
+      <p className="mb-2 text-xs text-ink-mute">{label}:</p>
+      <dl className="rounded-lg bg-canvas px-4 py-3 text-sm">
         {Object.entries(obj).map(([k, v]) => (
           <div key={k} className="flex items-start justify-between gap-4 py-0.5">
-            <dt className="font-mono text-xs text-gray-500">{k}</dt>
-            <dd className="max-w-[60%] break-all text-right text-sm text-gray-700">{formatValue(v)}</dd>
+            <dt className="font-mono text-xs text-ink-mute">{k}</dt>
+            <dd className="max-w-[60%] break-all text-right text-sm text-ink-soft">{formatValue(v)}</dd>
           </div>
         ))}
       </dl>

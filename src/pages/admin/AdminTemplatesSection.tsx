@@ -168,17 +168,17 @@ export default function AdminTemplatesSection() {
 
   if (loadError) {
     return (
-      <section className="rounded-2xl bg-rose-50 p-6 text-sm text-rose-700 ring-1 ring-rose-200">
+      <section className="rounded-2xl bg-out-soft p-6 text-sm text-out ring-1 ring-out">
         Failed to load reply templates: {loadError}
       </section>
     )
   }
 
   return (
-    <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+    <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
       <div className="mb-4">
-        <h3 className="text-sm font-semibold text-gray-900">Customer replies</h3>
-        <p className="mt-1 text-xs text-gray-500">
+        <h3 className="text-sm font-semibold text-ink">Customer replies</h3>
+        <p className="mt-1 text-xs text-ink-mute">
           Enable replies, customise the message text, see how each variant renders.
         </p>
       </div>
@@ -188,20 +188,20 @@ export default function AdminTemplatesSection() {
           template cards below are still editable when replies are
           off — admins can refine the copy in advance and flip the
           feature on once happy. */}
-      <div className="mb-6 flex items-start justify-between gap-4 rounded-xl border border-gray-200 bg-gray-50/40 p-4">
+      <div className="mb-6 flex items-start justify-between gap-4 rounded-xl border border-line bg-canvas p-4">
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-gray-900">Send replies</p>
-          <p className="mt-1 text-xs text-gray-500">
+          <p className="text-sm font-medium text-ink">Send replies</p>
+          <p className="mt-1 text-xs text-ink-mute">
             Off: designers can compose messages but Send is disabled.
             On: replies route through Help Scout to the customer.
           </p>
           {toggleError && (
-            <p className="mt-2 text-xs text-rose-600">{toggleError}</p>
+            <p className="mt-2 text-xs text-out">{toggleError}</p>
           )}
         </div>
         <div className="shrink-0 pt-0.5">
           {repliesEnabled === null ? (
-            <span className="text-xs text-gray-400">Loading…</span>
+            <span className="text-xs text-ink-dim">Loading…</span>
           ) : (
             <Toggle
               value={repliesEnabled}
@@ -214,7 +214,7 @@ export default function AdminTemplatesSection() {
       </div>
 
       {templates.length === 0 ? (
-        <p className="text-sm text-gray-400">Loading…</p>
+        <p className="text-sm text-ink-dim">Loading…</p>
       ) : (
         <>
           <TemplateGroup
@@ -255,10 +255,10 @@ function TemplateGroup({
   if (templates.length === 0) return null
   return (
     <div className="mb-6 last:mb-0">
-      <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">
+      <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-ink-dim">
         {heading}
       </h4>
-      <p className="mb-3 text-xs text-gray-500">{blurb}</p>
+      <p className="mb-3 text-xs text-ink-mute">{blurb}</p>
       <div className="space-y-6">
         {templates.map((t) => (
           <TemplateCard key={t.id} template={t} onSaved={onSaved} />
@@ -294,13 +294,13 @@ function Toggle({
       onClick={() => onChange(!value)}
       className={[
         'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors',
-        value ? 'bg-gray-900' : 'bg-gray-200',
+        value ? 'bg-ink' : 'bg-line',
         disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
       ].join(' ')}
     >
       <span
         className={[
-          'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-white transition-transform',
+          'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-surface transition-transform',
           value ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
         ].join(' ')}
       />
@@ -413,28 +413,28 @@ function TemplateCard({
   const previewText = renderTemplate(draft, previewCtx).replace(/<br\s*\/?>/gi, '\n')
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-gray-50/40 p-4">
+    <div className="rounded-xl border border-line bg-canvas p-4">
       <div className="mb-1 flex items-center gap-3">
-        <h4 className="text-sm font-semibold text-gray-900">{template.display_name}</h4>
-        {working && <span className="text-xs text-gray-400">Saving…</span>}
-        {recentlySaved && !working && <span className="text-xs text-emerald-600">Saved</span>}
-        {error && <span className="text-xs text-rose-600">{error}</span>}
+        <h4 className="text-sm font-semibold text-ink">{template.display_name}</h4>
+        {working && <span className="text-xs text-ink-dim">Saving…</span>}
+        {recentlySaved && !working && <span className="text-xs text-in-stock">Saved</span>}
+        {error && <span className="text-xs text-out">{error}</span>}
       </div>
-      <p className="mb-3 text-xs text-gray-500">{template.description}</p>
+      <p className="mb-3 text-xs text-ink-mute">{template.description}</p>
 
       {/* Insert toolbar — variables filtered by template scope so each
           card only shows the chips that are meaningful inside its
           template's runtime context. Pre-send and post-action templates
           have disjoint variable sets. */}
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 text-xs font-medium text-gray-500">Insert:</span>
+        <span className="mr-1 text-xs font-medium text-ink-mute">Insert:</span>
         {cardVariables.map((v) => (
           <button
             key={v.name}
             type="button"
             onClick={() => handleInsertVariable(v.name)}
             title={v.description}
-            className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-700 ring-1 ring-gray-200 transition-colors hover:bg-gray-100"
+            className="rounded-full bg-surface px-2.5 py-1 text-xs font-medium text-ink-soft ring-1 ring-line transition-colors hover:bg-canvas"
           >
             {`{${v.name}}`}
           </button>
@@ -443,7 +443,7 @@ function TemplateCard({
           type="button"
           onClick={handleInsertIfBlock}
           title="Insert a conditional block. Renders only when the named variable has a value."
-          className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-violet-700 ring-1 ring-violet-200 transition-colors hover:bg-violet-50"
+          className="rounded-full bg-surface px-2.5 py-1 text-xs font-medium text-violet-700 ring-1 ring-violet-200 transition-colors hover:bg-violet-50"
         >
           + if-block
         </button>
@@ -452,21 +452,21 @@ function TemplateCard({
       <div className="grid gap-3 lg:grid-cols-2">
         {/* Editor */}
         <div>
-          <label className="mb-1 block text-xs font-medium text-gray-500">Body</label>
+          <label className="mb-1 block text-xs font-medium text-ink-mute">Body</label>
           <textarea
             ref={textareaRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={handleBlur}
             rows={10}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs leading-relaxed focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+            className="w-full rounded border border-line px-3 py-2 font-mono text-xs leading-relaxed focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
           />
         </div>
 
         {/* Preview */}
         <div>
           <div className="mb-1 flex flex-wrap items-center gap-3">
-            <label className="text-xs font-medium text-gray-500">Preview</label>
+            <label className="text-xs font-medium text-ink-mute">Preview</label>
             <PreviewToggle<CompanyMode>
               value={companyMode}
               onChange={setCompanyMode}
@@ -484,7 +484,7 @@ function TemplateCard({
               ]}
             />
           </div>
-          <div className="min-h-[14rem] whitespace-pre-wrap rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs leading-relaxed text-gray-700">
+          <div className="min-h-[14rem] whitespace-pre-wrap rounded-lg border border-line bg-surface px-3 py-2 text-xs leading-relaxed text-ink-soft">
             {previewText}
           </div>
         </div>
@@ -494,7 +494,7 @@ function TemplateCard({
         <button
           type="button"
           onClick={handleReset}
-          className="text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+          className="text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
         >
           Reset to default
         </button>
@@ -512,38 +512,38 @@ function VariableHelpPanel() {
   const proofViewer = TEMPLATE_VARIABLES.filter((v) => v.scope === 'proof_viewer')
 
   return (
-    <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50/40 p-4">
-      <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+    <div className="mt-6 rounded-xl border border-line bg-canvas p-4">
+      <h4 className="text-xs font-semibold uppercase tracking-wider text-ink-dim">
         Pre-send variables
       </h4>
       <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
         {designerPicked.map((v) => (
           <div key={v.name} className="contents">
-            <dt className="font-mono text-gray-700">{`{${v.name}}`}</dt>
-            <dd className="text-gray-500">{v.description}</dd>
+            <dt className="font-mono text-ink-soft">{`{${v.name}}`}</dt>
+            <dd className="text-ink-mute">{v.description}</dd>
           </div>
         ))}
       </dl>
 
-      <h4 className="mt-4 text-xs font-semibold uppercase tracking-wider text-gray-400">
+      <h4 className="mt-4 text-xs font-semibold uppercase tracking-wider text-ink-dim">
         Post-action variables
       </h4>
       <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
         {proofViewer.map((v) => (
           <div key={v.name} className="contents">
-            <dt className="font-mono text-gray-700">{`{${v.name}}`}</dt>
-            <dd className="text-gray-500">{v.description}</dd>
+            <dt className="font-mono text-ink-soft">{`{${v.name}}`}</dt>
+            <dd className="text-ink-mute">{v.description}</dd>
           </div>
         ))}
       </dl>
 
-      <h4 className="mt-4 text-xs font-semibold uppercase tracking-wider text-gray-400">Conditionals</h4>
-      <p className="mt-2 text-xs text-gray-500">
-        Wrap a block in <code className="rounded bg-white px-1 ring-1 ring-gray-200">{'{? variable}'}</code> and{' '}
-        <code className="rounded bg-white px-1 ring-1 ring-gray-200">{'{/?}'}</code> to render only when the
+      <h4 className="mt-4 text-xs font-semibold uppercase tracking-wider text-ink-dim">Conditionals</h4>
+      <p className="mt-2 text-xs text-ink-mute">
+        Wrap a block in <code className="rounded bg-surface px-1 ring-1 ring-line">{'{? variable}'}</code> and{' '}
+        <code className="rounded bg-surface px-1 ring-1 ring-line">{'{/?}'}</code> to render only when the
         variable has a value. For example:
       </p>
-      <pre className="mt-2 overflow-x-auto rounded-lg bg-white px-3 py-2 text-xs text-gray-700 ring-1 ring-gray-200">{`Hi {first_name}{? company} from {company}{/?}, here's…`}</pre>
+      <pre className="mt-2 overflow-x-auto rounded-lg bg-surface px-3 py-2 text-xs text-ink-soft ring-1 ring-line">{`Hi {first_name}{? company} from {company}{/?}, here's…`}</pre>
     </div>
   )
 }
@@ -556,7 +556,7 @@ function PreviewToggle<T extends string>({ value, onChange, options }: {
   options: { value: T; label: string }[]
 }) {
   return (
-    <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5">
+    <div className="inline-flex rounded-lg border border-line bg-surface p-0.5">
       {options.map((o) => {
         const active = o.value === value
         return (
@@ -566,7 +566,7 @@ function PreviewToggle<T extends string>({ value, onChange, options }: {
             onClick={() => onChange(o.value)}
             className={[
               'rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors',
-              active ? 'bg-gray-900 text-white' : 'text-gray-500 hover:text-gray-900',
+              active ? 'bg-ink text-on-ink' : 'text-ink-mute hover:text-ink',
             ].join(' ')}
           >
             {o.label}

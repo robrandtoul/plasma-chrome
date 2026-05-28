@@ -158,17 +158,17 @@ export default function PersonalisationPricingSection() {
   }
 
   return (
-    <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-      <h3 className="mb-1 text-sm font-semibold text-gray-900">Personalisation pricing</h3>
-      <p className="mb-4 text-xs text-gray-500">
+    <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+      <h3 className="mb-1 text-sm font-semibold text-ink">Personalisation pricing</h3>
+      <p className="mb-4 text-xs text-ink-mute">
         Rate per card and minimum charge for the membership-card personalisation add-on, per currency. Changes apply immediately to every personalised proof, including ones already created. Customer pages render today's live numbers, not the rate at the time the proof was created.
       </p>
       {loadError ? (
-        <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-200">
+        <p className="rounded-lg bg-out-soft px-3 py-2 text-xs text-out ring-1 ring-out">
           {loadError}
         </p>
       ) : !rows ? (
-        <p className="text-sm text-gray-400">Loading…</p>
+        <p className="text-sm text-ink-dim">Loading…</p>
       ) : (
         <div className="space-y-4">
           {CURRENCIES.map((c) => {
@@ -181,24 +181,24 @@ export default function PersonalisationPricingSection() {
             return (
               <div
                 key={c}
-                className="rounded-lg border border-gray-200 p-4"
+                className="rounded-lg border border-line p-4"
               >
                 <div className="mb-2 flex items-center gap-3">
-                  <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-semibold text-gray-700">
+                  <span className="inline-flex items-center rounded-full bg-canvas px-2.5 py-0.5 text-xs font-semibold text-ink-soft">
                     {c}
                   </span>
-                  {working[c] && <span className="text-xs text-gray-400">Saving…</span>}
+                  {working[c] && <span className="text-xs text-ink-dim">Saving…</span>}
                   {recentlySaved(c) && !working[c] && (
-                    <span className="text-xs text-emerald-600">Saved</span>
+                    <span className="text-xs text-in-stock">Saved</span>
                   )}
                 </div>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-600">
+                    <label className="mb-1 block text-xs font-medium text-ink-soft">
                       Per card
                     </label>
                     <div className="relative">
-                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-ink-dim">
                         {SYMBOL[c]}
                       </span>
                       <input
@@ -208,23 +208,23 @@ export default function PersonalisationPricingSection() {
                         onChange={(e) => setDraft(c, 'rate', e.target.value)}
                         onBlur={() => void saveField(c, 'rate')}
                         className={[
-                          'w-full rounded-lg border px-3 py-2 pl-7 text-[17px] sm:text-sm focus:outline-none focus:ring-1',
+                          'w-full rounded border px-3 py-2 pl-7 text-[17px] sm:text-sm focus:outline-none',
                           rateError
-                            ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-300'
-                            : 'border-gray-300 focus:border-gray-900 focus:ring-gray-900',
+                            ? 'border-out focus:border-[var(--c-out)] focus:bg-[var(--c-out-soft)]'
+                            : 'border-line focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)]',
                         ].join(' ')}
                       />
                     </div>
                     {rateError && (
-                      <p className="mt-1 text-xs text-rose-600">{rateError}</p>
+                      <p className="mt-1 text-xs text-out">{rateError}</p>
                     )}
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-600">
+                    <label className="mb-1 block text-xs font-medium text-ink-soft">
                       Minimum charge
                     </label>
                     <div className="relative">
-                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-ink-dim">
                         {SYMBOL[c]}
                       </span>
                       <input
@@ -234,15 +234,15 @@ export default function PersonalisationPricingSection() {
                         onChange={(e) => setDraft(c, 'min', e.target.value)}
                         onBlur={() => void saveField(c, 'min')}
                         className={[
-                          'w-full rounded-lg border px-3 py-2 pl-7 text-[17px] sm:text-sm focus:outline-none focus:ring-1',
+                          'w-full rounded border px-3 py-2 pl-7 text-[17px] sm:text-sm focus:outline-none',
                           minError
-                            ? 'border-rose-300 focus:border-rose-500 focus:ring-rose-300'
-                            : 'border-gray-300 focus:border-gray-900 focus:ring-gray-900',
+                            ? 'border-out focus:border-[var(--c-out)] focus:bg-[var(--c-out-soft)]'
+                            : 'border-line focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)]',
                         ].join(' ')}
                       />
                     </div>
                     {minError && (
-                      <p className="mt-1 text-xs text-rose-600">{minError}</p>
+                      <p className="mt-1 text-xs text-out">{minError}</p>
                     )}
                   </div>
                 </div>

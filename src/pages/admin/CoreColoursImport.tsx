@@ -361,21 +361,21 @@ export default function CoreColoursImport({ current, onClose, onApplied }: Props
       onClose={onClose}
       preventClose={working}
       ariaLabelledBy="core-colours-import-title"
-      panelClassName="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+      panelClassName="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-surface shadow-xl"
     >
-      <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-4">
+      <div className="flex items-start justify-between gap-4 border-b border-line-soft px-6 py-4">
         <div>
-          <h3 id="core-colours-import-title" className="text-lg font-semibold text-gray-900">
+          <h3 id="core-colours-import-title" className="text-lg font-semibold text-ink">
             Import paper colours
           </h3>
-          <p className="mt-0.5 text-xs text-gray-500">
+          <p className="mt-0.5 text-xs text-ink-mute">
             Upload an XLSX with the same columns as Export. Changes are previewed before any write.
           </p>
         </div>
         <button
           onClick={onClose}
           disabled={working}
-          className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
+          className="rounded-lg p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft disabled:opacity-50"
           aria-label="Close"
         >
           <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -403,9 +403,9 @@ export default function CoreColoursImport({ current, onClose, onApplied }: Props
             onClick={() => { if (working) return; inputRef.current?.click() }}
             aria-disabled={working || undefined}
             className={[
-              'flex h-40 flex-col items-center justify-center rounded-2xl border-2 border-dashed text-sm text-gray-500 transition-colors',
-              working ? 'cursor-not-allowed border-gray-200 bg-gray-50 opacity-70' : 'cursor-pointer hover:bg-gray-50',
-              !working && (dragOver ? 'border-gray-900 bg-gray-50' : 'border-gray-300'),
+              'flex h-40 flex-col items-center justify-center rounded-2xl border-2 border-dashed text-sm text-ink-mute transition-colors',
+              working ? 'cursor-not-allowed border-line bg-canvas opacity-70' : 'cursor-pointer hover:bg-canvas',
+              !working && (dragOver ? 'border-ink bg-canvas' : 'border-line'),
             ].join(' ')}
           >
             {working ? 'Parsing…' : 'Drop a .xlsx here, or click to browse'}
@@ -413,11 +413,11 @@ export default function CoreColoursImport({ current, onClose, onApplied }: Props
         ) : (
           <div className="space-y-4">
             <div className="flex items-baseline justify-between gap-3">
-              <p className="text-xs uppercase tracking-wider text-gray-400">{file.name}</p>
+              <p className="text-xs uppercase tracking-wider text-ink-dim">{file.name}</p>
               <button
                 onClick={resetPick}
                 disabled={working}
-                className="text-xs text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline disabled:opacity-50"
+                className="text-xs text-ink-mute underline-offset-2 hover:text-ink hover:underline disabled:opacity-50"
               >
                 Pick a different file
               </button>
@@ -425,10 +425,10 @@ export default function CoreColoursImport({ current, onClose, onApplied }: Props
 
             {parseErrors.length > 0 && (
               <section>
-                <h4 className="mb-2 text-sm font-semibold text-rose-700">
+                <h4 className="mb-2 text-sm font-semibold text-out">
                   {parseErrors.length} validation error{parseErrors.length === 1 ? '' : 's'}
                 </h4>
-                <ul className="space-y-1 rounded-lg bg-rose-50 px-4 py-3 text-xs text-rose-700">
+                <ul className="space-y-1 rounded-lg bg-out-soft px-4 py-3 text-xs text-out">
                   {parseErrors.map((e, i) => (
                     <li key={i}>
                       <span className="font-medium">
@@ -438,7 +438,7 @@ export default function CoreColoursImport({ current, onClose, onApplied }: Props
                     </li>
                   ))}
                 </ul>
-                <p className="mt-2 text-xs text-gray-500">
+                <p className="mt-2 text-xs text-ink-mute">
                   Fix the spreadsheet and re-upload. The preview is blocked until every row validates.
                 </p>
               </section>
@@ -457,7 +457,7 @@ export default function CoreColoursImport({ current, onClose, onApplied }: Props
             )}
 
             {serverError && (
-              <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              <p className="rounded-lg bg-out-soft px-3 py-2 text-xs text-out">
                 Apply failed: {serverError}
               </p>
             )}
@@ -466,11 +466,11 @@ export default function CoreColoursImport({ current, onClose, onApplied }: Props
       </div>
 
       {file && (
-        <div className="flex items-center justify-end gap-2 border-t border-gray-100 px-6 py-4">
+        <div className="flex items-center justify-end gap-2 border-t border-line-soft px-6 py-4">
           <button
             onClick={onClose}
             disabled={working}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+            className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
           >
             Cancel
           </button>
@@ -484,7 +484,7 @@ export default function CoreColoursImport({ current, onClose, onApplied }: Props
                 ? 'No changes detected — nothing to apply'
                 : undefined
             }
-            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+            className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
           >
             {working ? 'Applying…' : applyLabel(preview)}
           </button>
@@ -525,20 +525,20 @@ function PreviewView({
   const total = preview.inserts.length + preview.updates.length + preview.deactivations.length
   return (
     <div className="space-y-4">
-      <div className="rounded-xl bg-gray-50 p-4 text-sm text-gray-700 ring-1 ring-gray-100">
+      <div className="rounded-xl bg-canvas p-4 text-sm text-ink-soft ring-1 ring-line-soft">
         <p>
           <strong>{preview.inserts.length}</strong> new,{' '}
           <strong>{preview.updates.length}</strong> updated,{' '}
           <strong>{preview.deactivations.length}</strong> deactivated
           {preview.unchangedCount > 0 && (
             <>
-              {' '}<span className="text-gray-500">({preview.unchangedCount} unchanged)</span>
+              {' '}<span className="text-ink-mute">({preview.unchangedCount} unchanged)</span>
             </>
           )}
           .
         </p>
         {total === 0 && (
-          <p className="mt-1 text-xs text-gray-500">
+          <p className="mt-1 text-xs text-ink-mute">
             No changes detected. The spreadsheet matches the live catalogue.
           </p>
         )}
@@ -550,25 +550,25 @@ function PreviewView({
           open={showInserts}
           onToggle={() => setShowInserts(!showInserts)}
         >
-          <div className="overflow-hidden rounded-lg ring-1 ring-gray-200">
+          <div className="overflow-hidden rounded-lg ring-1 ring-line">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-gray-100 bg-gray-50 text-left">
-                  <th className="px-3 py-2 font-semibold text-gray-500">Swatch</th>
-                  <th className="px-3 py-2 font-semibold text-gray-500">Name</th>
-                  <th className="px-3 py-2 font-semibold text-gray-500">Hex</th>
-                  <th className="px-3 py-2 font-semibold text-gray-500">Sort</th>
-                  <th className="px-3 py-2 font-semibold text-gray-500">Active</th>
+                <tr className="border-b border-line-soft bg-canvas text-left">
+                  <th className="px-3 py-2 font-semibold text-ink-mute">Swatch</th>
+                  <th className="px-3 py-2 font-semibold text-ink-mute">Name</th>
+                  <th className="px-3 py-2 font-semibold text-ink-mute">Hex</th>
+                  <th className="px-3 py-2 font-semibold text-ink-mute">Sort</th>
+                  <th className="px-3 py-2 font-semibold text-ink-mute">Active</th>
                 </tr>
               </thead>
               <tbody>
                 {preview.inserts.map((d) => (
-                  <tr key={`${d.parsed.rowNumber}-${d.parsed.name}`} className="border-b border-gray-50 last:border-0">
+                  <tr key={`${d.parsed.rowNumber}-${d.parsed.name}`} className="border-b border-line-soft last:border-0">
                     <td className="px-3 py-2"><CoreColourSwatch hex={d.parsed.hex_value} size={20} ariaLabel={`${d.parsed.name} swatch`} /></td>
-                    <td className="px-3 py-2 font-medium text-gray-900">{d.parsed.name}</td>
-                    <td className="px-3 py-2 font-mono text-gray-700">{d.parsed.hex_value}</td>
-                    <td className="px-3 py-2 tabular-nums text-gray-700">{d.parsed.sort_order}</td>
-                    <td className="px-3 py-2 text-gray-700">{d.parsed.is_active ? 'TRUE' : 'FALSE'}</td>
+                    <td className="px-3 py-2 font-medium text-ink">{d.parsed.name}</td>
+                    <td className="px-3 py-2 font-mono text-ink-soft">{d.parsed.hex_value}</td>
+                    <td className="px-3 py-2 tabular-nums text-ink-soft">{d.parsed.sort_order}</td>
+                    <td className="px-3 py-2 text-ink-soft">{d.parsed.is_active ? 'TRUE' : 'FALSE'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -587,11 +587,11 @@ function PreviewView({
             {preview.updates.map((d) => (
               <div
                 key={d.current!.id}
-                className="rounded-lg ring-1 ring-gray-200"
+                className="rounded-lg ring-1 ring-line"
               >
-                <div className="flex items-center gap-3 border-b border-gray-100 px-3 py-2">
+                <div className="flex items-center gap-3 border-b border-line-soft px-3 py-2">
                   <CoreColourSwatch hex={d.current!.hex_value} size={20} ariaLabel={`${d.current!.name} current swatch`} />
-                  <span className="text-sm font-medium text-gray-900">{d.current!.name}</span>
+                  <span className="text-sm font-medium text-ink">{d.current!.name}</span>
                 </div>
                 <table className="w-full text-xs">
                   <thead className="sr-only">
@@ -599,10 +599,10 @@ function PreviewView({
                   </thead>
                   <tbody>
                     {d.changes.map((c, i) => (
-                      <tr key={i} className="border-b border-gray-50 last:border-0">
-                        <td className="px-3 py-1.5 text-gray-500">{c.field}</td>
-                        <td className="px-3 py-1.5 font-mono text-gray-500 line-through">{c.old}</td>
-                        <td className="px-3 py-1.5 font-mono font-medium text-gray-900">{c.next}</td>
+                      <tr key={i} className="border-b border-line-soft last:border-0">
+                        <td className="px-3 py-1.5 text-ink-mute">{c.field}</td>
+                        <td className="px-3 py-1.5 font-mono text-ink-mute line-through">{c.old}</td>
+                        <td className="px-3 py-1.5 font-mono font-medium text-ink">{c.next}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -619,26 +619,26 @@ function PreviewView({
           open={showDeactivations}
           onToggle={() => setShowDeactivations(!showDeactivations)}
         >
-          <div className="overflow-hidden rounded-lg ring-1 ring-gray-200">
+          <div className="overflow-hidden rounded-lg ring-1 ring-line">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-gray-100 bg-gray-50 text-left">
-                  <th className="px-3 py-2 font-semibold text-gray-500">Swatch</th>
-                  <th className="px-3 py-2 font-semibold text-gray-500">Name</th>
-                  <th className="px-3 py-2 font-semibold text-gray-500">Hex</th>
+                <tr className="border-b border-line-soft bg-canvas text-left">
+                  <th className="px-3 py-2 font-semibold text-ink-mute">Swatch</th>
+                  <th className="px-3 py-2 font-semibold text-ink-mute">Name</th>
+                  <th className="px-3 py-2 font-semibold text-ink-mute">Hex</th>
                 </tr>
               </thead>
               <tbody>
                 {preview.deactivations.map((c) => (
-                  <tr key={c.id} className="border-b border-gray-50 last:border-0">
+                  <tr key={c.id} className="border-b border-line-soft last:border-0">
                     <td className="px-3 py-2"><CoreColourSwatch hex={c.hex_value} size={20} ariaLabel={`${c.name} swatch`} /></td>
-                    <td className="px-3 py-2 text-gray-700">{c.name}</td>
-                    <td className="px-3 py-2 font-mono text-gray-500">{c.hex_value}</td>
+                    <td className="px-3 py-2 text-ink-soft">{c.name}</td>
+                    <td className="px-3 py-2 font-mono text-ink-mute">{c.hex_value}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="px-3 py-2 text-xs text-gray-500">
+            <p className="px-3 py-2 text-xs text-ink-mute">
               Deactivation is a soft-delete. Existing letterpress proofs that reference these colours keep rendering, and the rows can be restored from the table above.
             </p>
           </div>
@@ -663,7 +663,7 @@ function Section({
     <section>
       <button
         onClick={onToggle}
-        className="flex items-center gap-2 text-sm font-semibold text-gray-900 hover:text-gray-700"
+        className="flex items-center gap-2 text-sm font-semibold text-ink hover:text-ink-soft"
       >
         <span aria-hidden>{open ? '▾' : '▸'}</span>
         {label}

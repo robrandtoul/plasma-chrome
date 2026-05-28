@@ -352,14 +352,14 @@ export default function AdminUsersPage() {
       {/* Header row */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">Users</h2>
-          <p className="mt-1 text-sm text-gray-500">
+          <h2 className="text-xl font-bold text-ink">Users</h2>
+          <p className="mt-1 text-sm text-ink-mute">
             Manage designer and admin accounts. Deactivated users keep their proof history.
           </p>
         </div>
         <button
           onClick={() => setShowAdd(true)}
-          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+          className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
         >
           Add user
         </button>
@@ -367,15 +367,15 @@ export default function AdminUsersPage() {
 
       {loading ? (
         <div className="flex justify-center py-20">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-gray-900" />
         </div>
       ) : loadError ? (
-        <div className="rounded-2xl bg-rose-50 p-6 text-sm text-rose-700 ring-1 ring-rose-200">
+        <div className="rounded-2xl bg-out-soft p-6 text-sm text-out ring-1 ring-out">
           Failed to load users: {loadError}
         </div>
       ) : users.length === 0 ? (
-        <div className="rounded-2xl bg-white py-16 text-center shadow-sm ring-1 ring-gray-200">
-          <p className="text-gray-400">No users yet.</p>
+        <div className="rounded-2xl bg-surface py-16 text-center shadow-sm ring-1 ring-line">
+          <p className="text-ink-dim">No users yet.</p>
         </div>
       ) : (
         // overflow-x-auto so eight columns + a kebab don't squeeze
@@ -388,17 +388,17 @@ export default function AdminUsersPage() {
         // ancestor and the wrapper can clip horizontally without
         // hiding menu items. overflow-y stays hidden to preserve
         // the rounded-2xl corner mask on the top + bottom edges.
-        <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200" ref={menuContainerRef}>
+        <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line" ref={menuContainerRef}>
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-100">
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Name</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Email</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Role</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Added</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Last sign-in</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400" title="Help Scout user ID — used to attribute staff replies. Default = HELPSCOUT_DEFAULT_USER_ID env var.">HS user</th>
-                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Status</th>
+              <tr className="border-b border-line-soft">
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Name</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Email</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Role</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Added</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Last sign-in</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim" title="Help Scout user ID — used to attribute staff replies. Default = HELPSCOUT_DEFAULT_USER_ID env var.">HS user</th>
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Status</th>
                 <th className="w-12 px-5 py-3" />
               </tr>
             </thead>
@@ -410,7 +410,7 @@ export default function AdminUsersPage() {
                 // Deactivated rows used to apply opacity-50 to the
                 // <tr>, but CSS opacity propagates to descendants and
                 // creates a stacking context — so the kebab menu's
-                // bg-white was rendered at α=0.5 (letting rows beneath
+                // bg-surface was rendered at α=0.5 (letting rows beneath
                 // bleed through) and disabled vs enabled menu-item
                 // text-greys collapsed into the same washed-out tone.
                 // Replaced with explicit muted text colours on the
@@ -418,15 +418,15 @@ export default function AdminUsersPage() {
                 // the menu surface is clean. The Status pill still
                 // carries the primary "deactivated" visual signal.
                 const textCellClass = deactivated
-                  ? 'px-5 py-3 text-gray-400'
-                  : 'px-5 py-3 text-gray-600'
+                  ? 'px-5 py-3 text-ink-dim'
+                  : 'px-5 py-3 text-ink-soft'
                 const subtleCellClass = deactivated
-                  ? 'px-5 py-3 text-gray-300'
-                  : 'px-5 py-3 text-gray-500'
+                  ? 'px-5 py-3 text-ink-dim'
+                  : 'px-5 py-3 text-ink-mute'
                 return (
-                  <tr key={u.id} className="border-b border-gray-50 last:border-0">
-                    <td className={['px-5 py-3 font-medium', deactivated ? 'text-gray-400' : 'text-gray-900'].join(' ')}>
-                      {u.full_name ?? '—'}{isSelf && <span className="ml-2 text-xs font-normal text-gray-400">(you)</span>}
+                  <tr key={u.id} className="border-b border-line-soft last:border-0">
+                    <td className={['px-5 py-3 font-medium', deactivated ? 'text-ink-dim' : 'text-ink'].join(' ')}>
+                      {u.full_name ?? '—'}{isSelf && <span className="ml-2 text-xs font-normal text-ink-dim">(you)</span>}
                     </td>
                     <td className={textCellClass}>{u.email}</td>
                     <td className="px-5 py-3">
@@ -436,13 +436,13 @@ export default function AdminUsersPage() {
                     <td className={subtleCellClass}>{u.last_sign_in_at ? formatRelative(u.last_sign_in_at) : 'Never'}</td>
                     <td className={subtleCellClass}>
                       {u.helpscout_user_id == null
-                        ? <span className="text-gray-400" title="No mapping — falls back to HELPSCOUT_DEFAULT_USER_ID">Default</span>
+                        ? <span className="text-ink-dim" title="No mapping — falls back to HELPSCOUT_DEFAULT_USER_ID">Default</span>
                         : <span className="font-mono">{u.helpscout_user_id}</span>}
                     </td>
                     <td className="px-5 py-3">
                       {deactivated
-                        ? <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500">Deactivated</span>
-                        : <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Active</span>}
+                        ? <span className="rounded-full bg-canvas px-2 py-0.5 text-xs font-semibold text-ink-mute">Deactivated</span>
+                        : <span className="rounded-full bg-in-stock-soft px-2 py-0.5 text-xs font-semibold text-in-stock">Active</span>}
                     </td>
                     <td className="px-5 py-3 text-right">
                       <div className="relative inline-block">
@@ -466,7 +466,7 @@ export default function AdminUsersPage() {
                             }
                           }}
                           aria-label={`Actions for ${u.full_name ?? u.email}`}
-                          className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                          className="rounded-lg p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft"
                         >
                           <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor">
                             <circle cx="3" cy="8" r="1.5" />
@@ -497,7 +497,7 @@ export default function AdminUsersPage() {
                                     right: window.innerWidth - openTriggerRect.right,
                                   }
                             }
-                            className="z-50 w-56 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg"
+                            className="z-50 w-56 overflow-hidden rounded-lg border border-line bg-surface shadow-lg"
                           >
                             {/* Send password reset — primary affordance.
                                 Disabled for deactivated users (their auth
@@ -557,7 +557,7 @@ export default function AdminUsersPage() {
                                 modal it opens. Disabled for deactivated
                                 users for the same reason as the reset
                                 email (their auth row is banned). */}
-                            <div className="border-t border-gray-100" />
+                            <div className="border-t border-line-soft" />
                             <MenuItem
                               label="Set new password…"
                               onClick={() => openDialog({ kind: 'setPassword', user: u })}
@@ -593,7 +593,7 @@ export default function AdminUsersPage() {
             `to ${actionDialog.user.role === 'admin' ? 'Designer' : 'Admin'}?`
           }
           confirmLabel="Change role"
-          confirmClass="bg-gray-900 hover:bg-gray-700 text-white"
+          confirmClass="bg-ink hover:opacity-90 text-on-ink"
           working={actionWorking}
           errorMsg={actionError}
           onConfirm={() => confirmChangeRole(actionDialog.user)}
@@ -606,7 +606,7 @@ export default function AdminUsersPage() {
         <ConfirmDialog
           message={`Deactivate ${actionDialog.user.full_name ?? actionDialog.user.email}? They won't be able to sign in until reactivated. Their proof history will be preserved.`}
           confirmLabel="Deactivate"
-          confirmClass="bg-rose-600 hover:bg-rose-700 text-white"
+          confirmClass="bg-out hover:opacity-90 text-on-ink"
           working={actionWorking}
           errorMsg={actionError}
           onConfirm={() => confirmDeactivate(actionDialog.user)}
@@ -619,7 +619,7 @@ export default function AdminUsersPage() {
         <ConfirmDialog
           message={`Reactivate ${actionDialog.user.full_name ?? actionDialog.user.email}?`}
           confirmLabel="Reactivate"
-          confirmClass="bg-emerald-600 hover:bg-emerald-700 text-white"
+          confirmClass="bg-in-stock hover:opacity-90 text-on-ink"
           working={actionWorking}
           errorMsg={actionError}
           onConfirm={() => confirmReactivate(actionDialog.user)}
@@ -635,7 +635,7 @@ export default function AdminUsersPage() {
         <ConfirmDialog
           message={`Send a password reset email to ${actionDialog.user.email}? They'll receive a recovery link they can use to set a new password themselves.`}
           confirmLabel="Send reset email"
-          confirmClass="bg-gray-900 hover:bg-gray-700 text-white"
+          confirmClass="bg-ink hover:opacity-90 text-on-ink"
           working={actionWorking}
           errorMsg={actionError}
           onConfirm={() => confirmSendPasswordReset(actionDialog.user)}
@@ -683,7 +683,7 @@ export default function AdminUsersPage() {
       )}
 
       {toast && (
-        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-gray-900 px-5 py-2.5 text-sm font-medium text-white shadow-lg">
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-on-ink shadow-lg">
           {toast}
         </div>
       )}
@@ -705,8 +705,8 @@ function RolePill({ role, muted }: { role: 'admin' | 'designer'; muted?: boolean
     return <span className={cls}>Admin</span>
   }
   const cls = muted
-    ? 'rounded-full bg-gray-50 px-2 py-0.5 text-xs font-semibold text-gray-400'
-    : 'rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600'
+    ? 'rounded-full bg-canvas px-2 py-0.5 text-xs font-semibold text-ink-dim'
+    : 'rounded-full bg-canvas px-2 py-0.5 text-xs font-semibold text-ink-soft'
   return <span className={cls}>Designer</span>
 }
 
@@ -725,10 +725,10 @@ function MenuItem({ label, onClick, disabled, disabledHint, danger }: {
       className={[
         'block w-full px-3 py-2 text-left text-sm transition-colors',
         disabled
-          ? 'cursor-not-allowed text-gray-300'
+          ? 'cursor-not-allowed text-ink-dim'
           : danger
-            ? 'text-rose-600 hover:bg-rose-50'
-            : 'text-gray-700 hover:bg-gray-50',
+            ? 'text-out hover:bg-out-soft'
+            : 'text-ink-soft hover:bg-canvas',
       ].join(' ')}
     >
       {label}
@@ -751,15 +751,15 @@ function ConfirmDialog({ message, confirmLabel, confirmClass, working, errorMsg,
       onClose={onCancel}
       preventClose={working}
       ariaLabel="Confirm action"
-      panelClassName="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl"
+      panelClassName="w-full max-w-sm rounded-2xl bg-surface p-6 shadow-xl"
     >
-      <p className="text-sm text-gray-700">{message}</p>
-      {errorMsg && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>}
+      <p className="text-sm text-ink-soft">{message}</p>
+      {errorMsg && <p className="mt-3 rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{errorMsg}</p>}
       <div className="mt-5 flex justify-end gap-2">
         <button
           onClick={onCancel}
           disabled={working}
-          className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+          className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
         >
           Cancel
         </button>
@@ -790,7 +790,7 @@ function SetPasswordDialog({
   onConfirm: () => void
   onCancel: () => void
 }) {
-  const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+  const inputClass = 'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
   return (
     <Modal
       open
@@ -799,15 +799,15 @@ function SetPasswordDialog({
       ariaLabelledBy="set-password-title"
     >
       <div>
-        <h3 id="set-password-title" className="text-lg font-semibold text-gray-900">Set new password</h3>
-        <p className="mt-1 text-xs text-gray-500">
+        <h3 id="set-password-title" className="text-lg font-semibold text-ink">Set new password</h3>
+        <p className="mt-1 text-xs text-ink-mute">
           Override the password for {user.full_name ?? user.email}. Share the new password with them out-of-band — they'll be signed out of any active sessions and need to use this to sign in next time.
         </p>
       </div>
 
       <div className="mt-4">
-        <label className="mb-1.5 block text-sm font-medium text-gray-700">
-          New password <span className="text-rose-500">*</span>
+        <label className="mb-1.5 block text-sm font-medium text-ink-soft">
+          New password <span className="text-out">*</span>
         </label>
         <div className="flex gap-2">
           <input
@@ -822,7 +822,7 @@ function SetPasswordDialog({
             type="button"
             onClick={onGenerate}
             disabled={working}
-            className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas disabled:opacity-50"
           >
             Generate
           </button>
@@ -831,27 +831,27 @@ function SetPasswordDialog({
             onClick={onToggleShow}
             disabled={working}
             aria-label={showPassword ? 'Hide password' : 'Show password'}
-            className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas disabled:opacity-50"
           >
             {showPassword ? 'Hide' : 'Show'}
           </button>
         </div>
       </div>
 
-      {errorMsg && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>}
+      {errorMsg && <p className="mt-4 rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{errorMsg}</p>}
 
       <div className="mt-5 flex justify-end gap-2">
         <button
           onClick={onCancel}
           disabled={working}
-          className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+          className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
         >
           Cancel
         </button>
         <button
           onClick={onConfirm}
           disabled={working || password.length < 8}
-          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+          className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
         >
           {working ? 'Setting…' : 'Set password'}
         </button>
@@ -872,7 +872,7 @@ function SetHelpscoutUserIdDialog({
   onConfirm: () => void
   onCancel: () => void
 }) {
-  const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+  const inputClass = 'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
   // Save label flips between Clear / Save based on whether the input
   // is empty — the empty case sends null to the edge function, which
   // clears the mapping. Distinct labels make the destructive case
@@ -887,16 +887,16 @@ function SetHelpscoutUserIdDialog({
       ariaLabelledBy="set-hs-user-title"
     >
       <div>
-        <h3 id="set-hs-user-title" className="text-lg font-semibold text-gray-900">
+        <h3 id="set-hs-user-title" className="text-lg font-semibold text-ink">
           Help Scout user ID for {user.full_name ?? user.email}
         </h3>
-        <p className="mt-1 text-xs text-gray-500">
+        <p className="mt-1 text-xs text-ink-mute">
           When this designer sends staff replies via the proof viewer, replies will appear in Help Scout under this user ID. Leave empty to use the project default.
         </p>
       </div>
 
       <div className="mt-4">
-        <label className="mb-1.5 block text-sm font-medium text-gray-700">
+        <label className="mb-1.5 block text-sm font-medium text-ink-soft">
           Help Scout user ID
         </label>
         <div className="flex gap-2">
@@ -914,38 +914,38 @@ function SetHelpscoutUserIdDialog({
             type="button"
             onClick={onClear}
             disabled={working || value === ''}
-            className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+            className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas disabled:opacity-50"
             title="Empty the field. Click 'Clear mapping' below to actually save the change."
           >
             Empty field
           </button>
         </div>
-        <p className="mt-1.5 text-xs text-gray-400">
+        <p className="mt-1.5 text-xs text-ink-dim">
           Current: {user.helpscout_user_id == null
             ? <span>using project default (HELPSCOUT_DEFAULT_USER_ID)</span>
             : <span className="font-mono">{user.helpscout_user_id}</span>}
         </p>
         {isClearing && user.helpscout_user_id != null && (
-          <p className="mt-1.5 text-xs text-amber-700">
+          <p className="mt-1.5 text-xs text-low">
             Field is empty — click <strong>Clear mapping</strong> below to remove the saved value.
           </p>
         )}
       </div>
 
-      {errorMsg && <p className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>}
+      {errorMsg && <p className="mt-4 rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{errorMsg}</p>}
 
       <div className="mt-5 flex justify-end gap-2">
         <button
           onClick={onCancel}
           disabled={working}
-          className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+          className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
         >
           Cancel
         </button>
         <button
           onClick={onConfirm}
           disabled={working}
-          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+          className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
         >
           {working ? 'Saving…' : isClearing ? 'Clear mapping' : 'Save'}
         </button>

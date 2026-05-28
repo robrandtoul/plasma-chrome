@@ -183,3 +183,16 @@ html, body { font-family: var(--font-body); color: var(--c-ink); background: var
 @media (max-width: 640px) {
   input, textarea, select { font-size: 16px !important; }
 }
+
+/* Drop the native number-input spinner arrows. Every number field in
+   the app is a type-the-value field, not a nudge-by-one field, so the
+   spinners are visual noise (arrow keys still step the value). */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}

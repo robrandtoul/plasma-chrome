@@ -357,13 +357,13 @@ export default function AdminAddOnEditor() {
   if (loading) {
     return (
       <div className="flex justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-gray-900" />
       </div>
     )
   }
   if (loadError || !addOn) {
     return (
-      <div className="rounded-2xl bg-rose-50 p-6 text-sm text-rose-700 ring-1 ring-rose-200">
+      <div className="rounded-2xl bg-out-soft p-6 text-sm text-out ring-1 ring-out">
         Failed to load add-on: {loadError ?? 'not found'}
       </div>
     )
@@ -374,22 +374,22 @@ export default function AdminAddOnEditor() {
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <Link to="/admin/pricing" className="text-xs text-gray-400 hover:text-gray-700">← Back to pricing</Link>
-          <h2 className="mt-2 text-xl font-bold text-gray-900">{addOn.display_name}</h2>
-          {addOn.notes && <p className="mt-1 max-w-xl text-xs text-gray-500">{addOn.notes}</p>}
+          <Link to="/admin/pricing" className="text-xs text-ink-dim hover:text-ink-soft">← Back to pricing</Link>
+          <h2 className="mt-2 text-xl font-bold text-ink">{addOn.display_name}</h2>
+          {addOn.notes && <p className="mt-1 max-w-xl text-xs text-ink-mute">{addOn.notes}</p>}
           {MATERIAL_OPTION_BACKED_ADDONS[addOn.code] && (
             <p className="mt-2 max-w-xl text-xs text-violet-700">
               Prices apply to Mirror and Brushed across Steel and Gold. Editing one tier updates all four schedules in lockstep.
             </p>
           )}
-          <p className="mt-2 text-sm text-gray-500">
+          <p className="mt-2 text-sm text-ink-mute">
             Changes save automatically. Customer-facing prices update immediately.
           </p>
         </div>
         {addOn.pricing_model !== 'custom_quote' && (
           <button
             onClick={() => downloadPricingExport(`addon:${addOn.code}`, `pricing_addon_${addOn.code}.csv`).catch(() => {})}
-            className="shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+            className="shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas"
           >
             Export this add-on
           </button>
@@ -398,7 +398,7 @@ export default function AdminAddOnEditor() {
 
       {/* Editor — branches by pricing_model */}
       {addOn.pricing_model === 'custom_quote' ? (
-        <div className="rounded-2xl bg-white p-6 text-sm text-gray-500 shadow-sm ring-1 ring-gray-200">
+        <div className="rounded-2xl bg-surface p-6 text-sm text-ink-mute shadow-sm ring-1 ring-line">
           Pricing for this add-on is custom. No editor available.
         </div>
       ) : addOn.pricing_model === 'flat' ? (
@@ -446,22 +446,22 @@ function FlatEditor({ prices, onSave, onSeed }: {
   }
 
   return (
-    <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-      <h3 className="text-sm font-semibold text-gray-900">Flat surcharge</h3>
+    <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+      <h3 className="text-sm font-semibold text-ink">Flat surcharge</h3>
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
         {CURRENCIES.map((c) => {
           const p = byCurrency.get(c)
           if (!p) return (
             <div key={c}>
-              <label className="block text-xs font-medium uppercase tracking-wide text-gray-400">
+              <label className="block text-xs font-medium uppercase tracking-wide text-ink-dim">
                 {c} {c === 'GBP' ? '(inc VAT)' : '(ex VAT)'}
               </label>
-              <p className="mt-1 text-sm text-gray-300">—</p>
+              <p className="mt-1 text-sm text-ink-dim">—</p>
             </div>
           )
           return (
             <div key={c}>
-              <label className="block text-xs font-medium uppercase tracking-wide text-gray-400">
+              <label className="block text-xs font-medium uppercase tracking-wide text-ink-dim">
                 {c} {c === 'GBP' ? '(inc VAT)' : '(ex VAT)'}
               </label>
               <div className="mt-1">
@@ -520,13 +520,13 @@ function PerTierEditor({ prices, parentQuantities, onSave, onCreate, onOpenSeed 
   }
 
   return (
-    <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+    <section className="overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-gray-100">
-            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Qty</th>
+          <tr className="border-b border-line-soft">
+            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Qty</th>
             {CURRENCIES.map((c) => (
-              <th key={c} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">
+              <th key={c} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">
                 {c} {c === 'GBP' ? '(inc VAT)' : '(ex VAT)'}
               </th>
             ))}
@@ -534,8 +534,8 @@ function PerTierEditor({ prices, parentQuantities, onSave, onCreate, onOpenSeed 
         </thead>
         <tbody>
           {byQty.map(([qty, row]) => (
-            <tr key={qty} className="border-b border-gray-50 last:border-0">
-              <td className="px-4 py-2 font-medium text-gray-900 tabular-nums">{qty.toLocaleString()}</td>
+            <tr key={qty} className="border-b border-line-soft last:border-0">
+              <td className="px-4 py-2 font-medium text-ink tabular-nums">{qty.toLocaleString()}</td>
               {CURRENCIES.map((c) => {
                 const p = row[c]
                 return (
@@ -543,7 +543,7 @@ function PerTierEditor({ prices, parentQuantities, onSave, onCreate, onOpenSeed 
                     {p ? (
                       <PriceCell value={p.surcharge} currency={c} allowClear onSave={(next) => onSave(p.id, next)} />
                     ) : (
-                      <span className="text-gray-300">—</span>
+                      <span className="text-ink-dim">—</span>
                     )}
                   </td>
                 )
@@ -560,14 +560,14 @@ function PerTierEditor({ prices, parentQuantities, onSave, onCreate, onOpenSeed 
                 onCancel={() => setAdding(false)}
               />
             ) : (
-              <tr className="border-t border-gray-100 bg-gray-50/40">
+              <tr className="border-t border-line-soft bg-canvas">
                 <td colSpan={1 + CURRENCIES.length} className="px-4 py-3">
                   <button
                     type="button"
                     onClick={() => setAdding(true)}
                     disabled={availableQuantities.length === 0}
                     title={availableQuantities.length === 0 ? 'All parent material quantities already have a surcharge tier' : undefined}
-                    className="text-sm font-medium text-gray-700 hover:text-gray-900 disabled:cursor-not-allowed disabled:text-gray-400"
+                    className="text-sm font-medium text-ink-soft hover:text-ink disabled:cursor-not-allowed disabled:text-ink-dim"
                   >
                     + Add tier
                   </button>
@@ -632,13 +632,13 @@ function AddTierRow({ availableQuantities, onSave, onCancel }: {
 
   return (
     <>
-      <tr className="border-t border-gray-100 bg-gray-50/40">
+      <tr className="border-t border-line-soft bg-canvas">
         <td className="px-4 py-2">
           <select
             value={quantity}
             onChange={(ev) => setQuantity(ev.target.value)}
             disabled={saving}
-            className="rounded border border-gray-200 px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-gray-900 focus:outline-none"
+            className="rounded border border-line px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
           >
             <option value="">Pick a qty</option>
             {availableQuantities.map((q) => (
@@ -651,7 +651,7 @@ function AddTierRow({ availableQuantities, onSave, onCancel }: {
           return (
             <td key={c} className="px-4 py-2">
               <div className="relative inline-block">
-                <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">
+                <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-ink-dim">
                   {currencySymbol(c)}
                 </span>
                 <input
@@ -662,22 +662,22 @@ function AddTierRow({ availableQuantities, onSave, onCancel }: {
                   placeholder="0.00"
                   onChange={(ev) => setter(ev.target.value)}
                   disabled={saving}
-                  className="w-24 rounded border border-gray-200 px-2 py-1 pl-5 text-[17px] sm:text-sm tabular-nums focus:border-gray-900 focus:outline-none"
+                  className="w-24 rounded border border-line px-2 py-1 pl-5 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                 />
               </div>
             </td>
           )
         })}
       </tr>
-      <tr className="bg-gray-50/40">
+      <tr className="bg-canvas">
         <td colSpan={1 + CURRENCIES.length} className="px-4 pb-3">
           <div className="flex items-center justify-end gap-2">
-            {error && <span className="mr-auto text-xs text-rose-600">{error}</span>}
+            {error && <span className="mr-auto text-xs text-out">{error}</span>}
             <button
               type="button"
               onClick={onCancel}
               disabled={saving}
-              className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+              className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
             >
               Cancel
             </button>
@@ -685,7 +685,7 @@ function AddTierRow({ availableQuantities, onSave, onCancel }: {
               type="button"
               onClick={handleSave}
               disabled={saving}
-              className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+              className="rounded-lg bg-ink px-3 py-1.5 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save tier'}
             </button>
@@ -704,11 +704,11 @@ function EmptyState({ label, actionLabel, onClick }: {
   onClick: () => void
 }) {
   return (
-    <div className="flex flex-col items-center gap-3 rounded-2xl bg-white py-12 text-center shadow-sm ring-1 ring-gray-200">
-      <p className="text-sm text-gray-500">{label}</p>
+    <div className="flex flex-col items-center gap-3 rounded-2xl bg-surface py-12 text-center shadow-sm ring-1 ring-line">
+      <p className="text-sm text-ink-mute">{label}</p>
       <button
         onClick={onClick}
-        className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+        className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
       >
         {actionLabel}
       </button>
@@ -753,37 +753,37 @@ function SeedQuantitiesDialog({ onSeed, onCancel }: {
       onClose={onCancel}
       preventClose={working}
       ariaLabelledBy="addon-seed-title"
-      panelClassName="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl"
+      panelClassName="w-full max-w-sm rounded-2xl bg-surface p-6 shadow-xl"
     >
       <form onSubmit={handleSubmit}>
-        <h3 id="addon-seed-title" className="text-lg font-semibold text-gray-900">Add prices</h3>
-        <p className="mt-1 text-xs text-gray-500">
+        <h3 id="addon-seed-title" className="text-lg font-semibold text-ink">Add prices</h3>
+        <p className="mt-1 text-xs text-ink-mute">
           Enter the quantity tiers to seed, comma-separated. All three currencies start at £0 / €0 / $0 — edit each cell afterwards.
         </p>
         <div className="mt-4">
-          <label className="block text-xs font-medium uppercase tracking-wide text-gray-400">Quantities</label>
+          <label className="block text-xs font-medium uppercase tracking-wide text-ink-dim">Quantities</label>
           <input
             type="text"
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
-            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+            className="mt-1 w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
             placeholder="100, 250, 500, 750, 1000"
           />
         </div>
-        {error && <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+        {error && <p className="mt-3 rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{error}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button
             type="button"
             onClick={onCancel}
             disabled={working}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+            className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={working}
-            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+            className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
           >
             {working ? 'Seeding…' : 'Seed tiers'}
           </button>

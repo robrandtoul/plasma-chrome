@@ -447,41 +447,41 @@ export default function AdminCardWeightsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-gray-900">Card weights</h2>
-        <p className="mt-1 text-sm text-gray-500">
+        <h2 className="text-xl font-bold text-ink">Card weights</h2>
+        <p className="mt-1 text-sm text-ink-mute">
           Single-card weight in grams. The Quote compiler multiplies this by quantity and adds the FedEx box tare weight to derive the parcel weight for shipping rates. Customer-facing pages are unaffected — weights only surface internally on the Quote compiler.
         </p>
-        <p className="mt-2 text-xs text-gray-400">
+        <p className="mt-2 text-xs text-ink-dim">
           Thickness variants take their own weight. Ink count and finish variants share one weight per material — those dimensions don't shift the underlying card weight. Standard metals (steel, gold, copper, etc.) share their weights too: one row per thickness covers all six finishes. Mini Steel and Full Colour Plastic keep their own per-thickness rows.
         </p>
       </div>
 
       {error && (
-        <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-200">
+        <div className="rounded-lg bg-out-soft px-3 py-2 text-sm text-out ring-1 ring-out">
           {error}
         </div>
       )}
 
       {loading ? (
         <div className="flex justify-center py-20">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-gray-900" />
         </div>
       ) : (
-        <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-          <table className="min-w-full divide-y divide-gray-100">
+        <div className="overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
+          <table className="min-w-full divide-y divide-line-soft">
             <thead>
-              <tr className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-widest text-gray-500">
+              <tr className="bg-canvas text-left text-xs font-semibold uppercase tracking-widest text-ink-mute">
                 <th className="px-5 py-3">Material / Variant</th>
                 <th className="px-5 py-3">Weight (g)</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 text-sm">
+            <tbody className="divide-y divide-line-soft text-sm">
               {displayGroups.map((group) => (
                 <Fragment key={group.key}>
-                  <tr className="bg-gray-50/60">
+                  <tr className="bg-canvas">
                     <td colSpan={2} className="px-5 py-2">
-                      <div className="font-medium text-gray-900">{group.name}</div>
-                      <div className="text-xs uppercase tracking-wider text-gray-400">{group.category}</div>
+                      <div className="font-medium text-ink">{group.name}</div>
+                      <div className="text-xs uppercase tracking-wider text-ink-dim">{group.category}</div>
                     </td>
                   </tr>
                   {group.rows.map((dr) => {
@@ -489,9 +489,9 @@ export default function AdminCardWeightsPage() {
                     const errorId = showError ? `weight-error-${dr.variantId}` : undefined
                     const isAllVariants = dr.label === 'All variants'
                     return (
-                      <tr key={dr.variantId} className={dr.dirty ? 'bg-amber-50/40' : ''}>
+                      <tr key={dr.variantId} className={dr.dirty ? 'bg-low-soft' : ''}>
                         <td className="px-5 py-3 align-top pl-10">
-                          <div className={isAllVariants ? 'italic text-gray-400' : 'text-gray-700'}>
+                          <div className={isAllVariants ? 'italic text-ink-dim' : 'text-ink-soft'}>
                             {dr.label}
                           </div>
                         </td>
@@ -508,7 +508,7 @@ export default function AdminCardWeightsPage() {
                             className={weightInputClass(showError)}
                           />
                           {showError && (
-                            <p id={errorId} className="mt-1 text-xs text-rose-700">
+                            <p id={errorId} className="mt-1 text-xs text-out">
                               {dr.validation.message}
                             </p>
                           )}
@@ -525,14 +525,14 @@ export default function AdminCardWeightsPage() {
 
       <div className="flex items-center justify-end gap-3">
         {recentlySaved && !saving && (
-          <span className="text-xs text-emerald-600">Saved</span>
+          <span className="text-xs text-in-stock">Saved</span>
         )}
-        {saving && <span className="text-xs text-gray-400">Saving…</span>}
+        {saving && <span className="text-xs text-ink-dim">Saving…</span>}
         <button
           type="button"
           onClick={handleSave}
           disabled={saveDisabled}
-          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-gray-900"
+          className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:opacity-40"
         >
           {dirtyDisplayCount === 0
             ? 'Save changes'
@@ -544,10 +544,10 @@ export default function AdminCardWeightsPage() {
 }
 
 function weightInputClass(showError: boolean): string {
-  const base = 'w-24 rounded-lg border px-3 py-2 text-[17px] sm:text-sm focus:outline-none focus:ring-1'
+  const base = 'w-24 rounded border px-3 py-2 text-[17px] sm:text-sm focus:outline-none'
   return showError
-    ? `${base} border-rose-400 focus:border-rose-500 focus:ring-rose-400`
-    : `${base} border-gray-300 focus:border-gray-900 focus:ring-gray-900`
+    ? `${base} border-out focus:border-[var(--c-out)] focus:bg-[var(--c-out-soft)]`
+    : `${base} border-line focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)]`
 }
 
 // Extract the leading integer from a thickness label like "300 micron".
