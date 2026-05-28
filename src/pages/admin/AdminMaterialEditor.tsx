@@ -707,11 +707,11 @@ export default function AdminMaterialEditor() {
                       <tr className="border-b border-line-soft">
                         <th className="px-5 py-3 text-left eyebrow text-ink-mute">Quantity</th>
                         {activeVariants.map((v) => (
-                          <th key={v.id} className="px-4 py-3 text-right eyebrow text-ink-mute whitespace-nowrap">
+                          <th key={v.id} className="px-4 py-3 text-right eyebrow text-ink-mute whitespace-nowrap border-l border-line-soft">
                             {v.display_name}
                           </th>
                         ))}
-                        <th className="px-4 py-3 text-center eyebrow text-ink-mute w-16">Actions</th>
+                        <th className="px-4 py-3 text-center eyebrow text-ink-mute w-16 border-l border-line-soft">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -727,7 +727,7 @@ export default function AdminMaterialEditor() {
                           {activeVariants.map((v) => {
                             const tier = tierFor(v.id, qty)
                             return (
-                              <td key={v.id} className="px-4 py-3 text-right">
+                              <td key={v.id} className="px-4 py-3 text-right border-l border-line-soft">
                                 <div className="flex flex-col items-end">
                                   <PriceCell
                                     value={tier ? tier.total_price : null}
@@ -744,7 +744,7 @@ export default function AdminMaterialEditor() {
                               </td>
                             )
                           })}
-                          <td className="px-4 py-3 text-center">
+                          <td className="px-4 py-3 text-center border-l border-line-soft">
                             <button
                               type="button"
                               onClick={() => { setTierError(null); setRemoveConfirmQty(qty) }}
