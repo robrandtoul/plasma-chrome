@@ -40,11 +40,11 @@ export function CustomQuoteFlags({
   }
 
   return (
-    <fieldset className="rounded-lg border border-amber-200 bg-amber-50/40 p-4">
-      <legend className="block px-1 text-xs font-semibold uppercase tracking-widest text-amber-700">
+    <fieldset className="rounded-lg border border-low bg-low-soft p-4">
+      <legend className="block px-1 text-xs font-semibold uppercase tracking-widest text-low">
         Special card types
       </legend>
-      <p className="mb-2 text-xs text-amber-700/80">
+      <p className="mb-2 text-xs text-low">
         Pick if this applies — it always needs a custom quote, no live pricing.
       </p>
       <div className="flex flex-col gap-2">
@@ -74,10 +74,10 @@ function Trigger({
     <label
       className={[
         'flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2 transition-colors',
-        'focus-within:ring-2 focus-within:ring-amber-400 focus-within:ring-offset-1',
+        'focus-within:ring-2 focus-within:ring-low focus-within:ring-offset-1',
         checked
-          ? 'border-amber-300 bg-amber-100/60 text-amber-900'
-          : 'border-amber-200 bg-white text-gray-700 hover:bg-amber-50',
+          ? 'border-low bg-low-soft text-low'
+          : 'border-low bg-surface text-ink-soft hover:bg-low-soft',
       ].join(' ')}
     >
       <input
@@ -91,8 +91,8 @@ function Trigger({
         className={[
           'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border',
           checked
-            ? 'border-amber-600 bg-amber-600 text-white'
-            : 'border-amber-300 bg-white',
+            ? 'border-low bg-low text-on-ink'
+            : 'border-low bg-surface',
         ].join(' ')}
       >
         {checked && (
@@ -103,7 +103,7 @@ function Trigger({
       </span>
       <span className="min-w-0">
         <span className="block text-sm font-medium">{label}</span>
-        <span className="block text-xs text-amber-700/80">{caption}</span>
+        <span className="block text-xs text-low">{caption}</span>
       </span>
     </label>
   )

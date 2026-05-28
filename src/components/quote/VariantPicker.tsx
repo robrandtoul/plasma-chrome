@@ -31,10 +31,10 @@ export function VariantPicker({
     if (!loading) return null
     return (
       <fieldset>
-        <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-gray-400">
+        <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-ink-dim">
           Variant
         </legend>
-        <p className="text-sm text-gray-400">Loading variants…</p>
+        <p className="text-sm text-ink-dim">Loading variants…</p>
       </fieldset>
     )
   }
@@ -51,7 +51,7 @@ export function VariantPicker({
 
   return (
     <fieldset>
-      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-gray-400">
+      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-ink-dim">
         {label}
       </legend>
       <div className="flex flex-wrap gap-2">
@@ -64,10 +64,10 @@ export function VariantPicker({
               onClick={() => onChange(v.id)}
               className={[
                 'rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors',
-                'focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 focus-visible:ring-offset-1',
+                'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
                 selected
                   ? 'border-transparent'
-                  : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50',
+                  : 'border-line bg-surface text-ink-soft hover:bg-canvas',
               ].join(' ')}
               style={selected ? selectedChipStyle : undefined}
             >

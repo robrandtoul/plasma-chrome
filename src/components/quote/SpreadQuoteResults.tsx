@@ -165,19 +165,19 @@ export function SpreadQuoteResults({
 
   if (loading) {
     return (
-      <div className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
-        <p className="text-sm text-gray-400">Loading prices…</p>
+      <div className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
+        <p className="text-sm text-ink-dim">Loading prices…</p>
       </div>
     )
   }
 
   if (!currency || !materialDisplayName) {
     return (
-      <div className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
-        <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+      <div className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
+        <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim">
           Spread quote
         </p>
-        <p className="mt-3 text-sm text-gray-400">
+        <p className="mt-3 text-sm text-ink-dim">
           Pick a material, variant, currency, and at least one quantity to see a spread quote.
         </p>
       </div>
@@ -186,11 +186,11 @@ export function SpreadQuoteResults({
 
   if (quantities.length === 0) {
     return (
-      <div className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
-        <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+      <div className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
+        <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim">
           Spread quote · {currency}
         </p>
-        <p className="mt-3 text-sm text-gray-400">
+        <p className="mt-3 text-sm text-ink-dim">
           Add quantities above to build the price grid.
         </p>
       </div>
@@ -228,19 +228,19 @@ export function SpreadQuoteResults({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+      <div className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
         <div className="flex items-baseline justify-between gap-3">
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+          <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim">
             Spread quote · {currency}
-            {isGbp && <span className="ml-1.5 normal-case tracking-normal text-gray-400">(inc VAT)</span>}
+            {isGbp && <span className="ml-1.5 normal-case tracking-normal text-ink-dim">(inc VAT)</span>}
           </p>
-          <p className="text-xs text-gray-400">
+          <p className="text-xs text-ink-dim">
             {validRows.length} of {quantities.length} priced
           </p>
         </div>
 
         {validRows.length === 0 && invalidBaseRows.length === 0 ? (
-          <p className="mt-4 text-sm text-gray-500">
+          <p className="mt-4 text-sm text-ink-mute">
             Add quantities above to build the price grid.
           </p>
         ) : (
@@ -256,13 +256,13 @@ export function SpreadQuoteResults({
         )}
 
         {personalisationActive && personalisationBreakevenQty != null && validRows.length > 0 && (
-          <p className="mt-3 text-xs text-gray-400">
+          <p className="mt-3 text-xs text-ink-dim">
             Totals already include personalisation. A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
           </p>
         )}
 
         {invalidFinishRows.length > 0 && (
-          <ul className="mt-4 space-y-1.5 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
+          <ul className="mt-4 space-y-1.5 rounded-lg border border-low bg-low-soft px-3 py-2 text-xs text-low">
             {invalidFinishRows.map((r) => (
               <li key={`fin-${r.quantity}`}>
                 <span className="font-semibold tabular-nums">{r.quantity.toLocaleString()}</span>:
@@ -284,39 +284,39 @@ export function SpreadQuoteResults({
       </div>
 
       {showSplitNameRow && (
-        <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+        <div className="rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-line">
+          <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim">
             Split-name tooling
           </p>
-          <p className="mt-2 text-base font-medium text-gray-900 tabular-nums">
+          <p className="mt-2 text-base font-medium text-ink tabular-nums">
             Totals already include {formatPrice(splitNameSurcharge, currency)} charge to split batch between {names} names
           </p>
-          <p className="mt-2 text-xs text-gray-500">
+          <p className="mt-2 text-xs text-ink-mute">
             This covers the extra tooling and machine set up incurred.
           </p>
         </div>
       )}
 
       {showDiscountRow && validRows.length > 0 && (
-        <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+        <div className="rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-line">
+          <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim">
             Discount
           </p>
-          <p className="mt-2 text-base font-medium text-emerald-700 tabular-nums">
+          <p className="mt-2 text-base font-medium text-in-stock tabular-nums">
             Totals above include a {discountLabel} discount.
           </p>
         </div>
       )}
 
       {showFlags && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5">
-          <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+        <div className="rounded-2xl border border-low bg-low-soft p-5">
+          <p className="text-xs font-semibold uppercase tracking-widest text-low">
             Needs a custom quote
           </p>
-          <ul className="mt-2 space-y-1 text-sm text-amber-900">
+          <ul className="mt-2 space-y-1 text-sm text-low">
             {customFlags.nfc && (
               <li className="flex items-start gap-2">
-                <span aria-hidden className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-600" />
+                <span aria-hidden className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-low" />
                 <span>NFC chips selected — prices above are without NFC.</span>
               </li>
             )}
@@ -326,22 +326,22 @@ export function SpreadQuoteResults({
 
       {formatted && (
         <div className="flex flex-wrap items-center gap-3">
-          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+          <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink-soft">
             <input
               type="checkbox"
               checked={includeUnitPrice}
               onChange={(e) => setIncludeUnitPrice(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-400"
+              className="h-4 w-4 rounded border-line text-brand focus:ring-brand"
             />
             <span>Include unit price</span>
           </label>
           {leadTimeState?.kind === 'standard' && (
-            <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+            <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink-soft">
               <input
                 type="checkbox"
                 checked={includeLeadTime}
                 onChange={(e) => onIncludeLeadTimeChange(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300 text-violet-600 focus:ring-violet-400"
+                className="h-4 w-4 rounded border-line text-brand focus:ring-brand"
               />
               <span>Include lead time</span>
             </label>
@@ -399,18 +399,18 @@ function SpreadList({
   }, [validRows, invalidBaseRows])
 
   return (
-    <ul className="mt-4 divide-y divide-gray-100" role="list">
+    <ul className="mt-4 divide-y divide-line-soft" role="list">
       {/* Header row appears only when the personalisation column
           is showing — otherwise the existing two-cell layout reads
           fine on its own. */}
       {personalisationActive && merged.length > 0 && (
         <li className="flex items-baseline justify-between gap-4 pb-2 pt-1">
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400" />
+          <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim" />
           <div className="flex items-baseline gap-8 text-right">
-            <p className="w-24 text-xs font-semibold uppercase tracking-widest text-gray-400">
+            <p className="w-24 text-xs font-semibold uppercase tracking-widest text-ink-dim">
               Personalisation
             </p>
-            <p className="w-28 text-xs font-semibold uppercase tracking-widest text-gray-400">
+            <p className="w-28 text-xs font-semibold uppercase tracking-widest text-ink-dim">
               Total
             </p>
           </div>
@@ -420,10 +420,10 @@ function SpreadList({
         <li key={`row-${r.quantity}-${i}`}>
           <div className="flex items-baseline justify-between gap-4 py-[18px]">
             <p className="tabular-nums">
-              <span className="text-[22px] font-medium text-gray-900">
+              <span className="text-[22px] font-medium text-ink">
                 {r.quantity.toLocaleString()}
               </span>
-              <span className="ml-1.5 text-[16px] font-medium text-gray-500">cards</span>
+              <span className="ml-1.5 text-[16px] font-medium text-ink-mute">cards</span>
             </p>
             <div className="flex items-baseline gap-8 text-right">
               {/* Personalisation column — only renders when the
@@ -435,28 +435,28 @@ function SpreadList({
               {personalisationActive && (
                 <div className="w-24 text-right">
                   {kind === 'valid' ? (
-                    <p className="text-[18px] font-medium leading-none tabular-nums text-gray-700">
+                    <p className="text-[18px] font-medium leading-none tabular-nums text-ink-soft">
                       {formatPrice(r.personalisationSurcharge, currency)}
                     </p>
                   ) : (
-                    <p className="text-[16px] tabular-nums text-gray-300">—</p>
+                    <p className="text-[16px] tabular-nums text-ink-dim">—</p>
                   )}
                 </div>
               )}
               <div className={personalisationActive ? 'w-28 text-right' : 'text-right'}>
                 {kind === 'valid' && r.total != null ? (
                   <>
-                    <p className="text-[32px] font-medium leading-none tabular-nums text-gray-900">
+                    <p className="text-[32px] font-medium leading-none tabular-nums text-ink">
                       {formatPrice(r.total, currency)}
                     </p>
                     {includeUnitPrice && r.unitPrice != null && (
-                      <p className="mt-1.5 text-[13px] tabular-nums text-gray-500">
+                      <p className="mt-1.5 text-[13px] tabular-nums text-ink-mute">
                         {formatPrice(r.unitPrice, currency, 2)} per card
                       </p>
                     )}
                   </>
                 ) : (
-                  <p className="text-[16px] font-medium tabular-nums text-gray-400">
+                  <p className="text-[16px] font-medium tabular-nums text-ink-dim">
                     Not priced
                   </p>
                 )}
@@ -469,7 +469,7 @@ function SpreadList({
               the same parent state. */}
           {kind === 'invalid' && (
             <div className="pb-[18px]">
-              <p className="text-xs text-amber-800">
+              <p className="text-xs text-low">
                 {r.baseLower != null && r.baseUpper != null
                   ? `Nearest tiers are ${r.baseLower.toLocaleString()} and ${r.baseUpper.toLocaleString()}.`
                   : r.baseLower != null
@@ -483,7 +483,7 @@ function SpreadList({
                   <button
                     type="button"
                     onClick={() => onSwap(r.quantity, r.baseLower!)}
-                    className="rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-50"
+                    className="rounded-md border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
                   >
                     Swap to {r.baseLower.toLocaleString()}
                   </button>
@@ -492,7 +492,7 @@ function SpreadList({
                   <button
                     type="button"
                     onClick={() => onSwap(r.quantity, r.baseUpper!)}
-                    className="rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-50"
+                    className="rounded-md border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
                   >
                     Swap to {r.baseUpper.toLocaleString()}
                   </button>
@@ -500,7 +500,7 @@ function SpreadList({
                 <button
                   type="button"
                   onClick={() => onRemove(r.quantity)}
-                  className="rounded-md border border-amber-200 bg-white px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
+                  className="rounded-md border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
                 >
                   Remove
                 </button>

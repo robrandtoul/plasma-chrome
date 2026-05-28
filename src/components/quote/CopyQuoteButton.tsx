@@ -164,10 +164,10 @@ export function CopyQuoteButton({
           'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors',
           'focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
           disabled
-            ? 'cursor-not-allowed bg-gray-200 text-gray-400'
+            ? 'cursor-not-allowed bg-line text-ink-dim'
             : isCopied
-              ? 'bg-emerald-600 text-white focus-visible:ring-emerald-400'
-              : 'bg-gray-900 text-white hover:bg-gray-700 focus-visible:ring-gray-400',
+              ? 'bg-in-stock text-on-ink focus-visible:ring-in-stock'
+              : 'bg-ink text-on-ink hover:opacity-90 focus-visible:ring-brand',
         ].join(' ')}
       >
         {isCopied && (
@@ -178,7 +178,7 @@ export function CopyQuoteButton({
         {isCopied ? 'Copied' : 'Copy quote'}
       </button>
       {isError && errorMsg && (
-        <p className="mt-2 text-xs text-rose-600">{errorMsg}</p>
+        <p className="mt-2 text-xs text-out">{errorMsg}</p>
       )}
     </div>
   )

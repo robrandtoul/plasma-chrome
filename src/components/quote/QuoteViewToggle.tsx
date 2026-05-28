@@ -30,7 +30,7 @@ export function QuoteViewToggle({
     <div
       role="radiogroup"
       aria-label="Quote view"
-      className="inline-flex rounded-lg bg-gray-100 p-0.5"
+      className="inline-flex rounded-lg bg-canvas p-0.5"
     >
       {options.map((o) => {
         const active = o.value === value
@@ -44,8 +44,8 @@ export function QuoteViewToggle({
             className={[
               'rounded-md px-3 py-1 text-xs font-medium transition-colors',
               active
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-900',
+                ? 'bg-surface text-ink shadow-sm'
+                : 'text-ink-mute hover:text-ink',
             ].join(' ')}
           >
             {o.label}

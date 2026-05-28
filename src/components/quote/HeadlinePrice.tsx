@@ -131,8 +131,8 @@ export function HeadlinePrice({
       : null
 
   return (
-    <div className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
-      <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+    <div className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
+      <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim">
         {currency ? `Total · ${currency}` : 'Total'}
       </p>
       <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-2">
@@ -142,29 +142,29 @@ export function HeadlinePrice({
             // Big, but not exotic. 64px equivalent so it dominates
             // without breaking on narrow viewports.
             'text-6xl font-bold tracking-tight',
-            showPrice ? 'text-gray-900' : 'text-gray-300',
+            showPrice ? 'text-ink' : 'text-ink-dim',
           ].join(' ')}
         >
           {showPrice ? formatPrice(total!, currency!) : '—'}
         </span>
         {showPrice && discountPercent > 0 && subtotal != null && (
-          <span className="text-sm font-medium text-gray-400 line-through tabular-nums">
+          <span className="text-sm font-medium text-ink-dim line-through tabular-nums">
             {formatPrice(subtotal, currency!)}
           </span>
         )}
         {showPrice && showVatNote && (
-          <span className="text-sm font-medium text-gray-400">
+          <span className="text-sm font-medium text-ink-dim">
             (includes {formatVatPercent(vatRate!)} VAT)
           </span>
         )}
       </div>
       {showPrice && unitPrice != null && quantity != null && (
-        <p className="mt-3 text-sm text-gray-500">
+        <p className="mt-3 text-sm text-ink-mute">
           {formatPrice(unitPrice, currency!, 2)} per card · {quantity.toLocaleString()} cards
         </p>
       )}
       {showPrice && exVatTotal != null && exPerCard != null && (
-        <p className="mt-0.5 text-xs text-gray-400 tabular-nums">
+        <p className="mt-0.5 text-xs text-ink-dim tabular-nums">
           {formatPrice(exVatTotal, 'GBP', 2)} ex VAT · {formatPrice(exPerCard, 'GBP', 2)} per card ex
         </p>
       )}
@@ -177,7 +177,7 @@ export function HeadlinePrice({
           so the "−£Y discount" line has its "£X base" anchor. */}
       {showPrice && baseTotal != null && (
         ((splitNameSurcharge ?? 0) > 0 || (finishSurcharge ?? 0) > 0 || (personalisationSurcharge ?? 0) > 0 || (discountAmount ?? 0) > 0) && (
-          <div className="mt-1 space-y-0.5 text-sm text-gray-500 tabular-nums">
+          <div className="mt-1 space-y-0.5 text-sm text-ink-mute tabular-nums">
             <p>{formatPrice(baseTotal, currency!)} base</p>
             {(finishSurcharge ?? 0) > 0 && (
               <p>+ {formatPrice(finishSurcharge!, currency!)} {finishLabel ?? 'finish'} surcharge</p>
@@ -189,7 +189,7 @@ export function HeadlinePrice({
               <p>+ {formatPrice(personalisationSurcharge!, currency!)} personalisation</p>
             )}
             {(discountAmount ?? 0) > 0 && (
-              <p className="text-emerald-700">
+              <p className="text-in-stock">
                 − {formatPrice(discountAmount!, currency!)} discount ({formatDiscountPercent(discountPercent)})
               </p>
             )}
@@ -197,17 +197,17 @@ export function HeadlinePrice({
         )
       )}
       {showPrice && (personalisationSurcharge ?? 0) > 0 && personalisationBreakevenQty != null && (
-        <p className="mt-2 text-xs text-gray-400">
+        <p className="mt-2 text-xs text-ink-dim">
           A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
         </p>
       )}
       {!showPrice && !loading && (
-        <p className="mt-3 text-sm text-gray-400">
+        <p className="mt-3 text-sm text-ink-dim">
           Pick a material, variant, currency and quantity to see a price.
         </p>
       )}
       {loading && (
-        <p className="mt-3 text-sm text-gray-400">Loading prices…</p>
+        <p className="mt-3 text-sm text-ink-dim">Loading prices…</p>
       )}
     </div>
   )

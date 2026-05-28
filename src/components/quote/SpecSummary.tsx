@@ -89,8 +89,8 @@ export function SpecSummary({
   }
 
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
-      <p className="mb-3 text-sm font-medium text-gray-500">Quoting</p>
+    <div className="rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-line">
+      <p className="mb-3 text-sm font-medium text-ink-mute">Quoting</p>
       <dl className="space-y-2 text-sm">
         <Row label="Material" value={materialName} />
         {variantRow && <Row label={variantRow.label} value={variantRow.value} />}
@@ -106,8 +106,8 @@ export function SpecSummary({
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-baseline justify-between gap-4">
-      <dt className="text-gray-500">{label}</dt>
-      <dd className="font-medium text-gray-900 tabular-nums">{value}</dd>
+      <dt className="text-ink-mute">{label}</dt>
+      <dd className="font-medium text-ink tabular-nums">{value}</dd>
     </div>
   )
 }

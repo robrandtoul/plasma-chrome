@@ -122,7 +122,7 @@ export function QuantityInput({
 
   return (
     <fieldset>
-      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-gray-400">
+      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-ink-dim">
         Quantity
       </legend>
       <div
@@ -135,7 +135,7 @@ export function QuantityInput({
           'relative flex max-w-[320px] items-stretch overflow-hidden rounded-[10px] border-2 transition-shadow',
           'focus-within:shadow-[0_0_0_3px_rgba(127,119,221,0.25)]',
           disabled || variantTiers.length === 0
-            ? 'cursor-not-allowed border-gray-200 bg-gray-50'
+            ? 'cursor-not-allowed border-line bg-canvas'
             : 'border-[#7F77DD] bg-[#EEEDFE]',
         ].join(' ')}
       >
@@ -157,8 +157,8 @@ export function QuantityInput({
             'min-w-0 flex-1 bg-transparent px-4 py-2.5 text-[28px] font-medium leading-tight tabular-nums',
             'focus:outline-none',
             disabled || variantTiers.length === 0
-              ? 'cursor-not-allowed text-gray-400 placeholder:text-gray-300'
-              : 'text-gray-900 placeholder:text-[#9994d6]',
+              ? 'cursor-not-allowed text-ink-dim placeholder:text-ink-dim'
+              : 'text-ink placeholder:text-[#9994d6]',
           ].join(' ')}
         />
         {/* Stepper column on the right edge. Two stacked buttons,
@@ -174,7 +174,7 @@ export function QuantityInput({
             className={[
               'flex h-1/2 items-center justify-center transition-colors',
               stepUpDisabled
-                ? 'cursor-not-allowed text-gray-300'
+                ? 'cursor-not-allowed text-ink-dim'
                 : 'text-[#5b2bba] hover:bg-[#dfdcfb]',
             ].join(' ')}
             tabIndex={-1}
@@ -190,7 +190,7 @@ export function QuantityInput({
             className={[
               'flex h-1/2 items-center justify-center transition-colors',
               stepDownDisabled
-                ? 'cursor-not-allowed text-gray-300'
+                ? 'cursor-not-allowed text-ink-dim'
                 : 'text-[#5b2bba] hover:bg-[#dfdcfb]',
             ].join(' ')}
             tabIndex={-1}
@@ -203,11 +203,11 @@ export function QuantityInput({
       {/* Live preview line. Shows only when the typed value is a
           valid tier and the parent has resolved total + unit. */}
       {showPreview && (
-        <p className="mt-2 text-[15px] tabular-nums text-gray-700">
+        <p className="mt-2 text-[15px] tabular-nums text-ink-soft">
           <span className="font-medium">
             {value!.toLocaleString()} cards • {formatPrice(previewTotal!, currency!)} total
           </span>
-          <span className="ml-2 text-gray-400">
+          <span className="ml-2 text-ink-dim">
             ({formatPrice(previewUnitPrice!, currency!, 2)} per card)
           </span>
         </p>
@@ -218,7 +218,7 @@ export function QuantityInput({
           column; this line is just a quiet acknowledgement that
           the typed number doesn't resolve to a price. */}
       {showInvalidHint && (
-        <p className="mt-2 text-[15px] text-gray-400">
+        <p className="mt-2 text-[15px] text-ink-dim">
           Not a valid tier
         </p>
       )}
@@ -227,11 +227,11 @@ export function QuantityInput({
           contrast than the preview above. Kept as-is so the
           designer can read off the available range at a glance. */}
       {disabled ? (
-        <p className="mt-1.5 text-xs text-gray-400">
+        <p className="mt-1.5 text-xs text-ink-dim">
           Pick a material and currency to enable.
         </p>
       ) : currency && variantTiers.length > 0 ? (
-        <p className="mt-1.5 text-xs text-gray-400">
+        <p className="mt-1.5 text-xs text-ink-dim">
           ↑/↓ to step through valid tiers ({variantTiers.length} available, {formatPrice(variantTiers[0].totalPrice, currency)} – {formatPrice(variantTiers[variantTiers.length - 1].totalPrice, currency)})
         </p>
       ) : null}

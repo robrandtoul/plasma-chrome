@@ -162,7 +162,7 @@ export function MaterialPicker({
 
   return (
     <fieldset>
-      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-gray-400">
+      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-ink-dim">
         Material
       </legend>
 
@@ -176,13 +176,13 @@ export function MaterialPicker({
           placeholder="Type to filter materials…"
           aria-label="Filter materials"
           autoComplete="off"
-          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-[17px] sm:text-sm text-gray-900 placeholder:text-gray-400 focus:border-violet-400 focus:outline-none focus:ring-1 focus:ring-violet-400"
+          className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-[17px] sm:text-sm text-ink placeholder:text-ink-mute focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
         />
       </div>
 
       <div ref={containerRef} onKeyDown={handleChipKey}>
         {totalVisible === 0 ? (
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-ink-dim">
             No materials match {`"${query}"`}.
           </p>
         ) : (
@@ -258,10 +258,10 @@ function FamilySection({
   }
 
   return (
-    <div className="border-t border-gray-200 pt-4 first:border-t-0 first:pt-0">
-      <p className="mb-3 text-sm font-bold uppercase tracking-widest text-gray-800">
+    <div className="border-t border-line pt-4 first:border-t-0 first:pt-0">
+      <p className="mb-3 text-sm font-bold uppercase tracking-widest text-ink">
         {CATEGORY_LABEL[cat]}{' '}
-        <span className="font-semibold text-gray-400">({list.length})</span>
+        <span className="font-semibold text-ink-dim">({list.length})</span>
       </p>
       <div className="flex flex-wrap items-center gap-2">{items}</div>
     </div>
@@ -289,14 +289,14 @@ function MaterialChip({
       onClick={onClick}
       className={[
         'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-1',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
         inPair
           ? selected
             ? 'border border-transparent'
-            : 'border border-transparent bg-white text-gray-700 hover:bg-gray-100'
+            : 'border border-transparent bg-surface text-ink-soft hover:bg-canvas'
           : selected
             ? 'border border-transparent'
-            : 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50',
+            : 'border border-line bg-surface text-ink-soft hover:bg-canvas',
       ].join(' ')}
       style={selected ? selectedChipStyle : undefined}
     >
@@ -323,7 +323,7 @@ function PeerPair({
   return (
     <span
       aria-label={`${first.display_name} family`}
-      className="inline-flex items-center gap-0.5 rounded-xl border border-gray-200 bg-gray-50 p-0.5"
+      className="inline-flex items-center gap-0.5 rounded-xl border border-line bg-canvas p-0.5"
     >
       <MaterialChip
         m={first}
@@ -331,7 +331,7 @@ function PeerPair({
         onClick={() => onChange(first.id)}
         inPair
       />
-      <span aria-hidden className="px-0.5 text-xs font-medium text-gray-400">+</span>
+      <span aria-hidden className="px-0.5 text-xs font-medium text-ink-dim">+</span>
       <MaterialChip
         m={second}
         selected={value === second.id}

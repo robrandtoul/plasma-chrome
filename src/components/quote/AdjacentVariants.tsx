@@ -106,8 +106,8 @@ export function AdjacentVariants({
   const label = variantSectionLabel(sorted[0].variant_type)
 
   return (
-    <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200">
-      <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+    <div className="rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-line">
+      <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim">
         Adjacent {label.toLowerCase()}
       </p>
       <div className={`mt-3 grid ${colsClass} gap-2`}>
@@ -150,19 +150,19 @@ function VariantCell({
 }) {
   if (!variant) {
     return (
-      <div className="rounded-lg border border-dashed border-gray-100 px-3 py-3 text-center">
-        <p className="text-xs text-gray-300">—</p>
+      <div className="rounded-lg border border-dashed border-line-soft px-3 py-3 text-center">
+        <p className="text-xs text-ink-dim">—</p>
       </div>
     )
   }
   const tier = tiers.find((t) => t.quantity === currentQuantity)
   if (!tier) {
     return (
-      <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-3">
-        <p className="text-xs font-medium uppercase tracking-wider text-gray-400">
+      <div className="rounded-lg border border-line-soft bg-canvas px-3 py-3">
+        <p className="text-xs font-medium uppercase tracking-wider text-ink-dim">
           {variant.display_name}
         </p>
-        <p className="mt-1 text-xs text-gray-300">No price at {currentQuantity.toLocaleString()}</p>
+        <p className="mt-1 text-xs text-ink-dim">No price at {currentQuantity.toLocaleString()}</p>
       </div>
     )
   }
@@ -173,24 +173,24 @@ function VariantCell({
     <div
       className={[
         'rounded-lg border px-3 py-3',
-        isCurrent ? 'border-transparent text-gray-900' : 'border-gray-200 text-gray-700',
+        isCurrent ? 'border-transparent text-ink' : 'border-line text-ink-soft',
       ].join(' ')}
       style={isCurrent ? currentCellStyle : undefined}
     >
-      <p className="text-xs font-medium uppercase tracking-wider text-gray-400">
+      <p className="text-xs font-medium uppercase tracking-wider text-ink-dim">
         {variant.display_name}
       </p>
       <p className="mt-1 text-base font-semibold tabular-nums">
         {formatPrice(total, currency)}
       </p>
-      <p className="mt-0.5 text-xs text-gray-500 tabular-nums">
+      <p className="mt-0.5 text-xs text-ink-mute tabular-nums">
         {formatPrice(unit, currency, 2)}/card
       </p>
       {deltaUnit != null && Math.abs(deltaUnit) > 0.005 && (
         <p
           className={[
             'mt-1 text-xs font-medium tabular-nums',
-            deltaUnit < 0 ? 'text-emerald-700' : 'text-amber-700',
+            deltaUnit < 0 ? 'text-in-stock' : 'text-low',
           ].join(' ')}
         >
           {deltaUnit < 0 ? '−' : '+'}{formatPrice(Math.abs(deltaUnit), currency, 2)}/card

@@ -23,10 +23,10 @@ export function CurrencyToggle({
 }) {
   return (
     <fieldset>
-      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-gray-400">
+      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-ink-dim">
         Currency
       </legend>
-      <div className="inline-flex rounded-xl border border-gray-200 bg-white p-0.5">
+      <div className="inline-flex rounded-xl border border-line bg-surface p-0.5">
         {CURRENCIES.map((c) => {
           const selected = value === c
           return (
@@ -36,8 +36,8 @@ export function CurrencyToggle({
               onClick={() => onChange(c)}
               className={[
                 'rounded-lg px-5 py-2 text-sm font-semibold transition-colors',
-                'focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 focus-visible:ring-offset-1',
-                selected ? '' : 'text-gray-500 hover:text-gray-900',
+                'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
+                selected ? '' : 'text-ink-mute hover:text-ink',
               ].join(' ')}
               style={selected ? selectedChipStyle : undefined}
             >

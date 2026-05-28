@@ -124,16 +124,16 @@ export function SpreadQuantityInput({
 
   return (
     <fieldset>
-      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-gray-400">
+      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-ink-dim">
         Quantities
       </legend>
       <div
         className={[
           'flex flex-wrap items-center gap-1.5 rounded-lg border px-2 py-2 text-sm transition-colors',
-          'focus-within:ring-2 focus-within:ring-violet-400 focus-within:ring-offset-1',
+          'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
           chrome
-            ? 'cursor-not-allowed border-gray-100 bg-gray-50'
-            : 'border-gray-200 bg-white',
+            ? 'cursor-not-allowed border-line-soft bg-canvas'
+            : 'border-line bg-surface',
         ].join(' ')}
         onClick={() => inputRef.current?.focus()}
       >
@@ -145,8 +145,8 @@ export function SpreadQuantityInput({
               className={[
                 'inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm font-medium tabular-nums',
                 valid
-                  ? 'bg-violet-50 text-violet-900 ring-1 ring-violet-200'
-                  : 'bg-amber-50 text-amber-900 ring-1 ring-amber-200',
+                  ? 'bg-brand-50 text-brand ring-1 ring-brand-200'
+                  : 'bg-low-soft text-low ring-1 ring-low',
               ].join(' ')}
             >
               {q.toLocaleString()}
@@ -155,7 +155,7 @@ export function SpreadQuantityInput({
                 onClick={(e) => { e.stopPropagation(); removeAt(i) }}
                 className={[
                   'rounded text-xs leading-none transition-colors',
-                  valid ? 'text-violet-500 hover:text-violet-900' : 'text-amber-500 hover:text-amber-900',
+                  valid ? 'text-brand hover:text-brand' : 'text-low hover:text-low',
                 ].join(' ')}
                 aria-label={`Remove ${q}`}
               >
@@ -178,18 +178,18 @@ export function SpreadQuantityInput({
           aria-label="Add quantity"
           className={[
             'min-w-[6rem] flex-1 border-0 bg-transparent px-1 py-0.5 text-[17px] sm:text-[15px] outline-none',
-            chrome ? 'text-gray-400 placeholder:text-gray-300' : 'text-gray-900 placeholder:text-gray-400',
+            chrome ? 'text-ink-dim placeholder:text-ink-dim' : 'text-ink placeholder:text-ink-mute',
           ].join(' ')}
         />
       </div>
       {/* Captions: tier orientation when ready, gate hint when
           disabled, soft-limit warning when over 15. */}
       {chrome ? (
-        <p className="mt-1.5 text-xs text-gray-400">
+        <p className="mt-1.5 text-xs text-ink-dim">
           Pick a material and currency to enable.
         </p>
       ) : (
-        <p className="mt-1.5 text-xs text-gray-400">
+        <p className="mt-1.5 text-xs text-ink-dim">
           Press Enter, comma, or space to add. {sortedTierQtys.length} tiers available
           {currency
             ? ` (${formatPrice(variantTiers[0]?.totalPrice ?? 0, currency)} – ${formatPrice(variantTiers[variantTiers.length - 1]?.totalPrice ?? 0, currency)})`
@@ -197,7 +197,7 @@ export function SpreadQuantityInput({
         </p>
       )}
       {overSoftLimit && (
-        <p className="mt-1.5 text-xs text-amber-700">
+        <p className="mt-1.5 text-xs text-low">
           That's {values.length} quantities. Help Scout replies stay readable up to about {SOFT_LIMIT}.
         </p>
       )}
@@ -227,7 +227,7 @@ export function SpreadQuantityInput({
             return (
               <li
                 key={`warn-${q}-${i}`}
-                className="rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-900"
+                className="rounded-lg border border-low bg-low-soft px-3 py-2 text-xs text-low"
               >
                 <p>
                   <span className="font-semibold tabular-nums">{q.toLocaleString()}</span> not listed,{' '}
@@ -238,7 +238,7 @@ export function SpreadQuantityInput({
                     <button
                       type="button"
                       onClick={() => swapAt(i, lower!)}
-                      className="rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-50"
+                      className="rounded-md border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
                     >
                       Swap to {lower.toLocaleString()}
                     </button>
@@ -247,7 +247,7 @@ export function SpreadQuantityInput({
                     <button
                       type="button"
                       onClick={() => swapAt(i, upper!)}
-                      className="rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-50"
+                      className="rounded-md border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
                     >
                       Swap to {upper.toLocaleString()}
                     </button>
@@ -255,7 +255,7 @@ export function SpreadQuantityInput({
                   <button
                     type="button"
                     onClick={() => removeAt(i)}
-                    className="rounded-md border border-amber-200 bg-white px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-50"
+                    className="rounded-md border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
                   >
                     Remove
                   </button>
