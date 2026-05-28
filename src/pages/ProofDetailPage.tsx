@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import JSZip from 'jszip'
 import { supabase } from '../lib/supabase'
@@ -24,7 +25,7 @@ import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, designerPreviewPath } from '../lib/customerProofUrl'
 // QuoteLink now lives inside DesignerChrome (PR 31).
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
-import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers } from 'lucide-react'
+import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal } from 'lucide-react'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -1274,13 +1275,27 @@ export default function ProofDetailPage() {
           <div className="px-7 py-6 flex flex-wrap items-start gap-6 justify-between">
             {/* Left: identity + KV row */}
             <div className="min-w-0 flex-1">
+              {/* Identity — favour the company name when present (matches
+                  the dashboard + customer page); the contact name drops
+                  to the subline. Sole traders (company === contact name)
+                  show a single line. */}
               <div className="eyebrow">Customer</div>
-              <h1 className="mt-1.5 font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0" style={{ fontSize: 'clamp(28px, 4vw, 36px)' }}>
-                {proof.contacts.full_name}
-              </h1>
-              {proof.contacts.companies?.name && (
-                <p className="mt-1 text-[14px] text-ink-mute leading-snug">{proof.contacts.companies.name}</p>
-              )}
+              {(() => {
+                const company = proof.contacts.companies?.name?.trim()
+                const person = proof.contacts.full_name
+                const primary = company || person
+                const secondary = company && company !== person ? person : null
+                return (
+                  <>
+                    <h1 className="mt-1.5 font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0" style={{ fontSize: 'clamp(28px, 4vw, 36px)' }}>
+                      {primary}
+                    </h1>
+                    {secondary && (
+                      <p className="mt-1 text-[14px] text-ink-mute leading-snug">{secondary}</p>
+                    )}
+                  </>
+                )
+              })()}
               {/* Helper notes — dormant warning, disclaimer
                   acknowledgement. */}
               {isDormant && (
@@ -1394,8 +1409,12 @@ export default function ProofDetailPage() {
                   </span>
                 )}
               </div>
-              {/* Primary actions — Add new version (coral, primary) +
-                  Open customer view (ghost). */}
+              {/* Single action row: the two everyday actions stay
+                  visible — Add new version (coral primary) + Open
+                  customer view (ghost) — and the terminal state changes
+                  (Mark as approved / Abandon, or Reopen when locked)
+                  move into a quiet overflow menu so they no longer
+                  compete with the everyday actions for attention. */}
               <div className="flex items-center gap-2">
                 {!isLocked && (
                   <ButtonCoral
@@ -1420,28 +1439,17 @@ export default function ProofDetailPage() {
                 >
                   Open customer view
                 </ButtonGhost>
+                <HeaderActionsMenu
+                  items={
+                    isLocked
+                      ? [{ label: 'Reopen project', onClick: () => setStatusDialog('reopen') }]
+                      : [
+                          { label: 'Mark as approved', tone: 'approve', onClick: () => setStatusDialog('approve') },
+                          { label: 'Abandon project', tone: 'danger', onClick: () => setStatusDialog('abandon') },
+                        ]
+                  }
+                />
               </div>
-              {/* Destructive / terminal row. Locked → Reopen only. */}
-              {isLocked ? (
-                <ButtonGhost onClick={() => setStatusDialog('reopen')}>
-                  Reopen
-                </ButtonGhost>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <ButtonGhost
-                    onClick={() => setStatusDialog('abandon')}
-                    className="!text-out hover:!bg-out-soft"
-                  >
-                    Abandon project
-                  </ButtonGhost>
-                  <ButtonGhost
-                    onClick={() => setStatusDialog('approve')}
-                    className="!text-in-stock hover:!bg-in-stock-soft"
-                  >
-                    Mark as approved
-                  </ButtonGhost>
-                </div>
-              )}
             </div>
           </div>
 
@@ -1504,7 +1512,7 @@ export default function ProofDetailPage() {
                     type="button"
                     onClick={() => void saveInternalNotes()}
                     disabled={notesSaving}
-                    className="rounded-md bg-ink px-3 py-1.5 text-[12px] font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
+                    className="rounded bg-ink px-3 py-1.5 text-[12px] font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
                   >
                     {notesSaving ? 'Saving…' : 'Save'}
                   </button>
@@ -1567,7 +1575,7 @@ export default function ProofDetailPage() {
                   <button
                     type="button"
                     disabled
-                    className="shrink-0 rounded-lg bg-line px-4 py-2 text-sm font-semibold text-ink-dim cursor-not-allowed"
+                    className="shrink-0 rounded bg-line px-4 py-2 text-sm font-semibold text-ink-dim cursor-not-allowed"
                   >
                     Send reply
                   </button>
@@ -1587,7 +1595,7 @@ export default function ProofDetailPage() {
                     disabled={repliesPaused}
                     title={repliesPaused ? pausedNote : undefined}
                     className={[
-                      'shrink-0 rounded-lg px-4 py-2 text-sm font-medium ring-1',
+                      'shrink-0 rounded px-4 py-2 text-sm font-medium ring-1',
                       repliesPaused
                         ? 'bg-canvas text-ink-dim ring-line-soft cursor-not-allowed'
                         : 'text-ink-soft ring-line hover:bg-canvas',
@@ -1607,7 +1615,7 @@ export default function ProofDetailPage() {
                     disabled={repliesPaused}
                     title={repliesPaused ? pausedNote : undefined}
                     className={[
-                      'shrink-0 rounded-lg px-4 py-2 text-sm font-semibold',
+                      'shrink-0 rounded px-4 py-2 text-sm font-semibold',
                       repliesPaused
                         ? 'bg-line text-ink-dim cursor-not-allowed'
                         : 'bg-ink text-on-ink hover:opacity-90',
@@ -2315,7 +2323,7 @@ export default function ProofDetailPage() {
                       onClick={handleDownloadZip}
                       disabled={zipPreparing}
                       className={[
-                        'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
+                        'inline-flex items-center gap-2 rounded px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
                         zipPreparing ? 'bg-ink/60' : 'bg-ink hover:opacity-90',
                         'disabled:cursor-not-allowed disabled:opacity-60',
                       ].join(' ')}
@@ -2347,7 +2355,7 @@ export default function ProofDetailPage() {
             </p>
             <button
               onClick={() => { setDeleteError(null); setStatusDialog('delete') }}
-              className="shrink-0 self-start rounded-lg border border-out px-4 py-2 text-sm font-medium text-out hover:bg-out-soft sm:self-auto"
+              className="shrink-0 self-start rounded border border-out px-4 py-2 text-sm font-medium text-out hover:bg-out-soft sm:self-auto"
             >
               Delete project
             </button>
@@ -2540,6 +2548,89 @@ export default function ProofDetailPage() {
       )}
     </div>
     </DesignerChrome>
+  )
+}
+
+// Overflow ("⋯") menu for the header's terminal state actions
+// (Mark as approved / Abandon, or Reopen when locked). Keeps those
+// rare, weighty actions out of the everyday action row. The dropdown
+// is portalled to document.body and positioned from the trigger's
+// rect because the header card uses overflow-hidden (for its rounded
+// left status cap), which would otherwise clip an in-card dropdown.
+type HeaderMenuItem = {
+  label: string
+  onClick: () => void
+  tone?: 'default' | 'approve' | 'danger'
+}
+
+function HeaderActionsMenu({ items }: { items: HeaderMenuItem[] }) {
+  const [open, setOpen] = useState(false)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function place() {
+      const r = btnRef.current?.getBoundingClientRect()
+      if (r) setPos({ top: r.bottom + 6, right: window.innerWidth - r.right })
+    }
+    place()
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  if (items.length === 0) return null
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="More actions"
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[4px] border border-line bg-surface text-ink-soft transition-colors hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
+      >
+        <MoreHorizontal size={16} aria-hidden="true" />
+      </button>
+      {open && pos && createPortal(
+        <>
+          {/* Transparent click-catcher closes the menu on any outside click. */}
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div
+            role="menu"
+            className="fixed z-50 min-w-[180px] rounded-[8px] border border-line bg-surface py-1 shadow-md"
+            style={{ top: pos.top, right: pos.right }}
+          >
+            {items.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                role="menuitem"
+                onClick={() => { setOpen(false); item.onClick() }}
+                className={[
+                  'block w-full px-3 py-2 text-left text-sm transition-colors hover:bg-canvas',
+                  item.tone === 'danger' ? 'text-out' : item.tone === 'approve' ? 'text-in-stock' : 'text-ink-soft',
+                ].join(' ')}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </>,
+        document.body,
+      )}
+    </>
   )
 }
 
@@ -2881,14 +2972,14 @@ function ConfirmDialog({
         <button
           onClick={onCancel}
           disabled={working}
-          className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+          className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
         >
           Cancel
         </button>
         <button
           onClick={onConfirm}
           disabled={working}
-          className={`rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50 ${confirmClass}`}
+          className={`rounded px-4 py-2 text-sm font-semibold disabled:opacity-50 ${confirmClass}`}
         >
           {working ? 'Working…' : confirmLabel}
         </button>

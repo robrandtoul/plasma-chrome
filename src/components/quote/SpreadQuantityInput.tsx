@@ -238,7 +238,7 @@ export function SpreadQuantityInput({
                     <button
                       type="button"
                       onClick={() => swapAt(i, lower!)}
-                      className="rounded-md border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
+                      className="rounded border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
                     >
                       Swap to {lower.toLocaleString()}
                     </button>
@@ -247,7 +247,7 @@ export function SpreadQuantityInput({
                     <button
                       type="button"
                       onClick={() => swapAt(i, upper!)}
-                      className="rounded-md border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
+                      className="rounded border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
                     >
                       Swap to {upper.toLocaleString()}
                     </button>
@@ -255,7 +255,7 @@ export function SpreadQuantityInput({
                   <button
                     type="button"
                     onClick={() => removeAt(i)}
-                    className="rounded-md border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
+                    className="rounded border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
                   >
                     Remove
                   </button>

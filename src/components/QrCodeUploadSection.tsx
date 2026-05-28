@@ -574,7 +574,7 @@ export function QrCodeUploadSection({
                               e.target.value === SHARED_APPROVAL_KEY ? null : e.target.value,
                           })
                         }
-                        className="rounded border border-line bg-surface px-2 py-1 text-[13px] text-ink"
+                        className="select-styled rounded border border-line bg-surface px-2 py-1 text-[13px] text-ink"
                       >
                         <option value={SHARED_APPROVAL_KEY}>All recipients (shared)</option>
                         {names.map((name) => (

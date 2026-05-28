@@ -549,7 +549,7 @@ export default function CustomersPage() {
                         <button
                           onClick={() => void saveCompany(c)}
                           disabled={edit.saving}
-                          className="shrink-0 rounded-md bg-ink px-3 py-1 text-xs font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+                          className="shrink-0 rounded bg-ink px-3 py-1 text-xs font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                         >
                           {edit.saving ? 'Saving…' : 'Save'}
                         </button>
@@ -803,7 +803,7 @@ function ContactRowUI({ contact, withTopBorder, edit, companies, projects, expan
               value={edit.draftCompanyId ?? ''}
               onChange={(e) => onChangeDraft({ draftCompanyId: e.target.value === '' ? null : e.target.value })}
               disabled={edit.saving}
-              className="mt-1 w-full rounded border border-line bg-white px-2 py-1.5 text-sm text-ink shadow-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+              className="select-styled mt-1 w-full rounded border border-line bg-white px-2 py-1.5 text-sm text-ink shadow-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
             >
               <option value="">— No company —</option>
               {[...companies]
@@ -817,7 +817,7 @@ function ContactRowUI({ contact, withTopBorder, edit, companies, projects, expan
             <button
               onClick={onSave}
               disabled={edit.saving}
-              className="rounded-md bg-ink px-3 py-1.5 text-xs font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+              className="rounded bg-ink px-3 py-1.5 text-xs font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
             >
               {edit.saving ? 'Saving…' : 'Save'}
             </button>
@@ -1105,14 +1105,14 @@ function ConfirmDialog({
         <button
           onClick={onCancel}
           disabled={working}
-          className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+          className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
         >
           Cancel
         </button>
         <button
           onClick={onConfirm}
           disabled={working}
-          className="rounded-lg bg-out px-4 py-2 text-sm font-semibold text-on-out hover:opacity-90 disabled:opacity-50"
+          className="rounded bg-out px-4 py-2 text-sm font-semibold text-on-out hover:opacity-90 disabled:opacity-50"
         >
           {working ? 'Deleting…' : 'Delete'}
         </button>

@@ -251,7 +251,7 @@ export default function AdminNeedsAttentionPage() {
             disabled={!dirty || saving}
             onClick={save}
             className={[
-              'rounded-lg px-4 py-2 text-sm font-semibold',
+              'rounded px-4 py-2 text-sm font-semibold',
               dirty && !saving
                 ? 'bg-ink text-on-ink hover:opacity-90'
                 : 'bg-line text-ink-dim cursor-not-allowed',
@@ -352,7 +352,7 @@ export default function AdminNeedsAttentionPage() {
             <button
               type="button"
               onClick={() => void resetToDefaults()}
-              className="rounded-md bg-low px-2 py-1 text-xs font-semibold text-on-ink hover:opacity-90"
+              className="rounded bg-low px-2 py-1 text-xs font-semibold text-on-ink hover:opacity-90"
             >Reset</button>
             <button
               type="button"
@@ -434,7 +434,7 @@ function Segmented<T extends string>({
           aria-pressed={value === o.value}
           onClick={() => onChange(o.value)}
           className={[
-            'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+            'rounded px-3 py-1 text-xs font-medium transition-colors',
             value === o.value ? 'bg-canvas text-ink' : 'text-ink-mute hover:text-ink',
           ].join(' ')}
         >{o.label}</button>

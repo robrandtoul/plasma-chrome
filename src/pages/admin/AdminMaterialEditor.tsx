@@ -750,7 +750,7 @@ export default function AdminMaterialEditor() {
                               onClick={() => { setTierError(null); setRemoveConfirmQty(qty) }}
                               title={`Remove the ${qty.toLocaleString()} tier (all variants)`}
                               aria-label={`Remove ${qty} tier`}
-                              className="inline-flex items-center justify-center w-7 h-7 rounded-md text-ink-mute hover:text-out hover:bg-out-soft transition-colors"
+                              className="inline-flex items-center justify-center w-7 h-7 rounded text-ink-mute hover:text-out hover:bg-out-soft transition-colors"
                             >
                               <X size={13} />
                             </button>
@@ -799,7 +799,7 @@ export default function AdminMaterialEditor() {
               type="button"
               onClick={() => { setVariantError(null); setAdding(true) }}
               disabled={variantInFlight}
-              className="rounded-lg bg-ink px-3 py-1.5 text-sm font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
+              className="rounded bg-ink px-3 py-1.5 text-sm font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
             >
               Add variant
             </button>
@@ -950,7 +950,7 @@ export default function AdminMaterialEditor() {
                     type="button"
                     onClick={() => void handleAddVariant()}
                     disabled={variantInFlight || !addNameDraft.trim()}
-                    className="shrink-0 rounded-lg bg-ink px-3 py-1 text-sm font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
+                    className="shrink-0 rounded bg-ink px-3 py-1 text-sm font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
                   >
                     {variantInFlight ? 'Saving…' : 'Save'}
                   </button>
@@ -960,7 +960,7 @@ export default function AdminMaterialEditor() {
                       setAdding(false); setAddNameDraft(''); setVariantError(null)
                     }}
                     disabled={variantInFlight}
-                    className="shrink-0 rounded-lg px-3 py-1 text-sm font-medium text-ink-mute hover:bg-surface disabled:opacity-50"
+                    className="shrink-0 rounded px-3 py-1 text-sm font-medium text-ink-mute hover:bg-surface disabled:opacity-50"
                   >
                     Cancel
                   </button>
@@ -1038,7 +1038,7 @@ export default function AdminMaterialEditor() {
             type="button"
             onClick={() => setRemoveConfirmQty(null)}
             disabled={tierInFlight}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+            className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
           >
             Cancel
           </button>
@@ -1046,7 +1046,7 @@ export default function AdminMaterialEditor() {
             type="button"
             onClick={() => { if (removeConfirmQty != null) void handleDeleteTier(removeConfirmQty) }}
             disabled={tierInFlight}
-            className="rounded-lg bg-out px-4 py-2 text-sm font-semibold text-on-out hover:opacity-90 disabled:opacity-50"
+            className="rounded bg-out px-4 py-2 text-sm font-semibold text-on-out hover:opacity-90 disabled:opacity-50"
           >
             {tierInFlight ? 'Removing…' : 'Remove tier'}
           </button>
@@ -1110,7 +1110,7 @@ function AddTierForm({
             type="button"
             onClick={onCancel}
             disabled={inFlight}
-            className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-mute hover:bg-surface disabled:opacity-50"
+            className="rounded px-3 py-1.5 text-sm font-medium text-ink-mute hover:bg-surface disabled:opacity-50"
           >
             Cancel
           </button>
@@ -1119,7 +1119,7 @@ function AddTierForm({
           type="button"
           onClick={onSave}
           disabled={inFlight || !canSave}
-          className="rounded-lg bg-ink px-3 py-1.5 text-sm font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
+          className="rounded bg-ink px-3 py-1.5 text-sm font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
         >
           {inFlight ? 'Saving…' : 'Save tier'}
         </button>

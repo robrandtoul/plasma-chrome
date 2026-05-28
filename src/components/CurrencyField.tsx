@@ -4,10 +4,13 @@ const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
 
 // Selected-pill hue. Carried fields pass a tone so the pill reads as
 // coral (fresh), neutral ("as before") or amber (changed).
+// Inset outline (not box-shadow ring): a ring-inset rasterises
+// unevenly on rounded pills (thicker bottom/right edge); an outline
+// draws uniformly and follows the corner radius.
 const SELECTED_TONE: Record<'brand' | 'neutral' | 'low', string> = {
-  brand: 'bg-brand-50 text-brand ring-1 ring-inset ring-brand',
-  neutral: 'bg-canvas text-ink ring-1 ring-inset ring-ink',
-  low: 'bg-low-soft text-low ring-1 ring-inset ring-low',
+  brand: 'bg-brand-50 text-brand outline outline-1 -outline-offset-1 outline-brand',
+  neutral: 'bg-canvas text-ink outline outline-1 -outline-offset-1 outline-ink',
+  low: 'bg-low-soft text-low outline outline-1 -outline-offset-1 outline-low',
 }
 
 export function CurrencyField({

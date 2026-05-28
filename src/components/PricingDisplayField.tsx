@@ -25,10 +25,13 @@ const SUBTITLE_UNSET = 'Choose how customers see pricing.'
 
 // Selected-pill hue. On carried fields the host passes a tone so the
 // pill reads as coral (fresh), neutral ("as before") or amber (changed).
+// The selected outline uses outline (not ring): a box-shadow ring-inset
+// rasterises unevenly on rounded pills (thicker bottom/right edge),
+// whereas an inset outline draws uniformly and follows the radius.
 const SELECTED_TONE: Record<'brand' | 'neutral' | 'low', string> = {
-  brand: 'bg-brand-50 text-brand ring-1 ring-inset ring-brand',
-  neutral: 'bg-canvas text-ink ring-1 ring-inset ring-ink',
-  low: 'bg-low-soft text-low ring-1 ring-inset ring-low',
+  brand: 'bg-brand-50 text-brand outline outline-1 -outline-offset-1 outline-brand',
+  neutral: 'bg-canvas text-ink outline outline-1 -outline-offset-1 outline-ink',
+  low: 'bg-low-soft text-low outline outline-1 -outline-offset-1 outline-low',
 }
 
 export function PricingDisplayField({

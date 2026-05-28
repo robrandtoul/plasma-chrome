@@ -35,7 +35,7 @@ export function ShippingDestinationInput({
             value={country ?? ''}
             onChange={(e) => onCountryChange(e.target.value === '' ? null : e.target.value)}
             disabled={disabled}
-            className="rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand disabled:cursor-not-allowed disabled:bg-canvas disabled:text-ink-dim"
+            className="select-styled rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand disabled:cursor-not-allowed disabled:bg-canvas disabled:text-ink-dim"
           >
             <option value="">Select country…</option>
             {SHIPPING_COUNTRIES.map((c) => (

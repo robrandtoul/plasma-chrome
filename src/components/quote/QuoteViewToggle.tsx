@@ -42,7 +42,7 @@ export function QuoteViewToggle({
             aria-checked={active}
             onClick={() => onChange(o.value)}
             className={[
-              'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+              'rounded px-3 py-1 text-xs font-medium transition-colors',
               active
                 ? 'bg-surface text-ink shadow-sm'
                 : 'text-ink-mute hover:text-ink',

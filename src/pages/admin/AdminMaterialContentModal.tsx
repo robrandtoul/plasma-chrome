@@ -818,7 +818,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
               {recentlySaved && !saving && <span className="text-xs text-in-stock">Saved</span>}
               <button
                 onClick={onClose}
-                className="rounded-lg p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft"
+                className="rounded p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft"
                 aria-label="Close"
               >
                 <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -867,7 +867,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                   setDraftCategory(next)
                   void saveCategory(next)
                 }}
-                className="w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                className="select-styled w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
               >
                 {CATEGORY_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
@@ -1186,7 +1186,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={saving}
-                    className="rounded-lg bg-ink px-3 py-1.5 text-sm font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
+                    className="rounded bg-ink px-3 py-1.5 text-sm font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
                   >
                     {currentIconUrl ? 'Replace icon' : 'Upload icon'}
                   </button>
@@ -1194,7 +1194,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                     <button
                       onClick={handleRemoveIcon}
                       disabled={saving}
-                      className="rounded-lg px-3 py-1.5 text-sm font-medium text-out ring-1 ring-out hover:bg-out-soft disabled:opacity-50"
+                      className="rounded px-3 py-1.5 text-sm font-medium text-out ring-1 ring-out hover:bg-out-soft disabled:opacity-50"
                     >
                       Remove icon
                     </button>
@@ -1227,7 +1227,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                   onClick={onPublishClick}
                   disabled={publishInFlight || saving || isArchived}
                   className={[
-                    'rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50',
+                    'rounded px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50',
                     isPublished
                       ? 'text-ink-soft ring-1 ring-line hover:bg-surface'
                       : 'bg-ink text-on-ink hover:opacity-90',
@@ -1269,7 +1269,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                     type="button"
                     onClick={() => void applyUnarchive()}
                     disabled={archiveInFlight || saving}
-                    className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+                    className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                   >
                     {archiveInFlight ? 'Saving…' : 'Unarchive'}
                   </button>
@@ -1278,7 +1278,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                     type="button"
                     onClick={requestArchive}
                     disabled={archiveInFlight || saving}
-                    className="rounded-lg px-4 py-2 text-sm font-semibold text-low ring-1 ring-low hover:bg-low-soft disabled:opacity-50"
+                    className="rounded px-4 py-2 text-sm font-semibold text-low ring-1 ring-low hover:bg-low-soft disabled:opacity-50"
                   >
                     Archive
                   </button>
@@ -1303,7 +1303,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
           <div className="flex justify-end border-t border-line-soft px-6 py-4">
             <button
               onClick={onClose}
-              className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
+              className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
             >
               Done
             </button>
@@ -1327,7 +1327,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
             type="button"
             onClick={() => setPublishConfirm(false)}
             disabled={publishInFlight}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+            className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
           >
             Cancel
           </button>
@@ -1335,7 +1335,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
             type="button"
             onClick={() => void applyPublishChange(true)}
             disabled={publishInFlight}
-            className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+            className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
           >
             {publishInFlight ? 'Publishing…' : 'Publish anyway'}
           </button>
@@ -1361,7 +1361,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
             type="button"
             onClick={() => setArchiveConfirm(false)}
             disabled={archiveInFlight}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+            className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
           >
             Cancel
           </button>
@@ -1369,7 +1369,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
             type="button"
             onClick={() => void applyArchive()}
             disabled={archiveInFlight}
-            className="rounded-lg bg-low px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+            className="rounded bg-low px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
           >
             {archiveInFlight ? 'Archiving…' : 'Archive'}
           </button>

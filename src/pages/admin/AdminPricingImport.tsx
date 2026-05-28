@@ -83,7 +83,7 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
             <button
               onClick={onClose}
               disabled={working}
-              className="rounded-lg p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft disabled:opacity-50"
+              className="rounded p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft disabled:opacity-50"
               aria-label="Close"
             >
               <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -183,14 +183,14 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
                 <button
                   onClick={onClose}
                   disabled={working}
-                  className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+                  className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleCommit}
                   disabled={working || preview.errors.length > 0 || totalApplicable === 0}
-                  className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+                  className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                 >
                   {working
                     ? 'Applying…'

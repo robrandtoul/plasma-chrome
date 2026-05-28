@@ -389,7 +389,7 @@ export default function AdminAddOnEditor() {
         {addOn.pricing_model !== 'custom_quote' && (
           <button
             onClick={() => downloadPricingExport(`addon:${addOn.code}`, `pricing_addon_${addOn.code}.csv`).catch(() => {})}
-            className="shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas"
+            className="shrink-0 rounded px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas"
           >
             Export this add-on
           </button>
@@ -638,7 +638,7 @@ function AddTierRow({ availableQuantities, onSave, onCancel }: {
             value={quantity}
             onChange={(ev) => setQuantity(ev.target.value)}
             disabled={saving}
-            className="rounded border border-line px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+            className="select-styled rounded border border-line px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
           >
             <option value="">Pick a qty</option>
             {availableQuantities.map((q) => (
@@ -677,7 +677,7 @@ function AddTierRow({ availableQuantities, onSave, onCancel }: {
               type="button"
               onClick={onCancel}
               disabled={saving}
-              className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+              className="rounded px-3 py-1.5 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
             >
               Cancel
             </button>
@@ -685,7 +685,7 @@ function AddTierRow({ availableQuantities, onSave, onCancel }: {
               type="button"
               onClick={handleSave}
               disabled={saving}
-              className="rounded-lg bg-ink px-3 py-1.5 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+              className="rounded bg-ink px-3 py-1.5 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save tier'}
             </button>
@@ -708,7 +708,7 @@ function EmptyState({ label, actionLabel, onClick }: {
       <p className="text-sm text-ink-mute">{label}</p>
       <button
         onClick={onClick}
-        className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
+        className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
       >
         {actionLabel}
       </button>
@@ -776,14 +776,14 @@ function SeedQuantitiesDialog({ onSeed, onCancel }: {
             type="button"
             onClick={onCancel}
             disabled={working}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+            className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={working}
-            className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+            className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
           >
             {working ? 'Seeding…' : 'Seed tiers'}
           </button>

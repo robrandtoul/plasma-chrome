@@ -483,7 +483,7 @@ function SpreadList({
                   <button
                     type="button"
                     onClick={() => onSwap(r.quantity, r.baseLower!)}
-                    className="rounded-md border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
+                    className="rounded border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
                   >
                     Swap to {r.baseLower.toLocaleString()}
                   </button>
@@ -492,7 +492,7 @@ function SpreadList({
                   <button
                     type="button"
                     onClick={() => onSwap(r.quantity, r.baseUpper!)}
-                    className="rounded-md border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
+                    className="rounded border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
                   >
                     Swap to {r.baseUpper.toLocaleString()}
                   </button>
@@ -500,7 +500,7 @@ function SpreadList({
                 <button
                   type="button"
                   onClick={() => onRemove(r.quantity)}
-                  className="rounded-md border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
+                  className="rounded border border-low bg-surface px-2 py-1 text-xs font-medium text-low hover:bg-low-soft"
                 >
                   Remove
                 </button>

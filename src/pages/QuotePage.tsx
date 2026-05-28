@@ -730,7 +730,7 @@ export default function QuotePage() {
           type="button"
           onClick={handleReset}
           disabled={!isFormDirty}
-          className="rounded-md border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink-soft hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink-soft hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
         >
           Reset form
         </button>
@@ -1305,7 +1305,7 @@ export default function QuotePage() {
                     <button
                       type="button"
                       onClick={() => setQuantity(result.snap.lower!.quantity)}
-                      className="rounded-lg border border-low bg-surface px-3 py-2 text-sm font-medium text-low hover:bg-low-soft"
+                      className="rounded border border-low bg-surface px-3 py-2 text-sm font-medium text-low hover:bg-low-soft"
                     >
                       Snap to {result.snap.lower.quantity.toLocaleString()} ({formatPrice(result.snap.lower.totalPrice, currency)})
                     </button>
@@ -1314,7 +1314,7 @@ export default function QuotePage() {
                     <button
                       type="button"
                       onClick={() => setQuantity(result.snap.upper!.quantity)}
-                      className="rounded-lg border border-low bg-surface px-3 py-2 text-sm font-medium text-low hover:bg-low-soft"
+                      className="rounded border border-low bg-surface px-3 py-2 text-sm font-medium text-low hover:bg-low-soft"
                     >
                       Snap to {result.snap.upper.quantity.toLocaleString()} ({formatPrice(result.snap.upper.totalPrice, currency)})
                     </button>

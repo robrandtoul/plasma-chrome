@@ -178,7 +178,7 @@ export default function MetalThicknessNotesSection() {
               type="button"
               onClick={handleSave}
               disabled={!dirty || saving}
-              className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Save thickness notes
             </button>

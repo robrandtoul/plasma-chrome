@@ -93,14 +93,14 @@ export default function VersionPreviewGate({
             <button
               type="button"
               onClick={onEdit}
-              className="rounded-lg px-3 py-2 text-sm font-medium text-ink-dim ring-1 ring-ink hover:bg-ink hover:text-on-ink"
+              className="rounded px-3 py-2 text-sm font-medium text-ink-dim ring-1 ring-ink hover:bg-ink hover:text-on-ink"
             >
               Go back and edit
             </button>
             <button
               type="button"
               onClick={onConfirm}
-              className="rounded-lg bg-in-stock px-4 py-2 text-sm font-semibold text-on-ink shadow-sm hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-in-stock"
+              className="rounded bg-in-stock px-4 py-2 text-sm font-semibold text-on-ink shadow-sm hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-in-stock"
             >
               {confirmLabel}
             </button>

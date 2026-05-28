@@ -286,7 +286,7 @@ export default function HelpScoutEditModal({
             <button
               onClick={onClose}
               disabled={saving}
-              className="rounded-lg p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft disabled:opacity-50"
+              className="rounded p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft disabled:opacity-50"
               aria-label="Close"
             >
               <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -408,14 +408,14 @@ export default function HelpScoutEditModal({
             <button
               onClick={onClose}
               disabled={saving}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+              className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               onClick={() => void handleSave()}
               disabled={saving}
-              className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+              className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save'}
             </button>
@@ -459,7 +459,7 @@ function HelpScoutPickerInline({
                 key={m.id}
                 type="button"
                 onClick={() => onPick(m)}
-                className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-line px-3 py-2.5 text-left text-sm hover:bg-canvas focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                className="flex w-full flex-col items-start gap-0.5 rounded border border-line px-3 py-2.5 text-left text-sm hover:bg-canvas focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
               >
                 <span className="font-medium text-ink">{m.subject ?? `Conversation #${m.id}`}</span>
                 <span className="text-xs text-ink-mute">
@@ -483,7 +483,7 @@ function HelpScoutPickerInline({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg px-3 py-1.5 text-sm text-ink-mute hover:bg-canvas"
+              className="rounded px-3 py-1.5 text-sm text-ink-mute hover:bg-canvas"
             >
               Close
             </button>

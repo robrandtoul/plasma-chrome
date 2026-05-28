@@ -161,7 +161,7 @@ export function CopyQuoteButton({
         disabled={disabled}
         aria-live="polite"
         className={[
-          'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors',
+          'inline-flex items-center gap-2 rounded px-4 py-2 text-sm font-semibold transition-colors',
           'focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
           disabled
             ? 'cursor-not-allowed bg-line text-ink-dim'

@@ -359,7 +359,7 @@ export default function AdminUsersPage() {
         </div>
         <button
           onClick={() => setShowAdd(true)}
-          className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
+          className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
         >
           Add user
         </button>
@@ -466,7 +466,7 @@ export default function AdminUsersPage() {
                             }
                           }}
                           aria-label={`Actions for ${u.full_name ?? u.email}`}
-                          className="rounded-lg p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft"
+                          className="rounded p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft"
                         >
                           <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor">
                             <circle cx="3" cy="8" r="1.5" />
@@ -759,14 +759,14 @@ function ConfirmDialog({ message, confirmLabel, confirmClass, working, errorMsg,
         <button
           onClick={onCancel}
           disabled={working}
-          className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+          className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
         >
           Cancel
         </button>
         <button
           onClick={onConfirm}
           disabled={working}
-          className={`rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50 ${confirmClass}`}
+          className={`rounded px-4 py-2 text-sm font-semibold disabled:opacity-50 ${confirmClass}`}
         >
           {working ? 'Working…' : confirmLabel}
         </button>
@@ -822,7 +822,7 @@ function SetPasswordDialog({
             type="button"
             onClick={onGenerate}
             disabled={working}
-            className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas disabled:opacity-50"
+            className="shrink-0 rounded border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas disabled:opacity-50"
           >
             Generate
           </button>
@@ -831,7 +831,7 @@ function SetPasswordDialog({
             onClick={onToggleShow}
             disabled={working}
             aria-label={showPassword ? 'Hide password' : 'Show password'}
-            className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas disabled:opacity-50"
+            className="shrink-0 rounded border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas disabled:opacity-50"
           >
             {showPassword ? 'Hide' : 'Show'}
           </button>
@@ -844,14 +844,14 @@ function SetPasswordDialog({
         <button
           onClick={onCancel}
           disabled={working}
-          className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+          className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
         >
           Cancel
         </button>
         <button
           onClick={onConfirm}
           disabled={working || password.length < 8}
-          className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+          className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
         >
           {working ? 'Setting…' : 'Set password'}
         </button>
@@ -914,7 +914,7 @@ function SetHelpscoutUserIdDialog({
             type="button"
             onClick={onClear}
             disabled={working || value === ''}
-            className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas disabled:opacity-50"
+            className="shrink-0 rounded border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas disabled:opacity-50"
             title="Empty the field. Click 'Clear mapping' below to actually save the change."
           >
             Empty field
@@ -938,14 +938,14 @@ function SetHelpscoutUserIdDialog({
         <button
           onClick={onCancel}
           disabled={working}
-          className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+          className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
         >
           Cancel
         </button>
         <button
           onClick={onConfirm}
           disabled={working}
-          className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+          className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
         >
           {working ? 'Saving…' : isClearing ? 'Clear mapping' : 'Save'}
         </button>

@@ -395,7 +395,7 @@ function OverflowMenu({
         aria-expanded={open}
         aria-label="Project actions"
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
-        className="flex h-8 w-8 items-center justify-center rounded-md text-ink-mute hover:bg-canvas hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
+        className="flex h-8 w-8 items-center justify-center rounded text-ink-mute hover:bg-canvas hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
       >
         <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor"><circle cx="3" cy="8" r="1.5" /><circle cx="8" cy="8" r="1.5" /><circle cx="13" cy="8" r="1.5" /></svg>
       </button>
@@ -603,7 +603,7 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
           onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
           className={
             stripStyle
-              ? 'flex h-7 w-7 items-center justify-center rounded-md text-ink-mute hover:bg-canvas hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]'
+              ? 'flex h-7 w-7 items-center justify-center rounded text-ink-mute hover:bg-canvas hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]'
               : 'flex h-5 w-5 items-center justify-center rounded-full text-low hover:bg-low-soft focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-low)]'
           }
         >
@@ -1174,7 +1174,7 @@ interface RowActionButtonProps {
 
 function RowActionButton({ label, children, href, to, onClick, active }: RowActionButtonProps) {
   const cls = [
-    'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
+    'flex h-7 w-7 items-center justify-center rounded transition-colors',
     'focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]',
     active
       ? 'text-ink hover:opacity-90'
@@ -1331,7 +1331,7 @@ function UnsnoozeButton({ proof, onUnsnooze }: UnsnoozeButtonProps) {
       title="Unsnooze"
       disabled={saving}
       onClick={handleClick}
-      className="flex h-7 w-7 items-center justify-center rounded-md hover:opacity-100 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 disabled:opacity-50"
+      className="flex h-7 w-7 items-center justify-center rounded hover:opacity-100 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 disabled:opacity-50"
       style={{
         color: '#7b3ff2',
         // Hover/focus tint sits at a higher source order than the

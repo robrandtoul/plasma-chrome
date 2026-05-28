@@ -31,7 +31,7 @@ export function CurrencyToggle({
                 'rounded px-5 py-2 text-sm font-semibold transition-colors',
                 'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
                 selected
-                  ? 'bg-brand-50 text-brand ring-1 ring-inset ring-brand'
+                  ? 'bg-brand-50 text-brand outline outline-1 -outline-offset-1 outline-brand'
                   : 'text-ink-mute hover:text-ink',
               ].join(' ')}
             >

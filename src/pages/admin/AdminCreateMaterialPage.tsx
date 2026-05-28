@@ -234,7 +234,7 @@ export default function AdminCreateMaterialPage() {
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value as Category)}
-            className={inputClass}
+            className={'select-styled ' + inputClass}
           >
             <option value="">Select a category</option>
             {CATEGORY_OPTIONS.map((o) => (
@@ -351,14 +351,14 @@ export default function AdminCreateMaterialPage() {
         <div className="flex justify-end gap-2 pt-2">
           <Link
             to="/admin/settings"
-            className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas"
+            className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas"
           >
             Cancel
           </Link>
           <button
             type="submit"
             disabled={submitting}
-            className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+            className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
           >
             {submitting ? 'Creating…' : 'Create material'}
           </button>

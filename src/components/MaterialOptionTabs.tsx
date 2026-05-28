@@ -47,7 +47,7 @@ export function MaterialOptionTabs({
             className={[
               'inline-flex items-baseline gap-1.5 rounded px-3 py-1.5 transition-colors',
               tab.isActive
-                ? 'bg-brand-50 text-brand ring-1 ring-inset ring-brand'
+                ? 'bg-brand-50 text-brand outline outline-1 -outline-offset-1 outline-brand'
                 : 'text-ink-mute hover:text-ink',
               'focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]',
             ].join(' ')}

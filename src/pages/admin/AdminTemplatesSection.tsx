@@ -565,7 +565,7 @@ function PreviewToggle<T extends string>({ value, onChange, options }: {
             type="button"
             onClick={() => onChange(o.value)}
             className={[
-              'rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors',
+              'rounded px-2 py-0.5 text-[11px] font-medium transition-colors',
               active ? 'bg-ink text-on-ink' : 'text-ink-mute hover:text-ink',
             ].join(' ')}
           >
