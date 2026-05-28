@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { DesignerChrome } from '../design'
 import { supabase } from '../lib/supabase'
 import { formatPrice } from '../lib/currency'
 import type { Currency } from '../lib/types'
@@ -723,29 +723,25 @@ export default function QuotePage() {
   }, [selectedVariantId, quantity, currency, names, perExtraNameSurcharge, finishSurchargeAtCurrent, personalisationSurchargeAtCurrent, discountPercent, variantTiers, tiersFresh])
 
   return (
+    <DesignerChrome
+      active="quote"
+      actions={
+        <button
+          type="button"
+          onClick={handleReset}
+          disabled={!isFormDirty}
+          className="rounded-md border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink-soft hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Reset form
+        </button>
+      }
+    >
     <div className="min-h-dvh bg-canvas">
       <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
-        <div className="mb-8 flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium uppercase tracking-widest text-ink-dim">PlasmaDesign</p>
-            <h1 className="mt-1 text-2xl font-bold text-ink">Quote compiler</h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleReset}
-              disabled={!isFormDirty}
-              className="rounded-lg border border-line bg-surface px-4 py-2 text-sm font-medium text-ink-soft shadow-sm hover:border-line disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-line"
-            >
-              Reset form
-            </button>
-            <Link
-              to="/"
-              className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas"
-            >
-              ← Projects
-            </Link>
-          </div>
+        <div className="mb-8">
+          <div className="eyebrow text-ink-mute">⌘ K · Quick quote</div>
+          <h1 className="mt-1.5 font-display font-medium tracking-[-0.02em] text-ink leading-tight" style={{ fontSize: 'clamp(24px, 4vw, 32px)' }}>Quote compiler</h1>
+          <p className="mt-1 text-sm text-ink-mute">Pick a material, a variant, a currency. Copy the price into Help Scout. No proof created.</p>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
@@ -1330,5 +1326,6 @@ export default function QuotePage() {
         </div>
       </div>
     </div>
+    </DesignerChrome>
   )
 }
