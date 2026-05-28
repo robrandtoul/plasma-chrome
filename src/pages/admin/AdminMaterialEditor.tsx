@@ -864,7 +864,7 @@ export default function AdminMaterialEditor() {
                           }}
                           onBlur={() => { void saveVariantName() }}
                           disabled={variantInFlight}
-                          className="w-full rounded-md border border-line px-2.5 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                          className="w-full rounded border border-line px-2.5 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                         />
                       ) : (
                         <button
@@ -943,7 +943,7 @@ export default function AdminMaterialEditor() {
                     material.variant_type === 'finish' ? 'e.g. Brushed' :
                     'Variant name'
                   }
-                  className="min-w-0 flex-1 rounded-md border border-line px-2.5 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                  className="min-w-0 flex-1 rounded border border-line px-2.5 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                 />
                 <div className="flex justify-end gap-2">
                   <button
@@ -1094,7 +1094,7 @@ function AddTierForm({
             value={qty}
             onChange={(e) => onQty(e.target.value)}
             disabled={inFlight}
-            className="w-28 rounded-md border border-line px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+            className="w-28 rounded border border-line px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
             placeholder="e.g. 500"
           />
         </div>
@@ -1147,7 +1147,7 @@ function CurrencyTotalField({ label, symbol, value, onChange, disabled }: {
           value={value}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
-          className="w-28 rounded-md border border-line px-2 py-1 pl-5 text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+          className="w-28 rounded border border-line px-2 py-1 pl-5 text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
           placeholder="0.00"
         />
       </div>

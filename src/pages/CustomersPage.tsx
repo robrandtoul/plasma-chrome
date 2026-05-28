@@ -542,7 +542,7 @@ export default function CustomersPage() {
                             if (e.key === 'Escape') cancelEditCompany(c.id)
                           }}
                           autoFocus
-                          className="min-w-0 flex-1 rounded-md border border-line bg-white px-2.5 py-1 text-sm font-medium text-ink shadow-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                          className="min-w-0 flex-1 rounded border border-line bg-white px-2.5 py-1 text-sm font-medium text-ink shadow-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                           aria-label="Company name"
                           disabled={edit.saving}
                         />
@@ -783,7 +783,7 @@ function ContactRowUI({ contact, withTopBorder, edit, companies, projects, expan
               value={edit.draftFullName}
               onChange={(e) => onChangeDraft({ draftFullName: e.target.value })}
               disabled={edit.saving}
-              className="mt-1 w-full rounded-md border border-line bg-white px-2.5 py-1.5 text-sm text-ink shadow-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+              className="mt-1 w-full rounded border border-line bg-white px-2.5 py-1.5 text-sm text-ink shadow-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
               autoFocus
             />
           </label>
@@ -794,7 +794,7 @@ function ContactRowUI({ contact, withTopBorder, edit, companies, projects, expan
               value={edit.draftEmail}
               onChange={(e) => onChangeDraft({ draftEmail: e.target.value })}
               disabled={edit.saving}
-              className="mt-1 w-full rounded-md border border-line bg-white px-2.5 py-1.5 text-sm text-ink shadow-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+              className="mt-1 w-full rounded border border-line bg-white px-2.5 py-1.5 text-sm text-ink shadow-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
             />
           </label>
           <label className="block">
@@ -803,7 +803,7 @@ function ContactRowUI({ contact, withTopBorder, edit, companies, projects, expan
               value={edit.draftCompanyId ?? ''}
               onChange={(e) => onChangeDraft({ draftCompanyId: e.target.value === '' ? null : e.target.value })}
               disabled={edit.saving}
-              className="mt-1 w-full rounded-md border border-line bg-white px-2 py-1.5 text-sm text-ink shadow-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+              className="mt-1 w-full rounded border border-line bg-white px-2 py-1.5 text-sm text-ink shadow-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
             >
               <option value="">— No company —</option>
               {[...companies]

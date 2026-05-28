@@ -319,7 +319,7 @@ export default function AdminNeedsAttentionPage() {
                             const n = Number(e.target.value)
                             patchRule(code, 'threshold_days', Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0)
                           }}
-                          className="w-20 rounded-md border border-gray-300 px-2 py-1 text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                          className="w-20 rounded border border-gray-300 px-2 py-1 text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                         />
                         <span className="text-xs text-gray-500">days</span>
                       </div>

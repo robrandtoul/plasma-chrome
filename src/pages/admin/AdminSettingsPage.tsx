@@ -764,4 +764,4 @@ function humanFieldLabel(field: keyof Settings): string {
   }[field]
 }
 
-const inputClass = 'w-full rounded-md border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
+const inputClass = 'w-full rounded border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'

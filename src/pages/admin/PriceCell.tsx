@@ -155,7 +155,7 @@ export default function PriceCell(props: Props) {
             // Focused/editing cell takes the brand ring + a faint
             // brand-50 fill — the "selected cell" highlight from the
             // pricing-editor mockup.
-            'w-24 rounded-md border px-2 py-1 text-[17px] sm:text-sm tabular-nums text-ink transition-colors',
+            'w-24 rounded border px-2 py-1 text-[17px] sm:text-sm tabular-nums text-ink transition-colors',
             showSymbol ? 'pl-5' : '',
             error
               ? 'border-out focus:border-[var(--c-out)] focus:bg-[var(--c-out-soft)] focus:outline-none'

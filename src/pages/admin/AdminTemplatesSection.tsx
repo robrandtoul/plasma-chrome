@@ -459,7 +459,7 @@ function TemplateCard({
             onChange={(e) => setDraft(e.target.value)}
             onBlur={handleBlur}
             rows={10}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs leading-relaxed focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+            className="w-full rounded border border-gray-300 px-3 py-2 font-mono text-xs leading-relaxed focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
           />
         </div>
 

@@ -841,7 +841,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                 onChange={(e) => { setDraftName(e.target.value); if (nameError) setNameError(null) }}
                 onBlur={saveName}
                 className={[
-                  'w-full rounded-md border px-3 py-2 text-[17px] sm:text-sm focus:outline-none',
+                  'w-full rounded border px-3 py-2 text-[17px] sm:text-sm focus:outline-none',
                   nameError
                     ? 'border-out focus:border-[var(--c-out)] focus:bg-[var(--c-out-soft)]'
                     : 'border-line focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)]',
@@ -867,7 +867,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                   setDraftCategory(next)
                   void saveCategory(next)
                 }}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                className="w-full rounded border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
               >
                 {CATEGORY_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
@@ -886,7 +886,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                 onChange={(e) => setDraftDesc(e.target.value)}
                 onBlur={saveDescription}
                 rows={6}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                className="w-full rounded border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                 placeholder="e.g. Steel cards are 0.5mm thick and laser-cut to…"
               />
               <p className="mt-1.5 text-xs text-gray-500">
@@ -937,7 +937,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                           onChange={(e) => updateFeature(i, 'title', e.target.value)}
                           onBlur={() => { void saveKeyFeatures() }}
                           placeholder="Title (e.g. Rolled stainless steel)"
-                          className="w-full rounded-md border border-gray-300 px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                          className="w-full rounded border border-gray-300 px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                         />
                         <input
                           type="text"
@@ -945,7 +945,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                           onChange={(e) => updateFeature(i, 'body', e.target.value)}
                           onBlur={() => { void saveKeyFeatures() }}
                           placeholder="Supporting line (e.g. Precision etched from sheet metal…)"
-                          className="w-full rounded-md border border-gray-300 px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                          className="w-full rounded border border-gray-300 px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                         />
                         {(titleOver || bodyOver) && (
                           <p className="text-xs text-amber-600">
@@ -1029,7 +1029,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                 onChange={(e) => { setDraftDisplayQtys(e.target.value); setDisplayQtysError(null) }}
                 onBlur={saveDisplayQuantities}
                 placeholder="e.g. 100, 250, 500, 1000"
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                className="w-full rounded border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
               />
               {/* Preview / status line — green when parsed cleanly,
                   rose on error. Both colours use the same position
@@ -1073,7 +1073,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                     onChange={(e) => { setDraftQuoteMin(e.target.value); setQuoteMinError(null) }}
                     onBlur={saveQuoteMinQuantity}
                     placeholder="Leave blank for no minimum"
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                    className="w-full rounded border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                   />
                   {quoteMinError && (
                     <p className="mt-1.5 text-xs text-rose-600">{quoteMinError}</p>
@@ -1090,7 +1090,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                     onChange={(e) => { setDraftQuoteMax(e.target.value); setQuoteMaxError(null) }}
                     onBlur={saveQuoteMaxQuantity}
                     placeholder="Leave blank for no maximum"
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                    className="w-full rounded border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                   />
                   {quoteMaxError && (
                     <p className="mt-1.5 text-xs text-rose-600">{quoteMaxError}</p>
