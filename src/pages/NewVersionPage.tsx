@@ -4054,7 +4054,7 @@ export default function NewVersionPage() {
           first, so the overlay never double-fires for a precise
           drop. */}
       <PageDropOverlay visible={isPageDragOver} />
-      <div className="mx-auto max-w-2xl px-4 py-10 pb-32 sm:px-6">
+      <div className="mx-auto max-w-6xl px-4 py-10 pb-32 sm:px-6">
 
         {/* Back + Quote compiler. QuoteLink lives in the per-page
             header on six pages today. Future "extract shared header"
@@ -4130,6 +4130,13 @@ export default function NewVersionPage() {
         })()}
 
         <form id="new-version-form" onSubmit={handleSubmit} className={savedVersion ? 'hidden' : 'space-y-6'}>
+
+          {/* Two-column layout: spec/setup sections on the left,
+              proof images + QR + change notes on the right. The wide
+              per-variant pricing-reference tables stay full-width
+              below the grid. Stacks to one column below lg. */}
+          <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+          <div className="space-y-6">
 
           {/* Carry-forward summary card — only renders on v2+ when
               there's an inheritance source. Labelled name-value
@@ -5303,6 +5310,8 @@ export default function NewVersionPage() {
 
               Hidden on variant rounds (build-plan step 5) — the
               variant editor above handles image attribution there. */}
+          </div>
+          <div className="space-y-6">
           {!isVariantRound && (
           <section ref={imageSectionRef} className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">
@@ -5902,6 +5911,8 @@ export default function NewVersionPage() {
             <textarea rows={3} placeholder="What changed in this version? Shown to the customer."
               value={changeNotes} onChange={(e) => setChangeNotes(e.target.value)} className={inputClass} />
           </section>
+          </div>
+          </div>
 
           {/* Pricing — one section per selected variant. Read-only
               reference display of live prices pulled from price_tiers
