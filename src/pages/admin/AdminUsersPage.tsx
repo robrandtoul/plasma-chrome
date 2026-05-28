@@ -700,8 +700,8 @@ function RolePill({ role, muted }: { role: 'admin' | 'designer'; muted?: boolean
   // rest of the row's text.
   if (role === 'admin') {
     const cls = muted
-      ? 'rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-300'
-      : 'rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700'
+      ? 'rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-300'
+      : 'rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand'
     return <span className={cls}>Admin</span>
   }
   const cls = muted

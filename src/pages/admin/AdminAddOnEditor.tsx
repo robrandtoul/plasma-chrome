@@ -378,7 +378,7 @@ export default function AdminAddOnEditor() {
           <h2 className="mt-2 text-xl font-bold text-ink">{addOn.display_name}</h2>
           {addOn.notes && <p className="mt-1 max-w-xl text-xs text-ink-mute">{addOn.notes}</p>}
           {MATERIAL_OPTION_BACKED_ADDONS[addOn.code] && (
-            <p className="mt-2 max-w-xl text-xs text-violet-700">
+            <p className="mt-2 max-w-xl text-xs text-brand">
               Prices apply to Mirror and Brushed across Steel and Gold. Editing one tier updates all four schedules in lockstep.
             </p>
           )}

@@ -443,7 +443,7 @@ function TemplateCard({
           type="button"
           onClick={handleInsertIfBlock}
           title="Insert a conditional block. Renders only when the named variable has a value."
-          className="rounded-full bg-surface px-2.5 py-1 text-xs font-medium text-violet-700 ring-1 ring-violet-200 transition-colors hover:bg-violet-50"
+          className="rounded-full bg-surface px-2.5 py-1 text-xs font-medium text-brand ring-1 ring-brand-200 transition-colors hover:bg-brand-50"
         >
           + if-block
         </button>

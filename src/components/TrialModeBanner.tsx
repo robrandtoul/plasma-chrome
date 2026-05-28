@@ -41,15 +41,15 @@ export function TrialModeBanner() {
   if (enabled !== false) return null
 
   return (
-    <div className="border-b border-amber-200 bg-amber-50 px-4 py-2.5 sm:px-6">
-      <p className="mx-auto max-w-5xl text-xs text-amber-800">
+    <div className="border-b border-low bg-low-soft px-4 py-2.5 sm:px-6">
+      <p className="mx-auto max-w-5xl text-xs text-low">
         Customer replies are paused. Designers can compose messages but Send is disabled.
         {role === 'admin' && (
           <>
             {' '}
             <Link
               to="/admin/settings"
-              className="font-medium underline underline-offset-2 hover:text-amber-900"
+              className="font-medium underline underline-offset-2 hover:text-low"
             >
               Enable in Settings
             </Link>

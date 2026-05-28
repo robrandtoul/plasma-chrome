@@ -118,12 +118,12 @@ function ToggleRow({
 }) {
   return (
     <tr>
-      <td colSpan={colSpan} className="border-t border-gray-100 p-0">
+      <td colSpan={colSpan} className="border-t border-line-soft p-0">
         <button
           type="button"
           aria-expanded={showAll}
           onClick={onToggle}
-          className="flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-1.5 px-6 py-3 text-sm font-medium text-gray-500 transition-colors duration-150 hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-300"
+          className="flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-1.5 px-6 py-3 text-sm font-medium text-ink-mute transition-colors duration-150 hover:bg-canvas focus:outline-none focus-visible:bg-canvas focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
         >
           <span>{showAll ? 'Show fewer quantities' : 'Show all quantities'}</span>
           <svg
@@ -179,16 +179,16 @@ function SingleVariantTable({
   return (
     <table className="w-full text-sm">
       <thead>
-        <tr className="border-b border-gray-100">
+        <tr className="border-b border-line-soft">
           {/* "Total quantity" + "Price" (rather than the earlier
               "Quantity" + "Total") spells out that the quantity
               is the full run across every name/variant, not
               per-identity. Switching the second header away from
               "Total" also avoids the adjacent double-use of the
               word when "Total quantity" sits next to it. */}
-          <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Total quantity</th>
-          <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400">Price</th>
-          <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400">Per card</th>
+          <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Total quantity</th>
+          <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-ink-dim">Price</th>
+          <th className="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-ink-dim">Per card</th>
         </tr>
       </thead>
       <tbody>
@@ -198,13 +198,13 @@ function SingleVariantTable({
             <tr
               key={qty}
               className={[
-                'border-b border-gray-50 last:border-0',
+                'border-b border-line-soft last:border-0',
                 isReveal ? 'animate-[reveal-row_200ms_ease-out]' : '',
               ].join(' ')}
             >
-              <td className="px-6 py-3 font-medium text-gray-900">{qty.toLocaleString()}</td>
-              <td className="px-6 py-3 text-right text-gray-900">{formatPrice(price, currency)}</td>
-              <td className="px-6 py-3 text-right text-gray-500">{formatPrice(price / qty, currency, 2)}</td>
+              <td className="px-6 py-3 font-medium text-ink">{qty.toLocaleString()}</td>
+              <td className="px-6 py-3 text-right text-ink">{formatPrice(price, currency)}</td>
+              <td className="px-6 py-3 text-right text-ink-mute">{formatPrice(price / qty, currency, 2)}</td>
             </tr>
           )
         })}
@@ -245,12 +245,12 @@ function MultiVariantGrid({
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-gray-100">
-            <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">
+          <tr className="border-b border-line-soft">
+            <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">
               Quantity
             </th>
             {variants.map((v) => (
-              <th key={v.variant_id} className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400">
+              <th key={v.variant_id} className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-ink-dim">
                 {v.display}
               </th>
             ))}
@@ -264,25 +264,25 @@ function MultiVariantGrid({
               <tr
                 key={qty}
                 className={[
-                  'border-b border-gray-50 last:border-0',
+                  'border-b border-line-soft last:border-0',
                   isReveal ? 'animate-[reveal-row_200ms_ease-out]' : '',
                 ].join(' ')}
               >
-                <td className="px-6 py-3 font-medium text-gray-900">{qty.toLocaleString()}</td>
+                <td className="px-6 py-3 font-medium text-ink">{qty.toLocaleString()}</td>
                 {variants.map((v) => {
                   const base = v.prices[String(qty)]
                   if (base == null) {
                     return (
                       <td key={v.variant_id} className="px-4 py-3 text-right">
-                        <span className="text-gray-300">—</span>
+                        <span className="text-ink-dim">—</span>
                       </td>
                     )
                   }
                   const price = base + surcharge
                   return (
                     <td key={v.variant_id} className="px-4 py-3 text-right">
-                      <div className="font-medium text-gray-900">{formatPrice(price, currency)}</div>
-                      <div className="text-xs text-gray-400">{formatPrice(price / qty, currency, 2)} each</div>
+                      <div className="font-medium text-ink">{formatPrice(price, currency)}</div>
+                      <div className="text-xs text-ink-dim">{formatPrice(price / qty, currency, 2)} each</div>
                     </td>
                   )
                 })}
@@ -322,13 +322,13 @@ function PersonalisationRowGroup({
 }) {
   if (quantities.length === 0) return null
   return (
-    <div className="border-t border-gray-100">
+    <div className="border-t border-line-soft">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-gray-100">
+          <tr className="border-b border-line-soft">
             <th
               colSpan={2}
-              className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400"
+              className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim"
             >
               Personalisation
             </th>
@@ -338,9 +338,9 @@ function PersonalisationRowGroup({
           {quantities.map((qty) => {
             const surcharge = personalisationByQty[qty] ?? 0
             return (
-              <tr key={qty} className="border-b border-gray-50 last:border-0">
-                <td className="px-6 py-3 font-medium text-gray-900">{qty.toLocaleString()}</td>
-                <td className="px-6 py-3 text-right text-gray-900">
+              <tr key={qty} className="border-b border-line-soft last:border-0">
+                <td className="px-6 py-3 font-medium text-ink">{qty.toLocaleString()}</td>
+                <td className="px-6 py-3 text-right text-ink">
                   + {formatPrice(surcharge, currency)}
                 </td>
               </tr>
@@ -349,7 +349,7 @@ function PersonalisationRowGroup({
         </tbody>
       </table>
       {breakevenQty != null && breakevenQty > 0 && (
-        <p className="px-6 py-3 text-xs text-gray-500">
+        <p className="px-6 py-3 text-xs text-ink-mute">
           A minimum personalisation charge applies below {breakevenQty.toLocaleString()} cards.
         </p>
       )}
