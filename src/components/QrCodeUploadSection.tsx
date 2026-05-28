@@ -336,7 +336,7 @@ export function QrCodeUploadSection({
           void handleFiles(e.dataTransfer.files)
         }}
         className={[
-          'flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors',
+          'flex cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed px-6 py-8 text-center transition-colors',
           dragOver
             ? 'border-brand bg-brand-50'
             : 'border-line hover:border-line',
@@ -400,13 +400,13 @@ export function QrCodeUploadSection({
             }}
             placeholder="https://qcrd.uk/jane-smith or jane-smith"
             disabled={disabled || vcardLoading}
-            className="flex-1 rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-mute focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex-1 rounded border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-mute focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand disabled:cursor-not-allowed disabled:opacity-60"
           />
           <button
             type="button"
             onClick={() => void handleAddVcard()}
             disabled={disabled || vcardLoading || !vcardInput.trim()}
-            className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-on-ink shadow-sm hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded bg-brand px-4 py-2 text-sm font-semibold text-on-ink shadow-sm hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
           >
             {vcardLoading ? 'Looking up…' : 'Look up + add'}
           </button>
@@ -449,7 +449,7 @@ export function QrCodeUploadSection({
                       width={120}
                       height={120}
                       className={[
-                        'aspect-square w-full max-w-[120px] rounded-md border border-line bg-surface object-contain transition-opacity',
+                        'aspect-square w-full max-w-[120px] rounded border border-line bg-surface object-contain transition-opacity',
                         ghosted ? 'opacity-40' : '',
                       ].join(' ')}
                     />
@@ -537,7 +537,7 @@ export function QrCodeUploadSection({
                         type="button"
                         onClick={() => handleDownloadSvg(entry)}
                         disabled={disabled}
-                        className="inline-flex items-center gap-1 rounded-md border border-line bg-surface px-2.5 py-1 text-[12px] font-medium text-ink-soft hover:border-brand hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex items-center gap-1 rounded border border-line bg-surface px-2.5 py-1 text-[12px] font-medium text-ink-soft hover:border-brand hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                           <path
@@ -628,7 +628,7 @@ export function QrCodeUploadSection({
                     type="button"
                     onClick={() => removeEntry(entry.id)}
                     disabled={disabled}
-                    className="rounded-md border border-line bg-surface px-2.5 py-1 text-[12px] font-medium text-ink-soft hover:border-out hover:text-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-out disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded border border-line bg-surface px-2.5 py-1 text-[12px] font-medium text-ink-soft hover:border-out hover:text-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-out disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Remove
                   </button>

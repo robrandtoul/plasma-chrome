@@ -4379,7 +4379,7 @@ export default function NewVersionPage() {
                   <label
                     key={String(opt.value)}
                     className={[
-                      'cursor-pointer rounded-xl border px-4 py-3 transition-colors',
+                      'cursor-pointer rounded border px-4 py-3 transition-colors',
                       'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
                       selected
                         ? 'border-ink bg-ink text-on-ink'
@@ -4465,7 +4465,7 @@ export default function NewVersionPage() {
                       <label
                         key={String(opt.value)}
                         className={[
-                          'cursor-pointer rounded-xl border px-4 py-3 transition-colors',
+                          'cursor-pointer rounded border px-4 py-3 transition-colors',
                           'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
                           selected
                             ? 'border-ink bg-ink text-on-ink'
@@ -4875,7 +4875,7 @@ export default function NewVersionPage() {
                 )}
               </label>
               <div style={carriedFieldStyle(carry.cardType.isCarried, carry.cardType.isEdited)}>
-                <fieldset className="inline-flex rounded-xl border border-line bg-surface p-0.5">
+                <fieldset className="inline-flex rounded-md border border-line bg-surface p-0.5">
                   <legend className="sr-only">Card type</legend>
                   {(['business', 'membership'] as const).map((opt) => {
                     const selected = cardType === opt
@@ -4883,7 +4883,7 @@ export default function NewVersionPage() {
                       <label
                         key={opt}
                         className={[
-                          'cursor-pointer rounded-lg px-5 py-2 text-sm font-semibold transition-colors',
+                          'cursor-pointer rounded px-5 py-2 text-sm font-semibold transition-colors',
                           'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
                           selected ? '' : 'text-ink-mute hover:text-ink',
                         ].join(' ')}
@@ -4969,7 +4969,7 @@ export default function NewVersionPage() {
                   )}
                 </label>
                 <div style={carriedFieldStyle(carry.sidedness.isCarried, carry.sidedness.isEdited)}>
-                  <fieldset className="inline-flex rounded-xl border border-line bg-surface p-0.5">
+                  <fieldset className="inline-flex rounded-md border border-line bg-surface p-0.5">
                     <legend className="sr-only">Sidedness</legend>
                     {(['one-sided', 'two-sided'] as const).map((opt) => {
                       const selected = sidedness === opt
@@ -4977,7 +4977,7 @@ export default function NewVersionPage() {
                         <label
                           key={opt}
                           className={[
-                            'cursor-pointer rounded-lg px-5 py-2 text-sm font-semibold transition-colors',
+                            'cursor-pointer rounded px-5 py-2 text-sm font-semibold transition-colors',
                             'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-1',
                             selected ? '' : 'text-ink-mute hover:text-ink',
                           ].join(' ')}
@@ -5017,7 +5017,7 @@ export default function NewVersionPage() {
                   toggle with its prior value. */}
               {sidedness === 'two-sided' && names.length >= 2 && (
                 <div style={carriedFieldStyle(carry.shared.isCarried, carry.shared.isEdited)}>
-                  <div className="flex items-center justify-between rounded-xl border border-line bg-surface px-4 py-3">
+                  <div className="flex items-center justify-between rounded border border-line bg-surface px-4 py-3">
                     <div>
                       <div className="flex items-center gap-2 text-sm font-medium text-ink-soft">
                         <span>Shared</span>
@@ -5069,7 +5069,7 @@ export default function NewVersionPage() {
                 <p className="mt-0.5 text-xs text-ink-mute">
                   Unique data per card, like member numbers or names.
                 </p>
-                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-line bg-surface px-4 py-3">
+                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded border border-line bg-surface px-4 py-3">
                   <input
                     type="checkbox"
                     checked={hasPersonalisation}
@@ -5149,7 +5149,7 @@ export default function NewVersionPage() {
                             placeholder={placeholder}
                             onChange={(e) => updateRow({ display_name: e.target.value })}
                             className={[
-                              'w-full rounded-lg border bg-surface px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2',
+                              'w-full rounded border bg-surface px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2',
                               labelInvalid
                                 ? 'border-out focus:border-out focus:ring-out'
                                 : 'border-line focus:border-brand focus:ring-brand',
@@ -5278,7 +5278,7 @@ export default function NewVersionPage() {
                       { key: uuidv4(), display_name: '', frontFiles: [], backFiles: null },
                     ])
                   }
-                  className="rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink-soft shadow-sm hover:border-line"
+                  className="rounded border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink-soft shadow-sm hover:border-line"
                 >
                   + Add direction
                 </button>
@@ -5485,7 +5485,7 @@ export default function NewVersionPage() {
                       }
                     }}
                     className={[
-                      'flex flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-7 text-center transition-colors',
+                      'flex flex-col items-center justify-center rounded border-2 border-dashed px-6 py-7 text-center transition-colors',
                       dropDisabled
                         ? 'cursor-not-allowed border-line bg-canvas text-ink-dim'
                         : isDragActive
@@ -6028,7 +6028,7 @@ export default function NewVersionPage() {
               title={!isValid ? missingFieldsHint(validations, optionLabelSingular) : undefined}
               aria-label={!isValid ? `Save version, ${missingFieldsHint(validations, optionLabelSingular)}` : undefined}
               className={[
-                'rounded-lg px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
+                'rounded px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
                 isValid ? 'bg-ink hover:opacity-90' : 'bg-ink/60',
                 'disabled:cursor-not-allowed disabled:opacity-50',
               ].join(' ')}
@@ -6762,7 +6762,7 @@ function EmptySlot({
       onDrop={handleDrop}
       onClick={() => inputRef.current?.click()}
       className={[
-        'flex cursor-pointer flex-col rounded-xl border-2 border-dashed p-2.5 transition-all',
+        'flex cursor-pointer flex-col rounded border-2 border-dashed p-2.5 transition-all',
         dragOver
           ? 'border-brand bg-brand-50 ring-2 ring-brand ring-offset-1'
           : 'border-line bg-canvas hover:border-line hover:bg-canvas',

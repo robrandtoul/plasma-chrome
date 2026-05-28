@@ -115,7 +115,7 @@ export default function NameChipInput({
   return (
     <div
       onClick={() => { if (editingIndex == null) inputRef.current?.focus() }}
-      className="flex min-h-[2.5rem] cursor-text flex-wrap items-center gap-1.5 rounded-lg border border-line bg-surface px-2 py-1.5 text-sm focus-within:border-brand focus-within:ring-1 focus-within:ring-brand"
+      className="flex min-h-[2.5rem] cursor-text flex-wrap items-center gap-1.5 rounded border border-line bg-surface px-2 py-1.5 text-sm focus-within:border-brand focus-within:ring-1 focus-within:ring-brand"
       role="group"
       aria-label={ariaLabel}
     >
@@ -140,7 +140,7 @@ export default function NameChipInput({
         return (
           <span
             key={i}
-            className="inline-flex items-center gap-1 rounded-full bg-canvas px-2 py-0.5 text-sm text-ink-soft hover:bg-line"
+            className="inline-flex items-center gap-1 rounded bg-canvas px-2 py-0.5 text-sm text-ink-soft hover:bg-line"
           >
             <button
               type="button"

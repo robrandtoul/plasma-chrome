@@ -117,7 +117,7 @@ export function VariantDropZone({
         onDragLeave={onDragLeave}
         onDrop={onDrop}
         className={[
-          'flex min-h-[88px] cursor-pointer items-center justify-center rounded-lg border-2 border-dashed px-4 py-6 text-center text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand',
+          'flex min-h-[88px] cursor-pointer items-center justify-center rounded border-2 border-dashed px-4 py-6 text-center text-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand',
           dragOver
             ? 'border-ink bg-canvas text-ink'
             : invalid
