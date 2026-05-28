@@ -484,21 +484,21 @@ export default function CustomersPage() {
     // AdminUsersPage / AdminPricingPage / AdminSettingsPage.
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-bold text-gray-900">Customers</h2>
-        <p className="mt-1 text-sm text-gray-500">
+        <h2 className="text-xl font-bold text-ink">Customers</h2>
+        <p className="mt-1 text-sm text-ink-mute">
           View, rename, and tidy up companies and contacts. You can only delete entries with no projects attached.
         </p>
       </div>
 
       {/* Controls — search + sort. Mirrors the dashboard's list-card
           controls so the page feels of-a-piece with the rest of admin. */}
-      <div className="mb-6 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-gray-200">
+      <div className="mb-6 rounded-2xl bg-white p-4 shadow-sm border border-line">
         <input
           type="search"
           placeholder="Search by company, contact, or email"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900"
+          className="w-full rounded-lg border border-line bg-white px-4 py-2.5 text-sm text-ink shadow-sm placeholder:text-ink-mute focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
         />
         <div className="mt-3 flex items-center gap-2">
           <SelectField
@@ -516,7 +516,7 @@ export default function CustomersPage() {
 
         {loading ? (
           <div className="flex justify-center py-20">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-line" />
           </div>
         ) : (
           <div className="space-y-4">
@@ -542,21 +542,21 @@ export default function CustomersPage() {
                             if (e.key === 'Escape') cancelEditCompany(c.id)
                           }}
                           autoFocus
-                          className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-sm font-medium text-gray-900 shadow-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                          className="min-w-0 flex-1 rounded-md border border-line bg-white px-2.5 py-1 text-sm font-medium text-ink shadow-sm focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
                           aria-label="Company name"
                           disabled={edit.saving}
                         />
                         <button
                           onClick={() => void saveCompany(c)}
                           disabled={edit.saving}
-                          className="shrink-0 rounded-md bg-gray-900 px-3 py-1 text-xs font-semibold text-white hover:bg-gray-800 disabled:opacity-50"
+                          className="shrink-0 rounded-md bg-ink px-3 py-1 text-xs font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                         >
                           {edit.saving ? 'Saving…' : 'Save'}
                         </button>
                         <button
                           onClick={() => cancelEditCompany(c.id)}
                           disabled={edit.saving}
-                          className="shrink-0 text-xs font-medium text-gray-500 hover:text-gray-900 disabled:opacity-50"
+                          className="shrink-0 text-xs font-medium text-ink-mute hover:text-ink disabled:opacity-50"
                         >
                           Cancel
                         </button>
@@ -571,12 +571,12 @@ export default function CustomersPage() {
                           onClick={() => toggleCompanyExpanded(c.id)}
                           aria-expanded={contactsOpen}
                           aria-controls={`company-${c.id}-contacts`}
-                          className="-ml-1 inline-flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+                          className="-ml-1 inline-flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
                         >
                           <svg
                             viewBox="0 0 12 12"
                             aria-hidden="true"
-                            className={['h-3 w-3 shrink-0 text-gray-400 transition-transform', contactsOpen ? 'rotate-90' : ''].join(' ')}
+                            className={['h-3 w-3 shrink-0 text-ink-mute transition-transform', contactsOpen ? 'rotate-90' : ''].join(' ')}
                             fill="none"
                             stroke="currentColor"
                             strokeWidth="2"
@@ -585,7 +585,7 @@ export default function CustomersPage() {
                           >
                             <polyline points="4.5 3 8.5 6 4.5 9" />
                           </svg>
-                          <span className="truncate whitespace-nowrap text-sm font-medium text-gray-900">{c.name}</span>
+                          <span className="truncate whitespace-nowrap text-sm font-medium text-ink">{c.name}</span>
                         </button>
                         <CountBadge
                           count={c.proofCount}
@@ -594,15 +594,15 @@ export default function CustomersPage() {
                         />
                         <button
                           onClick={() => startEditCompany(c)}
-                          className="shrink-0 text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+                          className="shrink-0 text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
                         >
                           Edit
                         </button>
-                        <div className="flex-1 border-t border-gray-200" />
+                        <div className="flex-1 border-t border-line" />
                         {canDeleteCompany && (
                           <button
                             onClick={() => setPending({ kind: 'company', id: c.id, name: c.name, contactCount: c.contacts.length })}
-                            className="shrink-0 text-xs font-medium text-rose-600 underline-offset-2 hover:underline"
+                            className="shrink-0 text-xs font-medium text-out underline-offset-2 hover:underline"
                           >
                             Delete company
                           </button>
@@ -611,7 +611,7 @@ export default function CustomersPage() {
                     )}
                   </div>
                   {edit?.rowError && (
-                    <p className="mb-2 rounded-md bg-rose-50 px-3 py-1.5 text-xs text-rose-700">{edit.rowError}</p>
+                    <p className="mb-2 rounded-md bg-out-soft px-3 py-1.5 text-xs text-out">{edit.rowError}</p>
                   )}
 
                   {companyProjectsOpen.has(c.id) && c.proofCount > 0 && (
@@ -625,10 +625,10 @@ export default function CustomersPage() {
                   {contactsOpen && (
                     <div
                       id={`company-${c.id}-contacts`}
-                      className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200"
+                      className="overflow-hidden rounded-2xl bg-white shadow-sm border border-line"
                     >
                       {c.contacts.length === 0 ? (
-                        <div className="px-5 py-4 text-sm text-gray-400">No contacts.</div>
+                        <div className="px-5 py-4 text-sm text-ink-mute">No contacts.</div>
                       ) : (
                         c.contacts.map((k, i) => (
                           <ContactRowUI
@@ -667,12 +667,12 @@ export default function CustomersPage() {
                       onClick={() => setOrphansExpanded((v) => !v)}
                       aria-expanded={open}
                       aria-controls="no-company-contacts"
-                      className="-ml-1 inline-flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+                      className="-ml-1 inline-flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
                     >
                       <svg
                         viewBox="0 0 12 12"
                         aria-hidden="true"
-                        className={['h-3 w-3 shrink-0 text-gray-400 transition-transform', open ? 'rotate-90' : ''].join(' ')}
+                        className={['h-3 w-3 shrink-0 text-ink-mute transition-transform', open ? 'rotate-90' : ''].join(' ')}
                         fill="none"
                         stroke="currentColor"
                         strokeWidth="2"
@@ -681,15 +681,15 @@ export default function CustomersPage() {
                       >
                         <polyline points="4.5 3 8.5 6 4.5 9" />
                       </svg>
-                      <span className="whitespace-nowrap text-sm font-medium text-gray-500">No company</span>
-                      <span className="ml-1 text-xs text-gray-400">({visibleOrphans.length})</span>
+                      <span className="whitespace-nowrap text-sm font-medium text-ink-mute">No company</span>
+                      <span className="ml-1 text-xs text-ink-mute">({visibleOrphans.length})</span>
                     </button>
-                    <div className="flex-1 border-t border-gray-200" />
+                    <div className="flex-1 border-t border-line" />
                   </div>
                   {open && (
                     <div
                       id="no-company-contacts"
-                      className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200"
+                      className="overflow-hidden rounded-2xl bg-white shadow-sm border border-line"
                     >
                       {visibleOrphans.map((k, i) => (
                         <ContactRowUI
@@ -715,19 +715,19 @@ export default function CustomersPage() {
             })()}
 
             {!hasResults && (
-              <div className="rounded-2xl bg-white py-16 text-center shadow-sm ring-1 ring-gray-200">
+              <div className="rounded-2xl bg-white py-16 text-center shadow-sm border border-line">
                 {searching ? (
                   <>
-                    <p className="text-gray-400">No companies or contacts match.</p>
+                    <p className="text-ink-mute">No companies or contacts match.</p>
                     <button
                       onClick={() => setSearchQuery('')}
-                      className="mt-2 text-sm text-gray-500 underline underline-offset-2 hover:text-gray-900"
+                      className="mt-2 text-sm text-ink-mute underline underline-offset-2 hover:text-ink"
                     >
                       Clear search
                     </button>
                   </>
                 ) : (
-                  <p className="text-gray-400">No customers yet.</p>
+                  <p className="text-ink-mute">No customers yet.</p>
                 )}
               </div>
             )}
@@ -749,7 +749,7 @@ export default function CustomersPage() {
       )}
 
       {toast && (
-        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-gray-900 px-5 py-2.5 text-sm font-medium text-white shadow-lg">
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-on-ink shadow-lg">
           {toast}
         </div>
       )}
@@ -774,36 +774,36 @@ function ContactRowUI({ contact, withTopBorder, edit, companies, projects, expan
   const canDelete = contact.proofCount === 0
   if (edit) {
     return (
-      <div className={['px-5 py-3', withTopBorder ? 'border-t border-gray-100' : ''].join(' ')}>
+      <div className={['px-5 py-3', withTopBorder ? 'border-t border-line-soft' : ''].join(' ')}>
         <div className="grid gap-2 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-start">
           <label className="block">
-            <span className="block text-[10px] font-medium uppercase tracking-wide text-gray-400">Full name</span>
+            <span className="block text-[10px] font-medium uppercase tracking-wide text-ink-mute">Full name</span>
             <input
               type="text"
               value={edit.draftFullName}
               onChange={(e) => onChangeDraft({ draftFullName: e.target.value })}
               disabled={edit.saving}
-              className="mt-1 w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 shadow-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              className="mt-1 w-full rounded-md border border-line bg-white px-2.5 py-1.5 text-sm text-ink shadow-sm focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
               autoFocus
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-medium uppercase tracking-wide text-gray-400">Email</span>
+            <span className="block text-[10px] font-medium uppercase tracking-wide text-ink-mute">Email</span>
             <input
               type="email"
               value={edit.draftEmail}
               onChange={(e) => onChangeDraft({ draftEmail: e.target.value })}
               disabled={edit.saving}
-              className="mt-1 w-full rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 shadow-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              className="mt-1 w-full rounded-md border border-line bg-white px-2.5 py-1.5 text-sm text-ink shadow-sm focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-medium uppercase tracking-wide text-gray-400">Company</span>
+            <span className="block text-[10px] font-medium uppercase tracking-wide text-ink-mute">Company</span>
             <select
               value={edit.draftCompanyId ?? ''}
               onChange={(e) => onChangeDraft({ draftCompanyId: e.target.value === '' ? null : e.target.value })}
               disabled={edit.saving}
-              className="mt-1 w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 shadow-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              className="mt-1 w-full rounded-md border border-line bg-white px-2 py-1.5 text-sm text-ink shadow-sm focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
             >
               <option value="">— No company —</option>
               {[...companies]
@@ -817,31 +817,31 @@ function ContactRowUI({ contact, withTopBorder, edit, companies, projects, expan
             <button
               onClick={onSave}
               disabled={edit.saving}
-              className="rounded-md bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-gray-800 disabled:opacity-50"
+              className="rounded-md bg-ink px-3 py-1.5 text-xs font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
             >
               {edit.saving ? 'Saving…' : 'Save'}
             </button>
             <button
               onClick={onCancelEdit}
               disabled={edit.saving}
-              className="text-xs font-medium text-gray-500 hover:text-gray-900 disabled:opacity-50"
+              className="text-xs font-medium text-ink-mute hover:text-ink disabled:opacity-50"
             >
               Cancel
             </button>
           </div>
         </div>
         {edit.rowError && (
-          <p className="mt-2 rounded-md bg-rose-50 px-3 py-1.5 text-xs text-rose-700">{edit.rowError}</p>
+          <p className="mt-2 rounded-md bg-out-soft px-3 py-1.5 text-xs text-out">{edit.rowError}</p>
         )}
       </div>
     )
   }
   return (
-    <div className={withTopBorder ? 'border-t border-gray-100' : ''}>
+    <div className={withTopBorder ? 'border-t border-line-soft' : ''}>
       <div className="flex items-center gap-3 px-5 py-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-gray-900">{contact.full_name}</div>
-          <div className="truncate text-xs text-gray-400">{contact.email}</div>
+          <div className="truncate text-sm font-medium text-ink">{contact.full_name}</div>
+          <div className="truncate text-xs text-ink-mute">{contact.email}</div>
         </div>
         <CountBadge
           count={contact.proofCount}
@@ -850,21 +850,21 @@ function ContactRowUI({ contact, withTopBorder, edit, companies, projects, expan
         />
         <button
           onClick={onStartEdit}
-          className="shrink-0 text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+          className="shrink-0 text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
         >
           Edit
         </button>
         {canDelete && (
           <button
             onClick={onDelete}
-            className="shrink-0 text-xs font-medium text-rose-600 underline-offset-2 hover:underline"
+            className="shrink-0 text-xs font-medium text-out underline-offset-2 hover:underline"
           >
             Delete
           </button>
         )}
       </div>
       {expanded && contact.proofCount > 0 && (
-        <div className="border-t border-gray-100 bg-gray-50/60 px-5 py-3">
+        <div className="border-t border-line-soft bg-canvas px-5 py-3">
           <ProjectList projects={projects} />
         </div>
       )}
@@ -883,7 +883,7 @@ function CountBadge({ count, expanded, onToggle }: {
       <span
         title="No projects"
         aria-label="No projects"
-        className="shrink-0 inline-flex items-center rounded-md bg-gray-50 px-1.5 py-0.5 text-[11px] font-medium text-gray-400"
+        className="shrink-0 inline-flex items-center rounded-md bg-canvas px-1.5 py-0.5 text-[11px] font-medium text-ink-mute"
       >
         —
       </span>
@@ -897,7 +897,7 @@ function CountBadge({ count, expanded, onToggle }: {
     return (
       <span
         title={`${count} ${projectsWord}`}
-        className="shrink-0 inline-flex items-center rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold text-gray-700"
+        className="shrink-0 inline-flex items-center rounded-md bg-line-soft px-1.5 py-0.5 text-[11px] font-semibold text-ink-soft"
       >
         {count}
       </span>
@@ -910,13 +910,13 @@ function CountBadge({ count, expanded, onToggle }: {
       aria-expanded={expanded}
       aria-label={title}
       title={title}
-      className="shrink-0 inline-flex items-center gap-0.5 rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900 focus-visible:ring-offset-1"
+      className="shrink-0 inline-flex items-center gap-0.5 rounded-md bg-line-soft px-1.5 py-0.5 text-[11px] font-semibold text-ink-soft hover:bg-line focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
     >
       <span>{count}</span>
       <svg
         viewBox="0 0 12 12"
         aria-hidden="true"
-        className={['h-2.5 w-2.5 text-gray-500 transition-transform', expanded ? 'rotate-180' : ''].join(' ')}
+        className={['h-2.5 w-2.5 text-ink-mute transition-transform', expanded ? 'rotate-180' : ''].join(' ')}
         fill="none"
         stroke="currentColor"
         strokeWidth="2"
@@ -946,7 +946,7 @@ function ProjectList({ projects, showContact, className }: {
     // Defensive — the parent only mounts us when count > 0, but a stale
     // count (rare) is better caught with a quiet line than an empty box.
     return (
-      <div className={['rounded-xl bg-gray-50 px-4 py-3 text-xs text-gray-400', className ?? ''].join(' ')}>
+      <div className={['rounded-xl bg-canvas px-4 py-3 text-xs text-ink-mute', className ?? ''].join(' ')}>
         No matching projects to show.
       </div>
     )
@@ -963,30 +963,30 @@ function ProjectList({ projects, showContact, className }: {
     return bv.localeCompare(av)
   })
   return (
-    <div className={['overflow-hidden rounded-xl bg-white ring-1 ring-gray-200', className ?? ''].join(' ')}>
+    <div className={['overflow-hidden rounded-xl bg-white border border-line', className ?? ''].join(' ')}>
       {ordered.map((p, i) => (
         <Link
           key={p.proof_id}
           to={`/proofs/${p.proof_id}`}
           className={[
-            'flex items-center gap-3 px-4 py-2 text-xs hover:bg-gray-50',
-            i > 0 ? 'border-t border-gray-100' : '',
+            'flex items-center gap-3 px-4 py-2 text-xs hover:bg-canvas',
+            i > 0 ? 'border-t border-line-soft' : '',
           ].join(' ')}
         >
           <StatusDot status={p.status} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm text-gray-900">
+            <div className="truncate text-sm text-ink">
               {projectTitle(p, !!showContact)}
               {p.current_version_number != null && (
-                <span className="ml-2 text-xs text-gray-400">v{p.current_version_number}</span>
+                <span className="ml-2 text-xs text-ink-mute">v{p.current_version_number}</span>
               )}
             </div>
             {p.material_display && (
-              <div className="truncate text-xs text-gray-400">{p.material_display}</div>
+              <div className="truncate text-xs text-ink-mute">{p.material_display}</div>
             )}
           </div>
-          <span className="shrink-0 text-xs text-gray-400">{statusLabel(p.status)}</span>
-          <span className="shrink-0 text-xs text-gray-400">
+          <span className="shrink-0 text-xs text-ink-mute">{statusLabel(p.status)}</span>
+          <span className="shrink-0 text-xs text-ink-mute">
             {p.last_activity_at ? relativeTime(p.last_activity_at) : ''}
           </span>
         </Link>
@@ -1012,15 +1012,19 @@ function statusLabel(status: ProofStatus): string {
 }
 
 function StatusDot({ status }: { status: ProofStatus }) {
+  // Status dot colour follows the dashboard tile + row palette:
+  // approved → in-stock, abandoned → ink-mute, dormant → ink-dim,
+  // in_progress → allocated (matches the "In review" pill).
   const colour =
-    status === 'approved'  ? 'bg-emerald-500'
-    : status === 'dormant'  ? 'bg-gray-300'
-    : status === 'abandoned' ? 'bg-slate-400'
-    :                          'bg-amber-400'
+    status === 'approved'   ? 'var(--c-in-stock)'
+    : status === 'dormant'  ? 'var(--c-ink-dim)'
+    : status === 'abandoned' ? 'var(--c-ink-mute)'
+    :                          'var(--c-allocated)'
   return (
     <span
       aria-hidden="true"
-      className={['h-2 w-2 shrink-0 rounded-full', colour].join(' ')}
+      className="h-2 w-2 shrink-0 rounded-full"
+      style={{ backgroundColor: colour }}
     />
   )
 }
@@ -1041,16 +1045,16 @@ function SelectField<T extends string>({
   label?: string
 }) {
   return (
-    <div className="relative inline-flex items-center rounded-md border border-gray-300 bg-white shadow-sm hover:bg-gray-50 focus-within:ring-2 focus-within:ring-gray-900">
+    <div className="relative inline-flex items-center rounded-md border border-line bg-surface hover:bg-canvas focus-within:border-[var(--c-brand)] focus-within:outline focus-within:outline-2 focus-within:outline-offset-[-1px] focus-within:outline-[var(--c-brand)]">
       {label && (
-        <span className="pointer-events-none select-none pl-2.5 text-xs font-medium text-gray-400">
+        <span className="pointer-events-none select-none pl-2.5 text-xs font-medium text-ink-mute">
           {label}
         </span>
       )}
       <select
         value={value}
         onChange={(e) => onChange(e.target.value as T)}
-        className="cursor-pointer appearance-none bg-transparent py-1.5 pl-1 pr-7 text-xs font-medium text-gray-800 focus:outline-none"
+        className="cursor-pointer appearance-none bg-transparent py-1.5 pl-1 pr-7 text-xs font-medium text-ink focus:outline-none"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
@@ -1059,7 +1063,7 @@ function SelectField<T extends string>({
       <svg
         aria-hidden
         viewBox="0 0 16 16"
-        className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-gray-400"
+        className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ink-mute"
         fill="none"
         stroke="currentColor"
         strokeWidth="2"
@@ -1093,22 +1097,22 @@ function ConfirmDialog({
       ariaLabel="Confirm delete"
       panelClassName="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl"
     >
-      <p className="text-sm text-gray-700">{message}</p>
+      <p className="text-sm text-ink-soft">{message}</p>
       {errorMsg && (
-        <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{errorMsg}</p>
+        <p className="mt-3 rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{errorMsg}</p>
       )}
       <div className="mt-5 flex justify-end gap-2">
         <button
           onClick={onCancel}
           disabled={working}
-          className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+          className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
         >
           Cancel
         </button>
         <button
           onClick={onConfirm}
           disabled={working}
-          className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+          className="rounded-lg bg-out px-4 py-2 text-sm font-semibold text-on-out hover:opacity-90 disabled:opacity-50"
         >
           {working ? 'Deleting…' : 'Delete'}
         </button>
