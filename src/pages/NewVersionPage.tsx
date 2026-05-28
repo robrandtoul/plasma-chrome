@@ -5229,7 +5229,7 @@ export default function NewVersionPage() {
                               })
                             }
                             disabled={idx === 0}
-                            className="rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink-soft hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
+                            className="rounded border border-line bg-surface px-2 py-1 text-xs text-ink-soft hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
                             aria-label="Move up"
                           >
                             ↑
@@ -5245,7 +5245,7 @@ export default function NewVersionPage() {
                               })
                             }
                             disabled={idx === variantRows.length - 1}
-                            className="rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink-soft hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
+                            className="rounded border border-line bg-surface px-2 py-1 text-xs text-ink-soft hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
                             aria-label="Move down"
                           >
                             ↓
@@ -5256,7 +5256,7 @@ export default function NewVersionPage() {
                               setVariantRows((prev) => prev.filter((_, i) => i !== idx))
                             }
                             disabled={variantRows.length <= 2}
-                            className="rounded-md border border-out bg-surface px-2 py-1 text-xs text-out hover:bg-out-soft disabled:cursor-not-allowed disabled:opacity-40"
+                            className="rounded border border-out bg-surface px-2 py-1 text-xs text-out hover:bg-out-soft disabled:cursor-not-allowed disabled:opacity-40"
                             aria-label={`Remove direction ${idx + 1}`}
                           >
                             ✕
@@ -6182,7 +6182,7 @@ function material_display_for(id: string, materials: Material[]) {
 }
 
 const inputClass = 'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand'
-const selectClass = 'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand bg-surface'
+const selectClass = 'select-styled w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand bg-surface'
 
 // One row of the Paper layers picker block. Pulled out as a helper
 // so the three layers (Front/Core/Back) share the same swatch-+-
@@ -6295,8 +6295,14 @@ function carriedFieldStyle(carried: boolean, edited: boolean): CSSProperties {
     // rule reserves the geometry so nothing shifts. Only a change from
     // the prior version lights up amber. Coral is reserved for the
     // selected-value indicator, not for "carried".
+    //
+    // The edited marker is the full-strength amber left rule; the
+    // background fill is softened toward the canvas (~40% strength) so
+    // it tints the field without overpowering it — and so the amber
+    // selected chip/segment inside (which uses full bg-low-soft) still
+    // reads clearly rather than blending into the wrapper.
     borderLeft: edited ? '4px solid var(--c-low)' : '4px solid transparent',
-    background: edited ? 'var(--c-low-soft)' : 'transparent',
+    background: edited ? 'color-mix(in srgb, var(--c-low-soft) 40%, var(--c-bg))' : 'transparent',
     paddingLeft: '12px',
     paddingTop: '8px',
     paddingBottom: '8px',

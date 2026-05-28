@@ -327,7 +327,7 @@ export default function AdminLeadTimesPage() {
           type="button"
           onClick={handleSave}
           disabled={saveDisabled}
-          className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {dirtyCount === 0
             ? 'Save changes'

@@ -1363,7 +1363,7 @@ function HelpScoutPicker({
             key={m.id}
             type="button"
             onClick={() => onPick(m)}
-            className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-line px-3 py-2.5 text-left text-sm hover:bg-canvas focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
+            className="flex w-full flex-col items-start gap-0.5 rounded border border-line px-3 py-2.5 text-left text-sm hover:bg-canvas focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
           >
             <span className="font-medium text-ink">{m.subject ?? `Conversation #${m.id}`}</span>
             <span className="text-xs text-ink-mute">
@@ -1387,7 +1387,7 @@ function HelpScoutPicker({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-lg px-3 py-1.5 text-sm text-ink-mute hover:bg-line-soft"
+          className="rounded px-3 py-1.5 text-sm text-ink-mute hover:bg-line-soft"
         >
           Close
         </button>

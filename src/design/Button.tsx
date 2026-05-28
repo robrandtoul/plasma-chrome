@@ -24,9 +24,11 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 // same cascade reasons documented on Input.
 const BASE = 'inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium font-sans transition-colors disabled:opacity-60 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]'
 
+// 4px corners on both sizes — matches the 4px chips / inputs / cells
+// across the app for one consistent interactive-element radius.
 const SIZE_CLASS: Record<ButtonSize, string> = {
-  sm: 'h-[30px] px-[10px] text-[13px] rounded-[6px]',
-  md: 'h-[38px] px-4 text-sm rounded-[8px]',
+  sm: 'h-[30px] px-[10px] text-[13px] rounded-[4px]',
+  md: 'h-[38px] px-4 text-sm rounded-[4px]',
 }
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {

@@ -634,7 +634,7 @@ export default function VersionDetailModal({
             </div>
             <button
               onClick={handleClose}
-              className="ml-4 shrink-0 rounded-lg p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft"
+              className="ml-4 shrink-0 rounded p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft"
             >
               <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                 <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
@@ -1008,7 +1008,7 @@ export default function VersionDetailModal({
                 </p>
                 <button
                   onClick={handleClose}
-                  className="rounded-lg bg-ink px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
+                  className="rounded bg-ink px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
                 >
                   Close
                 </button>
@@ -1020,7 +1020,7 @@ export default function VersionDetailModal({
                   <button
                     onClick={() => { setDeleteState('idle'); setError(null) }}
                     disabled={deleteState === 'working'}
-                    className="rounded-lg px-3 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+                    className="rounded px-3 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
                   >
                     Cancel
                   </button>
@@ -1029,7 +1029,7 @@ export default function VersionDetailModal({
                       <button
                         onClick={onDeleteProofRequested}
                         disabled={deleteState === 'working'}
-                        className="rounded-lg bg-out px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+                        className="rounded bg-out px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                       >
                         Delete project
                       </button>
@@ -1049,7 +1049,7 @@ export default function VersionDetailModal({
               <div className="flex items-center justify-between gap-3">
                 <button
                   onClick={() => setDeleteState('confirm')}
-                  className="rounded-lg px-3 py-2 text-sm font-medium text-out hover:bg-out-soft"
+                  className="rounded px-3 py-2 text-sm font-medium text-out hover:bg-out-soft"
                 >
                   Delete version
                 </button>
@@ -1058,20 +1058,20 @@ export default function VersionDetailModal({
                     <button
                       onClick={handleSetCurrent}
                       disabled={settingCurrent}
-                      className="rounded-lg px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-50"
+                      className="rounded px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-50"
                     >
                       {settingCurrent ? 'Setting…' : 'Set as current'}
                     </button>
                   )}
                   <button
                     onClick={() => navigate(`/proofs/${proofId}/versions/${version.id}/edit`)}
-                    className="rounded-lg px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas"
+                    className="rounded px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas"
                   >
                     Edit version
                   </button>
                   <button
                     onClick={handleClose}
-                    className="rounded-lg bg-ink px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
+                    className="rounded bg-ink px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
                   >
                     Close
                   </button>
@@ -1202,14 +1202,14 @@ function ApprovalGroup({
               <button
                 type="button"
                 onClick={onOpenApprove}
-                className="rounded-lg bg-in-stock-soft px-3 py-1.5 text-xs font-medium text-in-stock ring-1 ring-in-stock hover:bg-in-stock-soft"
+                className="rounded bg-in-stock-soft px-3 py-1.5 text-xs font-medium text-in-stock ring-1 ring-in-stock hover:bg-in-stock-soft"
               >
                 Mark as approved
               </button>
               <button
                 type="button"
                 onClick={onOpenChanges}
-                className="rounded-lg bg-low-soft px-3 py-1.5 text-xs font-medium text-low ring-1 ring-low hover:bg-low-soft"
+                className="rounded bg-low-soft px-3 py-1.5 text-xs font-medium text-low ring-1 ring-low hover:bg-low-soft"
               >
                 Record change request
               </button>
@@ -1339,7 +1339,7 @@ function ApproveDialog({
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-lg px-3 py-2 text-sm font-medium text-ink-mute hover:bg-canvas"
+          className="rounded px-3 py-2 text-sm font-medium text-ink-mute hover:bg-canvas"
         >
           Cancel
         </button>
@@ -1347,7 +1347,7 @@ function ApproveDialog({
           type="button"
           onClick={() => onConfirm(trimmed)}
           disabled={trimmed.length === 0}
-          className="rounded-lg bg-in-stock px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+          className="rounded bg-in-stock px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
         >
           Confirm
         </button>
@@ -1412,7 +1412,7 @@ function RequestChangesDialog({
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-lg px-3 py-2 text-sm font-medium text-ink-mute hover:bg-canvas"
+          className="rounded px-3 py-2 text-sm font-medium text-ink-mute hover:bg-canvas"
         >
           Cancel
         </button>
@@ -1420,7 +1420,7 @@ function RequestChangesDialog({
           type="button"
           onClick={() => onSubmit(trimmedActor, trimmedNote === '' ? null : trimmedNote)}
           disabled={trimmedActor.length === 0}
-          className="rounded-lg bg-low px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+          className="rounded bg-low px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
         >
           Submit
         </button>

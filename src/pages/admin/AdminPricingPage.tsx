@@ -268,20 +268,20 @@ export default function AdminPricingPage() {
           <button
             onClick={handleExportSurcharges}
             disabled={exporting}
-            className="rounded-lg px-3 py-2 text-sm font-medium text-ink-soft border border-line hover:bg-canvas disabled:opacity-50"
+            className="rounded px-3 py-2 text-sm font-medium text-ink-soft border border-line hover:bg-canvas disabled:opacity-50"
           >
             Export surcharges
           </button>
           <button
             onClick={handleExportAll}
             disabled={exporting}
-            className="rounded-lg px-3 py-2 text-sm font-medium text-ink-soft border border-line hover:bg-canvas disabled:opacity-50"
+            className="rounded px-3 py-2 text-sm font-medium text-ink-soft border border-line hover:bg-canvas disabled:opacity-50"
           >
             {exporting ? 'Bundling…' : 'Export everything (ZIP)'}
           </button>
           <button
             onClick={() => setShowImport(true)}
-            className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
+            className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
           >
             Import
           </button>

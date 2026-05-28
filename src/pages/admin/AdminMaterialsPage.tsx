@@ -53,7 +53,7 @@ export default function AdminMaterialsPage() {
           </div>
           <Link
             to="/admin/materials/new"
-            className="shrink-0 rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
+            className="shrink-0 rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
           >
             Add material
           </Link>
@@ -187,13 +187,13 @@ function renderMaterialRow(
       <div className="flex shrink-0 flex-wrap justify-end gap-2">
         <button
           onClick={() => openEditor(m)}
-          className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-soft border border-line hover:bg-canvas"
+          className="rounded px-3 py-1.5 text-sm font-medium text-ink-soft border border-line hover:bg-canvas"
         >
           Edit
         </button>
         <Link
           to={`/admin/pricing/materials/${m.code}`}
-          className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-mute hover:bg-canvas"
+          className="rounded px-3 py-1.5 text-sm font-medium text-ink-mute hover:bg-canvas"
         >
           Pricing &amp; variants
         </Link>

@@ -269,7 +269,7 @@ export default function MessageSendPanel({
           <button
             type="button"
             onClick={onSkip}
-            className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
+            className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
           >
             Continue to project
           </button>
@@ -390,7 +390,7 @@ export default function MessageSendPanel({
             disabled={editorDisabled || !bodyReady || repliesEnabled === false}
             title={repliesEnabled === false ? 'Replies are currently paused by an admin.' : undefined}
             className={[
-              'rounded-lg px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
+              'rounded px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
               editorState === 'sending' || editorState === 'sent' || repliesEnabled === false
                 ? 'bg-ink/60 cursor-not-allowed'
                 : 'bg-ink hover:opacity-90',

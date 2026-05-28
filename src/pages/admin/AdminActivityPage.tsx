@@ -349,7 +349,7 @@ export default function AdminActivityPage() {
             <button
               onClick={handleExport}
               disabled={exporting}
-              className="rounded-lg px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-50"
+              className="rounded px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-50"
             >
               {exporting ? 'Exporting…' : 'Export CSV'}
             </button>
@@ -455,14 +455,14 @@ export default function AdminActivityPage() {
               <button
                 onClick={prevPage}
                 disabled={pageNumber <= 1}
-                className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-40"
+                className="rounded px-3 py-1.5 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-40"
               >
                 Previous
               </button>
               <button
                 onClick={nextPage}
                 disabled={!hasMore}
-                className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-40"
+                className="rounded px-3 py-1.5 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-40"
               >
                 Next
               </button>
@@ -487,5 +487,5 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-const selectClass = 'min-w-[10rem] rounded border border-line bg-surface px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
+const selectClass = 'select-styled min-w-[10rem] rounded border border-line bg-surface px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
 const inputClass  = 'rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'

@@ -369,7 +369,7 @@ export default function AdminCoreColoursPage() {
             type="button"
             onClick={handleExport}
             disabled={colours.length === 0}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded px-4 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50"
             title={colours.length === 0 ? 'Catalogue is empty — nothing to export' : 'Download the full palette as XLSX'}
           >
             Export
@@ -377,7 +377,7 @@ export default function AdminCoreColoursPage() {
           <button
             type="button"
             onClick={() => setShowImport(true)}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas"
+            className="rounded px-4 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas"
             title="Upload an XLSX to bulk-update the palette"
           >
             Import
@@ -386,7 +386,7 @@ export default function AdminCoreColoursPage() {
             type="button"
             onClick={openAdd}
             disabled={!!adding}
-            className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             + Add colour
           </button>
@@ -512,7 +512,7 @@ export default function AdminCoreColoursPage() {
                             type="button"
                             onClick={() => cancelEdit(c.id)}
                             disabled={draft.saving}
-                            className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+                            className="rounded px-3 py-1.5 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
                           >
                             Cancel
                           </button>
@@ -520,7 +520,7 @@ export default function AdminCoreColoursPage() {
                             type="button"
                             onClick={() => void saveEdit(c)}
                             disabled={draft.saving}
-                            className="rounded-lg bg-ink px-3 py-1.5 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+                            className="rounded bg-ink px-3 py-1.5 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                           >
                             {draft.saving ? 'Saving…' : 'Save'}
                           </button>
@@ -534,7 +534,7 @@ export default function AdminCoreColoursPage() {
                         <button
                           type="button"
                           onClick={() => startEdit(c)}
-                          className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-soft hover:bg-canvas"
+                          className="rounded px-3 py-1.5 text-sm font-medium text-ink-soft hover:bg-canvas"
                         >
                           Edit
                         </button>
@@ -542,7 +542,7 @@ export default function AdminCoreColoursPage() {
                           <button
                             type="button"
                             onClick={() => void deactivate(c)}
-                            className="rounded-lg px-3 py-1.5 text-sm font-medium text-out hover:bg-out-soft"
+                            className="rounded px-3 py-1.5 text-sm font-medium text-out hover:bg-out-soft"
                           >
                             Remove
                           </button>
@@ -550,7 +550,7 @@ export default function AdminCoreColoursPage() {
                           <button
                             type="button"
                             onClick={() => void reactivate(c)}
-                            className="rounded-lg px-3 py-1.5 text-sm font-medium text-in-stock hover:bg-in-stock-soft"
+                            className="rounded px-3 py-1.5 text-sm font-medium text-in-stock hover:bg-in-stock-soft"
                           >
                             Restore
                           </button>
@@ -619,7 +619,7 @@ export default function AdminCoreColoursPage() {
                         type="button"
                         onClick={() => setAdding(null)}
                         disabled={adding.saving}
-                        className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+                        className="rounded px-3 py-1.5 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
                       >
                         Cancel
                       </button>
@@ -627,7 +627,7 @@ export default function AdminCoreColoursPage() {
                         type="button"
                         onClick={() => void createColour()}
                         disabled={adding.saving}
-                        className="rounded-lg bg-ink px-3 py-1.5 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+                        className="rounded bg-ink px-3 py-1.5 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                       >
                         {adding.saving ? 'Saving…' : 'Save colour'}
                       </button>

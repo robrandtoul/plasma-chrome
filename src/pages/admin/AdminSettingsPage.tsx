@@ -494,7 +494,7 @@ export default function AdminSettingsPage() {
           <button
             onClick={testHelpScout}
             disabled={hsTesting}
-            className="shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-50"
+            className="shrink-0 rounded px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-50"
           >
             {hsTesting ? 'Testing…' : 'Test connection'}
           </button>

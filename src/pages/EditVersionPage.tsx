@@ -1543,7 +1543,7 @@ export default function EditVersionPage() {
               : undefined
         }
         className={[
-          'rounded-lg px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
+          'rounded px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
           isValid ? 'bg-ink hover:opacity-90' : 'bg-ink/60 hover:bg-ink/75',
           'disabled:cursor-not-allowed disabled:opacity-50',
         ].join(' ')}
@@ -1886,7 +1886,7 @@ export default function EditVersionPage() {
                       <select
                         value={entry.associated_name ?? ''}
                         onChange={(e) => updateAssociatedName(key, e.target.value || null)}
-                        className="mt-1 w-full rounded border border-line px-2 py-1 text-xs focus:border-brand focus:outline-none"
+                        className="select-styled mt-1 w-full rounded border border-line px-2 py-1 text-xs focus:border-brand focus:outline-none"
                         aria-label="Associated name"
                       >
                         <option value="">Shared</option>
@@ -1895,7 +1895,7 @@ export default function EditVersionPage() {
                       <select
                         value={entry.side ?? ''}
                         onChange={(e) => updateSide(key, (e.target.value || null) as 'front' | 'back' | null)}
-                        className="mt-1 w-full rounded border border-line px-2 py-1 text-xs focus:border-brand focus:outline-none"
+                        className="select-styled mt-1 w-full rounded border border-line px-2 py-1 text-xs focus:border-brand focus:outline-none"
                         aria-label="Side"
                       >
                         <option value="">—</option>
@@ -2316,7 +2316,7 @@ function EditLayerColourPicker({
           <select
             value={selectedId ?? ''}
             onChange={(e) => onChange(e.target.value || null)}
-            className={[inputClass, invalid ? 'border-out focus:border-out focus:ring-out' : ''].join(' ')}
+            className={['select-styled', inputClass, invalid ? 'border-out focus:border-out focus:ring-out' : ''].join(' ')}
           >
             <option value="">Select a colour…</option>
             {colours.map((c) => (

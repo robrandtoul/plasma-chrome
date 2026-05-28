@@ -141,7 +141,7 @@ export default function AddUserDialog({
                   <button
                     type="button"
                     onClick={() => setPassword(generatePassword(12))}
-                    className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas"
+                    className="shrink-0 rounded border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas"
                   >
                     Generate
                   </button>
@@ -149,7 +149,7 @@ export default function AddUserDialog({
                     type="button"
                     onClick={() => setShowPassword(v => !v)}
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas"
+                    className="shrink-0 rounded border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas"
                   >
                     {showPassword ? 'Hide' : 'Show'}
                   </button>
@@ -165,14 +165,14 @@ export default function AddUserDialog({
                   type="button"
                   onClick={onClose}
                   disabled={submitting}
-                  className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
+                  className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+                  className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                 >
                   {submitting ? 'Creating…' : 'Create user'}
                 </button>
@@ -207,7 +207,7 @@ function CredentialsView({ user, onCopy, onClose }: {
       <div className="flex justify-end">
         <button
           onClick={onClose}
-          className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
+          className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
         >
           Done
         </button>

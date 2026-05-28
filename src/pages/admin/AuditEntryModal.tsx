@@ -86,7 +86,7 @@ export default function AuditEntryModal({ entry, onClose }: {
         </div>
         <button
           onClick={onClose}
-          className="ml-4 rounded-lg p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft"
+          className="ml-4 rounded p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft"
           aria-label="Close"
         >
           <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
