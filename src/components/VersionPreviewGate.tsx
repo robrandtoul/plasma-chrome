@@ -93,7 +93,7 @@ export default function VersionPreviewGate({
             <button
               type="button"
               onClick={onEdit}
-              className="rounded-lg px-3 py-2 text-sm font-medium text-ink-dim ring-1 ring-ink hover:opacity-90 hover:text-on-ink"
+              className="rounded-lg px-3 py-2 text-sm font-medium text-ink-dim ring-1 ring-ink hover:bg-ink hover:text-on-ink"
             >
               Go back and edit
             </button>
