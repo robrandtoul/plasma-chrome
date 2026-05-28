@@ -4056,10 +4056,7 @@ export default function NewVersionPage() {
       <PageDropOverlay visible={isPageDragOver} />
       <div className="mx-auto max-w-6xl px-4 py-10 pb-32 sm:px-6">
 
-        {/* Back + Quote compiler. QuoteLink lives in the per-page
-            header on six pages today. Future "extract shared header"
-            pass should inline this once and remove the per-page
-            insertions. */}
+        {/* Breadcrumb back to Proofs / this project. */}
         <nav className="mb-6 flex items-center gap-1.5 text-[13px] text-ink-mute">
           <Link to="/" className="hover:text-ink">Proofs</Link>
           <span className="text-ink-dim">›</span>

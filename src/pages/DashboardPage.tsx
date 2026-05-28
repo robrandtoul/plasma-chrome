@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
-import { DesignerChrome, useDesignerProfile, ButtonCoral, ButtonGhost, ButtonInk, ProofStatusPill } from '../design'
-import { Plus, Filter, X, Maximize2, Bell, MessageSquare, Eye, Check } from 'lucide-react'
+import { DesignerChrome, useDesignerProfile, ButtonCoral, ButtonInk, ProofStatusPill } from '../design'
+import { Plus, X, Maximize2, Bell, MessageSquare, Eye, Check, Clock } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -45,7 +45,7 @@ import {
 type SortMode  = 'activity' | 'date' | 'name'
 type GroupMode = 'time' | 'company'
 type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week' | 'not_viewed' | 'changes_requested'
-type ChipKey   = 'all' | 'mine' | 'needs_me' | 'last_7_days' | 'steel' | 'letterpress'
+type ChipKey   = 'all' | 'metal' | 'paper' | 'plastic' | 'carbon' | 'wood' | 'acrylic'
 
 // Reason chip text per rule. Templated against rule_meta.days where
 // the rule has a threshold. Kept here rather than in a shared lib
@@ -85,25 +85,50 @@ interface DashboardLatestEvent {
   company_name: string | null
 }
 
+// One material's production lead time, read straight off the
+// materials table (authenticated SELECT, same source the admin Lead
+// times tab writes to). Only rows where both days are set are
+// fetched, so the chart never has to reason about the null case.
+interface LeadTime {
+  display_name: string
+  category: string
+  lead_time_min_days: number
+  lead_time_max_days: number
+}
+
 const SORT_KEY      = 'proofViewer.dashboard.sort'
 const GROUP_KEY     = 'proofViewer.dashboard.group'
 const ABANDONED_KEY = 'proofViewer.dashboard.showAbandoned'
 const SNOOZED_KEY   = 'proofViewer.dashboard.showSnoozed'
 const CHIP_KEY      = 'proofViewer.dashboard.chip'
 
-// Filter chip strip — six fixed chips per the mockup. Ordered left
-// to right as: clear → ownership → attention → recency → two top
-// materials. Material chips are pinned to Steel + Letterpress
-// because they cover the highest-traffic product families; a future
-// "Saved views" feature can carry per-designer custom chip sets.
+// Filter chip strip — material-family lenses. The status tiles above
+// own "status" and the search box owns "customer", so this row slices
+// the one dimension neither covers: the product family. (Replaced the
+// old ownership/attention/recency chips, which duplicated the tiles or
+// added little — see the dashboard review.)
 const CHIPS = [
-  { value: 'all',          label: 'All' },
-  { value: 'mine',         label: 'Mine' },
-  { value: 'needs_me',     label: 'Needs me' },
-  { value: 'last_7_days',  label: 'Last 7 days' },
-  { value: 'steel',        label: 'Steel' },
-  { value: 'letterpress',  label: 'Letterpress' },
+  { value: 'all',     label: 'All' },
+  { value: 'metal',   label: 'Metal' },
+  { value: 'paper',   label: 'Paper' },
+  { value: 'plastic', label: 'Plastic' },
+  { value: 'carbon',  label: 'Carbon fibre' },
+  { value: 'wood',    label: 'Wood' },
+  { value: 'acrylic', label: 'Acrylic' },
 ] as const
+
+// Each family matches against the proof's material display name (the
+// dashboard row only carries the name, not the catalogue category).
+// The material set is stable; revisit if a material is added whose
+// name doesn't match one of these patterns.
+const MATERIAL_CATEGORY_MATCH: Record<Exclude<ChipKey, 'all'>, RegExp> = {
+  metal:   /steel|metal|titanium/i,
+  paper:   /letterpress|paper/i,
+  plastic: /plastic/i,
+  carbon:  /carbon/i,
+  wood:    /wood/i,
+  acrylic: /acrylic/i,
+}
 
 function readSort(): SortMode {
   try {
@@ -134,7 +159,7 @@ function readShowSnoozed(): boolean {
 function readChip(): ChipKey {
   try {
     const v = localStorage.getItem(CHIP_KEY)
-    if (v === 'all' || v === 'mine' || v === 'needs_me' || v === 'last_7_days' || v === 'steel' || v === 'letterpress') return v
+    if (v === 'all' || v === 'metal' || v === 'paper' || v === 'plastic' || v === 'carbon' || v === 'wood' || v === 'acrylic') return v
   } catch { /* */ }
   return 'all'
 }
@@ -297,10 +322,10 @@ function StatTile({ label, count, active, tone, onClick }: StatTileProps) {
       {/* Dot + label row. Dot picks up the tile's tone; label uses the
           eyebrow class (inline whitespace-normal so long labels wrap —
           see PR 17c for why the override has to be inline). */}
-      <div className="flex items-baseline gap-2 min-h-[24px]">
+      <div className="flex items-center gap-2 min-h-[24px]">
         <span
           aria-hidden="true"
-          className="inline-block w-2 h-2 rounded-full shrink-0 translate-y-[-1px]"
+          className="inline-block w-4 h-4 rounded shrink-0"
           style={{ backgroundColor: tint }}
         />
         <span
@@ -750,7 +775,12 @@ function ThumbnailLightbox({ imageUrl, projectName, onClose, onOpenProject }: Th
       aria-modal="true"
       aria-label={`${projectName} preview`}
       className="fixed inset-0 z-[70] flex flex-col items-center justify-center bg-black/80 p-8"
-      onClick={onClose}
+      // createPortal renders to document.body, but React still bubbles
+      // synthetic events up the *component* tree — so without stopping
+      // propagation here the click would also hit ProjectRow's onClick
+      // and navigate to the proof page. stopPropagation keeps a
+      // backdrop click as a pure dismiss.
+      onClick={(e) => { e.stopPropagation(); onClose() }}
     >
       <button
         type="button"
@@ -1419,10 +1449,10 @@ function LatestActivityPanel({
 }) {
   return (
     <div className="rounded-[14px] bg-surface border border-line overflow-hidden">
-      {/* Header: bell icon in a coral-tinted square + LAST 24 HOURS
-          eyebrow + Today's activity h-display. The bell ties the
-          panel to the per-event icon-square idiom below — same
-          14% tint + solid icon treatment, same 32px box. */}
+      {/* Header: bell icon in a coral-tinted square + Recent eyebrow
+          + Latest activity h-display. The bell ties the panel to the
+          per-event icon-square idiom below — same 14% tint + solid
+          icon treatment, same 32px box. */}
       <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-line-soft">
         <span
           aria-hidden="true"
@@ -1435,9 +1465,9 @@ function LatestActivityPanel({
           <Bell size={16} />
         </span>
         <div className="min-w-0">
-          <div className="eyebrow text-ink-mute">Last 24 hours</div>
+          <div className="eyebrow text-ink-mute">Recent</div>
           <h2 className="font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0 text-[20px]">
-            Today's activity
+            Latest activity
           </h2>
         </div>
       </div>
@@ -1446,7 +1476,10 @@ function LatestActivityPanel({
           No customer activity yet.
         </p>
       ) : (
-        <ul className="divide-y divide-line-soft">
+        // Cap the list to roughly six rows (~70px each) and let older
+        // entries scroll into view. The header above stays fixed; only
+        // the list scrolls. The fetch already pulls up to 20 events.
+        <ul className="max-h-[420px] overflow-y-auto divide-y divide-line-soft">
           {events.map((e) => {
             const visual = ACTIVITY_VISUAL[e.event_type]
             const Icon = visual.icon
@@ -1515,6 +1548,175 @@ function LatestActivityPanel({
   )
 }
 
+// ── Lead times chart ─────────────────────────────────────────────────────────
+
+// Per-category bar colour. Mirrors the material-family filter chips'
+// intent (one hue per family) but keys off the catalogue `category`
+// column directly rather than a name regex. All values are design
+// tokens so the chart stays on-system; carbon's variants share the
+// near-black ink tint, fitting the material. Unknown categories fall
+// back to the muted ink grey.
+const LEAD_TIME_CATEGORY_TINT: Record<string, string> = {
+  metal:            'var(--c-allocated)',
+  paper:            'var(--c-low)',
+  plastic:          'var(--c-brand)',
+  wood:             'var(--c-in-stock)',
+  acrylic:          'var(--c-critical)',
+  carbon_fibre:     'var(--c-ink)',
+  carbon_fibre_cnc: 'var(--c-ink)',
+  carbon_cnc:       'var(--c-ink)',
+}
+
+function leadTimeTint(category: string): string {
+  return LEAD_TIME_CATEGORY_TINT[category] ?? 'var(--c-ink-mute)'
+}
+
+// Horizontal range-bar chart of production lead times. Each row is one
+// material; the bar runs left→right with a solid core up to the *min*
+// business-day figure and a lighter tail extending to the *max*, so
+// the bar reads as "at least X, up to Y". Bar widths are scaled to the
+// single longest max across all materials, making rows comparable at a
+// glance. Sits in the dashboard sidebar under Latest activity.
+function LeadTimesChart({
+  leadTimes,
+  navigate,
+}: {
+  leadTimes: LeadTime[]
+  navigate: (to: string) => void
+}) {
+  // Longest max-days drives the scale. Guard against an all-zero /
+  // empty set so the width maths never divides by zero.
+  const scaleMax = leadTimes.reduce((m, lt) => Math.max(m, lt.lead_time_max_days), 0) || 1
+  // Longest-first reads as a descending skyline — the at-a-glance
+  // question this chart answers is "what takes longest to make".
+  const sorted = [...leadTimes].sort(
+    (a, b) =>
+      b.lead_time_max_days - a.lead_time_max_days ||
+      b.lead_time_min_days - a.lead_time_min_days ||
+      a.display_name.localeCompare(b.display_name),
+  )
+
+  return (
+    <div className="rounded-[14px] bg-surface border border-line overflow-hidden">
+      {/* Header mirrors the Latest activity card: tinted icon square +
+          eyebrow + display heading, so the two sidebar cards read as a
+          set. Clock icon for "time to make". */}
+      <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-line-soft">
+        <span
+          aria-hidden="true"
+          className="inline-flex items-center justify-center w-8 h-8 rounded-md shrink-0"
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--c-brand) 14%, transparent)',
+            color: 'var(--c-brand)',
+          }}
+        >
+          <Clock size={16} />
+        </span>
+        <div className="min-w-0">
+          <div className="eyebrow text-ink-mute">Production</div>
+          <h2 className="font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0 text-[20px]">
+            Lead times
+          </h2>
+        </div>
+      </div>
+
+      {sorted.length === 0 ? (
+        <p className="px-5 py-8 text-center text-sm text-ink-mute">
+          No lead times set yet.{' '}
+          <button
+            type="button"
+            onClick={() => navigate('/admin/lead-times')}
+            className="font-medium text-ink underline underline-offset-2 hover:text-brand"
+          >
+            Set them in Admin
+          </button>
+          .
+        </p>
+      ) : (
+        <>
+          {/* Cap to roughly eight rows and scroll the rest, so a long
+              catalogue doesn't push the sidebar to an unwieldy height. */}
+          <ul className="max-h-[360px] overflow-y-auto px-5 py-4 space-y-3">
+            {sorted.map((lt) => {
+              const tint = leadTimeTint(lt.category)
+              const minPct = (lt.lead_time_min_days / scaleMax) * 100
+              const maxPct = (lt.lead_time_max_days / scaleMax) * 100
+              const rangeLabel =
+                lt.lead_time_min_days === lt.lead_time_max_days
+                  ? `${lt.lead_time_min_days}d`
+                  : `${lt.lead_time_min_days}–${lt.lead_time_max_days}d`
+              return (
+                <li key={lt.display_name}>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="truncate text-[13px] font-medium text-ink">
+                      {lt.display_name}
+                    </span>
+                    <span className="shrink-0 font-mono font-tnum text-[11px] text-ink-mute">
+                      {rangeLabel}
+                    </span>
+                  </div>
+                  {/* Track: full-width rounded rail. The lighter tail is
+                      laid first (left-aligned, full length to max), then
+                      the solid core paints over its first `min` portion.
+                      Both rounded so the core reads as a pill resting on
+                      the tail. title carries the long-form for hover. */}
+                  <div
+                    className="relative mt-1.5 h-2.5 w-full rounded-full bg-line-soft"
+                    title={`${lt.display_name} — ${rangeLabel.replace('d', '')} business days`}
+                  >
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-full"
+                      style={{
+                        width: `${maxPct}%`,
+                        backgroundColor: `color-mix(in srgb, ${tint} 28%, transparent)`,
+                      }}
+                    />
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-full"
+                      style={{ width: `${minPct}%`, backgroundColor: tint }}
+                    />
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+          {/* Legend: ties the solid/light split to its meaning. */}
+          <div className="flex items-center gap-4 border-t border-line-soft px-5 py-3 text-[11px] text-ink-mute">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-ink" aria-hidden="true" />
+              min
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: 'color-mix(in srgb, var(--c-ink) 28%, transparent)' }}
+                aria-hidden="true"
+              />
+              up to max
+            </span>
+            <span className="ml-auto">business days</span>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ── Hero greeting ────────────────────────────────────────────────────────────
+
+// The hero's "Good afternoon, <name>" line. This MUST be its own
+// component rather than inlined into DashboardPage. DashboardPage
+// renders the DesignerProfileContext provider (via <DesignerChrome>)
+// inside its own JSX, and a component cannot consume a context that it
+// itself renders — so a useDesignerProfile() call in DashboardPage's
+// body always reads null and the greeting fell back to "there". As a
+// child of DesignerChrome, this component sits below the provider and
+// reads the real signed-in designer's first name.
+function HeroGreeting() {
+  const profile = useDesignerProfile()
+  return <>{greetingFor(new Date())}, {profile?.firstName ?? 'there'}</>
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -1529,10 +1731,15 @@ export default function DashboardPage() {
   // placeholder rendered inside ProjectRow.
   const [thumbnailUrls, setThumbnailUrls] = useState<Map<string, string>>(new Map())
   const [latestEvents, setLatestEvents]   = useState<DashboardLatestEvent[]>([])
+  // Production lead times for the sidebar chart under Latest activity.
+  // Sourced from materials (same table the admin Lead times tab edits);
+  // empty until loadDashboard resolves.
+  const [leadTimes, setLeadTimes]         = useState<LeadTime[]>([])
   // myProfile / editProfileOpen / handleSignOut state moved into
-  // DesignerChrome in PR 31. The hero greeting reads via
-  // useDesignerProfile() below.
-  const profile = useDesignerProfile()
+  // DesignerChrome in PR 31. The hero greeting reads the profile via
+  // the <HeroGreeting /> child component — it can't be read here in
+  // the body because this component renders the provider itself (see
+  // HeroGreeting's note).
   // Pin state — proof_id → pinned_at ISO. Two maps because the
   // dashboard cares about each scope independently (mine drives the
   // Pinned section, team drives the Team section, and both feed the
@@ -1662,16 +1869,28 @@ export default function DashboardPage() {
       .from('proof_pins')
       .select('proof_id, scope, user_id, pinned_at')
 
+    // Lead times for the sidebar chart. Only active materials with a
+    // complete min/max pair (the 000175 CHECK means min is non-null iff
+    // max is) — `.not(..., 'is', null)` on the min column is enough to
+    // exclude the unset rows. Designer-only data, never customer-facing.
+    const leadTimesPromise = supabase
+      .from('materials')
+      .select('display_name, category, lead_time_min_days, lead_time_max_days')
+      .eq('is_active', true)
+      .not('lead_time_min_days', 'is', null)
+
     const [
       { data: projectRows },
       { data: events },
       { data: pinRows },
-    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise])
+      { data: leadTimeRows },
+    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise])
 
     const typedProjects = (projectRows ?? []) as DashboardProject[]
     setProjects(typedProjects)
 
     setLatestEvents((events ?? []) as DashboardLatestEvent[])
+    setLeadTimes((leadTimeRows ?? []) as LeadTime[])
 
     // ── Per-row thumbnails ──────────────────────────────────────
     // Fetch the first front (or side=null) image for each project's
@@ -1923,7 +2142,6 @@ export default function DashboardPage() {
   // Filter pipeline: search → chip → tile → status. All AND-combined.
   const filteredProjects = useMemo(() => {
     const q = search.trim().toLowerCase()
-    const sevenDaysAgoMs = Date.now() - 7 * 86_400_000
     return projects.filter((p) => {
       if (q) {
         const hay = [
@@ -1935,29 +2153,11 @@ export default function DashboardPage() {
         ].filter(Boolean).join(' ').toLowerCase()
         if (!hay.includes(q)) return false
       }
-      // Chip filter — orthogonal to tile / status. The 'all' chip is
-      // the no-op default. Other chips refine the visible set by
-      // ownership, attention rules, recency, or material family.
-      if (chipFilter === 'mine') {
-        // Mine: I'm the assigned designer on this proof's current
-        // version. Proofs with no version yet (current_version_id is
-        // null) have no designer attribution and are filtered out.
-        if (p.designer_user_id == null || p.designer_user_id !== userId) return false
-      }
-      if (chipFilter === 'needs_me') {
-        // Same predicate as the Needs attention tile.
-        if (p.rule_code == null) return false
-        if (isCurrentlySnoozed(p)) return false
-      }
-      if (chipFilter === 'last_7_days') {
-        if (!p.last_activity_at) return false
-        if (new Date(p.last_activity_at).getTime() < sevenDaysAgoMs) return false
-      }
-      if (chipFilter === 'steel') {
-        if (!p.material_display?.toLowerCase().includes('steel')) return false
-      }
-      if (chipFilter === 'letterpress') {
-        if (!p.material_display?.toLowerCase().includes('letterpress')) return false
+      // Material-family chip — orthogonal to the status tiles. 'all' is
+      // the no-op default; every other chip keeps only proofs whose
+      // material name matches that family's pattern.
+      if (chipFilter !== 'all') {
+        if (!MATERIAL_CATEGORY_MATCH[chipFilter].test(p.material_display ?? '')) return false
       }
       // Currently-snoozed projects always belong to the Snoozed section —
       // exclude them from every tile filter so they don't appear in the main
@@ -1996,7 +2196,7 @@ export default function DashboardPage() {
       if (!showAbandoned && p.status === 'abandoned') return false
       return true
     })
-  }, [projects, search, tileFilter, showAbandoned, chipFilter, userId])
+  }, [projects, search, tileFilter, showAbandoned, chipFilter])
 
   // Sort
   const sortedProjects = useMemo(() => {
@@ -2092,7 +2292,7 @@ export default function DashboardPage() {
                 <div>
                   <div className="eyebrow">Proofs at a glance</div>
                   <h1 className="mt-1 font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0" style={{ fontSize: 'clamp(22px, 3vw, 28px)' }}>
-                    {greetingFor(new Date())}, {profile?.firstName ?? 'there'}
+                    <HeroGreeting />
                   </h1>
                   <p className="mt-1.5 text-[14px] text-ink-soft leading-snug">
                     {todayLabel(new Date())}
@@ -2108,11 +2308,6 @@ export default function DashboardPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {/* Saved views — placeholder for the still-to-build
-                      feature. No handler; renders as a disabled-looking
-                      button so the visual matches the mockup but the
-                      affordance reads as "coming soon". */}
-                  <ButtonGhost icon={Filter} disabled>Saved views</ButtonGhost>
                   <ButtonCoral icon={Plus} onClick={() => navigate('/proofs/new')}>
                     New proof
                   </ButtonCoral>
@@ -2386,13 +2581,14 @@ export default function DashboardPage() {
                 )}
               </div>
 
-              <aside className="hidden lg:block">
+              <aside className="hidden lg:block space-y-6">
                 {/* lg:sticky lg:top-10 used to ride here so the panel
                     locked to the viewport top while the project list
                     scrolled. Dropped in PR 30 — the project list can
                     run many pages and a static panel hovering over
                     nothing related is more distracting than useful. */}
                 <LatestActivityPanel events={latestEvents} navigate={navigate} />
+                <LeadTimesChart leadTimes={leadTimes} navigate={navigate} />
               </aside>
             </div>
           </>
