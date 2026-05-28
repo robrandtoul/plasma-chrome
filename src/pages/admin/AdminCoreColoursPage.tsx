@@ -341,14 +341,14 @@ export default function AdminCoreColoursPage() {
   if (loading) {
     return (
       <div className="flex justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-gray-900" />
       </div>
     )
   }
 
   if (loadError) {
     return (
-      <div className="rounded-2xl bg-rose-50 p-6 text-sm text-rose-700 ring-1 ring-rose-200">
+      <div className="rounded-2xl bg-out-soft p-6 text-sm text-out ring-1 ring-out">
         Failed to load paper colours: {loadError}
       </div>
     )
@@ -358,8 +358,8 @@ export default function AdminCoreColoursPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">Letterpress paper colours</h2>
-          <p className="mt-1 max-w-xl text-sm text-gray-500">
+          <h2 className="text-xl font-bold text-ink">Letterpress paper colours</h2>
+          <p className="mt-1 max-w-xl text-sm text-ink-mute">
             The Colorplan paper palette used for the front, core, and back layers of un-gilded
             letterpress cards. Designers pick from active colours when creating a letterpress proof.
           </p>
@@ -369,7 +369,7 @@ export default function AdminCoreColoursPage() {
             type="button"
             onClick={handleExport}
             disabled={colours.length === 0}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg px-4 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-50"
             title={colours.length === 0 ? 'Catalogue is empty — nothing to export' : 'Download the full palette as XLSX'}
           >
             Export
@@ -377,7 +377,7 @@ export default function AdminCoreColoursPage() {
           <button
             type="button"
             onClick={() => setShowImport(true)}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50"
+            className="rounded-lg px-4 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas"
             title="Upload an XLSX to bulk-update the palette"
           >
             Import
@@ -386,7 +386,7 @@ export default function AdminCoreColoursPage() {
             type="button"
             onClick={openAdd}
             disabled={!!adding}
-            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             + Add colour
           </button>
@@ -397,28 +397,28 @@ export default function AdminCoreColoursPage() {
       {importToast && (
         <div
           role="status"
-          className="rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-800 ring-1 ring-emerald-200"
+          className="rounded-lg bg-in-stock-soft px-4 py-3 text-sm text-in-stock ring-1 ring-in-stock"
         >
           {importToast}
         </div>
       )}
 
-      <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+      <section className="overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-gray-100">
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Colour</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Name</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Hex</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Sort</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Status</th>
+            <tr className="border-b border-line-soft">
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Colour</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Name</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Hex</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Sort</th>
+              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Status</th>
               <th className="px-4 py-3" aria-label="Actions"></th>
             </tr>
           </thead>
           <tbody>
             {colours.length === 0 && !adding && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">
+                <td colSpan={6} className="px-4 py-8 text-center text-sm text-ink-mute">
                   No paper colours yet. Add the first one above.
                 </td>
               </tr>
@@ -430,8 +430,8 @@ export default function AdminCoreColoursPage() {
                 <tr
                   key={c.id}
                   className={[
-                    'border-b border-gray-50 last:border-0',
-                    !c.is_active ? 'bg-gray-50/50' : '',
+                    'border-b border-line-soft last:border-0',
+                    !c.is_active ? 'bg-canvas' : '',
                   ].join(' ')}
                 >
                   <td className="px-4 py-3">
@@ -448,10 +448,10 @@ export default function AdminCoreColoursPage() {
                         value={draft.draftName}
                         onChange={(e) => setEditField(c.id, 'draftName', e.target.value)}
                         disabled={draft.saving}
-                        className="w-40 rounded border border-gray-200 px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                        className="w-40 rounded border border-line px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                       />
                     ) : (
-                      <span className={c.is_active ? 'font-medium text-gray-900' : 'text-gray-500'}>
+                      <span className={c.is_active ? 'font-medium text-ink' : 'text-ink-mute'}>
                         {c.name}
                       </span>
                     )}
@@ -465,7 +465,7 @@ export default function AdminCoreColoursPage() {
                           onChange={(e) => setEditField(c.id, 'draftHex', e.target.value)}
                           disabled={draft.saving}
                           aria-label="Pick colour"
-                          className="h-8 w-8 cursor-pointer rounded border border-gray-200"
+                          className="h-8 w-8 cursor-pointer rounded border border-line"
                         />
                         <input
                           type="text"
@@ -473,11 +473,11 @@ export default function AdminCoreColoursPage() {
                           onChange={(e) => setEditField(c.id, 'draftHex', e.target.value)}
                           disabled={draft.saving}
                           placeholder="#1a2b3c"
-                          className="w-24 rounded border border-gray-200 px-2 py-1 font-mono text-xs focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                          className="w-24 rounded border border-line px-2 py-1 font-mono text-xs focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                         />
                       </div>
                     ) : (
-                      <span className={c.is_active ? 'text-gray-700' : 'text-gray-400'}>{c.hex_value}</span>
+                      <span className={c.is_active ? 'text-ink-soft' : 'text-ink-dim'}>{c.hex_value}</span>
                     )}
                   </td>
                   <td className="px-4 py-3 tabular-nums">
@@ -487,19 +487,19 @@ export default function AdminCoreColoursPage() {
                         value={draft.draftSortOrder}
                         onChange={(e) => setEditField(c.id, 'draftSortOrder', e.target.value)}
                         disabled={draft.saving}
-                        className="w-20 rounded border border-gray-200 px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                        className="w-20 rounded border border-line px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                       />
                     ) : (
-                      <span className={c.is_active ? 'text-gray-700' : 'text-gray-400'}>{c.sort_order}</span>
+                      <span className={c.is_active ? 'text-ink-soft' : 'text-ink-dim'}>{c.sort_order}</span>
                     )}
                   </td>
                   <td className="px-4 py-3">
                     {c.is_active ? (
-                      <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200">
+                      <span className="inline-flex items-center rounded-full bg-in-stock-soft px-2.5 py-0.5 text-xs font-medium text-in-stock ring-1 ring-in-stock">
                         Active
                       </span>
                     ) : (
-                      <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-500 ring-1 ring-gray-200">
+                      <span className="inline-flex items-center rounded-full bg-canvas px-2.5 py-0.5 text-xs font-medium text-ink-mute ring-1 ring-line">
                         Inactive
                       </span>
                     )}
@@ -512,7 +512,7 @@ export default function AdminCoreColoursPage() {
                             type="button"
                             onClick={() => cancelEdit(c.id)}
                             disabled={draft.saving}
-                            className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+                            className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
                           >
                             Cancel
                           </button>
@@ -520,13 +520,13 @@ export default function AdminCoreColoursPage() {
                             type="button"
                             onClick={() => void saveEdit(c)}
                             disabled={draft.saving}
-                            className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+                            className="rounded-lg bg-ink px-3 py-1.5 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                           >
                             {draft.saving ? 'Saving…' : 'Save'}
                           </button>
                         </div>
                         {draft.rowError && (
-                          <span className="text-xs text-rose-600">{draft.rowError}</span>
+                          <span className="text-xs text-out">{draft.rowError}</span>
                         )}
                       </div>
                     ) : (
@@ -534,7 +534,7 @@ export default function AdminCoreColoursPage() {
                         <button
                           type="button"
                           onClick={() => startEdit(c)}
-                          className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100"
+                          className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-soft hover:bg-canvas"
                         >
                           Edit
                         </button>
@@ -542,7 +542,7 @@ export default function AdminCoreColoursPage() {
                           <button
                             type="button"
                             onClick={() => void deactivate(c)}
-                            className="rounded-lg px-3 py-1.5 text-sm font-medium text-rose-600 hover:bg-rose-50"
+                            className="rounded-lg px-3 py-1.5 text-sm font-medium text-out hover:bg-out-soft"
                           >
                             Remove
                           </button>
@@ -550,7 +550,7 @@ export default function AdminCoreColoursPage() {
                           <button
                             type="button"
                             onClick={() => void reactivate(c)}
-                            className="rounded-lg px-3 py-1.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50"
+                            className="rounded-lg px-3 py-1.5 text-sm font-medium text-in-stock hover:bg-in-stock-soft"
                           >
                             Restore
                           </button>
@@ -564,7 +564,7 @@ export default function AdminCoreColoursPage() {
           </tbody>
           {adding && (
             <tfoot>
-              <tr className="border-t border-gray-200 bg-gray-50/60">
+              <tr className="border-t border-line bg-canvas">
                 <td className="px-4 py-3">
                   <CoreColourSwatch
                     hex={isValidHex(adding.draftHex) ? normaliseHex(adding.draftHex) : '#000000'}
@@ -579,7 +579,7 @@ export default function AdminCoreColoursPage() {
                     onChange={(e) => setAdding({ ...adding, draftName: e.target.value, rowError: null })}
                     disabled={adding.saving}
                     placeholder="e.g. Sage"
-                    className="w-40 rounded border border-gray-200 px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                    className="w-40 rounded border border-line px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                   />
                 </td>
                 <td className="px-4 py-3">
@@ -590,7 +590,7 @@ export default function AdminCoreColoursPage() {
                       onChange={(e) => setAdding({ ...adding, draftHex: e.target.value, rowError: null })}
                       disabled={adding.saving}
                       aria-label="Pick colour"
-                      className="h-8 w-8 cursor-pointer rounded border border-gray-200"
+                      className="h-8 w-8 cursor-pointer rounded border border-line"
                     />
                     <input
                       type="text"
@@ -598,7 +598,7 @@ export default function AdminCoreColoursPage() {
                       onChange={(e) => setAdding({ ...adding, draftHex: e.target.value, rowError: null })}
                       disabled={adding.saving}
                       placeholder="#1a2b3c"
-                      className="w-24 rounded border border-gray-200 px-2 py-1 font-mono text-xs focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                      className="w-24 rounded border border-line px-2 py-1 font-mono text-xs focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                     />
                   </div>
                 </td>
@@ -608,10 +608,10 @@ export default function AdminCoreColoursPage() {
                     value={adding.draftSortOrder}
                     onChange={(e) => setAdding({ ...adding, draftSortOrder: e.target.value, rowError: null })}
                     disabled={adding.saving}
-                    className="w-20 rounded border border-gray-200 px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                    className="w-20 rounded border border-line px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                   />
                 </td>
-                <td className="px-4 py-3 text-xs text-gray-500">New</td>
+                <td className="px-4 py-3 text-xs text-ink-mute">New</td>
                 <td className="px-4 py-3 text-right">
                   <div className="flex flex-col items-end gap-1">
                     <div className="flex items-center gap-2">
@@ -619,7 +619,7 @@ export default function AdminCoreColoursPage() {
                         type="button"
                         onClick={() => setAdding(null)}
                         disabled={adding.saving}
-                        className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+                        className="rounded-lg px-3 py-1.5 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
                       >
                         Cancel
                       </button>
@@ -627,13 +627,13 @@ export default function AdminCoreColoursPage() {
                         type="button"
                         onClick={() => void createColour()}
                         disabled={adding.saving}
-                        className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+                        className="rounded-lg bg-ink px-3 py-1.5 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                       >
                         {adding.saving ? 'Saving…' : 'Save colour'}
                       </button>
                     </div>
                     {adding.rowError && (
-                      <span className="text-xs text-rose-600">{adding.rowError}</span>
+                      <span className="text-xs text-out">{adding.rowError}</span>
                     )}
                   </div>
                 </td>
@@ -643,7 +643,7 @@ export default function AdminCoreColoursPage() {
         </table>
       </section>
 
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-ink-mute">
         Removing a colour deactivates it but keeps the row, so any existing proofs that use the colour
         keep working. Inactive colours stay listed here. Restore reactivates the colour for designers.
       </p>

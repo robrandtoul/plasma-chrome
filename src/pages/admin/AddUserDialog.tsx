@@ -94,15 +94,15 @@ export default function AddUserDialog({
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <h3 id="add-user-title" className="text-lg font-semibold text-gray-900">Add user</h3>
-                <p className="mt-1 text-xs text-gray-500">
+                <h3 id="add-user-title" className="text-lg font-semibold text-ink">Add user</h3>
+                <p className="mt-1 text-xs text-ink-mute">
                   Creates a new Designer account. Share the credentials with the person directly — we'll show them once.
                 </p>
               </div>
 
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                  Full name <span className="text-rose-500">*</span>
+                <label className="mb-1.5 block text-sm font-medium text-ink-soft">
+                  Full name <span className="text-out">*</span>
                 </label>
                 <input
                   type="text"
@@ -114,8 +114,8 @@ export default function AddUserDialog({
               </div>
 
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                  Email <span className="text-rose-500">*</span>
+                <label className="mb-1.5 block text-sm font-medium text-ink-soft">
+                  Email <span className="text-out">*</span>
                 </label>
                 <input
                   type="email"
@@ -127,8 +127,8 @@ export default function AddUserDialog({
               </div>
 
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                  Password <span className="text-rose-500">*</span>
+                <label className="mb-1.5 block text-sm font-medium text-ink-soft">
+                  Password <span className="text-out">*</span>
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -141,7 +141,7 @@ export default function AddUserDialog({
                   <button
                     type="button"
                     onClick={() => setPassword(generatePassword(12))}
-                    className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                    className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas"
                   >
                     Generate
                   </button>
@@ -149,7 +149,7 @@ export default function AddUserDialog({
                     type="button"
                     onClick={() => setShowPassword(v => !v)}
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                    className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas"
                   >
                     {showPassword ? 'Hide' : 'Show'}
                   </button>
@@ -157,7 +157,7 @@ export default function AddUserDialog({
               </div>
 
               {error && (
-                <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>
+                <p className="rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{error}</p>
               )}
 
               <div className="flex justify-end gap-2 pt-2">
@@ -165,14 +165,14 @@ export default function AddUserDialog({
                   type="button"
                   onClick={onClose}
                   disabled={submitting}
-                  className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+                  className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                 >
                   {submitting ? 'Creating…' : 'Create user'}
                 </button>
@@ -191,8 +191,8 @@ function CredentialsView({ user, onCopy, onClose }: {
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-lg font-semibold text-gray-900">User created</h3>
-        <p className="mt-1 text-sm text-gray-600">
+        <h3 className="text-lg font-semibold text-ink">User created</h3>
+        <p className="mt-1 text-sm text-ink-soft">
           Share these credentials with {user.full_name}:
         </p>
       </div>
@@ -200,14 +200,14 @@ function CredentialsView({ user, onCopy, onClose }: {
       <CopyRow label="Email" value={user.email} onCopy={onCopy} />
       <CopyRow label="Password" value={user.password} onCopy={onCopy} mono />
 
-      <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+      <p className="rounded-lg bg-low-soft px-3 py-2 text-xs text-low">
         Save these credentials now, they won't be shown again.
       </p>
 
       <div className="flex justify-end">
         <button
           onClick={onClose}
-          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+          className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
         >
           Done
         </button>
@@ -225,7 +225,7 @@ function CopyRow({ label, value, onCopy, mono }: {
   const [copied, setCopied] = useState(false)
   return (
     <div>
-      <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-400">{label}</div>
+      <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-ink-dim">{label}</div>
       <div className="flex gap-2">
         <input
           readOnly
@@ -240,7 +240,7 @@ function CopyRow({ label, value, onCopy, mono }: {
             setCopied(true)
             setTimeout(() => setCopied(false), 1500)
           }}
-          className="shrink-0 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+          className="shrink-0 rounded-lg border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas"
         >
           {copied ? 'Copied' : 'Copy'}
         </button>
@@ -249,4 +249,4 @@ function CopyRow({ label, value, onCopy, mono }: {
   )
 }
 
-const inputClass = 'w-full rounded border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
+const inputClass = 'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'

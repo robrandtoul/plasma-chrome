@@ -800,25 +800,25 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
         onClose={onClose}
         preventClose={saving}
         ariaLabelledBy="material-content-title"
-        panelClassName="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+        panelClassName="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-surface shadow-xl"
       >
           {/* Header */}
-          <div className="flex items-start justify-between border-b border-gray-100 px-6 py-4">
+          <div className="flex items-start justify-between border-b border-line-soft px-6 py-4">
             <div>
-              <h3 id="material-content-title" className="text-lg font-semibold text-gray-900">{draftName.trim() || material.display_name}</h3>
+              <h3 id="material-content-title" className="text-lg font-semibold text-ink">{draftName.trim() || material.display_name}</h3>
               <Link
                 to={`/admin/pricing/materials/${material.code}`}
-                className="text-xs text-gray-500 hover:text-gray-900 hover:underline"
+                className="text-xs text-ink-mute hover:text-ink hover:underline"
               >
                 Open pricing editor →
               </Link>
             </div>
             <div className="flex items-center gap-3">
-              {saving && <span className="text-xs text-gray-400">Saving…</span>}
-              {recentlySaved && !saving && <span className="text-xs text-emerald-600">Saved</span>}
+              {saving && <span className="text-xs text-ink-dim">Saving…</span>}
+              {recentlySaved && !saving && <span className="text-xs text-in-stock">Saved</span>}
               <button
                 onClick={onClose}
-                className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+                className="rounded-lg p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft"
                 aria-label="Close"
               >
                 <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -832,8 +832,8 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
           <div className="space-y-6 overflow-y-auto px-6 py-5">
             {/* Name */}
             <section>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                Material name <span className="text-rose-500">*</span>
+              <label className="mb-1.5 block text-sm font-medium text-ink-soft">
+                Material name <span className="text-out">*</span>
               </label>
               <input
                 type="text"
@@ -847,18 +847,18 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                     : 'border-line focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)]',
                 ].join(' ')}
               />
-              <p className="mt-1.5 text-xs text-gray-500">
+              <p className="mt-1.5 text-xs text-ink-mute">
                 This is what customers and designers see. The internal identifier (slug) won't change.
               </p>
               {nameError && (
-                <p className="mt-1.5 text-xs font-medium text-rose-500">{nameError}</p>
+                <p className="mt-1.5 text-xs font-medium text-out">{nameError}</p>
               )}
             </section>
 
             {/* Category */}
             <section>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                Category <span className="text-rose-500">*</span>
+              <label className="mb-1.5 block text-sm font-medium text-ink-soft">
+                Category <span className="text-out">*</span>
               </label>
               <select
                 value={draftCategory}
@@ -867,29 +867,29 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                   setDraftCategory(next)
                   void saveCategory(next)
                 }}
-                className="w-full rounded border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                className="w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
               >
                 {CATEGORY_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </select>
-              <p className="mt-1.5 text-xs text-gray-500">
+              <p className="mt-1.5 text-xs text-ink-mute">
                 Groups this material in the designer's dropdown.
               </p>
             </section>
 
             {/* Description */}
             <section>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">Description</label>
+              <label className="mb-1.5 block text-sm font-medium text-ink-soft">Description</label>
               <textarea
                 value={draftDesc}
                 onChange={(e) => setDraftDesc(e.target.value)}
                 onBlur={saveDescription}
                 rows={6}
-                className="w-full rounded border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                className="w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                 placeholder="e.g. Steel cards are 0.5mm thick and laser-cut to…"
               />
-              <p className="mt-1.5 text-xs text-gray-500">
+              <p className="mt-1.5 text-xs text-ink-mute">
                 Displayed on the customer-facing proof page for any proof using this material. Paragraph breaks render as spacing.
               </p>
             </section>
@@ -902,13 +902,13 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                 to null on save for parity with the customer
                 render gate. */}
             <section>
-              <h4 className="mb-3 text-sm font-semibold text-gray-800">Key features</h4>
-              <p className="mb-4 text-xs text-gray-500">
+              <h4 className="mb-3 text-sm font-semibold text-ink">Key features</h4>
+              <p className="mb-4 text-xs text-ink-mute">
                 Surfaced on the customer proof page under the About section, numbered 01 to {draftFeatures.length.toString().padStart(2, '0')} in the order shown here. Each feature is a short title plus a one-line supporting description.
               </p>
 
               {draftFeatures.length === 0 && (
-                <p className="mb-3 text-sm text-gray-500">
+                <p className="mb-3 text-sm text-ink-mute">
                   No features yet. Click "Add feature" to start.
                 </p>
               )}
@@ -920,10 +920,10 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                   return (
                     <li
                       key={i}
-                      className="grid grid-cols-[32px_1fr_auto] items-start gap-3 rounded-lg border border-gray-200 p-3"
+                      className="grid grid-cols-[32px_1fr_auto] items-start gap-3 rounded-lg border border-line p-3"
                     >
                       {/* Plain gray sans-serif numeral — admin chrome tone. */}
-                      <span className="pt-2 text-sm font-semibold text-gray-400 tabular-nums">
+                      <span className="pt-2 text-sm font-semibold text-ink-dim tabular-nums">
                         {String(i + 1).padStart(2, '0')}
                       </span>
                       <div className="min-w-0 space-y-2">
@@ -937,7 +937,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                           onChange={(e) => updateFeature(i, 'title', e.target.value)}
                           onBlur={() => { void saveKeyFeatures() }}
                           placeholder="Title (e.g. Rolled stainless steel)"
-                          className="w-full rounded border border-gray-300 px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                          className="w-full rounded border border-line px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                         />
                         <input
                           type="text"
@@ -945,10 +945,10 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                           onChange={(e) => updateFeature(i, 'body', e.target.value)}
                           onBlur={() => { void saveKeyFeatures() }}
                           placeholder="Supporting line (e.g. Precision etched from sheet metal…)"
-                          className="w-full rounded border border-gray-300 px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                          className="w-full rounded border border-line px-2 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                         />
                         {(titleOver || bodyOver) && (
-                          <p className="text-xs text-amber-600">
+                          <p className="text-xs text-low">
                             {titleOver && `Title over ${TITLE_SOFT_MAX} chars may crowd the customer layout.`}
                             {titleOver && bodyOver && ' '}
                             {bodyOver && `Body over ${BODY_SOFT_MAX} chars may wrap awkwardly.`}
@@ -969,7 +969,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                           type="button"
                           onClick={() => { void moveFeature(i, -1) }}
                           disabled={i === 0}
-                          className="rounded px-2 py-1 text-xs font-medium text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-400"
+                          className="rounded px-2 py-1 text-xs font-medium text-ink-dim hover:bg-canvas hover:text-ink-soft disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-ink-dim"
                           aria-label={`Move feature ${i + 1} up`}
                           title="Move up"
                         >
@@ -979,7 +979,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                           type="button"
                           onClick={() => { void moveFeature(i, 1) }}
                           disabled={i === draftFeatures.length - 1}
-                          className="rounded px-2 py-1 text-xs font-medium text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-400"
+                          className="rounded px-2 py-1 text-xs font-medium text-ink-dim hover:bg-canvas hover:text-ink-soft disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-ink-dim"
                           aria-label={`Move feature ${i + 1} down`}
                           title="Move down"
                         >
@@ -988,7 +988,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                         <button
                           type="button"
                           onClick={() => { void removeFeature(i) }}
-                          className="rounded px-2 py-1 text-xs font-medium text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+                          className="rounded px-2 py-1 text-xs font-medium text-ink-dim hover:bg-out-soft hover:text-out"
                           aria-label={`Remove feature ${i + 1}`}
                         >
                           Remove
@@ -1003,13 +1003,13 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                 type="button"
                 onClick={addFeature}
                 disabled={draftFeatures.length >= MAX_FEATURES}
-                className="mt-3 text-sm font-medium text-gray-600 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-3 text-sm font-medium text-ink-soft hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
               >
                 + Add feature{draftFeatures.length >= MAX_FEATURES && ' (max reached)'}
               </button>
 
               {featuresError && (
-                <p className="mt-2 text-xs text-rose-600">{featuresError}</p>
+                <p className="mt-2 text-xs text-out">{featuresError}</p>
               )}
             </section>
 
@@ -1019,24 +1019,24 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                 when deciding how this material shows up on the
                 customer page. */}
             <section>
-              <h4 className="mb-3 text-sm font-semibold text-gray-800">Pricing presentation</h4>
+              <h4 className="mb-3 text-sm font-semibold text-ink">Pricing presentation</h4>
 
               {/* Display quantities */}
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">Display quantities</label>
+              <label className="mb-1.5 block text-sm font-medium text-ink-soft">Display quantities</label>
               <input
                 type="text"
                 value={draftDisplayQtys}
                 onChange={(e) => { setDraftDisplayQtys(e.target.value); setDisplayQtysError(null) }}
                 onBlur={saveDisplayQuantities}
                 placeholder="e.g. 100, 250, 500, 1000"
-                className="w-full rounded border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                className="w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
               />
               {/* Preview / status line — green when parsed cleanly,
                   rose on error. Both colours use the same position
                   so the admin always looks to the same spot for
                   feedback. */}
               {displayQtysError ? (
-                <p className="mt-1.5 text-xs text-rose-600">{displayQtysError}</p>
+                <p className="mt-1.5 text-xs text-out">{displayQtysError}</p>
               ) : (() => {
                 // Live preview without committing. Mirrors saveDisplayQuantities'
                 // parse so what the admin sees matches what will save.
@@ -1044,18 +1044,18 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                 if (!preview.ok) return null
                 if (preview.parsed.length === 0) {
                   return (
-                    <p className="mt-1.5 text-xs text-gray-500">
+                    <p className="mt-1.5 text-xs text-ink-mute">
                       Preview: empty. Customer page will fall back to the first 10 tiers in the pricing snapshot.
                     </p>
                   )
                 }
                 return (
-                  <p className="mt-1.5 text-xs text-gray-500">
+                  <p className="mt-1.5 text-xs text-ink-mute">
                     Preview: {preview.parsed.map((n) => n.toLocaleString()).join(', ')}
                   </p>
                 )
               })()}
-              <p className="mt-1 text-xs text-gray-400">
+              <p className="mt-1 text-xs text-ink-dim">
                 Comma or space separated. Customer page shows these rows (intersected with the snapshot) on the single pricing table. Leave blank to fall back to the first 10 tiers in the snapshot.
               </p>
 
@@ -1063,7 +1063,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                   stacked on narrow. Both optional. */}
               <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-gray-700">Minimum quantity for quote</label>
+                  <label className="mb-1.5 block text-sm font-medium text-ink-soft">Minimum quantity for quote</label>
                   <input
                     type="number"
                     inputMode="numeric"
@@ -1073,14 +1073,14 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                     onChange={(e) => { setDraftQuoteMin(e.target.value); setQuoteMinError(null) }}
                     onBlur={saveQuoteMinQuantity}
                     placeholder="Leave blank for no minimum"
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                    className="w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                   />
                   {quoteMinError && (
-                    <p className="mt-1.5 text-xs text-rose-600">{quoteMinError}</p>
+                    <p className="mt-1.5 text-xs text-out">{quoteMinError}</p>
                   )}
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-gray-700">Maximum quantity for quote</label>
+                  <label className="mb-1.5 block text-sm font-medium text-ink-soft">Maximum quantity for quote</label>
                   <input
                     type="number"
                     inputMode="numeric"
@@ -1090,14 +1090,14 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                     onChange={(e) => { setDraftQuoteMax(e.target.value); setQuoteMaxError(null) }}
                     onBlur={saveQuoteMaxQuantity}
                     placeholder="Leave blank for no maximum"
-                    className="w-full rounded border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                    className="w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                   />
                   {quoteMaxError && (
-                    <p className="mt-1.5 text-xs text-rose-600">{quoteMaxError}</p>
+                    <p className="mt-1.5 text-xs text-out">{quoteMaxError}</p>
                   )}
                 </div>
               </div>
-              <p className="mt-1.5 text-xs text-gray-400">
+              <p className="mt-1.5 text-xs text-ink-dim">
                 Bound the customer's quantity-lookup input. Typing a value outside the range returns a "please get in touch" message instead of a tier row.
               </p>
             </section>
@@ -1110,11 +1110,11 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                 page (Personalisation pricing section). */}
             <section>
               <div className="flex items-start justify-between gap-3">
-                <label className="text-sm font-medium text-gray-700">
+                <label className="text-sm font-medium text-ink-soft">
                   Supports personalisation
                 </label>
                 {supportsPersonalisationInFlight && (
-                  <span className="text-xs text-gray-400">Saving…</span>
+                  <span className="text-xs text-ink-dim">Saving…</span>
                 )}
               </div>
               <div className="mt-2 flex items-center gap-3">
@@ -1126,33 +1126,33 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                   aria-checked={supportsPersonalisation}
                   className={[
                     'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50',
-                    supportsPersonalisation ? 'bg-gray-900' : 'bg-gray-200',
+                    supportsPersonalisation ? 'bg-ink' : 'bg-line',
                   ].join(' ')}
                 >
                   <span
                     className={[
-                      'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-white transition-transform',
+                      'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-surface transition-transform',
                       supportsPersonalisation ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
                     ].join(' ')}
                   />
                 </button>
-                <span className="text-sm text-gray-600">
+                <span className="text-sm text-ink-soft">
                   {supportsPersonalisation
                     ? 'Designers can add personalisation to membership cards on this material.'
                     : 'Personalisation is hidden for this material.'}
                 </span>
               </div>
-              <p className="mt-1.5 text-xs text-gray-500">
+              <p className="mt-1.5 text-xs text-ink-mute">
                 Personalisation prices live one rate, one floor per currency, edited from the Settings page.
               </p>
               {supportsPersonalisationError && (
-                <p className="mt-1.5 text-xs text-rose-600">{supportsPersonalisationError}</p>
+                <p className="mt-1.5 text-xs text-out">{supportsPersonalisationError}</p>
               )}
             </section>
 
             {/* Icon */}
             <section>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">Icon</label>
+              <label className="mb-1.5 block text-sm font-medium text-ink-soft">Icon</label>
               <div
                 onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
                 onDragLeave={() => setDragOver(false)}
@@ -1164,13 +1164,13 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                 }}
                 className={[
                   'flex min-h-[10rem] items-center justify-center gap-6 rounded-2xl border-2 border-dashed p-4 transition-colors',
-                  dragOver ? 'border-gray-900 bg-gray-50' : 'border-gray-300',
+                  dragOver ? 'border-ink bg-canvas' : 'border-line',
                 ].join(' ')}
               >
                 {currentIconUrl ? (
                   <img src={currentIconUrl} alt="Icon preview" className="max-h-32 max-w-[12rem] object-contain" />
                 ) : (
-                  <p className="text-sm text-gray-400">No icon set</p>
+                  <p className="text-sm text-ink-dim">No icon set</p>
                 )}
                 <div className="flex flex-col gap-2">
                   <input
@@ -1186,7 +1186,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={saving}
-                    className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                    className="rounded-lg bg-ink px-3 py-1.5 text-sm font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
                   >
                     {currentIconUrl ? 'Replace icon' : 'Upload icon'}
                   </button>
@@ -1194,29 +1194,29 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                     <button
                       onClick={handleRemoveIcon}
                       disabled={saving}
-                      className="rounded-lg px-3 py-1.5 text-sm font-medium text-rose-600 ring-1 ring-rose-200 hover:bg-rose-50 disabled:opacity-50"
+                      className="rounded-lg px-3 py-1.5 text-sm font-medium text-out ring-1 ring-out hover:bg-out-soft disabled:opacity-50"
                     >
                       Remove icon
                     </button>
                   )}
                 </div>
               </div>
-              <p className="mt-1.5 text-xs text-gray-500">
+              <p className="mt-1.5 text-xs text-ink-mute">
                 PNG, JPG or SVG, up to 2 MB. Square or roughly square, at least 480px wide works best. Transparent backgrounds render cleanly.
               </p>
             </section>
 
             {/* Publish status */}
             <section className={isArchived ? 'opacity-60' : ''}>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">Publish status</label>
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-gray-50 px-4 py-3 ring-1 ring-gray-200">
+              <label className="mb-1.5 block text-sm font-medium text-ink-soft">Publish status</label>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-canvas px-4 py-3 ring-1 ring-line">
                 <div className="flex items-center gap-3">
                   {isPublished ? (
-                    <span className="inline-block rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">Published</span>
+                    <span className="inline-block rounded-full bg-in-stock-soft px-2.5 py-0.5 text-xs font-semibold text-in-stock">Published</span>
                   ) : (
-                    <span className="inline-block rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">Unpublished</span>
+                    <span className="inline-block rounded-full bg-low-soft px-2.5 py-0.5 text-xs font-semibold text-low">Unpublished</span>
                   )}
-                  <p className="text-sm text-gray-600">
+                  <p className="text-sm text-ink-soft">
                     {isPublished
                       ? 'This material is live.'
                       : 'This material is not visible to designers yet.'}
@@ -1229,8 +1229,8 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                   className={[
                     'rounded-lg px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-50',
                     isPublished
-                      ? 'text-gray-600 ring-1 ring-gray-200 hover:bg-white'
-                      : 'bg-gray-900 text-white hover:bg-gray-700',
+                      ? 'text-ink-soft ring-1 ring-line hover:bg-surface'
+                      : 'bg-ink text-on-ink hover:opacity-90',
                   ].join(' ')}
                 >
                   {publishInFlight
@@ -1239,10 +1239,10 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                 </button>
               </div>
               {isArchived && (
-                <p className="mt-1.5 text-xs text-gray-500">Unarchive this material before publishing.</p>
+                <p className="mt-1.5 text-xs text-ink-mute">Unarchive this material before publishing.</p>
               )}
               {publishError && (
-                <p className="mt-1.5 text-xs text-rose-600">{publishError}</p>
+                <p className="mt-1.5 text-xs text-out">{publishError}</p>
               )}
             </section>
 
@@ -1250,15 +1250,15 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                 soft-confirm before commit. Unarchive is a straight
                 toggle — the admin still has to re-publish explicitly. */}
             <section>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">Archive</label>
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-gray-50 px-4 py-3 ring-1 ring-gray-200">
+              <label className="mb-1.5 block text-sm font-medium text-ink-soft">Archive</label>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-canvas px-4 py-3 ring-1 ring-line">
                 <div className="flex items-center gap-3">
                   {isArchived ? (
-                    <span className="inline-block rounded-full bg-gray-200 px-2.5 py-0.5 text-xs font-semibold text-gray-700">Archived</span>
+                    <span className="inline-block rounded-full bg-line px-2.5 py-0.5 text-xs font-semibold text-ink-soft">Archived</span>
                   ) : (
-                    <span className="inline-block rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-semibold text-gray-600">Active</span>
+                    <span className="inline-block rounded-full bg-canvas px-2.5 py-0.5 text-xs font-semibold text-ink-soft">Active</span>
                   )}
-                  <p className="text-sm text-gray-600">
+                  <p className="text-sm text-ink-soft">
                     {isArchived
                       ? 'Hidden from the designer dropdown. Unarchive to restore.'
                       : 'Use archive for materials you no longer sell.'}
@@ -1269,7 +1269,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                     type="button"
                     onClick={() => void applyUnarchive()}
                     disabled={archiveInFlight || saving}
-                    className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+                    className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                   >
                     {archiveInFlight ? 'Saving…' : 'Unarchive'}
                   </button>
@@ -1278,32 +1278,32 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                     type="button"
                     onClick={requestArchive}
                     disabled={archiveInFlight || saving}
-                    className="rounded-lg px-4 py-2 text-sm font-semibold text-amber-700 ring-1 ring-amber-200 hover:bg-amber-50 disabled:opacity-50"
+                    className="rounded-lg px-4 py-2 text-sm font-semibold text-low ring-1 ring-low hover:bg-low-soft disabled:opacity-50"
                   >
                     Archive
                   </button>
                 )}
               </div>
               {unarchiveNotice && (
-                <p className="mt-1.5 text-xs text-emerald-700">
+                <p className="mt-1.5 text-xs text-in-stock">
                   {material.display_name} unarchived. Republish from the Publish section when ready.
                 </p>
               )}
               {archiveError && (
-                <p className="mt-1.5 text-xs text-rose-600">{archiveError}</p>
+                <p className="mt-1.5 text-xs text-out">{archiveError}</p>
               )}
             </section>
 
             {error && (
-              <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>
+              <p className="rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{error}</p>
             )}
           </div>
 
           {/* Footer */}
-          <div className="flex justify-end border-t border-gray-100 px-6 py-4">
+          <div className="flex justify-end border-t border-line-soft px-6 py-4">
             <button
               onClick={onClose}
-              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+              className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
             >
               Done
             </button>
@@ -1316,10 +1316,10 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
         onClose={() => setPublishConfirm(false)}
         preventClose={publishInFlight}
         ariaLabel="Publish anyway confirmation"
-        panelClassName="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-gray-200"
+        panelClassName="w-full max-w-md rounded-2xl bg-surface p-6 shadow-xl ring-1 ring-line"
       >
-        <h4 className="text-base font-semibold text-gray-900">Publish anyway?</h4>
-        <p className="mt-2 text-sm text-gray-600">
+        <h4 className="text-base font-semibold text-ink">Publish anyway?</h4>
+        <p className="mt-2 text-sm text-ink-soft">
           This material has no variants or prices. Designers will see it but won't be able to add versions with it. Publish anyway?
         </p>
         <div className="mt-5 flex justify-end gap-2">
@@ -1327,7 +1327,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
             type="button"
             onClick={() => setPublishConfirm(false)}
             disabled={publishInFlight}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+            className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
           >
             Cancel
           </button>
@@ -1335,7 +1335,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
             type="button"
             onClick={() => void applyPublishChange(true)}
             disabled={publishInFlight}
-            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+            className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
           >
             {publishInFlight ? 'Publishing…' : 'Publish anyway'}
           </button>
@@ -1350,10 +1350,10 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
         onClose={() => setArchiveConfirm(false)}
         preventClose={archiveInFlight}
         ariaLabel="Archive material confirmation"
-        panelClassName="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-gray-200"
+        panelClassName="w-full max-w-md rounded-2xl bg-surface p-6 shadow-xl ring-1 ring-line"
       >
-        <h4 className="text-base font-semibold text-gray-900">Archive {material.display_name}?</h4>
-        <p className="mt-2 text-sm text-gray-600">
+        <h4 className="text-base font-semibold text-ink">Archive {material.display_name}?</h4>
+        <p className="mt-2 text-sm text-ink-soft">
           This hides it from the designer dropdown and unpublishes it. You can unarchive later from the Archived section of Settings.
         </p>
         <div className="mt-5 flex justify-end gap-2">
@@ -1361,7 +1361,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
             type="button"
             onClick={() => setArchiveConfirm(false)}
             disabled={archiveInFlight}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+            className="rounded-lg px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
           >
             Cancel
           </button>
@@ -1369,7 +1369,7 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
             type="button"
             onClick={() => void applyArchive()}
             disabled={archiveInFlight}
-            className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:opacity-50"
+            className="rounded-lg bg-low px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
           >
             {archiveInFlight ? 'Archiving…' : 'Archive'}
           </button>

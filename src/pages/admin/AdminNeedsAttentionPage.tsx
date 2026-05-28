@@ -220,7 +220,7 @@ export default function AdminNeedsAttentionPage() {
 
   if (loadError) {
     return (
-      <div className="rounded-2xl bg-rose-50 p-6 text-sm text-rose-700 ring-1 ring-rose-200">
+      <div className="rounded-2xl bg-out-soft p-6 text-sm text-out ring-1 ring-out">
         Failed to load Needs-attention rules: {loadError}
       </div>
     )
@@ -228,7 +228,7 @@ export default function AdminNeedsAttentionPage() {
   if (!draft) {
     return (
       <div className="flex justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-gray-900" />
       </div>
     )
   }
@@ -237,14 +237,14 @@ export default function AdminNeedsAttentionPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">Needs-attention rules</h2>
-          <p className="mt-1 text-sm text-gray-500">
+          <h2 className="text-xl font-bold text-ink">Needs-attention rules</h2>
+          <p className="mt-1 text-sm text-ink-mute">
             Configure which projects show up in the Needs-attention tile on the designer dashboard. Drag to reorder priority — the highest-priority rule that fires on a project is the one whose chip the dashboard shows.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
           {savedAt && !dirty && (
-            <span className="text-xs text-emerald-600">{savedLabel(savedAt)}</span>
+            <span className="text-xs text-in-stock">{savedLabel(savedAt)}</span>
           )}
           <button
             type="button"
@@ -253,8 +253,8 @@ export default function AdminNeedsAttentionPage() {
             className={[
               'rounded-lg px-4 py-2 text-sm font-semibold',
               dirty && !saving
-                ? 'bg-gray-900 text-white hover:bg-gray-700'
-                : 'bg-gray-200 text-gray-400 cursor-not-allowed',
+                ? 'bg-ink text-on-ink hover:opacity-90'
+                : 'bg-line text-ink-dim cursor-not-allowed',
             ].join(' ')}
           >
             {saving ? 'Saving…' : 'Save'}
@@ -273,7 +273,7 @@ export default function AdminNeedsAttentionPage() {
               onDragStart={() => onDragStart(code)}
               onDragOver={(e) => onDragOver(e, code)}
               onDragEnd={onDragEnd}
-              className="flex gap-4 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200"
+              className="flex gap-4 rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-line"
             >
               {/* Drag handle. Lives on the rule card so the whole
                   card is the drag target — keeps the keyboard /
@@ -282,21 +282,21 @@ export default function AdminNeedsAttentionPage() {
                 <span
                   aria-label="Drag to reorder"
                   title="Drag to reorder"
-                  className="cursor-grab text-gray-300 active:cursor-grabbing"
+                  className="cursor-grab text-ink-dim active:cursor-grabbing"
                 >
                   <svg viewBox="0 0 16 16" className="h-5 w-5" fill="currentColor">
                     <circle cx="5" cy="3" r="1.25" /><circle cx="5" cy="8" r="1.25" /><circle cx="5" cy="13" r="1.25" />
                     <circle cx="11" cy="3" r="1.25" /><circle cx="11" cy="8" r="1.25" /><circle cx="11" cy="13" r="1.25" />
                   </svg>
                 </span>
-                <span className="text-xs font-semibold text-gray-400 tabular-nums">{i + 1}</span>
+                <span className="text-xs font-semibold text-ink-dim tabular-nums">{i + 1}</span>
               </div>
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h3 className="text-sm font-semibold text-gray-900">{spec.label}</h3>
-                    <p className="mt-1 text-xs text-gray-500">{spec.description}</p>
+                    <h3 className="text-sm font-semibold text-ink">{spec.label}</h3>
+                    <p className="mt-1 text-xs text-ink-mute">{spec.description}</p>
                   </div>
                   <Toggle
                     value={rule.enabled}
@@ -309,7 +309,7 @@ export default function AdminNeedsAttentionPage() {
                   <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3">
                     {spec.hasThreshold && (
                       <div className="flex items-center gap-2">
-                        <label className="text-xs font-medium uppercase tracking-wider text-gray-500">Threshold</label>
+                        <label className="text-xs font-medium uppercase tracking-wider text-ink-mute">Threshold</label>
                         <input
                           type="number"
                           min={0}
@@ -319,14 +319,14 @@ export default function AdminNeedsAttentionPage() {
                             const n = Number(e.target.value)
                             patchRule(code, 'threshold_days', Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0)
                           }}
-                          className="w-20 rounded border border-gray-300 px-2 py-1 text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                          className="w-20 rounded border border-line px-2 py-1 text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                         />
-                        <span className="text-xs text-gray-500">days</span>
+                        <span className="text-xs text-ink-mute">days</span>
                       </div>
                     )}
                     {spec.hasCalendarToggle && (
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium uppercase tracking-wider text-gray-500">Counts</span>
+                        <span className="text-xs font-medium uppercase tracking-wider text-ink-mute">Counts</span>
                         <Segmented
                           value={rule.calendar ? 'calendar' : 'working'}
                           options={[
@@ -347,24 +347,24 @@ export default function AdminNeedsAttentionPage() {
 
       <div className="flex justify-end pt-2">
         {confirmReset ? (
-          <div className="flex items-center gap-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-200">
+          <div className="flex items-center gap-3 rounded-lg bg-low-soft px-3 py-2 text-xs text-low ring-1 ring-low">
             <span>Replace all rules with defaults?</span>
             <button
               type="button"
               onClick={() => void resetToDefaults()}
-              className="rounded-md bg-amber-600 px-2 py-1 text-xs font-semibold text-white hover:bg-amber-700"
+              className="rounded-md bg-low px-2 py-1 text-xs font-semibold text-on-ink hover:opacity-90"
             >Reset</button>
             <button
               type="button"
               onClick={() => setConfirmReset(false)}
-              className="text-xs text-amber-700 underline"
+              className="text-xs text-low underline"
             >Cancel</button>
           </div>
         ) : (
           <button
             type="button"
             onClick={() => setConfirmReset(true)}
-            className="text-xs text-gray-500 underline underline-offset-2 hover:text-gray-900"
+            className="text-xs text-ink-mute underline underline-offset-2 hover:text-ink"
           >
             Reset to defaults
           </button>
@@ -405,12 +405,12 @@ function Toggle({ value, onChange, label }: {
       onClick={() => onChange(!value)}
       className={[
         'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors',
-        value ? 'bg-gray-900' : 'bg-gray-200',
+        value ? 'bg-ink' : 'bg-line',
       ].join(' ')}
     >
       <span
         className={[
-          'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-white transition-transform',
+          'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-surface transition-transform',
           value ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
         ].join(' ')}
       />
@@ -426,7 +426,7 @@ function Segmented<T extends string>({
   onChange: (v: T) => void
 }) {
   return (
-    <div className="flex rounded-lg border border-gray-200 bg-white p-0.5">
+    <div className="flex rounded-lg border border-line bg-surface p-0.5">
       {options.map((o) => (
         <button
           key={o.value}
@@ -435,7 +435,7 @@ function Segmented<T extends string>({
           onClick={() => onChange(o.value)}
           className={[
             'rounded-md px-3 py-1 text-xs font-medium transition-colors',
-            value === o.value ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:text-gray-900',
+            value === o.value ? 'bg-canvas text-ink' : 'text-ink-mute hover:text-ink',
           ].join(' ')}
         >{o.label}</button>
       ))}

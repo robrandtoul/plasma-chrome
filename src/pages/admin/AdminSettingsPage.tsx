@@ -255,7 +255,7 @@ export default function AdminSettingsPage() {
 
   if (loadError) {
     return (
-      <div className="rounded-2xl bg-rose-50 p-6 text-sm text-rose-700 ring-1 ring-rose-200">
+      <div className="rounded-2xl bg-out-soft p-6 text-sm text-out ring-1 ring-out">
         Failed to load settings: {loadError}
       </div>
     )
@@ -263,7 +263,7 @@ export default function AdminSettingsPage() {
   if (!settings) {
     return (
       <div className="flex justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-gray-900" />
       </div>
     )
   }
@@ -271,15 +271,15 @@ export default function AdminSettingsPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-xl font-bold text-gray-900">Settings</h2>
-        <p className="mt-1 text-sm text-gray-500">
+        <h2 className="text-xl font-bold text-ink">Settings</h2>
+        <p className="mt-1 text-sm text-ink-mute">
           Changes save automatically. Customer-facing values update within a minute.
         </p>
       </div>
 
       {/* ── Customer-facing ─────────────────────────────────────────── */}
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-        <h3 className="mb-4 text-sm font-semibold text-gray-900">Customer-facing</h3>
+      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+        <h3 className="mb-4 text-sm font-semibold text-ink">Customer-facing</h3>
         <div className="space-y-5">
           <FieldRow
             label="Disclaimer copy"
@@ -358,8 +358,8 @@ export default function AdminSettingsPage() {
       </section>
 
       {/* ── Customer approvals (Phase 2) ──────────────────────────── */}
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-        <h3 className="mb-4 text-sm font-semibold text-gray-900">Customer approvals</h3>
+      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+        <h3 className="mb-4 text-sm font-semibold text-ink">Customer approvals</h3>
         <div className="space-y-5">
           <FieldRow
             label="Customer-facing approval flow enabled"
@@ -411,8 +411,8 @@ export default function AdminSettingsPage() {
       </section>
 
       {/* ── Designer defaults ─────────────────────────────────────── */}
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-        <h3 className="mb-4 text-sm font-semibold text-gray-900">Designer defaults</h3>
+      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+        <h3 className="mb-4 text-sm font-semibold text-ink">Designer defaults</h3>
         <div className="space-y-5">
           <FieldRow
             label="Default pricing display"
@@ -461,20 +461,20 @@ export default function AdminSettingsPage() {
           messages keyed off the structured `reason` returned by
           admin-test-helpscout. State is component-scoped — leaving
           and returning resets to "Not tested this session". */}
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-        <h3 className="mb-4 text-sm font-semibold text-gray-900">Help Scout</h3>
+      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+        <h3 className="mb-4 text-sm font-semibold text-ink">Help Scout</h3>
 
         <div className="flex flex-wrap items-start gap-4">
           <div className="flex-1 min-w-[15rem]">
             <HelpScoutStatusRow state={hsTestState} />
-            <p className="mt-3 text-xs text-gray-500">
-              To update Help Scout credentials, open the Supabase dashboard → Project Settings → Edge Functions → Secrets and update <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">HELPSCOUT_APP_ID</code> and <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">HELPSCOUT_APP_SECRET</code>. After updating, click Test connection to verify.
+            <p className="mt-3 text-xs text-ink-mute">
+              To update Help Scout credentials, open the Supabase dashboard → Project Settings → Edge Functions → Secrets and update <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[11px]">HELPSCOUT_APP_ID</code> and <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[11px]">HELPSCOUT_APP_SECRET</code>. After updating, click Test connection to verify.
             </p>
           </div>
           <button
             onClick={testHelpScout}
             disabled={hsTesting}
-            className="shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-50"
+            className="shrink-0 rounded-lg px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-50"
           >
             {hsTesting ? 'Testing…' : 'Test connection'}
           </button>
@@ -489,8 +489,8 @@ export default function AdminSettingsPage() {
           cache is invalidated so other open tabs pick the change up
           faster than the 60s TTL. Customer-facing pages are
           unaffected. */}
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-        <h3 className="mb-4 text-sm font-semibold text-gray-900">Shipping</h3>
+      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+        <h3 className="mb-4 text-sm font-semibold text-ink">Shipping</h3>
         <div className="space-y-5">
           <FieldRow
             label="FedEx box weight (grams)"
@@ -569,8 +569,8 @@ export default function AdminSettingsPage() {
             />
           </FieldRow>
 
-          <p className="text-xs text-gray-500">
-            To update FedEx credentials, open the Supabase dashboard → Project Settings → Edge Functions → Secrets and update <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">FEDEX_API_KEY</code>, <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">FEDEX_API_SECRET</code>, and <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">FEDEX_ACCOUNT_NUMBER</code>.
+          <p className="text-xs text-ink-mute">
+            To update FedEx credentials, open the Supabase dashboard → Project Settings → Edge Functions → Secrets and update <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[11px]">FEDEX_API_KEY</code>, <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[11px]">FEDEX_API_SECRET</code>, and <code className="rounded bg-canvas px-1 py-0.5 font-mono text-[11px]">FEDEX_ACCOUNT_NUMBER</code>.
           </p>
         </div>
       </section>
@@ -595,7 +595,7 @@ function HelpScoutStatusRow({ state }: { state: HelpScoutTestState }) {
     return (
       <div className="flex items-center gap-2">
         <Dot color="amber" />
-        <span className="text-sm font-medium text-gray-900">Not tested this session</span>
+        <span className="text-sm font-medium text-ink">Not tested this session</span>
       </div>
     )
   }
@@ -611,15 +611,15 @@ function HelpScoutStatusRow({ state }: { state: HelpScoutTestState }) {
       <div>
         <div className="flex items-center gap-2">
           <Dot color="green" />
-          <span className="text-sm font-medium text-emerald-700">Connected</span>
+          <span className="text-sm font-medium text-in-stock">Connected</span>
         </div>
         {state.mailboxName && (
-          <p className="mt-1 text-xs text-gray-600">
-            Mailbox: <span className="font-medium text-gray-900">{state.mailboxName}</span>
+          <p className="mt-1 text-xs text-ink-soft">
+            Mailbox: <span className="font-medium text-ink">{state.mailboxName}</span>
           </p>
         )}
         {verifiedAt && (
-          <p className="mt-0.5 text-xs text-gray-400">Last verified at {verifiedAt}</p>
+          <p className="mt-0.5 text-xs text-ink-dim">Last verified at {verifiedAt}</p>
         )}
       </div>
     )
@@ -630,10 +630,10 @@ function HelpScoutStatusRow({ state }: { state: HelpScoutTestState }) {
     <div>
       <div className="flex items-center gap-2">
         <Dot color="red" />
-        <span className="text-sm font-medium text-rose-700">Not connected — {message}</span>
+        <span className="text-sm font-medium text-out">Not connected — {message}</span>
       </div>
       {state.detail && (
-        <p className="mt-1 break-all text-xs text-gray-500" title={state.detail}>{state.detail}</p>
+        <p className="mt-1 break-all text-xs text-ink-mute" title={state.detail}>{state.detail}</p>
       )}
     </div>
   )
@@ -654,10 +654,10 @@ function helpScoutFailMessage(reason: HelpScoutFailReason): string {
 
 function Dot({ color }: { color: 'amber' | 'green' | 'red' }) {
   const cls = color === 'green'
-    ? 'bg-emerald-500'
+    ? 'bg-in-stock'
     : color === 'red'
-      ? 'bg-rose-500'
-      : 'bg-amber-400'
+      ? 'bg-out'
+      : 'bg-low'
   return <span aria-hidden className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${cls}`} />
 }
 
@@ -672,13 +672,13 @@ function FieldRow({ label, help, saved, working, error, children }: {
   return (
     <div>
       <div className="mb-1 flex items-center gap-3">
-        <label className="text-sm font-medium text-gray-700">{label}</label>
-        {working && <span className="text-xs text-gray-400">Saving…</span>}
-        {saved && !working && <span className="text-xs text-emerald-600">Saved</span>}
-        {error && <span className="text-xs text-rose-600">{error}</span>}
+        <label className="text-sm font-medium text-ink-soft">{label}</label>
+        {working && <span className="text-xs text-ink-dim">Saving…</span>}
+        {saved && !working && <span className="text-xs text-in-stock">Saved</span>}
+        {error && <span className="text-xs text-out">{error}</span>}
       </div>
       {children}
-      <p className="mt-1.5 text-xs text-gray-500">{help}</p>
+      <p className="mt-1.5 text-xs text-ink-mute">{help}</p>
     </div>
   )
 }
@@ -704,13 +704,13 @@ function Toggle({
       onClick={() => onChange(!value)}
       className={[
         'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors',
-        value ? 'bg-gray-900' : 'bg-gray-200',
+        value ? 'bg-ink' : 'bg-line',
         disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
       ].join(' ')}
     >
       <span
         className={[
-          'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-white transition-transform',
+          'inline-block h-5 w-5 translate-y-0.5 transform rounded-full bg-surface transition-transform',
           value ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
         ].join(' ')}
       />
@@ -735,8 +735,8 @@ function RadioGroup<T extends string | null>({ value, onChange, options }: {
             className={[
               'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
               active
-                ? 'bg-gray-900 text-white'
-                : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
+                ? 'bg-ink text-on-ink'
+                : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
             ].join(' ')}
           >
             {o.label}
@@ -764,4 +764,4 @@ function humanFieldLabel(field: keyof Settings): string {
   }[field]
 }
 
-const inputClass = 'w-full rounded border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
+const inputClass = 'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
