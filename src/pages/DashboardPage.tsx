@@ -371,12 +371,19 @@ function OverflowMenu({
   onUnsnooze,
 }: OverflowMenuProps) {
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
     function onDocClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      const t = e.target as Node
+      // The menu is portalled to <body>, so the click-outside test must
+      // exclude BOTH the trigger button and the portalled menu — else a
+      // click on a menu item registers as "outside" and closes it before
+      // the item's handler fires.
+      if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return
+      setOpen(false)
     }
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') setOpen(false)
@@ -389,9 +396,26 @@ function OverflowMenu({
     }
   }, [open])
 
+  // Position the menu via a fixed-position portal so it escapes the row
+  // card's overflow-hidden (which was clipping the dropdown). Right-
+  // aligned under the trigger button; clamped to stay on-screen.
+  const menuPos = open && btnRef.current
+    ? (() => {
+        const r = btnRef.current!.getBoundingClientRect()
+        const W = 224
+        const H_GUESS = 300
+        return {
+          left: Math.max(16, r.right - W),
+          top: Math.max(16, Math.min(r.bottom + 4, window.innerHeight - H_GUESS - 16)),
+          width: W,
+        }
+      })()
+    : null
+
   return (
-    <div className="relative" ref={ref}>
+    <>
       <button
+        ref={btnRef}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -401,10 +425,12 @@ function OverflowMenu({
       >
         <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor"><circle cx="3" cy="8" r="1.5" /><circle cx="8" cy="8" r="1.5" /><circle cx="13" cy="8" r="1.5" /></svg>
       </button>
-      {open && (
+      {open && menuPos && createPortal(
         <div
           role="menu"
-          className="absolute right-0 top-9 z-10 w-56 rounded-[10px] bg-surface py-1 text-sm shadow-md border border-line"
+          ref={menuRef}
+          style={menuPos}
+          className="fixed z-[60] w-56 rounded-[10px] bg-surface py-1 text-sm shadow-md border border-line"
           onClick={(e) => e.stopPropagation()}
         >
           {proof.current_version_id ? (
@@ -474,9 +500,10 @@ function OverflowMenu({
               <SnoozeButton proof={proof} onSnooze={onSnooze} menuStyle />
             </div>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   )
 }
 
