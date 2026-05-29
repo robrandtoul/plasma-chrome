@@ -6,6 +6,7 @@ import { invalidateApprovalSettings } from '../../lib/approvalSettings'
 import { invalidateShippingSettings } from '../../lib/shippingSettings'
 import AdminTemplatesSection from './AdminTemplatesSection'
 import MetalThicknessNotesSection from './MetalThicknessNotesSection'
+import LoginCopySection from './LoginCopySection'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -631,6 +632,9 @@ export default function AdminSettingsPage() {
           </p>
         </div>
       </section>
+
+      {/* ── Login page copy ──────────────────────────────────── */}
+      <LoginCopySection />
 
       {/* ── Metal thickness notes ────────────────────────────── */}
       <MetalThicknessNotesSection />
