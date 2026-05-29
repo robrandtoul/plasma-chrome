@@ -22,7 +22,7 @@ import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/sharedApproval'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
-import { customerProofPath, designerPreviewPath } from '../lib/customerProofUrl'
+import { customerProofPath, openDesignerPreview } from '../lib/customerProofUrl'
 // QuoteLink now lives inside DesignerChrome (PR 31).
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
 import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal } from 'lucide-react'
@@ -1429,12 +1429,11 @@ export default function ProofDetailPage() {
                   disabled={versions.length === 0}
                   title={versions.length === 0 ? 'Add a version to enable preview' : undefined}
                   onClick={() => {
-                    // Open the customer page in a new tab. The previous
-                    // modal collapsed silently in some setups (HMR
-                    // reconnect on dev, X-Frame-Options on certain
-                    // deploys). noopener + noreferrer so the customer
-                    // tab can't reach back into window.opener.
-                    window.open(designerPreviewPath(proof.id), '_blank', 'noopener,noreferrer')
+                    // Open the customer page in a new tab, falling back
+                    // to same-tab navigation when the tab is blocked (a
+                    // popup blocker, or a sandboxed embed without allow-
+                    // popups) so the button never silently does nothing.
+                    openDesignerPreview(proof.id)
                   }}
                 >
                   Open customer view

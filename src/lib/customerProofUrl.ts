@@ -26,3 +26,15 @@ export function customerProofPath(proofId: string): string {
 export function designerPreviewPath(proofId: string): string {
   return `${customerProofPath(proofId)}?preview=1`
 }
+
+// Open the designer-preview of the customer page. Tries a new tab first
+// (the preferred UX — the designer keeps their place), but window.open
+// returns null when the tab is blocked: a popup blocker, or a sandboxed
+// embed (e.g. a preview pane) without allow-popups. In that case fall
+// back to same-tab navigation so the action never silently does nothing.
+// Used by every "Preview" / "Open customer view" control.
+export function openDesignerPreview(proofId: string): void {
+  const path = designerPreviewPath(proofId)
+  const opened = window.open(path, '_blank', 'noopener,noreferrer')
+  if (!opened) window.location.assign(path)
+}
