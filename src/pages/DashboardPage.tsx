@@ -1771,7 +1771,29 @@ export default function DashboardPage() {
   // clicking the tile, which shows the Snoozed section alongside the rest.
   const [snoozedOnly,   setSnoozedOnly]   = useState(false)
 
+  // The search term the server list is currently fetched for. Held in a
+  // ref so loadDashboard() (called from many places — mount, visibility,
+  // after pin/snooze writes) always re-fetches for the active search
+  // without every call site threading it through. Empty = working set.
+  const serverSearchRef = useRef('')
+
   useEffect(() => { loadDashboard() }, [])
+
+  // Server-side search (scaling C). The `search` box filters the loaded
+  // list client-side for instant feedback; this debounced effect also
+  // re-fetches dashboard_list with the term so proofs OUTSIDE the working
+  // set (archived: old approved / abandoned) surface. Only refetches when
+  // the settled term actually changes — typing within the already-loaded
+  // set stays instant, the archive backfills ~300ms later.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const term = search.trim()
+      if (term === serverSearchRef.current) return
+      serverSearchRef.current = term
+      void loadDashboard()
+    }, 300)
+    return () => clearTimeout(t)
+  }, [search])
 
   // Profile fetch lives inside DesignerChrome — the wrapper owns
   // it so other designer pages don't each reimplement it.
@@ -1860,7 +1882,10 @@ export default function DashboardPage() {
     // proofs, so scoping this list doesn't skew the headline numbers; and
     // every tile's click-through members are active/recent, so they're
     // present in this set. Long-closed history is reachable via search (C).
-    const projectsPromise = supabase.rpc('dashboard_list')
+    // p_search empty → working set; non-empty → matches across all
+    // proofs incl. the archive (migration 000205). The term is held in a
+    // ref so every loadDashboard() caller re-fetches for the active search.
+    const projectsPromise = supabase.rpc('dashboard_list', { p_search: serverSearchRef.current })
 
     // Note: dashboard_tile_counts() RPC used to be fetched here, but
     // every tile now sources its count client-side from `projects`
@@ -2134,9 +2159,11 @@ export default function DashboardPage() {
         if (!p.latest_non_view_event_at || !p.version_created_at) return false
         if (new Date(p.latest_non_view_event_at).getTime() <= new Date(p.version_created_at).getTime()) return false
       }
-      // Hide abandoned proofs unless the designer has toggled them
-      // on via the Abandoned checkbox.
-      if (!showAbandoned && p.status === 'abandoned') return false
+      // Hide abandoned proofs unless the designer has toggled them on via
+      // the Abandoned checkbox — but never hide them while a search is
+      // active: searching is how you find archived (incl. abandoned)
+      // proofs, so a match must always surface (scaling C).
+      if (!showAbandoned && p.status === 'abandoned' && q === '') return false
       return true
     })
   }, [projects, search, tileFilter, showAbandoned, chipFilter])
