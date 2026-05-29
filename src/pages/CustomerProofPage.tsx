@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Send, Check, Layers, PoundSterling, BookOpen, Info, Eye } from 'lucide-react'
+import { Send, Check, Layers, PoundSterling, DollarSign, Euro, BookOpen, Info, Eye, type LucideIcon } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { PlasmaWordmark, Pill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, StatusRule, tokens, type PillColour } from '../design'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
@@ -22,6 +22,21 @@ import { firstName } from '../lib/firstName'
 import { BRAND_ORDER } from '../lib/theme'
 import { getPublicSettings, ABOUT_PROOF_COPY_DEFAULT, type PublicSettings } from '../lib/publicSettings'
 import type { PricingSnapshot, PricingVariant, Currency } from '../lib/types'
+
+// Pricing-card header glyph, picked from the version's currency so the
+// icon matches the prices shown beneath it (£ / $ / €) instead of always
+// reading as GBP. Falls back to the pound for null/unknown currencies
+// (e.g. per-direction-pricing rounds, which hide the pricing card anyway).
+function currencyIcon(currency: Currency | null | undefined): LucideIcon {
+  switch (currency) {
+    case 'USD':
+      return DollarSign
+    case 'EUR':
+      return Euro
+    default:
+      return PoundSterling
+  }
+}
 
 export default function CustomerProofPage() {
   const { id } = useParams<{ id: string }>()
@@ -1806,7 +1821,7 @@ export default function CustomerProofPage() {
         {!activeVersion.is_per_direction_pricing && (
           <PanelShell
             title="Pricing"
-            icon={PoundSterling}
+            icon={currencyIcon(activeVersion.currency)}
             accent={tokens.brand}
             action={
               !activeVersion.custom_quote ? (
@@ -2368,8 +2383,8 @@ export default function CustomerProofPage() {
                       : 'Inclusive of VAT'
                   }
                   title="Pricing"
-                  icon={PoundSterling}
-                  accent={tokens.ink}
+                  icon={currencyIcon(activeVersion.currency)}
+                  accent={tokens.brand}
                   className="order-8 lg:order-none"
                   action={
                     !activeVersion.custom_quote ? (
@@ -2459,7 +2474,7 @@ export default function CustomerProofPage() {
                 column. Always rendered (not gated), so it sits below
                 whatever Specs/Pricing the version carries. */}
             <div className="order-10 lg:order-none rounded-[10px] bg-surface border border-line-soft p-5 flex items-start gap-3">
-              <Info size={18} aria-hidden="true" className="text-ink-mute mt-0.5 shrink-0" />
+              <Info size={18} aria-hidden="true" className="text-brand mt-0.5 shrink-0" />
               <div className="min-w-0">
                 <span className="eyebrow block mb-1.5">About this proof</span>
                 <p className="whitespace-pre-line text-[13px] leading-[1.6] text-ink-soft m-0">
@@ -2966,7 +2981,7 @@ export default function CustomerProofPage() {
                   card: intro narrative left, the coral-accented
                   thickness list right. Stacks to one column below md
                   in reading order (intro → list). */}
-              <div className="grid gap-8 md:grid-cols-2">
+              <div className="grid gap-8 md:grid-cols-[1fr_2fr] md:items-start">
                 <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-ink-soft">
                   {thicknessNotes.intro}
                 </p>
@@ -2989,19 +3004,27 @@ export default function CustomerProofPage() {
               accent={tokens.brand}
               className="order-7 lg:order-none"
             >
-              <p className="mb-4 max-w-[62ch] text-[14px] leading-[1.6] text-ink-soft">
-                Three layers of genuine Colorplan paper, bonded
-                together and visible along the card's edges — a
-                signature detail of our letterpress cards.
-              </p>
-              <LayeredConstructionPanel
-                front_name={activeVersion.front_colour_name}
-                front_hex={activeVersion.front_colour_hex}
-                core_name={activeVersion.core_colour_name}
-                core_hex={activeVersion.core_colour_hex}
-                back_name={activeVersion.back_colour_name}
-                back_hex={activeVersion.back_colour_hex}
-              />
+              {/* One-third / two-third split: the explanatory text in
+                  the left column, the layered cross-section diagram in
+                  the right. Mirrors the Thickness / QR two-column
+                  pattern, weighted 1:2 so the diagram gets the room.
+                  Stacks to one column below md, in reading order (text
+                  first, then diagram). */}
+              <div className="grid gap-6 md:gap-8 md:grid-cols-[1fr_2fr] md:items-start">
+                <p className="text-[14px] leading-[1.6] text-ink-soft m-0">
+                  Three layers of genuine Colorplan paper, bonded
+                  together and visible along the card's edges — a
+                  signature detail of our letterpress cards.
+                </p>
+                <LayeredConstructionPanel
+                  front_name={activeVersion.front_colour_name}
+                  front_hex={activeVersion.front_colour_hex}
+                  core_name={activeVersion.core_colour_name}
+                  core_hex={activeVersion.core_colour_hex}
+                  back_name={activeVersion.back_colour_name}
+                  back_hex={activeVersion.back_colour_hex}
+                />
+              </div>
             </PanelShell>
           )}
 
@@ -3054,8 +3077,8 @@ export default function CustomerProofPage() {
                     : 'Inclusive of VAT'
                 }
                 title="Pricing"
-                icon={PoundSterling}
-                accent={tokens.ink}
+                icon={currencyIcon(activeVersion.currency)}
+                accent={tokens.brand}
                 className="order-8 lg:order-none"
                 action={
                   !activeVersion.custom_quote ? (
@@ -3160,15 +3183,16 @@ export default function CustomerProofPage() {
                   <h2 id="section-material-heading" className="sr-only">
                     About our {activeVersion.material_display.toLowerCase()} cards
                   </h2>
-                  {/* Balanced two-column grid at md+ (narrative
-                      left, key features right). Stacks to a single
+                  {/* One-third / two-third grid at md+ (narrative
+                      left, key features right) — matches the Thickness
+                      and Construction cards. Stacks to a single
                       column below the breakpoint in reading order:
                       narrative → features. When key_features is
                       null or empty the right column renders an
                       empty <div> so the grid shape stays stable
                       and narrative width (max-w-[62ch]) doesn't
                       reshape across materials. */}
-                  <div className="grid gap-8 md:grid-cols-2">
+                  <div className="grid gap-8 md:grid-cols-[1fr_2fr] md:items-start">
                     <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-ink-soft">
                       {activeVersion.material_description}
                     </p>
