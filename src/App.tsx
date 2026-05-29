@@ -11,6 +11,7 @@ import ProofDetailPage from './pages/ProofDetailPage'
 import NewVersionPage from './pages/NewVersionPage'
 import EditVersionPage from './pages/EditVersionPage'
 import CustomersPage from './pages/CustomersPage'
+import CustomerDetailPage from './pages/CustomerDetailPage'
 import QuotePage from './pages/QuotePage'
 import AdminLayout from './pages/admin/AdminLayout'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
@@ -65,6 +66,7 @@ function AppShell() {
         <Route index element={<Navigate to="users" replace />} />
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="customers" element={<CustomersPage />} />
+        <Route path="customers/:companyId" element={<CustomerDetailPage />} />
         <Route path="materials" element={<AdminMaterialsPage />} />
         <Route path="pricing" element={<AdminPricingPage />} />
         <Route path="lead-times" element={<AdminLeadTimesPage />} />
