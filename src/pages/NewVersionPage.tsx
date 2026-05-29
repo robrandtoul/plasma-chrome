@@ -5,9 +5,7 @@ import { deriveCodes } from '../lib/variantSlug'
 import { VariantDropZone } from '../components/VariantDropZone'
 import { supabase } from '../lib/supabase'
 import { logAudit } from '../lib/audit'
-import { formatPrice } from '../lib/currency'
 import { pluralLabel, variantLabel } from '../lib/labels'
-import { DEFAULT_DISPLAY_QUANTITIES } from '../lib/constants'
 import { PricingDisplayField, type PricingDisplayValue } from '../components/PricingDisplayField'
 import { CurrencyField } from '../components/CurrencyField'
 import NameChipInput from '../components/NameChipInput'
@@ -267,7 +265,6 @@ export default function NewVersionPage() {
   const [selectedVariantIds, setSelectedVariantIds] = useState<string[]>([])
   const [currency, setCurrency] = useState<Currency | null>(null)
   const [variantTiers, setVariantTiers] = useState<Record<string, PriceTierRow[]>>({})
-  const [expandedVariants, setExpandedVariants] = useState<Record<string, boolean>>({})
   // Inheritance tracking. On v2+ creation we snapshot every inherited
   // value into inheritedSnapshot once the prior version loads. From
   // there each field derives its own isCarried/isEdited live by
@@ -1305,7 +1302,6 @@ export default function NewVersionPage() {
 
   useEffect(() => {
     setVariantTiers({})
-    setExpandedVariants({})
     if (selectedVariantIds.length === 0 || currency === null) return
 
     // Capture the selection for this fetch so the callback can
@@ -5912,88 +5908,6 @@ export default function NewVersionPage() {
           </div>
           </div>
 
-          {/* Pricing — one section per selected variant. Read-only
-              reference display of live prices pulled from price_tiers
-              for the chosen variant and currency. All edits happen
-              in Admin → Pricing; designers see the live values here
-              to confirm the customer-facing number, not to modify
-              it. Hidden in custom-quote mode and until a currency is
-              picked. Also gated on formExpanded (Tier 2c) so the
-              previews collapse with the form they verify — no point
-              showing pricing tables when the variant/currency
-              choices that produce them are hidden. */}
-          {formExpanded && !isPerDirectionRound && !isCustomQuote && selectedVariantIds.length > 0 && currency !== null && selectedVariantIds.map((vid) => {
-            const variant = variants.find((v) => v.id === vid)
-            const tiers = variantTiers[vid] ?? []
-            if (!variant) return null
-
-            const material = materials.find((m) => m.id === selectedMaterialId)
-            const displaySet = new Set(material?.display_quantities ?? DEFAULT_DISPLAY_QUANTITIES)
-            const userExpanded = !!expandedVariants[vid]
-            const visibleTiers = tiers.filter((t) => displaySet.has(t.quantity) || userExpanded)
-            const hiddenCount = tiers.length - visibleTiers.length
-            const showToggle = hiddenCount > 0 || (userExpanded && tiers.length > displaySet.size)
-            const variantLabel = variantType === 'default'
-              ? material_display_for(selectedMaterialId, materials)
-              : variant.display_name
-
-            return (
-              <section key={vid} className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
-                <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-ink-dim">
-                  Pricing: {variantLabel}
-                </h2>
-                <p className="mb-4 text-xs text-ink-dim">
-                  {tiers.length > 0
-                    ? `Reference pricing for ${variantLabel} (${currency}).`
-                    : 'No price tiers found for this variant and currency.'}
-                </p>
-                {tiers.length > 0 && (
-                  <>
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-line-soft">
-                          {/* Mirrors the shared PricingDisplay
-                              component's headers so designer and
-                              customer views stay in lockstep.
-                              Currency suffix dropped from the
-                              price column — the cell values
-                              already carry the currency via
-                              formatPrice. */}
-                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Total quantity</th>
-                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Price</th>
-                          <th className="pb-2 text-left text-xs font-semibold uppercase tracking-wider text-ink-dim">Per card</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {visibleTiers.map((tier) => (
-                          <tr key={tier.quantity} className="border-b border-line-soft last:border-0">
-                            <td className="py-2 pr-4 font-medium text-ink">{tier.quantity.toLocaleString()}</td>
-                            <td className="py-2 pr-4 text-ink">
-                              {formatPrice(tier.total_price, currency, 2)}
-                            </td>
-                            <td className="py-2 text-xs text-ink-mute">
-                              {tier.total_price > 0 ? formatPrice(tier.total_price / tier.quantity, currency, 2) : '—'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {showToggle && (
-                      <button
-                        type="button"
-                        onClick={() => setExpandedVariants(prev => ({ ...prev, [vid]: !prev[vid] }))}
-                        className="mt-3 text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
-                      >
-                        {userExpanded
-                          ? 'Hide extra tiers'
-                          : `Show all tiers${hiddenCount > 0 ? ` (${hiddenCount} more)` : ''}`}
-                      </button>
-                    )}
-                  </>
-                )}
-              </section>
-            )
-          })}
 
           {error && <p className="rounded-lg bg-out-soft px-4 py-3 text-sm text-out">{error}</p>}
 
@@ -6175,10 +6089,6 @@ function missingFieldsHint(
   const items = missingFieldItems(validations, optionLabelSingular)
   if (items.length === 0) return 'Some required fields are incomplete.'
   return items.map((s) => `${s}.`).join(' ')
-}
-
-function material_display_for(id: string, materials: Material[]) {
-  return materials.find((m) => m.id === id)?.display_name ?? ''
 }
 
 const inputClass = 'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand'
