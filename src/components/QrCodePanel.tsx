@@ -40,6 +40,10 @@ import {
   VcardConfigError,
 } from '../lib/vcardClient'
 import { PanelShell, tokens } from '../design'
+import {
+  QR_PANEL_INTRO_COPY_DEFAULT,
+  QR_PANEL_VCARD_COPY_DEFAULT,
+} from '../lib/publicSettings'
 import type { GridImage } from './ImageGrid'
 
 interface QrCodePanelProps {
@@ -62,9 +66,17 @@ interface QrCodePanelProps {
   isVariantRound: boolean
   /** Optional classes for the panel root (e.g. responsive order-*). */
   className?: string
+  /**
+   * Admin-editable panel copy (migration 000200), threaded from the
+   * customer page's public_settings fetch. Either may be null while
+   * settings are still loading or when the column is empty; QrSection
+   * falls back to the shipped defaults so the copy never blanks.
+   */
+  introCopy?: string | null
+  vcardCopy?: string | null
 }
 
-export function QrCodePanel({ qrImages, names, isVariantRound, className }: QrCodePanelProps) {
+export function QrCodePanel({ qrImages, names, isVariantRound, className, introCopy, vcardCopy }: QrCodePanelProps) {
   if (qrImages.length === 0) return null
 
   // Variant rounds: QR rows are version-wide (no round_variant_id on
@@ -72,7 +84,7 @@ export function QrCodePanel({ qrImages, names, isVariantRound, className }: QrCo
   // per-recipient grouping doesn't apply to variant rounds.
   if (isVariantRound) {
     return (
-      <QrSection className={className}>
+      <QrSection className={className} introCopy={introCopy} vcardCopy={vcardCopy}>
         <div className="space-y-6">
           {qrImages.map((img) => (
             <QrCodeCard key={img.id} image={img} />
@@ -89,7 +101,7 @@ export function QrCodePanel({ qrImages, names, isVariantRound, className }: QrCo
   // panel.
   if (names.length === 0) {
     return (
-      <QrSection className={className}>
+      <QrSection className={className} introCopy={introCopy} vcardCopy={vcardCopy}>
         <div className="space-y-6">
           {qrImages.map((img) => (
             <QrCodeCard key={img.id} image={img} />
@@ -114,7 +126,7 @@ export function QrCodePanel({ qrImages, names, isVariantRound, className }: QrCo
   if (!hasAnyContent) return null
 
   return (
-    <QrSection className={className}>
+    <QrSection className={className} introCopy={introCopy} vcardCopy={vcardCopy}>
       <div className="space-y-8">
         {perRecipient.map(({ name, qrs }) => {
           // Skip recipients with no QRs visible to them (no
@@ -148,7 +160,22 @@ export function QrCodePanel({ qrImages, names, isVariantRound, className }: QrCo
 
 // ── Section wrapper ──────────────────────────────────────────────────
 
-function QrSection({ children, className }: { children: React.ReactNode; className?: string }) {
+function QrSection({
+  children,
+  className,
+  introCopy,
+  vcardCopy,
+}: {
+  children: React.ReactNode
+  className?: string
+  introCopy?: string | null
+  vcardCopy?: string | null
+}) {
+  // Admin-editable copy (migration 000200), with the shipped defaults
+  // as the fallback so a null/loading/empty value never blanks the
+  // instructions. Trim-guard mirrors publicSettings.ts.
+  const intro = introCopy && introCopy.trim().length > 0 ? introCopy : QR_PANEL_INTRO_COPY_DEFAULT
+  const vcard = vcardCopy && vcardCopy.trim().length > 0 ? vcardCopy : QR_PANEL_VCARD_COPY_DEFAULT
   return (
     <PanelShell
       eyebrow="Before approving"
@@ -157,19 +184,22 @@ function QrSection({ children, className }: { children: React.ReactNode; classNa
       accent={tokens.brand}
       className={className}
     >
-      <div className="space-y-4">
-        <p className="text-[14px] leading-[1.6] text-ink-soft max-w-[62ch] m-0">
-          Please double-check the contents of each QR code. Scan with your
-          phone or read the decoded text alongside each one. The on-screen
-          QR is the exact image we'll print.
-        </p>
-        <p className="text-[13px] leading-[1.55] text-ink-mute max-w-[62ch] m-0">
-          For Plasma vCards, scanning the QR saves the contact details
-          below to a phone. The look of the page it opens — the photo,
-          colours, and layout — is yours to personalise after your cards
-          arrive.
-        </p>
-        <div className="pt-2">{children}</div>
+      {/* One-third / two-third split: the standing review
+          instructions sit in the left column, the QR codes and their
+          decoded contents in the right. Mirrors the Thickness /
+          Material-notes two-column pattern, but weighted 1:2 so the
+          codes get the room. Stacks to one column below md, in reading
+          order (instructions first, then the codes). */}
+      <div className="grid gap-6 md:gap-8 md:grid-cols-[1fr_2fr] md:items-start">
+        <div className="space-y-4">
+          <p className="text-[14px] leading-[1.6] text-ink-soft m-0 whitespace-pre-line">
+            {intro}
+          </p>
+          <p className="text-[13px] leading-[1.55] text-ink-mute m-0 whitespace-pre-line">
+            {vcard}
+          </p>
+        </div>
+        <div>{children}</div>
       </div>
     </PanelShell>
   )
@@ -192,21 +222,21 @@ function QrCodeCard({
   const kind: QrKind = image.qr_kind ?? classifyQrData(decoded)
 
   return (
-    <article className="grid gap-5 sm:grid-cols-[160px_1fr] rounded-[10px] bg-canvas border border-line p-5">
+    <article className="grid gap-5 sm:grid-cols-[120px_1fr] rounded-[10px] bg-canvas border border-line p-5">
       <div>
         {image.signed_url ? (
           <img
             src={image.signed_url}
             alt="QR code"
-            width={160}
-            height={160}
-            className="block w-full max-w-[160px] aspect-square object-contain bg-surface rounded-[6px] border border-line-soft"
+            width={120}
+            height={120}
+            className="block w-full max-w-[120px] aspect-square object-contain bg-surface rounded-[6px] border border-line-soft"
           />
         ) : (
           // Edge-function signing failure — graceful empty box.
           // The decoded panel still renders so the customer can
           // verify the contents even without the visible QR.
-          <div className="block w-full max-w-[160px] aspect-square bg-canvas border border-dashed border-line rounded-[6px]" />
+          <div className="block w-full max-w-[120px] aspect-square bg-canvas border border-dashed border-line rounded-[6px]" />
         )}
         {sharedLabel && (
           <div className="eyebrow mt-2" style={{ letterSpacing: '0.16em' }}>

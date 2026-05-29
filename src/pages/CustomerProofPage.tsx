@@ -2943,6 +2943,8 @@ export default function CustomerProofPage() {
             names={activeVersion.names ?? []}
             isVariantRound={activeVersion.is_variant_round ?? false}
             className="order-5 lg:order-none"
+            introCopy={publicSettings?.qr_panel_intro_copy}
+            vcardCopy={publicSettings?.qr_panel_vcard_copy}
           />
 
           {/* Metal thickness guide (migration 000177). Contextual
