@@ -44,6 +44,11 @@ export default function CustomerProofPage() {
   const [proof, setProof] = useState<PublicProof | null>(null)
   const [versions, setVersions] = useState<PublicProofVersion[]>([])
   const [activeVersion, setActiveVersion] = useState<PublicProofVersion | null>(null)
+  // History row: when a proof has many revisions, collapse the older
+  // ones behind a "+N earlier" chip so the row doesn't wrap to several
+  // lines. Toggled open by the customer; also force-open when they're
+  // viewing one of the older (collapsed) versions.
+  const [showAllVersions, setShowAllVersions] = useState(false)
   const [versionImages, setVersionImages] = useState<Record<string, GridImage[]>>({})
   // QR-code rows split off from versionImages so the regular image
   // grid never renders them. Same edge-function payload, but
@@ -2490,53 +2495,110 @@ export default function CustomerProofPage() {
               real two-column flex container on lg+. */}
           <div className="contents lg:flex lg:flex-col lg:gap-7 lg:min-w-0">
 
-            {/* Version pill row — chronological, click switches
-                the active version via setActiveVersion (handler
-                preserved from prior PRs). Current version gets a
-                green dot; on the active (ink) pill the dot inverts
-                to white. */}
-            {versions.length > 1 && (
-              <div className="order-3 lg:order-none flex flex-wrap items-center gap-2.5">
-                <span className="eyebrow mr-1.5">History</span>
-                {versions.map((v) => {
-                  const active = v.id === activeVersion.id
-                  const dateLabel = new Date(v.created_at).toLocaleDateString('en-GB', {
-                    day: 'numeric',
-                    month: 'short',
-                  })
-                  const cls = [
-                    'inline-flex items-center gap-2 h-8 px-3 rounded-full text-[13px] transition-colors',
-                    'border',
-                    active
-                      ? 'bg-ink text-on-ink border-ink'
-                      : 'bg-surface text-ink-soft border-line hover:bg-canvas',
-                  ].join(' ')
-                  return (
+            {/* Version pill row — chronological, click switches the
+                active version via setActiveVersion. When there are many
+                revisions the older ones collapse behind a "+N earlier"
+                chip so the row stays compact; the current (latest)
+                version carries a coral accent + dot so it's always the
+                identifiable anchor, kept distinct from the ink "you're
+                viewing this" fill. */}
+            {versions.length > 1 && (() => {
+              const RECENT = 5
+              const tooMany = versions.length > RECENT + 1
+              const activeIdx = versions.findIndex((v) => v.id === activeVersion.id)
+              const recentStart = Math.max(0, versions.length - RECENT)
+              const activeInRecent = activeIdx >= recentStart
+              // Collapse only when there are many AND the customer is
+              // viewing one of the recent versions — never hide the one
+              // they're looking at. Manual expand overrides.
+              const collapsed = tooMany && !showAllVersions && activeInRecent
+              const visible = collapsed ? versions.slice(recentStart) : versions
+              const hiddenCount = collapsed ? recentStart : 0
+              const toggleCls =
+                'inline-flex items-center h-8 px-3 rounded-full text-[12px] border border-line bg-surface text-ink-mute hover:bg-canvas hover:text-ink transition-colors'
+              return (
+                <div className="order-3 lg:order-none flex flex-wrap items-center gap-2.5">
+                  <span className="eyebrow mr-1.5">History</span>
+                  {collapsed && (
                     <button
-                      key={v.id}
                       type="button"
-                      onClick={() => setActiveVersion(v)}
-                      aria-pressed={active}
-                      aria-label={`Version ${v.version_number}, ${dateLabel}${v.is_current ? ' (current)' : ''}`}
-                      className={cls}
+                      onClick={() => setShowAllVersions(true)}
+                      className={toggleCls}
+                      aria-label={`Show ${hiddenCount} earlier versions`}
                     >
-                      <span className="font-mono font-medium">v{v.version_number}</span>
-                      <span className={active ? 'text-on-ink/70' : 'text-ink-dim'} aria-hidden="true">
-                        ·
-                      </span>
-                      <span className="text-[12px]">{dateLabel}</span>
-                      {v.is_current && (
-                        <span
-                          aria-hidden="true"
-                          className="inline-block w-1.5 h-1.5 rounded-full ml-0.5"
-                          style={{ backgroundColor: active ? '#ffffff' : 'var(--c-in-stock)' }}
-                        />
-                      )}
+                      +{hiddenCount} earlier
                     </button>
-                  )
-                })}
-              </div>
-            )}
+                  )}
+                  {visible.map((v) => {
+                    const active = v.id === activeVersion.id
+                    const isCurrent = v.is_current
+                    const dateLabel = new Date(v.created_at).toLocaleDateString('en-GB', {
+                      day: 'numeric',
+                      month: 'short',
+                    })
+                    const cls = [
+                      'inline-flex items-center gap-2 h-8 px-3 rounded-full text-[13px] transition-colors border',
+                      active
+                        ? 'bg-ink text-on-ink border-ink'
+                        : isCurrent
+                          ? '' // coral accent applied via inline style below
+                          : 'bg-surface text-ink-soft border-line hover:bg-canvas',
+                    ].join(' ')
+                    // Current-but-not-viewed: coral-tinted fill, coral
+                    // border, dark-coral text — the anchor of the row.
+                    const style =
+                      !active && isCurrent
+                        ? {
+                            backgroundColor: 'var(--c-brand-50)',
+                            color: 'var(--c-brand-900)',
+                            borderColor: 'var(--c-brand-300)',
+                          }
+                        : undefined
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() => setActiveVersion(v)}
+                        aria-pressed={active}
+                        aria-label={`Version ${v.version_number}, ${dateLabel}${isCurrent ? ' (current)' : ''}`}
+                        className={cls}
+                        style={style}
+                      >
+                        <span className="font-mono font-medium">v{v.version_number}</span>
+                        <span
+                          className={active ? 'text-on-ink/70' : isCurrent ? '' : 'text-ink-dim'}
+                          aria-hidden="true"
+                        >
+                          ·
+                        </span>
+                        <span className="text-[12px]">{dateLabel}</span>
+                        {isCurrent && (
+                          <span
+                            aria-hidden="true"
+                            className="ml-1 text-[10px] font-semibold uppercase tracking-[0.12em]"
+                            // Coral on the ink "viewing" pill (brand-300
+                            // reads on black); inherits the pill's
+                            // dark-coral text otherwise.
+                            style={active ? { color: 'var(--c-brand-300)' } : undefined}
+                          >
+                            Current
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                  {tooMany && !collapsed && activeInRecent && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllVersions(false)}
+                      className={toggleCls}
+                    >
+                      Show fewer
+                    </button>
+                  )}
+                </div>
+              )
+            })()}
 
           {/* ───── Plates ─────
               Near-white section. Groups come from buildImageGroups
