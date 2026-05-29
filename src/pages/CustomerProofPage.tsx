@@ -2140,7 +2140,7 @@ export default function CustomerProofPage() {
           <img
             src="/logo-dark.png"
             alt="PlasmaDesign Proofs"
-            className="h-7 sm:h-9 w-auto"
+            className="h-[39px] sm:h-[50px] w-auto"
           />
           <div className="ml-auto flex items-center gap-4">
             {lastUpdated && (
