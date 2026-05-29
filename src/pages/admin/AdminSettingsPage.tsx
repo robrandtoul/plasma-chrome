@@ -18,6 +18,9 @@ interface Settings {
   reply_email: string
   /** "About this proof" footer note on the customer page (000199). */
   about_proof_copy: string
+  /** "QR code contents" panel copy on the customer page (000200). */
+  qr_panel_intro_copy: string
+  qr_panel_vcard_copy: string
   /** null means "no default — force the designer to choose". */
   default_pricing_display: PricingDisplayValue | null
   default_currency: CurrencyValue | null
@@ -53,6 +56,8 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   company_name:                      'setting.company_name_updated',
   reply_email:                       'setting.reply_email_updated',
   about_proof_copy:                  'setting.about_proof_copy_updated',
+  qr_panel_intro_copy:               'setting.qr_panel_intro_copy_updated',
+  qr_panel_vcard_copy:               'setting.qr_panel_vcard_copy_updated',
   default_pricing_display:           'setting.default_pricing_display_updated',
   default_currency:                  'setting.default_currency_updated',
   approvals_enabled:                 'setting.approvals_enabled_updated',
@@ -371,6 +376,38 @@ export default function AdminSettingsPage() {
               onChange={(e) => setDrafts((d) => ({ ...d, about_proof_copy: e.target.value }))}
               onBlur={() => onTextBlur('about_proof_copy')}
               rows={5}
+              className={inputClass}
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="QR panel — review instructions"
+            help="First paragraph of the 'QR code contents' panel, shown on proofs that include QR codes. The standing 'please double-check each QR code' instruction. Leave blank to use the built-in default."
+            saved={recentlySaved('qr_panel_intro_copy')}
+            working={working.qr_panel_intro_copy}
+            error={errors.qr_panel_intro_copy}
+          >
+            <textarea
+              value={drafts.qr_panel_intro_copy ?? settings.qr_panel_intro_copy ?? ''}
+              onChange={(e) => setDrafts((d) => ({ ...d, qr_panel_intro_copy: e.target.value }))}
+              onBlur={() => onTextBlur('qr_panel_intro_copy')}
+              rows={4}
+              className={inputClass}
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="QR panel — Plasma vCard note"
+            help="Second paragraph of the 'QR code contents' panel, explaining what scanning a Plasma vCard QR does. Leave blank to use the built-in default."
+            saved={recentlySaved('qr_panel_vcard_copy')}
+            working={working.qr_panel_vcard_copy}
+            error={errors.qr_panel_vcard_copy}
+          >
+            <textarea
+              value={drafts.qr_panel_vcard_copy ?? settings.qr_panel_vcard_copy ?? ''}
+              onChange={(e) => setDrafts((d) => ({ ...d, qr_panel_vcard_copy: e.target.value }))}
+              onBlur={() => onTextBlur('qr_panel_vcard_copy')}
+              rows={4}
               className={inputClass}
             />
           </FieldRow>
@@ -776,6 +813,8 @@ function humanFieldLabel(field: keyof Settings): string {
     company_name: 'Company name',
     reply_email: 'Reply email',
     about_proof_copy: 'About this proof note',
+    qr_panel_intro_copy: 'QR panel — review instructions',
+    qr_panel_vcard_copy: 'QR panel — Plasma vCard note',
     default_pricing_display: 'Default pricing display',
     default_currency: 'Default currency',
     approvals_enabled: 'Customer-facing approval flow enabled',

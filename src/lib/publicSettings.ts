@@ -26,6 +26,11 @@ export interface PublicSettings {
   // "About this proof" footer note (migration 000199). Editable in
   // admin; falls back to the shipped default if null/empty.
   about_proof_copy: string
+  // "QR code contents" panel copy (migration 000200). Two paragraphs,
+  // editable in admin; each falls back to the shipped default if
+  // null/empty so the panel always renders readable copy.
+  qr_panel_intro_copy: string
+  qr_panel_vcard_copy: string
 }
 
 const TTL_MS = 60_000
@@ -41,6 +46,12 @@ const REQUEST_CHANGES_COPY_DEFAULT =
 // the copy that previously lived inline in CustomerProofPage.tsx.
 export const ABOUT_PROOF_COPY_DEFAULT =
   'The proof shows etching colour, ink finish, layout and copy at the closest faithful representation we can make on screen. The real card will differ slightly in the way the material catches light, the depth of any embossing or etch, and the weight in hand. Plasma Design hand-finishes every set in Stoke-on-Trent.'
+// Mirrors the migration 000200 seeds for the QR-panel copy and the copy
+// that previously lived inline in src/components/QrCodePanel.tsx.
+export const QR_PANEL_INTRO_COPY_DEFAULT =
+  "Please double-check the contents of each QR code. Scan with your phone or read the decoded text alongside each one. The on-screen QR is the exact image we'll print."
+export const QR_PANEL_VCARD_COPY_DEFAULT =
+  'For Plasma vCards, scanning the QR saves the contact details to a phone. The look of the page it opens — the photo, colours, and layout — is yours to personalise after your cards arrive.'
 
 const DEFAULTS: PublicSettings = {
   disclaimer_text: '',
@@ -50,6 +61,8 @@ const DEFAULTS: PublicSettings = {
   request_changes_confirmation_copy: REQUEST_CHANGES_COPY_DEFAULT,
   metal_thickness_notes: DEFAULT_METAL_THICKNESS_NOTES,
   about_proof_copy: ABOUT_PROOF_COPY_DEFAULT,
+  qr_panel_intro_copy: QR_PANEL_INTRO_COPY_DEFAULT,
+  qr_panel_vcard_copy: QR_PANEL_VCARD_COPY_DEFAULT,
 }
 
 export async function getPublicSettings(): Promise<PublicSettings> {
@@ -78,6 +91,14 @@ export async function getPublicSettings(): Promise<PublicSettings> {
           typeof data?.about_proof_copy === 'string' && data.about_proof_copy.trim().length > 0
             ? data.about_proof_copy
             : DEFAULTS.about_proof_copy,
+        qr_panel_intro_copy:
+          typeof data?.qr_panel_intro_copy === 'string' && data.qr_panel_intro_copy.trim().length > 0
+            ? data.qr_panel_intro_copy
+            : DEFAULTS.qr_panel_intro_copy,
+        qr_panel_vcard_copy:
+          typeof data?.qr_panel_vcard_copy === 'string' && data.qr_panel_vcard_copy.trim().length > 0
+            ? data.qr_panel_vcard_copy
+            : DEFAULTS.qr_panel_vcard_copy,
       }
       cache = { value, fetchedAt: Date.now() }
       return value
