@@ -9,6 +9,15 @@ import {
   normaliseMetalThicknessNotes,
   type MetalThicknessNotes,
 } from './metalThicknessNotes'
+import {
+  LOGIN_HEADLINE_DEFAULT,
+  LOGIN_DESCRIPTION_DEFAULT,
+  LOGIN_STATS_DEFAULT,
+  LOGIN_FORM_HEADING_DEFAULT,
+  LOGIN_FORM_SUBCOPY_DEFAULT,
+  normaliseLoginStats,
+  type LoginStat,
+} from './loginCopy'
 
 export interface PublicSettings {
   disclaimer_text: string
@@ -31,6 +40,15 @@ export interface PublicSettings {
   // null/empty so the panel always renders readable copy.
   qr_panel_intro_copy: string
   qr_panel_vcard_copy: string
+  // Login-page copy (migration 000206). Editable in admin; each falls
+  // back to the shipped default if null/empty/malformed so the login
+  // page never blanks. login_headline carries newlines (rendered
+  // white-space: pre-line); login_stats is normalised to <=3 rows.
+  login_headline: string
+  login_description: string
+  login_stats: LoginStat[]
+  login_form_heading: string
+  login_form_subcopy: string
 }
 
 const TTL_MS = 60_000
@@ -63,6 +81,18 @@ const DEFAULTS: PublicSettings = {
   about_proof_copy: ABOUT_PROOF_COPY_DEFAULT,
   qr_panel_intro_copy: QR_PANEL_INTRO_COPY_DEFAULT,
   qr_panel_vcard_copy: QR_PANEL_VCARD_COPY_DEFAULT,
+  login_headline: LOGIN_HEADLINE_DEFAULT,
+  login_description: LOGIN_DESCRIPTION_DEFAULT,
+  login_stats: LOGIN_STATS_DEFAULT,
+  login_form_heading: LOGIN_FORM_HEADING_DEFAULT,
+  login_form_subcopy: LOGIN_FORM_SUBCOPY_DEFAULT,
+}
+
+// Trim-guarded string pick: returns the RPC value when it's a non-empty
+// string, else the default. Mirrors the inline checks used for the other
+// editable-copy fields.
+function pickStr(v: unknown, fallback: string): string {
+  return typeof v === 'string' && v.trim().length > 0 ? v : fallback
 }
 
 export async function getPublicSettings(): Promise<PublicSettings> {
@@ -99,6 +129,11 @@ export async function getPublicSettings(): Promise<PublicSettings> {
           typeof data?.qr_panel_vcard_copy === 'string' && data.qr_panel_vcard_copy.trim().length > 0
             ? data.qr_panel_vcard_copy
             : DEFAULTS.qr_panel_vcard_copy,
+        login_headline:     pickStr(data?.login_headline, DEFAULTS.login_headline),
+        login_description:  pickStr(data?.login_description, DEFAULTS.login_description),
+        login_stats:        normaliseLoginStats(data?.login_stats),
+        login_form_heading: pickStr(data?.login_form_heading, DEFAULTS.login_form_heading),
+        login_form_subcopy: pickStr(data?.login_form_subcopy, DEFAULTS.login_form_subcopy),
       }
       cache = { value, fetchedAt: Date.now() }
       return value

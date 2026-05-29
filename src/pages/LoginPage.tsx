@@ -1,9 +1,18 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate, Navigate } from 'react-router-dom'
 import { Layers, KeyRound, Bell, Info } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { ButtonInk, Field, Input, LetterpressMotif } from '../design'
+import { getPublicSettings } from '../lib/publicSettings'
+import {
+  LOGIN_HEADLINE_DEFAULT,
+  LOGIN_DESCRIPTION_DEFAULT,
+  LOGIN_STATS_DEFAULT,
+  LOGIN_FORM_HEADING_DEFAULT,
+  LOGIN_FORM_SUBCOPY_DEFAULT,
+  type LoginStat,
+} from '../lib/loginCopy'
 
 export default function LoginPage() {
   const { session, loading } = useAuth()
@@ -12,6 +21,38 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  // Admin-editable login copy (migration 000206), fetched via the anon
+  // public_settings RPC. Seeded with the shipped defaults so the first
+  // paint shows readable copy with no flash, then updated if an admin
+  // has changed it. getPublicSettings caches, so this is cheap.
+  const [copy, setCopy] = useState<{
+    headline: string
+    description: string
+    stats: LoginStat[]
+    formHeading: string
+    formSubcopy: string
+  }>({
+    headline: LOGIN_HEADLINE_DEFAULT,
+    description: LOGIN_DESCRIPTION_DEFAULT,
+    stats: LOGIN_STATS_DEFAULT,
+    formHeading: LOGIN_FORM_HEADING_DEFAULT,
+    formSubcopy: LOGIN_FORM_SUBCOPY_DEFAULT,
+  })
+  useEffect(() => {
+    let cancelled = false
+    void getPublicSettings().then((s) => {
+      if (cancelled) return
+      setCopy({
+        headline: s.login_headline,
+        description: s.login_description,
+        stats: s.login_stats,
+        formHeading: s.login_form_heading,
+        formSubcopy: s.login_form_subcopy,
+      })
+    })
+    return () => { cancelled = true }
+  }, [])
 
   if (loading) return null
   if (session) return <Navigate to="/" replace />
@@ -63,31 +104,27 @@ export default function LoginPage() {
 
         <div className="relative z-[2] mt-auto">
           <h1
-            className="font-display font-medium tracking-[-0.02em] m-0"
+            className="font-display font-medium tracking-[-0.02em] m-0 whitespace-pre-line"
             style={{ fontSize: 'clamp(32px, 5vw, 56px)', lineHeight: 1.05 }}
           >
-            Every revision,<br />
-            every recipient,<br />
-            one private link.
+            {copy.headline}
           </h1>
           <p className="mt-5 text-[15px] text-white/65 max-w-[460px] leading-[1.55]">
-            The signed-in side of the proof viewer. Drop in a JPEG, set the
-            spec, snapshot the price. The customer reads, replies, signs off.
-            No JPEGs in inboxes, no spreadsheet trail.
+            {copy.description}
           </p>
         </div>
 
-        {/* Stat row. Hidden on narrow widths so the brand panel
-            stays compact above the form. Values are static
-            placeholders per the handoff [Assumed] flag — wire to
-            real Supabase counts later if useful, but the login is
-            designer-only and rarely re-loaded, so live data
-            wouldn't add much. */}
-        <div className="relative z-[2] hidden min-[880px]:flex gap-7">
-          <Stat value="142" label="proofs sent this year" />
-          <Stat value="03" label="designers on the team" />
-          <Stat value="24 h" label="typical turnaround" />
-        </div>
+        {/* Stat row. Hidden on narrow widths so the brand panel stays
+            compact above the form. Values are admin-editable (migration
+            000206); the panel renders whatever stats are configured
+            (up to three). */}
+        {copy.stats.length > 0 && (
+          <div className="relative z-[2] hidden min-[880px]:flex gap-7">
+            {copy.stats.map((s, i) => (
+              <Stat key={i} value={s.value} label={s.label} />
+            ))}
+          </div>
+        )}
 
         <LetterpressMotif size={360} top={48} right={-60} opacity={0.18} />
       </div>
@@ -98,11 +135,10 @@ export default function LoginPage() {
         <div className="max-w-[460px]">
           <div className="eyebrow">Designer sign in</div>
           <h2 className="mt-1.5 font-display font-medium tracking-[-0.02em] text-ink text-[36px] leading-tight m-0">
-            Welcome back
+            {copy.formHeading}
           </h2>
-          <p className="mt-2 text-[14px] text-ink-soft leading-[1.5]">
-            Accounts are issued by an admin. New here? Ask Rob for a temporary
-            password and change it from the header on first sign-in.
+          <p className="mt-2 text-[14px] text-ink-soft leading-[1.5] whitespace-pre-line">
+            {copy.formSubcopy}
           </p>
         </div>
 
