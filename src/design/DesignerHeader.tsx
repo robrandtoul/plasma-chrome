@@ -20,7 +20,7 @@ import { PlasmaWordmark } from './PlasmaWordmark'
 // field as a controlled input so the parent can both read the value
 // (to drive filtering) and clear it from elsewhere if needed.
 
-export type DesignerNavId = 'proofs' | 'quote' | 'customers' | 'admin'
+export type DesignerNavId = 'proofs' | 'quote' | 'admin'
 export type DesignerHeaderColour = 'blue' | 'teal' | 'coral' | 'purple'
 
 interface NavItem {
@@ -29,11 +29,14 @@ interface NavItem {
   to: string
 }
 
+// Customers deliberately omitted here — it lives in the Admin sidebar
+// (AdminLayout), which the Admin nav item already leads into. Listing
+// it in the top bar too was redundant (the whole admin section
+// highlights "Admin" anyway).
 const NAV: NavItem[] = [
-  { id: 'proofs',    label: 'Proofs',    to: '/' },
-  { id: 'quote',     label: 'Quote',     to: '/quote' },
-  { id: 'customers', label: 'Customers', to: '/admin/customers' },
-  { id: 'admin',     label: 'Admin',     to: '/admin/users' },
+  { id: 'proofs', label: 'Proofs', to: '/' },
+  { id: 'quote',  label: 'Quote',  to: '/quote' },
+  { id: 'admin',  label: 'Admin',  to: '/admin/users' },
 ]
 
 // Map the four legacy designer colours to design-system tokens. The
