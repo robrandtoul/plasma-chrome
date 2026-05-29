@@ -291,20 +291,20 @@ export function QrCodeUploadSection({
   }
 
   return (
-    <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
+    <section className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
       <div className="mb-2 flex items-baseline justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-gray-400">
+        <h2 className="text-sm font-semibold uppercase tracking-widest text-ink-dim">
           QR codes
         </h2>
-        <span className="text-xs text-gray-400">
+        <span className="text-xs text-ink-dim">
           {value.length === 0 ? 'Optional' : `${value.length} attached`}
         </span>
       </div>
-      <p className="mb-5 max-w-prose text-sm text-gray-600">
+      <p className="mb-5 max-w-prose text-sm text-ink-soft">
         Add each QR code that appears on the card so the customer can verify it before approving. Use the customer-supplied path for QRs the customer sent (vCard, URL, wifi, etc.), or the Plasma vCard path when the QR points at a hosted qcrd.uk card.
       </p>
 
-      <div className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-gray-400">
+      <div className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-ink-dim">
         Customer-supplied QR
       </div>
       <label
@@ -336,10 +336,10 @@ export function QrCodeUploadSection({
           void handleFiles(e.dataTransfer.files)
         }}
         className={[
-          'flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors',
+          'flex cursor-pointer flex-col items-center justify-center rounded border-2 border-dashed px-6 py-8 text-center transition-colors',
           dragOver
-            ? 'border-violet-400 bg-violet-50'
-            : 'border-gray-300 hover:border-gray-400',
+            ? 'border-brand bg-brand-50'
+            : 'border-line hover:border-line',
           disabled ? 'pointer-events-none opacity-60' : '',
         ].join(' ')}
       >
@@ -351,10 +351,10 @@ export function QrCodeUploadSection({
             fill="none"
           />
         </svg>
-        <div className="mt-2 text-sm text-gray-700">
-          Drop QR images here, or <span className="font-semibold text-violet-700">browse</span>
+        <div className="mt-2 text-sm text-ink-soft">
+          Drop QR images here, or <span className="font-semibold text-brand">browse</span>
         </div>
-        <div className="mt-1 text-xs text-gray-500">JPEG only, one file per QR code</div>
+        <div className="mt-1 text-xs text-ink-mute">JPEG only, one file per QR code</div>
         <input
           id={inputId}
           ref={fileInputRef}
@@ -373,17 +373,17 @@ export function QrCodeUploadSection({
       </label>
 
       {dropError && (
-        <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
+        <p className="mt-3 rounded-lg bg-out-soft px-3 py-2 text-sm text-out">
           {dropError}
         </p>
       )}
 
       {/* ── Plasma vCard QR add form ─────────────────────────────── */}
-      <div className="mt-6 mb-3 text-[11px] font-semibold uppercase tracking-widest text-gray-400">
+      <div className="mt-6 mb-3 text-[11px] font-semibold uppercase tracking-widest text-ink-dim">
         Plasma vCard QR
       </div>
-      <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-        <p className="mb-3 max-w-prose text-xs text-gray-600">
+      <div className="rounded-xl border border-line bg-canvas p-4">
+        <p className="mb-3 max-w-prose text-xs text-ink-soft">
           Paste the qcrd.uk URL or slug of the Plasma vCard this QR points at. We'll generate the QR for the artwork and show the live contact details to the customer when they verify.
         </p>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
@@ -400,19 +400,19 @@ export function QrCodeUploadSection({
             }}
             placeholder="https://qcrd.uk/jane-smith or jane-smith"
             disabled={disabled || vcardLoading}
-            className="flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-200 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex-1 rounded border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-mute focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand disabled:cursor-not-allowed disabled:opacity-60"
           />
           <button
             type="button"
             onClick={() => void handleAddVcard()}
             disabled={disabled || vcardLoading || !vcardInput.trim()}
-            className="rounded-md bg-violet-700 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-violet-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded bg-brand px-4 py-2 text-sm font-semibold text-on-ink shadow-sm hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
           >
             {vcardLoading ? 'Looking up…' : 'Look up + add'}
           </button>
         </div>
         {vcardError && (
-          <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          <p className="mt-3 rounded-lg bg-out-soft px-3 py-2 text-xs text-out">
             {vcardError}
           </p>
         )}
@@ -437,8 +437,8 @@ export function QrCodeUploadSection({
                 className={[
                   'grid gap-4 rounded-xl border p-4 sm:grid-cols-[120px_1fr_auto] transition-colors',
                   showArtworkChangedNotice
-                    ? 'border-amber-200 bg-amber-50/60'
-                    : 'border-gray-200 bg-gray-50',
+                    ? 'border-low bg-low-soft'
+                    : 'border-line bg-canvas',
                 ].join(' ')}
               >
                 <div className="grid place-items-center">
@@ -449,12 +449,12 @@ export function QrCodeUploadSection({
                       width={120}
                       height={120}
                       className={[
-                        'aspect-square w-full max-w-[120px] rounded-md border border-gray-200 bg-white object-contain transition-opacity',
+                        'aspect-square w-full max-w-[120px] rounded border border-line bg-surface object-contain transition-opacity',
                         ghosted ? 'opacity-40' : '',
                       ].join(' ')}
                     />
                   ) : (
-                    <div className="aspect-square w-full max-w-[120px] rounded-md border border-dashed border-gray-300 bg-white" />
+                    <div className="aspect-square w-full max-w-[120px] rounded-md border border-dashed border-line bg-surface" />
                   )}
                 </div>
                 {/*
@@ -468,11 +468,11 @@ export function QrCodeUploadSection({
                 */}
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-emerald-800">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-in-stock-soft px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-in-stock">
                       <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
                         <path
                           d="M2.5 6.5L5 9L9.5 3.5"
-                          stroke="#0c5e3a"
+                          stroke="var(--c-in-stock)"
                           strokeWidth="1.8"
                           strokeLinecap="round"
                           strokeLinejoin="round"
@@ -484,19 +484,19 @@ export function QrCodeUploadSection({
                       className={[
                         'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide',
                         entry.kind === 'hosted_vcard'
-                          ? 'bg-violet-100 text-violet-800'
-                          : 'bg-gray-200 text-gray-700',
+                          ? 'bg-brand-50 text-brand'
+                          : 'bg-line text-ink-soft',
                       ].join(' ')}
                     >
                       {KIND_LABELS[entry.kind]}
                     </span>
                     {entry.kind === 'hosted_vcard' && entry.vcardCardName && (
-                      <span className="text-[12px] font-medium text-gray-700">
+                      <span className="text-[12px] font-medium text-ink-soft">
                         {entry.vcardCardName}
                       </span>
                     )}
                     {entry.kind !== 'hosted_vcard' && entry.originalFilename && (
-                      <span className="text-[12px] text-gray-500" title={entry.originalFilename}>
+                      <span className="text-[12px] text-ink-mute" title={entry.originalFilename}>
                         {entry.originalFilename}
                       </span>
                     )}
@@ -517,7 +517,7 @@ export function QrCodeUploadSection({
                     structural safety on its own.
                   */}
                   {showArtworkChangedNotice && (
-                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-snug text-amber-900">
+                    <div className="mt-3 rounded-lg border border-low bg-low-soft px-3 py-2 text-[12px] leading-snug text-low">
                       <p className="font-medium">
                         Artwork has changed on the card this QR appears on.
                       </p>
@@ -528,7 +528,7 @@ export function QrCodeUploadSection({
                       </p>
                     </div>
                   )}
-                  <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-white p-2 text-[12px] text-gray-800 ring-1 ring-gray-200">
+                  <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-surface p-2 text-[12px] text-ink ring-1 ring-line">
                     {entry.decodedData}
                   </pre>
                   {entry.kind === 'hosted_vcard' && entry.vcardSvg && entry.source === 'new' && (
@@ -537,7 +537,7 @@ export function QrCodeUploadSection({
                         type="button"
                         onClick={() => handleDownloadSvg(entry)}
                         disabled={disabled}
-                        className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[12px] font-medium text-gray-700 hover:border-violet-400 hover:text-violet-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex items-center gap-1 rounded border border-line bg-surface px-2.5 py-1 text-[12px] font-medium text-ink-soft hover:border-brand hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                           <path
@@ -563,7 +563,7 @@ export function QrCodeUploadSection({
                     // (null / shared) on single-recipient versions;
                     // the customer page still renders the QR under
                     // the recipient's section via the shared branch.
-                    <label className="mt-3 flex flex-col gap-1 text-[12px] text-gray-600 sm:flex-row sm:items-center sm:gap-2">
+                    <label className="mt-3 flex flex-col gap-1 text-[12px] text-ink-soft sm:flex-row sm:items-center sm:gap-2">
                       Applies to
                       <select
                         value={entry.associatedName ?? SHARED_APPROVAL_KEY}
@@ -574,7 +574,7 @@ export function QrCodeUploadSection({
                               e.target.value === SHARED_APPROVAL_KEY ? null : e.target.value,
                           })
                         }
-                        className="rounded border border-gray-300 bg-white px-2 py-1 text-[13px] text-gray-900"
+                        className="select-styled rounded border border-line bg-surface px-2 py-1 text-[13px] text-ink"
                       >
                         <option value={SHARED_APPROVAL_KEY}>All recipients (shared)</option>
                         {names.map((name) => (
@@ -598,7 +598,7 @@ export function QrCodeUploadSection({
                     not committed state).
                   */}
                   {showKeepToggle && (
-                    <label className="inline-flex items-center gap-2 text-[12px] text-gray-700">
+                    <label className="inline-flex items-center gap-2 text-[12px] text-ink-soft">
                       <span>Keep</span>
                       <button
                         type="button"
@@ -609,13 +609,13 @@ export function QrCodeUploadSection({
                         onClick={() => onKeepChange!(entry.id, !effectiveKeep)}
                         className={[
                           'relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors',
-                          effectiveKeep ? 'bg-gray-900' : 'bg-gray-300',
+                          effectiveKeep ? 'bg-ink' : 'bg-line',
                           disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer',
                         ].join(' ')}
                       >
                         <span
                           className={[
-                            'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+                            'inline-block h-4 w-4 transform rounded-full bg-surface transition-transform',
                             effectiveKeep
                               ? 'translate-x-[1.125rem] translate-y-0.5'
                               : 'translate-x-0.5 translate-y-0.5',
@@ -628,7 +628,7 @@ export function QrCodeUploadSection({
                     type="button"
                     onClick={() => removeEntry(entry.id)}
                     disabled={disabled}
-                    className="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[12px] font-medium text-gray-700 hover:border-rose-400 hover:text-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded border border-line bg-surface px-2.5 py-1 text-[12px] font-medium text-ink-soft hover:border-out hover:text-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-out disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Remove
                   </button>

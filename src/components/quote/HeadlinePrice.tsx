@@ -1,5 +1,6 @@
 import { formatPrice } from '../../lib/currency'
 import type { Currency } from '../../lib/types'
+import { LetterpressMotif } from '../../design'
 
 // Headline price — the largest visual element on the compiler.
 // Currency symbol welds directly onto the amount via
@@ -131,8 +132,10 @@ export function HeadlinePrice({
       : null
 
   return (
-    <div className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
-      <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+    <div className="relative overflow-hidden rounded-2xl bg-ink p-8 text-on-ink">
+      <LetterpressMotif size={220} top={-30} right={-30} opacity={0.13} />
+      <div className="relative z-[1]">
+      <p className="text-xs font-semibold uppercase tracking-widest text-on-ink/55">
         {currency ? `Total · ${currency}` : 'Total'}
       </p>
       <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-2">
@@ -142,29 +145,29 @@ export function HeadlinePrice({
             // Big, but not exotic. 64px equivalent so it dominates
             // without breaking on narrow viewports.
             'text-6xl font-bold tracking-tight',
-            showPrice ? 'text-gray-900' : 'text-gray-300',
+            showPrice ? 'text-on-ink' : 'text-on-ink/40',
           ].join(' ')}
         >
           {showPrice ? formatPrice(total!, currency!) : '—'}
         </span>
         {showPrice && discountPercent > 0 && subtotal != null && (
-          <span className="text-sm font-medium text-gray-400 line-through tabular-nums">
+          <span className="text-sm font-medium text-on-ink/55 line-through tabular-nums">
             {formatPrice(subtotal, currency!)}
           </span>
         )}
         {showPrice && showVatNote && (
-          <span className="text-sm font-medium text-gray-400">
+          <span className="text-sm font-medium text-on-ink/55">
             (includes {formatVatPercent(vatRate!)} VAT)
           </span>
         )}
       </div>
       {showPrice && unitPrice != null && quantity != null && (
-        <p className="mt-3 text-sm text-gray-500">
+        <p className="mt-3 text-sm text-on-ink/75">
           {formatPrice(unitPrice, currency!, 2)} per card · {quantity.toLocaleString()} cards
         </p>
       )}
       {showPrice && exVatTotal != null && exPerCard != null && (
-        <p className="mt-0.5 text-xs text-gray-400 tabular-nums">
+        <p className="mt-0.5 text-xs text-on-ink/55 tabular-nums">
           {formatPrice(exVatTotal, 'GBP', 2)} ex VAT · {formatPrice(exPerCard, 'GBP', 2)} per card ex
         </p>
       )}
@@ -177,7 +180,7 @@ export function HeadlinePrice({
           so the "−£Y discount" line has its "£X base" anchor. */}
       {showPrice && baseTotal != null && (
         ((splitNameSurcharge ?? 0) > 0 || (finishSurcharge ?? 0) > 0 || (personalisationSurcharge ?? 0) > 0 || (discountAmount ?? 0) > 0) && (
-          <div className="mt-1 space-y-0.5 text-sm text-gray-500 tabular-nums">
+          <div className="mt-1 space-y-0.5 text-sm text-on-ink/75 tabular-nums">
             <p>{formatPrice(baseTotal, currency!)} base</p>
             {(finishSurcharge ?? 0) > 0 && (
               <p>+ {formatPrice(finishSurcharge!, currency!)} {finishLabel ?? 'finish'} surcharge</p>
@@ -189,7 +192,7 @@ export function HeadlinePrice({
               <p>+ {formatPrice(personalisationSurcharge!, currency!)} personalisation</p>
             )}
             {(discountAmount ?? 0) > 0 && (
-              <p className="text-emerald-700">
+              <p className="text-in-stock">
                 − {formatPrice(discountAmount!, currency!)} discount ({formatDiscountPercent(discountPercent)})
               </p>
             )}
@@ -197,18 +200,19 @@ export function HeadlinePrice({
         )
       )}
       {showPrice && (personalisationSurcharge ?? 0) > 0 && personalisationBreakevenQty != null && (
-        <p className="mt-2 text-xs text-gray-400">
+        <p className="mt-2 text-xs text-on-ink/55">
           A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
         </p>
       )}
       {!showPrice && !loading && (
-        <p className="mt-3 text-sm text-gray-400">
+        <p className="mt-3 text-sm text-on-ink/55">
           Pick a material, variant, currency and quantity to see a price.
         </p>
       )}
       {loading && (
-        <p className="mt-3 text-sm text-gray-400">Loading prices…</p>
+        <p className="mt-3 text-sm text-on-ink/55">Loading prices…</p>
       )}
+      </div>
     </div>
   )
 }

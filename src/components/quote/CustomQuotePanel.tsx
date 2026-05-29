@@ -49,26 +49,26 @@ export function CustomQuotePanel({
   }
 
   return (
-    <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 p-8">
-      <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+    <div className="rounded-2xl border-2 border-low bg-low-soft p-8">
+      <p className="text-xs font-semibold uppercase tracking-widest text-low">
         Custom quote required
       </p>
-      <p className="mt-3 text-2xl font-bold leading-tight text-amber-900">
+      <p className="mt-3 text-2xl font-bold leading-tight text-low">
         This needs a custom quote — flag for Rob
       </p>
-      <p className="mt-3 text-sm text-amber-800">
+      <p className="mt-3 text-sm text-low">
         Live pricing isn't available for this configuration. Send the spec
         to Rob with the customer's contact details and he'll come back
         with a quote.
       </p>
-      <div className="mt-4 rounded-lg border border-amber-200 bg-white/70 px-4 py-3">
-        <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+      <div className="mt-4 rounded-lg border border-low bg-surface/70 px-4 py-3">
+        <p className="text-xs font-semibold uppercase tracking-widest text-low">
           Why
         </p>
-        <ul className="mt-1.5 space-y-1 text-sm text-amber-900">
+        <ul className="mt-1.5 space-y-1 text-sm text-low">
           {reasons.map((r) => (
             <li key={r} className="flex items-start gap-2">
-              <span aria-hidden className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-amber-600" />
+              <span aria-hidden className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-low" />
               <span>{r}</span>
             </li>
           ))}

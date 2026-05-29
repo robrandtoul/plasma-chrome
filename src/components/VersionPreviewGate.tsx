@@ -65,25 +65,25 @@ export default function VersionPreviewGate({
   const previewSrc = `${customerProofPath(proofId)}?preview=1&v=${versionId}`
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col bg-white">
+    <div className="fixed inset-0 z-40 flex flex-col bg-surface">
       {/* Sticky banner — gray-900 so it's unambiguously app chrome,
           not part of the customer page rendered below. Two-row
           layout on narrow viewports collapses cleanly. */}
-      <div className="border-b border-gray-800 bg-gray-900 px-4 py-3 text-white sm:px-6">
+      <div className="border-b border-ink bg-ink px-4 py-3 text-on-ink sm:px-6">
         <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <div className="flex items-center gap-2">
-              <svg className="h-4 w-4 text-amber-300" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+              <svg className="h-4 w-4 text-low" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
                 <circle cx="8" cy="8" r="6.5" />
                 <path strokeLinecap="round" d="M8 5v3.5l2 1.5" />
               </svg>
               <span className="text-sm font-semibold">Preview, what the customer will see</span>
             </div>
-            <div className="flex items-center gap-3 text-xs text-gray-300">
+            <div className="flex items-center gap-3 text-xs text-ink-dim">
               <span>Version v{versionNumber}</span>
               {currency && (
                 <>
-                  <span aria-hidden="true" className="text-gray-600">·</span>
+                  <span aria-hidden="true" className="text-ink-soft">·</span>
                   <span>Currency {currency}</span>
                 </>
               )}
@@ -93,14 +93,14 @@ export default function VersionPreviewGate({
             <button
               type="button"
               onClick={onEdit}
-              className="rounded-lg px-3 py-2 text-sm font-medium text-gray-200 ring-1 ring-gray-700 hover:bg-gray-800 hover:text-white"
+              className="rounded px-3 py-2 text-sm font-medium text-ink-dim ring-1 ring-ink hover:bg-ink hover:text-on-ink"
             >
               Go back and edit
             </button>
             <button
               type="button"
               onClick={onConfirm}
-              className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+              className="rounded bg-in-stock px-4 py-2 text-sm font-semibold text-on-ink shadow-sm hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-in-stock"
             >
               {confirmLabel}
             </button>
@@ -119,7 +119,7 @@ export default function VersionPreviewGate({
       <iframe
         src={previewSrc}
         title={`Preview of version v${versionNumber} as the customer will see it`}
-        className="flex-1 w-full border-0 bg-white"
+        className="flex-1 w-full border-0 bg-surface"
       />
     </div>
   )

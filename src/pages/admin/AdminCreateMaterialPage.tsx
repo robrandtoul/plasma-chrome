@@ -200,14 +200,14 @@ export default function AdminCreateMaterialPage() {
   return (
     <div>
       <div className="mb-6">
-        <Link to="/admin/settings" className="text-xs text-gray-400 hover:text-gray-700">← Back to settings</Link>
-        <h2 className="mt-2 text-xl font-bold text-gray-900">Add material</h2>
-        <p className="mt-1 text-sm text-gray-500">
+        <Link to="/admin/settings" className="text-xs text-ink-dim hover:text-ink-soft">← Back to settings</Link>
+        <h2 className="mt-2 text-xl font-bold text-ink">Add material</h2>
+        <p className="mt-1 text-sm text-ink-mute">
           Creates a new material in an unpublished state. You can add variants and prices before making it visible to designers.
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="max-w-2xl space-y-6 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+      <form onSubmit={handleSubmit} className="max-w-2xl space-y-6 rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
         {/* Name */}
         <Field
           label="Name"
@@ -234,7 +234,7 @@ export default function AdminCreateMaterialPage() {
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value as Category)}
-            className={inputClass}
+            className={'select-styled ' + inputClass}
           >
             <option value="">Select a category</option>
             {CATEGORY_OPTIONS.map((o) => (
@@ -272,8 +272,8 @@ export default function AdminCreateMaterialPage() {
                   className={[
                     'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
                     active
-                      ? 'bg-gray-900 text-white'
-                      : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
+                      ? 'bg-ink text-on-ink'
+                      : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
                   ].join(' ')}
                 >
                   {o.label}
@@ -282,7 +282,7 @@ export default function AdminCreateMaterialPage() {
             })}
           </div>
           {variantType === 'default' && (
-            <p className="mt-1.5 text-xs text-gray-500">
+            <p className="mt-1.5 text-xs text-ink-mute">
               A single placeholder variant will be created so you can attach prices. You can rename or replace it in the pricing editor.
             </p>
           )}
@@ -345,20 +345,20 @@ export default function AdminCreateMaterialPage() {
         </Field>
 
         {error && (
-          <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>
+          <p className="rounded-lg bg-out-soft px-3 py-2 text-sm text-out">{error}</p>
         )}
 
         <div className="flex justify-end gap-2 pt-2">
           <Link
             to="/admin/settings"
-            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
+            className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas"
           >
             Cancel
           </Link>
           <button
             type="submit"
             disabled={submitting}
-            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+            className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
           >
             {submitting ? 'Creating…' : 'Create material'}
           </button>
@@ -378,11 +378,11 @@ function Field({ label, required, help, children }: {
 }) {
   return (
     <div>
-      <label className="mb-1.5 block text-sm font-medium text-gray-700">
-        {label} {required && <span className="text-rose-500">*</span>}
+      <label className="mb-1.5 block text-sm font-medium text-ink-soft">
+        {label} {required && <span className="text-out">*</span>}
       </label>
       {children}
-      {help && <p className="mt-1.5 text-xs text-gray-500">{help}</p>}
+      {help && <p className="mt-1.5 text-xs text-ink-mute">{help}</p>}
     </div>
   )
 }
@@ -396,12 +396,12 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
       aria-checked={value}
       className={[
         'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors',
-        value ? 'bg-gray-900' : 'bg-gray-200',
+        value ? 'bg-ink' : 'bg-line',
       ].join(' ')}
     >
       <span
         className={[
-          'inline-block h-5 w-5 translate-x-0.5 translate-y-0.5 transform rounded-full bg-white transition-transform',
+          'inline-block h-5 w-5 translate-x-0.5 translate-y-0.5 transform rounded-full bg-surface transition-transform',
           value ? 'translate-x-[1.375rem]' : 'translate-x-0.5',
         ].join(' ')}
       />
@@ -412,7 +412,7 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
 function SurchargeInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
     <div>
-      <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-400">{label}</label>
+      <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-ink-dim">{label}</label>
       <input
         type="number"
         step="0.01"
@@ -425,4 +425,4 @@ function SurchargeInput({ label, value, onChange }: { label: string; value: stri
   )
 }
 
-const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+const inputClass = 'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'

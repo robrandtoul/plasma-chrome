@@ -75,7 +75,7 @@ export function ImageCard({
       role="button"
       tabIndex={0}
       aria-label={`Open ${alt} at full size`}
-      className="cursor-zoom-in overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+      className="cursor-zoom-in overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
       onClick={activate}
       onKeyDown={activateOnEnterOrSpace(activate)}
     >
@@ -92,11 +92,11 @@ export function ImageCard({
 function Caption({ label, filename, signedUrl }: { label: string; filename?: string | null; signedUrl: string }) {
   if (!label && !filename) return null
   return (
-    <div className="border-t border-gray-100 px-4 py-2">
-      {label && <div className="text-center text-sm text-gray-500">{label}</div>}
+    <div className="border-t border-line-soft px-4 py-2">
+      {label && <div className="text-center text-sm text-ink-mute">{label}</div>}
       <div className="mt-0.5 flex items-center justify-center gap-2">
         {filename && (
-          <div className="min-w-0 truncate text-xs text-gray-400" title={filename}>
+          <div className="min-w-0 truncate text-xs text-ink-dim" title={filename}>
             {filename}
           </div>
         )}
@@ -114,7 +114,7 @@ function Caption({ label, filename, signedUrl }: { label: string; filename?: str
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
-          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white px-2.5 py-0.5 text-xs font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-surface px-2.5 py-0.5 text-xs font-medium text-ink-soft ring-1 ring-line hover:bg-canvas"
         >
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" className="h-3.5 w-3.5">
             <path fillRule="evenodd" d="M10 3a.75.75 0 0 1 .75.75v8.69l2.72-2.72a.75.75 0 1 1 1.06 1.06l-4 4a.75.75 0 0 1-1.06 0l-4-4a.75.75 0 1 1 1.06-1.06l2.72 2.72V3.75A.75.75 0 0 1 10 3Zm-6 12.25a.75.75 0 0 1 .75.75v.25c0 .414.336.75.75.75h9c.414 0 .75-.336.75-.75V16a.75.75 0 0 1 1.5 0v.25A2.25 2.25 0 0 1 14.5 18.5h-9A2.25 2.25 0 0 1 3.25 16.25V16a.75.75 0 0 1 .75-.75Z" clipRule="evenodd" />
@@ -137,8 +137,8 @@ export function ImageGrid({
 }) {
   if (images.length === 0) {
     return (
-      <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-        <div className="flex h-64 items-center justify-center text-gray-400">
+      <div className="overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
+        <div className="flex h-64 items-center justify-center text-ink-dim">
           Image unavailable
         </div>
       </div>
@@ -154,7 +154,7 @@ export function ImageGrid({
         role="button"
         tabIndex={0}
         aria-label={`Open ${altText} at full size`}
-        className="cursor-zoom-in overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+        className="cursor-zoom-in overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
         onClick={activate}
         onKeyDown={activateOnEnterOrSpace(activate)}
       >
@@ -179,7 +179,7 @@ export function ImageGrid({
             role="button"
             tabIndex={0}
             aria-label={`Open ${altText} at full size`}
-            className="cursor-zoom-in overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+            className="cursor-zoom-in overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
             onClick={activate}
             onKeyDown={activateOnEnterOrSpace(activate)}
           >

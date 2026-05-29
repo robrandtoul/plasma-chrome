@@ -61,7 +61,7 @@ export function NamesInput({
 
   return (
     <fieldset>
-      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-gray-400">
+      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-ink-dim">
         Unique names
       </legend>
       <input
@@ -73,12 +73,12 @@ export function NamesInput({
         onKeyDown={handleKey}
         aria-label="Number of unique names"
         className={[
-          'w-24 rounded-lg border px-3 py-2 text-[17px] sm:text-base font-medium tabular-nums',
-          'border-gray-200 bg-white text-gray-900',
-          'focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400 focus-visible:ring-offset-1',
+          'w-24 rounded border px-3 py-2 text-[17px] sm:text-base font-medium tabular-nums',
+          'border-line bg-surface text-ink',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
         ].join(' ')}
       />
-      <p className="mt-1.5 text-xs text-gray-400">
+      <p className="mt-1.5 text-xs text-ink-dim">
         Each name beyond the first adds {formatPrice(perExtraNameSurcharge, currency)} for split-name tooling.
       </p>
     </fieldset>

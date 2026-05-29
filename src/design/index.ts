@@ -1,0 +1,22 @@
+// Barrel for the reskin design system. Components live in src/design/
+// per the PR 2 plan; later screens import from '@/design' (or the
+// relative path equivalent) to keep call sites short.
+
+export { tokens, type TokenName } from './tokens'
+export { useEscape } from './useEscape'
+export { Eyebrow } from './Eyebrow'
+export { Num } from './Num'
+export { ButtonInk, ButtonCoral, ButtonGhost, type ButtonProps } from './Button'
+export { Pill, type PillColour } from './Pill'
+export { ProofStatusPill, type ProofStatus } from './ProofStatusPill'
+export { StatusRule } from './StatusRule'
+export { PanelShell } from './PanelShell'
+export { Field } from './Field'
+export { Input } from './Input'
+export { Textarea } from './Textarea'
+export { InkSwatch } from './InkSwatch'
+export { CurrencyAmount, type Currency } from './CurrencyAmount'
+export { PlasmaWordmark } from './PlasmaWordmark'
+export { LetterpressMotif } from './LetterpressMotif'
+export { DesignerHeader, type DesignerNavId, type DesignerHeaderColour } from './DesignerHeader'
+export { DesignerChrome, useDesignerProfile, type DesignerProfile } from './DesignerChrome'

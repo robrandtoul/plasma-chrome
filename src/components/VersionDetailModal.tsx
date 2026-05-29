@@ -605,36 +605,36 @@ export default function VersionDetailModal({
         onClose={handleClose}
         preventClose={deleteState !== 'idle'}
         ariaLabelledBy="version-detail-title"
-        panelClassName="relative flex max-h-full w-full flex-col overflow-hidden bg-white sm:max-h-[90vh] sm:max-w-2xl sm:rounded-2xl"
+        panelClassName="relative flex max-h-full w-full flex-col overflow-hidden bg-surface sm:max-h-[90vh] sm:max-w-2xl sm:rounded-2xl"
       >
           {/* Header */}
-          <div className="flex shrink-0 items-start justify-between border-b border-gray-100 px-6 py-4">
+          <div className="flex shrink-0 items-start justify-between border-b border-line-soft px-6 py-4">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 id="version-detail-title" className="text-lg font-bold text-gray-900">
+              <h2 id="version-detail-title" className="text-lg font-bold text-ink">
                 v{version.version_number} — {version.material_display}
               </h2>
               {/* Currency pill hides on per-direction-pricing rounds —
                   there's no single version-level currency to display.
                   Mirrors the customer page's docket gate. */}
               {!version.is_per_direction_pricing && version.currency && (
-                <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">
+                <span className="rounded-full bg-canvas px-2.5 py-0.5 text-xs font-medium text-ink-soft">
                   {version.currency}
                 </span>
               )}
               {version.is_current && (
-                <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+                <span className="rounded-full bg-in-stock-soft px-2.5 py-0.5 text-xs font-semibold text-in-stock">
                   Current
                 </span>
               )}
               {version.custom_quote && (
-                <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
+                <span className="rounded-full bg-line px-2.5 py-0.5 text-xs font-semibold text-ink-mute">
                   Custom quote
                 </span>
               )}
             </div>
             <button
               onClick={handleClose}
-              className="ml-4 shrink-0 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              className="ml-4 shrink-0 rounded p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft"
             >
               <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                 <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
@@ -650,29 +650,29 @@ export default function VersionDetailModal({
                 most recent rows; anything older lives in audit_log
                 + proof_version_views. */}
             {viewHistory && viewHistory.length > 0 && (
-              <div className="rounded-2xl bg-white p-5 ring-1 ring-gray-200">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-gray-400">Customer views</p>
+              <div className="rounded-2xl bg-surface p-5 ring-1 ring-line">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-ink-dim">Customer views</p>
                 <ul className="space-y-1">
                   {viewHistory.slice(0, 5).map((v, i) => (
                     <li key={i} className="flex items-center justify-between gap-3 text-sm">
-                      <span className="truncate text-gray-700">{summariseUserAgent(v.user_agent)}</span>
-                      <span className="shrink-0 text-xs text-gray-400" title={formatAbsoluteDateTime(v.viewed_at)}>
+                      <span className="truncate text-ink-soft">{summariseUserAgent(v.user_agent)}</span>
+                      <span className="shrink-0 text-xs text-ink-dim" title={formatAbsoluteDateTime(v.viewed_at)}>
                         {relativeTime(v.viewed_at)}
                       </span>
                     </li>
                   ))}
                 </ul>
                 {viewHistory.length > 5 && (
-                  <p className="mt-2 text-xs text-gray-400">+{viewHistory.length - 5} earlier view{viewHistory.length - 5 === 1 ? '' : 's'}</p>
+                  <p className="mt-2 text-xs text-ink-dim">+{viewHistory.length - 5} earlier view{viewHistory.length - 5 === 1 ? '' : 's'}</p>
                 )}
               </div>
             )}
 
             {/* Change notes */}
             {version.change_notes && (
-              <div className="rounded-2xl bg-amber-50 p-5 ring-1 ring-amber-100">
-                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-amber-600">Notes on this version</p>
-                <p className="text-sm text-amber-900">{version.change_notes}</p>
+              <div className="rounded-2xl bg-low-soft p-5 ring-1 ring-low">
+                <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-low">Notes on this version</p>
+                <p className="text-sm text-low">{version.change_notes}</p>
               </div>
             )}
 
@@ -685,21 +685,21 @@ export default function VersionDetailModal({
                 in a single-line badge + helper line that mirrors the
                 customer page's wording, with the Added date kept on
                 the right as the one cell that still applies. */}
-            <div className="rounded-2xl bg-white p-5 ring-1 ring-gray-200">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">Specification</p>
+            <div className="rounded-2xl bg-surface p-5 ring-1 ring-line">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-ink-dim">Specification</p>
               {version.is_per_direction_pricing ? (
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
-                    <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700">
+                    <span className="inline-flex items-center rounded-full bg-line px-2.5 py-0.5 text-xs font-semibold text-ink-soft">
                       Per-direction pricing
                     </span>
-                    <p className="mt-2 text-sm text-gray-600">
+                    <p className="mt-2 text-sm text-ink-soft">
                       Each direction is priced individually. See the customer's email for details.
                     </p>
                   </div>
                   <div>
-                    <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Added</dt>
-                    <dd className="mt-1 text-sm font-medium text-gray-900">
+                    <dt className="text-xs font-medium uppercase tracking-wide text-ink-dim">Added</dt>
+                    <dd className="mt-1 text-sm font-medium text-ink">
                       {new Date(version.created_at).toLocaleDateString('en-GB')}
                     </dd>
                   </div>
@@ -707,13 +707,13 @@ export default function VersionDetailModal({
               ) : (
                 <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
                   <div>
-                    <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Material</dt>
-                    <dd className="mt-1 text-sm font-medium text-gray-900">{version.material_display}</dd>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-ink-dim">Material</dt>
+                    <dd className="mt-1 text-sm font-medium text-ink">{version.material_display}</dd>
                   </div>
                   {version.ink_names.length > 0 && (
                     <div>
-                      <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Inks</dt>
-                      <dd className="mt-1 text-sm font-medium text-gray-900">{version.ink_names.join(', ')}</dd>
+                      <dt className="text-xs font-medium uppercase tracking-wide text-ink-dim">Inks</dt>
+                      <dd className="mt-1 text-sm font-medium text-ink">{version.ink_names.join(', ')}</dd>
                     </div>
                   )}
                   {/* Letterpress layer colours (migrations 000133 +
@@ -748,8 +748,8 @@ export default function VersionDetailModal({
                           { label: 'Back', colour: back },
                         ].map(({ label, colour }) => (
                           <div key={label}>
-                            <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">{label}</dt>
-                            <dd className="mt-1 flex items-center gap-2 text-sm font-medium text-gray-900">
+                            <dt className="text-xs font-medium uppercase tracking-wide text-ink-dim">{label}</dt>
+                            <dd className="mt-1 flex items-center gap-2 text-sm font-medium text-ink">
                               <CoreColourSwatch hex={colour.hex_value} size={14} ariaLabel={`${colour.name} swatch`} />
                               <span>{stripDefaultSuffix(colour.name)}</span>
                             </dd>
@@ -759,8 +759,8 @@ export default function VersionDetailModal({
                     )
                   })()}
                   <div>
-                    <dt className="text-xs font-medium uppercase tracking-wide text-gray-400">Added</dt>
-                    <dd className="mt-1 text-sm font-medium text-gray-900">
+                    <dt className="text-xs font-medium uppercase tracking-wide text-ink-dim">Added</dt>
+                    <dd className="mt-1 text-sm font-medium text-ink">
                       {new Date(version.created_at).toLocaleDateString('en-GB')}
                     </dd>
                   </div>
@@ -777,10 +777,10 @@ export default function VersionDetailModal({
                 recipient) then one group per name with its own
                 approval header and action row. */}
             <div>
-              <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">Images</p>
+              <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-ink-dim">Images</p>
               {loadingImages ? (
-                <div className="flex h-32 items-center justify-center rounded-2xl bg-white ring-1 ring-gray-200">
-                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+                <div className="flex h-32 items-center justify-center rounded-2xl bg-surface ring-1 ring-line">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-gray-900" />
                 </div>
               ) : version.is_variant_round ? (
                 <div className="space-y-6">
@@ -802,8 +802,8 @@ export default function VersionDetailModal({
                       )
                       .map((img) => ({ ...img, label: img.side === 'back' ? 'Back' : 'Front' }))
                     return (
-                      <div key={rv.id} className="rounded-2xl bg-white p-4 ring-1 ring-gray-200">
-                        <p className="mb-3 text-sm font-semibold text-gray-900">{rv.display_name}</p>
+                      <div key={rv.id} className="rounded-2xl bg-surface p-4 ring-1 ring-line">
+                        <p className="mb-3 text-sm font-semibold text-ink">{rv.display_name}</p>
                         {variantImages.length > 0 ? (
                           <ImageGrid
                             images={variantImages}
@@ -811,7 +811,7 @@ export default function VersionDetailModal({
                             onImageClick={setLightboxSrc}
                           />
                         ) : (
-                          <p className="text-xs text-gray-400">No images for this direction.</p>
+                          <p className="text-xs text-ink-dim">No images for this direction.</p>
                         )}
                       </div>
                     )
@@ -823,8 +823,8 @@ export default function VersionDetailModal({
                     const orphans = images.filter((img) => !img.round_variant_id)
                     if (orphans.length === 0) return null
                     return (
-                      <div className="rounded-2xl bg-amber-50 p-4 ring-1 ring-amber-200">
-                        <p className="mb-3 text-sm font-semibold text-amber-800">Unassigned images</p>
+                      <div className="rounded-2xl bg-low-soft p-4 ring-1 ring-low">
+                        <p className="mb-3 text-sm font-semibold text-low">Unassigned images</p>
                         <ImageGrid
                           images={orphans}
                           versionNumber={version.version_number}
@@ -834,7 +834,7 @@ export default function VersionDetailModal({
                     )
                   })()}
                   {roundVariants.length === 0 && (
-                    <p className="text-xs text-gray-400">No directions on this variant round.</p>
+                    <p className="text-xs text-ink-dim">No directions on this variant round.</p>
                   )}
                 </div>
               ) : version.names.length === 0 ? (
@@ -912,7 +912,7 @@ export default function VersionDetailModal({
                     if (shared.length === 0) return null
                     const approval = approvals[SHARED_APPROVAL_KEY]
                     return (
-                      <div className="border-t border-gray-200 pt-6">
+                      <div className="border-t border-line pt-6">
                         <ApprovalGroup
                           heading="Shared"
                           approval={approval}
@@ -941,9 +941,9 @@ export default function VersionDetailModal({
                 with. Matches the customer page's docket gate
                 (CustomerProofPage, !is_per_direction_pricing). */}
             {!version.is_per_direction_pricing && (
-              <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-gray-200">
-                <div className="border-b border-gray-100 px-6 py-4">
-                  <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Pricing</p>
+              <div className="overflow-hidden rounded-2xl bg-surface ring-1 ring-line">
+                <div className="border-b border-line-soft px-6 py-4">
+                  <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim">Pricing</p>
                 </div>
                 {version.custom_quote ? (
                   // Custom-quote path — triggered either by the
@@ -953,7 +953,7 @@ export default function VersionDetailModal({
                   // is selected. Either way, the underlying column
                   // is proof_versions.custom_quote and the UI here
                   // doesn't need to know which trigger fired.
-                  <div className="px-6 py-8 text-center text-sm text-gray-500">
+                  <div className="px-6 py-8 text-center text-sm text-ink-mute">
                     Custom quote — price and quantity agreed separately.
                   </div>
                 ) : loadingPricing ? (
@@ -962,7 +962,7 @@ export default function VersionDetailModal({
                   // so this rarely flashes; the "Custom quote" path
                   // skips this entirely and renders synchronously.
                   <div className="flex justify-center px-6 py-12">
-                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-gray-200 border-t-gray-700" />
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-line border-t-gray-700" />
                   </div>
                 ) : (
                   <PricingDisplay
@@ -983,8 +983,8 @@ export default function VersionDetailModal({
                     personalisationPricing={version.has_personalisation ? personalisationPricing : null}
                   />
                 )}
-                <div className="border-t border-gray-100 px-6 py-3">
-                  <p className="text-xs text-gray-400">
+                <div className="border-t border-line-soft px-6 py-3">
+                  <p className="text-xs text-ink-dim">
                     {!version.custom_quote && version.currency === 'GBP' ? 'Prices include VAT. ' : ''}
                     {version.shipping_note}
                   </p>
@@ -993,34 +993,34 @@ export default function VersionDetailModal({
             )}
 
             {error && (
-              <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
+              <p className="rounded-lg bg-out-soft px-4 py-3 text-sm text-out">{error}</p>
             )}
           </div>
 
           {/* Footer actions */}
-          <div className="shrink-0 border-t border-gray-100 px-6 py-4">
+          <div className="shrink-0 border-t border-line-soft px-6 py-4">
             {proofLocked ? (
               <div className="flex items-center justify-between gap-3">
-                <p className="text-xs text-gray-400">
+                <p className="text-xs text-ink-dim">
                   {lockReason === 'abandoned'
                     ? 'This project is abandoned and locked. Reopen the project to make changes.'
                     : 'This project is approved and locked. Reopen the project to make changes.'}
                 </p>
                 <button
                   onClick={handleClose}
-                  className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+                  className="rounded bg-ink px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
                 >
                   Close
                 </button>
               </div>
             ) : deleteState === 'confirm' || deleteState === 'working' ? (
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm text-gray-700">{deleteConfirmText}</p>
+                <p className="text-sm text-ink-soft">{deleteConfirmText}</p>
                 <div className="flex shrink-0 gap-2">
                   <button
                     onClick={() => { setDeleteState('idle'); setError(null) }}
                     disabled={deleteState === 'working'}
-                    className="rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+                    className="rounded px-3 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
                   >
                     Cancel
                   </button>
@@ -1029,7 +1029,7 @@ export default function VersionDetailModal({
                       <button
                         onClick={onDeleteProofRequested}
                         disabled={deleteState === 'working'}
-                        className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                        className="rounded bg-out px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                       >
                         Delete project
                       </button>
@@ -1038,7 +1038,7 @@ export default function VersionDetailModal({
                     <button
                       onClick={handleDelete}
                       disabled={deleteState === 'working'}
-                      className="rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                      className="rounded-lg bg-out px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                     >
                       {deleteState === 'working' ? 'Deleting…' : 'Confirm delete'}
                     </button>
@@ -1049,7 +1049,7 @@ export default function VersionDetailModal({
               <div className="flex items-center justify-between gap-3">
                 <button
                   onClick={() => setDeleteState('confirm')}
-                  className="rounded-lg px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+                  className="rounded px-3 py-2 text-sm font-medium text-out hover:bg-out-soft"
                 >
                   Delete version
                 </button>
@@ -1058,20 +1058,20 @@ export default function VersionDetailModal({
                     <button
                       onClick={handleSetCurrent}
                       disabled={settingCurrent}
-                      className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-50"
+                      className="rounded px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-50"
                     >
                       {settingCurrent ? 'Setting…' : 'Set as current'}
                     </button>
                   )}
                   <button
                     onClick={() => navigate(`/proofs/${proofId}/versions/${version.id}/edit`)}
-                    className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
+                    className="rounded px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas"
                   >
                     Edit version
                   </button>
                   <button
                     onClick={handleClose}
-                    className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+                    className="rounded bg-ink px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
                   >
                     Close
                   </button>
@@ -1190,9 +1190,9 @@ function ApprovalGroup({
   // that the group knows which sentinel/name it represents.
   void approvalKey
   return (
-    <div className="rounded-2xl ring-1 ring-gray-200 bg-white p-4">
+    <div className="rounded-2xl ring-1 ring-line bg-surface p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <p className="text-sm font-semibold text-gray-900">{heading}</p>
+        <p className="text-sm font-semibold text-ink">{heading}</p>
       </div>
       <ApprovalStateHeader approval={approval} versionNumberById={versionNumberById} />
       {!proofLocked && (
@@ -1202,14 +1202,14 @@ function ApprovalGroup({
               <button
                 type="button"
                 onClick={onOpenApprove}
-                className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
+                className="rounded bg-in-stock-soft px-3 py-1.5 text-xs font-medium text-in-stock ring-1 ring-in-stock hover:bg-in-stock-soft"
               >
                 Mark as approved
               </button>
               <button
                 type="button"
                 onClick={onOpenChanges}
-                className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 ring-1 ring-amber-200 hover:bg-amber-100"
+                className="rounded bg-low-soft px-3 py-1.5 text-xs font-medium text-low ring-1 ring-low hover:bg-low-soft"
               >
                 Record change request
               </button>
@@ -1219,14 +1219,14 @@ function ApprovalGroup({
               <button
                 type="button"
                 onClick={approval.state === 'approved' ? onOpenApprove : onOpenChanges}
-                className="text-xs font-medium text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline"
+                className="text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
               >
                 Edit
               </button>
               <button
                 type="button"
                 onClick={onClear}
-                className="text-xs font-medium text-gray-400 underline-offset-2 hover:text-gray-700 hover:underline"
+                className="text-xs font-medium text-ink-dim underline-offset-2 hover:text-ink-soft hover:underline"
               >
                 Clear
               </button>
@@ -1237,7 +1237,7 @@ function ApprovalGroup({
       {images.length > 0 ? (
         <ImageGrid images={images} versionNumber={versionNumber} onImageClick={onImageClick} />
       ) : (
-        <p className="text-xs text-gray-400">{emptyHint ?? 'No images.'}</p>
+        <p className="text-xs text-ink-dim">{emptyHint ?? 'No images.'}</p>
       )}
     </div>
   )
@@ -1252,7 +1252,7 @@ function ApprovalStateHeader({
 }) {
   if (!approval) {
     return (
-      <div className="mb-3 rounded-lg bg-gray-50 px-3 py-2 text-xs font-medium text-gray-500 ring-1 ring-gray-200">
+      <div className="mb-3 rounded-lg bg-canvas px-3 py-2 text-xs font-medium text-ink-mute ring-1 ring-line">
         Pending
       </div>
     )
@@ -1272,12 +1272,12 @@ function ApprovalStateHeader({
 
   if (approval.state === 'approved') {
     return (
-      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 ring-1 ring-emerald-200">
-        <span className="text-xs font-medium text-emerald-800">
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg bg-in-stock-soft px-3 py-2 ring-1 ring-in-stock">
+        <span className="text-xs font-medium text-in-stock">
           Approved {when} by {approval.actor_name}
         </span>
         {carriedLabel != null && (
-          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-normal text-gray-500">
+          <span className="rounded-full bg-canvas px-2 py-0.5 text-xs font-normal text-ink-mute">
             Carried from v{carriedLabel}
           </span>
         )}
@@ -1286,12 +1286,12 @@ function ApprovalStateHeader({
   }
   // changes_requested
   return (
-    <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 ring-1 ring-amber-200">
-      <p className="text-xs font-medium text-amber-800">
+    <div className="mb-3 rounded-lg bg-low-soft px-3 py-2 ring-1 ring-low">
+      <p className="text-xs font-medium text-low">
         Changes requested {when} by {approval.actor_name}
       </p>
       {approval.change_request && (
-        <p className="mt-1 text-xs text-amber-700/80">{approval.change_request}</p>
+        <p className="mt-1 text-xs text-low">{approval.change_request}</p>
       )}
     </div>
   )
@@ -1325,21 +1325,21 @@ function ApproveDialog({
       ariaLabelledBy={titleId}
       backdropClassName="bg-black/60"
     >
-      <h3 id={titleId} className="text-base font-semibold text-gray-900">Approve for {name === SHARED_APPROVAL_KEY ? 'Shared' : name}</h3>
+      <h3 id={titleId} className="text-base font-semibold text-ink">Approve for {name === SHARED_APPROVAL_KEY ? 'Shared' : name}</h3>
       <label className="mt-4 block">
-        <span className="block text-xs font-medium uppercase tracking-wider text-gray-500">Approved by</span>
+        <span className="block text-xs font-medium uppercase tracking-wider text-ink-mute">Approved by</span>
         <input
           type="text"
           value={actor}
           onChange={(e) => setActor(e.target.value)}
-          className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none"
+          className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none"
         />
       </label>
       <div className="mt-5 flex justify-end gap-2">
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
+          className="rounded px-3 py-2 text-sm font-medium text-ink-mute hover:bg-canvas"
         >
           Cancel
         </button>
@@ -1347,7 +1347,7 @@ function ApproveDialog({
           type="button"
           onClick={() => onConfirm(trimmed)}
           disabled={trimmed.length === 0}
-          className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+          className="rounded bg-in-stock px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
         >
           Confirm
         </button>
@@ -1389,30 +1389,30 @@ function RequestChangesDialog({
       ariaLabelledBy={titleId}
       backdropClassName="bg-black/60"
     >
-      <h3 id={titleId} className="text-base font-semibold text-gray-900">Record change request for {name === SHARED_APPROVAL_KEY ? 'Shared' : name}</h3>
+      <h3 id={titleId} className="text-base font-semibold text-ink">Record change request for {name === SHARED_APPROVAL_KEY ? 'Shared' : name}</h3>
       <label className="mt-4 block">
-        <span className="block text-xs font-medium uppercase tracking-wider text-gray-500">What needs to change?</span>
+        <span className="block text-xs font-medium uppercase tracking-wider text-ink-mute">What needs to change?</span>
         <textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
           rows={4}
-          className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none"
+          className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none"
         />
       </label>
       <label className="mt-4 block">
-        <span className="block text-xs font-medium uppercase tracking-wider text-gray-500">Reported by</span>
+        <span className="block text-xs font-medium uppercase tracking-wider text-ink-mute">Reported by</span>
         <input
           type="text"
           value={actor}
           onChange={(e) => setActor(e.target.value)}
-          className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none"
+          className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none"
         />
       </label>
       <div className="mt-5 flex justify-end gap-2">
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
+          className="rounded px-3 py-2 text-sm font-medium text-ink-mute hover:bg-canvas"
         >
           Cancel
         </button>
@@ -1420,7 +1420,7 @@ function RequestChangesDialog({
           type="button"
           onClick={() => onSubmit(trimmedActor, trimmedNote === '' ? null : trimmedNote)}
           disabled={trimmedActor.length === 0}
-          className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+          className="rounded bg-low px-3 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
         >
           Submit
         </button>

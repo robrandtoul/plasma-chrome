@@ -71,19 +71,19 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
       onClose={onClose}
       preventClose={working}
       ariaLabelledBy="pricing-import-title"
-      panelClassName="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+      panelClassName="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-surface shadow-xl"
     >
-          <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-6 py-4">
+          <div className="flex items-start justify-between gap-4 border-b border-line-soft px-6 py-4">
             <div>
-              <h3 id="pricing-import-title" className="text-lg font-semibold text-gray-900">Import pricing</h3>
+              <h3 id="pricing-import-title" className="text-lg font-semibold text-ink">Import pricing</h3>
               {scopeLabel && (
-                <p className="mt-0.5 text-xs text-gray-500">Scoped to {scopeLabel}. Rows for other materials will be flagged as errors.</p>
+                <p className="mt-0.5 text-xs text-ink-mute">Scoped to {scopeLabel}. Rows for other materials will be flagged as errors.</p>
               )}
             </div>
             <button
               onClick={onClose}
               disabled={working}
-              className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
+              className="rounded p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft disabled:opacity-50"
               aria-label="Close"
             >
               <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -95,7 +95,7 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
           <div className="flex-1 overflow-y-auto px-6 py-5">
             {!preview ? (
               <div>
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-ink-mute">
                   Drag a CSV or ZIP here, or click to pick one. Imports update existing prices and create new quantity tiers. They never delete tiers. To remove a tier, use the pricing editor.
                 </p>
                 <div
@@ -122,11 +122,11 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
                   onClick={() => { if (working) return; inputRef.current?.click() }}
                   aria-disabled={working || undefined}
                   className={[
-                    'mt-4 flex h-40 flex-col items-center justify-center rounded-2xl border-2 border-dashed text-sm text-gray-500 transition-colors',
+                    'mt-4 flex h-40 flex-col items-center justify-center rounded-2xl border-2 border-dashed text-sm text-ink-mute transition-colors',
                     working
-                      ? 'cursor-not-allowed border-gray-200 bg-gray-50 opacity-70'
-                      : 'cursor-pointer hover:bg-gray-50',
-                    !working && (dragOver ? 'border-gray-900 bg-gray-50' : 'border-gray-300'),
+                      ? 'cursor-not-allowed border-line bg-canvas opacity-70'
+                      : 'cursor-pointer hover:bg-canvas',
+                    !working && (dragOver ? 'border-ink bg-canvas' : 'border-line'),
                   ].filter(Boolean).join(' ')}
                 >
                   {working ? 'Parsing…' : 'Drop a .csv or .zip here, or click to browse'}
@@ -142,7 +142,7 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
                   }}
                 />
                 {error && (
-                  <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>
+                  <p className="mt-3 rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{error}</p>
                 )}
               </div>
             ) : (
@@ -162,7 +162,7 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
 
           {/* Footer actions */}
           {preview && (
-            <div className="flex items-center justify-between gap-3 border-t border-gray-100 px-6 py-4">
+            <div className="flex items-center justify-between gap-3 border-t border-line-soft px-6 py-4">
               <button
                 onClick={() => {
                   setFile(null)
@@ -175,7 +175,7 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
                   if (inputRef.current) inputRef.current.value = ''
                 }}
                 disabled={working}
-                className="text-xs text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline disabled:opacity-50"
+                className="text-xs text-ink-mute underline-offset-2 hover:text-ink hover:underline disabled:opacity-50"
               >
                 Pick a different file
               </button>
@@ -183,14 +183,14 @@ export default function AdminPricingImport({ onClose, onCommitted, scope, scopeL
                 <button
                   onClick={onClose}
                   disabled={working}
-                  className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+                  className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleCommit}
                   disabled={working || preview.errors.length > 0 || totalApplicable === 0}
-                  className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+                  className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
                 >
                   {working
                     ? 'Applying…'
@@ -227,21 +227,21 @@ function PreviewView({
   return (
     <div className="space-y-4">
       <div>
-        <p className="text-xs uppercase tracking-wider text-gray-400">{fileName}</p>
-        <p className="mt-1 text-sm text-gray-700">
+        <p className="text-xs uppercase tracking-wider text-ink-dim">{fileName}</p>
+        <p className="mt-1 text-sm text-ink-soft">
           <strong>{preview.creates.length}</strong> new tier{preview.creates.length === 1 ? '' : 's'},
           {' '}<strong>{preview.changes.length}</strong> price{preview.changes.length === 1 ? '' : 's'} will change,
           {' '}<strong>{preview.unchanged.length}</strong> unchanged,
-          {' '}<strong className={preview.errors.length > 0 ? 'text-rose-700' : ''}>{preview.errors.length}</strong> error{preview.errors.length === 1 ? '' : 's'}.
+          {' '}<strong className={preview.errors.length > 0 ? 'text-out' : ''}>{preview.errors.length}</strong> error{preview.errors.length === 1 ? '' : 's'}.
         </p>
       </div>
 
-      {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>}
+      {error && <p className="rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{error}</p>}
 
       {preview.errors.length > 0 && (
         <section>
-          <h4 className="mb-2 text-sm font-semibold text-rose-700">Errors</h4>
-          <ul className="space-y-1 rounded-lg bg-rose-50 px-4 py-3 text-xs text-rose-700">
+          <h4 className="mb-2 text-sm font-semibold text-out">Errors</h4>
+          <ul className="space-y-1 rounded-lg bg-out-soft px-4 py-3 text-xs text-out">
             {preview.errors.map((e, i) => (
               <li key={i}>
                 <span className="font-medium">{e.file || fileName || 'CSV'}{e.row != null ? ` · Row ${e.row}` : ''}:</span> {e.message}
@@ -255,33 +255,33 @@ function PreviewView({
         <section>
           <button
             onClick={() => setShowCreates(!showCreates)}
-            className="flex items-center gap-2 text-sm font-semibold text-gray-900 hover:text-gray-700"
+            className="flex items-center gap-2 text-sm font-semibold text-ink hover:text-ink-soft"
           >
             <span>{showCreates ? '▾' : '▸'}</span>
             New tiers ({preview.creates.length})
           </button>
           {showCreates && (
-            <div className="mt-2 overflow-hidden rounded-lg ring-1 ring-gray-200">
+            <div className="mt-2 overflow-hidden rounded-lg ring-1 ring-line">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="border-b border-gray-100 bg-gray-50 text-left">
-                    <th className="px-3 py-2 font-semibold text-gray-500">Material</th>
-                    <th className="px-3 py-2 font-semibold text-gray-500">Variant</th>
-                    <th className="px-3 py-2 font-semibold text-gray-500">Qty</th>
-                    <th className="px-3 py-2 font-semibold text-gray-500">GBP</th>
-                    <th className="px-3 py-2 font-semibold text-gray-500">EUR</th>
-                    <th className="px-3 py-2 font-semibold text-gray-500">USD</th>
+                  <tr className="border-b border-line-soft bg-canvas text-left">
+                    <th className="px-3 py-2 font-semibold text-ink-mute">Material</th>
+                    <th className="px-3 py-2 font-semibold text-ink-mute">Variant</th>
+                    <th className="px-3 py-2 font-semibold text-ink-mute">Qty</th>
+                    <th className="px-3 py-2 font-semibold text-ink-mute">GBP</th>
+                    <th className="px-3 py-2 font-semibold text-ink-mute">EUR</th>
+                    <th className="px-3 py-2 font-semibold text-ink-mute">USD</th>
                   </tr>
                 </thead>
                 <tbody>
                   {preview.creates.map((c, i) => (
-                    <tr key={i} className="border-b border-gray-50 last:border-0">
-                      <td className="px-3 py-1.5 text-gray-700">{c.material_slug}</td>
-                      <td className="px-3 py-1.5 text-gray-700">{c.variant_label}</td>
-                      <td className="px-3 py-1.5 tabular-nums text-gray-700">{c.quantity.toLocaleString()}</td>
-                      <td className="px-3 py-1.5 tabular-nums font-medium text-gray-900">£{c.gbp}</td>
-                      <td className="px-3 py-1.5 tabular-nums font-medium text-gray-900">€{c.eur}</td>
-                      <td className="px-3 py-1.5 tabular-nums font-medium text-gray-900">${c.usd}</td>
+                    <tr key={i} className="border-b border-line-soft last:border-0">
+                      <td className="px-3 py-1.5 text-ink-soft">{c.material_slug}</td>
+                      <td className="px-3 py-1.5 text-ink-soft">{c.variant_label}</td>
+                      <td className="px-3 py-1.5 tabular-nums text-ink-soft">{c.quantity.toLocaleString()}</td>
+                      <td className="px-3 py-1.5 tabular-nums font-medium text-ink">£{c.gbp}</td>
+                      <td className="px-3 py-1.5 tabular-nums font-medium text-ink">€{c.eur}</td>
+                      <td className="px-3 py-1.5 tabular-nums font-medium text-ink">${c.usd}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -295,27 +295,27 @@ function PreviewView({
         <section>
           <button
             onClick={() => setShowChanges(!showChanges)}
-            className="flex items-center gap-2 text-sm font-semibold text-gray-900 hover:text-gray-700"
+            className="flex items-center gap-2 text-sm font-semibold text-ink hover:text-ink-soft"
           >
             <span>{showChanges ? '▾' : '▸'}</span>
             Changes ({preview.changes.length})
           </button>
           {showChanges && (
-            <div className="mt-2 overflow-hidden rounded-lg ring-1 ring-gray-200">
+            <div className="mt-2 overflow-hidden rounded-lg ring-1 ring-line">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="border-b border-gray-100 bg-gray-50 text-left">
-                    <th className="px-3 py-2 font-semibold text-gray-500">What</th>
-                    <th className="px-3 py-2 font-semibold text-gray-500">Old</th>
-                    <th className="px-3 py-2 font-semibold text-gray-500">New</th>
+                  <tr className="border-b border-line-soft bg-canvas text-left">
+                    <th className="px-3 py-2 font-semibold text-ink-mute">What</th>
+                    <th className="px-3 py-2 font-semibold text-ink-mute">Old</th>
+                    <th className="px-3 py-2 font-semibold text-ink-mute">New</th>
                   </tr>
                 </thead>
                 <tbody>
                   {preview.changes.map((c, i) => (
-                    <tr key={i} className="border-b border-gray-50 last:border-0">
-                      <td className="px-3 py-1.5 text-gray-700">{c.description}</td>
-                      <td className="px-3 py-1.5 tabular-nums text-gray-500">{c.oldValue}</td>
-                      <td className="px-3 py-1.5 tabular-nums font-medium text-gray-900">{c.newValue}</td>
+                    <tr key={i} className="border-b border-line-soft last:border-0">
+                      <td className="px-3 py-1.5 text-ink-soft">{c.description}</td>
+                      <td className="px-3 py-1.5 tabular-nums text-ink-mute">{c.oldValue}</td>
+                      <td className="px-3 py-1.5 tabular-nums font-medium text-ink">{c.newValue}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -329,13 +329,13 @@ function PreviewView({
         <section>
           <button
             onClick={() => setShowUnchanged(!showUnchanged)}
-            className="flex items-center gap-2 text-sm font-medium text-gray-500 hover:text-gray-700"
+            className="flex items-center gap-2 text-sm font-medium text-ink-mute hover:text-ink-soft"
           >
             <span>{showUnchanged ? '▾' : '▸'}</span>
             Unchanged ({preview.unchanged.length})
           </button>
           {showUnchanged && (
-            <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
+            <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto rounded-lg bg-canvas px-3 py-2 text-xs text-ink-mute">
               {preview.unchanged.map((u, i) => <li key={i}>{u.description}</li>)}
             </ul>
           )}

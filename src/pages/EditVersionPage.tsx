@@ -8,7 +8,7 @@ import { DEFAULT_DISPLAY_QUANTITIES } from '../lib/constants'
 import { PricingDisplay } from '../components/PricingDisplay'
 import { PricingDisplayField, type PricingDisplayValue } from '../components/PricingDisplayField'
 import { CurrencyField } from '../components/CurrencyField'
-import { QuoteLink } from '../components/QuoteLink'
+import { DesignerChrome } from '../design'
 import { PageDropOverlay } from '../components/PageDropOverlay'
 import NameChipInput from '../components/NameChipInput'
 import { matchImageToName } from '../lib/matchImageToName'
@@ -1436,8 +1436,8 @@ export default function EditVersionPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-dvh items-center justify-center bg-gray-50">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+      <div className="flex min-h-dvh items-center justify-center bg-canvas">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-ink" />
       </div>
     )
   }
@@ -1487,13 +1487,14 @@ export default function EditVersionPage() {
       designer_first_name: '',
     }
     return (
+      <DesignerChrome active="proofs">
+      <div className="min-h-dvh bg-canvas">
       <div className="mx-auto max-w-2xl px-4 py-10 pb-32 sm:px-6">
         <div className="mb-8">
-          <h1 className="text-2xl font-bold text-gray-900">
+          <h1 className="font-display font-medium tracking-[-0.02em] text-ink leading-tight" style={{ fontSize: 'clamp(24px, 4vw, 32px)' }}>
             Version v{versionNumber} saved
           </h1>
-          {proofName && <p className="mt-1 text-gray-500">{proofName}</p>}
-          {proofCompany && <p className="text-sm text-gray-400">{proofCompany}</p>}
+          {proofCompany && <p className="mt-1 text-sm text-ink-dim">{proofCompany}</p>}
         </div>
         <MessageSendPanel
           proofId={proofId}
@@ -1506,6 +1507,8 @@ export default function EditVersionPage() {
           onSkip={() => navigate(`/proofs/${proofId}`)}
         />
       </div>
+      </div>
+      </DesignerChrome>
     )
   }
 
@@ -1524,7 +1527,7 @@ export default function EditVersionPage() {
     <div className="flex items-center gap-3">
       <Link
         to={`/proofs/${proofId}`}
-        className="text-sm font-medium text-gray-500 hover:text-gray-700"
+        className="text-sm font-medium text-ink-mute hover:text-ink-soft"
       >
         Cancel
       </Link>
@@ -1540,8 +1543,8 @@ export default function EditVersionPage() {
               : undefined
         }
         className={[
-          'rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors',
-          isValid ? 'bg-gray-900 hover:bg-gray-700' : 'bg-gray-900/60 hover:bg-gray-900/75',
+          'rounded px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
+          isValid ? 'bg-ink hover:opacity-90' : 'bg-ink/60 hover:bg-ink/75',
           'disabled:cursor-not-allowed disabled:opacity-50',
         ].join(' ')}
       >
@@ -1551,12 +1554,13 @@ export default function EditVersionPage() {
   )
 
   return (
-    <div className="min-h-dvh bg-gray-50">
+    <DesignerChrome active="proofs">
+    <div className="min-h-dvh bg-canvas">
       <PageDropOverlay visible={isPageDragOver} />
       {toast?.kind === 'validation' && (
         <div
           role="status"
-          className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full bg-rose-50 px-5 py-2.5 text-sm font-medium text-rose-700 shadow-lg ring-1 ring-rose-200"
+          className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-full bg-out-soft px-5 py-2.5 text-sm font-medium text-out shadow-lg ring-1 ring-out"
         >
           {toast.text}
         </div>
@@ -1564,28 +1568,28 @@ export default function EditVersionPage() {
       {toast?.kind === 'undo' && (
         <div
           role="status"
-          className="fixed left-1/2 top-6 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full bg-slate-700 px-5 py-2.5 text-sm font-medium text-white shadow-lg"
+          className="fixed left-1/2 top-6 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-on-ink shadow-lg"
         >
           <span>{toast.text}</span>
           <button
             type="button"
             onClick={() => toast.onUndo()}
-            className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wider hover:bg-white/25"
+            className="rounded-full bg-on-ink/15 px-3 py-1 text-xs font-semibold uppercase tracking-wider hover:bg-on-ink/25"
           >
             Undo
           </button>
         </div>
       )}
-      <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6">
+      <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
 
-        {/* Back + Quote compiler. QuoteLink lives in the per-page
-            header on six pages today. Future "extract shared header"
-            pass should inline this once and remove the per-page
-            insertions. */}
-        <div className="mb-6 flex items-center justify-between">
-          <Link to={`/proofs/${proofId}`} className="text-sm text-gray-400 hover:text-gray-700">← Back to project</Link>
-          <QuoteLink variant="inline" />
-        </div>
+        {/* Breadcrumb back to Proofs / this project. */}
+        <nav className="mb-6 flex items-center gap-1.5 text-[13px] text-ink-mute">
+          <Link to="/" className="hover:text-ink">Proofs</Link>
+          <span className="text-ink-dim">›</span>
+          <Link to={`/proofs/${proofId}`} className="max-w-[24ch] truncate hover:text-ink">{proofName ?? 'Project'}</Link>
+          <span className="text-ink-dim">›</span>
+          <span className="text-ink">Edit v{versionNumber}</span>
+        </nav>
 
         {/* Page heading + top actions. Cancel + Save pair is
             defined as `actionRow` above the render and emitted
@@ -1593,9 +1597,8 @@ export default function EditVersionPage() {
             the image-editing section at the bottom of the form. */}
         <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Edit v{versionNumber}</h1>
-            {proofName && <p className="mt-1 text-gray-500">{proofName}</p>}
-            {proofCompany && <p className="text-sm text-gray-400">{proofCompany}</p>}
+            <h1 className="font-display font-medium tracking-[-0.02em] text-ink leading-tight" style={{ fontSize: 'clamp(24px, 4vw, 32px)' }}>Edit v{versionNumber}</h1>
+            {proofCompany && <p className="mt-1 text-sm text-ink-dim">{proofCompany}</p>}
           </div>
           {actionRow}
         </div>
@@ -1612,7 +1615,7 @@ export default function EditVersionPage() {
         {isVariantRound && isLocked && (
           <div
             role="alert"
-            className="mb-6 rounded-xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-800"
+            className="mb-6 rounded-xl border border-out bg-out-soft px-5 py-4 text-sm text-out"
           >
             <p className="font-semibold">
               This variant round has been locked by the customer's selection.
@@ -1630,6 +1633,13 @@ export default function EditVersionPage() {
         <form id="edit-version-form" onSubmit={handleSubmit} className="space-y-6">
           <fieldset disabled={false} className="contents">
 
+          {/* Two-column body: spec/setup on the left, proof images +
+              QR + change notes on the right. Personalisation, the
+              pricing-reference tables and the action row sit
+              full-width below. Stacks to one column below lg. */}
+          <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+          <div className="space-y-6">
+
           {/* Pricing display — required choice between standard grid and custom quote.
               Standard is disabled when the saved snapshot carries no
               per-tier prices (5+ ink versions, historical custom
@@ -1640,8 +1650,8 @@ export default function EditVersionPage() {
               cards on the new-version flow's Commercial section.
               On this edit-version surface we wrap it with the
               standalone-card chrome it used to provide internally. */}
-          <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Pricing display</h2>
+          <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">Pricing display</h2>
             <PricingDisplayField
               value={pricingDisplay}
               onChange={setPricingDisplay}
@@ -1651,25 +1661,25 @@ export default function EditVersionPage() {
           </section>
 
           {/* Specification */}
-          <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Specification</h2>
+          <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">Specification</h2>
 
             <div className="mb-4">
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">Material display name</label>
+              <label className="mb-1.5 block text-sm font-medium text-ink-soft">Material display name</label>
               <input
                 ref={materialRef}
                 type="text"
                 value={materialDisplay}
                 onChange={(e) => setMaterialDisplay(e.target.value)}
-                className={[inputClass, shouldHighlight('material') ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
+                className={[inputClass, shouldHighlight('material') ? 'border-out focus:border-out focus:ring-out' : ''].join(' ')}
               />
-              {shouldHighlight('material') && <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>}
+              {shouldHighlight('material') && <p className="mt-1.5 text-xs font-medium text-out">Required</p>}
             </div>
 
             {/* Option selection — for materials that expose multi-options */}
             {hasOptions && (
               <div className="mb-4">
-                <label className="mb-2 block text-sm font-medium text-gray-700">{optionLabelPlural}</label>
+                <label className="mb-2 block text-sm font-medium text-ink-soft">{optionLabelPlural}</label>
                 <div className="flex flex-wrap gap-2">
                   {availableOptions.map(o => {
                     const selected = selectedOptions.includes(o.code)
@@ -1679,10 +1689,10 @@ export default function EditVersionPage() {
                         type="button"
                         onClick={() => toggleOption(o.code)}
                         className={[
-                          'rounded-full px-4 py-1.5 text-sm font-medium ring-1 transition-colors',
+                          'rounded px-4 py-1.5 text-sm font-medium ring-1 transition-colors',
                           selected
-                            ? 'bg-gray-900 text-white ring-gray-900'
-                            : 'bg-white text-gray-600 ring-gray-200 hover:bg-gray-50',
+                            ? 'bg-ink text-on-ink ring-ink'
+                            : 'bg-surface text-ink-soft ring-line hover:bg-canvas',
                         ].join(' ')}
                       >
                         {o.display_name}
@@ -1690,7 +1700,7 @@ export default function EditVersionPage() {
                     )
                   })}
                 </div>
-                <p className="mt-1.5 text-xs text-gray-400">
+                <p className="mt-1.5 text-xs text-ink-dim">
                   Select which {optionLabelPlural.toLowerCase()} to offer. Each {optionLabelSingular.toLowerCase()} gets its own proof images.
                 </p>
               </div>
@@ -1706,9 +1716,9 @@ export default function EditVersionPage() {
                 Grouped under one "Paper layers" heading so the
                 designer reads it as one decision. */}
             {requiresLayerColours && (
-              <div className="mb-4 rounded-xl bg-gray-50 p-4 ring-1 ring-gray-100">
-                <label className="mb-1 block text-sm font-medium text-gray-700">Paper layers</label>
-                <p className="mb-3 text-xs text-gray-500">
+              <div className="mb-4 rounded-xl bg-canvas p-4 ring-1 ring-line-soft">
+                <label className="mb-1 block text-sm font-medium text-ink-soft">Paper layers</label>
+                <p className="mb-3 text-xs text-ink-mute">
                   The three Colorplan layers visible at the card's edge. Pick a colour for each.
                 </p>
                 <div className="space-y-3">
@@ -1742,13 +1752,13 @@ export default function EditVersionPage() {
 
             {requiresInkNames ? (
               <div ref={inkNamesRef} className="mb-4">
-                <label className="mb-1.5 block text-sm font-medium text-gray-700">Ink names</label>
+                <label className="mb-1.5 block text-sm font-medium text-ink-soft">Ink names</label>
                 <div className="space-y-2">
                   {Array.from({ length: editInkCount }).map((_, i) => {
                     const fieldInvalid = submitAttempted && !inkNameValidities[i]
                     return (
                       <div key={i}>
-                        <label className="mb-0.5 block text-xs font-medium text-gray-500">Ink {i + 1}</label>
+                        <label className="mb-0.5 block text-xs font-medium text-ink-mute">Ink {i + 1}</label>
                         <input
                           type="text"
                           placeholder="e.g. Pantone 185 C"
@@ -1760,10 +1770,10 @@ export default function EditVersionPage() {
                           }}
                           className={[
                             inputClass,
-                            fieldInvalid ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : '',
+                            fieldInvalid ? 'border-out focus:border-out focus:ring-out' : '',
                           ].join(' ')}
                         />
-                        {fieldInvalid && <p className="mt-1 text-xs font-medium text-rose-500">Required</p>}
+                        {fieldInvalid && <p className="mt-1 text-xs font-medium text-out">Required</p>}
                       </div>
                     )
                   })}
@@ -1771,8 +1781,8 @@ export default function EditVersionPage() {
               </div>
             ) : (
               <div className="mb-4">
-                <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                  Ink names <span className="font-normal text-gray-400">(optional, comma-separated)</span>
+                <label className="mb-1.5 block text-sm font-medium text-ink-soft">
+                  Ink names <span className="font-normal text-ink-dim">(optional, comma-separated)</span>
                 </label>
                 <input
                   type="text"
@@ -1789,8 +1799,8 @@ export default function EditVersionPage() {
                 surcharge snapshot on save from the version's
                 current material + currency. */}
             <div className="mb-4">
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">
-                Names on this order <span className="font-normal text-gray-400">(optional)</span>
+              <label className="mb-1.5 block text-sm font-medium text-ink-soft">
+                Names on this order <span className="font-normal text-ink-dim">(optional)</span>
               </label>
               <NameChipInput
                 names={names}
@@ -1802,28 +1812,30 @@ export default function EditVersionPage() {
 
             {!isCustomQuote && (
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-gray-700">Currency</label>
+                <label className="mb-1.5 block text-sm font-medium text-ink-soft">Currency</label>
                 <div>
                   <CurrencyField value={currency} onChange={() => {}} disabled />
-                  <p className="mt-1.5 text-xs text-gray-400">Cannot be changed after creation.</p>
+                  <p className="mt-1.5 text-xs text-ink-dim">Cannot be changed after creation.</p>
                 </div>
               </div>
             )}
 
           </section>
 
+          </div>
+          <div className="space-y-6">
           {/* Images */}
-          <section ref={imageSectionRef} className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">
+          <section ref={imageSectionRef} className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">
               Proof images
               {currentImages.length > 0 && (
-                <span className="ml-2 font-normal normal-case text-gray-400">— drag to reorder</span>
+                <span className="ml-2 font-normal normal-case text-ink-dim">— drag to reorder</span>
               )}
             </h2>
 
             {/* Option tabs */}
             {optionMode && selectedOptions.length > 0 && (
-              <div className="mb-4 flex gap-0 border-b border-gray-100">
+              <div className="mb-4 flex gap-0 border-b border-line-soft">
                 {selectedOptions.map(fCode => {
                   const f = availableOptions.find(x => x.code === fCode)
                   const isActive = activeImageOption === fCode
@@ -1835,12 +1847,12 @@ export default function EditVersionPage() {
                       className={[
                         '-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors',
                         isActive
-                          ? 'border-gray-900 text-gray-900'
-                          : 'border-transparent text-gray-400 hover:text-gray-700',
+                          ? 'border-ink text-ink'
+                          : 'border-transparent text-ink-dim hover:text-ink-soft',
                       ].join(' ')}
                     >
                       {f?.display_name ?? fCode}
-                      <span className={['ml-1.5 text-xs', isActive ? 'text-gray-400' : 'text-gray-300'].join(' ')}>
+                      <span className={['ml-1.5 text-xs', isActive ? 'text-ink-dim' : 'text-ink-dim'].join(' ')}>
                         ({(editImagesByOption[fCode] ?? []).length})
                       </span>
                     </button>
@@ -1861,7 +1873,7 @@ export default function EditVersionPage() {
                       onDragStart={() => handleDragStart(index)}
                       onDragOver={(e) => handleDragOver(e, index)}
                       onDragEnd={handleDragEnd}
-                      className="group relative cursor-grab rounded-xl border border-gray-200 bg-gray-50 p-2 active:cursor-grabbing"
+                      className="group relative cursor-grab rounded-xl border border-line bg-canvas p-2 active:cursor-grabbing"
                     >
                       <img
                         src={entry.preview}
@@ -1874,7 +1886,7 @@ export default function EditVersionPage() {
                       <select
                         value={entry.associated_name ?? ''}
                         onChange={(e) => updateAssociatedName(key, e.target.value || null)}
-                        className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-gray-900 focus:outline-none"
+                        className="select-styled mt-1 w-full rounded border border-line px-2 py-1 text-xs focus:border-brand focus:outline-none"
                         aria-label="Associated name"
                       >
                         <option value="">Shared</option>
@@ -1883,7 +1895,7 @@ export default function EditVersionPage() {
                       <select
                         value={entry.side ?? ''}
                         onChange={(e) => updateSide(key, (e.target.value || null) as 'front' | 'back' | null)}
-                        className="mt-1 w-full rounded border border-gray-200 px-2 py-1 text-xs focus:border-gray-900 focus:outline-none"
+                        className="select-styled mt-1 w-full rounded border border-line px-2 py-1 text-xs focus:border-brand focus:outline-none"
                         aria-label="Side"
                       >
                         <option value="">—</option>
@@ -1891,14 +1903,14 @@ export default function EditVersionPage() {
                         <option value="back">Back</option>
                       </select>
                       {filename && (
-                        <p className="mt-1 truncate text-[11px] text-gray-400" title={filename}>
+                        <p className="mt-1 truncate text-[11px] text-ink-dim" title={filename}>
                           {filename}
                         </p>
                       )}
                       <button
                         type="button"
                         onClick={() => removeImage(key)}
-                        className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-gray-800 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100"
+                        className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-ink text-xs text-on-ink opacity-0 transition-opacity group-hover:opacity-100"
                       >
                         ×
                       </button>
@@ -1925,10 +1937,10 @@ export default function EditVersionPage() {
                   className={[
                     'flex w-full items-center justify-center rounded-xl border-2 py-8 text-sm transition-colors',
                     isZoneDragOver
-                      ? 'border-solid border-gray-900 bg-gray-50 text-gray-900'
+                      ? 'border-solid border-ink bg-canvas text-ink'
                       : shouldHighlight('images')
-                        ? 'border-dashed border-rose-300 text-rose-500 hover:border-rose-400 hover:text-rose-600'
-                        : 'border-dashed border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600',
+                        ? 'border-dashed border-out text-out hover:border-out hover:text-out'
+                        : 'border-dashed border-line text-ink-dim hover:border-line hover:text-ink-soft',
                   ].join(' ')}
                 >
                   {isZoneDragOver
@@ -1940,24 +1952,12 @@ export default function EditVersionPage() {
               </>
             )}
 
-            {fileError && <p className="mt-2 text-sm text-red-600">{fileError}</p>}
-            {fileNote && <p className="mt-2 text-sm text-gray-500">{fileNote}</p>}
+            {fileError && <p className="mt-2 text-sm text-out">{fileError}</p>}
+            {fileNote && <p className="mt-2 text-sm text-ink-mute">{fileNote}</p>}
             {shouldHighlight('images') && (
-              <p className="mt-2 text-xs font-medium text-rose-500">{imagesHint}</p>
+              <p className="mt-2 text-xs font-medium text-out">{imagesHint}</p>
             )}
           </section>
-
-          {/* Bottom-of-form mirror of the top action row. Same
-              Cancel + Save pair, same form="edit-version-form"
-              wiring, so clicking Save here routes through the
-              same handleSubmit → validation path as the top
-              button. Right-aligned to match the top row's
-              visual position within the content column. Not
-              sticky — the image-editing section above needs the
-              vertical space. */}
-          <div className="flex justify-end">
-            {actionRow}
-          </div>
 
           {/* QR codes (migrations 000168 / 000169).
               Standard-edit-form parity with NewVersionPage. Hidden
@@ -1974,8 +1974,8 @@ export default function EditVersionPage() {
           )}
 
           {/* Change notes */}
-          <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Change notes</h2>
+          <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">Change notes</h2>
             <textarea
               rows={3}
               placeholder="What changed in this version? Shown to the customer."
@@ -1984,6 +1984,9 @@ export default function EditVersionPage() {
               className={inputClass}
             />
           </section>
+
+          </div>
+          </div>
 
           {/* Personalisation add-on (migration 000172). Visible only
               when the material supports personalisation AND this is a
@@ -1998,20 +2001,20 @@ export default function EditVersionPage() {
             && cardType === 'membership'
             && !isCustomQuote
             && !isVariantRound && (
-            <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-              <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-gray-400">Personalisation</h2>
-              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+            <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+              <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">Personalisation</h2>
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-line bg-surface px-4 py-3">
                 <input
                   type="checkbox"
                   checked={hasPersonalisation}
                   onChange={(e) => setHasPersonalisation(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 text-gray-900 focus:ring-gray-400"
+                  className="mt-0.5 h-4 w-4 cursor-pointer rounded border-line text-ink focus:ring-brand"
                 />
                 <div>
-                  <div className="text-sm font-medium text-gray-700">
+                  <div className="text-sm font-medium text-ink-soft">
                     Add personalisation
                   </div>
-                  <div className="text-xs text-gray-500">
+                  <div className="text-xs text-ink-mute">
                     {(() => {
                       // Live rate from personalisation_pricing.
                       // Seed fallbacks (migration 000172) apply only
@@ -2030,18 +2033,18 @@ export default function EditVersionPage() {
 
           {/* Pricing — read-only. Hidden when this version is a custom quote. */}
           {!isCustomQuote && pricingSnapshot && (
-            <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-              <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-                <h2 className="text-sm font-semibold uppercase tracking-widest text-gray-400">Pricing</h2>
-                <span className="text-xs text-gray-400">Read-only — locked at creation</span>
+            <section className="overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
+              <div className="flex items-center justify-between border-b border-line-soft px-6 py-4">
+                <h2 className="text-sm font-semibold uppercase tracking-widest text-ink-dim">Pricing</h2>
+                <span className="text-xs text-ink-dim">Read-only — locked at creation</span>
               </div>
               <PricingDisplay
                 snapshot={pricingSnapshot}
                 currency={currency}
                 displayQuantities={displayQuantities}
               />
-              <div className="border-t border-gray-100 px-6 py-3">
-                <p className="text-xs text-gray-400">
+              <div className="border-t border-line-soft px-6 py-3">
+                <p className="text-xs text-ink-dim">
                   {currency === 'GBP' ? 'Prices include VAT. ' : ''}
                   {shippingNote}
                 </p>
@@ -2049,7 +2052,14 @@ export default function EditVersionPage() {
             </section>
           )}
 
-          {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+          {error && <p className="rounded-lg bg-out-soft px-4 py-3 text-sm text-out">{error}</p>}
+
+          {/* Bottom action row — full-width Cancel + Save below the
+              two-column body. Mirrors the top row; same handleSubmit
+              path via form="edit-version-form". */}
+          <div className="flex justify-end">
+            {actionRow}
+          </div>
 
           </fieldset>
         </form>
@@ -2069,11 +2079,11 @@ export default function EditVersionPage() {
             here and bailing in handleSubmit if a payload tries to
             change them. */}
         {isVariantRound && !isLocked && (
-        <form id="edit-version-form" onSubmit={handleSubmit} className="space-y-6">
-          <section className="rounded-2xl bg-white p-8 shadow-sm ring-1 ring-gray-200">
+        <form id="edit-version-form" onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
+          <section className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
             <div className="mb-6">
-              <h2 className="text-base font-semibold text-gray-900">Variants</h2>
-              <p className="mt-0.5 text-xs text-gray-500">
+              <h2 className="text-base font-semibold text-ink">Variants</h2>
+              <p className="mt-0.5 text-xs text-ink-mute">
                 Rename a direction, replace its images per side, or add / remove a back side. The variant ID is fixed at first save and won't change with renames; adding or removing whole directions isn't supported in this version — create a new version instead if the round needs a different shape.
               </p>
             </div>
@@ -2118,18 +2128,18 @@ export default function EditVersionPage() {
                       {visible.map((img) => (
                         <li
                           key={img.id}
-                          className="flex items-center gap-3 rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs"
+                          className="flex items-center gap-3 rounded-md border border-line bg-surface px-2 py-1.5 text-xs"
                         >
                           {img.signedUrl ? (
                             <img
                               src={img.signedUrl}
                               alt=""
                               aria-hidden="true"
-                              className="h-32 w-32 shrink-0 rounded-md border border-gray-200 object-cover"
+                              className="h-32 w-32 shrink-0 rounded-md border border-line object-cover"
                             />
                           ) : (
                             <div
-                              className="h-32 w-32 shrink-0 rounded-md border border-gray-200 bg-gray-50"
+                              className="h-32 w-32 shrink-0 rounded-md border border-line bg-canvas"
                               aria-hidden="true"
                             />
                           )}
@@ -2143,7 +2153,7 @@ export default function EditVersionPage() {
                                 removedExistingIds: [...s.removedExistingIds, img.id],
                               })
                             }
-                            className="ml-2 shrink-0 text-gray-500 hover:text-rose-600"
+                            className="ml-2 shrink-0 text-ink-mute hover:text-out"
                             aria-label={`Remove ${img.originalFilename ?? 'image'}`}
                           >
                             Remove
@@ -2157,14 +2167,14 @@ export default function EditVersionPage() {
                 return (
                   <li
                     key={row.id}
-                    className="rounded-xl border border-gray-200 bg-gray-50 p-5"
+                    className="rounded-xl border border-line bg-canvas p-5"
                   >
                     <div className="flex items-start gap-3">
-                      <span className="mt-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold text-white">
+                      <span className="mt-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink text-xs font-semibold text-on-ink">
                         {idx + 1}
                       </span>
                       <div className="min-w-0 flex-1">
-                        <label className="mb-1.5 block text-sm font-medium text-gray-700">
+                        <label className="mb-1.5 block text-sm font-medium text-ink-soft">
                           Direction name
                         </label>
                         <input
@@ -2172,14 +2182,14 @@ export default function EditVersionPage() {
                           value={row.display_name}
                           onChange={(e) => patchRow({ display_name: e.target.value })}
                           className={[
-                            'w-full rounded-lg border bg-white px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2',
+                            'w-full rounded-lg border bg-surface px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2',
                             labelInvalid
-                              ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300'
-                              : 'border-gray-200 focus:border-gray-400 focus:ring-gray-300',
+                              ? 'border-out focus:border-out focus:ring-out'
+                              : 'border-line focus:border-brand focus:ring-brand',
                           ].join(' ')}
                         />
                         {labelInvalid && (
-                          <p className="mt-1.5 text-xs font-medium text-rose-500">Required</p>
+                          <p className="mt-1.5 text-xs font-medium text-out">Required</p>
                         )}
 
                         <div className="mt-4">
@@ -2240,7 +2250,7 @@ export default function EditVersionPage() {
                                 })
                               }
                             }}
-                            className="text-xs font-medium text-gray-600 underline underline-offset-4 hover:text-gray-900"
+                            className="text-xs font-medium text-ink-soft underline underline-offset-4 hover:text-ink"
                           >
                             {backEnabled ? '− Remove back side' : '+ Add back side'}
                           </button>
@@ -2253,15 +2263,16 @@ export default function EditVersionPage() {
             </ul>
           </section>
 
-          {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+          {error && <p className="rounded-lg bg-out-soft px-4 py-3 text-sm text-out">{error}</p>}
         </form>
         )}
       </div>
     </div>
+    </DesignerChrome>
   )
 }
 
-const inputClass = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+const inputClass = 'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand'
 
 // One row of the Paper layers picker block. Mirrors the
 // LayerColourPicker helper in NewVersionPage but uses inputClass
@@ -2288,7 +2299,7 @@ function EditLayerColourPicker({
   return (
     <div ref={refEl}>
       <div className="grid grid-cols-[60px_1fr] items-center gap-3">
-        <label className="text-xs font-medium uppercase tracking-wide text-gray-500">{label}</label>
+        <label className="text-xs font-medium uppercase tracking-wide text-ink-mute">{label}</label>
         <div className="flex items-center gap-3">
           {picked ? (
             <CoreColourSwatch hex={picked.hex_value} size={28} ariaLabel={`${picked.name} swatch`} />
@@ -2305,7 +2316,7 @@ function EditLayerColourPicker({
           <select
             value={selectedId ?? ''}
             onChange={(e) => onChange(e.target.value || null)}
-            className={[inputClass, invalid ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-300' : ''].join(' ')}
+            className={['select-styled', inputClass, invalid ? 'border-out focus:border-out focus:ring-out' : ''].join(' ')}
           >
             <option value="">Select a colour…</option>
             {colours.map((c) => (
@@ -2314,7 +2325,7 @@ function EditLayerColourPicker({
           </select>
         </div>
       </div>
-      {invalid && <p className="mt-1.5 text-xs font-medium text-rose-500" style={{ paddingLeft: 72 }}>Required</p>}
+      {invalid && <p className="mt-1.5 text-xs font-medium text-out" style={{ paddingLeft: 72 }}>Required</p>}
     </div>
   )
 }

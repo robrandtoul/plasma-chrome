@@ -43,7 +43,7 @@ const MAX_BYTES = 2 * 1024 * 1024 // 2 MB
 // ── Shared input style (matches AddUserDialog) ────────────────────────────────
 
 const inputClass =
-  'w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+  'w-full rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -308,18 +308,18 @@ export default function EditProfileModal({
     <Modal open onClose={onClose} preventClose={saving || uploading} ariaLabelledBy={titleId}>
       {loading ? (
         <div className="flex justify-center py-8">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-ink" />
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-5">
 
-          <h3 id={titleId} className="text-lg font-semibold text-gray-900">
+          <h3 id={titleId} className="text-lg font-semibold text-ink">
             Edit profile
           </h3>
 
           {/* Avatar upload ──────────────────────────────────────────────── */}
           <div>
-            <p className="mb-2 text-sm font-medium text-gray-700">Profile picture</p>
+            <p className="mb-2 text-sm font-medium text-ink-soft">Profile picture</p>
             <div className="flex items-center gap-4">
               {/* Clickable avatar — shows photo if uploaded, initials otherwise */}
               <button
@@ -327,7 +327,7 @@ export default function EditProfileModal({
                 onClick={() => fileRef.current?.click()}
                 disabled={uploading}
                 aria-label="Upload profile picture"
-                className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900 focus-visible:ring-offset-2"
+                className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
               >
                 {avatarUrl ? (
                   <img
@@ -359,7 +359,7 @@ export default function EditProfileModal({
                       xmlns="http://www.w3.org/2000/svg"
                       viewBox="0 0 20 20"
                       fill="currentColor"
-                      className="h-5 w-5 text-white opacity-0 drop-shadow transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                      className="h-5 w-5 text-on-ink opacity-0 drop-shadow transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
                       aria-hidden
                     >
                       <path
@@ -372,7 +372,7 @@ export default function EditProfileModal({
                 )}
               </button>
 
-              <div className="text-xs text-gray-500 leading-relaxed">
+              <div className="text-xs text-ink-mute leading-relaxed">
                 <p>Click to upload a photo.</p>
                 <p>JPEG, PNG, or WebP. Max 2 MB.</p>
                 {avatarUrl && (
@@ -426,7 +426,7 @@ export default function EditProfileModal({
                         })
                       }
                     }}
-                    className="mt-1 text-rose-600 hover:underline"
+                    className="mt-1 text-out hover:underline"
                   >
                     Remove photo
                   </button>
@@ -445,7 +445,7 @@ export default function EditProfileModal({
             />
 
             {uploadError && (
-              <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              <p className="mt-2 rounded-lg bg-out-soft px-3 py-2 text-xs text-out">
                 {uploadError}
               </p>
             )}
@@ -453,8 +453,8 @@ export default function EditProfileModal({
 
           {/* Full name ─────────────────────────────────────────────────── */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">
-              Full name <span className="text-rose-500" aria-hidden>*</span>
+            <label className="mb-1.5 block text-sm font-medium text-ink-soft">
+              Full name <span className="text-out" aria-hidden>*</span>
             </label>
             <input
               type="text"
@@ -468,7 +468,7 @@ export default function EditProfileModal({
 
           {/* Initials + live preview ────────────────────────────────────── */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-gray-700">
+            <label className="mb-1.5 block text-sm font-medium text-ink-soft">
               Initials
             </label>
             <div className="flex items-center gap-3">
@@ -485,7 +485,7 @@ export default function EditProfileModal({
               <span
                 aria-hidden
                 className={[
-                  'flex h-9 w-9 shrink-0 select-none items-center justify-center rounded-full text-sm font-semibold ring-1 ring-gray-200 overflow-hidden',
+                  'flex h-9 w-9 shrink-0 select-none items-center justify-center rounded-full text-sm font-semibold ring-1 ring-line overflow-hidden',
                   !avatarUrl ? `${cm.bg} ${cm.text}` : '',
                 ].join(' ')}
               >
@@ -495,15 +495,15 @@ export default function EditProfileModal({
                 }
               </span>
             </div>
-            <p className="mt-1.5 text-xs text-gray-400">
+            <p className="mt-1.5 text-xs text-ink-dim">
               Shown when no photo is uploaded. Auto-derived from your name — edit to override.
             </p>
           </div>
 
           {/* Colour picker ──────────────────────────────────────────────── */}
           <div>
-            <p className="mb-2 text-sm font-medium text-gray-700">Avatar colour</p>
-            <p className="mb-2 text-xs text-gray-400">Used as the background for your initials when no photo is set.</p>
+            <p className="mb-2 text-sm font-medium text-ink-soft">Avatar colour</p>
+            <p className="mb-2 text-xs text-ink-dim">Used as the background for your initials when no photo is set.</p>
             <div className="flex gap-3" role="radiogroup" aria-label="Avatar colour">
               {COLOURS.map((c) => (
                 <button
@@ -514,12 +514,12 @@ export default function EditProfileModal({
                   aria-label={c.label}
                   onClick={() => setColour(c.value)}
                   className={[
-                    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
+                    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-brand',
                     c.bg,
                     c.text,
                     colour === c.value
                       ? `scale-110 ring-2 ring-offset-2 ${c.ring}`
-                      : 'ring-1 ring-gray-200 hover:scale-105',
+                      : 'ring-1 ring-line hover:scale-105',
                   ].join(' ')}
                 >
                   {initials || '?'}
@@ -529,7 +529,7 @@ export default function EditProfileModal({
           </div>
 
           {formError && (
-            <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            <p className="rounded-lg bg-out-soft px-3 py-2 text-xs text-out">
               {formError}
             </p>
           )}
@@ -540,14 +540,14 @@ export default function EditProfileModal({
               type="button"
               onClick={onClose}
               disabled={saving || uploading}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+              className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving || uploading}
-              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+              className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save'}
             </button>

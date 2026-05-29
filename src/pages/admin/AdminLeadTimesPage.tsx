@@ -234,42 +234,42 @@ export default function AdminLeadTimesPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-gray-900">Lead times</h2>
-        <p className="mt-1 text-sm text-gray-500">
+        <h2 className="text-xl font-bold text-ink">Lead times</h2>
+        <p className="mt-1 text-sm text-ink-mute">
           Set the current production lead time per material, in business days. Surfaces on the Quote compiler so the designer sees a live figure beside the material and quantity inputs. Customer-facing pages are unaffected. Clear both fields on a row to remove the recorded lead time for that material.
         </p>
       </div>
 
       {error && (
-        <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 ring-1 ring-rose-200">
+        <div className="rounded-lg bg-out-soft px-3 py-2 text-sm text-out ring-1 border-out">
           {error}
         </div>
       )}
 
       {loading ? (
         <div className="flex justify-center py-20">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-ink" />
         </div>
       ) : (
-        <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-          <table className="min-w-full divide-y divide-gray-100">
+        <div className="overflow-hidden rounded-[14px] bg-surface border border-line">
+          <table className="min-w-full divide-y divide-line-soft">
             <thead>
-              <tr className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-widest text-gray-500">
+              <tr className="bg-canvas text-left text-xs font-semibold uppercase tracking-widest text-ink-mute">
                 <th className="px-5 py-3">Material</th>
                 <th className="px-5 py-3">Min days</th>
                 <th className="px-5 py-3">Max days</th>
                 <th className="px-5 py-3">Last updated</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 text-sm">
+            <tbody className="divide-y divide-line-soft text-sm">
               {rowState.map(({ row, draft, validation, dirty }) => {
                 const showError = draft.touched && !validation.ok
                 const errorId = showError ? `lead-time-error-${row.id}` : undefined
                 return (
-                  <tr key={row.id} className={dirty ? 'bg-amber-50/40' : ''}>
+                  <tr key={row.id} className={dirty ? 'bg-low-soft/40' : ''}>
                     <td className="px-5 py-3 align-top">
-                      <div className="font-medium text-gray-900">{row.display_name}</div>
-                      <div className="text-xs uppercase tracking-wider text-gray-400">{row.category}</div>
+                      <div className="font-medium text-ink">{row.display_name}</div>
+                      <div className="text-xs uppercase tracking-wider text-ink-mute">{row.category}</div>
                     </td>
                     <td className="px-5 py-3 align-top">
                       <input
@@ -297,13 +297,13 @@ export default function AdminLeadTimesPage() {
                         className={leadTimeInputClass(showError)}
                       />
                       {showError && (
-                        <p id={errorId} className="mt-1 text-xs text-rose-700">
+                        <p id={errorId} className="mt-1 text-xs text-out">
                           {validation.message}
                         </p>
                       )}
                     </td>
                     <td
-                      className="px-5 py-3 align-top text-xs text-gray-500"
+                      className="px-5 py-3 align-top text-xs text-ink-mute"
                       title={formatAbsoluteDateTime(row.lead_time_updated_at) || undefined}
                     >
                       {row.lead_time_updated_at == null
@@ -320,14 +320,14 @@ export default function AdminLeadTimesPage() {
 
       <div className="flex items-center justify-end gap-3">
         {recentlySaved && !saving && (
-          <span className="text-xs text-emerald-600">Saved</span>
+          <span className="text-xs text-in-stock">Saved</span>
         )}
-        {saving && <span className="text-xs text-gray-400">Saving…</span>}
+        {saving && <span className="text-xs text-ink-mute">Saving…</span>}
         <button
           type="button"
           onClick={handleSave}
           disabled={saveDisabled}
-          className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-gray-900"
+          className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {dirtyCount === 0
             ? 'Save changes'
@@ -339,8 +339,8 @@ export default function AdminLeadTimesPage() {
 }
 
 function leadTimeInputClass(showError: boolean): string {
-  const base = 'w-24 rounded-lg border px-3 py-2 text-[17px] sm:text-sm focus:outline-none focus:ring-1'
+  const base = 'w-24 rounded border px-3 py-2 text-[17px] sm:text-sm focus:outline-none'
   return showError
-    ? `${base} border-rose-400 focus:border-rose-500 focus:ring-rose-400`
-    : `${base} border-gray-300 focus:border-gray-900 focus:ring-gray-900`
+    ? `${base} border-out focus:border-[var(--c-out)] focus:bg-[var(--c-out-soft)]`
+    : `${base} border-line focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)]`
 }

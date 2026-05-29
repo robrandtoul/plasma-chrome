@@ -272,12 +272,12 @@ export default function HelpScoutEditModal({
         onClose={onClose}
         preventClose={saving}
         ariaLabelledBy="hs-edit-title"
-        panelClassName="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+        panelClassName="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-surface shadow-xl"
       >
-          <div className="flex items-start justify-between border-b border-gray-100 px-6 py-4">
+          <div className="flex items-start justify-between border-b border-line-soft px-6 py-4">
             <div>
-              <h3 id="hs-edit-title" className="text-lg font-semibold text-gray-900">Change Help Scout conversation</h3>
-              <p className="mt-0.5 text-xs text-gray-500">
+              <h3 id="hs-edit-title" className="text-lg font-semibold text-ink">Change Help Scout conversation</h3>
+              <p className="mt-0.5 text-xs text-ink-mute">
                 {contactEmail
                   ? `Looking up conversations for ${contactEmail}.`
                   : 'No contact email on this project — paste a URL or provide a reason manually.'}
@@ -286,7 +286,7 @@ export default function HelpScoutEditModal({
             <button
               onClick={onClose}
               disabled={saving}
-              className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50"
+              className="rounded p-1.5 text-ink-dim hover:bg-canvas hover:text-ink-soft disabled:opacity-50"
               aria-label="Close"
             >
               <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -297,25 +297,25 @@ export default function HelpScoutEditModal({
 
           <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
             {/* Current state */}
-            <section className="rounded-lg bg-gray-50 px-4 py-3 ring-1 ring-gray-200">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <section className="rounded-lg bg-canvas px-4 py-3 ring-1 ring-line">
+              <p className="text-xs font-semibold uppercase tracking-wider text-ink-dim">
                 Current
               </p>
-              <p className="mt-1 text-sm text-gray-700">
+              <p className="mt-1 text-sm text-ink-soft">
                 {current.conversationUrl ? (
-                  <a href={current.conversationUrl} target="_blank" rel="noopener noreferrer" className="text-amber-800 underline">
+                  <a href={current.conversationUrl} target="_blank" rel="noopener noreferrer" className="text-low underline">
                     {current.conversationUrl}
                   </a>
                 ) : current.overrideReason ? (
-                  <span className="italic text-gray-600">Override: {current.overrideReason}</span>
+                  <span className="italic text-ink-soft">Override: {current.overrideReason}</span>
                 ) : (
-                  <span className="italic text-gray-500">Nothing recorded.</span>
+                  <span className="italic text-ink-mute">Nothing recorded.</span>
                 )}
               </p>
             </section>
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700">
+              <label className="mb-1.5 block text-sm font-medium text-ink-soft">
                 Help Scout conversation URL
               </label>
               <input
@@ -344,13 +344,13 @@ export default function HelpScoutEditModal({
                   }
                 }}
                 placeholder="https://secure.helpscout.net/conversation/…"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                className="w-full rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
               />
               {hsLookupInFlight && (
-                <p className="mt-1.5 text-xs text-gray-400">Checking Help Scout…</p>
+                <p className="mt-1.5 text-xs text-ink-dim">Checking Help Scout…</p>
               )}
               {!hsLookupInFlight && hsLinkedSubject && hsConversationId && (
-                <p className="mt-1.5 text-xs text-emerald-600">
+                <p className="mt-1.5 text-xs text-in-stock">
                   Linked to Help Scout thread: <span className="font-medium">{hsLinkedSubject}</span>
                 </p>
               )}
@@ -358,40 +358,40 @@ export default function HelpScoutEditModal({
                 <button
                   type="button"
                   onClick={() => setHsPickerOpen(true)}
-                  className="mt-1.5 text-xs text-amber-600 underline hover:text-amber-700"
+                  className="mt-1.5 text-xs text-low underline hover:text-low"
                 >
                   {hsPickerMatches.length} Help Scout threads found — choose one
                 </button>
               )}
               {urlFormatError && (
-                <p className="mt-1.5 text-xs text-red-600">{urlFormatError}</p>
+                <p className="mt-1.5 text-xs text-out">{urlFormatError}</p>
               )}
               {hsLookupError && (
-                <p className="mt-1.5 text-xs text-gray-400">
+                <p className="mt-1.5 text-xs text-ink-dim">
                   Couldn't check Help Scout — {hsLookupError}. Paste a URL manually or provide an override reason.
                 </p>
               )}
             </div>
 
             {hsLookupReturnedZero && !hsConversationId && (
-              <div className="rounded-lg bg-amber-50 p-4 ring-1 ring-amber-100">
-                <p className="text-sm font-medium text-amber-900">
+              <div className="rounded-lg bg-low-soft p-4 ring-1 ring-low">
+                <p className="text-sm font-medium text-low">
                   No Help Scout conversation linked
                 </p>
-                <p className="mt-1 text-xs text-amber-800">
+                <p className="mt-1 text-xs text-low">
                   {contactEmail ? `No matches found for ${contactEmail}.` : ''} Paste a URL above, or provide a reason to continue without one.
                 </p>
-                <label className="mt-3 block text-xs font-medium text-amber-900">
-                  Why is this proof not linked to a Help Scout conversation? <span className="text-red-500">*</span>
+                <label className="mt-3 block text-xs font-medium text-low">
+                  Why is this proof not linked to a Help Scout conversation? <span className="text-out">*</span>
                 </label>
                 <textarea
                   rows={2}
                   value={overrideReason}
                   onChange={(e) => setOverrideReason(e.target.value)}
                   placeholder={`At least ${MIN_OVERRIDE_REASON_LENGTH} characters.`}
-                  className="mt-1 w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-[17px] sm:text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                  className="mt-1 w-full rounded-lg border border-low bg-surface px-3 py-2 text-[17px] sm:text-sm focus:border-low focus:outline-none focus:ring-1 focus:ring-low"
                 />
-                <p className="mt-1 text-xs text-amber-700">
+                <p className="mt-1 text-xs text-low">
                   {overrideReason.trim().length < MIN_OVERRIDE_REASON_LENGTH
                     ? `${overrideReason.trim().length} / ${MIN_OVERRIDE_REASON_LENGTH} characters`
                     : 'OK'}
@@ -400,22 +400,22 @@ export default function HelpScoutEditModal({
             )}
 
             {saveError && (
-              <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">{saveError}</p>
+              <p className="rounded-lg bg-out-soft px-4 py-3 text-sm text-out">{saveError}</p>
             )}
           </div>
 
-          <div className="flex justify-end gap-2 border-t border-gray-100 px-6 py-4">
+          <div className="flex justify-end gap-2 border-t border-line-soft px-6 py-4">
             <button
               onClick={onClose}
               disabled={saving}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+              className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               onClick={() => void handleSave()}
               disabled={saving}
-              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
+              className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save'}
             </button>
@@ -451,19 +451,19 @@ function HelpScoutPickerInline({
       ariaLabelledBy="hs-picker-title"
       backdropClassName="bg-black/40"
     >
-          <h3 id="hs-picker-title" className="text-sm font-semibold text-gray-900">Multiple Help Scout threads found</h3>
-          <p className="mt-1 text-xs text-gray-500">Pick the conversation this proof relates to.</p>
+          <h3 id="hs-picker-title" className="text-sm font-semibold text-ink">Multiple Help Scout threads found</h3>
+          <p className="mt-1 text-xs text-ink-mute">Pick the conversation this proof relates to.</p>
           <div className="mt-4 max-h-72 space-y-1.5 overflow-y-auto">
             {matches.map((m) => (
               <button
                 key={m.id}
                 type="button"
                 onClick={() => onPick(m)}
-                className="flex w-full flex-col items-start gap-0.5 rounded-lg border border-gray-200 px-3 py-2.5 text-left text-sm hover:bg-gray-50 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                className="flex w-full flex-col items-start gap-0.5 rounded border border-line px-3 py-2.5 text-left text-sm hover:bg-canvas focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
               >
-                <span className="font-medium text-gray-900">{m.subject ?? `Conversation #${m.id}`}</span>
-                <span className="text-xs text-gray-500">
-                  <span className={m.status === 'active' ? 'font-medium text-emerald-600' : 'text-gray-500'}>
+                <span className="font-medium text-ink">{m.subject ?? `Conversation #${m.id}`}</span>
+                <span className="text-xs text-ink-mute">
+                  <span className={m.status === 'active' ? 'font-medium text-in-stock' : 'text-ink-mute'}>
                     {m.status ?? 'unknown'}
                   </span>
                   {m.mailboxName && ` · ${m.mailboxName}`}
@@ -476,14 +476,14 @@ function HelpScoutPickerInline({
             <button
               type="button"
               onClick={onOverride}
-              className="text-xs text-gray-500 underline hover:text-gray-900"
+              className="text-xs text-ink-mute underline hover:text-ink"
             >
               These aren't right — I'll provide a reason
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100"
+              className="rounded px-3 py-1.5 text-sm text-ink-mute hover:bg-canvas"
             >
               Close
             </button>

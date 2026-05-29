@@ -1,0 +1,215 @@
+/* ─────────────────────────────────────────────────────────────
+   PlasmaDesign Stock Control — design tokens.
+   Lifted verbatim from the production app's tailwind.config.js
+   and src/index.css. Two layers:
+     1. Raw tokens  (--c-*, --font-*, --num-features, etc.)
+     2. Semantic    (h1, h2, .num, .eyebrow, .mono, .body, .caption…)
+   British English everywhere. No em dashes.
+   ─────────────────────────────────────────────────────────── */
+
+/* IBM Plex Mono substitutes for Geist Mono until ttf is supplied.
+   The IBM Plex @import lives at the top of src/index.css so the
+   bundler keeps it ahead of any other rule (CSS spec requires
+   @imports to precede non-@import rules). */
+
+:root {
+  /* Type families */
+  --font-display: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --font-body:    'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --font-mono:    'Geist Mono', 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+  /* OpenType: tabular + lining numerics on every monospace number. */
+  --num-features: 'tnum' 1, 'lnum' 1;
+
+  /* Letter-spacing */
+  --tracking-display: -0.02em;
+  --tracking-eyebrow: 0.14em;
+  --tracking-pill:    0.04em;
+  --tracking-stat:    0.18em;
+
+  /* Geometry */
+  --rule-w: 10px;          /* vertical status rule on cards */
+  --bar-h:  22px;          /* ruler-style level bar height */
+  --swatch: 56px;          /* primary material swatch */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* ── Surface + ink ─────────────────────────────────────── */
+  --c-bg:        #fbf7f0;  /* canvas, warm cream */
+  --c-bg-panel:  #ffffff;
+  --c-surface:   #ffffff;
+  --c-line:      #ece4d3;  /* hairline */
+  --c-line-soft: #f4ede0;  /* softer hairline */
+
+  --c-ink:       #161311;  /* primary text */
+  --c-ink-soft:  #3d342d;
+  --c-ink-mute:  #766b62;  /* eyebrows, helper copy */
+  --c-ink-dim:   #b6ac9f;  /* tertiary / disabled */
+
+  /* ── Brand: electric coral ─────────────────────────────── */
+  --c-brand-50:  #fff3ee;
+  --c-brand-100: #ffe1d8;
+  --c-brand-200: #ffc6b3;
+  --c-brand-300: #ff9c7b;
+  --c-brand-400: #ff7857;
+  --c-brand-500: #ff5b3a;  /* primary */
+  --c-brand-600: #e8421f;
+  --c-brand-700: #c2301a;
+  --c-brand-800: #9a2516;
+  --c-brand-900: #7a1d05;
+  --c-brand:      var(--c-brand-500);
+  --c-brand-soft: var(--c-brand-100);
+  --c-brand-ink:  var(--c-brand-900);
+
+  /* ── Stock statuses ───────────────────────────────────── */
+  --c-in-stock:      #0e9b4e;
+  --c-in-stock-soft: #d0f1d8;
+  --c-low:           #e8a200;
+  --c-low-soft:      #ffeab0;
+  --c-out:           #d11e3d;
+  --c-out-soft:      #fcd0d6;
+
+  /* Allocated, intentionally blue, separate from brand. */
+  --c-allocated:      #2b6df5;
+  --c-allocated-soft: #d5e3fd;
+
+  /* Critical: deeper than out, for shortfalls incoming
+     supplier deliveries cannot cover. */
+  --c-critical:      #7a0d24;
+  --c-critical-soft: #f3cad2;
+
+  /* Text on saturated fills */
+  --c-on-brand:    #ffffff;
+  --c-on-in-stock: #ffffff;
+  --c-on-out:      #ffffff;
+  --c-on-ink:      #ffffff;
+
+  /* Hatched fill (used for unknown letterpress colours). */
+  --c-hatch-a: #ece4d3;
+  --c-hatch-b: #fbf7f0;
+
+  /* ── Elevation: shadows are very subtle. ──────────────── */
+  --shadow-card:  0 1px 0 rgba(0,0,0,0.04) inset;
+  --shadow-sm:    0 1px 2px rgba(22,19,17,0.04);
+  --shadow-md:    0 2px 6px rgba(22,19,17,0.06), 0 1px 2px rgba(22,19,17,0.04);
+  --shadow-modal: 0 24px 64px rgba(22,19,17,0.18), 0 2px 6px rgba(22,19,17,0.08);
+
+  /* ── Spacing scale (Tailwind-derived). ────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+}
+
+/* ─── Body baseline ─────────────────────────────────────── */
+html, body { font-family: var(--font-body); color: var(--c-ink); background: var(--c-bg); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+/* ─── Semantic typography classes ───────────────────────── */
+.h-display {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: clamp(36px, 5vw, 56px);
+  line-height: 1.05;
+  letter-spacing: var(--tracking-display);
+  color: var(--c-ink);
+}
+.h1 { font-family: var(--font-display); font-weight: 500; font-size: 36px; line-height: 1.1;  letter-spacing: var(--tracking-display); color: var(--c-ink); }
+.h2 { font-family: var(--font-display); font-weight: 500; font-size: 28px; line-height: 1.15; letter-spacing: var(--tracking-display); color: var(--c-ink); }
+.h3 { font-family: var(--font-display); font-weight: 500; font-size: 22px; line-height: 1.2;  letter-spacing: var(--tracking-display); color: var(--c-ink); }
+.h4 { font-family: var(--font-display); font-weight: 500; font-size: 18px; line-height: 1.25; letter-spacing: var(--tracking-display); color: var(--c-ink); }
+.body         { font-family: var(--font-body); font-size: 14px; line-height: 1.5;  color: var(--c-ink); }
+.body-soft    { font-family: var(--font-body); font-size: 14px; line-height: 1.55; color: var(--c-ink-soft); }
+.caption      { font-family: var(--font-body); font-size: 12px; line-height: 1.4;  color: var(--c-ink-mute); }
+.helper       { font-family: var(--font-body); font-size: 13px; line-height: 1.5;  color: var(--c-ink-soft); }
+
+/* Eyebrows: the tiny uppercase monospace labels used everywhere
+   above figures, on stat blocks, and as field labels. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-feature-settings: var(--num-features);
+  font-weight: 500;
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--c-ink-mute);
+  white-space: nowrap;
+}
+
+/* Numerical specimens: large monospaced tabular numerals,
+   the visual centrepiece of the dashboard. */
+.num            { font-family: var(--font-mono); font-feature-settings: var(--num-features); font-weight: 500; }
+.num-sm         { font-size: 14px; line-height: 1; }
+.num-md         { font-size: 18px; line-height: 1; }
+.num-xl         { font-size: 28px; line-height: 1; }
+.num-2xl        { font-size: 40px; line-height: 1; font-weight: 600; }
+.num-3xl        { font-size: 56px; line-height: 1; font-weight: 600; }
+
+/* Stat blocks on the ink-filled login panel */
+.stat-value     { font-family: var(--font-mono); font-feature-settings: var(--num-features); font-weight: 500; font-size: 28px; line-height: 1; }
+.stat-label     { font-family: var(--font-mono); font-weight: 500; font-size: 10px; line-height: 1; letter-spacing: var(--tracking-stat); text-transform: uppercase; color: var(--c-ink-mute); }
+
+/* Inline code chip (sparingly used in copy) */
+.code {
+  font-family: var(--font-mono); font-feature-settings: var(--num-features);
+  font-size: 12px; padding: 1px 4px; border-radius: 4px;
+  background: var(--c-bg); color: var(--c-ink-soft);
+}
+
+/* Status pills (mirrors StatusBadge component) */
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 8px; border-radius: var(--radius-pill);
+  font-family: var(--font-mono); font-weight: 500; font-size: 11px;
+  text-transform: uppercase; letter-spacing: var(--tracking-pill);
+  white-space: nowrap;
+}
+.pill::before { content: ""; width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
+.pill-in-stock { color: var(--c-in-stock); background: var(--c-in-stock-soft); }
+.pill-low      { color: var(--c-low);      background: var(--c-low-soft); }
+.pill-out      { color: var(--c-out);      background: var(--c-out-soft); }
+.pill-critical { color: var(--c-critical); background: var(--c-critical-soft); }
+.pill-allocated{ color: var(--c-allocated);background: var(--c-allocated-soft); }
+.pill-brand    { color: var(--c-brand);    background: var(--c-brand-soft); }
+
+/* iOS Safari zooms inputs <16px. Force 16px on small viewports. */
+@media (max-width: 640px) {
+  input, textarea, select { font-size: 16px !important; }
+}
+
+/* Drop the native number-input spinner arrows. Every number field in
+   the app is a type-the-value field, not a nudge-by-one field, so the
+   spinners are visual noise (arrow keys still step the value). */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Native <select> styled to match the design-system text inputs:
+   strip the OS control chrome (which otherwise renders a default
+   platform dropdown that looks out of place) and draw our own
+   chevron in ink-mute. Padding-right reserves room for the chevron.
+   Applied via the `select-styled` class alongside the Tailwind
+   border / focus utilities. */
+.select-styled {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23766b62' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px;
+  padding-right: 36px;
+}

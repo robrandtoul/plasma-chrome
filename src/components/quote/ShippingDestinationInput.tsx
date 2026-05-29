@@ -25,17 +25,17 @@ export function ShippingDestinationInput({
 }) {
   return (
     <div>
-      <div className="mb-2 text-xs font-semibold uppercase tracking-widest text-gray-500">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-widest text-ink-mute">
         Shipping destination
       </div>
       <div className="flex flex-wrap items-start gap-3">
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-gray-500">Country</span>
+          <span className="text-xs text-ink-mute">Country</span>
           <select
             value={country ?? ''}
             onChange={(e) => onCountryChange(e.target.value === '' ? null : e.target.value)}
             disabled={disabled}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400"
+            className="select-styled rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand disabled:cursor-not-allowed disabled:bg-canvas disabled:text-ink-dim"
           >
             <option value="">Select country…</option>
             {SHIPPING_COUNTRIES.map((c) => (
@@ -44,7 +44,7 @@ export function ShippingDestinationInput({
           </select>
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-gray-500">Postcode</span>
+          <span className="text-xs text-ink-mute">Postcode</span>
           <input
             type="text"
             value={postcode ?? ''}
@@ -56,11 +56,11 @@ export function ShippingDestinationInput({
             }}
             disabled={disabled}
             placeholder="e.g. 10001"
-            className="w-40 rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400"
+            className="w-40 rounded-lg border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand disabled:cursor-not-allowed disabled:bg-canvas disabled:text-ink-dim"
           />
         </label>
       </div>
-      <p className="mt-1.5 text-xs text-gray-500">
+      <p className="mt-1.5 text-xs text-ink-mute">
         Origin is Plasma's Southampton premises. Destination drives the FedEx rate lookup; designer-only.
       </p>
     </div>

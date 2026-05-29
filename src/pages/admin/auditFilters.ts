@@ -210,6 +210,7 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'setting.fedex_intl_adjust_percent_updated',        label: 'FedEx international adjustment updated' },
     { code: 'setting.domestic_uk_mainland_rate_gbp_updated',    label: 'UK mainland shipping rate updated' },
     { code: 'setting.domestic_uk_ni_rate_gbp_updated',          label: 'Northern Ireland shipping rate updated' },
+    { code: 'setting.login_copy_updated',                       label: 'Login page copy updated' },
   ]},
 ]
 

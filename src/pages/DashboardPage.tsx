@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
+import { DesignerChrome, useDesignerProfile, ButtonCoral, ButtonInk, ProofStatusPill } from '../design'
+import { Plus, X, Maximize2, Bell, MessageSquare, Eye, Check, Clock } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -15,10 +18,14 @@ import {
   viewedStateTitle,
   type ViewedState,
 } from '../lib/viewedState'
-import { designerPreviewPath } from '../lib/customerProofUrl'
+import { openDesignerPreview } from '../lib/customerProofUrl'
 import { logAudit } from '../lib/audit'
-import { QuoteLink } from '../components/QuoteLink'
-import EditProfileModal, { type EditProfileSavedPayload } from '../components/EditProfileModal'
+// QuoteLink imported + rendered inside DesignerChrome (PR 31) so
+// every designer page surfaces the same new-tab "phone rings"
+// affordance without re-importing.
+// EditProfileModal + sign-out wiring moved into DesignerChrome in
+// PR 31 — that wrapper owns the profile fetch and the modal so
+// individual designer pages don't each reimplement ~40 lines.
 import {
   groupByTime,
   groupByCompany,
@@ -38,6 +45,9 @@ import {
 type SortMode  = 'activity' | 'date' | 'name'
 type GroupMode = 'time' | 'company'
 type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week' | 'not_viewed' | 'changes_requested'
+// Server-side tile counts (migration 000202) — one number per TileKey.
+type TileCounts = Record<TileKey, number>
+type ChipKey   = 'all' | 'metal' | 'paper' | 'plastic' | 'carbon' | 'wood' | 'acrylic'
 
 // Reason chip text per rule. Templated against rule_meta.days where
 // the rule has a threshold. Kept here rather than in a shared lib
@@ -77,10 +87,50 @@ interface DashboardLatestEvent {
   company_name: string | null
 }
 
+// One material's production lead time, read straight off the
+// materials table (authenticated SELECT, same source the admin Lead
+// times tab writes to). Only rows where both days are set are
+// fetched, so the chart never has to reason about the null case.
+interface LeadTime {
+  display_name: string
+  category: string
+  lead_time_min_days: number
+  lead_time_max_days: number
+}
+
 const SORT_KEY      = 'proofViewer.dashboard.sort'
 const GROUP_KEY     = 'proofViewer.dashboard.group'
 const ABANDONED_KEY = 'proofViewer.dashboard.showAbandoned'
 const SNOOZED_KEY   = 'proofViewer.dashboard.showSnoozed'
+const CHIP_KEY      = 'proofViewer.dashboard.chip'
+
+// Filter chip strip — material-family lenses. The status tiles above
+// own "status" and the search box owns "customer", so this row slices
+// the one dimension neither covers: the product family. (Replaced the
+// old ownership/attention/recency chips, which duplicated the tiles or
+// added little — see the dashboard review.)
+const CHIPS = [
+  { value: 'all',     label: 'All' },
+  { value: 'metal',   label: 'Metal' },
+  { value: 'paper',   label: 'Paper' },
+  { value: 'plastic', label: 'Plastic' },
+  { value: 'carbon',  label: 'Carbon fibre' },
+  { value: 'wood',    label: 'Wood' },
+  { value: 'acrylic', label: 'Acrylic' },
+] as const
+
+// Each family matches against the proof's material display name (the
+// dashboard row only carries the name, not the catalogue category).
+// The material set is stable; revisit if a material is added whose
+// name doesn't match one of these patterns.
+const MATERIAL_CATEGORY_MATCH: Record<Exclude<ChipKey, 'all'>, RegExp> = {
+  metal:   /steel|metal|titanium/i,
+  paper:   /letterpress|paper/i,
+  plastic: /plastic/i,
+  carbon:  /carbon/i,
+  wood:    /wood/i,
+  acrylic: /acrylic/i,
+}
 
 function readSort(): SortMode {
   try {
@@ -106,6 +156,14 @@ function readShowAbandoned(): boolean {
 function readShowSnoozed(): boolean {
   try { return localStorage.getItem(SNOOZED_KEY) === 'true' } catch { /* */ }
   return false
+}
+
+function readChip(): ChipKey {
+  try {
+    const v = localStorage.getItem(CHIP_KEY)
+    if (v === 'all' || v === 'metal' || v === 'paper' || v === 'plastic' || v === 'carbon' || v === 'wood' || v === 'acrylic') return v
+  } catch { /* */ }
+  return 'all'
 }
 
 
@@ -146,28 +204,41 @@ function viewedStateFor(p: DashboardProject): ViewedState {
 }
 
 // ── Designer avatar ──────────────────────────────────────────────────────────
+//
+// Per-designer colour bg / text. Soft 14% tint background with a solid
+// text colour matches the readability you want at 24px — solid bg +
+// white text (the DesignerHeader UserPill pattern) reads too heavy
+// when 20+ avatars stack in a dashboard list. Same four-colour palette
+// as DesignerHeader's COLOUR_BG so the header pill and row avatars
+// share the same designer-identity register.
 
-const COLOUR_CLASSES: Record<DesignerColour, string> = {
-  blue:   'bg-sky-100 text-sky-800 ring-sky-200',
-  teal:   'bg-teal-100 text-teal-800 ring-teal-200',
-  coral:  'bg-orange-100 text-orange-800 ring-orange-200',
-  purple: 'bg-violet-100 text-violet-800 ring-violet-200',
+const AVATAR_COLOUR: Record<DesignerColour, string> = {
+  blue:   'var(--c-allocated)',
+  teal:   'var(--c-in-stock)',
+  coral:  'var(--c-brand)',
+  purple: '#7b3ff2',
 }
 
 function DesignerAvatar({ p }: { p: DashboardProject }) {
   const initials = (p.designer_initials ?? '').slice(0, 2) || '—'
   const colour = (p.designer_colour ?? 'teal') as DesignerColour
+  const tint = AVATAR_COLOUR[colour]
   const tooltip = p.designer_name && p.current_version_number != null && p.version_created_at
     ? `${p.designer_name} — v${p.current_version_number} created ${formatAbsoluteDateTime(p.version_created_at)}`
     : p.designer_name ?? ''
+  const tintedStyle = p.designer_avatar_url
+    ? undefined
+    : {
+        backgroundColor: `color-mix(in srgb, ${tint} 14%, transparent)`,
+        color: tint,
+        boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${tint} 30%, transparent)`,
+      }
   return (
     <span
       title={tooltip}
       aria-label={tooltip}
-      className={[
-        'flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold ring-1',
-        p.designer_avatar_url ? 'bg-transparent ring-gray-200' : COLOUR_CLASSES[colour],
-      ].join(' ')}
+      className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold"
+      style={tintedStyle}
     >
       {p.designer_avatar_url
         ? <img src={p.designer_avatar_url} alt="" className="h-full w-full object-cover" />
@@ -186,6 +257,29 @@ function statusLabel(status: ProofStatus): string {
   return 'In progress'
 }
 
+// ── Hero strip helpers ───────────────────────────────────────────────────────
+
+// Time-of-day greeting for the hero. Splits at the standard 12 / 17 hour
+// boundaries so the greeting tracks the working day — Rob's mornings
+// run long and the cutover at noon / 5pm is what most office tools use.
+function greetingFor(d: Date): string {
+  const h = d.getHours()
+  if (h < 12) return 'Good morning'
+  if (h < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
+// "Wednesday, 27 May" — uses Intl with the default en-GB locale so the
+// day-then-month ordering matches Rob's expectations. No year; the
+// hero is for today, not historical context.
+function todayLabel(d: Date): string {
+  return d.toLocaleDateString('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  })
+}
+
 // ── Stat tile ────────────────────────────────────────────────────────────────
 
 interface StatTileProps {
@@ -193,59 +287,62 @@ interface StatTileProps {
   count: number
   active: boolean
   tone: 'rose' | 'amber' | 'sky' | 'neutral' | 'violet' | 'green' | 'turquoise'
-  description?: string
   onClick: () => void
 }
 
-function StatTile({ label, count, active, tone, description, onClick }: StatTileProps) {
-  // Top accent border colour — saturated, no fill on the card body.
-  // 'turquoise' maps to Tailwind teal-500 (#14b8a6) — Tailwind doesn't ship a
-  // literal turquoise utility, and teal-500 reads as visibly distinct from
-  // sky-500 (the Awaiting customer neighbour) thanks to its green tint, where
-  // cyan-500 would sit too close to sky.
-  const accentBorder =
-    tone === 'rose'      ? 'border-t-rose-500'
-    : tone === 'amber'   ? 'border-t-amber-500'
-    : tone === 'sky'     ? 'border-t-sky-500'
-    : tone === 'turquoise' ? 'border-t-teal-500'
-    : tone === 'green'   ? 'border-t-emerald-500'
-    : tone === 'violet'  ? 'border-t-violet-500'
-    :                      'border-t-gray-400'
-  // Count colour matches the accent
-  const countColour =
-    tone === 'rose'      ? 'text-rose-600'
-    : tone === 'amber'   ? 'text-amber-500'
-    : tone === 'sky'     ? 'text-sky-500'
-    : tone === 'turquoise' ? 'text-teal-500'
-    : tone === 'green'   ? 'text-emerald-600'
-    : tone === 'violet'  ? 'text-violet-600'
-    :                      'text-gray-500'
-  // Active state: thicker ring in the matching tone; inactive: quiet border
-  const activeRing = active
-    ? tone === 'rose'      ? 'ring-2 ring-rose-400'
-      : tone === 'amber'   ? 'ring-2 ring-amber-400'
-      : tone === 'sky'     ? 'ring-2 ring-sky-400'
-      : tone === 'turquoise' ? 'ring-2 ring-teal-400'
-      : tone === 'green'   ? 'ring-2 ring-emerald-500'
-      : tone === 'violet'  ? 'ring-2 ring-violet-400'
-      :                      'ring-2 ring-gray-400'
-    : 'ring-1 ring-gray-200'
+// Tone → CSS colour mapping. Design-system tokens where they map
+// cleanly to the seven dashboard tones; explicit hues for the two
+// (turquoise, violet) where the token palette doesn't reach. The
+// neutral tone uses the ink-mute token rather than a saturated
+// colour so Dormant reads as a backwater rather than an alert.
+const TILE_COLOUR: Record<StatTileProps['tone'], string> = {
+  rose:      'var(--c-out)',
+  amber:     'var(--c-low)',
+  sky:       'var(--c-allocated)',
+  turquoise: '#0d9488',
+  green:     'var(--c-in-stock)',
+  violet:    '#7c3aed',
+  neutral:   'var(--c-ink-mute)',
+}
+
+function StatTile({ label, count, active, tone, onClick }: StatTileProps) {
+  const tint = TILE_COLOUR[tone]
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={[
-        'flex flex-col items-start gap-1 rounded-xl border-t-4 bg-white px-5 py-4 text-left transition-colors hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
-        accentBorder,
-        activeRing,
-      ].join(' ')}
+      className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative"
+      style={{
+        // Active state: a soft tint of the tile's tone fills the cell
+        // background. Cleaner than an inset ring when each cell sits
+        // inside a unified panel — the ring would compete with the
+        // panel border and the dividing hairlines.
+        backgroundColor: active ? `color-mix(in srgb, ${tint} 8%, transparent)` : undefined,
+      }}
     >
-      <span className="min-h-8 text-xs font-semibold uppercase tracking-wider text-gray-500">{label}</span>
-      <span className={['text-2xl font-bold tabular-nums', countColour].join(' ')}>{count}</span>
-      {description && (
-        <span className="text-xs text-gray-400">{description}</span>
-      )}
+      {/* Dot + label row. Dot picks up the tile's tone; label uses the
+          eyebrow class (inline whitespace-normal so long labels wrap —
+          see PR 17c for why the override has to be inline). */}
+      <div className="flex items-center gap-2 min-h-[24px]">
+        <span
+          aria-hidden="true"
+          className="inline-block w-4 h-4 rounded shrink-0"
+          style={{ backgroundColor: tint }}
+        />
+        <span
+          className="eyebrow text-ink-mute"
+          style={{ whiteSpace: 'normal', lineHeight: 1.2 }}
+        >
+          {label}
+        </span>
+      </div>
+      <span
+        className="text-[32px] leading-none font-medium tabular-nums font-mono text-ink"
+        style={{ fontFeatureSettings: 'var(--num-features)' }}
+      >
+        {String(count).padStart(2, '0')}
+      </span>
     </button>
   )
 }
@@ -300,37 +397,35 @@ function OverflowMenu({
         aria-expanded={open}
         aria-label="Project actions"
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
-        className="flex h-8 w-8 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900"
+        className="flex h-8 w-8 items-center justify-center rounded text-ink-mute hover:bg-canvas hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
       >
         <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor"><circle cx="3" cy="8" r="1.5" /><circle cx="8" cy="8" r="1.5" /><circle cx="13" cy="8" r="1.5" /></svg>
       </button>
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-9 z-10 w-56 rounded-lg bg-white py-1 text-sm shadow-lg ring-1 ring-gray-200"
+          className="absolute right-0 top-9 z-10 w-56 rounded-[10px] bg-surface py-1 text-sm shadow-md border border-line"
           onClick={(e) => e.stopPropagation()}
         >
           {proof.current_version_id ? (
-            <a
+            <button
+              type="button"
               role="menuitem"
-              href={designerPreviewPath(proof.proof_id)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block px-3 py-2 text-gray-700 hover:bg-gray-100"
-              onClick={() => setOpen(false)}
-            >Preview</a>
+              className="block w-full text-left px-3 py-2 text-ink-soft hover:bg-canvas"
+              onClick={() => { setOpen(false); openDesignerPreview(proof.proof_id) }}
+            >Preview</button>
           ) : (
-            <span role="menuitem" aria-disabled className="block cursor-not-allowed px-3 py-2 text-gray-300">Preview</span>
+            <span role="menuitem" aria-disabled className="block cursor-not-allowed px-3 py-2 text-ink-dim">Preview</span>
           )}
           {canAddVersion ? (
             <Link
               role="menuitem"
               to={`/proofs/${proof.proof_id}/versions/new`}
-              className="block px-3 py-2 text-gray-700 hover:bg-gray-100"
+              className="block px-3 py-2 text-ink-soft hover:bg-canvas"
               onClick={() => setOpen(false)}
             >Add version</Link>
           ) : (
-            <span role="menuitem" aria-disabled className="block cursor-not-allowed px-3 py-2 text-gray-300">Add version</span>
+            <span role="menuitem" aria-disabled className="block cursor-not-allowed px-3 py-2 text-ink-dim">Add version</span>
           )}
           {proof.helpscout_conversation_url && (
             <a
@@ -338,7 +433,7 @@ function OverflowMenu({
               href={proof.helpscout_conversation_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="block px-3 py-2 text-gray-700 hover:bg-gray-100"
+              className="block px-3 py-2 text-ink-soft hover:bg-canvas"
               onClick={() => setOpen(false)}
             >Open in Help Scout</a>
           )}
@@ -346,7 +441,7 @@ function OverflowMenu({
             role="menuitem"
             type="button"
             onClick={() => { setOpen(false); onToggleMinePin(proof.proof_id) }}
-            className="block w-full border-t border-gray-100 px-3 py-2 text-left text-gray-700 hover:bg-gray-100"
+            className="block w-full border-t border-line-soft px-3 py-2 text-left text-ink-soft hover:bg-canvas"
           >
             {minePinned ? 'Unpin from your list' : 'Pin to your list'}
           </button>
@@ -354,7 +449,7 @@ function OverflowMenu({
             role="menuitem"
             type="button"
             onClick={() => { setOpen(false); onToggleTeamPin(proof.proof_id) }}
-            className="block w-full px-3 py-2 text-left text-gray-700 hover:bg-gray-100"
+            className="block w-full px-3 py-2 text-left text-ink-soft hover:bg-canvas"
           >
             {teamPinned ? 'Unpin from the team list' : 'Pin for the team'}
           </button>
@@ -368,13 +463,14 @@ function OverflowMenu({
                   void onUnsnooze(proof.proof_id, proof.snooze_rule_code)
                 }
               }}
-              className="block w-full border-t border-gray-100 px-3 py-2 text-left text-violet-700 hover:bg-violet-50"
+              className="block w-full border-t border-line-soft px-3 py-2 text-left hover:bg-canvas"
+              style={{ color: '#7b3ff2' }}
             >
               Unsnooze
             </button>
           )}
           {proof.rule_code && !proof.snoozed_until && (
-            <div className="border-t border-gray-100">
+            <div className="border-t border-line-soft">
               <SnoozeButton proof={proof} onSnooze={onSnooze} menuStyle />
             </div>
           )}
@@ -494,9 +590,9 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
           role="menuitem"
           aria-label="Snooze this alert"
           onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
-          className="flex w-full items-center gap-2 px-3 py-2 text-left text-gray-700 hover:bg-gray-100"
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-ink-soft hover:bg-canvas"
         >
-          <ClockIcon className="h-4 w-4 shrink-0 text-gray-400" />
+          <ClockIcon className="h-4 w-4 shrink-0 text-ink-mute" />
           <span>Snooze</span>
         </button>
       ) : (
@@ -507,8 +603,8 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
           onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
           className={
             stripStyle
-              ? 'flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900'
-              : 'flex h-5 w-5 items-center justify-center rounded-full text-amber-600 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500'
+              ? 'flex h-7 w-7 items-center justify-center rounded text-ink-mute hover:bg-canvas hover:text-ink focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]'
+              : 'flex h-5 w-5 items-center justify-center rounded-full text-low hover:bg-low-soft focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-low)]'
           }
         >
           <ClockIcon className={stripStyle ? 'h-4 w-4' : 'h-3 w-3'} />
@@ -519,7 +615,7 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
           role="dialog"
           aria-label="Snooze options"
           className={[
-            'absolute z-30 w-56 overflow-hidden rounded-lg bg-white py-2 shadow-lg ring-1 ring-gray-200',
+            'absolute z-30 w-56 overflow-hidden rounded-[10px] bg-surface py-2 shadow-md border border-line',
             menuStyle ? 'right-0 top-full mt-1' : stripStyle ? 'right-0 top-8' : 'left-0 top-6',
           ].join(' ')}
           onClick={(e) => e.stopPropagation()}
@@ -527,67 +623,187 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
           {customMode ? (
             /* ── Custom date picker ── */
             <div className="px-3 py-2">
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Snooze until</p>
+              <p className="mb-2 eyebrow text-ink-mute">Snooze until</p>
               <input
                 type="date"
                 min={minDate()}
                 value={customDate}
                 onChange={(e) => setCustomDate(e.target.value)}
-                className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm text-gray-700 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                className="w-full rounded border border-line px-2 py-1.5 text-sm text-ink-soft focus:border-[var(--c-brand)] focus:outline-none focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
                 onClick={(e) => e.stopPropagation()}
               />
               <button
                 type="button"
                 disabled={saving || !customDate}
                 onClick={() => handleSnooze(hoursUntilEndOfDate(customDate))}
-                className="mt-2 w-full rounded bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-40"
+                className="mt-2 w-full rounded bg-ink px-3 py-1.5 text-sm font-medium text-on-ink hover:opacity-90 disabled:opacity-40"
               >{saving ? 'Saving…' : 'Snooze'}</button>
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); setCustomMode(false); setCustomDate('') }}
-                className="mt-1 w-full py-1 text-xs text-gray-400 hover:text-gray-700"
+                className="mt-1 w-full py-1 text-xs text-ink-mute hover:text-ink-soft"
               >← Back</button>
             </div>
           ) : (
             /* ── Preset list ── */
             <>
-              <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">Snooze for</p>
+              <p className="px-3 pb-1.5 eyebrow text-ink-mute">Snooze for</p>
               {PRESETS.map(({ label, hours }) => (
                 <button
                   key={hours}
                   type="button"
                   disabled={saving}
                   onClick={() => handleSnooze(hours)}
-                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                  className="w-full px-3 py-2 text-left text-sm text-ink-soft hover:bg-canvas disabled:opacity-50"
                 >{label}</button>
               ))}
               <button
                 type="button"
                 disabled={saving}
                 onClick={(e) => { e.stopPropagation(); setCustomMode(true) }}
-                className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                className="w-full px-3 py-2 text-left text-sm text-ink-soft hover:bg-canvas disabled:opacity-50"
               >Custom date…</button>
             </>
           )}
           {/* Note + cancel — shown in both modes */}
-          <div className="mt-1 border-t border-gray-100 px-3 pt-2">
+          <div className="mt-1 border-t border-line-soft px-3 pt-2">
             <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
               placeholder="Add a note (optional)"
               rows={2}
-              className="w-full resize-none rounded border border-gray-200 px-2 py-1.5 text-xs text-gray-700 placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+              className="w-full resize-none rounded border border-line px-2 py-1.5 text-xs text-ink-soft placeholder:text-ink-dim focus:border-[var(--c-brand)] focus:outline-none focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
               onClick={(e) => e.stopPropagation()}
             />
             <button
               type="button"
               onClick={handleClose}
-              className="mt-1 w-full py-1 text-xs text-gray-400 hover:text-gray-700"
+              className="mt-1 w-full py-1 text-xs text-ink-mute hover:text-ink-soft"
             >Cancel</button>
           </div>
         </div>
       )}
     </div>
+  )
+}
+
+// ── Thumbnail hover preview popover ──────────────────────────────────────────
+//
+// Floating preview anchored to the dashboard row's thumbnail. Renders
+// at ~320px wide via createPortal so it escapes the row's
+// overflow-hidden clipping and any parent stacking contexts. Positions
+// itself to the right of the anchor when there's room, otherwise to
+// the left; vertical alignment biases up so most rows have headroom.
+// The popover is presentation-only: no click handlers, no focus
+// management, no aria-modal. The lightbox covers the "I want to act
+// on this" case.
+
+interface ThumbnailPopoverProps {
+  anchor: HTMLElement
+  imageUrl: string
+  projectName: string
+}
+
+function ThumbnailPopover({ anchor, imageUrl, projectName }: ThumbnailPopoverProps) {
+  const rect = anchor.getBoundingClientRect()
+  // 12px gap between the anchor and the popover; the popover's
+  // shadow ensures it reads as a separate floating surface.
+  const GAP = 12
+  const POPOVER_W = 320
+  const POPOVER_H_GUESS = 240 // assumed before paint; only used for edge tests
+  const wouldOverflowRight = rect.right + GAP + POPOVER_W > window.innerWidth - 16
+  const left = wouldOverflowRight
+    ? Math.max(16, rect.left - GAP - POPOVER_W)
+    : rect.right + GAP
+  // Vertical: try to center on the anchor; clamp to viewport.
+  const idealTop = rect.top + rect.height / 2 - POPOVER_H_GUESS / 2
+  const top = Math.max(16, Math.min(idealTop, window.innerHeight - POPOVER_H_GUESS - 16))
+  return createPortal(
+    <div
+      role="presentation"
+      aria-hidden="true"
+      className="fixed z-[60] rounded-[10px] bg-surface border border-line shadow-md p-2 pointer-events-none"
+      style={{ left, top, width: POPOVER_W }}
+    >
+      <img
+        src={imageUrl}
+        alt=""
+        className="block w-full h-auto max-h-[300px] object-contain rounded-[6px] bg-canvas"
+      />
+      <div className="mt-2 px-1 pb-0.5 text-[12px] text-ink-mute truncate">
+        {projectName}
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+// ── Thumbnail click lightbox ──────────────────────────────────────────────────
+//
+// Fullscreen modal. ESC + backdrop click both close. The Open project
+// CTA navigates through to the proof detail page where the
+// customer-page-style full image set + actions live. Click on the image
+// itself does nothing — separated from the close affordance so the
+// designer can rest the cursor on the image without dismissing the
+// modal accidentally.
+
+interface ThumbnailLightboxProps {
+  imageUrl: string
+  projectName: string
+  onClose: () => void
+  onOpenProject: () => void
+}
+
+function ThumbnailLightbox({ imageUrl, projectName, onClose, onOpenProject }: ThumbnailLightboxProps) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    // Lock background scroll so the lightbox feels modal.
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [onClose])
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${projectName} preview`}
+      className="fixed inset-0 z-[70] flex flex-col items-center justify-center bg-black/80 p-8"
+      // createPortal renders to document.body, but React still bubbles
+      // synthetic events up the *component* tree — so without stopping
+      // propagation here the click would also hit ProjectRow's onClick
+      // and navigate to the proof page. stopPropagation keeps a
+      // backdrop click as a pure dismiss.
+      onClick={(e) => { e.stopPropagation(); onClose() }}
+    >
+      <button
+        type="button"
+        aria-label="Close preview"
+        onClick={(e) => { e.stopPropagation(); onClose() }}
+        className="absolute top-4 right-4 inline-flex items-center justify-center w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-white"
+      >
+        <X size={16} />
+      </button>
+      <img
+        src={imageUrl}
+        alt={projectName}
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[80vh] max-w-[90vw] object-contain rounded-[8px] shadow-lg"
+      />
+      <div className="mt-6 flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
+        <span className="text-[14px] text-white/70">{projectName}</span>
+        <ButtonInk onClick={() => { onOpenProject(); onClose() }}>
+          Open project
+        </ButtonInk>
+      </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -603,6 +819,10 @@ interface ProjectRowProps {
   // on hover via the `title` attribute (kept for keyboard / screen-reader
   // parity).
   showReason: boolean
+  /** Signed URL for the project's first front image. Undefined while
+   *  loadThumbnails is in flight or when the version has no images;
+   *  the row falls through to the dark-plate initials placeholder. */
+  thumbnailUrl?: string
   onToggleMinePin: (proofId: string) => void
   onToggleTeamPin: (proofId: string) => void
   onSnooze: (proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) => Promise<void>
@@ -614,11 +834,49 @@ function ProjectRow({
   minePinned,
   teamPinned,
   showReason,
+  thumbnailUrl,
   onToggleMinePin,
   onToggleTeamPin,
   onSnooze,
   onUnsnooze,
 }: ProjectRowProps) {
+  // Hover popover + click lightbox state. Both gate on a real
+  // thumbnailUrl — when no image is available (placeholder rendering)
+  // the thumb is non-interactive and shows nothing on hover/click.
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
+  const hoverTimerRef = useRef<number | null>(null)
+  const thumbRef = useRef<HTMLDivElement>(null)
+
+  function handleThumbMouseEnter() {
+    if (!thumbnailUrl) return
+    // 400ms delay matches the standard tooltip pattern — long enough
+    // to skip accidental flyovers, short enough to feel responsive
+    // when a designer pauses to look.
+    hoverTimerRef.current = window.setTimeout(() => setPreviewOpen(true), 400)
+  }
+  function handleThumbMouseLeave() {
+    if (hoverTimerRef.current != null) {
+      window.clearTimeout(hoverTimerRef.current)
+      hoverTimerRef.current = null
+    }
+    setPreviewOpen(false)
+  }
+  function handleThumbClick(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!thumbnailUrl) return
+    setLightboxOpen(true)
+    // Close the hover popover when the click takes over.
+    setPreviewOpen(false)
+  }
+
+  // Clean up the hover timer on unmount so a virtualised row leaving
+  // the viewport doesn't fire a stale setPreviewOpen.
+  useEffect(() => {
+    return () => {
+      if (hoverTimerRef.current != null) window.clearTimeout(hoverTimerRef.current)
+    }
+  }, [])
   const navigate = useNavigate()
   const canAddVersion = project.status === 'in_progress' || project.status === 'dormant'
   const { verb, ts } = activityVerb(project)
@@ -634,6 +892,23 @@ function ProjectRow({
   if (project.contact_name && project.contact_name !== projectName) sublineParts.push(project.contact_name)
   if (project.company_name && project.company_name !== projectName) sublineParts.push(project.company_name)
   const subline = sublineParts.join(' · ')
+  // 2-3 character thumbnail placeholder derived from the project
+  // name. First letter of each word, capped at 3, uppercased.
+  // Real thumbnails are wired in PR 25 via a public_dashboard_projects
+  // column + signed-URL fetch — until then every row shows this
+  // dark-plate placeholder per the handoff brief.
+  const thumbInitials = projectName
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w[0])
+    .slice(0, 3)
+    .join('')
+    .toUpperCase() || '—'
+
+  const updatedLabel = ts
+    ? new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    : '—'
+
   return (
     <div
       role="button"
@@ -652,63 +927,180 @@ function ProjectRow({
           : viewedStateTitle(viewedStateFor(project)),
         project.rule_code ? reasonChipText(project.rule_code, project.rule_meta?.days) : null,
         !project.rule_code && isCurrentlySnoozed(project) ? `Snoozed until ${formatSnoozeUntil(project.snoozed_until!)}` : null,
+        ts ? `${verb} ${relativeTime(ts)}` : null,
       ].filter(Boolean).join(' · ')}
       className={[
-        'flex cursor-pointer items-center gap-3 border-l-[6px] pl-4 pr-5 py-3 transition-colors hover:bg-gray-50 focus:outline-none focus-visible:bg-gray-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900',
-        isCurrentlySnoozed(project)                                                    ? 'border-l-violet-400'  :
-        project.rule_code                                                              ? 'border-l-rose-500'    :
-        project.status === 'approved'                                                  ? 'border-l-emerald-500' :
-        project.status === 'dormant'                                                   ? 'border-l-gray-300'    :
-        project.status === 'abandoned'                                                 ? 'border-l-slate-400'   :
-        project.current_version_id && project.current_version_viewed_at               ? 'border-l-sky-500'     :
-                                                                                         'border-l-amber-400',
+        // Each row is now a standalone card: bg-surface + hairline
+        // border + rounded corners + wide coloured left cap that the
+        // overflow-hidden lets respect the rounding. group + relative
+        // for the hover-only action overlay further down.
+        'group relative cursor-pointer overflow-hidden rounded-[10px] bg-surface border border-line border-l-[10px] pl-4 pr-5 py-3 transition-colors hover:bg-canvas focus:outline-none focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]',
         project.status === 'dormant' ? 'opacity-60' : '',
       ].join(' ')}
+      style={{
+        // Left-border colour map. Each rule maps to a design-system
+        // token so the row's status accent reads in the same palette
+        // as the stat tile that filters to it. Snooze + dormant
+        // overrides use the same hues their corresponding tiles use.
+        borderLeftColor:
+          isCurrentlySnoozed(project)                                       ? '#7c3aed' :  // matches violet tile
+          project.rule_code                                                 ? 'var(--c-out)' :  // matches rose Needs attention tile
+          project.status === 'approved'                                     ? 'var(--c-in-stock)' :  // matches green Approved tile
+          project.status === 'dormant'                                      ? 'var(--c-ink-dim)' :   // matches neutral Dormant tile
+          project.status === 'abandoned'                                    ? 'var(--c-ink-mute)' :  // quieter still
+          project.current_version_id && project.current_version_viewed_at  ? 'var(--c-allocated)' : // matches sky Awaiting tile
+                                                                              'var(--c-low)',        // matches amber Not viewed tile
+      }}
     >
-      {/* No version yet → no designer to attribute → no avatar. */}
-      {project.current_version_id && <DesignerAvatar p={project} />}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-[15px] font-medium text-gray-900">{projectName}</span>
-          {project.current_version_number != null && (
-            <span className="shrink-0 text-xs text-gray-400">v{project.current_version_number}</span>
+      {/* Columnar grid layout per the mockup. At md+ widths the row
+          reads as a clean six-column table; at narrower widths some
+          columns drop (Material, Versions, Updated) so Customer +
+          Status stay legible. */}
+      <div className="grid items-center gap-3 grid-cols-[56px_minmax(0,1fr)_auto_auto] sm:grid-cols-[56px_minmax(0,1fr)_140px_auto] md:grid-cols-[56px_minmax(0,1fr)_140px_60px_70px_24px_110px]">
+        {/* Thumbnail — real signed-URL image when loadThumbnails has
+            produced one for this version. Falls through to a dark
+            plate with the project's initials when no URL is available
+            (no version yet, no images uploaded, or fetch still in
+            flight). loading="lazy" defers off-screen image fetches
+            so opening the dashboard doesn't blast 100+ requests at
+            once.
+            Hover (400ms delay) opens the floating preview popover;
+            click opens the lightbox. The group/peer-hover Maximize
+            glyph hints clickability when an image is present. */}
+        <div
+          ref={thumbRef}
+          onClick={handleThumbClick}
+          onMouseEnter={handleThumbMouseEnter}
+          onMouseLeave={handleThumbMouseLeave}
+          className={[
+            'relative flex items-center justify-center w-[56px] h-[36px] rounded-[4px] bg-ink text-on-ink font-mono font-medium text-[10px] tracking-wider overflow-hidden',
+            thumbnailUrl ? 'cursor-zoom-in' : '',
+          ].join(' ')}
+        >
+          {thumbnailUrl ? (
+            <>
+              <img
+                src={thumbnailUrl}
+                alt=""
+                loading="lazy"
+                className="w-full h-full object-cover"
+              />
+              {/* Hover affordance — a Maximize glyph in a dark scrim
+                  appears on thumb hover so designers know the thumb
+                  is interactive. The row's wider hover state isn't
+                  enough — that's also true for the action overlay,
+                  which lives elsewhere. */}
+              <span
+                aria-hidden="true"
+                className="absolute inset-0 flex items-center justify-center bg-black/55 text-white opacity-0 hover:opacity-100 transition-opacity"
+              >
+                <Maximize2 size={14} />
+              </span>
+            </>
+          ) : (
+            thumbInitials
           )}
         </div>
-        {subline && <div className="truncate text-xs text-gray-500">{subline}</div>}
-        {/* Reason chip — third row line, visible only when the
-            Needs attention tile filter is active. Rose dot ties the
-            chip back to the rose left-border and the rose tile that
-            triggered the filter. Truncates to keep the row to three
-            lines on narrow widths; full text remains in the row's
-            `title` attribute. */}
-        {showReason && project.rule_code && (
-          <div className="mt-1 flex items-center gap-1.5 text-xs text-rose-700">
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-rose-500" aria-hidden="true" />
-            <span className="truncate">{reasonChipText(project.rule_code, project.rule_meta?.days)}</span>
-          </div>
+        {/* Hover popover — portal-rendered so it can escape the row's
+            overflow-hidden and the section's stacking context. Anchored
+            to the thumb's bounding rect via the helper below. */}
+        {previewOpen && thumbnailUrl && thumbRef.current && (
+          <ThumbnailPopover
+            anchor={thumbRef.current}
+            imageUrl={thumbnailUrl}
+            projectName={projectName}
+          />
         )}
+        {/* Click lightbox — fullscreen modal with the same image at
+            max viewport size. Click backdrop or ESC to close; the
+            Open project button navigates to the proof detail page. */}
+        {lightboxOpen && thumbnailUrl && (
+          <ThumbnailLightbox
+            imageUrl={thumbnailUrl}
+            projectName={projectName}
+            onClose={() => setLightboxOpen(false)}
+            onOpenProject={() => navigate(`/proofs/${project.proof_id}`)}
+          />
+        )}
+
+        {/* Customer: name on row 1, company sub-line on row 2.
+            The version label moves to its own column on md+. */}
+        <div className="min-w-0">
+          <div className="truncate text-[15px] font-medium text-ink">{projectName}</div>
+          {subline && <div className="truncate text-xs text-ink-mute mt-0.5">{subline}</div>}
+          {/* Reason chip — third row line, visible only when the Needs
+              attention tile filter is active. */}
+          {showReason && project.rule_code && (
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-out">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-out" aria-hidden="true" />
+              <span className="truncate">{reasonChipText(project.rule_code, project.rule_meta?.days)}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Material — hidden below sm. Variant sub-line will land in
+            PR 25+ once the dashboard view exposes it. */}
+        <div className="hidden sm:block min-w-0">
+          <div className="truncate text-[13px] text-ink-soft">{project.material_display ?? '—'}</div>
+        </div>
+
+        {/* Versions — only at md+ so narrow widths don't fragment. */}
+        {project.current_version_number != null ? (
+          <div className="hidden md:block text-[12px] text-ink-mute font-mono tabular-nums" style={{ fontFeatureSettings: 'var(--num-features)' }}>
+            {String(project.current_version_number).padStart(2, '0')} <span className="text-ink-dim">vers</span>
+          </div>
+        ) : (
+          <div className="hidden md:block" />
+        )}
+
+        {/* Updated — md+ only. Always shows the activityVerb's
+            timestamp formatted as "27 May". */}
+        <div className="hidden md:block text-[12px] text-ink-mute font-mono tabular-nums" style={{ fontFeatureSettings: 'var(--num-features)' }}>
+          {updatedLabel}
+        </div>
+
+        {/* Owner avatar — md+ only. No version yet → no designer to
+            attribute → empty slot kept so the grid column stays. */}
+        <div className="hidden md:flex items-center justify-center">
+          {project.current_version_id && <DesignerAvatar p={project} />}
+        </div>
+
+        {/* Status pill — always visible on all widths. Fades out on
+            row hover/focus-within so the action overlay can take over
+            the right edge without layout jump. */}
+        <div className="flex justify-end items-center transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+          <ProofStatusPill status={project.status} />
+        </div>
       </div>
-      <span className="hidden w-32 shrink-0 text-right text-xs text-gray-400 xl:block" title={ts ? formatAbsoluteDateTime(ts) : undefined}>
-        {verb}{ts ? ` ${relativeTime(ts)}` : ''}
-      </span>
-      <ActionStrip
-        proof={project}
-        canAddVersion={canAddVersion}
-        minePinned={minePinned}
-        onToggleMinePin={onToggleMinePin}
-        onSnooze={onSnooze}
-        onUnsnooze={onUnsnooze}
-      />
-      <OverflowMenu
-        proof={project}
-        canAddVersion={canAddVersion}
-        minePinned={minePinned}
-        teamPinned={teamPinned}
-        onToggleMinePin={onToggleMinePin}
-        onToggleTeamPin={onToggleTeamPin}
-        onSnooze={onSnooze}
-        onUnsnooze={onUnsnooze}
-      />
+
+      {/* Hover-only action overlay. Absolutely positioned over the
+          right edge so the status pill underneath gets covered cleanly
+          on hover/focus-within. bg-canvas matches the row's hover bg
+          so the transition reads as the same surface, no visible
+          colour-band when the actions slide in.
+          opacity-0 at rest; group-hover and group-focus-within both
+          opaque so the popover from the overflow menu doesn't close
+          when the cursor leaves the row. */}
+      <div className="absolute right-3 top-0 bottom-0 flex items-center gap-0.5 pl-3 bg-canvas opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto group-focus-within:pointer-events-auto">
+        <ActionStrip
+          proof={project}
+          canAddVersion={canAddVersion}
+          minePinned={minePinned}
+          onToggleMinePin={onToggleMinePin}
+          onSnooze={onSnooze}
+          onUnsnooze={onUnsnooze}
+        />
+        <OverflowMenu
+          proof={project}
+          canAddVersion={canAddVersion}
+          minePinned={minePinned}
+          teamPinned={teamPinned}
+          onToggleMinePin={onToggleMinePin}
+          onToggleTeamPin={onToggleTeamPin}
+          onSnooze={onSnooze}
+          onUnsnooze={onUnsnooze}
+        />
+      </div>
     </div>
   )
 }
@@ -782,12 +1174,15 @@ interface RowActionButtonProps {
 
 function RowActionButton({ label, children, href, to, onClick, active }: RowActionButtonProps) {
   const cls = [
-    'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
-    'focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
+    'flex h-7 w-7 items-center justify-center rounded transition-colors',
+    'focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]',
     active
-      ? 'bg-violet-100 text-violet-600 hover:bg-violet-200'
-      : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700',
+      ? 'text-ink hover:opacity-90'
+      : 'text-ink-mute hover:bg-canvas hover:text-ink',
   ].join(' ')
+  const activeStyle = active
+    ? { backgroundColor: 'color-mix(in srgb, #7b3ff2 14%, transparent)', color: '#7b3ff2' }
+    : undefined
 
   if (href) {
     return (
@@ -799,6 +1194,7 @@ function RowActionButton({ label, children, href, to, onClick, active }: RowActi
         title={label}
         onClick={(e) => { e.stopPropagation(); onClick?.(e) }}
         className={cls}
+        style={activeStyle}
       >{children}</a>
     )
   }
@@ -810,6 +1206,7 @@ function RowActionButton({ label, children, href, to, onClick, active }: RowActi
         title={label}
         onClick={(e) => { e.stopPropagation(); onClick?.(e) }}
         className={cls}
+        style={activeStyle}
       >{children}</Link>
     )
   }
@@ -820,6 +1217,7 @@ function RowActionButton({ label, children, href, to, onClick, active }: RowActi
       title={label}
       onClick={(e) => { e.stopPropagation(); onClick?.(e) }}
       className={cls}
+      style={activeStyle}
     >{children}</button>
   )
 }
@@ -860,7 +1258,7 @@ function ActionStrip({ proof, canAddVersion, minePinned, onToggleMinePin, onSnoo
 
       {/* Preview */}
       {proof.current_version_id ? (
-        <RowActionButton label="Preview" href={designerPreviewPath(proof.proof_id)}>
+        <RowActionButton label="Preview" onClick={() => openDesignerPreview(proof.proof_id)}>
           <EyeIcon className="h-4 w-4" />
         </RowActionButton>
       ) : <StripSpacer />}
@@ -933,7 +1331,16 @@ function UnsnoozeButton({ proof, onUnsnooze }: UnsnoozeButtonProps) {
       title="Unsnooze"
       disabled={saving}
       onClick={handleClick}
-      className="flex h-7 w-7 items-center justify-center rounded-md text-violet-500 hover:bg-violet-100 hover:text-violet-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 disabled:opacity-50"
+      className="flex h-7 w-7 items-center justify-center rounded hover:opacity-100 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-1 disabled:opacity-50"
+      style={{
+        color: '#7b3ff2',
+        // Hover/focus tint sits at a higher source order than the
+        // pseudo-classes, so apply via class would lose. Inline-style
+        // ring + bg via :hover would need a sibling stylesheet. Keep
+        // it as a flat coloured icon button — when the row hover state
+        // changes the surface bg, the violet stays vivid against it.
+        outlineColor: '#7b3ff2',
+      }}
     >
       <UnsnoozeIcon className="h-4 w-4" />
     </button>
@@ -995,6 +1402,44 @@ function buildPinSections(
 
 // ── Latest activity sidebar ──────────────────────────────────────────────────
 
+// Per-event-type visual mapping. Each entry picks the Lucide icon
+// and the colour token used for the icon-square tint + the icon
+// itself. The icon-square sits inside a 32x32 rounded-md block with
+// the colour at 14% opacity — same register as the per-recipient
+// approval pill on the customer page (PR 12c) so the dashboard's
+// "what happened" cues match the customer's "what state am I in"
+// cues.
+type ActivityVisual = {
+  icon: typeof Bell
+  // CSS colour (token var or hex). Used for both the icon and the
+  // square's tinted background via color-mix.
+  tint: string
+  verbCopy: (versionNumber: number) => string
+}
+
+const ACTIVITY_VISUAL: Record<DashboardLatestEvent['event_type'], ActivityVisual> = {
+  view: {
+    icon: Eye,
+    tint: 'var(--c-allocated)',
+    verbCopy: (v) => `opened v${v}`,
+  },
+  approve: {
+    icon: Check,
+    tint: 'var(--c-in-stock)',
+    verbCopy: (v) => `signed off v${v}`,
+  },
+  designer_override_approve: {
+    icon: Check,
+    tint: 'var(--c-ink-mute)',
+    verbCopy: (v) => `marked v${v} approved`,
+  },
+  request_changes: {
+    icon: MessageSquare,
+    tint: 'var(--c-low)',
+    verbCopy: (v) => `requested changes on v${v}`,
+  },
+}
+
 function LatestActivityPanel({
   events,
   navigate,
@@ -1003,49 +1448,46 @@ function LatestActivityPanel({
   navigate: (to: string) => void
 }) {
   return (
-    <div className="rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-      <div className="border-b border-gray-100 px-5 py-4">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500">Latest activity</h2>
-        <p className="mt-0.5 text-xs text-gray-400">Last 20 events</p>
+    <div className="rounded-[14px] bg-surface border border-line overflow-hidden">
+      {/* Header: bell icon in a coral-tinted square + Recent eyebrow
+          + Latest activity h-display. The bell ties the panel to the
+          per-event icon-square idiom below — same 14% tint + solid
+          icon treatment, same 32px box. */}
+      <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-line-soft">
+        <span
+          aria-hidden="true"
+          className="inline-flex items-center justify-center w-8 h-8 rounded-md shrink-0"
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--c-brand) 14%, transparent)',
+            color: 'var(--c-brand)',
+          }}
+        >
+          <Bell size={16} />
+        </span>
+        <div className="min-w-0">
+          <div className="eyebrow text-ink-mute">Recent</div>
+          <h2 className="font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0 text-[20px]">
+            Latest activity
+          </h2>
+        </div>
       </div>
       {events.length === 0 ? (
-        <p className="px-5 py-8 text-center text-sm text-gray-400">No customer activity yet.</p>
+        <p className="px-5 py-8 text-center text-sm text-ink-mute">
+          No customer activity yet.
+        </p>
       ) : (
-        <ul>
-          {events.map((e, i) => {
-            const isView = e.event_type === 'view'
-            const isApprove = e.event_type === 'approve'
-            const isOverride = e.event_type === 'designer_override_approve'
-            const verb = isView
-              ? `viewed v${e.version_number}`
-              : isApprove
-                ? 'approved'
-                : isOverride
-                  ? 'marked as approved (override)'
-                  : 'requested changes on'
-            const projectLabel = [e.contact_name, e.company_name].filter(Boolean).join(' · ') || '(no contact)'
-            const recipient = e.recipient_name && e.recipient_name !== '__shared__' ? e.recipient_name : 'shared'
-            const subline = isView
-              ? projectLabel
-              : `${projectLabel} · v${e.version_number} · ${recipient}`
-            const failed = !isView && !isOverride && e.helpscout_thread_id == null
-            const accent = isView
-              ? 'border-l-4 border-sky-500'
-              : isApprove
-                ? 'border-l-4 border-emerald-500'
-                : isOverride
-                  ? 'border-l-4 border-slate-600'
-                  : 'border-l-4 border-amber-500'
-            const dotClass = isView
-              ? 'bg-sky-500'
-              : isApprove
-                ? 'bg-emerald-500'
-                : isOverride
-                  ? 'bg-slate-600'
-                  : 'bg-amber-500'
-            const rowBg = (isApprove || isOverride)
-              ? 'bg-emerald-50 hover:bg-emerald-100 focus-visible:bg-emerald-100'
-              : 'hover:bg-gray-50 focus-visible:bg-gray-50'
+        // Cap the list to roughly six rows (~70px each) and let older
+        // entries scroll into view. The header above stays fixed; only
+        // the list scrolls. The fetch already pulls up to 20 events.
+        <ul className="max-h-[420px] overflow-y-auto divide-y divide-line-soft">
+          {events.map((e) => {
+            const visual = ACTIVITY_VISUAL[e.event_type]
+            const Icon = visual.icon
+            const verb = visual.verbCopy(e.version_number)
+            const failed =
+              e.event_type !== 'view' &&
+              e.event_type !== 'designer_override_approve' &&
+              e.helpscout_thread_id == null
             return (
               <li
                 key={e.id}
@@ -1058,29 +1500,42 @@ function LatestActivityPanel({
                     navigate(`/proofs/${e.proof_id}`)
                   }
                 }}
-                className={[
-                  'flex cursor-pointer gap-3 py-3 pl-4 pr-5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900',
-                  rowBg,
-                  accent,
-                  i > 0 ? 'border-t border-t-gray-100' : '',
-                ].join(' ')}
+                className="flex cursor-pointer items-start gap-3 px-5 py-4 transition-colors hover:bg-canvas focus:outline-none focus-visible:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]"
               >
-                <span aria-hidden className={['mt-1.5 h-2 w-2 shrink-0 rounded-full', dotClass].join(' ')} />
+                {/* Event-type icon in a tinted 32x32 square. */}
+                <span
+                  aria-hidden="true"
+                  className="inline-flex items-center justify-center w-8 h-8 rounded-md shrink-0 mt-0.5"
+                  style={{
+                    backgroundColor: `color-mix(in srgb, ${visual.tint} 14%, transparent)`,
+                    color: visual.tint,
+                  }}
+                >
+                  <Icon size={16} />
+                </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm leading-snug text-gray-900">
+                  <p className="text-[14px] leading-snug text-ink">
                     <span className="font-semibold">{e.actor_name}</span>{' '}
-                    <span className="text-gray-500">{verb}</span>
+                    <span className="text-ink-soft">{verb}</span>
                   </p>
-                  <p className="mt-0.5 truncate text-xs text-gray-500">{subline}</p>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <span className="text-[11px] text-gray-400" title={formatAbsoluteDateTime(e.created_at)}>
+                    <span
+                      className="eyebrow text-ink-mute"
+                      title={formatAbsoluteDateTime(e.created_at)}
+                    >
                       {relativeTime(e.created_at)}
                     </span>
                     {failed && (
                       <span
-                        className="inline-flex items-center rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
+                        className="inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold"
+                        style={{
+                          backgroundColor: 'var(--c-low-soft)',
+                          color: 'var(--c-low)',
+                        }}
                         title="Help Scout notification failed — customer was asked to email."
-                      >notification failed</span>
+                      >
+                        notification failed
+                      </span>
                     )}
                   </div>
                 </div>
@@ -1093,18 +1548,203 @@ function LatestActivityPanel({
   )
 }
 
+// ── Lead times chart ─────────────────────────────────────────────────────────
+
+// Per-category bar colour. Mirrors the material-family filter chips'
+// intent (one hue per family) but keys off the catalogue `category`
+// column directly rather than a name regex. All values are design
+// tokens so the chart stays on-system; carbon's variants share the
+// near-black ink tint, fitting the material. Unknown categories fall
+// back to the muted ink grey.
+const LEAD_TIME_CATEGORY_TINT: Record<string, string> = {
+  metal:            'var(--c-allocated)',
+  paper:            'var(--c-low)',
+  plastic:          'var(--c-brand)',
+  wood:             'var(--c-in-stock)',
+  acrylic:          'var(--c-critical)',
+  carbon_fibre:     'var(--c-ink)',
+  carbon_fibre_cnc: 'var(--c-ink)',
+  carbon_cnc:       'var(--c-ink)',
+}
+
+function leadTimeTint(category: string): string {
+  return LEAD_TIME_CATEGORY_TINT[category] ?? 'var(--c-ink-mute)'
+}
+
+// Horizontal range-bar chart of production lead times. Each row is one
+// material; the bar runs left→right with a solid core up to the *min*
+// business-day figure and a lighter tail extending to the *max*, so
+// the bar reads as "at least X, up to Y". Bar widths are scaled to the
+// single longest max across all materials, making rows comparable at a
+// glance. Sits in the dashboard sidebar under Latest activity.
+function LeadTimesChart({
+  leadTimes,
+  navigate,
+}: {
+  leadTimes: LeadTime[]
+  navigate: (to: string) => void
+}) {
+  // Longest max-days drives the scale. Guard against an all-zero /
+  // empty set so the width maths never divides by zero.
+  const scaleMax = leadTimes.reduce((m, lt) => Math.max(m, lt.lead_time_max_days), 0) || 1
+  // Longest-first reads as a descending skyline — the at-a-glance
+  // question this chart answers is "what takes longest to make".
+  const sorted = [...leadTimes].sort(
+    (a, b) =>
+      b.lead_time_max_days - a.lead_time_max_days ||
+      b.lead_time_min_days - a.lead_time_min_days ||
+      a.display_name.localeCompare(b.display_name),
+  )
+
+  return (
+    <div className="rounded-[14px] bg-surface border border-line overflow-hidden">
+      {/* Header mirrors the Latest activity card: tinted icon square +
+          eyebrow + display heading, so the two sidebar cards read as a
+          set. Clock icon for "time to make". */}
+      <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-line-soft">
+        <span
+          aria-hidden="true"
+          className="inline-flex items-center justify-center w-8 h-8 rounded-md shrink-0"
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--c-brand) 14%, transparent)',
+            color: 'var(--c-brand)',
+          }}
+        >
+          <Clock size={16} />
+        </span>
+        <div className="min-w-0">
+          <div className="eyebrow text-ink-mute">Production</div>
+          <h2 className="font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0 text-[20px]">
+            Lead times
+          </h2>
+        </div>
+      </div>
+
+      {sorted.length === 0 ? (
+        <p className="px-5 py-8 text-center text-sm text-ink-mute">
+          No lead times set yet.{' '}
+          <button
+            type="button"
+            onClick={() => navigate('/admin/lead-times')}
+            className="font-medium text-ink underline underline-offset-2 hover:text-brand"
+          >
+            Set them in Admin
+          </button>
+          .
+        </p>
+      ) : (
+        <>
+          {/* Cap to roughly eight rows and scroll the rest, so a long
+              catalogue doesn't push the sidebar to an unwieldy height. */}
+          <ul className="max-h-[360px] overflow-y-auto px-5 py-4 space-y-3">
+            {sorted.map((lt) => {
+              const tint = leadTimeTint(lt.category)
+              const minPct = (lt.lead_time_min_days / scaleMax) * 100
+              const maxPct = (lt.lead_time_max_days / scaleMax) * 100
+              const rangeLabel =
+                lt.lead_time_min_days === lt.lead_time_max_days
+                  ? `${lt.lead_time_min_days}d`
+                  : `${lt.lead_time_min_days}–${lt.lead_time_max_days}d`
+              return (
+                <li key={lt.display_name}>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="truncate text-[13px] font-medium text-ink">
+                      {lt.display_name}
+                    </span>
+                    <span className="shrink-0 font-mono font-tnum text-[11px] text-ink-mute">
+                      {rangeLabel}
+                    </span>
+                  </div>
+                  {/* Track: full-width rounded rail. The lighter tail is
+                      laid first (left-aligned, full length to max), then
+                      the solid core paints over its first `min` portion.
+                      Both rounded so the core reads as a pill resting on
+                      the tail. title carries the long-form for hover. */}
+                  <div
+                    className="relative mt-1.5 h-2.5 w-full rounded-full bg-line-soft"
+                    title={`${lt.display_name} — ${rangeLabel.replace('d', '')} business days`}
+                  >
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-full"
+                      style={{
+                        width: `${maxPct}%`,
+                        backgroundColor: `color-mix(in srgb, ${tint} 28%, transparent)`,
+                      }}
+                    />
+                    <div
+                      className="absolute inset-y-0 left-0 rounded-full"
+                      style={{ width: `${minPct}%`, backgroundColor: tint }}
+                    />
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+          {/* Legend: ties the solid/light split to its meaning. */}
+          <div className="flex items-center gap-4 border-t border-line-soft px-5 py-3 text-[11px] text-ink-mute">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-ink" aria-hidden="true" />
+              min
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: 'color-mix(in srgb, var(--c-ink) 28%, transparent)' }}
+                aria-hidden="true"
+              />
+              up to max
+            </span>
+            <span className="ml-auto">business days</span>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ── Hero greeting ────────────────────────────────────────────────────────────
+
+// The hero's "Good afternoon, <name>" line. This MUST be its own
+// component rather than inlined into DashboardPage. DashboardPage
+// renders the DesignerProfileContext provider (via <DesignerChrome>)
+// inside its own JSX, and a component cannot consume a context that it
+// itself renders — so a useDesignerProfile() call in DashboardPage's
+// body always reads null and the greeting fell back to "there". As a
+// child of DesignerChrome, this component sits below the provider and
+// reads the real signed-in designer's first name.
+function HeroGreeting() {
+  const profile = useDesignerProfile()
+  return <>{greetingFor(new Date())}, {profile?.firstName ?? 'there'}</>
+}
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const { session, role } = useAuth()
+  const { session } = useAuth()
   const userId = session?.user.id ?? null
   const [projects, setProjects]           = useState<DashboardProject[]>([])
+  // Server-computed tile counts (migration 000202). Counted across every
+  // proof in the DB, not the loaded `projects` subset, so the headline
+  // numbers stay correct no matter how many proofs exist. Null until the
+  // RPC resolves.
+  const [tileCounts, setTileCounts]       = useState<TileCounts | null>(null)
+  // current_version_id → signed thumbnail URL. Populated in
+  // loadDashboard after the projects fetch by batch-signing the
+  // first front image of each version. Empty entries (no version
+  // yet, or no images uploaded) fall through to the dark-plate
+  // placeholder rendered inside ProjectRow.
+  const [thumbnailUrls, setThumbnailUrls] = useState<Map<string, string>>(new Map())
   const [latestEvents, setLatestEvents]   = useState<DashboardLatestEvent[]>([])
-  const [myProfile, setMyProfile]         = useState<{ initials: string; colour: DesignerColour; avatarUrl: string | null } | null>(null)
-  const [avatarOpen, setAvatarOpen]       = useState(false)
-  const [editProfileOpen, setEditProfileOpen] = useState(false)
-  const avatarRef                         = useRef<HTMLDivElement>(null)
+  // Production lead times for the sidebar chart under Latest activity.
+  // Sourced from materials (same table the admin Lead times tab edits);
+  // empty until loadDashboard resolves.
+  const [leadTimes, setLeadTimes]         = useState<LeadTime[]>([])
+  // myProfile / editProfileOpen / handleSignOut state moved into
+  // DesignerChrome in PR 31. The hero greeting reads the profile via
+  // the <HeroGreeting /> child component — it can't be read here in
+  // the body because this component renders the provider itself (see
+  // HeroGreeting's note).
   // Pin state — proof_id → pinned_at ISO. Two maps because the
   // dashboard cares about each scope independently (mine drives the
   // Pinned section, team drives the Team section, and both feed the
@@ -1114,47 +1754,47 @@ export default function DashboardPage() {
   const [teamPinAt, setTeamPinAt]         = useState<Map<string, string>>(new Map())
   const [loading, setLoading]             = useState(true)
   const [search, setSearch]               = useState('')
-  const [statusFilter, setStatusFilter]   = useState<Set<ProofStatus>>(new Set())
+  // statusFilter state was wired through the now-removed Status
+  // dropdown (dropped in PR 21). Tile clicks + chip filter cover
+  // the same use cases and the Abandoned checkbox handles the rare
+  // dedicated abandoned filter.
   const [tileFilter, setTileFilter]       = useState<TileKey | null>(null)
   const [sort, setSort]                   = useState<SortMode>(readSort)
   const [group, setGroup]                 = useState<GroupMode>(readGroup)
   const [showAbandoned, setShowAbandoned] = useState<boolean>(readShowAbandoned)
   const [showSnoozed,   setShowSnoozed]   = useState<boolean>(readShowSnoozed)
+  const [chipFilter,    setChipFilter]    = useState<ChipKey>(readChip)
   // When the user picks "Snoozed" from the status dropdown we want to show
   // only the Snoozed section and hide the main list. This is distinct from
   // clicking the tile, which shows the Snoozed section alongside the rest.
   const [snoozedOnly,   setSnoozedOnly]   = useState(false)
 
+  // The search term the server list is currently fetched for. Held in a
+  // ref so loadDashboard() (called from many places — mount, visibility,
+  // after pin/snooze writes) always re-fetches for the active search
+  // without every call site threading it through. Empty = working set.
+  const serverSearchRef = useRef('')
+
   useEffect(() => { loadDashboard() }, [])
 
-  // Fetch the signed-in designer's own profile for the header avatar
+  // Server-side search (scaling C). The `search` box filters the loaded
+  // list client-side for instant feedback; this debounced effect also
+  // re-fetches dashboard_list with the term so proofs OUTSIDE the working
+  // set (archived: old approved / abandoned) surface. Only refetches when
+  // the settled term actually changes — typing within the already-loaded
+  // set stays instant, the archive backfills ~300ms later.
   useEffect(() => {
-    if (!userId) return
-    supabase
-      .from('profiles')
-      .select('designer_initials, designer_colour, full_name, avatar_url')
-      .eq('id', userId)
-      .single()
-      .then(({ data }) => {
-        if (!data) return
-        setMyProfile({
-          initials: (data.designer_initials ?? data.full_name?.split(' ').map((n: string) => n[0]).join('') ?? '?').slice(0, 2),
-          colour: (data.designer_colour ?? 'blue') as DesignerColour,
-          avatarUrl: data.avatar_url ?? null,
-        })
-      })
-  }, [userId])
+    const t = setTimeout(() => {
+      const term = search.trim()
+      if (term === serverSearchRef.current) return
+      serverSearchRef.current = term
+      void loadDashboard()
+    }, 300)
+    return () => clearTimeout(t)
+  }, [search])
 
-  // Close avatar popover on outside click
-  useEffect(() => {
-    function onPointerDown(e: PointerEvent) {
-      if (avatarRef.current && !avatarRef.current.contains(e.target as Node)) {
-        setAvatarOpen(false)
-      }
-    }
-    document.addEventListener('pointerdown', onPointerDown)
-    return () => document.removeEventListener('pointerdown', onPointerDown)
-  }, [])
+  // Profile fetch lives inside DesignerChrome — the wrapper owns
+  // it so other designer pages don't each reimplement it.
 
   // Refetch when the tab becomes visible — designers context-switching
   // (Help Scout, email) come back to a fresh page without a manual reload.
@@ -1170,6 +1810,62 @@ export default function DashboardPage() {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [])
 
+  // Fetch + sign the row thumbnails for a list of dashboard projects.
+  // Returns a current_version_id → signed-URL Map. Designed to never
+  // throw — every failure path returns an empty Map so missing
+  // thumbnails fall through to the placeholder. The proof-images
+  // bucket is private, so signed URLs are required; createSignedUrls
+  // does the batch in one round-trip with a 1-hour expiry (long
+  // enough that a normally-engaged designer never sees stale URLs
+  // since the next visibility tick refetches the dashboard).
+  async function loadThumbnails(rows: DashboardProject[]): Promise<Map<string, string>> {
+    const versionIds = rows
+      .map((p) => p.current_version_id)
+      .filter((id): id is string => id != null)
+    if (versionIds.length === 0) return new Map()
+
+    const { data: imageRows, error } = await supabase
+      .from('proof_version_images')
+      .select('proof_version_id, image_path, sort_order, side')
+      .in('proof_version_id', versionIds)
+      .eq('is_qr_code', false)
+      .order('sort_order', { ascending: true })
+    if (error || !imageRows) return new Map()
+
+    // First image per version, preferring front / null side over back.
+    const pathByVersion = new Map<string, string>()
+    for (const r of imageRows as Array<{ proof_version_id: string; image_path: string; side: string | null }>) {
+      if (pathByVersion.has(r.proof_version_id)) continue
+      if (r.side === 'back') continue // skip backs; pick a front below
+      pathByVersion.set(r.proof_version_id, r.image_path)
+    }
+    // Fill any versions with only back-side images so they get
+    // something rather than nothing.
+    for (const r of imageRows as Array<{ proof_version_id: string; image_path: string }>) {
+      if (!pathByVersion.has(r.proof_version_id)) {
+        pathByVersion.set(r.proof_version_id, r.image_path)
+      }
+    }
+    if (pathByVersion.size === 0) return new Map()
+
+    const paths = Array.from(pathByVersion.values())
+    const { data: signedData } = await supabase.storage
+      .from('proof-images')
+      .createSignedUrls(paths, 3600)
+    if (!signedData) return new Map()
+
+    const urlByPath = new Map<string, string>()
+    for (const r of signedData) {
+      if (r.path && r.signedUrl) urlByPath.set(r.path, r.signedUrl)
+    }
+    const urlByVersion = new Map<string, string>()
+    for (const [versionId, path] of pathByVersion) {
+      const url = urlByPath.get(path)
+      if (url) urlByVersion.set(versionId, url)
+    }
+    return urlByVersion
+  }
+
   async function loadDashboard() {
     // Note: the four queries below depend on migration 000152
     // (public_dashboard_projects view + dashboard_tile_counts() +
@@ -1178,11 +1874,16 @@ export default function DashboardPage() {
     // (proof_pins table). The page will throw / render the empty
     // state until all three migrations have been pushed to the
     // linked Supabase project.
-    const projectsPromise = supabase
-      .from('public_dashboard_projects')
-      .select('*')
-      .order('last_activity_at', { ascending: false, nullsFirst: false })
-      .limit(2000)
+    // Working-set list (migration 000203): active + recently-closed
+    // proofs, plus anything pinned, instead of every proof capped at 2000.
+    // The tile counts (dashboard_tile_counts, 000202) still span ALL
+    // proofs, so scoping this list doesn't skew the headline numbers; and
+    // every tile's click-through members are active/recent, so they're
+    // present in this set. Long-closed history is reachable via search (C).
+    // p_search empty → working set; non-empty → matches across all
+    // proofs incl. the archive (migration 000205). The term is held in a
+    // ref so every loadDashboard() caller re-fetches for the active search.
+    const projectsPromise = supabase.rpc('dashboard_list', { p_search: serverSearchRef.current })
 
     // Note: dashboard_tile_counts() RPC used to be fetched here, but
     // every tile now sources its count client-side from `projects`
@@ -1200,15 +1901,45 @@ export default function DashboardPage() {
       .from('proof_pins')
       .select('proof_id, scope, user_id, pinned_at')
 
+    // Lead times for the sidebar chart. Only active materials with a
+    // complete min/max pair (the 000175 CHECK means min is non-null iff
+    // max is) — `.not(..., 'is', null)` on the min column is enough to
+    // exclude the unset rows. Designer-only data, never customer-facing.
+    const leadTimesPromise = supabase
+      .from('materials')
+      .select('display_name, category, lead_time_min_days, lead_time_max_days')
+      .eq('is_active', true)
+      .not('lead_time_min_days', 'is', null)
+
+    // Server-side stat-tile counts (migration 000202). Counted across
+    // every proof, so the headline numbers don't depend on the (capped)
+    // projects fetch above.
+    const countsPromise = supabase.rpc('dashboard_tile_counts')
+
     const [
       { data: projectRows },
       { data: events },
       { data: pinRows },
-    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise])
+      { data: leadTimeRows },
+      { data: counts },
+    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise])
 
-    setProjects((projectRows ?? []) as DashboardProject[])
+    const typedProjects = (projectRows ?? []) as DashboardProject[]
+    setProjects(typedProjects)
+
+    if (counts) setTileCounts(counts as TileCounts)
 
     setLatestEvents((events ?? []) as DashboardLatestEvent[])
+    setLeadTimes((leadTimeRows ?? []) as LeadTime[])
+
+    // ── Per-row thumbnails ──────────────────────────────────────
+    // Fetch the first front (or side=null) image for each project's
+    // current_version_id, then batch-sign their paths through
+    // Supabase Storage in a single round-trip. QR-code rows are
+    // excluded so a vCard row doesn't masquerade as the proof
+    // thumbnail. Errors are tolerated silently — missing thumbnails
+    // fall through to the dark-plate placeholder in ProjectRow.
+    void loadThumbnails(typedProjects).then(setThumbnailUrls)
 
     // Split pins into the two scope-specific maps. Mine pins are
     // filtered to the current user (RLS lets every authenticated user
@@ -1341,6 +2072,11 @@ export default function DashboardPage() {
     try { localStorage.setItem(SORT_KEY, s) } catch { /* */ }
   }
 
+  function handleChipChange(c: ChipKey) {
+    setChipFilter(c)
+    try { localStorage.setItem(CHIP_KEY, c) } catch { /* */ }
+  }
+
   function handleGroupChange(g: GroupMode) {
     setGroup(g)
     try { localStorage.setItem(GROUP_KEY, g) } catch { /* */ }
@@ -1353,109 +2089,23 @@ export default function DashboardPage() {
     setTileFilter((prev) => (prev === t ? null : t))
   }
 
-  async function handleSignOut() {
-    await supabase.auth.signOut()
-    navigate('/login')
-  }
+  // Tile counts come from the server (dashboard_tile_counts RPC, migration
+  // 000202) so they count across every proof in the database rather than
+  // the capped `projects` fetch — the headline numbers stay correct no
+  // matter how many proofs exist. The SQL predicates are kept in exact
+  // lockstep with the click-through filters below (each tile excludes
+  // currently-snoozed proofs, and needs-attention proofs are excluded from
+  // the other tiles so each proof belongs to exactly one tile). Null until
+  // the RPC resolves; falls back to 0 so the tiles render a number rather
+  // than a blank during the first paint.
+  const needsAttentionCount   = tileCounts?.needs_attention ?? 0
+  const notViewedCount        = tileCounts?.not_viewed ?? 0
+  const awaitingCustomerCount = tileCounts?.awaiting_customer ?? 0
+  const changesRequestedCount = tileCounts?.changes_requested ?? 0
+  const dormantCount          = tileCounts?.dormant ?? 0
+  const approvedThisWeekCount = tileCounts?.approved_this_week ?? 0
 
-  // Status counts — derived from the full project list once.
-  const statusCounts = useMemo(() => {
-    const c: Record<ProofStatus, number> = { in_progress: 0, approved: 0, dormant: 0, abandoned: 0 }
-    for (const p of projects) c[p.status] = (c[p.status] ?? 0) + 1
-    return c
-  }, [projects])
-
-  // Tile counts — all computed client-side so counts and filters use exactly
-  // the same predicates. Currently-snoozed projects are always excluded:
-  // they live in the dedicated Snoozed section regardless of their other
-  // state. Note `isCurrentlySnoozed` rather than `snoozed_until == null`:
-  // 000186 widened the view's lateral so recently-expired snoozes still
-  // surface snoozed_until for the 24-hour grace window that powers
-  // recentlyAwakened(). Needs-attention projects are excluded from every
-  // other tile so each project belongs to exactly one tile.
-  // No abandoned-status guard: every rule in proofs_needing_attention()
-  // is gated on an active status, so rule_code is always null on an
-  // abandoned proof. The count therefore depends only on `projects`,
-  // matching the needs_attention click-through filter predicate.
-  const needsAttentionCount = useMemo(() =>
-    projects.filter((p) =>
-      p.rule_code != null &&
-      !isCurrentlySnoozed(p)
-    ).length,
-  [projects])
-
-  const notViewedCount = useMemo(() =>
-    projects.filter((p) => {
-      const isActive = p.status === 'in_progress' || p.status === 'dormant'
-      return (
-        p.rule_code == null &&
-        !isCurrentlySnoozed(p) &&
-        isActive &&
-        p.current_version_id !== null &&
-        p.current_version_viewed_at === null
-      )
-    }).length,
-  [projects])
-
-  const awaitingCustomerCount = useMemo(() =>
-    projects.filter((p) =>
-      p.rule_code == null &&
-      !isCurrentlySnoozed(p) &&
-      p.status === 'in_progress' &&
-      p.current_version_id !== null &&
-      p.current_version_viewed_at !== null
-    ).length,
-  [projects])
-
-  // Changes requested — proofs where the customer's most recent action on the
-  // current version was a change request and no newer version has been shipped
-  // since. Detection uses latest_non_view_event_* (migration 000198), not
-  // latest_event_*: the latter includes synthetic 'view' rows, so a customer
-  // simply re-opening the proof after requesting changes would otherwise mask
-  // the outstanding request (PV-2026W22-087). The change request's own
-  // timestamp is compared against version_created_at — a newer version uploaded
-  // in response would be later. Needs-attention proofs (the overdue subset,
-  // captured by the request_changes_no_version rule) are excluded so each proof
-  // belongs to exactly one tile — overdue change requests escalate to the Needs
-  // attention tile.
-  const changesRequestedCount = useMemo(() =>
-    projects.filter((p) => {
-      if (p.rule_code != null) return false
-      if (isCurrentlySnoozed(p)) return false
-      if (p.status !== 'in_progress') return false
-      if (p.latest_non_view_event_type !== 'request_changes') return false
-      if (!p.latest_non_view_event_at || !p.version_created_at) return false
-      return new Date(p.latest_non_view_event_at).getTime() > new Date(p.version_created_at).getTime()
-    }).length,
-  [projects])
-
-  // Dormant / Approved-this-week counts. Migration 000152's
-  // dashboard_tile_counts() returns server-side counts that do not
-  // filter snoozed proofs (the snooze filter is applied in 000164's
-  // proofs_needing_attention() only). Computing these client-side with
-  // the same isCurrentlySnoozed guard ensures the tile count matches
-  // the number of rows shown when the tile is clicked (the click-through
-  // filter below drops currently-snoozed proofs when any tile filter is
-  // active). Mirrors the alignment fix from PV-2026W19-015
-  // (awaiting_customer) for the remaining two tiles.
-  const dormantCount = useMemo(() =>
-    projects.filter((p) =>
-      !isCurrentlySnoozed(p) &&
-      p.status === 'dormant'
-    ).length,
-  [projects])
-
-  const approvedThisWeekCount = useMemo(() => {
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
-    return projects.filter((p) => {
-      if (isCurrentlySnoozed(p)) return false
-      if (p.status !== 'approved') return false
-      if (!p.approved_at) return false
-      return new Date(p.approved_at).getTime() >= sevenDaysAgo
-    }).length
-  }, [projects])
-
-  // Filter pipeline: search → tile → status. All AND-combined.
+  // Filter pipeline: search → chip → tile → status. All AND-combined.
   const filteredProjects = useMemo(() => {
     const q = search.trim().toLowerCase()
     return projects.filter((p) => {
@@ -1468,6 +2118,12 @@ export default function DashboardPage() {
           p.proof_id,
         ].filter(Boolean).join(' ').toLowerCase()
         if (!hay.includes(q)) return false
+      }
+      // Material-family chip — orthogonal to the status tiles. 'all' is
+      // the no-op default; every other chip keeps only proofs whose
+      // material name matches that family's pattern.
+      if (chipFilter !== 'all') {
+        if (!MATERIAL_CATEGORY_MATCH[chipFilter].test(p.material_display ?? '')) return false
       }
       // Currently-snoozed projects always belong to the Snoozed section —
       // exclude them from every tile filter so they don't appear in the main
@@ -1501,13 +2157,14 @@ export default function DashboardPage() {
         if (!p.latest_non_view_event_at || !p.version_created_at) return false
         if (new Date(p.latest_non_view_event_at).getTime() <= new Date(p.version_created_at).getTime()) return false
       }
-      // Hide abandoned proofs unless the designer has toggled them on,
-      // or has explicitly selected "Abandoned" from the status filter.
-      if (!showAbandoned && p.status === 'abandoned' && statusFilter.size === 0) return false
-      if (statusFilter.size > 0 && !statusFilter.has(p.status)) return false
+      // Hide abandoned proofs unless the designer has toggled them on via
+      // the Abandoned checkbox — but never hide them while a search is
+      // active: searching is how you find archived (incl. abandoned)
+      // proofs, so a match must always surface (scaling C).
+      if (!showAbandoned && p.status === 'abandoned' && q === '') return false
       return true
     })
-  }, [projects, search, tileFilter, statusFilter, showAbandoned])
+  }, [projects, search, tileFilter, showAbandoned, chipFilter])
 
   // Sort
   const sortedProjects = useMemo(() => {
@@ -1570,147 +2227,77 @@ export default function DashboardPage() {
   const noResults = !loading && sections.every((s) => s.projects.length === 0)
 
   return (
-    <div className="min-h-dvh bg-gray-50">
+    <DesignerChrome
+      active="proofs"
+      search={{ value: search, onChange: setSearch }}
+      onProfileSaved={() => {
+        // Refetch dashboard rows so the designer-avatar columns on
+        // every project tile pick up the new avatar/initials/colour
+        // immediately rather than waiting for the next
+        // visibilitychange tick (PV-2026W21-071).
+        void loadDashboard()
+      }}
+    >
+    <div className="min-h-dvh bg-canvas">
       <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
 
-        {/* Header */}
-        <div className="mb-8 flex items-center justify-between gap-4">
-
-          {/* Identity */}
-          <div>
-            <p className="text-xs font-medium uppercase tracking-widest text-gray-400">Proof viewer</p>
-            <h1 className="text-xl font-semibold text-gray-900">Projects</h1>
+        {loading ? (
+          <div className="flex justify-center py-20">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-line motion-reduce:animate-none" style={{ borderTopColor: 'var(--c-ink)' }} />
           </div>
-
-          {/* Nav actions */}
-          <div className="flex items-center gap-1">
-
-            {/* Utility tools */}
-            <QuoteLink />
-            {role === 'admin' && (
-              <Link
-                to="/admin/users"
-                className="rounded-lg px-3 py-2 text-sm font-medium text-gray-900 ring-1 ring-gray-300 hover:bg-white"
-              >
-                Admin
-              </Link>
-            )}
-
-            {/* Divider */}
-            <span className="mx-2 h-5 w-px bg-gray-200" aria-hidden="true" />
-
-            {/* Primary action */}
-            <Link
-              to="/proofs/new"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-gray-700 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-600"
-            >
-              <svg className="h-3.5 w-3.5" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M7 1v12M1 7h12"/></svg>
-              New project
-            </Link>
-
-            {/* Divider */}
-            <span className="mx-2 h-5 w-px bg-gray-200" aria-hidden="true" />
-
-            {/* Avatar — sign-out popover */}
-            <div ref={avatarRef} className="relative">
-              <button
-                onClick={() => setAvatarOpen((v) => !v)}
-                aria-label="Account menu"
-                aria-expanded={avatarOpen}
-                className={[
-                  'flex h-8 w-8 items-center justify-center overflow-hidden rounded-full text-xs font-semibold ring-1 transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900',
-                  myProfile && !myProfile.avatarUrl ? COLOUR_CLASSES[myProfile.colour] : 'bg-gray-100 text-gray-500 ring-gray-200',
-                ].join(' ')}
-              >
-                {myProfile?.avatarUrl
-                  ? <img src={myProfile.avatarUrl} alt="Profile" className="h-full w-full object-cover" />
-                  : (myProfile?.initials ?? '…')
-                }
-              </button>
-              {avatarOpen && (
-                <div className="absolute right-0 top-10 z-20 min-w-[10rem] rounded-xl bg-white py-1 shadow-md ring-1 ring-gray-200">
-                  <button
-                    onClick={() => { setAvatarOpen(false); setEditProfileOpen(true) }}
-                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Edit profile
-                  </button>
-                  <div className="mx-3 my-1 border-t border-gray-100" />
-                  <button
-                    onClick={handleSignOut}
-                    className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-                  >
-                    Sign out
-                  </button>
+        ) : (
+          <>
+            {/* Unified hero + tile panel. One bordered card spanning
+                the full page width: hero header (eyebrow + greeting +
+                date+count line + Saved views + New proof) at the top,
+                7-tile row below, divided by a hairline. The Latest
+                activity sidebar (rendered further down inside the
+                2-col grid) now starts below this unified area rather
+                than aligning with the hero, matching the mockup. */}
+            <section className="mb-6 rounded-[14px] bg-surface border border-line overflow-hidden">
+              {/* Hero header */}
+              <div className="px-6 py-5 flex flex-wrap items-end justify-between gap-4 border-b border-line-soft">
+                <div>
+                  <div className="eyebrow">Proofs at a glance</div>
+                  <h1 className="mt-1 font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0" style={{ fontSize: 'clamp(22px, 3vw, 28px)' }}>
+                    <HeroGreeting />
+                  </h1>
+                  <p className="mt-1.5 text-[14px] text-ink-soft leading-snug">
+                    {todayLabel(new Date())}
+                    {needsAttentionCount > 0 && (
+                      <>
+                        {' · '}
+                        <span className="font-medium" style={{ color: 'var(--c-brand)' }}>
+                          {String(needsAttentionCount).padStart(2, '0')} {needsAttentionCount === 1 ? 'job' : 'jobs'}
+                        </span>
+                        {' need your attention this morning.'}
+                      </>
+                    )}
+                  </p>
                 </div>
-              )}
-            </div>
-
-          </div>
-        </div>
-
-        {/* Edit profile modal */}
-        {editProfileOpen && userId && (
-          <EditProfileModal
-            userId={userId}
-            onClose={() => setEditProfileOpen(false)}
-            onSaved={(payload: EditProfileSavedPayload) => {
-              setMyProfile({ initials: payload.initials, colour: payload.colour, avatarUrl: payload.avatarUrl })
-              // Refetch dashboard rows so the designer-avatar columns on
-              // every project tile pick up the new avatar/initials/colour
-              // immediately rather than waiting for the next
-              // visibilitychange tick (PV-2026W21-071).
-              void loadDashboard()
-            }}
-          />
-        )}
-
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
-          <div className="min-w-0">
-
-            {loading ? (
-              <div className="flex justify-center py-20">
-                <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+                <div className="flex items-center gap-2">
+                  <ButtonCoral icon={Plus} onClick={() => navigate('/proofs/new')}>
+                    New proof
+                  </ButtonCoral>
+                </div>
               </div>
-            ) : (
-              <>
-                {/* Stat tile row */}
-                {/* Three groups, left to right:
-                    • Alert    — Needs attention (col 1)
-                    • Workflow — the happy path the proof travels through:
-                                 Not viewed → Awaiting customer →
-                                 Changes requested → Approved this week (cols 2–5)
-                    • On hold  — proofs not currently moving through the
-                                 workflow: Snoozed, Dormant (cols 6–7)
-                    Palette: rose → amber → sky → turquoise → green → violet → gray */}
 
-                {/* Section labels — xl only, one label per group aligned to
-                    the matching tile column(s) via the same 7-col grid */}
-                <div className="mb-1.5 hidden xl:grid xl:grid-cols-7 xl:gap-3">
-                  {/* Alert group — spans column 1 */}
-                  <div className="flex items-center gap-2 px-0.5">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-rose-500">Alert</span>
-                    <span className="h-px flex-1 bg-rose-300" aria-hidden="true" />
-                  </div>
-                  {/* Workflow group — spans columns 2–5 */}
-                  <div className="col-span-4 flex items-center gap-2 px-0.5">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">Workflow</span>
-                    <span className="h-px flex-1 bg-gray-300" aria-hidden="true" />
-                  </div>
-                  {/* On hold group — spans columns 6–7 */}
-                  <div className="col-span-2 flex items-center gap-2 px-0.5">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">On hold</span>
-                    <span className="h-px flex-1 bg-gray-300" aria-hidden="true" />
-                  </div>
-                </div>
-
-                <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-7">
+              {/* Tile row. Seven tiles in priority order, separated by
+                  vertical hairlines at xl widths via xl:divide-x. Below
+                  xl the tiles wrap into 2 / 3 column grids so they
+                  remain readable on narrow viewports; the hairlines
+                  drop on the wrapped layout since tiles no longer share
+                  a single row. The tile palette encodes the
+                  Alert/Workflow/On-hold grouping via colour
+                  (rose for Needs attention,
+                  amber→sky→turquoise→green for workflow,
+                  violet/neutral for on-hold). */}
+              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 xl:divide-x xl:divide-line">
                   <StatTile
                     label="Needs attention"
                     count={needsAttentionCount}
                     active={tileFilter === 'needs_attention'}
                     tone="rose"
-                    description="action required from you"
                     onClick={() => toggleTile('needs_attention')}
                   />
                   <StatTile
@@ -1718,7 +2305,6 @@ export default function DashboardPage() {
                     count={notViewedCount}
                     active={tileFilter === 'not_viewed'}
                     tone="amber"
-                    description="current version unopened"
                     onClick={() => toggleTile('not_viewed')}
                   />
                   <StatTile
@@ -1726,7 +2312,6 @@ export default function DashboardPage() {
                     count={awaitingCustomerCount}
                     active={tileFilter === 'awaiting_customer'}
                     tone="sky"
-                    description="viewed, no response yet"
                     onClick={() => toggleTile('awaiting_customer')}
                   />
                   <StatTile
@@ -1734,7 +2319,6 @@ export default function DashboardPage() {
                     count={changesRequestedCount}
                     active={tileFilter === 'changes_requested'}
                     tone="turquoise"
-                    description="awaiting new version from you"
                     onClick={() => toggleTile('changes_requested')}
                   />
                   <StatTile
@@ -1742,7 +2326,6 @@ export default function DashboardPage() {
                     count={approvedThisWeekCount}
                     active={tileFilter === 'approved_this_week'}
                     tone="green"
-                    description="approved in last 7 days"
                     onClick={() => toggleTile('approved_this_week')}
                   />
                   <StatTile
@@ -1750,7 +2333,6 @@ export default function DashboardPage() {
                     count={snoozedSections[0]?.projects.length ?? 0}
                     active={showSnoozed}
                     tone="violet"
-                    description="temporarily hidden"
                     onClick={() => {
                       setShowSnoozed((v) => {
                         const next = !v
@@ -1766,83 +2348,68 @@ export default function DashboardPage() {
                     count={dormantCount}
                     active={tileFilter === 'dormant'}
                     tone="neutral"
-                    description="no activity for 30+ days"
                     onClick={() => toggleTile('dormant')}
                   />
-                </div>
+              </div>
+            </section>
 
-                {/* List card. Search, status chips and sort/group toggles
-                    sit inside the same card as the project list so they
-                    visibly belong to the list rather than floating in the
-                    page margin. The truly-empty state (no projects yet)
-                    keeps its own standalone card since the controls would
-                    have nothing to act on. */}
+            {/* 2-column grid for the rest of the page: list card on the
+                left, Latest activity sidebar on the right. Lives below
+                the unified hero+tile panel so the sidebar starts under
+                the tile row rather than aligning with the hero. */}
+            <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
+              <div className="min-w-0">
+
+                {/* PR 25: the outer list-card wrapper retired here. Controls
+                    sit in their own bordered card above; rows flow as
+                    standalone cards below, each with a wide coloured left
+                    cap. Section headers become loose eyebrows between
+                    groups. Matches the mockup's loose-card-list pattern. */}
                 {projects.length === 0 ? (
-                  <div className="rounded-2xl bg-white py-20 text-center shadow-sm ring-1 ring-gray-200">
-                    <p className="text-gray-400">No projects yet.</p>
-                    <Link to="/proofs/new" className="mt-3 inline-block text-sm font-medium text-gray-900 underline">Create the first one</Link>
+                  <div className="rounded-[14px] bg-surface py-20 text-center border border-line">
+                    <p className="text-ink-mute">No projects yet.</p>
+                    <Link to="/proofs/new" className="mt-3 inline-block text-[14px] font-medium text-ink underline">Create the first one</Link>
                   </div>
                 ) : (
-                  <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-                    {/* Controls block — divider below separates it from
-                        the list. Search on row 1, three matching
-                        dropdowns (Status, Sort, Group) on row 2. The
-                        Status dropdown replaced a row of five chips —
-                        identical visual treatment to Sort/Group means
-                        the row reads as a single unit rather than two
-                        competing styles. Per-status counts live in the
-                        dropdown options so they appear when the menu
-                        opens without crowding the closed control. */}
-                    <div className="border-b border-gray-100 px-5 py-4">
-                      <div className="mb-3">
-                        <input
-                          type="search"
-                          placeholder="Search project, contact, company, email, or Help Scout id"
-                          value={search}
-                          onChange={(e) => setSearch(e.target.value)}
-                          className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-gray-900 focus:outline-none focus:ring-2 focus:ring-gray-900"
-                        />
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        {/* Status filter */}
-                        <SelectField
-                          label="Status"
-                          value={
-                            statusFilter.size === 0 && showSnoozed
-                              ? 'snoozed'
-                              : statusFilter.size === 0
-                                ? 'all'
-                                : Array.from(statusFilter)[0] as ProofStatus
-                          }
-                          onChange={(v) => {
-                            if (v === 'snoozed') {
-                              setSnoozedOnly(true)
-                              setStatusFilter(new Set())
-                              setShowSnoozed((prev) => {
-                                if (prev) return prev
-                                try { localStorage.setItem(SNOOZED_KEY, 'true') } catch { /* */ }
-                                return true
-                              })
-                            } else {
-                              setSnoozedOnly(false)
-                              if (v === 'all') setStatusFilter(new Set())
-                              else setStatusFilter(new Set([v as ProofStatus]))
-                            }
-                          }}
-                          options={[
-                            { value: 'all',         label: `All (${projects.length})` },
-                            { value: 'in_progress', label: `In progress (${statusCounts.in_progress})` },
-                            { value: 'approved',    label: `Approved (${statusCounts.approved})` },
-                            { value: 'dormant',     label: `Dormant (${statusCounts.dormant})` },
-                            { value: 'abandoned',   label: `Abandoned (${statusCounts.abandoned})` },
-                            { value: 'snoozed',     label: `Snoozed (${snoozedSections[0]?.projects.length ?? 0})` },
-                          ]}
-                        />
+                  <>
+                    {/* Controls card — filter chips on the left,
+                        N showing + Sort + Group + Abandoned on the right. */}
+                    <div className="rounded-[14px] bg-surface border border-line px-5 py-4 mb-4">
+                      {/* Filter chip strip (left) + N showing · Sort · Group ·
+                          Abandoned (right). Status dropdown removed in PR 21:
+                          the tiles cover its main use cases (Approved this
+                          week → Approved this week tile, Dormant → Dormant
+                          tile, Snoozed → Snoozed tile) and the Abandoned
+                          checkbox handles the rare abandoned filter. Chip
+                          state is single-select; 'all' is the no-op default. */}
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="eyebrow text-ink-mute pr-1">Filter</span>
+                        {(CHIPS as readonly { value: ChipKey; label: string }[]).map(({ value, label }) => {
+                          const isActive = chipFilter === value
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => handleChipChange(value)}
+                              aria-pressed={isActive}
+                              className={[
+                                'inline-flex items-center h-[30px] px-3 rounded-full text-[12px] font-medium transition-colors',
+                                isActive
+                                  ? 'bg-ink text-on-ink border border-ink'
+                                  : 'border border-line bg-surface text-ink-soft hover:bg-canvas',
+                              ].join(' ')}
+                            >
+                              {label}
+                            </button>
+                          )
+                        })}
 
-                        {/* Divider — separates filter from view controls */}
-                        <span className="h-4 w-px bg-gray-200" aria-hidden="true" />
-
-                        {/* Sort + Group */}
+                        {/* Right cluster */}
+                        <span className="flex-1" aria-hidden="true" />
+                        <span className="text-[12px] text-ink-mute tabular-nums font-mono">
+                          {filteredProjects.length} showing
+                        </span>
+                        <span className="h-4 w-px bg-line" aria-hidden="true" />
                         <SelectField
                           label="Sort"
                           value={sort}
@@ -1862,9 +2429,6 @@ export default function DashboardPage() {
                             { value: 'company', label: 'Company' },
                           ]}
                         />
-
-                        {/* Abandoned checkbox toggle — pushed to far right */}
-                        <span className="flex-1" aria-hidden="true" />
                         <button
                           onClick={() => {
                             setShowAbandoned((v) => {
@@ -1873,16 +2437,16 @@ export default function DashboardPage() {
                               return next
                             })
                           }}
-                          className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                          className={`inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs font-medium transition-colors ${
                             showAbandoned
-                              ? 'border-gray-400 bg-gray-100 text-gray-800'
-                              : 'border-gray-300 bg-white text-gray-500 shadow-sm hover:bg-gray-50 hover:text-gray-700'
+                              ? 'border-line bg-canvas text-ink'
+                              : 'border-line bg-surface text-ink-mute hover:bg-canvas hover:text-ink-soft'
                           }`}
                         >
                           {/* Checkbox indicator */}
-                          <span className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border ${showAbandoned ? 'border-gray-600 bg-gray-700' : 'border-gray-300'}`}>
+                          <span className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border ${showAbandoned ? 'border-ink bg-ink' : 'border-line'}`}>
                             {showAbandoned && (
-                              <svg viewBox="0 0 10 10" className="h-2.5 w-2.5 text-white" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <svg viewBox="0 0 10 10" className="h-2.5 w-2.5 text-on-ink" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <polyline points="1.5 5 4 7.5 8.5 2.5" />
                               </svg>
                             )}
@@ -1894,23 +2458,23 @@ export default function DashboardPage() {
 
                     {noResults ? (
                       <div className="py-16 text-center">
-                        <p className="text-gray-400">No projects match the current filters.</p>
+                        <p className="text-ink-mute">No projects match the current filters.</p>
                         <button
                           onClick={() => {
                             setSearch('')
-                            setStatusFilter(new Set())
                             setTileFilter(null)
                             setShowAbandoned(false)
                             setShowSnoozed(false)
                             setSnoozedOnly(false)
+                            handleChipChange('all')
                             try { localStorage.setItem(ABANDONED_KEY, 'false') } catch { /* */ }
                             try { localStorage.setItem(SNOOZED_KEY, 'false') } catch { /* */ }
                           }}
-                          className="mt-2 text-sm text-gray-500 underline underline-offset-2 hover:text-gray-900"
+                          className="mt-2 text-sm text-ink-soft underline underline-offset-2 hover:text-ink"
                         >Clear filters</button>
                       </div>
                     ) : (
-                      sections.map((section, si) => {
+                      sections.map((section) => {
                         // Virtualise the Older drawer only — Today /
                         // This week / Pinned / Team / Company sections
                         // are bounded in size and don't need it. The
@@ -1919,69 +2483,87 @@ export default function DashboardPage() {
                         // keyboard interaction behave identically.
                         const virtualise = section.kind === 'time' && section.key === 'older' && section.projects.length > 30
                         return (
-                          <div key={section.key} className={si > 0 ? 'border-t border-gray-100' : ''}>
-                            <div className="flex items-center gap-3 bg-gray-50/80 px-5 py-2 pt-12">
-                              {section.kind === 'pinned'  && <PinIcon className="h-3.5 w-3.5 shrink-0 text-gray-600" />}
-                              {section.kind === 'team'    && <UsersIcon className="h-3.5 w-3.5 shrink-0 text-gray-600" />}
-                              {section.kind === 'snoozed' && <ClockIcon className="h-3.5 w-3.5 shrink-0 text-gray-600" />}
-                              <span className="text-sm font-bold uppercase tracking-wider text-gray-700">{section.title}</span>
-                              <span className="text-xs font-medium text-gray-500 tabular-nums">{section.projects.length}</span>
+                          <div key={section.key} className="mt-6 first:mt-0">
+                            {/* Loose section header — eyebrow on the
+                                cream bg above the stack of row cards.
+                                No bg / no border, just the label and
+                                a small icon when the section kind has
+                                one. */}
+                            <div className="flex items-center gap-2 px-1 pb-3">
+                              {section.kind === 'pinned'  && <PinIcon className="h-3.5 w-3.5 shrink-0 text-ink-mute" />}
+                              {section.kind === 'team'    && <UsersIcon className="h-3.5 w-3.5 shrink-0 text-ink-mute" />}
+                              {section.kind === 'snoozed' && <ClockIcon className="h-3.5 w-3.5 shrink-0 text-ink-mute" />}
+                              <span className="eyebrow text-ink-soft">{section.title}</span>
+                              <span className="text-xs font-medium text-ink-mute tabular-nums">{section.projects.length}</span>
                             </div>
-                            {virtualise ? (
-                              <Virtuoso
-                                useWindowScroll
-                                data={section.projects}
-                                overscan={400}
-                                computeItemKey={(_, p) => p.proof_id}
-                                itemContent={(ri, p) => (
-                                  <div className={ri > 0 ? 'border-t border-gray-100' : ''}>
-                                    <ProjectRow
-                                      project={p}
-                                      minePinned={minePinAt.has(p.proof_id)}
-                                      teamPinned={teamPinAt.has(p.proof_id)}
-                                      onToggleMinePin={toggleMinePin}
-                                      onToggleTeamPin={toggleTeamPin}
-                                      onSnooze={handleSnooze}
-                                      onUnsnooze={handleUnsnooze}
-                                      showReason={tileFilter === 'needs_attention'}
-                                    />
-                                  </div>
-                                )}
-                              />
-                            ) : (
-                              section.projects.map((p, ri) => (
-                                <div key={p.proof_id} className={ri > 0 ? 'border-t border-gray-100' : ''}>
+                            {/* Row cards. space-y-2 puts a small gap
+                                between cards; each card now carries its
+                                own border + rounded corners + bg-surface
+                                + wide left status cap. The inter-row
+                                hairline borders dropped here. */}
+                            <div className="space-y-2">
+                              {virtualise ? (
+                                <Virtuoso
+                                  useWindowScroll
+                                  data={section.projects}
+                                  overscan={400}
+                                  computeItemKey={(_, p) => p.proof_id}
+                                  itemContent={(_, p) => (
+                                    <div className="mb-2 last:mb-0">
+                                      <ProjectRow
+                                        project={p}
+                                        minePinned={minePinAt.has(p.proof_id)}
+                                        teamPinned={teamPinAt.has(p.proof_id)}
+                                        thumbnailUrl={p.current_version_id ? thumbnailUrls.get(p.current_version_id) : undefined}
+                                        onToggleMinePin={toggleMinePin}
+                                        onToggleTeamPin={toggleTeamPin}
+                                        onSnooze={handleSnooze}
+                                        onUnsnooze={handleUnsnooze}
+                                        showReason={tileFilter === 'needs_attention'}
+                                      />
+                                    </div>
+                                  )}
+                                />
+                              ) : (
+                                section.projects.map((p) => (
                                   <ProjectRow
+                                    key={p.proof_id}
                                     project={p}
                                     minePinned={minePinAt.has(p.proof_id)}
                                     teamPinned={teamPinAt.has(p.proof_id)}
+                                    thumbnailUrl={p.current_version_id ? thumbnailUrls.get(p.current_version_id) : undefined}
                                     onToggleMinePin={toggleMinePin}
                                     onToggleTeamPin={toggleTeamPin}
                                     onSnooze={handleSnooze}
                                     onUnsnooze={handleUnsnooze}
                                     showReason={tileFilter === 'needs_attention'}
                                   />
-                                </div>
-                              ))
-                            )}
+                                ))
+                              )}
+                            </div>
                           </div>
                         )
                       })
                     )}
-                  </div>
+                  </>
                 )}
-              </>
-            )}
-          </div>
+              </div>
 
-          {!loading && (
-            <aside className="hidden lg:sticky lg:top-10 lg:block lg:self-start xl:pt-4">
-              <LatestActivityPanel events={latestEvents} navigate={navigate} />
-            </aside>
-          )}
-        </div>
+              <aside className="hidden lg:block space-y-6">
+                {/* lg:sticky lg:top-10 used to ride here so the panel
+                    locked to the viewport top while the project list
+                    scrolled. Dropped in PR 30 — the project list can
+                    run many pages and a static panel hovering over
+                    nothing related is more distracting than useful. */}
+                <LatestActivityPanel events={latestEvents} navigate={navigate} />
+                <LeadTimesChart leadTimes={leadTimes} navigate={navigate} />
+              </aside>
+            </div>
+          </>
+        )}
       </div>
     </div>
+    </DesignerChrome>
   )
 }
 
@@ -2003,16 +2585,16 @@ function SelectField<T extends string>({
   label?: string
 }) {
   return (
-    <div className="relative inline-flex items-center rounded-md border border-gray-300 bg-white shadow-sm hover:bg-gray-50 focus-within:ring-2 focus-within:ring-gray-900">
+    <div className="relative inline-flex items-center rounded-[8px] border border-line bg-surface hover:bg-canvas focus-within:border-[var(--c-brand)] focus-within:outline focus-within:outline-2 focus-within:outline-offset-[-1px] focus-within:outline-[var(--c-brand)] transition-colors">
       {label && (
-        <span className="pointer-events-none select-none pl-2.5 text-xs font-medium text-gray-400">
+        <span className="pointer-events-none select-none pl-2.5 text-xs font-medium text-ink-mute">
           {label}
         </span>
       )}
       <select
         value={value}
         onChange={(e) => onChange(e.target.value as T)}
-        className="cursor-pointer appearance-none bg-transparent py-1.5 pl-1 pr-7 text-xs font-medium text-gray-800 focus:outline-none"
+        className="cursor-pointer appearance-none bg-transparent py-1.5 pl-1 pr-7 text-xs font-medium text-ink focus:outline-none"
       >
         {options.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
@@ -2021,7 +2603,7 @@ function SelectField<T extends string>({
       <svg
         aria-hidden
         viewBox="0 0 16 16"
-        className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-gray-400"
+        className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ink-mute"
         fill="none"
         stroke="currentColor"
         strokeWidth="2"

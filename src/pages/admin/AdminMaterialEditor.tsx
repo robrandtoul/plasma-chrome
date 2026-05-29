@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { ChevronRight, Hash, Tag, Plus, X } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import PriceCell, { currencySymbol } from './PriceCell'
 import AdminPricingImport from './AdminPricingImport'
 import Modal from '../../components/Modal'
 import { downloadPricingExport } from '../../lib/pricingIO'
 import { logAudit } from '../../lib/audit'
+import { PanelShell, ButtonGhost, ButtonInk, tokens } from '../../design'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -50,6 +52,10 @@ export default function AdminMaterialEditor() {
   const [variants, setVariants] = useState<Variant[]>([])
   const [tiers, setTiers] = useState<Tier[]>([])
   const [activeVariantId, setActiveVariantId] = useState<string | null>(null)
+  // Currency the tier matrix is showing (screen 06 currency strip).
+  // The grid filters price_tiers to this currency; switching re-pivots
+  // the matrix without a refetch (all currencies are already loaded).
+  const [editCurrency, setEditCurrency] = useState<Currency>('GBP')
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -178,6 +184,45 @@ export default function AdminMaterialEditor() {
       targetLabel: `${material?.display_name ?? ''} ${variant?.display_name ?? ''} @ qty ${quantity}`,
       beforeValue: { currency: existing?.currency, total_price: prevTotal },
       afterValue: { currency: existing?.currency, total_price: nextTotal },
+    })
+  }
+
+  // Matrix-cell save: update the (variant, quantity, currency) tier if
+  // it exists, otherwise insert one. Lets every cell in the tier matrix
+  // be edited directly — including gaps where a variant is missing a
+  // quantity in the selected currency. Inserts are single-currency
+  // (the matrix is per-currency); the multi-currency batch insert still
+  // lives in handleAddTier for adding a brand-new quantity column.
+  async function saveTierCell(variantId: string, quantity: number, nextTotal: number) {
+    const existing = tiers.find(
+      (t) => t.material_variant_id === variantId && t.quantity === quantity && t.currency === editCurrency,
+    )
+    if (existing) {
+      await saveTier(existing.id, quantity, nextTotal)
+      return
+    }
+    const nextUnit = Number((nextTotal / quantity).toFixed(4))
+    const { data: created, error } = await supabase
+      .from('price_tiers')
+      .insert({
+        material_variant_id: variantId,
+        currency: editCurrency,
+        quantity,
+        total_price: nextTotal,
+        unit_price: nextUnit,
+      })
+      .select('id, material_variant_id, currency, quantity, total_price, unit_price')
+      .single()
+    if (error || !created) throw new Error(error?.message ?? 'Insert failed')
+    setTiers((prev) => [...prev, created as Tier])
+    const variant = variants.find((v) => v.id === variantId)
+    void logAudit({
+      action: 'price_tier.created',
+      targetType: 'price_tier',
+      targetId: (created as Tier).id,
+      targetLabel: `${material?.display_name ?? ''} ${variant?.display_name ?? ''} @ qty ${quantity}`,
+      beforeValue: { currency: editCurrency, total_price: null },
+      afterValue: { currency: editCurrency, total_price: nextTotal },
     })
   }
 
@@ -461,37 +506,34 @@ export default function AdminMaterialEditor() {
 
   async function handleDeleteTier(qty: number) {
     if (!material) return
-    const variantId = activeVariantId ?? variants.find((v) => v.is_active)?.id
-    if (!variantId) return
-    const variant = variants.find((v) => v.id === variantId)
-    if (!variant) return
+    // In the transposed matrix a quantity is a COLUMN spanning every
+    // variant, so removing it clears that quantity for all of the
+    // material's variants (every currency) — not just one variant.
+    const variantIds = variants.map((v) => v.id)
     const doomed = tiers.filter(
-      (t) => t.material_variant_id === variantId && t.quantity === qty,
+      (t) => variantIds.includes(t.material_variant_id) && t.quantity === qty,
     )
     if (doomed.length === 0) return
 
     setTierInFlight(true)
     setTierError(null)
     try {
-      // Single DELETE filtered by (variant, quantity) removes all three
-      // currency rows atomically.
       const { error: err } = await supabase
         .from('price_tiers')
         .delete()
-        .eq('material_variant_id', variantId)
+        .in('material_variant_id', variantIds)
         .eq('quantity', qty)
       if (err) throw new Error(err.message)
 
-      setTiers((prev) => prev.filter(
-        (t) => !(t.material_variant_id === variantId && t.quantity === qty),
-      ))
+      setTiers((prev) => prev.filter((t) => t.quantity !== qty))
 
       for (const row of doomed) {
+        const variant = variants.find((v) => v.id === row.material_variant_id)
         void logAudit({
           action: 'price_tier_deleted',
           targetType: 'price_tier',
           targetId: row.id,
-          targetLabel: `${material.display_name} ${variant.display_name} @ qty ${qty}`,
+          targetLabel: `${material.display_name} ${variant?.display_name ?? ''} @ qty ${qty}`,
           beforeValue: { currency: row.currency, total_price: row.total_price, quantity: qty },
         })
       }
@@ -506,63 +548,108 @@ export default function AdminMaterialEditor() {
   if (loading) {
     return (
       <div className="flex justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-line motion-reduce:animate-none" style={{ borderTopColor: 'var(--c-ink)' }} />
       </div>
     )
   }
   if (loadError || !material) {
     return (
-      <div className="rounded-2xl bg-rose-50 p-6 text-sm text-rose-700 ring-1 ring-rose-200">
+      <div className="rounded-[14px] bg-out-soft p-6 text-sm text-out border border-out">
         Failed to load material: {loadError ?? 'not found'}
       </div>
     )
   }
 
+  // Meta line summarising the editable surface, per screen 06.
+  // Descriptor word follows the material's variant_type; no
+  // materials.notes field exists today so the trailing descriptor
+  // is derived from the variant type + published state rather than
+  // free-text copy.
+  const variantWord =
+    material.variant_type === 'thickness' ? 'thickness variants' :
+    material.variant_type === 'ink_count' ? 'ink-count variants' :
+    material.variant_type === 'finish'    ? 'finish variants' :
+                                            'variant'
+  const metaLine = [
+    `${variants.length} ${variantWord}`,
+    'GBP, EUR, USD',
+    `${tiers.length} tier prices`,
+    material.is_published ? 'published' : 'unpublished',
+  ].join(' · ')
+
   return (
-    <div className="space-y-8">
-      {/* Header */}
+    <div className="space-y-6">
+      {/* Breadcrumb */}
+      <nav className="flex items-center gap-1.5 text-[13px]">
+        <Link to="/admin/pricing" className="text-ink-mute hover:text-ink transition-colors">Pricing</Link>
+        <ChevronRight size={14} className="text-ink-dim" aria-hidden="true" />
+        <span className="text-ink-soft truncate">{material.display_name}</span>
+      </nav>
+
+      {/* Header card — swatch + title + meta line on the left, actions
+          on the right. No material colour field exists today, so the
+          swatch is a neutral placeholder. */}
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <Link to="/admin/pricing" className="text-xs text-gray-400 hover:text-gray-700">← Back to pricing</Link>
-          <div className="mt-2 flex items-center gap-3">
-            <h2 className="text-xl font-bold text-gray-900">{material.display_name}</h2>
-            {/* Read-only status pill. Publish toggle lives on the
-                Settings-page material modal (single source of truth);
-                this is just a glanceable indicator for price entry. */}
-            {material.is_published ? (
-              <span
-                className="inline-block rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700"
-                title="This material is visible to designers. Manage on the Settings page."
-              >
-                Published
-              </span>
-            ) : (
-              <span
-                className="inline-block rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700"
-                title="This material is hidden from designers. Publish from the Settings page."
-              >
-                Unpublished
-              </span>
-            )}
+        <div className="flex items-start gap-4 min-w-0">
+          <span
+            aria-hidden="true"
+            className="shrink-0 w-12 h-12 rounded-[8px] border border-line"
+            style={{ backgroundColor: 'var(--c-ink-dim)' }}
+          />
+          <div className="min-w-0">
+            <h1 className="font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0" style={{ fontSize: 'clamp(24px, 4vw, 32px)' }}>
+              {material.display_name}
+            </h1>
+            <p className="mt-1 text-[13px] text-ink-mute">{metaLine}</p>
           </div>
-          <p className="mt-1 text-sm text-gray-500">
-            Changes save automatically. Customer-facing prices update immediately.
-          </p>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <button
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <ButtonGhost
             onClick={() => downloadPricingExport(`material:${material.code}`, `pricing_${material.code}.csv`).catch(() => {})}
-            className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
           >
-            Export this material
-          </button>
-          <button
-            onClick={() => setShowImport(true)}
-            className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-700"
-          >
-            Import
-          </button>
+            Export
+          </ButtonGhost>
+          {material.variant_type !== 'default' && !adding && (
+            <ButtonGhost
+              icon={Plus}
+              disabled={variantInFlight}
+              onClick={() => { setVariantError(null); setAdding(true) }}
+            >
+              Add variant
+            </ButtonGhost>
+          )}
+          <ButtonInk onClick={() => setShowImport(true)}>Import</ButtonInk>
         </div>
+      </div>
+
+      {/* Currency strip — segmented GBP/EUR/USD + VAT explainer. The
+          tier matrix below filters to the selected currency. */}
+      <div className="rounded-[14px] bg-surface border border-line px-5 py-3.5 flex flex-wrap items-center gap-x-5 gap-y-2">
+        <span className="eyebrow text-ink-mute">Currency</span>
+        <div className="inline-flex items-center rounded-[8px] border border-line overflow-hidden">
+          {CURRENCIES.map((c) => {
+            const active = editCurrency === c
+            return (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setEditCurrency(c)}
+                aria-pressed={active}
+                className={[
+                  'px-3.5 py-1.5 text-[13px] font-medium transition-colors',
+                  active ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft hover:bg-canvas',
+                ].join(' ')}
+              >
+                {c}
+              </button>
+            )
+          })}
+        </div>
+        <span className="text-[13px] text-ink-mute">
+          {editCurrency === 'GBP'
+            ? '£ figures include VAT at 20%'
+            : `${editCurrency} figures are VAT-free`}
+        </span>
       </div>
 
       {showImport && code && (
@@ -577,46 +664,142 @@ export default function AdminMaterialEditor() {
         />
       )}
 
-      {/* Surcharges */}
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-        <h3 className="text-sm font-semibold text-gray-900">Split-name surcharge</h3>
-        <p className="mt-1 text-xs text-gray-500">
-          Charged per extra name beyond the first. Leave blank if this material doesn't offer split names.
-        </p>
-        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          {CURRENCIES.map((currency) => {
-            const col = `split_name_surcharge_${currency.toLowerCase()}` as keyof Material
-            const val = material[col] as number | null
-            return (
-              <div key={currency}>
-                <label className="block text-xs font-medium uppercase tracking-wide text-gray-400">
-                  {currency} {currency === 'GBP' ? '(inc VAT)' : '(ex VAT)'}
-                </label>
-                <div className="mt-1">
-                  <PriceCell
-                    value={val}
-                    currency={currency}
-                    allowClear
-                    onSave={(next) => saveSurcharge(currency, next)}
-                    placeholder="—"
-                  />
-                </div>
+      {/* Tier prices — quantity rows × variant columns for the
+          currency selected in the strip above. Quantities run down
+          the table (tall, vertical scroll) so materials with many
+          tiers — the metal schedules have ~39 — never trigger
+          horizontal scroll. Each cell is a click-to-edit PriceCell
+          (its brand focus ring matches the mockup's highlighted cell)
+          with the per-card unit price below. The per-row Actions cell
+          removes that quantity tier across every variant. */}
+      {(() => {
+        const activeVariants = variants.filter((v) => v.is_active)
+        const tiersForCurrency = tiers.filter((t) => t.currency === editCurrency)
+        const qtyList = [...new Set(tiersForCurrency.map((t) => t.quantity))].sort((a, b) => a - b)
+        const tierFor = (variantId: string, qty: number) =>
+          tiersForCurrency.find((t) => t.material_variant_id === variantId && t.quantity === qty) ?? null
+        const eyebrow = `${activeVariants.length} ${activeVariants.length === 1 ? 'variant' : 'variants'} · ${qtyList.length} ${qtyList.length === 1 ? 'tier' : 'tiers'}`
+        return (
+          <PanelShell title="Tier prices" eyebrow={eyebrow} icon={Hash} accent={tokens.ink} padded={false}>
+            {activeVariants.length === 0 ? (
+              <p className="px-5 py-8 text-sm text-ink-mute">No active variants yet. Add one above to start building the price list.</p>
+            ) : qtyList.length === 0 ? (
+              <div className="px-5 py-6 space-y-3">
+                <p className="text-sm text-ink-mute">No prices yet for {editCurrency}. Add your first quantity tier.</p>
+                <AddTierForm
+                  qty={tierQtyDraft}
+                  gbp={tierGbpDraft}
+                  eur={tierEurDraft}
+                  usd={tierUsdDraft}
+                  onQty={setTierQtyDraft}
+                  onGbp={setTierGbpDraft}
+                  onEur={setTierEurDraft}
+                  onUsd={setTierUsdDraft}
+                  onSave={() => void handleAddTier()}
+                  inFlight={tierInFlight}
+                />
               </div>
-            )
-          })}
-        </div>
-      </section>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-line-soft">
+                        <th className="px-5 py-3 text-left eyebrow text-ink-mute">Quantity</th>
+                        {activeVariants.map((v) => (
+                          <th key={v.id} className="px-4 py-3 text-right eyebrow text-ink-mute whitespace-nowrap border-l border-line-soft">
+                            {v.display_name}
+                          </th>
+                        ))}
+                        <th className="px-4 py-3 text-center eyebrow text-ink-mute w-16 border-l border-line-soft">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {qtyList.map((qty, ri) => (
+                        <tr key={qty} className={ri > 0 ? 'border-t border-line-soft' : ''}>
+                          {/* Quantity + sequential tier letter (A = smallest). */}
+                          <td className="px-5 py-3 whitespace-nowrap">
+                            <div className="font-mono text-[14px] font-medium text-ink tabular-nums">
+                              {qty.toLocaleString()}
+                            </div>
+                            <div className="eyebrow text-ink-dim">tier {String.fromCharCode(65 + ri)}</div>
+                          </td>
+                          {activeVariants.map((v) => {
+                            const tier = tierFor(v.id, qty)
+                            return (
+                              <td key={v.id} className="px-4 py-3 text-right border-l border-line-soft">
+                                <div className="flex flex-col items-end">
+                                  <PriceCell
+                                    value={tier ? tier.total_price : null}
+                                    currency={editCurrency}
+                                    placeholder="—"
+                                    onSave={(next) => saveTierCell(v.id, qty, next)}
+                                  />
+                                  {tier && (
+                                    <span className="mt-0.5 font-mono text-[10px] text-ink-dim tabular-nums">
+                                      {currencySymbol(editCurrency)}{(tier.total_price / qty).toFixed(2)}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                            )
+                          })}
+                          <td className="px-4 py-3 text-center border-l border-line-soft">
+                            <button
+                              type="button"
+                              onClick={() => { setTierError(null); setRemoveConfirmQty(qty) }}
+                              title={`Remove the ${qty.toLocaleString()} tier (all variants)`}
+                              aria-label={`Remove ${qty} tier`}
+                              className="inline-flex items-center justify-center w-7 h-7 rounded text-ink-mute hover:text-out hover:bg-out-soft transition-colors"
+                            >
+                              <X size={13} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="px-5 py-4 border-t border-line-soft">
+                  {tierAddOpen ? (
+                    <AddTierForm
+                      qty={tierQtyDraft}
+                      gbp={tierGbpDraft}
+                      eur={tierEurDraft}
+                      usd={tierUsdDraft}
+                      onQty={setTierQtyDraft}
+                      onGbp={setTierGbpDraft}
+                      onEur={setTierEurDraft}
+                      onUsd={setTierUsdDraft}
+                      onSave={() => void handleAddTier()}
+                      onCancel={resetTierAddForm}
+                      inFlight={tierInFlight}
+                    />
+                  ) : (
+                    <ButtonGhost icon={Plus} onClick={() => { setTierError(null); setTierAddOpen(true) }}>
+                      Add quantity tier
+                    </ButtonGhost>
+                  )}
+                </div>
+              </>
+            )}
+            {tierError && (
+              <p className="mx-5 mb-4 rounded-lg bg-out-soft px-3 py-2 text-sm text-out">{tierError}</p>
+            )}
+          </PanelShell>
+        )
+      })()}
 
       {/* Variants */}
       <section>
         <div className="mb-3 flex items-center justify-between gap-4">
-          <h3 className="text-sm font-semibold text-gray-900">Variants</h3>
+          <h3 className="text-sm font-semibold text-ink">Variants</h3>
           {material.variant_type !== 'default' && !adding && (
             <button
               type="button"
               onClick={() => { setVariantError(null); setAdding(true) }}
               disabled={variantInFlight}
-              className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+              className="rounded bg-ink px-3 py-1.5 text-sm font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
             >
               Add variant
             </button>
@@ -627,18 +810,18 @@ export default function AdminMaterialEditor() {
           // Default materials have a single implicit variant created by
           // the admin create-material flow. No rename, no toggle, no add
           // — variant management isn't meaningful here.
-          <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
+          <div className="rounded-[14px] bg-surface p-6 border border-line">
             {variants[0] ? (
               <div className="flex items-center gap-3">
-                <span className="text-sm font-medium text-gray-900">{variants[0].display_name}</span>
-                <span className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
+                <span className="text-sm font-medium text-ink">{variants[0].display_name}</span>
+                <span className="inline-block rounded-full bg-line-soft px-2 py-0.5 text-xs font-semibold text-ink-soft">
                   Single variant
                 </span>
               </div>
             ) : (
-              <p className="text-sm text-gray-400">No variant.</p>
+              <p className="text-sm text-ink-mute">No variant.</p>
             )}
-            <p className="mt-2 text-xs text-gray-500">
+            <p className="mt-2 text-xs text-ink-mute">
               This material has a single implicit variant. Variant management is only meaningful for materials with multiple options.
             </p>
           </div>
@@ -648,12 +831,12 @@ export default function AdminMaterialEditor() {
                 at least one variant. Matches the tone of the empty
                 price-tier state below. */}
             {variants.length === 0 && !adding && (
-              <p className="mb-3 text-sm text-gray-500">
+              <p className="mb-3 text-sm text-ink-mute">
                 No variants yet. Add your first variant below to start building the price list. For materials with a single price list, name it "Default".
               </p>
             )}
             {(variants.length > 0 || adding) && (
-              <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+              <div className="overflow-hidden rounded-[14px] bg-surface border border-line">
                 {variants.map((v, i) => {
                 const isEditing = editingVariantId === v.id
                 return (
@@ -661,7 +844,7 @@ export default function AdminMaterialEditor() {
                     key={v.id}
                     className={[
                       'flex items-center gap-3 px-4 py-3',
-                      i > 0 ? 'border-t border-gray-100' : '',
+                      i > 0 ? 'border-t border-line-soft' : '',
                       v.is_active ? '' : 'opacity-60',
                     ].join(' ')}
                   >
@@ -681,7 +864,7 @@ export default function AdminMaterialEditor() {
                           }}
                           onBlur={() => { void saveVariantName() }}
                           disabled={variantInFlight}
-                          className="w-full rounded-lg border border-gray-300 px-2.5 py-1 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                          className="w-full rounded border border-line px-2.5 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                         />
                       ) : (
                         <button
@@ -691,7 +874,7 @@ export default function AdminMaterialEditor() {
                             setEditingVariantId(v.id)
                             setEditingNameDraft(v.display_name)
                           }}
-                          className="block w-full truncate text-left text-sm font-medium text-gray-900 hover:text-gray-600"
+                          className="block w-full truncate text-left text-sm font-medium text-ink hover:text-ink-soft"
                           title="Click to rename"
                         >
                           {v.display_name}
@@ -700,13 +883,13 @@ export default function AdminMaterialEditor() {
                     </div>
 
                     {/* Variant-type pill (read-only sanity check) */}
-                    <span className="inline-block shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-600">
+                    <span className="inline-block shrink-0 rounded-full bg-line-soft px-2 py-0.5 text-xs font-semibold text-ink-soft">
                       {v.variant_type}
                     </span>
 
                     {/* Deactivated pill */}
                     {!v.is_active && (
-                      <span className="inline-block shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                      <span className="inline-block shrink-0 rounded-full bg-low-soft px-2 py-0.5 text-xs font-semibold text-low">
                         Deactivated
                       </span>
                     )}
@@ -721,12 +904,12 @@ export default function AdminMaterialEditor() {
                       title={v.is_active ? 'Deactivate variant' : 'Activate variant'}
                       className={[
                         'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50',
-                        v.is_active ? 'bg-gray-900' : 'bg-gray-200',
+                        v.is_active ? 'bg-ink' : 'bg-line',
                       ].join(' ')}
                     >
                       <span
                         className={[
-                          'inline-block h-5 w-5 transform rounded-full bg-white transition-transform',
+                          'inline-block h-5 w-5 transform rounded-full bg-surface transition-transform',
                           v.is_active ? 'translate-x-[1.375rem] translate-y-0.5' : 'translate-x-0.5 translate-y-0.5',
                         ].join(' ')}
                       />
@@ -740,7 +923,7 @@ export default function AdminMaterialEditor() {
             {adding && (
               <div className={[
                 'flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center',
-                variants.length > 0 ? 'border-t border-gray-100 bg-gray-50' : 'bg-gray-50',
+                variants.length > 0 ? 'border-t border-line-soft bg-canvas' : 'bg-canvas',
               ].join(' ')}>
                 <input
                   autoFocus
@@ -760,14 +943,14 @@ export default function AdminMaterialEditor() {
                     material.variant_type === 'finish' ? 'e.g. Brushed' :
                     'Variant name'
                   }
-                  className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2.5 py-1 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
+                  className="min-w-0 flex-1 rounded border border-line px-2.5 py-1 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
                 />
                 <div className="flex justify-end gap-2">
                   <button
                     type="button"
                     onClick={() => void handleAddVariant()}
                     disabled={variantInFlight || !addNameDraft.trim()}
-                    className="shrink-0 rounded-lg bg-gray-900 px-3 py-1 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+                    className="shrink-0 rounded bg-ink px-3 py-1 text-sm font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
                   >
                     {variantInFlight ? 'Saving…' : 'Save'}
                   </button>
@@ -777,7 +960,7 @@ export default function AdminMaterialEditor() {
                       setAdding(false); setAddNameDraft(''); setVariantError(null)
                     }}
                     disabled={variantInFlight}
-                    className="shrink-0 rounded-lg px-3 py-1 text-sm font-medium text-gray-500 hover:bg-white disabled:opacity-50"
+                    className="shrink-0 rounded px-3 py-1 text-sm font-medium text-ink-mute hover:bg-surface disabled:opacity-50"
                   >
                     Cancel
                   </button>
@@ -790,113 +973,51 @@ export default function AdminMaterialEditor() {
         )}
 
         {variantError && (
-          <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{variantError}</p>
+          <p className="mt-2 rounded-lg bg-out-soft px-3 py-2 text-sm text-out">{variantError}</p>
         )}
       </section>
 
-      {/* Price grid */}
-      <section>
-        <h3 className="mb-3 text-sm font-semibold text-gray-900">Price tiers</h3>
-        {(() => {
-          const activeVariants = variants.filter((v) => v.is_active)
-          if (activeVariants.length === 0) {
-            return <p className="text-sm text-gray-400">No active variants yet.</p>
-          }
-          // Default materials keep their single implicit variant as-is;
-          // multi-variant materials render a tab strip above the grid.
-          const renderedVariantId = material.variant_type === 'default'
-            ? activeVariants[0].id
-            : activeVariantId
-          const tiersForVariant = tiers.filter((t) => t.material_variant_id === renderedVariantId)
-          const isEmpty = tiersForVariant.length === 0
-
-          return (
-            <>
-              {material.variant_type !== 'default' && (
-                /* Variant tab strip — active variants only. Deactivated
-                   variants never surface here, they're managed via the
-                   Variants section above. */
-                <div className="mb-4 flex flex-wrap gap-2">
-                  {activeVariants.map((v) => {
-                    const isActive = activeVariantId === v.id
-                    return (
-                      <button
-                        key={v.id}
-                        onClick={() => setActiveVariantId(v.id)}
-                        className={[
-                          'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
-                          isActive
-                            ? 'bg-gray-900 text-white'
-                            : 'bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50',
-                        ].join(' ')}
-                      >
-                        {v.display_name}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-
-              {isEmpty ? (
-                /* Bootstrap state: no tiers yet, show the add form open
-                   with a soft lead-in so the next step is obvious. */
-                <div className="space-y-3">
-                  <p className="text-sm text-gray-500">No prices yet. Add your first quantity tier below.</p>
-                  <AddTierForm
-                    qty={tierQtyDraft}
-                    gbp={tierGbpDraft}
-                    eur={tierEurDraft}
-                    usd={tierUsdDraft}
-                    onQty={setTierQtyDraft}
-                    onGbp={setTierGbpDraft}
-                    onEur={setTierEurDraft}
-                    onUsd={setTierUsdDraft}
-                    onSave={() => void handleAddTier()}
-                    inFlight={tierInFlight}
-                  />
-                </div>
-              ) : (
-                <>
-                  <PriceGrid
-                    tiers={tiersForVariant}
-                    onSave={saveTier}
-                    onRemoveQty={(qty) => { setTierError(null); setRemoveConfirmQty(qty) }}
-                  />
-                  <div className="mt-4">
-                    {tierAddOpen ? (
-                      <AddTierForm
-                        qty={tierQtyDraft}
-                        gbp={tierGbpDraft}
-                        eur={tierEurDraft}
-                        usd={tierUsdDraft}
-                        onQty={setTierQtyDraft}
-                        onGbp={setTierGbpDraft}
-                        onEur={setTierEurDraft}
-                        onUsd={setTierUsdDraft}
-                        onSave={() => void handleAddTier()}
-                        onCancel={resetTierAddForm}
-                        inFlight={tierInFlight}
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => { setTierError(null); setTierAddOpen(true) }}
-                        className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50"
-                      >
-                        Add tier
-                      </button>
-                    )}
-                  </div>
-                </>
-              )}
-
-              {tierError && (
-                <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{tierError}</p>
-              )}
-            </>
-          )
-        })()}
-      </section>
+      {/* Split-name tooling surcharge — per-currency inputs + an info
+          strip. Per extra name beyond the first; lives on the material,
+          not the variant. */}
+      <PanelShell
+        title="Split-name tooling surcharge"
+        eyebrow="Per extra name beyond the first"
+        icon={Tag}
+        accent={tokens.low}
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {CURRENCIES.map((currency) => {
+            const col = `split_name_surcharge_${currency.toLowerCase()}` as keyof Material
+            const val = material[col] as number | null
+            return (
+              <div key={currency}>
+                <label className="eyebrow text-ink-mute block mb-1.5">
+                  {currency} per extra name
+                </label>
+                <PriceCell
+                  value={val}
+                  currency={currency}
+                  allowClear
+                  onSave={(next) => saveSurcharge(currency, next)}
+                  placeholder="—"
+                />
+              </div>
+            )
+          })}
+        </div>
+        <div
+          className="mt-4 rounded-lg px-3 py-2.5 text-[12px] leading-[1.5] text-ink-soft"
+          style={{
+            backgroundColor: 'var(--c-low-soft)',
+            boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--c-low) 30%, transparent)',
+          }}
+        >
+          Surcharge lives on the material, not the variant. The new-version
+          form doesn't expose this — designers manually override the snapshot
+          when more than one name is in play.
+        </div>
+      </PanelShell>
 
       {/* Soft-confirm for removing a tier. Destructive button is rose
           so the admin can't click through absent-mindedly. */}
@@ -906,18 +1027,18 @@ export default function AdminMaterialEditor() {
         preventClose={tierInFlight}
         ariaLabel="Remove price tier confirmation"
         backdropClassName="bg-black/40"
-        panelClassName="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl ring-1 ring-gray-200"
+        panelClassName="w-full max-w-md rounded-[14px] bg-surface p-6 shadow-xl border border-line"
       >
-        <h4 className="text-base font-semibold text-gray-900">Remove this tier?</h4>
-        <p className="mt-2 text-sm text-gray-600">
-          Remove the price tier for {removeConfirmQty?.toLocaleString()} units? This removes the GBP, EUR and USD prices for this quantity and cannot be undone.
+        <h4 className="text-base font-semibold text-ink">Remove this quantity tier?</h4>
+        <p className="mt-2 text-sm text-ink-soft">
+          Remove the {removeConfirmQty?.toLocaleString()}-unit tier? This removes that quantity's GBP, EUR and USD prices for <strong>every variant</strong> of this material and cannot be undone.
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <button
             type="button"
             onClick={() => setRemoveConfirmQty(null)}
             disabled={tierInFlight}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+            className="rounded px-4 py-2 text-sm font-medium text-ink-mute hover:bg-canvas disabled:opacity-50"
           >
             Cancel
           </button>
@@ -925,7 +1046,7 @@ export default function AdminMaterialEditor() {
             type="button"
             onClick={() => { if (removeConfirmQty != null) void handleDeleteTier(removeConfirmQty) }}
             disabled={tierInFlight}
-            className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
+            className="rounded bg-out px-4 py-2 text-sm font-semibold text-on-out hover:opacity-90 disabled:opacity-50"
           >
             {tierInFlight ? 'Removing…' : 'Remove tier'}
           </button>
@@ -961,11 +1082,11 @@ function AddTierForm({
 }) {
   const canSave = qty.trim() !== '' && gbp.trim() !== '' && eur.trim() !== '' && usd.trim() !== ''
   return (
-    <div className="rounded-2xl bg-gray-50 p-4 ring-1 ring-gray-200">
+    <div className="rounded-[14px] bg-canvas p-4 border border-line">
       {/* Fields row: wraps on narrow, stays one line on wide. */}
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-gray-400">Quantity</label>
+          <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Quantity</label>
           <input
             type="number"
             min="1"
@@ -973,7 +1094,7 @@ function AddTierForm({
             value={qty}
             onChange={(e) => onQty(e.target.value)}
             disabled={inFlight}
-            className="w-28 rounded border border-gray-200 px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-gray-900 focus:outline-none"
+            className="w-28 rounded border border-line px-2 py-1 text-[17px] sm:text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
             placeholder="e.g. 500"
           />
         </div>
@@ -989,7 +1110,7 @@ function AddTierForm({
             type="button"
             onClick={onCancel}
             disabled={inFlight}
-            className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-white disabled:opacity-50"
+            className="rounded px-3 py-1.5 text-sm font-medium text-ink-mute hover:bg-surface disabled:opacity-50"
           >
             Cancel
           </button>
@@ -998,7 +1119,7 @@ function AddTierForm({
           type="button"
           onClick={onSave}
           disabled={inFlight || !canSave}
-          className="rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
+          className="rounded bg-ink px-3 py-1.5 text-sm font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
         >
           {inFlight ? 'Saving…' : 'Save tier'}
         </button>
@@ -1016,9 +1137,9 @@ function CurrencyTotalField({ label, symbol, value, onChange, disabled }: {
 }) {
   return (
     <div>
-      <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-gray-400">{label}</label>
+      <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-ink-mute">{label}</label>
       <div className="relative">
-        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">{symbol}</span>
+        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-ink-mute">{symbol}</span>
         <input
           type="number"
           step="0.01"
@@ -1026,102 +1147,10 @@ function CurrencyTotalField({ label, symbol, value, onChange, disabled }: {
           value={value}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
-          className="w-28 rounded border border-gray-200 px-2 py-1 pl-5 text-sm tabular-nums focus:border-gray-900 focus:outline-none"
+          className="w-28 rounded border border-line px-2 py-1 pl-5 text-sm tabular-nums focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
           placeholder="0.00"
         />
       </div>
-    </div>
-  )
-}
-
-// ── Price grid ───────────────────────────────────────────────────────────────
-
-function PriceGrid({ tiers, onSave, onRemoveQty }: {
-  tiers: Tier[]
-  onSave: (tierId: string, quantity: number, nextTotal: number) => Promise<void>
-  /** Optional per-row remove handler. Omit to hide the Remove column. */
-  onRemoveQty?: (quantity: number) => void
-}) {
-  // Group by quantity so every row has all three currencies side-by-side.
-  const byQty = useMemo(() => {
-    const map = new Map<number, Partial<Record<Currency, Tier>>>()
-    for (const t of tiers) {
-      const row = map.get(t.quantity) ?? {}
-      row[t.currency as Currency] = t
-      map.set(t.quantity, row)
-    }
-    return [...map.entries()].sort((a, b) => a[0] - b[0])
-  }, [tiers])
-
-  // Empty state is handled by the parent so it can decide whether to
-  // render bootstrap copy + an open add form instead of nothing.
-  if (byQty.length === 0) return null
-
-  return (
-    <div className="overflow-x-auto rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-gray-100">
-            <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">Qty</th>
-            {CURRENCIES.map((c) => (
-              <th key={c} colSpan={2} className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-400">
-                {c} {c === 'GBP' ? '(inc VAT)' : '(ex VAT)'}
-              </th>
-            ))}
-            {onRemoveQty && (
-              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-gray-400"></th>
-            )}
-          </tr>
-          <tr className="border-b border-gray-100">
-            <th className="px-4 pb-2 text-left text-[11px] font-medium uppercase tracking-wider text-gray-300" />
-            {CURRENCIES.flatMap((c) => ([
-              <th key={`${c}-total`} className="px-4 pb-2 text-left text-[11px] font-medium uppercase tracking-wider text-gray-400">Total</th>,
-              <th key={`${c}-unit`} className="px-4 pb-2 text-left text-[11px] font-medium uppercase tracking-wider text-gray-400">Unit</th>,
-            ]))}
-            {onRemoveQty && <th className="px-4 pb-2" />}
-          </tr>
-        </thead>
-        <tbody>
-          {byQty.map(([qty, row]) => (
-            <tr key={qty} className="border-b border-gray-50 last:border-0">
-              <td className="px-4 py-2 font-medium text-gray-900 tabular-nums">{qty.toLocaleString()}</td>
-              {CURRENCIES.flatMap((c) => {
-                const tier = row[c]
-                return [
-                  <td key={`${qty}-${c}-total`} className="px-4 py-2">
-                    {tier ? (
-                      <PriceCell
-                        value={tier.total_price}
-                        currency={c}
-                        onSave={(next) => onSave(tier.id, qty, next)}
-                      />
-                    ) : (
-                      <span className="text-gray-300">—</span>
-                    )}
-                  </td>,
-                  <td key={`${qty}-${c}-unit`} className="px-4 py-2 text-xs text-gray-500 tabular-nums">
-                    {tier
-                      ? `${currencySymbol(c)}${(tier.total_price / qty).toFixed(4)}`
-                      : '—'}
-                  </td>,
-                ]
-              })}
-              {onRemoveQty && (
-                <td className="px-4 py-2 text-right">
-                  <button
-                    type="button"
-                    onClick={() => onRemoveQty(qty)}
-                    title={`Remove tier for ${qty.toLocaleString()} units`}
-                    className="rounded px-2 py-0.5 text-xs font-medium text-gray-400 hover:bg-rose-50 hover:text-rose-600"
-                  >
-                    Remove
-                  </button>
-                </td>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   )
 }

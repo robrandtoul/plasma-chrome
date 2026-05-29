@@ -1,13 +1,6 @@
-import type { CSSProperties } from 'react'
 import type { Currency } from '../../lib/types'
 
 const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
-
-const selectedChipStyle: CSSProperties = {
-  background: 'rgba(123,63,242,0.16)',
-  color: '#5b2bba',
-  boxShadow: 'inset 0 0 0 1.5px #7b3ff2',
-}
 
 // Compiler-side currency picker. Same visual shape as
 // src/components/CurrencyField but lighter — no carry-forward
@@ -23,10 +16,10 @@ export function CurrencyToggle({
 }) {
   return (
     <fieldset>
-      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-gray-400">
+      <legend className="mb-2 block text-xs font-semibold uppercase tracking-widest text-ink-dim">
         Currency
       </legend>
-      <div className="inline-flex rounded-xl border border-gray-200 bg-white p-0.5">
+      <div className="inline-flex rounded-md border border-line bg-surface p-0.5">
         {CURRENCIES.map((c) => {
           const selected = value === c
           return (
@@ -35,11 +28,12 @@ export function CurrencyToggle({
               type="button"
               onClick={() => onChange(c)}
               className={[
-                'rounded-lg px-5 py-2 text-sm font-semibold transition-colors',
-                'focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 focus-visible:ring-offset-1',
-                selected ? '' : 'text-gray-500 hover:text-gray-900',
+                'rounded px-5 py-2 text-sm font-semibold transition-colors',
+                'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
+                selected
+                  ? 'bg-brand-50 text-brand outline outline-1 -outline-offset-1 outline-brand'
+                  : 'text-ink-mute hover:text-ink',
               ].join(' ')}
-              style={selected ? selectedChipStyle : undefined}
             >
               {c}
             </button>

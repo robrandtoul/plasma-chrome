@@ -259,8 +259,8 @@ export default function AdminPricingPage() {
     <div className="space-y-10">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">Pricing</h2>
-          <p className="mt-1 text-sm text-gray-500">
+          <h2 className="text-xl font-bold text-ink">Pricing</h2>
+          <p className="mt-1 text-sm text-ink-mute">
             Edit materials, variants, price tiers and add-on surcharges. Changes save automatically and customer-facing prices update immediately.
           </p>
         </div>
@@ -268,27 +268,27 @@ export default function AdminPricingPage() {
           <button
             onClick={handleExportSurcharges}
             disabled={exporting}
-            className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-50"
+            className="rounded px-3 py-2 text-sm font-medium text-ink-soft border border-line hover:bg-canvas disabled:opacity-50"
           >
             Export surcharges
           </button>
           <button
             onClick={handleExportAll}
             disabled={exporting}
-            className="rounded-lg px-3 py-2 text-sm font-medium text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-50"
+            className="rounded px-3 py-2 text-sm font-medium text-ink-soft border border-line hover:bg-canvas disabled:opacity-50"
           >
             {exporting ? 'Bundling…' : 'Export everything (ZIP)'}
           </button>
           <button
             onClick={() => setShowImport(true)}
-            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
+            className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90"
           >
             Import
           </button>
         </div>
       </div>
       {exportError && (
-        <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700">{exportError}</p>
+        <p className="rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{exportError}</p>
       )}
       {showImport && (
         <AdminPricingImport
@@ -302,9 +302,9 @@ export default function AdminPricingPage() {
           per-currency settings that affect every quote. Lifted
           here from the Settings page so pricing-affecting
           knobs live next to the pricing they affect. */}
-      <section className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-        <h3 className="mb-1 text-sm font-semibold text-gray-900">VAT rate</h3>
-        <p className="mb-4 text-xs text-gray-500">
+      <section className="rounded-[14px] bg-surface p-6 border border-line">
+        <h3 className="mb-1 text-sm font-semibold text-ink">VAT rate</h3>
+        <p className="mb-4 text-xs text-ink-mute">
           UK VAT rate. Currently {vatRate != null ? `${Math.round(vatRate * 100 * 100) / 100}% (${vatRate})` : '—'}. Edit if HMRC changes it. EUR and USD prices are VAT-free and unaffected.
         </p>
         <div className="flex items-center gap-3">
@@ -318,9 +318,9 @@ export default function AdminPricingPage() {
             onBlur={() => { void saveVatRate() }}
             className={`${pricingInputClass} max-w-[10rem]`}
           />
-          {vatSaving && <span className="text-xs text-gray-400">Saving…</span>}
-          {vatRecentlySaved && !vatSaving && <span className="text-xs text-emerald-600">Saved</span>}
-          {vatError && <span className="text-xs text-rose-600">{vatError}</span>}
+          {vatSaving && <span className="text-xs text-ink-mute">Saving…</span>}
+          {vatRecentlySaved && !vatSaving && <span className="text-xs text-in-stock">Saved</span>}
+          {vatError && <span className="text-xs text-out">{vatError}</span>}
         </div>
       </section>
 
@@ -328,30 +328,30 @@ export default function AdminPricingPage() {
 
       {loading ? (
         <div className="flex justify-center py-20">
-          <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-gray-900" />
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-ink" />
         </div>
       ) : error ? (
-        <div className="rounded-2xl bg-rose-50 p-6 text-sm text-rose-700 ring-1 ring-rose-200">
+        <div className="rounded-[14px] bg-out-soft p-6 text-sm text-out ring-1 border-out">
           Failed to load pricing catalogue: {error}
         </div>
       ) : (
         <>
           {/* Materials */}
           <section>
-            <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-500">Materials</h3>
+            <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-ink-mute">Materials</h3>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {materials.map((m) => (
                 <Link
                   key={m.id}
                   to={`/admin/pricing/materials/${m.code}`}
-                  className="block rounded-2xl bg-white p-5 shadow-sm ring-1 ring-gray-200 transition-shadow hover:shadow-md"
+                  className="block rounded-[14px] bg-surface p-5 border border-line transition-shadow hover:shadow-md"
                 >
                   <div className="flex items-center justify-between">
-                    <div className="text-sm font-semibold text-gray-900">{m.display_name}</div>
-                    <span className="text-xs uppercase tracking-wider text-gray-400">{m.category}</span>
+                    <div className="text-sm font-semibold text-ink">{m.display_name}</div>
+                    <span className="text-xs uppercase tracking-wider text-ink-mute">{m.category}</span>
                   </div>
-                  <div className="mt-2 text-xs text-gray-500">{variantTypeLabel(m.variant_type, m.variant_count)}</div>
-                  <div className="mt-0.5 text-xs text-gray-400">{m.tier_count} price tier{m.tier_count === 1 ? '' : 's'}</div>
+                  <div className="mt-2 text-xs text-ink-mute">{variantTypeLabel(m.variant_type, m.variant_count)}</div>
+                  <div className="mt-0.5 text-xs text-ink-mute">{m.tier_count} price tier{m.tier_count === 1 ? '' : 's'}</div>
                 </Link>
               ))}
             </div>
@@ -359,23 +359,23 @@ export default function AdminPricingPage() {
 
           {/* Add-ons */}
           <section>
-            <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-500">Add-ons</h3>
-            <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-gray-200">
+            <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-ink-mute">Add-ons</h3>
+            <div className="overflow-hidden rounded-[14px] bg-surface border border-line">
               {addOns.map((a, i) => (
                 <Link
                   key={a.id}
                   to={`/admin/pricing/add-ons/${a.code}`}
                   className={[
-                    'flex items-center gap-4 px-5 py-3 hover:bg-gray-50',
-                    i > 0 ? 'border-t border-gray-100' : '',
+                    'flex items-center gap-4 px-5 py-3 hover:bg-canvas',
+                    i > 0 ? 'border-t border-line-soft' : '',
                   ].join(' ')}
                 >
                   <div className="flex-1">
-                    <div className="text-sm font-medium text-gray-900">{a.display_name}</div>
-                    <div className="text-xs text-gray-500">{pricingModelLabel(a.pricing_model)}</div>
+                    <div className="text-sm font-medium text-ink">{a.display_name}</div>
+                    <div className="text-xs text-ink-mute">{pricingModelLabel(a.pricing_model)}</div>
                   </div>
                   {!a.has_prices && a.pricing_model !== 'custom_quote' && (
-                    <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                    <span className="shrink-0 rounded-full bg-low-soft px-2 py-0.5 text-xs font-semibold text-low">
                       Needs pricing
                     </span>
                   )}
@@ -389,4 +389,4 @@ export default function AdminPricingPage() {
   )
 }
 
-const pricingInputClass = 'rounded-lg border border-gray-300 px-3 py-2 text-[17px] sm:text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900'
+const pricingInputClass = 'rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'

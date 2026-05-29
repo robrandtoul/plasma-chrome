@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { Send, Check, Layers, PoundSterling, DollarSign, Euro, BookOpen, Info, Eye, type LucideIcon } from 'lucide-react'
 import { supabase } from '../lib/supabase'
+import { PlasmaWordmark, Pill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, StatusRule, tokens, type PillColour } from '../design'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
 import { compilePersonalisationSurcharges, personalisationBreakeven } from '../lib/personalisation'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
@@ -8,53 +10,33 @@ import type { ProofEventState } from '../lib/types'
 import { deriveSharedApprovalState } from '../lib/sharedApproval'
 import { formatPrice } from '../lib/currency'
 import { type GridImage } from '../components/ImageGrid'
-import { BrandRule } from '../components/BrandRule'
-import { DocketBar } from '../components/DocketBar'
-import { DocketCell } from '../components/DocketCell'
 import { MaterialOptionTabs } from '../components/MaterialOptionTabs'
-import { PaperRecipientBand } from '../components/PaperRecipientBand'
-import { PaperRevisionTimeline } from '../components/PaperRevisionTimeline'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LayeredConstructionPanel } from '../components/LayeredConstructionPanel'
 import { MetalThicknessPanel } from '../components/MetalThicknessPanel'
+import { DEFAULT_METAL_THICKNESS_NOTES, thicknessSetForMaterial } from '../lib/metalThicknessNotes'
 import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
 import { ActionPanel } from '../components/ActionPanel'
 import { ProofDetailView } from '../components/ProofDetailView'
 import { firstName } from '../lib/firstName'
-import {
-  INK,
-  PAPER_CREAM,
-  PAPER_TINT_1,
-  PAPER_TINT_2,
-  PAPER_INK,
-  PAPER_SECONDARY,
-  PAPER_TERTIARY,
-  ACCENT,
-  ACCENT_GLOW,
-  APPROVED_GREEN,
-  BRAND_ORDER,
-  CTA_TEAL,
-  CTA_TEAL_HOVER,
-  CTA_TEAL_PRESSED,
-  CTA_TEAL_RING,
-  CTA_GHOST_BORDER,
-  CTA_GHOST_TEXT,
-  CTA_GHOST_BG,
-  CTA_GHOST_HOVER_BG,
-  CTA_GHOST_PRESSED_BG,
-  CTA_GHOST_HOVER_BORDER,
-  CTA_AMBER_BG,
-  CTA_AMBER_HOVER_BG,
-  CTA_AMBER_PRESSED_BG,
-  CTA_AMBER_BORDER,
-  CTA_AMBER_HOVER_BORDER,
-  CTA_AMBER_TEXT,
-  SERIF,
-  SANS,
-  MONO,
-} from '../lib/theme'
-import { getPublicSettings, type PublicSettings } from '../lib/publicSettings'
+import { BRAND_ORDER } from '../lib/theme'
+import { getPublicSettings, ABOUT_PROOF_COPY_DEFAULT, type PublicSettings } from '../lib/publicSettings'
 import type { PricingSnapshot, PricingVariant, Currency } from '../lib/types'
+
+// Pricing-card header glyph, picked from the version's currency so the
+// icon matches the prices shown beneath it (£ / $ / €) instead of always
+// reading as GBP. Falls back to the pound for null/unknown currencies
+// (e.g. per-direction-pricing rounds, which hide the pricing card anyway).
+function currencyIcon(currency: Currency | null | undefined): LucideIcon {
+  switch (currency) {
+    case 'USD':
+      return DollarSign
+    case 'EUR':
+      return Euro
+    default:
+      return PoundSterling
+  }
+}
 
 export default function CustomerProofPage() {
   const { id } = useParams<{ id: string }>()
@@ -62,6 +44,11 @@ export default function CustomerProofPage() {
   const [proof, setProof] = useState<PublicProof | null>(null)
   const [versions, setVersions] = useState<PublicProofVersion[]>([])
   const [activeVersion, setActiveVersion] = useState<PublicProofVersion | null>(null)
+  // History row: when a proof has many revisions, collapse the older
+  // ones behind a "+N earlier" chip so the row doesn't wrap to several
+  // lines. Toggled open by the customer; also force-open when they're
+  // viewing one of the older (collapsed) versions.
+  const [showAllVersions, setShowAllVersions] = useState(false)
   const [versionImages, setVersionImages] = useState<Record<string, GridImage[]>>({})
   // QR-code rows split off from versionImages so the regular image
   // grid never renders them. Same edge-function payload, but
@@ -1065,106 +1052,59 @@ export default function CustomerProofPage() {
     const key = bandKey(activeVersion.id, name)
     const successMessage = successMessages[key] ?? null
 
-    // Older-version slot — viewing v(N) while v(M) is current. The
-    // lockout (informational message + jump-to-current button) only
-    // fires when the proof has already been approved on some
-    // version. Before any approval, the customer can still approve
-    // an earlier version they prefer; that branch falls through to
+    // Older-version hard lockout — viewing v(N) while v(M) is
+    // current AND the proof has already been approved somewhere.
+    // Informational line + ghost button to jump to the latest.
+    // Before any approval, the customer can still approve an
+    // earlier version they prefer; that branch falls through to
     // the normal pending render with an amber warning prepended
     // (see below). is_current is the single source of truth for
-    // "latest version" (set by the supersession trigger in 000068);
-    // avoid created_at so a designer-renumbered version doesn't
-    // slip through.
+    // "latest version" (set by the supersession trigger in 000068).
     if (!activeVersion.is_current && proofIsApproved) {
       const currentVersion = versions.find((v) => v.is_current) ?? null
       return (
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-start">
-          <span
-            className="text-[#1a1612]/70"
-            style={{ fontFamily: SANS, fontSize: 14, lineHeight: 1.5 }}
-          >
+          <span className="text-sm text-ink-soft">
             You're viewing version {activeVersion.version_number}.
             {currentVersion
               ? ` Version ${currentVersion.version_number} is the current proof.`
               : ''}
           </span>
           {currentVersion && (
-            <button
-              type="button"
-              onClick={() => setActiveVersion(currentVersion)}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-                e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent'
-                e.currentTarget.style.borderColor = 'rgba(26,22,18,0.25)'
-              }}
-              className="inline-flex min-h-[36px] items-center justify-center rounded-[2px] px-5 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2"
-              style={{
-                background: 'transparent',
-                border: '1px solid rgba(26,22,18,0.25)',
-                color: 'rgba(26,22,18,0.75)',
-                fontFamily: MONO,
-                fontSize: 12,
-                fontWeight: 500,
-                letterSpacing: '0.06em',
-                textTransform: 'uppercase',
-                ['--tw-ring-color' as string]: CTA_TEAL_RING,
-              }}
-            >
+            <ButtonGhost size="sm" onClick={() => setActiveVersion(currentVersion)}>
               View current version
-            </button>
+            </ButtonGhost>
           )}
         </div>
       )
     }
 
-    // Banner layouts per state. Light theme — sits inside the
-    // PAPER-backed proofs section so the editorial register is
-    // preserved.
-    const bannerBase =
-      'mt-6 flex flex-col gap-2 rounded-md px-5 py-4 text-[#1a1612]'
-    const KICKER_STYLE = {
-      fontFamily: MONO,
-      fontSize: 11,
-      letterSpacing: '0.22em',
-    } as const
-    const BODY_STYLE = { fontFamily: SERIF, fontWeight: 400, fontSize: 18, lineHeight: 1.35 } as const
-
+    // Optimistic banner — fires right after a successful action
+    // before the server-mirrored state lands on next reload.
+    // role="status" is the implicit aria-live=polite + atomic so
+    // screen readers announce the result; the non-optimistic
+    // states render at page load and don't need announcing.
     if (state.kind === 'optimistic') {
       const approved = state.type === 'approve'
+      const pillColour: PillColour = approved ? 'in-stock' : 'brand'
+      const label = (approved ? 'Approved' : 'Changes requested') + (named ? ` for ${name}` : '')
       return (
         <div
-          // role=status (implicit aria-live=polite, aria-atomic=true) so
-          // screen readers announce the just-recorded approval / change
-          // request when this banner replaces the action buttons. The
-          // non-optimistic states render at initial page load and don't
-          // need to be announced; only this branch is dynamic.
           role="status"
-          className={bannerBase}
-          style={{
-            background: approved ? 'rgba(81,180,148,0.14)' : 'rgba(58,44,145,0.14)',
-            border: `1px solid ${approved ? 'rgba(81,180,148,0.45)' : 'rgba(58,44,145,0.45)'}`,
-          }}
+          className="mt-6 flex flex-col gap-2 rounded-[10px] bg-surface border border-line px-5 py-4"
         >
-          <span
-            className="uppercase"
-            style={{ ...KICKER_STYLE, color: approved ? '#176b3f' : '#3a2c91' }}
-          >
-            {(approved ? 'APPROVED' : 'CHANGES REQUESTED') + (named ? ` FOR ${name}` : '')}
-          </span>
-          <span style={BODY_STYLE}>
+          <Pill colour={pillColour}>{label}</Pill>
+          <span className="text-[15px] text-ink leading-snug">
             by {state.actorName}
             {formatBandDate(state.createdAt) ? ` on ${formatBandDate(state.createdAt)}` : ''}.
           </span>
           {state.comment && (
-            <p className="text-[14px] leading-[1.55] text-[#1a1612]/80" style={{ fontFamily: SANS }}>
-              "{state.comment}"
+            <p className="text-[14px] leading-[1.55] text-ink-soft">
+              &ldquo;{state.comment}&rdquo;
             </p>
           )}
           {successMessage && (
-            <p className="text-[13px] leading-[1.55] text-[#1a1612]/70" style={{ fontFamily: SANS }}>
+            <p className="text-[13px] leading-[1.55] text-ink-mute">
               {successMessage}
             </p>
           )}
@@ -1172,100 +1112,56 @@ export default function CustomerProofPage() {
       )
     }
 
+    // Carried — green carry-forward banner. Reads "Approved
+    // (carried from v{N})" so the customer understands the slot
+    // was approved on an earlier version and pulled through.
     if (state.kind === 'carried') {
       const subtitle =
         state.carriedFromVersionNumber != null
-          ? `Approved (carried from v${state.carriedFromVersionNumber})`
-          : 'Approved (carried from a previous version)'
+          ? `Carried from v${state.carriedFromVersionNumber}`
+          : 'Carried from a previous version'
       return (
-        <div
-          className={bannerBase}
-          style={{
-            background: 'rgba(81,180,148,0.08)',
-            border: '1px solid rgba(81,180,148,0.30)',
-          }}
-        >
-          <span className="uppercase" style={{ ...KICKER_STYLE, color: '#176b3f' }}>
-            {('Approved' + forSuffix).toUpperCase()}
-          </span>
-          <span style={{ ...BODY_STYLE, fontSize: 15, color: '#1a1612' }}>
-            {subtitle}
-          </span>
+        <div className="mt-6 flex flex-col gap-2 rounded-[10px] bg-surface border border-line px-5 py-4">
+          <Pill colour="in-stock">{'Approved' + forSuffix}</Pill>
+          <span className="text-[14px] text-ink-soft">{subtitle}</span>
         </div>
       )
     }
 
+    // Approved — minimal status line in the same horizontal slot
+    // the buttons would occupy. Pill + actor/date/comment.
+    // Quieter than the carried banner because the slot reads as
+    // "done" rather than as a state to act on.
     if (state.kind === 'approved') {
-      // Latest version, approved — minimal status line in the same
-      // horizontal slot the buttons would occupy. Green dot
-      // (APPROVED_GREEN, matched to the Approve CTA accent) +
-      // uppercase tracked label, with a muted DD MMM YYYY secondary
-      // line beneath. No tinted card, no border — keeps the slot
-      // visually quiet so the customer reads it as "done" rather
-      // than as a fresh thing to act on.
       const approvedDate = formatApprovedDate(state.createdAt)
       return (
-        <div className="mt-6 flex flex-col gap-1 sm:items-start">
-          <div className="flex items-center gap-2">
-            <span
-              aria-hidden="true"
-              className="inline-block rounded-full"
-              style={{ width: 8, height: 8, background: APPROVED_GREEN }}
-            />
-            <span
-              className="uppercase"
-              style={{
-                fontFamily: MONO,
-                fontSize: 11,
-                letterSpacing: '0.22em',
-                color: '#1a1612',
-              }}
-            >
-              APPROVED
-            </span>
-          </div>
+        <div className="mt-6 flex flex-col gap-1.5 sm:items-start">
+          <Pill colour="in-stock">{'Approved' + forSuffix}</Pill>
           {(state.actorName || approvedDate) && (
-            <span
-              className="text-[#1a1612]/70"
-              style={{ fontFamily: SANS, fontSize: 14, lineHeight: 1.5 }}
-            >
+            <span className="text-sm text-ink-soft">
               {state.actorName ? `Approved by ${state.actorName}` : 'Approved'}
               {approvedDate ? ` on ${approvedDate}` : ''}
             </span>
           )}
           {state.comment && (
-            <p className="text-[14px] leading-[1.55] text-[#1a1612]/80" style={{ fontFamily: SANS }}>
-              "{state.comment}"
+            <p className="text-[14px] leading-[1.55] text-ink-soft">
+              &ldquo;{state.comment}&rdquo;
             </p>
           )}
         </div>
       )
     }
 
+    // Changes requested — coral / brand pill on a quiet card.
+    // brand-soft for the changes-requested treatment so it sits
+    // on the page as a clear "action needed" state without
+    // shouting at the customer who already submitted feedback.
     if (state.kind === 'changes_requested') {
-      // Coral / request-changes banner stays on the saturated
-      // treatment — the spec only reworks the approved state.
       return (
-        <div
-          className="mt-6 flex flex-col gap-2 rounded-md py-[18px] px-[22px] text-[#1a1612]"
-          style={{
-            background: 'rgba(58,44,145,0.18)',
-            border: '1px solid rgba(58,44,145,0.4)',
-          }}
-        >
-          <span
-            className="uppercase"
-            style={{
-              ...KICKER_STYLE,
-              fontSize: 16,
-              fontWeight: 600,
-              color: '#3a2c91',
-            }}
-          >
-            CHANGES REQUESTED
-          </span>
+        <div className="mt-6 flex flex-col gap-2 rounded-[10px] bg-brand-50 border border-brand-200 px-5 py-4">
+          <Pill colour="brand">Changes requested</Pill>
           {(state.actorName || state.createdAt) && (
-            <span style={{ ...BODY_STYLE, fontSize: 22, color: '#3a2c91' }}>
+            <span className="text-[15px] text-ink leading-snug">
               {state.actorName ? `by ${state.actorName}` : ''}
               {state.actorName && formatBandDate(state.createdAt) ? ' ' : ''}
               {formatBandDate(state.createdAt)
@@ -1275,25 +1171,25 @@ export default function CustomerProofPage() {
             </span>
           )}
           {state.comment && (
-            <p className="text-[14px] leading-[1.55] text-[#1a1612]/80" style={{ fontFamily: SANS }}>
-              "{state.comment}"
+            <p className="text-[14px] leading-[1.55] text-ink-soft">
+              &ldquo;{state.comment}&rdquo;
             </p>
           )}
         </div>
       )
     }
 
-    // pending — render the two buttons. When the customer is viewing
+    // Pending — render the two buttons. When the customer is viewing
     // an earlier version on a not-yet-approved proof, prepend an
     // amber warning so they know they're not on the most recent
     // proof but can still approve this one if they prefer it.
     //
-    // If the action panel is already open for this slot (same version
-    // and recipient, and not the variant-round path), suppress the
-    // whole pending block — eyebrow, warning, both buttons. The panel
-    // IS the form now; rendering a second pair of buttons below it
-    // reads as redundant and confusing. The block reappears if the
-    // customer cancels.
+    // If the action panel is already open for this slot (same
+    // version and recipient, and not the variant-round path),
+    // suppress the whole pending block — eyebrow, warning, both
+    // buttons. The panel IS the form now; rendering a second pair
+    // of buttons below it reads as redundant. The block reappears
+    // if the customer cancels.
     if (
       actionPanel &&
       !actionPanel.roundVariant &&
@@ -1308,32 +1204,14 @@ export default function CustomerProofPage() {
     return (
       <div className="mt-6 flex flex-col gap-3 sm:items-start">
         {showEarlierVersionWarning && latestVersion && (
-          <div
-            className="flex flex-col gap-1 rounded-md px-5 py-4 text-[#1a1612]"
-            style={{
-              background: 'rgba(217,119,6,0.10)',
-              border: '1px solid rgba(217,119,6,0.45)',
-            }}
-          >
-            <span
-              className="uppercase"
-              style={{
-                fontFamily: MONO,
-                fontSize: 11,
-                letterSpacing: '0.22em',
-                color: '#92400e',
-              }}
-            >
-              Heads up
-            </span>
-            <p
-              style={{
-                fontFamily: SANS,
-                fontSize: 14,
-                lineHeight: 1.55,
-                color: '#1a1612',
-              }}
-            >
+          // "Heads up" earlier-version warning. Quiet low-soft
+          // (amber) card with a pill + body copy. Was Direction-B
+          // amber tint + bespoke colour values; now uses the
+          // design system's low / low-soft tokens which match
+          // the same semantic (warning, not error).
+          <div className="flex flex-col gap-2 rounded-[10px] bg-low-soft border border-low px-5 py-4">
+            <Pill colour="low">Heads up</Pill>
+            <p className="text-sm text-ink leading-relaxed">
               You're viewing version {activeVersion.version_number} of{' '}
               {versions.length}. Version {latestVersion.version_number} is
               the most recent proof. You can still approve this version if
@@ -1344,122 +1222,39 @@ export default function CustomerProofPage() {
         {/* "Request changes or approve" eyebrow only makes sense
             when both actions are on offer. On an earlier version
             Request changes is suppressed (capturing feedback
-            against a superseded design is illogical — the customer
-            should be on the latest version to do that), so the
-            eyebrow goes too. The amber "Heads up" block above
-            already frames the earlier-version choice. */}
+            against a superseded design is illogical — the
+            customer should be on the latest version to do that),
+            so the eyebrow goes too. */}
         {!showEarlierVersionWarning && (
-          <span
-            className="uppercase"
-            style={{
-              fontFamily: MONO,
-              fontSize: 11,
-              letterSpacing: '0.22em',
-              textTransform: 'uppercase',
-              color: PAPER_SECONDARY,
-            }}
-          >
-            Request changes or approve
-          </span>
+          <span className="eyebrow">Request changes or approve</span>
         )}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           {showEarlierVersionWarning && latestVersion ? (
-            // Earlier version — secondary navigation, not the
-            // primary action. Style matches the "View current
-            // version" button in the hard-lockout branch above so
-            // the same affordance reads as the same control. The
-            // teal Approve button to the right is the primary
-            // action; this gives the customer a quiet way to
-            // switch off the earlier version if they didn't mean
-            // to be on it.
-            <button
-              type="button"
-              onClick={() => setActiveVersion(latestVersion)}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-                e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent'
-                e.currentTarget.style.borderColor = 'rgba(26,22,18,0.25)'
-              }}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-5 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2"
-              style={{
-                background: 'transparent',
-                border: '1px solid rgba(26,22,18,0.25)',
-                color: 'rgba(26,22,18,0.75)',
-                fontFamily: MONO,
-                fontSize: 12,
-                fontWeight: 500,
-                letterSpacing: '0.06em',
-                textTransform: 'uppercase',
-                ['--tw-ring-color' as string]: CTA_TEAL_RING,
-              }}
-            >
+            // Earlier version, no approval yet — secondary
+            // navigation, not the primary action. ButtonGhost
+            // lets the customer switch to the latest version
+            // quietly while the Approve CTA stays available for
+            // the deliberate "I want this earlier version" case.
+            <ButtonGhost onClick={() => setActiveVersion(latestVersion)}>
               Go to the latest version
-            </button>
+            </ButtonGhost>
           ) : (
-            <button
-              type="button"
+            // Request changes — coral / brand-tinted CTA, paired
+            // with the ink Approve to its right. The two CTAs
+            // sit side-by-side at sm+ and stack at <sm.
+            <ButtonCoral
+              icon={Send}
               onClick={() => openActionPanel(activeVersion.id, name, 'request_changes')}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = CTA_AMBER_HOVER_BG
-                e.currentTarget.style.borderColor = CTA_AMBER_HOVER_BORDER
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = CTA_AMBER_BG
-                e.currentTarget.style.borderColor = CTA_AMBER_BORDER
-              }}
-              onMouseDown={(e) => {
-                e.currentTarget.style.background = CTA_AMBER_PRESSED_BG
-              }}
-              onMouseUp={(e) => {
-                e.currentTarget.style.background = CTA_AMBER_HOVER_BG
-              }}
-              className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-7 py-4 transition-colors focus-visible:outline-none focus-visible:ring-2"
-              style={{
-                background: CTA_AMBER_BG,
-                border: `1.5px solid ${CTA_AMBER_BORDER}`,
-                color: CTA_AMBER_TEXT,
-                fontFamily: MONO,
-                fontSize: 13,
-                fontWeight: 500,
-                letterSpacing: '0.06em',
-                textTransform: 'uppercase',
-                ['--tw-ring-color' as string]: CTA_TEAL_RING,
-              }}
             >
               Request changes
-            </button>
+            </ButtonCoral>
           )}
-          <button
-            type="button"
+          <ButtonInk
+            icon={Check}
             onClick={() => openActionPanel(activeVersion.id, name, 'approve')}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = CTA_TEAL_HOVER
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = CTA_TEAL
-            }}
-            onMouseDown={(e) => {
-              e.currentTarget.style.background = CTA_TEAL_PRESSED
-            }}
-            onMouseUp={(e) => {
-              e.currentTarget.style.background = CTA_TEAL_HOVER
-            }}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-[2px] px-7 py-4 text-white transition-colors focus-visible:outline-none focus-visible:ring-2"
-            style={{
-              background: CTA_TEAL,
-              fontFamily: MONO,
-              fontSize: 13,
-              fontWeight: 500,
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-              ['--tw-ring-color' as string]: CTA_TEAL_RING,
-            }}
           >
             {approveLabel}
-          </button>
+          </ButtonInk>
         </div>
       </div>
     )
@@ -1502,15 +1297,11 @@ export default function CustomerProofPage() {
       timestampByName,
     })
 
-    const bannerBase =
-      'mt-6 flex flex-col gap-2 rounded-md px-5 py-4 text-[#1a1612]'
-    const KICKER_STYLE = {
-      fontFamily: MONO,
-      fontSize: 11,
-      letterSpacing: '0.22em',
-    } as const
-    const BODY_STYLE = { fontFamily: SERIF, fontWeight: 400, fontSize: 18, lineHeight: 1.35 } as const
-
+    // Two-state info banner for the shared-section block — used
+    // when the proof has named recipients (the shared section is
+    // approved-by-implication, never the customer's direct action).
+    // 'approved' → green register matching the per-recipient
+    // approval pill from PR 12c; otherwise → quiet eyebrow.
     if (derived.state === 'approved') {
       const dateStr = derived.latestApprovedAt
         ? new Date(derived.latestApprovedAt).toLocaleDateString('en-GB', {
@@ -1520,17 +1311,34 @@ export default function CustomerProofPage() {
           })
         : null
       return (
-        <div
-          className={bannerBase}
-          style={{
-            background: 'rgba(81,180,148,0.08)',
-            border: '1px solid rgba(81,180,148,0.30)',
-          }}
-        >
-          <span className="uppercase" style={{ ...KICKER_STYLE, color: '#176b3f' }}>
-            APPROVED
+        <div className="flex flex-col gap-1.5">
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 eyebrow self-start"
+            style={{
+              background: 'rgba(14,155,78,0.14)',
+              color: 'var(--c-in-stock)',
+              border: '1px solid rgba(14,155,78,0.3)',
+              letterSpacing: '0.14em',
+            }}
+          >
+            <svg
+              width="9"
+              height="9"
+              viewBox="0 0 12 12"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M2.5 6.5L5 9L9.5 3.5"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Approved
           </span>
-          <span style={{ ...BODY_STYLE, fontSize: 15, color: '#1a1612' }}>
+          <span className="text-[14px] text-ink-soft leading-snug">
             {dateStr ? `Approved on ${dateStr}.` : 'Approved.'}
           </span>
         </div>
@@ -1538,17 +1346,9 @@ export default function CustomerProofPage() {
     }
 
     return (
-      <div
-        className={bannerBase}
-        style={{
-          background: 'rgba(0,0,0,0.04)',
-          border: '1px solid rgba(0,0,0,0.10)',
-        }}
-      >
-        <span className="uppercase" style={{ ...KICKER_STYLE, color: '#1a1612' }}>
-          PENDING REVIEW
-        </span>
-        <span style={{ ...BODY_STYLE, fontSize: 15, color: '#1a1612' }}>
+      <div className="flex flex-col gap-1.5">
+        <span className="eyebrow text-ink-mute">Pending review</span>
+        <span className="text-[14px] text-ink-soft leading-snug">
           Approved automatically once every recipient approves their design.
         </span>
       </div>
@@ -1673,13 +1473,10 @@ export default function CustomerProofPage() {
     const isLocked = lockState.kind === 'locked'
     const isChosen = isLocked && lockState.chosenVariantId === variant.id
 
-    const KICKER_STYLE = {
-      fontFamily: MONO,
-      fontSize: 11,
-      letterSpacing: '0.22em',
-      textTransform: 'uppercase' as const,
-    }
-
+    // Chosen direction — green Selected pill + headline + optional
+    // comment. Uses the same in-stock token as the per-recipient
+    // approval pill in PR 12c so the two "this has been confirmed"
+    // signals read as the same colour register across the page.
     if (isLocked && isChosen) {
       const actor = lockState.actorName ?? ''
       const dateStr = formatBandDate(lockState.createdAt)
@@ -1689,38 +1486,38 @@ export default function CustomerProofPage() {
           ? `Chosen by ${actor}.`
           : 'This direction was selected.'
       return (
-        <div
-          className="mt-6 flex flex-col gap-2 rounded-md py-[18px] px-[22px]"
-          style={{
-            background: 'rgba(81,180,148,0.18)',
-            border: '1px solid rgba(81,180,148,0.45)',
-            color: '#1a1612',
-          }}
-        >
-          <span style={{ ...KICKER_STYLE, color: '#176b3f' }}>
-            Selected
-          </span>
+        <div className="flex flex-col gap-2">
           <span
+            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 eyebrow self-start"
             style={{
-              fontFamily: SERIF,
-              fontWeight: 400,
-              fontSize: 22,
-              lineHeight: 1.35,
-              color: '#1a1612',
+              background: 'rgba(14,155,78,0.14)',
+              color: 'var(--c-in-stock)',
+              border: '1px solid rgba(14,155,78,0.3)',
+              letterSpacing: '0.14em',
             }}
           >
+            <svg
+              width="9"
+              height="9"
+              viewBox="0 0 12 12"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M2.5 6.5L5 9L9.5 3.5"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Selected
+          </span>
+          <span className="font-display font-medium text-ink text-[17px] leading-snug">
             {headlineText}
           </span>
           {lockState.comment && (
-            <p
-              className="mt-1"
-              style={{
-                fontFamily: SANS,
-                fontSize: 14,
-                lineHeight: 1.55,
-                color: '#1a1612',
-              }}
-            >
+            <p className="text-[14px] text-ink-soft leading-[1.55]">
               "{lockState.comment}"
             </p>
           )}
@@ -1730,17 +1527,7 @@ export default function CustomerProofPage() {
 
     if (isLocked && !isChosen) {
       return (
-        <div
-          className="mt-6 flex items-center rounded-md py-[14px] px-[18px]"
-          style={{
-            background: 'rgba(0,0,0,0.04)',
-            border: '1px solid rgba(0,0,0,0.10)',
-          }}
-        >
-          <span style={{ ...KICKER_STYLE, color: 'rgba(26,22,18,0.55)' }}>
-            Not selected
-          </span>
-        </div>
+        <span className="eyebrow text-ink-mute">Not selected</span>
       )
     }
 
@@ -1758,43 +1545,17 @@ export default function CustomerProofPage() {
       return null
     }
     return (
-      <div className="mt-6">
-        <button
-          type="button"
-          onClick={() =>
-            openVariantActionPanel(activeVersion.id, {
-              id: variant.id,
-              display_name: variant.display_name,
-            })
-          }
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-            e.currentTarget.style.borderColor = CTA_GHOST_HOVER_BORDER
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = CTA_GHOST_BG
-            e.currentTarget.style.borderColor = CTA_GHOST_BORDER
-          }}
-          onMouseDown={(e) => {
-            e.currentTarget.style.background = CTA_GHOST_PRESSED_BG
-          }}
-          onMouseUp={(e) => {
-            e.currentTarget.style.background = CTA_GHOST_HOVER_BG
-          }}
-          className="inline-flex min-h-[44px] w-full items-center justify-center rounded-[2px] px-7 py-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(123,63,242,0.5)]"
-          style={{
-            background: CTA_GHOST_BG,
-            border: `1.5px solid ${CTA_GHOST_BORDER}`,
-            color: CTA_GHOST_TEXT,
-            fontFamily: MONO,
-            fontSize: 13,
-            letterSpacing: '0.06em',
-            textTransform: 'uppercase',
-          }}
-        >
-          Choose this direction
-        </button>
-      </div>
+      <ButtonGhost
+        block
+        onClick={() =>
+          openVariantActionPanel(activeVersion.id, {
+            id: variant.id,
+            display_name: variant.display_name,
+          })
+        }
+      >
+        Choose this direction
+      </ButtonGhost>
     )
   }
 
@@ -1850,316 +1611,236 @@ export default function CustomerProofPage() {
     const isLocked = lockState.kind === 'locked'
 
     return (
-      <>
-        {/* ───── Variant comparison ───────────────────────────────────
-            Side-by-side variant cards. Each card carries its own
-            heading (display_name), image cluster, and action band.
-            Renders ahead of the pricing card so the customer scans
-            and chooses a direction before scrolling to price detail.
-            The whole grid locks once any selection lands; the chosen
-            variant gets the emerald "Selected" banner, others go to
-            muted "Not selected" + reduced opacity. */}
-        <section
-          aria-labelledby="section-variant-grid-heading"
-          style={{
-            background: PAPER_CREAM,
-            color: PAPER_INK,
-          }}
-        >
-          <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-            <div
-              className="mb-10 flex flex-wrap items-end justify-between gap-4 border-b-2 pb-4"
-              style={{ borderColor: 'rgba(26,22,18,0.8)' }}
+      <div className="space-y-6">
+        {/* V2 contact-sheet treatment for the variant comparison.
+            Inline section header ("Choose a direction" + count
+            eyebrow + gradient hairline) matches the plates section
+            from PR 12c. Each variant renders as a V2 numbered card
+            panel: header band with chip + display_name + sides
+            indicator, image grid below, per-variant action band on
+            a top border at the bottom. */}
+        <div>
+          <div className="mb-6 flex flex-wrap items-baseline gap-3 sm:gap-4">
+            <h2
+              id="section-variant-grid-heading"
+              className="font-display font-medium tracking-[-0.02em] text-ink leading-tight"
+              style={{ fontSize: 'clamp(22px, 3vw, 28px)' }}
             >
-              <div>
-                <h2
-                  id="section-variant-grid-heading"
-                  className="leading-none break-words"
+              Choose a direction
+            </h2>
+            <span className="eyebrow">
+              {variants.length === 1
+                ? '01 direction'
+                : `${String(variants.length).padStart(2, '0')} directions · pick one`}
+            </span>
+            <span
+              aria-hidden="true"
+              className="hidden sm:block flex-1 h-px"
+              style={{ background: 'linear-gradient(to right, var(--c-line), transparent)' }}
+            />
+          </div>
+          {/* Per-direction-pricing pointer (000142, renamed 000144).
+              Sits between the header and the variant cards so the
+              customer reads it as part of the section's framing.
+              Per-direction pricing also fires when directions differ
+              in thickness/tier within the same material family, so
+              the by-material framing was sometimes inaccurate. */}
+          {activeVersion.is_per_direction_pricing && (
+            <p className="mb-5 text-[14px] text-ink-soft leading-[1.55]">
+              Each direction is priced individually. See your email for details.
+            </p>
+          )}
+          <div className={gridClass}>
+            {variants.map((variant, variantIdx) => {
+              const variantImages = imagesByVariant.get(variant.id) ?? []
+              // Per-variant 2-sided support. Front images include
+              // any legacy side=null rows so existing variant
+              // rounds without a side stamp render unchanged
+              // (000143 backfilled production rows to 'front', so
+              // the null-tolerant filter is belt-and-braces for
+              // any future drift). Back images render as a second
+              // cluster below the front, separated by a small
+              // eyebrow label — only when the designer actually
+              // uploaded a back side for this variant.
+              const frontImages = variantImages.filter(
+                (img) => img.side === 'front' || img.side == null,
+              )
+              const backImages = variantImages.filter(
+                (img) => img.side === 'back',
+              )
+              const hasBack = backImages.length > 0
+              // Variant-round navigable set — what the detail view
+              // (Phase 2) walks through with its chevrons. Front-
+              // then-back across this single variant card; the
+              // rest of the page (other variants, the shared
+              // section) is not part of the same set, so chevron
+              // navigation never escapes the variant the customer
+              // clicked into.
+              const variantNavigableImages: GridImage[] = hasBack
+                ? [...frontImages, ...backImages]
+                : frontImages
+              const isChosen =
+                isLocked && lockState.chosenVariantId === variant.id
+              const dimmed = isLocked && !isChosen
+              const chipLabel = String(variantIdx + 1).padStart(2, '0')
+              const sidesLabel = hasBack
+                ? '2 sides'
+                : `${frontImages.length} ${frontImages.length === 1 ? 'side' : 'sides'}`
+              let colorIdx = 0
+              return (
+                <article
+                  key={variant.id}
+                  className="bg-surface border rounded-[14px] overflow-hidden flex flex-col"
                   style={{
-                    fontFamily: SERIF,
-                    fontWeight: 400,
-                    fontSize: 'clamp(40px, 9vw, 56px)',
-                    color: PAPER_INK,
+                    borderColor: isChosen
+                      ? 'rgba(14,155,78,0.4)'
+                      : 'var(--c-line)',
+                    opacity: dimmed ? 0.55 : 1,
+                    transition: 'opacity 200ms ease-out',
                   }}
                 >
-                  Choose a direction
-                </h2>
-                <p
-                  className="mt-3 block"
-                  style={{
-                    fontFamily: SANS,
-                    fontSize: 15,
-                    color: PAPER_TERTIARY,
-                  }}
-                >
-                  {variants.length === 1
-                    ? '1 direction'
-                    : `${variants.length} directions · pick one`}
-                </p>
-                {/* Per-direction-pricing pointer (000142, renamed 000144).
-                    Sits under the count subtitle so the customer reads
-                    it as part of the section's framing, not as an alert.
-                    The per-direction pricing decisions live in the email
-                    thread; this line is just the signpost. Copy moved
-                    away from "Pricing varies by material…" — per-
-                    direction pricing also fires when directions differ
-                    in thickness or tier within the same material family,
-                    so the by-material framing was sometimes inaccurate. */}
-                {activeVersion.is_per_direction_pricing && (
-                  <p
-                    className="mt-2"
-                    style={{
-                      fontFamily: SANS,
-                      fontSize: 14,
-                      color: PAPER_SECONDARY,
-                    }}
-                  >
-                    Each direction is priced individually. See your email for details.
-                  </p>
-                )}
-              </div>
-            </div>
-            <div className={gridClass}>
-              {variants.map((variant) => {
-                const variantImages = imagesByVariant.get(variant.id) ?? []
-                // Per-variant 2-sided support. Front images include
-                // any legacy side=null rows so existing variant
-                // rounds without a side stamp render unchanged
-                // (000143 backfilled production rows to 'front', so
-                // the null-tolerant filter is belt-and-braces for
-                // any future drift). Back images render as a second
-                // cluster below the front, separated by a small
-                // mono kicker — only when the designer actually
-                // uploaded a back side for this variant.
-                const frontImages = variantImages.filter(
-                  (img) => img.side === 'front' || img.side == null,
-                )
-                const backImages = variantImages.filter(
-                  (img) => img.side === 'back',
-                )
-                const hasBack = backImages.length > 0
-                // Variant-round navigable set — what the detail view
-                // (Phase 2) walks through with its chevrons. Front-
-                // then-back across this single variant card; the
-                // rest of the page (other variants, the shared
-                // section) is not part of the same set, so chevron
-                // navigation never escapes the variant the customer
-                // clicked into.
-                const variantNavigableImages: GridImage[] = hasBack
-                  ? [...frontImages, ...backImages]
-                  : frontImages
-                const isChosen =
-                  isLocked && lockState.chosenVariantId === variant.id
-                const dimmed = isLocked && !isChosen
-                let colorIdx = 0
-                return (
-                  <article
-                    key={variant.id}
-                    className="flex flex-col p-6 sm:p-7"
-                    style={{
-                      background: '#ffffff',
-                      border: isChosen
-                        ? '1px solid rgba(81,180,148,0.45)'
-                        : '1px solid rgba(26,22,18,0.12)',
-                      opacity: dimmed ? 0.55 : 1,
-                      transition: 'opacity 200ms ease-out',
-                    }}
-                  >
-                    <h3
-                      className="break-words"
-                      style={{
-                        fontFamily: SERIF,
-                        fontWeight: 400,
-                        fontSize: 'clamp(24px, 5vw, 30px)',
-                        lineHeight: 1.05,
-                        color: PAPER_INK,
-                      }}
-                    >
-                      {variant.display_name}
-                    </h3>
-                    {variantImages.length === 0 ? (
-                      <p
-                        className="mt-6"
-                        style={{
-                          fontFamily: SANS,
-                          fontSize: 14,
-                          color: PAPER_TERTIARY,
-                        }}
-                      >
+                  {/* Card header band: numbered chip + display_name
+                      + sides indicator. Mirrors the per-recipient
+                      card pattern from PR 12c. */}
+                  <div className="flex items-center gap-3 px-5 py-4 border-b border-line-soft">
+                    <span className="grid place-items-center h-9 w-9 rounded-full bg-canvas border border-line eyebrow text-ink">
+                      {chipLabel}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-display font-medium text-ink text-[17px] leading-tight truncate">
+                        {variant.display_name}
+                      </div>
+                    </div>
+                    {variantImages.length > 0 && (
+                      <span className="inline-flex items-center gap-1.5 eyebrow text-ink-mute">
+                        <Eye size={12} aria-hidden="true" />
+                        {sidesLabel}
+                      </span>
+                    )}
+                  </div>
+                  {/* Image area. Empty state, two-sided sub-grid,
+                      or single cluster. */}
+                  {variantImages.length === 0 ? (
+                    <div className="p-5">
+                      <p className="text-[14px] text-ink-mute">
                         No images uploaded for this direction yet.
                       </p>
-                    ) : hasBack ? (
-                      // Two-sided: Front and Back render side-by-side
-                      // at sm+ (≥ 640px) so the variant card stays
-                      // roughly the same height as a single-sided card
-                      // alongside it. Below sm, fall back to vertical
-                      // stacking — side-by-side inside a comparison-
-                      // grid column at <640px would crush each image
-                      // too small to read. Order is fixed Front-Left,
-                      // Back-Right regardless of image sort_order.
-                      <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2">
-                        <div>
-                          <p
-                            className="font-paper-mono uppercase"
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 500,
-                              letterSpacing: '0.32em',
-                              color: PAPER_TERTIARY,
-                            }}
-                          >
-                            Front
-                          </p>
-                          <div className="mt-2 space-y-5">
-                            {frontImages.map((img) => (
-                              <PlateCard
-                                key={img.id}
-                                image={img}
-                                brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
-                                alt={`${variant.display_name} — proof version ${activeVersion.version_number}`}
-                                onClick={() => openDetailView({
-                                  images: variantNavigableImages,
-                                  index: variantNavigableImages.findIndex((x) => x.id === img.id),
-                                  displayLabel: variant.display_name,
-                                  versionId: activeVersion.id,
-                                  recipientName: SHARED_APPROVAL_KEY,
-                                  roundVariant: { id: variant.id, displayName: variant.display_name },
-                                })}
-                              />
-                            ))}
-                          </div>
-                        </div>
-                        <div>
-                          <p
-                            className="font-paper-mono uppercase"
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 500,
-                              letterSpacing: '0.32em',
-                              color: PAPER_TERTIARY,
-                            }}
-                          >
-                            Back
-                          </p>
-                          <div className="mt-2 space-y-5">
-                            {backImages.map((img) => (
-                              <PlateCard
-                                key={img.id}
-                                image={img}
-                                brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
-                                alt={`${variant.display_name} (back) — proof version ${activeVersion.version_number}`}
-                                onClick={() => openDetailView({
-                                  images: variantNavigableImages,
-                                  index: variantNavigableImages.findIndex((x) => x.id === img.id),
-                                  displayLabel: variant.display_name,
-                                  versionId: activeVersion.id,
-                                  recipientName: SHARED_APPROVAL_KEY,
-                                  roundVariant: { id: variant.id, displayName: variant.display_name },
-                                })}
-                              />
-                            ))}
-                          </div>
+                    </div>
+                  ) : hasBack ? (
+                    // Two-sided: Front and Back render side-by-side
+                    // at sm+ (≥ 640px) so the variant card stays
+                    // roughly the same height as a single-sided card
+                    // alongside it. Below sm, fall back to vertical
+                    // stacking — side-by-side inside a comparison-
+                    // grid column at <640px would crush each image
+                    // too small to read. Order is fixed Front-Left,
+                    // Back-Right regardless of image sort_order.
+                    <div className="grid grid-cols-1 gap-px bg-line-soft sm:grid-cols-2">
+                      <div className="bg-surface p-5">
+                        <p className="eyebrow text-ink-mute mb-2">Front</p>
+                        <div className="space-y-5">
+                          {frontImages.map((img) => (
+                            <PlateCard
+                              key={img.id}
+                              image={img}
+                              brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
+                              alt={`${variant.display_name} — proof version ${activeVersion.version_number}`}
+                              onClick={() => openDetailView({
+                                images: variantNavigableImages,
+                                index: variantNavigableImages.findIndex((x) => x.id === img.id),
+                                displayLabel: variant.display_name,
+                                versionId: activeVersion.id,
+                                recipientName: SHARED_APPROVAL_KEY,
+                                roundVariant: { id: variant.id, displayName: variant.display_name },
+                              })}
+                            />
+                          ))}
                         </div>
                       </div>
-                    ) : (
-                      // Single-sided: full-width Front cluster, no
-                      // kicker. Byte-identical to the pre-2-sided
-                      // render path.
-                      <div className="mt-5 space-y-5">
-                        {frontImages.map((img) => (
-                          <PlateCard
-                            key={img.id}
-                            image={img}
-                            brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
-                            alt={`${variant.display_name} — proof version ${activeVersion.version_number}`}
-                            onClick={() => openDetailView({
-                              images: variantNavigableImages,
-                              index: variantNavigableImages.findIndex((x) => x.id === img.id),
-                              displayLabel: variant.display_name,
-                              versionId: activeVersion.id,
-                              recipientName: SHARED_APPROVAL_KEY,
-                              roundVariant: { id: variant.id, displayName: variant.display_name },
-                            })}
-                          />
-                        ))}
+                      <div className="bg-surface p-5">
+                        <p className="eyebrow text-ink-mute mb-2">Back</p>
+                        <div className="space-y-5">
+                          {backImages.map((img) => (
+                            <PlateCard
+                              key={img.id}
+                              image={img}
+                              brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
+                              alt={`${variant.display_name} (back) — proof version ${activeVersion.version_number}`}
+                              onClick={() => openDetailView({
+                                images: variantNavigableImages,
+                                index: variantNavigableImages.findIndex((x) => x.id === img.id),
+                                displayLabel: variant.display_name,
+                                versionId: activeVersion.id,
+                                recipientName: SHARED_APPROVAL_KEY,
+                                roundVariant: { id: variant.id, displayName: variant.display_name },
+                              })}
+                            />
+                          ))}
+                        </div>
                       </div>
-                    )}
+                    </div>
+                  ) : (
+                    // Single-sided: full-width Front cluster, no eyebrow.
+                    <div className="p-5 space-y-5">
+                      {frontImages.map((img) => (
+                        <PlateCard
+                          key={img.id}
+                          image={img}
+                          brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
+                          alt={`${variant.display_name} — proof version ${activeVersion.version_number}`}
+                          onClick={() => openDetailView({
+                            images: variantNavigableImages,
+                            index: variantNavigableImages.findIndex((x) => x.id === img.id),
+                            displayLabel: variant.display_name,
+                            versionId: activeVersion.id,
+                            recipientName: SHARED_APPROVAL_KEY,
+                            roundVariant: { id: variant.id, displayName: variant.display_name },
+                          })}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {/* Per-variant action band — sits on a top border
+                      so the divider reads as "now act on this
+                      direction". Matches the per-recipient action
+                      band layout from PR 12c. */}
+                  <div className="mt-auto border-t border-line-soft px-5 py-4">
                     {renderVariantBand(variant)}
-                  </article>
-                )
-              })}
-            </div>
+                  </div>
+                </article>
+              )
+            })}
           </div>
-        </section>
+        </div>
 
-        {/* ───── Pricing (variant-round view) ─────────────────────────
-            Variant rounds are single-material/single-currency so the
-            pricing card is shared across every variant card. Sits
-            below the variant grid — the customer compares directions
-            first, then sees price context once they're ready to act.
-            PaperPricingTable is the same component the standard view
-            uses; quantitySurcharges is empty on this branch (no
-            option dimension).
+        {/* Pricing card. Variant rounds are single-material /
+            single-currency so the pricing card is shared across
+            every variant card. Sits below the variant grid — the
+            customer compares directions first, then sees price
+            context once they're ready to act.
 
-            Per-direction-pricing variant rounds (000142, renamed 000144) hide this card
-            entirely — pricing is per-variant and handled out-of-
-            band. The pointer line above the variant grid signposts
-            that decision to the customer. */}
+            Per-direction-pricing variant rounds (000142, renamed
+            000144) hide this card entirely — pricing is per-variant
+            and handled out-of-band. The pointer line above the
+            variant grid signposts that decision to the customer. */}
         {!activeVersion.is_per_direction_pricing && (
-        <section
-          aria-labelledby="section-variant-pricing-heading"
-          style={{
-            background: PAPER_CREAM,
-            color: PAPER_INK,
-            borderTop: '1px solid rgba(26,22,18,0.10)',
-          }}
-        >
-          <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-            <div
-              className="mb-10 flex flex-wrap items-baseline justify-between gap-3 border-b-2 pb-4"
-              style={{ borderColor: 'rgba(26,22,18,0.8)' }}
-            >
-              <h2
-                id="section-variant-pricing-heading"
-                className="leading-none break-words"
-                style={{
-                  fontFamily: SERIF,
-                  fontWeight: 400,
-                  fontSize: 'clamp(40px, 9vw, 56px)',
-                  color: PAPER_INK,
-                }}
-              >
-                Pricing
-              </h2>
-              {!activeVersion.custom_quote && (
-                <p
-                  className="font-paper-mono uppercase"
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 500,
-                    letterSpacing: '0.22em',
-                    color: PAPER_INK,
-                  }}
-                >
+          <PanelShell
+            title="Pricing"
+            icon={currencyIcon(activeVersion.currency)}
+            accent={tokens.brand}
+            action={
+              !activeVersion.custom_quote ? (
+                <span className="eyebrow text-ink-mute">
                   {activeVersion.currency}
                   {activeVersion.currency === 'GBP' ? ' · VAT included' : ''}
-                </p>
-              )}
-            </div>
+                </span>
+              ) : null
+            }
+          >
             {activeVersion.custom_quote ? (
-              <div className="py-6 text-center">
-                <p
-                  className="mx-auto max-w-md"
-                  style={{
-                    fontFamily: SERIF,
-                    fontWeight: 400,
-                    fontSize: 22,
-                    color: PAPER_SECONDARY,
-                  }}
-                >
-                  This proof requires a custom quote. We'll be in touch separately with pricing.
-                </p>
-              </div>
+              <p className="text-[14px] text-ink-soft leading-[1.55] py-2">
+                This proof requires a custom quote. We'll be in touch separately with pricing.
+              </p>
             ) : (
               <PaperPricingTable
                 snapshot={livePricingSnapshot}
@@ -2180,33 +1861,16 @@ export default function CustomerProofPage() {
               />
             )}
             {!activeVersion.custom_quote && activeVersion.shipping_note && (
-              <div
-                className="mt-8 p-6"
-                style={{ border: '1px solid rgba(26,22,18,0.12)' }}
-              >
-                <p
-                  className="font-paper-mono uppercase"
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 500,
-                    letterSpacing: '0.32em',
-                    color: ACCENT,
-                  }}
-                >
-                  Shipping
-                </p>
-                <p
-                  className="mt-2"
-                  style={{ fontFamily: SERIF, fontSize: 18, color: PAPER_INK }}
-                >
+              <div className="mt-4 pt-4 border-t border-line-soft">
+                <p className="eyebrow text-ink-mute mb-1">Shipping</p>
+                <p className="text-[14px] text-ink-soft leading-[1.55]">
                   {activeVersion.shipping_note}
                 </p>
               </div>
             )}
-          </div>
-        </section>
+          </PanelShell>
         )}
-      </>
+      </div>
     )
   }
 
@@ -2385,35 +2049,10 @@ export default function CustomerProofPage() {
   // form is needed on the customer page (no section heading for options).
   const optionLabelSingular = activeVersion?.option_label ?? 'Finish'
 
-  // ── Editorial treatment tokens (Variant B) ────────────────────
-  // All design tokens (surface colours, typography stacks, CTA
-  // palette, brand-rule colours) live in src/lib/theme.ts. This
-  // page imports them at the top of the file. The constants used
-  // to live inline here; they were lifted to a shared module in
-  // the janitor pass so the components can reference the same
-  // values without prop pass-through.
-  // Customer-page typographic registers. Replace the small
-  // uppercase-mono treatment for short editorial labels (Register
-  // A) and sentence-fragment text (Register B). Mono stays for
-  // CTA buttons, pricing-grid numerals, file names, segmented
-  // pill toggles, the DOWNLOAD chip, and the FRONT/BACK side
-  // label — all locked-in keep-on-mono per the inventory.
-  const REG_A_BASE = {
-    fontFamily: SANS,
-    fontSize: 12,
-    fontWeight: 600,
-    letterSpacing: '0.12em',
-    textTransform: 'uppercase' as const,
-  }
-  // Surface colour palette for the new registers. Dark sections
-  // use #C8C8C8 for primary labels (one stop above the previous
-  // text-white/45 ≈ #737373); light cream sections use #5F564D
-  // for primary, #3F362D for kickers needing more presence.
-  // Coloured highlights (status pills, brand-teal kickers) keep
-  // their existing colour and only swap typography — the brief
-  // is explicit on that.
-  const LABEL_DARK = '#c8c8c8'
-  const LABEL_LIGHT = '#5f564d'
+  // Admin-editable metal Thickness card copy (migration 000199). Falls
+  // back to the shipped defaults while publicSettings is still loading
+  // or if the column / RPC is unavailable, so the panel never blanks.
+  const thicknessNotes = publicSettings?.metal_thickness_notes ?? DEFAULT_METAL_THICKNESS_NOTES
 
   // Short customer-facing reference — the proof's Help Scout
   // conversation id, prefixed with PL · for the editorial feel.
@@ -2467,374 +2106,500 @@ export default function CustomerProofPage() {
   // the sheet).
   const actionPanelOpen = actionPanel != null
 
+  // Header meta: anti-enumeration design (public_get_customer_proof
+  // doesn't expose the customer's email or proof.sent_at), so the
+  // "Sent X to Y" line from the prototype becomes a "Last updated
+  // {date}" carrying the active version's created_at — the most
+  // recent customer-visible date on the proof.
+  const lastUpdated = activeVersion
+    ? new Date(activeVersion.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    : null
+
   return (
     <div
       className={[
-        'antialiased',
+        'antialiased bg-canvas text-ink font-body',
         actionPanelOpen ? 'pb-[50vh] sm:pb-0 sm:pr-[400px]' : '',
       ].join(' ')}
-      style={{ fontFamily: SANS, background: INK }}
     >
 
-      {/* ───── Top: ink masthead strip ─────
-          DocketBar (logo + caption + proof ref) on INK,
-          followed by the BrandRule's 4-colour signature.
-          The hero used to sit inside this wrapper too, on a
-          tinted gradient over the ink; both the gradient
-          overlay and the hero have moved out (the hero into
-          its own PAPER_CREAM band below). */}
-      <div className="text-white" style={{ background: INK }}>
-        <DocketBar
-          proofRef={proofRef}
-          accentGlow={ACCENT_GLOW}
-          captionStyle={{ ...REG_A_BASE, color: LABEL_DARK }}
-        />
-        <BrandRule />
-      </div>
+      {/* Sticky public header. PlasmaWordmark left, "Last updated"
+          eyebrow right. Replaces the Direction-B dark-ink DocketBar +
+          BrandRule masthead. Cream canvas, hairline bottom border.
+          Container width + padding match the dark masthead and <main>
+          below (max-w-1280 / px-6 sm:px-7) so the wordmark's left edge
+          lines up with the cards rather than sitting inboard. */}
+      <header
+        className="sticky top-0 z-[5] bg-canvas border-b border-line"
+      >
+        <div className="mx-auto max-w-[1280px] flex items-center gap-4 px-6 sm:px-7 py-3.5">
+          {/* Wordmark steps down to the standard md size on phones,
+              where the enlarged xl lockup feels oversized; xl returns
+              at sm+. PlasmaWordmark takes a single size, so we render
+              both and toggle via wrapper spans (visibility lives on the
+              span so it can't fight the component's own inline-flex). */}
+          <span className="inline-flex sm:hidden">
+            <PlasmaWordmark size="md" tagline="Proofs" />
+          </span>
+          <span className="hidden sm:inline-flex">
+            <PlasmaWordmark size="xl" tagline="Proofs" />
+          </span>
+          <div className="ml-auto flex items-center gap-4">
+            {lastUpdated && (
+              <span className="eyebrow hidden sm:inline">Last updated {lastUpdated}</span>
+            )}
+          </div>
+        </div>
+      </header>
 
-      {/* Hero — paper-first editorial register. Sits in its own
-          PAPER_CREAM band below the dark masthead. */}
-      <div style={{ background: PAPER_CREAM }}>
-
-          {/* Hero — approval chip (when applicable) + "Proofs for"
-              eyebrow + customer name + italic company + quick-
-              facts row (material / revision / names). Scaled so
-              the name reads as the page's dominant object at
-              61px. The approval chip sits INSIDE the hero,
-              above the eyebrow, so it's the first thing the
-              customer sees on landing — replaces the old
-              between-masthead-and-hero banner. */}
-          <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8">
-            {/* Approval-chip slot — always rendered as a
-                fixed-height wrapper regardless of approval
-                state, so switching versions via the revisions
-                timeline (approved ↔ unapproved) doesn't shift
-                the "Proofs for" eyebrow + customer name up
-                and down.
-                Desktop (sm+): h-7 dot (28px) + py-2 vertical
-                padding (16px) + 1px top border + 1px bottom
-                border = 46px single-row pill. sm:min-h-[46px]
-                matches that exactly.
-                Mobile (<sm): the c521f7c restructure stacks
-                the chip vertically — dot/label cluster on
-                row 1, secondary text on row 2. Height adds
-                the second row's ~18px line-height + 8px
-                inter-row gap (~72px baseline). At narrow
-                viewports the secondary text wraps to 2 lines
-                (partial-approval copy, or approved copy
-                below ~390px) pushing rendered height to
-                ~90px. min-h-[96px] reserves a 6px buffer
-                above that worst case so the layout stays
-                locked across approved ↔ unapproved flips
-                on phone, without burning the extra ~24px
-                of dead dark ink that the prior 120px floor
-                left under in-progress proofs (the most
-                common state).
-                display: flex (not default block) keeps the
-                chip out of line-box formatting so baseline-
-                alignment + ambient line-height don't add
-                half-leading on top of the box. */}
-            <div className="mb-10 flex min-h-[96px] items-start sm:min-h-[46px]">
-              {heroApprovalStrip && activeVersion && (() => {
-                const total = versionImages[activeVersion.id]?.length ?? 0
-                const isApprovedKind = heroApprovalStrip.kind === 'approved'
-                // Colour tokens for the chip. Green for full
-                // approval, sky-blue for the carry-forward
-                // partial state — same palette the old banner
-                // used, now in one unified chip pattern.
-                // Paper-register tone palette. The chip used to
-                // sit on INK with translucent fills + outer glows;
-                // on PAPER_CREAM the tints lift to 0.18 opacity for
-                // legibility, glows zero out (cream + halo reads
-                // muddy), and label colours move to deep
-                // green/sky values that hit ≥4.5:1 against PAPER_
-                // CREAM. Sky derivation noted in handoff: README
-                // specifies green-on-paper but defers the partial-
-                // approval sky variant; #0369a1 (Tailwind sky-700)
-                // is the chosen pair, parity with the green pill
-                // border at 0.5 alpha.
-                const tone = isApprovedKind
-                  ? {
-                      bg: 'rgba(81,180,148,0.18)',
-                      border: 'rgba(81,180,148,0.4)',
-                      glow: 'none',
-                      dotBg: APPROVED_GREEN,
-                      dotGlow: 'none',
-                      label: '#176b3f',
-                      divider: 'rgba(26,22,18,0.15)',
-                    }
-                  : {
-                      bg: 'rgba(125,211,252,0.18)',
-                      border: 'rgba(125,211,252,0.5)',
-                      glow: 'none',
-                      dotBg: '#7dd3fc',
-                      dotGlow: 'none',
-                      label: '#0369a1',
-                      divider: 'rgba(26,22,18,0.15)',
-                    }
-                return (
-                  // Stacks vertically at narrow viewports —
-                  // dot + label cluster on one row, secondary
-                  // text on the next — so the secondary text
-                  // doesn't wrap awkwardly inside a single-row
-                  // pill and leave the | separator orphaned.
-                  // At sm+ the layout returns to the original
-                  // single-row pattern verbatim.
-                  //
-                  // Mobile also swaps the shape tokens:
-                  //   * rounded-3xl (24px) instead of the
-                  //     desktop's rounded-full semicircle —
-                  //     straightens the pill's top/bottom
-                  //     edges so the stacked content isn't
-                  //     fighting a tight curve.
-                  //   * pl-4 pr-6 instead of the desktop's
-                  //     tight pl-2 pr-5 — gives the tick
-                  //     circle and the end of the secondary
-                  //     text real breathing room from the
-                  //     inner edges. Desktop padding stays
-                  //     asymmetric because the dot sits flush
-                  //     against the semicircle's curve.
-                  <div
-                    className="inline-flex flex-col items-start gap-2 rounded-3xl py-2 pl-4 pr-6 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4 sm:rounded-full sm:pl-2 sm:pr-5"
-                    style={{
-                      background: tone.bg,
-                      border: `1px solid ${tone.border}`,
-                      boxShadow: tone.glow,
-                    }}
-                  >
-                    {/* Dot + label cluster — always stays
-                        inline regardless of viewport so the
-                        mobile stacked shape is a clean 2-row
-                        layout rather than dot / label / text
-                        on three separate rows. */}
-                    <div className="flex items-center gap-4">
-                      <span
-                        aria-hidden
-                        className="grid h-7 w-7 shrink-0 place-items-center rounded-full"
-                        style={{ background: tone.dotBg, boxShadow: tone.dotGlow }}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                          <path
-                            d="M3 7L6 10L11 4"
-                            stroke="white"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </span>
-                      <span style={{ ...REG_A_BASE, color: tone.label }}>
-                        {isApprovedKind ? 'Approved' : 'Partially approved'}
-                      </span>
-                    </div>
-                    {/* Divider — only meaningful between
-                        adjacent inline items on the desktop
-                        row. Hidden (display:none) on mobile so
-                        it both disappears visually and drops
-                        out of the flex layout (no ghost gap). */}
-                    <span
-                      aria-hidden
-                      className="hidden h-4 w-px shrink-0 sm:inline-block"
-                      style={{ background: tone.divider }}
-                    />
-                    <span
-                      // aria-label spells out the secondary text in a
-                      // form a screen reader can speak cleanly: middle
-                      // dot becomes a comma, "5 / 5" becomes "5 of 5".
-                      // Visible text is unchanged. Without this the
-                      // chip reads as "Signed off … middle dot 5
-                      // slash 5 proofs" on VoiceOver / NVDA.
-                      aria-label={
-                        isApprovedKind
-                          ? [
-                              'Signed off',
-                              heroApprovalStrip.dateLabel,
-                              total > 0
-                                ? `, ${total} of ${total} proof${total === 1 ? '' : 's'}`
-                                : null,
-                            ]
-                              .filter(Boolean)
-                              .join(' ')
-                              .replace(' ,', ',')
-                          : 'Some proofs already signed off, others awaiting review'
-                      }
-                      style={{ ...REG_A_BASE, color: PAPER_TERTIARY }}
-                    >
-                      {isApprovedKind
-                        // Drop the date phrase when dateLabel is
-                        // missing rather than hard-coding "today" —
-                        // approved_at can be null on rare race
-                        // conditions, and a stale visit a week
-                        // later shouldn't read "Signed off today".
-                        // Gate the proof-count phrase on total > 0
-                        // so an empty version doesn't render the
-                        // tautological "0 / 0 proofs".
-                        ? [
-                            'Signed off',
-                            heroApprovalStrip.dateLabel,
-                            total > 0 ? `· ${total} / ${total} proof${total === 1 ? '' : 's'}` : null,
-                          ].filter(Boolean).join(' ')
-                        : 'Some proofs already signed off, others awaiting review'}
-                    </span>
-                  </div>
-                )
-              })()}
-            </div>
-            <p
-              className="font-paper-mono uppercase"
-              style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
-            >
-              {(activeVersion?.names?.length ?? 0) >= 2 ? 'Proofs for' : 'Proof for'}
-            </p>
-            {/* Masthead heading rule: when the customer is a
-                company, promote the company name to the prominent
-                serif H1 and demote the contact's full name to the
-                italic sub-line. When there is no company, fall back
-                to the contact name in the prominent slot with no
-                sub-line.
-                Truthy check trims so an empty or whitespace-only
-                company string falls back to contact-prominent. The
-                sub-line is suppressed when the demoted value is
-                also empty or whitespace, so the masthead never
-                renders a stranded italic line. */}
-            {(() => {
-              const trimmedCompany = proof.company?.trim() ?? ''
-              const trimmedName = proof.customer_name?.trim() ?? ''
-              const companyProminent = trimmedCompany.length > 0
-              const primary = companyProminent ? proof.company! : proof.customer_name
-              const subline = companyProminent && trimmedName.length > 0
-                ? proof.customer_name
-                : null
-              return (
+      {/* V2 dark masthead strip — newspaper-rule horizontal band
+          beneath the cream sticky header. Left cluster: company
+          name (when present) + divider + VERSION {nn} · CURRENT /
+          HISTORY · status (mapped from proof.status). Right cluster:
+          {nn} NAMES · {n} SIDES · {variant} {MATERIAL} stats.
+          All mono uppercase tracked. Hides until activeVersion
+          resolves so we don't flash placeholder copy. */}
+      {activeVersion && (() => {
+        const company = proof.company?.trim() ?? ''
+        const versionLabel = `Version ${String(activeVersion.version_number).padStart(2, '0')}`
+        const currencyLabel = activeVersion.is_current ? 'Current' : 'History'
+        // proof.status === 'abandoned' is handled by the AbandonedScreen
+        // early-return above, so it's unreachable here.
+        const statusLabel = proof.status === 'approved'
+          ? 'Approved'
+          : proof.status === 'dormant'
+            ? 'Dormant'
+            : 'In review'
+        const namesCount = activeVersion.names.length
+        const namesLabel = namesCount > 0
+          ? `${String(namesCount).padStart(2, '0')} ${namesCount === 1 ? 'Name' : 'Names'}`
+          : null
+        const hasBack = (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
+        const sidesLabel = `${hasBack ? '02' : '01'} ${hasBack ? 'Sides' : 'Side'}`
+        // Variant label — when exactly one variant is priced on this
+        // version (the common case for thickness / finish / default
+        // materials), pull its display string from the snapshot.
+        // Multi-variant materials (e.g. ink-count grids) collapse to
+        // null and the stats line reads with just material name.
+        const variantLabel =
+          livePricingSnapshot.variants.length === 1
+            ? livePricingSnapshot.variants[0].display
+            : null
+        const materialLabel = activeVersion.material_display
+        const statsPieces = [namesLabel, sidesLabel,
+          [variantLabel, materialLabel].filter(Boolean).join(' '),
+        ].filter(Boolean) as string[]
+        return (
+          <div className="bg-ink text-on-ink">
+            <div className="mx-auto max-w-[1280px] flex flex-wrap items-center gap-3 sm:gap-4 px-6 sm:px-7 py-3.5">
+              {company && (
                 <>
-                  {/* Hero H1 — deliberate deviation from the
-                      README's 104px spec (paper-first handoff
-                      §"Visual Language → Typography" line 157).
-                      Reduced 20% to 84px after design review;
-                      tracking, line-height, and italic subline
-                      stay at the README values. */}
-                  <h1
-                    className="mt-4 leading-[0.96] tracking-[-0.02em] break-words"
-                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(48px, 12vw, 84px)', color: PAPER_INK }}
-                  >
-                    {primary}
-                  </h1>
-                  {subline && (
-                    <p
-                      className="mt-3 italic"
-                      style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, color: PAPER_TERTIARY }}
-                    >
-                      {subline}
-                    </p>
-                  )}
+                  <span className="eyebrow" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                    {company}
+                  </span>
+                  <span aria-hidden="true" className="hidden sm:inline-block w-px h-3 bg-white/25" />
                 </>
+              )}
+              <span className="eyebrow" style={{ color: '#ffffff' }}>
+                {[versionLabel, currencyLabel, statusLabel].join(' · ')}
+              </span>
+              {statsPieces.length > 0 && (
+                <span className="eyebrow sm:ml-auto" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                  {statsPieces.join(' · ')}
+                </span>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* V2 customer-page main — 2-column grid on lg+: a sticky
+          left rail carrying the customer card, Specs, and Pricing;
+          a right column carrying the version pills, the contact-
+          sheet recipient panels, material-explanation panels, and
+          the About-this-proof disclaimer. Stacks to one column
+          below lg. Gated on activeVersion so the page doesn't
+          half-render while data loads. */}
+      {activeVersion && (
+        /* Layout: single flex column on narrow screens, two-column
+           grid on lg+. On mobile both column wrappers below are
+           `display: contents` so every card becomes a direct flex
+           child of <main> and can be re-sequenced with order-* into
+           the customer-preferred reading order (Proof for -> The set ->
+           QR -> Spec -> Thickness/Construction -> Pricing -> Material
+           notes -> About this proof). Each card resets to lg:order-none
+           so the desktop two-column layout is untouched. */
+        <main className="mx-auto max-w-[1280px] px-6 sm:px-7 py-8 flex flex-col gap-6 lg:grid lg:grid-cols-[360px_1fr] lg:gap-8 lg:items-start">
+
+          {/* Left rail — sticky on lg+, scrolls with viewport on
+              smaller screens. top-[120px] accounts for sticky
+              header (~60px) + masthead band (~52px) + small gutter. */}
+          <aside className="contents lg:flex lg:flex-col lg:gap-4 lg:sticky lg:top-[120px]">
+
+            {/* Approval banner — shows when the proof has been
+                fully signed off or carries forward-approved slots
+                from earlier versions. Lifted into the left rail in
+                V2 (was a full-width top banner in V1) so it sits
+                next to the customer card it qualifies. */}
+            {heroApprovalStrip && (() => {
+              const total = versionImages[activeVersion.id]?.length ?? 0
+              const isApprovedKind = heroApprovalStrip.kind === 'approved'
+              const pillColour: PillColour = isApprovedKind ? 'in-stock' : 'allocated'
+              const label = isApprovedKind ? 'Approved' : 'Partially approved'
+              const detailVisible = isApprovedKind
+                ? [
+                    heroApprovalStrip.dateLabel ? `Signed off ${heroApprovalStrip.dateLabel}` : 'Signed off',
+                    total > 0 ? `${total} / ${total} proof${total === 1 ? '' : 's'}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')
+                : 'Some proofs already signed off, others awaiting review'
+              const detailAria = isApprovedKind
+                ? [
+                    heroApprovalStrip.dateLabel ? `Signed off ${heroApprovalStrip.dateLabel}` : 'Signed off',
+                    total > 0 ? `${total} of ${total} proof${total === 1 ? '' : 's'}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(', ')
+                : 'Some proofs already signed off, others awaiting review'
+              return (
+                <div className="order-1 lg:order-none flex flex-wrap items-center gap-3 rounded-[10px] bg-surface border border-line px-4 py-3">
+                  <Pill colour={pillColour}>{label}</Pill>
+                  <span className="text-[13px] text-ink-soft" aria-label={detailAria}>
+                    {detailVisible}
+                  </span>
+                </div>
               )
             })()}
 
-            {/* Brand 4-band signature rule under the H1. README §2
-                positions it between the italic subline and the
-                docket meta at mt-12, height 3px. Default BrandRule
-                height (2) is undisturbed elsewhere. */}
-            <div className="mt-12">
-              <BrandRule height={3} />
+            {/* Customer card with brand StatusRule on its left edge.
+                Carries "Proof for" eyebrow + display customer name +
+                optional company subline + What-changed-in-vN callout.
+                Replaces the V1 hero strip that used to sit above the
+                page main. */}
+            <div className="order-2 lg:order-none relative bg-surface border border-line rounded-[14px] overflow-hidden px-6 py-6">
+              <StatusRule colour={tokens.brand} />
+              <div className="pl-2">
+                {(() => {
+                  const trimmedCompany = proof.company?.trim() ?? ''
+                  const trimmedName = proof.customer_name?.trim() ?? ''
+                  const companyProminent = trimmedCompany.length > 0
+                  const primary = companyProminent ? proof.company! : proof.customer_name
+                  const subline = companyProminent && trimmedName.length > 0
+                    ? proof.customer_name
+                    : trimmedCompany || null
+                  return (
+                    <>
+                      <span className="eyebrow">Proof for</span>
+                      <h1
+                        className="mt-2 font-display font-medium tracking-[-0.02em] text-ink leading-[1.05] break-words"
+                        style={{ fontSize: 'clamp(26px, 3vw, 32px)' }}
+                      >
+                        {primary}
+                      </h1>
+                      {subline && (
+                        <p className="mt-1 text-[14px] text-ink-mute">{subline}</p>
+                      )}
+                    </>
+                  )
+                })()}
+                {activeVersion.change_notes && (
+                  <div className="mt-4 rounded-[10px] bg-canvas border border-line-soft p-4">
+                    <span className="eyebrow text-brand block mb-1.5">
+                      What changed in v{activeVersion.version_number}
+                    </span>
+                    <p className="text-[13px] leading-[1.5] text-ink-soft whitespace-pre-line m-0">
+                      {activeVersion.change_notes}
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Hero docket — Material / Sides|Option / Revision /
-                Names. Hidden on per-direction-pricing variant rounds
-                (000142): every per-direction material is decided
-                out-of-band so a version-level MATERIAL cell on the
-                row would either be misleading ("Per-direction pricing"
-                read as a real material) or empty. The H1 + italic
-                subline + BrandRule above already read as a complete
-                hero header on their own; the variant grid below
-                supplies its own py-20 / py-24 breathing room when
-                the section starts. */}
-            {activeVersion && !activeVersion.is_per_direction_pricing && (() => {
-              // Cell 2 — adaptive branching. Option-having materials
-              // show the option label + value (Finish / Brushed,
-              // Species / Black Walnut, etc.). No-option materials
-              // fall back to Sides, derived from the image set the
-              // same way the Specs section does (any image with
-              // side='back' → "Front and back").
-              const sidesValue =
-                (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
-                  ? 'Front and back'
-                  : 'Front only'
-              // Cell 4 — full names joined with " + ". Mirrors the
-              // Specification section's "Names on card" treatment
-              // a few sections down (no truncation). Empty array →
-              // em-dash placeholder so the 4-cell grid stays intact.
-              // Recipient-band headings ("Marie's card") at line
-              // ~1789 still use firstName() for the possessive form
-              // — separate surface, separate concern.
-              const namesLabel = activeVersion.names.length >= 2 ? 'Names' : 'Name'
-              const namesValue =
-                activeVersion.names.length === 0
-                  ? '—'
-                  : activeVersion.names.join(' + ')
-              // Cell 4 swaps to a Personalisation signpost when the
-              // version is personalised: a single recipient name (or
-              // a list of tier variants) doesn't describe a card
-              // where every recipient gets unique data. Drops the
-              // Names cell entirely in that case; the spec section
-              // does the same.
-              return (
-                <dl className="mt-12 grid grid-cols-2 border-b border-[rgba(26,22,18,0.10)] sm:grid-cols-4">
-                  <DocketCell label="Material" value={activeVersion.material_display} />
-                  {activeOption ? (
-                    <DocketCell
-                      label={optionLabelSingular}
-                      value={activeOption.display_name}
-                    />
-                  ) : (
-                    <DocketCell label="Sides" value={sidesValue} />
+            {/* Specification PanelShell — preserved verbatim from PR 7
+                except the outer <section className="bg-canvas"> and
+                max-w-1180 wrappers (the aside is the container now).
+                Renders below the customer card. Per-direction-pricing
+                versions skip the panel entirely (migration 000144). */}
+            {!activeVersion.is_per_direction_pricing && (
+              <PanelShell
+                eyebrow="As proofed"
+                title="Specification"
+                icon={Layers}
+                accent={tokens.brand}
+                className="order-6 lg:order-none"
+              >
+                <dl
+                  aria-labelledby="section-specification-heading"
+                  className="divide-y divide-line-soft"
+                >
+                  <h2 id="section-specification-heading" className="sr-only">Specification</h2>
+                  <SpecRow label="Material" value={activeVersion.material_display} />
+                  {/* Sides — derived from the image set. Two-sided
+                      iff any image on the active version carries
+                      side='back'; otherwise front only.
+                      Pre-migration-000085 data with null sides reads
+                      as front only. */}
+                  <SpecRow
+                    label="Sides"
+                    value={
+                      (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
+                        ? 'Front and back'
+                        : 'Front only'
+                    }
+                  />
+                  {lockedFinishVariant && (
+                    <SpecRow label="Finish" value={lockedFinishVariant.display_name} />
                   )}
-                  <DocketCell
+                  {activeOption && (
+                    <SpecRow label={optionLabelSingular} value={activeOption.display_name} />
+                  )}
+                  {activeVersion.ink_names.length > 0 && (
+                    <SpecRow label="Ink colours" value={activeVersion.ink_names.join('\n')} />
+                  )}
+                  {activeVersion.names.length > 0 && !(activeVersion.has_personalisation && activePersonalisationPricing) && (
+                    <SpecRow label="Names on card" value={activeVersion.names.join('\n')} />
+                  )}
+                  {activeVersion.has_personalisation && activePersonalisationPricing && (
+                    <SpecRow label="Personalisation" value="Unique data per card" />
+                  )}
+                  <SpecRow
                     label="Revision"
                     value={`v${activeVersion.version_number}${heroRevisionDate ? ` · ${heroRevisionDate}` : ''}`}
                   />
-                  {/* Personalisation cell only displaces Names
-                      when has_personalisation is on AND the live
-                      pricing payload actually resolved for this
-                      currency. Defends against the rare drift
-                      case where the proof's currency has no
-                      personalisation_pricing row (admin deletion,
-                      RPC drift) — without the second gate the
-                      customer would see a Personalisation label
-                      with no cost disclosed below. */}
-                  {activeVersion.has_personalisation && activePersonalisationPricing ? (
-                    <DocketCell label="Personalisation" value="Unique per card" />
-                  ) : (
-                    <DocketCell label={namesLabel} value={namesValue} />
-                  )}
                 </dl>
+              </PanelShell>
+            )}
+
+            {/* Pricing PanelShell + split-name / shipping callouts.
+                Renders here in the left rail when the table is
+                narrow enough to fit (up to 3 columns total = qty +
+                2 variant prices, i.e. variants.length <= 2). Wider
+                tables (4+ columns) overflow the 360px rail and
+                render in the right column via the same JSX block
+                below. Variant-round versions skip the panel
+                entirely. */}
+            {!activeVersion.is_variant_round && livePricingSnapshot.variants.length <= 2 && (
+              <>
+                <PanelShell
+                  eyebrow={
+                    !activeVersion.custom_quote && activeOption && versionOptions.length > 0 && materialHasSurcharges
+                      ? `Prices shown for ${activeOption.display_name} ${optionLabelSingular.toLowerCase()}`
+                      : 'Inclusive of VAT'
+                  }
+                  title="Pricing"
+                  icon={currencyIcon(activeVersion.currency)}
+                  accent={tokens.brand}
+                  className="order-8 lg:order-none"
+                  action={
+                    !activeVersion.custom_quote ? (
+                      <span className="num text-[12px] font-medium text-ink uppercase tracking-[0.18em]">
+                        {activeVersion.currency}
+                        {activeVersion.currency === 'GBP' ? ' · VAT included' : ''}
+                      </span>
+                    ) : undefined
+                  }
+                >
+                  <h2 id="section-pricing-heading" className="sr-only">Pricing</h2>
+                  {activeVersion.custom_quote ? (
+                    <div className="py-6 text-center">
+                      <p className="mx-auto max-w-md font-display text-[18px] leading-snug text-ink-soft">
+                        This proof requires a custom quote. We'll be in touch separately with pricing.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <PaperPricingTable
+                        snapshot={livePricingSnapshot}
+                        currency={activeVersion.currency!}
+                        displayQuantities={activeVersion.display_quantities}
+                        quoteMinQuantity={activeVersion.quote_min_quantity}
+                        quoteMaxQuantity={activeVersion.quote_max_quantity}
+                        quantitySurcharges={quantitySurcharges}
+                        personalisationPricing={activePersonalisationPricing}
+                      />
+                      {personalisationBreakevenQty != null && (
+                        <p className="mt-3 text-[13px] text-ink-mute leading-relaxed">
+                          A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
+                        </p>
+                      )}
+                      {/* Shipping note as a quiet footer line inside
+                          the Pricing PanelShell — mirrors the V2
+                          prototype's "Prices exclude shipping" treatment.
+                          Avoids floating a standalone shipping card
+                          below the panel when there's no split-name
+                          tooling alongside it to pair with. */}
+                      {activeVersion.shipping_note && (
+                        <p className="mt-3 text-[12px] text-ink-mute whitespace-pre-line text-right border-t border-line-soft pt-3">
+                          {activeVersion.shipping_note}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </PanelShell>
+
+                {/* Split-name tooling callout — full-width card below
+                    the Pricing PanelShell when applicable. Contains a
+                    multi-line calc + explanation, so it earns its own
+                    card chrome (unlike shipping, which collapses to
+                    an inline footer line above). */}
+                {!activeVersion.custom_quote &&
+                  activeVersion.names.length >= 2 &&
+                  activeVersion.split_name_surcharge_snapshot != null &&
+                  activeVersion.split_name_surcharge_snapshot > 0 && (
+                    <div className="order-8 lg:order-none rounded-[10px] bg-surface border border-line p-4">
+                      <span className="eyebrow text-brand">Split-name tooling</span>
+                      <p className="mt-2 text-[15px] leading-snug text-ink font-medium">
+                        Add{' '}
+                        <span className="num font-medium">
+                          {formatPrice(
+                            (activeVersion.names.length - 1) *
+                              activeVersion.split_name_surcharge_snapshot,
+                            activeVersion.currency!,
+                          )}
+                        </span>{' '}
+                        to the prices above
+                      </p>
+                      <p className="mt-1.5 text-[12px] text-ink-mute">
+                        {activeVersion.names.length - 1} extra{' '}
+                        {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
+                        {formatPrice(
+                          activeVersion.split_name_surcharge_snapshot,
+                          activeVersion.currency!,
+                        )}{' '}
+                        tooling
+                      </p>
+                    </div>
+                  )}
+              </>
+            )}
+
+            {/* About this proof — quiet disclaimer card. Lives in the
+                left rail as the final card so it closes the spec
+                column. Always rendered (not gated), so it sits below
+                whatever Specs/Pricing the version carries. */}
+            <div className="order-10 lg:order-none rounded-[10px] bg-surface border border-line-soft p-5 flex items-start gap-3">
+              <Info size={18} aria-hidden="true" className="text-brand mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <span className="eyebrow block mb-1.5">About this proof</span>
+                <p className="whitespace-pre-line text-[13px] leading-[1.6] text-ink-soft m-0">
+                  {publicSettings?.about_proof_copy ?? ABOUT_PROOF_COPY_DEFAULT}
+                </p>
+              </div>
+            </div>
+
+          </aside>
+
+          {/* Right column — contact sheet. `contents` on mobile (see
+              <main> note) so its cards re-sequence with the left rail's;
+              real two-column flex container on lg+. */}
+          <div className="contents lg:flex lg:flex-col lg:gap-7 lg:min-w-0">
+
+            {/* Version pill row — chronological, click switches the
+                active version via setActiveVersion. When there are many
+                revisions the older ones collapse behind a "+N earlier"
+                chip so the row stays compact; the current (latest)
+                version carries a coral accent + dot so it's always the
+                identifiable anchor, kept distinct from the ink "you're
+                viewing this" fill. */}
+            {versions.length > 1 && (() => {
+              const RECENT = 5
+              const tooMany = versions.length > RECENT + 1
+              const activeIdx = versions.findIndex((v) => v.id === activeVersion.id)
+              const recentStart = Math.max(0, versions.length - RECENT)
+              const activeInRecent = activeIdx >= recentStart
+              // Collapse only when there are many AND the customer is
+              // viewing one of the recent versions — never hide the one
+              // they're looking at. Manual expand overrides.
+              const collapsed = tooMany && !showAllVersions && activeInRecent
+              const visible = collapsed ? versions.slice(recentStart) : versions
+              const hiddenCount = collapsed ? recentStart : 0
+              const toggleCls =
+                'inline-flex items-center h-8 px-3 rounded-full text-[12px] border border-line bg-surface text-ink-mute hover:bg-canvas hover:text-ink transition-colors'
+              return (
+                <div className="order-3 lg:order-none flex flex-wrap items-center gap-2.5">
+                  <span className="eyebrow mr-1.5">History</span>
+                  {collapsed && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllVersions(true)}
+                      className={toggleCls}
+                      aria-label={`Show ${hiddenCount} earlier versions`}
+                    >
+                      +{hiddenCount} earlier
+                    </button>
+                  )}
+                  {visible.map((v) => {
+                    const active = v.id === activeVersion.id
+                    const isCurrent = v.is_current
+                    const dateLabel = new Date(v.created_at).toLocaleDateString('en-GB', {
+                      day: 'numeric',
+                      month: 'short',
+                    })
+                    const cls = [
+                      'inline-flex items-center gap-2 h-8 px-3 rounded-full text-[13px] transition-colors border',
+                      active
+                        ? 'bg-ink text-on-ink border-ink'
+                        : isCurrent
+                          ? '' // coral accent applied via inline style below
+                          : 'bg-surface text-ink-soft border-line hover:bg-canvas',
+                    ].join(' ')
+                    // Current-but-not-viewed: coral-tinted fill, coral
+                    // border, dark-coral text — the anchor of the row.
+                    const style =
+                      !active && isCurrent
+                        ? {
+                            backgroundColor: 'var(--c-brand-50)',
+                            color: 'var(--c-brand-900)',
+                            borderColor: 'var(--c-brand-300)',
+                          }
+                        : undefined
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() => setActiveVersion(v)}
+                        aria-pressed={active}
+                        aria-label={`Version ${v.version_number}, ${dateLabel}${isCurrent ? ' (current)' : ''}`}
+                        className={cls}
+                        style={style}
+                      >
+                        <span className="font-mono font-medium">v{v.version_number}</span>
+                        <span
+                          className={active ? 'text-on-ink/70' : isCurrent ? '' : 'text-ink-dim'}
+                          aria-hidden="true"
+                        >
+                          ·
+                        </span>
+                        <span className="text-[12px]">{dateLabel}</span>
+                        {isCurrent && (
+                          <span
+                            aria-hidden="true"
+                            className="ml-1 text-[10px] font-semibold uppercase tracking-[0.12em]"
+                            // Coral on the ink "viewing" pill (brand-300
+                            // reads on black); inherits the pill's
+                            // dark-coral text otherwise.
+                            style={active ? { color: 'var(--c-brand-300)' } : undefined}
+                          >
+                            Current
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                  {tooMany && !collapsed && activeInRecent && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllVersions(false)}
+                      className={toggleCls}
+                    >
+                      Show fewer
+                    </button>
+                  )}
+                </div>
               )
             })()}
-          </div>
 
-      </div>
-
-      {/* ───── Revision history band ─────
-          Dedicated zone below the hero — a header row, a
-          spotlight column showing the active v-number + Latest/
-          History chip + date, and the timeline rail. Coachmark
-          overlays the rail on first visit to teach the rail
-          interaction (localStorage-persisted, dismisses on
-          × click or any dot click). Rationale for finish
-          pills NOT living here: they change which proofs are
-          visible, so they belong adjacent to the proofs in
-          the Plates section header — not grouped with
-          time-based revision metadata. */}
-      {activeVersion && versions.length > 1 && (
-        <PaperRevisionTimeline
-          versions={versions}
-          activeVersion={activeVersion}
-          onSelectVersion={setActiveVersion}
-        />
-      )}
-
-      {activeVersion && (
-        <>
           {/* ───── Plates ─────
               Near-white section. Groups come from buildImageGroups
               (shared first, then named); each named group gets a
@@ -2921,7 +2686,10 @@ export default function CustomerProofPage() {
             // per injected instance. Keeps "N proofs · M
             // recipients" accurate when a single shared front
             // renders inside two named pairs.
-            const plateCount = [...(sharedGroup?.images ?? []), ...namedGroups.flatMap((g) => g.images)].length
+            // plateCount (was used to drive the "(NN)" count chip
+            // in the V1 section header) dropped in PR 12c —
+            // the V2 "The set" header uses names · sides framing
+            // instead of unique-proofs count.
             // Recipient count derives from activeVersion.names —
             // the canonical list of who the proof is for — rather
             // than namedGroups (which is filtered by the active
@@ -2948,69 +2716,46 @@ export default function CustomerProofPage() {
             return (
               <section
                 aria-labelledby="section-proofs-heading"
-                style={{ background: PAPER_CREAM, color: PAPER_INK }}
+                className="order-4 lg:order-none bg-canvas text-ink"
               >
-                <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-                  {/* Section header — left cluster is the
-                      Proofs heading + count subtitle stacked
-                      vertically; right cluster is the Finish
-                      selector. Finish pills live here (not in
-                      the revisions band) because they change
-                      which proofs are visible, so they belong
-                      adjacent to the proofs they affect rather
-                      than grouped with time-based revision
-                      metadata. items-end so the pill row hugs
-                      the bottom edge of the heading cluster
-                      regardless of whether the subtitle
-                      renders. */}
-                  <div
-                    className="mb-10 flex flex-wrap items-end justify-between gap-4 border-b-2 pb-4"
-                    style={{ borderColor: 'rgba(26,22,18,0.8)' }}
+                {/* V2 section header: "The set" h2 + count eyebrow
+                    + gradient hairline. Right slot still hosts the
+                    MaterialOptionTabs strip when the version has 2+
+                    material options. Replaces the V1 "Proofs (NN) /
+                    N unique proofs · N people" treatment. Count copy
+                    moves to the eyebrow slot and trades the "N people"
+                    framing for "front + back" / sides description,
+                    closer to the V2 prototype's contact-sheet brief.
+                    Membership cards still skip the count entirely. */}
+                <div className="mb-6 flex flex-wrap items-baseline gap-3 sm:gap-4">
+                  <h2
+                    id="section-proofs-heading"
+                    className="font-display font-medium tracking-[-0.02em] text-ink leading-tight"
+                    style={{ fontSize: 'clamp(22px, 3vw, 28px)' }}
                   >
-                    <div>
-                      <h2
-                        id="section-proofs-heading"
-                        className="leading-none break-words"
-                        style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(40px, 9vw, 56px)', color: PAPER_INK }}
-                      >
-                        Proofs
-                      </h2>
-                      {/* Count subtitle — rendered for business
-                          cards only. Membership cards hide the
-                          whole line (the "proof count vs
-                          people" framing doesn't map to
-                          membership tiers). The special
-                          "Shared" branch survives for the rare
-                          all-shared business card (shared group
-                          only, no named groups). */}
-                      {activeVersion.card_type !== 'membership' && (
-                        <span
-                          className="mt-3 block"
-                          style={{ ...REG_A_BASE, color: LABEL_LIGHT }}
-                        >
-                          {plateCount === 1 ? '1 unique proof' : `${plateCount} unique proofs`}
-                          {recipientCount > 0 && (
-                            <>
-                              {' · '}
-                              {recipientCount === 1
-                                ? sharedGroup && namedGroups.length === 0
-                                  ? 'Shared'
-                                  : '1 person'
-                                : `${recipientCount} people`}
-                            </>
-                          )}
-                        </span>
-                      )}
-                    </div>
-                    {/* Material-option tabs — paper-register
-                        underlined tab strip per README §4. The
-                        tabs[] array maps versionOptions through
-                        the existing optionFromPrice derivation;
-                        no new pricing logic. Gate stays at
-                        versionOptions.length >= 2 (showOption-
-                        Switcher), so single-option materials
-                        don't render the strip. */}
-                    {showOptionSwitcher && (
+                    The set
+                  </h2>
+                  {activeVersion.card_type !== 'membership' && (() => {
+                    const namesLabel = recipientCount === 1
+                      ? sharedGroup && namedGroups.length === 0
+                        ? 'Shared'
+                        : '1 name'
+                      : `${String(recipientCount).padStart(2, '0')} names`
+                    const sidesLabel = augmentedNamedGroups.some(groupIsPair) ||
+                      (sharedStandaloneGroup && groupIsPair(sharedStandaloneGroup))
+                      ? 'front + back'
+                      : 'front only'
+                    return (
+                      <span className="eyebrow">{namesLabel} · {sidesLabel}</span>
+                    )
+                  })()}
+                  <span
+                    aria-hidden="true"
+                    className="hidden sm:block flex-1 h-px"
+                    style={{ background: 'linear-gradient(to right, var(--c-line), transparent)' }}
+                  />
+                  {showOptionSwitcher && (
+                    <div className="basis-full sm:basis-auto sm:ml-auto">
                       <MaterialOptionTabs
                         label={optionLabelSingular}
                         // Inside the !is_per_direction_pricing gate; null
@@ -3033,187 +2778,230 @@ export default function CustomerProofPage() {
                           }
                         })}
                       />
-                    )}
-                  </div>
+                    </div>
+                  )}
+                </div>
 
-                  {/* Shared group — renders alone when there
-                      are unconsumed shared images (either no
-                      named groups exist, or named groups exist
-                      but didn't need every shared image for
-                      virtual pairing). Heading stays suppressed;
-                      the approval banner in the hero strip
-                      carries that signal. Width matches the
-                      named groups below for a consistent
-                      section-wide image size. */}
-                  {sharedStandaloneGroup && (
-                    <PaperRecipientBand
-                      heading={sharedHeading}
-                      topRule={false}
-                    >
+                {/* V2 contact-sheet card layout. Each recipient
+                    (or the shared-standalone group) renders as a
+                    self-contained card panel: header band with a
+                    chip / heading / sides indicator, image grid
+                    with a hairline divider between front + back,
+                    per-recipient action band below. Renders in a
+                    vertical stack with consistent spacing between
+                    recipients. */}
+                <div className="space-y-5">
+                  {/* Shared standalone group — renders when there
+                      are unconsumed shared images. Uses a "Shared"
+                      eyebrow heading instead of a numbered chip
+                      since it's not a recipient. */}
+                  {sharedStandaloneGroup && (() => {
+                    const sharedPrimary = sharedHeading.split(' · ')[0] ?? 'Shared'
+                    const sharedDetail = sharedHeading.includes(' · ')
+                      ? sharedHeading.split(' · ').slice(1).join(' · ')
+                      : null
+                    return (
+                    <div className="bg-surface border border-line rounded-[14px] overflow-hidden">
+                      <div className="flex items-center gap-3 px-5 py-4 border-b border-line-soft">
+                        {/* No numbered chip on the shared block —
+                            "Shared" doesn't belong in a recipient
+                            sequence. Use a quieter icon-only chip
+                            to keep the visual rhythm with numbered
+                            cards below. */}
+                        <span className="grid place-items-center h-9 w-9 rounded-full bg-canvas border border-line text-ink-mute">
+                          <Layers size={14} aria-hidden="true" />
+                        </span>
+                        <div className="min-w-0">
+                          <div className="font-display font-medium text-ink text-[17px] leading-tight truncate">
+                            {sharedPrimary}
+                          </div>
+                          {sharedDetail && (
+                            <div className="eyebrow mt-0.5">{sharedDetail}</div>
+                          )}
+                        </div>
+                        <span className="ml-auto inline-flex items-center gap-1.5 eyebrow text-ink-mute">
+                          <Eye size={12} aria-hidden="true" />
+                          {groupIsPair(sharedStandaloneGroup) ? '2 sides' : `${sharedStandaloneGroup.images.length} ${sharedStandaloneGroup.images.length === 1 ? 'side' : 'sides'}`}
+                        </span>
+                      </div>
                       <div
                         className={
                           groupIsPair(sharedStandaloneGroup)
-                            ? 'grid grid-cols-1 gap-6 md:grid-cols-2'
-                            : 'space-y-6'
+                            ? 'grid grid-cols-1 gap-px bg-line-soft md:grid-cols-2'
+                            : 'space-y-5 p-5'
                         }
                       >
                         {sharedStandaloneGroup.images.map((img, idx) => (
-                          <PlateCard
+                          <div
                             key={img.id}
-                            image={img}
-                            brandColor={BRAND_ORDER[idx % BRAND_ORDER.length]}
-                            alt={`Proof version ${activeVersion.version_number}`}
-                            onClick={() => openDetailView({
-                              images: sharedStandaloneGroup.images,
-                              index: idx,
-                              displayLabel: 'Shared',
-                              versionId: activeVersion.id,
-                              recipientName: SHARED_APPROVAL_KEY,
-                            })}
-                            recipientLabel="Shared"
-                          />
+                            className={groupIsPair(sharedStandaloneGroup) ? 'bg-surface p-5' : ''}
+                          >
+                            <PlateCard
+                              image={img}
+                              brandColor={BRAND_ORDER[idx % BRAND_ORDER.length]}
+                              alt={`Proof version ${activeVersion.version_number}`}
+                              onClick={() => openDetailView({
+                                images: sharedStandaloneGroup.images,
+                                index: idx,
+                                displayLabel: 'Shared',
+                                versionId: activeVersion.id,
+                                recipientName: SHARED_APPROVAL_KEY,
+                              })}
+                              recipientLabel="Shared"
+                            />
+                          </div>
                         ))}
                       </div>
-                      {/* Shared band routing.
-                          * names.length > 0 → renderSharedInfoBand().
-                            Status-only panel; the shared section is
-                            approved-by-implication when every named
-                            recipient approves. No Approve button on
-                            this surface in the split-name case.
-                          * names.length === 0 → renderActionBand().
-                            All-shared one-off proof — the shared
-                            section IS the proof, so the customer
-                            still hits Approve here and the
-                            approved_* columns get written on the
-                            __shared__ row directly. */}
-                      {(activeVersion?.names.length ?? 0) > 0
-                        ? renderSharedInfoBand()
-                        : renderActionBand(SHARED_APPROVAL_KEY)}
-                    </PaperRecipientBand>
-                  )}
-
-                  {augmentedNamedGroups.length > 0 && (
-                    <div>
-                      {(() => {
-                        // Running colour-rotation index across
-                        // all groups in reading order so each
-                        // rendered image-instance on the page
-                        // gets a distinct bullet colour from
-                        // BRAND_ORDER (red → pink → indigo →
-                        // teal). Counted starts at the number of
-                        // images actually rendered in the
-                        // standalone shared section — NOT the
-                        // full shared-group size — so shared
-                        // images consumed into named groups via
-                        // virtual pairing don't inflate the
-                        // offset. A shared image injected into
-                        // two different named groups therefore
-                        // picks up two different colours (one
-                        // per rendered instance), which keeps
-                        // the palette cycling visibly across
-                        // every card rather than clustering two
-                        // cards onto the same hue.
-                        let colorIdx = sharedStandaloneGroup
-                          ? sharedStandaloneGroup.images.length
-                          : 0
-                        // When a shared-standalone group sits
-                        // above the named-groups block, keep the
-                        // rule + padding on the first named
-                        // group too — treats the shared block as
-                        // the preceding sibling so the shared →
-                        // first-named boundary reads as a proper
-                        // divider, not a floating introduction.
-                        // When there's no shared block above,
-                        // the first named group opens the list
-                        // and shouldn't sit behind a rule
-                        // (would read as a bracket).
-                        const firstNamedGroupSkipsRule = !sharedStandaloneGroup
-                        return augmentedNamedGroups.map((group, groupIdx) => {
-                          const pill =
-                            group.heading != null ? approvalPillFor(group.heading) : null
-                          const startIdx = colorIdx
-                          colorIdx += group.images.length
-                          // Top rule: 2px ink-at-80% per README §4
-                          // line 319. Suppressed on the very first
-                          // named band when no shared block sits
-                          // above it (firstNamedGroupSkipsRule), so
-                          // the list opens flush rather than under a
-                          // floating bracket.
-                          const showTopRule = !(firstNamedGroupSkipsRule && groupIdx === 0)
-                          const heading = group.heading
-                          const bandHeading =
-                            heading != null ? `${firstName(heading)}'s card` : ''
-                          return (
-                            <PaperRecipientBand
-                              key={group.heading ?? ''}
-                              heading={bandHeading}
-                              topRule={showTopRule}
-                              pillSlot={
-                                pill ? (
-                                  <span
-                                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1"
-                                    style={{
-                                      ...REG_A_BASE,
-                                      background: 'rgba(81,180,148,0.14)',
-                                      color: '#176b3f',
-                                      border: '1px solid rgba(81,180,148,0.45)',
-                                    }}
-                                  >
-                                    <svg
-                                      width="9"
-                                      height="9"
-                                      viewBox="0 0 12 12"
-                                      fill="none"
-                                      aria-hidden="true"
-                                    >
-                                      <path
-                                        d="M2.5 6.5L5 9L9.5 3.5"
-                                        stroke="#176b3f"
-                                        strokeWidth="1.8"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                      />
-                                    </svg>
-                                    {pill}
-                                  </span>
-                                ) : null
-                              }
-                            >
-                              <div
-                                className={
-                                  groupIsPair(group)
-                                    ? 'grid grid-cols-1 gap-10 md:grid-cols-2'
-                                    : 'space-y-10'
-                                }
-                              >
-                                {group.images.map((img, localIdx) => {
-                                  const dotIdx = startIdx + localIdx
-                                  return (
-                                    <PlateCard
-                                      key={img.id}
-                                      image={img}
-                                      brandColor={BRAND_ORDER[dotIdx % BRAND_ORDER.length]}
-                                      alt={`${group.heading} — proof version ${activeVersion.version_number}`}
-                                      onClick={() => openDetailView({
-                                        images: group.images,
-                                        index: localIdx,
-                                        displayLabel: group.heading ?? null,
-                                        versionId: activeVersion.id,
-                                        recipientName: group.heading ?? SHARED_APPROVAL_KEY,
-                                      })}
-                                      recipientLabel={group.heading ?? undefined}
-                                    />
-                                  )
-                                })}
-                              </div>
-                              {/* Phase 2.5 per-recipient action band. */}
-                              {group.heading != null && renderActionBand(group.heading)}
-                            </PaperRecipientBand>
-                          )
-                        })
-                      })()}
+                      {/* Shared band routing — preserved verbatim
+                          from the prior layout. names.length > 0 →
+                          renderSharedInfoBand (status-only, shared
+                          section approved-by-implication once every
+                          named recipient approves). names empty →
+                          renderActionBand (all-shared one-off, the
+                          shared section IS the proof). */}
+                      <div className="border-t border-line-soft px-5 py-4">
+                        {(activeVersion?.names.length ?? 0) > 0
+                          ? renderSharedInfoBand()
+                          : renderActionBand(SHARED_APPROVAL_KEY)}
+                      </div>
                     </div>
-                  )}
+                    )
+                  })()}
+
+                  {augmentedNamedGroups.length > 0 && (() => {
+                    // Running colour-rotation index across all groups
+                    // in reading order so each rendered image-instance
+                    // on the page gets a distinct bullet colour from
+                    // BRAND_ORDER (red → pink → indigo → teal). Starts
+                    // at the number of images actually rendered in the
+                    // standalone shared section — NOT the full shared-
+                    // group size — so shared images consumed into named
+                    // groups via virtual pairing don't inflate the
+                    // offset. A shared image injected into two
+                    // different named groups therefore picks up two
+                    // different colours (one per rendered instance).
+                    let colorIdx = sharedStandaloneGroup
+                      ? sharedStandaloneGroup.images.length
+                      : 0
+                    return augmentedNamedGroups.map((group, groupIdx) => {
+                      const pill =
+                        group.heading != null ? approvalPillFor(group.heading) : null
+                      const startIdx = colorIdx
+                      colorIdx += group.images.length
+                      const heading = group.heading
+                      const bandHeading =
+                        heading != null ? `${firstName(heading)}'s card` : ''
+                      // Numbered chip — recipient index in the
+                      // augmented sequence, zero-padded to two digits.
+                      // Shared block above doesn't carry a number, so
+                      // we count named groups from 01 regardless of
+                      // whether a shared block precedes them.
+                      const chipLabel = String(groupIdx + 1).padStart(2, '0')
+                      const isPair = groupIsPair(group)
+                      const sidesLabel = isPair
+                        ? '2 sides'
+                        : `${group.images.length} ${group.images.length === 1 ? 'side' : 'sides'}`
+                      return (
+                        <div
+                          key={group.heading ?? ''}
+                          className="bg-surface border border-line rounded-[14px] overflow-hidden"
+                        >
+                          {/* Card header band: numbered chip + name +
+                              optional approval pill on its right + sides
+                              indicator far right. */}
+                          <div className="flex items-center gap-3 px-5 py-4 border-b border-line-soft">
+                            <span className="grid place-items-center h-9 w-9 rounded-full bg-canvas border border-line eyebrow text-ink">
+                              {chipLabel}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <div className="font-display font-medium text-ink text-[17px] leading-tight truncate">
+                                {bandHeading}
+                              </div>
+                            </div>
+                            {pill && (
+                              <span
+                                className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 eyebrow"
+                                style={{
+                                  background: 'rgba(14,155,78,0.14)',
+                                  color: 'var(--c-in-stock)',
+                                  border: '1px solid rgba(14,155,78,0.3)',
+                                  letterSpacing: '0.14em',
+                                }}
+                              >
+                                <svg
+                                  width="9"
+                                  height="9"
+                                  viewBox="0 0 12 12"
+                                  fill="none"
+                                  aria-hidden="true"
+                                >
+                                  <path
+                                    d="M2.5 6.5L5 9L9.5 3.5"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                </svg>
+                                {pill}
+                              </span>
+                            )}
+                            <span className="inline-flex items-center gap-1.5 eyebrow text-ink-mute">
+                              <Eye size={12} aria-hidden="true" />
+                              {sidesLabel}
+                            </span>
+                          </div>
+                          {/* Image grid — front + back side-by-side at
+                              md+, stacked at smaller widths. The gap-px
+                              + bg-line-soft creates the hairline divider
+                              between cells without per-cell borders. */}
+                          <div
+                            className={
+                              isPair
+                                ? 'grid grid-cols-1 gap-px bg-line-soft md:grid-cols-2'
+                                : 'space-y-5 p-5'
+                            }
+                          >
+                            {group.images.map((img, localIdx) => {
+                              const dotIdx = startIdx + localIdx
+                              return (
+                                <div
+                                  key={img.id}
+                                  className={isPair ? 'bg-surface p-5' : ''}
+                                >
+                                  <PlateCard
+                                    image={img}
+                                    brandColor={BRAND_ORDER[dotIdx % BRAND_ORDER.length]}
+                                    alt={`${group.heading} — proof version ${activeVersion.version_number}`}
+                                    onClick={() => openDetailView({
+                                      images: group.images,
+                                      index: localIdx,
+                                      displayLabel: group.heading ?? null,
+                                      versionId: activeVersion.id,
+                                      recipientName: group.heading ?? SHARED_APPROVAL_KEY,
+                                    })}
+                                    recipientLabel={group.heading ?? undefined}
+                                  />
+                                </div>
+                              )
+                            })}
+                          </div>
+                          {/* Per-recipient action band — Phase 2.5
+                              approve / request-changes pair with its
+                              state-machine renderer. Lives inside the
+                              card with its own top border so the
+                              divider reads as "now act on this
+                              recipient" rather than as a free-floating
+                              afterthought. */}
+                          {group.heading != null && (
+                            <div className="border-t border-line-soft px-5 py-4">
+                              {renderActionBand(group.heading)}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })
+                  })()}
                 </div>
               </section>
             )
@@ -3231,110 +3019,75 @@ export default function CustomerProofPage() {
             qrImages={versionQrImages[activeVersion.id] ?? []}
             names={activeVersion.names ?? []}
             isVariantRound={activeVersion.is_variant_round ?? false}
+            className="order-5 lg:order-none"
+            introCopy={publicSettings?.qr_panel_intro_copy}
+            vcardCopy={publicSettings?.qr_panel_vcard_copy}
           />
 
-          {/* ───── Metal thickness guide (migration 000177) ─────
-              Contextual section explaining the three metal card
-              thickness options (300μm / 500μm / 800μm). Mirrors the
-              Construction section's two-column rhythm and sits on the
-              same PAPER_TINT_1 band. Renders only on metal proofs
-              (material_code starts with 'metal_') so no other
-              material category is affected. Metal proofs never have
-              the letterpress Construction section, so the two bands
-              never stack — each material gets at most one contextual
-              panel in this slot. */}
+          {/* Metal thickness guide (migration 000177). Contextual
+              section explaining the three metal card thickness
+              options (300μm / 500μm / 800μm). Renders only on
+              metal proofs (material_code starts with 'metal_').
+              Metal proofs never carry the letterpress Construction
+              panel, so the two never stack — each material gets at
+              most one contextual panel in this slot. */}
           {activeVersion.material_code?.startsWith('metal_') && (
-            <section
-              aria-labelledby="section-thickness-heading"
-              style={{
-                background: PAPER_TINT_1,
-                color: PAPER_INK,
-                borderTop: '1px solid rgba(26,22,18,0.10)',
-              }}
+            <PanelShell
+              eyebrow="About this material"
+              title="Thickness"
+              icon={Layers}
+              accent={tokens.brand}
+              className="order-7 lg:order-none"
             >
-              <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-                <div className="grid gap-10 sm:grid-cols-[1fr_2fr] sm:gap-16">
-                  <div>
-                    <h2
-                      id="section-thickness-heading"
-                      className="leading-[1.02] border-b-2 pb-4 break-words"
-                      style={{
-                        fontFamily: SERIF,
-                        fontWeight: 400,
-                        fontSize: 'clamp(40px, 9vw, 56px)',
-                        color: PAPER_INK,
-                        borderColor: 'rgba(26,22,18,0.8)',
-                      }}
-                    >
-                      Thickness
-                    </h2>
-                    <p
-                      className="mt-5 max-w-[30ch] text-[14px] leading-[1.55]"
-                      style={{ color: PAPER_TERTIARY }}
-                    >
-                      Metal cards are available in three thicknesses. The pricing table below shows the cost for each — choose the weight that suits you best.
-                    </p>
-                  </div>
-                  <MetalThicknessPanel materialCode={activeVersion.material_code} />
-                </div>
+              {/* Two-column grid mirroring the "Material notes"
+                  card: intro narrative left, the coral-accented
+                  thickness list right. Stacks to one column below md
+                  in reading order (intro → list). */}
+              <div className="grid gap-8 md:grid-cols-[1fr_2fr] md:items-start">
+                <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-ink-soft">
+                  {thicknessNotes.intro}
+                </p>
+                <MetalThicknessPanel
+                  options={thicknessSetForMaterial(thicknessNotes, activeVersion.material_code)}
+                />
               </div>
-            </section>
+            </PanelShell>
           )}
 
-          {/* ───── Construction (migration 000135) ─────
-              Mirrors the Specification section's two-column rhythm:
-              big serif heading on the left (1fr), panel on the
-              right (2fr). Sits on its own tinted band
-              (PAPER_TINT_1) between the proof images (PAPER_CREAM)
-              and the Specification (PAPER_TINT_2), giving a gentle
-              cream → tint_1 → tint_2 progression. Renders only when
-              all three layer fields populate, so non-letterpress
-              and gilded versions naturally drop the entire band
-              (heading included — no orphan "Construction" header
-              over an empty space). */}
+          {/* Letterpress construction guide (migration 000135).
+              Renders only when all three layer fields populate, so
+              non-letterpress and gilded versions naturally drop the
+              entire panel. */}
           {activeVersion.front_colour_name && activeVersion.core_colour_name && activeVersion.back_colour_name && (
-            <section
-              aria-labelledby="section-construction-heading"
-              style={{
-                background: PAPER_TINT_1,
-                color: PAPER_INK,
-                borderTop: '1px solid rgba(26,22,18,0.10)',
-              }}
+            <PanelShell
+              eyebrow="About this material"
+              title="Construction"
+              icon={Layers}
+              accent={tokens.brand}
+              className="order-7 lg:order-none"
             >
-              <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-                <div className="grid gap-10 sm:grid-cols-[1fr_2fr] sm:gap-16">
-                  <div>
-                    <h2
-                      id="section-construction-heading"
-                      className="leading-[1.02] border-b-2 pb-4 break-words"
-                      style={{
-                        fontFamily: SERIF,
-                        fontWeight: 400,
-                        fontSize: 'clamp(40px, 9vw, 56px)',
-                        color: PAPER_INK,
-                        borderColor: 'rgba(26,22,18,0.8)',
-                      }}
-                    >
-                      Construction
-                    </h2>
-                    <p
-                      className="mt-5 max-w-[30ch] text-[14px] leading-[1.55]"
-                      style={{ color: PAPER_TERTIARY }}
-                    >
-                      Three layers of genuine Colorplan paper, bonded together and visible along the card's edges, a signature detail of our letterpress cards.
-                    </p>
-                  </div>
-                  <LayeredConstructionPanel
-                    front_name={activeVersion.front_colour_name}
-                    front_hex={activeVersion.front_colour_hex}
-                    core_name={activeVersion.core_colour_name}
-                    core_hex={activeVersion.core_colour_hex}
-                    back_name={activeVersion.back_colour_name}
-                    back_hex={activeVersion.back_colour_hex}
-                  />
-                </div>
+              {/* One-third / two-third split: the explanatory text in
+                  the left column, the layered cross-section diagram in
+                  the right. Mirrors the Thickness / QR two-column
+                  pattern, weighted 1:2 so the diagram gets the room.
+                  Stacks to one column below md, in reading order (text
+                  first, then diagram). */}
+              <div className="grid gap-6 md:gap-8 md:grid-cols-[1fr_2fr] md:items-start">
+                <p className="text-[14px] leading-[1.6] text-ink-soft m-0">
+                  Three layers of genuine Colorplan paper, bonded
+                  together and visible along the card's edges — a
+                  signature detail of our letterpress cards.
+                </p>
+                <LayeredConstructionPanel
+                  front_name={activeVersion.front_colour_name}
+                  front_hex={activeVersion.front_colour_hex}
+                  core_name={activeVersion.core_colour_name}
+                  core_hex={activeVersion.core_colour_hex}
+                  back_name={activeVersion.back_colour_name}
+                  back_hex={activeVersion.back_colour_hex}
+                />
               </div>
-            </section>
+            </PanelShell>
           )}
 
           {/* ───── Specification + Notes on ink ─────
@@ -3348,148 +3101,9 @@ export default function CustomerProofPage() {
               section — every per-direction material is a separate
               decision and the version row carries no aggregate
               material/currency to put on the spec sheet. */}
-          {!activeVersion.is_per_direction_pricing && (
-          <section
-            aria-labelledby="section-specification-heading"
-            style={{
-              background: PAPER_TINT_2,
-              color: PAPER_INK,
-              borderTop: '1px solid rgba(26,22,18,0.10)',
-            }}
-          >
-            <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-              <div className="grid gap-10 sm:grid-cols-[1fr_2fr] sm:gap-16">
-                <div>
-                  <h2
-                    id="section-specification-heading"
-                    className="leading-[1.02] border-b-2 pb-4 break-words"
-                    style={{
-                      fontFamily: SERIF,
-                      fontWeight: 400,
-                      fontSize: 'clamp(40px, 9vw, 56px)',
-                      color: PAPER_INK,
-                      borderColor: 'rgba(26,22,18,0.8)',
-                    }}
-                  >
-                    Specification
-                  </h2>
-                  <p
-                    className="mt-5 max-w-[30ch] text-[14px] leading-[1.55]"
-                    style={{ color: PAPER_TERTIARY }}
-                  >
-                    The details captured in this proof. Final thickness, options, and quantity are confirmed when you place your order.
-                  </p>
-                </div>
-                <dl>
-                  <PaperSpecRow label="Material" value={activeVersion.material_display} />
-                  {/* Sides — derived from the image set. Two-sided
-                      iff any image on the active version carries
-                      side='back'; otherwise front only. Pre-
-                      migration-000085 data with null sides reads
-                      as front only, which matches the historic
-                      single-sided proofs' reality. */}
-                  <PaperSpecRow
-                    label="Sides"
-                    value={
-                      (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
-                        ? 'Front and back'
-                        : 'Front only'
-                    }
-                  />
-                  {lockedFinishVariant && (
-                    <PaperSpecRow label="Finish" value={lockedFinishVariant.display_name} />
-                  )}
-                  {activeOption && (
-                    <PaperSpecRow label={optionLabelSingular} value={activeOption.display_name} />
-                  )}
-                  {/* Core colour was previously surfaced here as a
-                      single spec row (migration 000133). Migration
-                      000135 replaced it with a dedicated
-                      LayeredConstructionPanel that renders above
-                      the Specification section and shows all three
-                      Colorplan layers as a cross-section. */}
-                  {activeVersion.ink_names.length > 0 && (
-                    <PaperSpecRow
-                      label="Ink colours"
-                      value={activeVersion.ink_names.join('\n')}
-                    />
-                  )}
-                  {/* Names on card hidden when personalisation is on
-                      AND its pricing actually resolved (live read
-                      from personalisation_pricing for the proof's
-                      currency). The price-resolved gate matches the
-                      docket-cell defence — a Personalisation label
-                      without a Personalisation row in the pricing
-                      table below would read as a free claim. */}
-                  {activeVersion.names.length > 0 && !(activeVersion.has_personalisation && activePersonalisationPricing) && (
-                    <PaperSpecRow
-                      label="Names on card"
-                      value={activeVersion.names.join('\n')}
-                    />
-                  )}
-                  {activeVersion.has_personalisation && activePersonalisationPricing && (
-                    <PaperSpecRow
-                      label="Personalisation"
-                      value="Unique data per card"
-                    />
-                  )}
-                  <PaperSpecRow
-                    label="Revision"
-                    value={`v${activeVersion.version_number}${heroRevisionDate ? ` · ${heroRevisionDate}` : ''}`}
-                  />
-                </dl>
-              </div>
-
-              {activeVersion.change_notes && (
-                <div
-                  className="mt-20 grid gap-10 pt-14 sm:grid-cols-[1fr_2fr] sm:gap-16"
-                  style={{ borderTop: '1px solid rgba(26,22,18,0.10)' }}
-                >
-                  <div>
-                    <h2
-                      className="leading-[1.02] border-b-2 pb-4 break-words"
-                      style={{
-                        fontFamily: SERIF,
-                        fontWeight: 400,
-                        fontSize: 'clamp(40px, 9vw, 56px)',
-                        color: PAPER_INK,
-                        borderColor: 'rgba(26,22,18,0.8)',
-                      }}
-                    >
-                      Notes
-                    </h2>
-                  </div>
-                  <div>
-                    <p
-                      style={{
-                        fontFamily: SERIF,
-                        fontWeight: 400,
-                        fontSize: 26,
-                        lineHeight: 1.4,
-                        color: PAPER_INK,
-                      }}
-                    >
-                      <span style={{ color: ACCENT }}>“</span>
-                      <span className="whitespace-pre-line">{activeVersion.change_notes}</span>
-                      <span style={{ color: ACCENT }}>”</span>
-                    </p>
-                    <p
-                      className="mt-6 font-paper-mono uppercase"
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 500,
-                        letterSpacing: '0.32em',
-                        color: PAPER_TERTIARY,
-                      }}
-                    >
-                      — Plasma Design · v{activeVersion.version_number}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </section>
-          )}
+          {/* Specs PanelShell moved into the left-rail aside in V2.
+              Notes card was here too — its copy lives in the
+              customer card at the top of the aside now. */}
 
           {/* ───── Pricing ─────
               Darker ink section (#0f0d0b) — visually distinct
@@ -3508,242 +3122,103 @@ export default function CustomerProofPage() {
               duplicate. is_variant_round is false on every row
               in production today, so this gate is a no-op for
               every existing proof. */}
-          {!activeVersion?.is_variant_round && (
-          <section
-            aria-labelledby="section-pricing-heading"
-            style={{
-              background: PAPER_CREAM,
-              color: PAPER_INK,
-              borderTop: '1px solid rgba(26,22,18,0.10)',
-            }}
-          >
-            <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-              <div
-                className="mb-10 flex flex-wrap items-baseline justify-between gap-3 border-b-2 pb-4"
-                style={{ borderColor: 'rgba(26,22,18,0.8)' }}
-              >
-                <div>
-                  <h2
-                    id="section-pricing-heading"
-                    className="leading-none break-words"
-                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(40px, 9vw, 56px)', color: PAPER_INK }}
-                  >
-                    Pricing
-                  </h2>
-                </div>
-                <div className="text-right">
-                  {!activeVersion.custom_quote &&
-                    activeOption &&
-                    versionOptions.length > 0 &&
-                    materialHasSurcharges && (
-                      <p
-                        className="font-paper-mono uppercase"
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 500,
-                          letterSpacing: '0.22em',
-                          color: PAPER_TERTIARY,
-                        }}
-                      >
-                        Prices shown for {activeOption.display_name} {optionLabelSingular.toLowerCase()}
-                      </p>
-                    )}
-                  {!activeVersion.custom_quote && (
-                    // Currency + VAT label sits at PAPER_INK rather than
-                    // the kicker-family PAPER_TERTIARY because it's
-                    // business-critical disclosure (the customer needs
-                    // to know prices include VAT before placing an
-                    // order), not supplementary context like "Prices
-                    // shown for {finish}". Don't migrate back to
-                    // PAPER_TERTIARY in a consistency sweep — the
-                    // divergence is intentional.
-                    <p
-                      className="mt-1 font-paper-mono uppercase"
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 500,
-                        letterSpacing: '0.22em',
-                        color: PAPER_INK,
-                      }}
-                    >
+          {/* Wide-table Pricing — renders here in the right column
+              when the snapshot has 3 or more priced variants
+              (4+ total columns: qty + N variant prices). The
+              360px left rail comfortably fits up to 3 columns
+              (qty + 2 prices); anything wider overflows.
+              Single- and two-variant pricing stay in the left
+              rail per V2 design intent. JSX shape mirrors the
+              aside's Pricing block above. */}
+          {!activeVersion.is_variant_round && livePricingSnapshot.variants.length > 2 && (
+            <>
+              <PanelShell
+                eyebrow={
+                  !activeVersion.custom_quote && activeOption && versionOptions.length > 0 && materialHasSurcharges
+                    ? `Prices shown for ${activeOption.display_name} ${optionLabelSingular.toLowerCase()}`
+                    : 'Inclusive of VAT'
+                }
+                title="Pricing"
+                icon={currencyIcon(activeVersion.currency)}
+                accent={tokens.brand}
+                className="order-8 lg:order-none"
+                action={
+                  !activeVersion.custom_quote ? (
+                    <span className="num text-[12px] font-medium text-ink uppercase tracking-[0.18em]">
                       {activeVersion.currency}
                       {activeVersion.currency === 'GBP' ? ' · VAT included' : ''}
+                    </span>
+                  ) : undefined
+                }
+              >
+                <h2 id="section-pricing-heading" className="sr-only">Pricing</h2>
+                {activeVersion.custom_quote ? (
+                  <div className="py-6 text-center">
+                    <p className="mx-auto max-w-md font-display text-[18px] leading-snug text-ink-soft">
+                      This proof requires a custom quote. We'll be in touch separately with pricing.
                     </p>
-                  )}
-                </div>
-              </div>
-
-              {activeVersion.custom_quote ? (
-                <div className="py-6 text-center">
-                  <p
-                    className="mx-auto max-w-md"
-                    style={{
-                      fontFamily: SERIF,
-                      fontWeight: 400,
-                      fontSize: 22,
-                      color: PAPER_SECONDARY,
-                    }}
-                  >
-                    This proof requires a custom quote. We'll be in touch separately with pricing.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <PaperPricingTable
-                    snapshot={livePricingSnapshot}
-                    // Inside the !is_per_direction_pricing gate; see
-                    // sibling call above for the migration 000142 reference.
-                    currency={activeVersion.currency!}
-                    displayQuantities={activeVersion.display_quantities}
-                    quoteMinQuantity={activeVersion.quote_min_quantity}
-                    quoteMaxQuantity={activeVersion.quote_max_quantity}
-                    quantitySurcharges={quantitySurcharges}
-                    personalisationPricing={activePersonalisationPricing}
-                  />
-                  {personalisationBreakevenQty != null && (
-                    <p
-                      className="mt-3 font-body"
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 400,
-                        color: PAPER_TERTIARY,
-                      }}
-                    >
-                      A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
-                    </p>
-                  )}
-                </>
-              )}
-
-              {/* Split-name + shipping callouts — two side-by-
-                  side cards on paper. Split-name only renders
-                  when there's an extra-name surcharge to apply;
-                  shipping renders whenever the version has a
-                  shipping_note set. Hidden in custom-quote mode
-                  (no prices to modify). */}
-              {!activeVersion.custom_quote &&
-                (((activeVersion.names.length >= 2 &&
-                  activeVersion.split_name_surcharge_snapshot != null &&
-                  activeVersion.split_name_surcharge_snapshot > 0) ||
-                  !!activeVersion.shipping_note)) && (
-                  <div
-                    className={[
-                      'mt-8 grid gap-6',
-                      activeVersion.names.length >= 2 &&
-                      activeVersion.split_name_surcharge_snapshot != null &&
-                      activeVersion.split_name_surcharge_snapshot > 0 &&
-                      activeVersion.shipping_note
-                        ? 'sm:grid-cols-2'
-                        : 'sm:grid-cols-1',
-                    ].join(' ')}
-                  >
-                    {activeVersion.names.length >= 2 &&
-                      activeVersion.split_name_surcharge_snapshot != null &&
-                      activeVersion.split_name_surcharge_snapshot > 0 && (
-                        <div
-                          className="p-6"
-                          style={{ border: '1px solid rgba(26,22,18,0.12)' }}
-                        >
-                          <p
-                            className="font-paper-mono uppercase"
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 500,
-                              letterSpacing: '0.32em',
-                              color: ACCENT,
-                            }}
-                          >
-                            Split-name tooling
-                          </p>
-                          <p
-                            className="mt-3"
-                            style={{
-                              fontFamily: SERIF,
-                              fontWeight: 400,
-                              fontSize: 26,
-                              lineHeight: 1.25,
-                              color: PAPER_INK,
-                            }}
-                          >
-                            Add{' '}
-                            <span style={{ fontFamily: MONO, fontSize: 22 }}>
-                              {formatPrice(
-                                (activeVersion.names.length - 1) *
-                                  activeVersion.split_name_surcharge_snapshot,
-                                // !is_per_direction_pricing gate; null
-                                // unreachable here (migration 000142).
-                                activeVersion.currency!,
-                              )}
-                            </span>{' '}
-                            to the prices above
-                          </p>
-                          <p
-                            className="mt-2 font-body"
-                            style={{
-                              fontSize: 13,
-                              fontWeight: 400,
-                              color: PAPER_TERTIARY,
-                            }}
-                          >
-                            {/*
-                              Multiplier semantics: the surcharge
-                              applies to each name *beyond the first*,
-                              so the multiplier is names.length - 1
-                              not names.length. The earlier copy
-                              ("{N} names × £15 tooling each beyond
-                              the first") read as N × £15 to anyone
-                              not parsing the trailing clause —
-                              e.g. for 2 names it scanned as £30
-                              even though the +£X total above is £15.
-                              This phrasing puts the count of *extra*
-                              names in the multiplier slot so the
-                              math reads right at a glance.
-                            */}
-                            {activeVersion.names.length - 1} extra{' '}
-                            {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
-                            {formatPrice(
-                              activeVersion.split_name_surcharge_snapshot,
-                              // Same gate as the parent formatPrice call.
-                              activeVersion.currency!,
-                            )}{' '}
-                            tooling
-                          </p>
-                        </div>
-                      )}
-                    {activeVersion.shipping_note && (
-                      <div
-                        className="p-6"
-                        style={{ border: '1px solid rgba(26,22,18,0.12)' }}
-                      >
-                        <p
-                          className="font-paper-mono uppercase"
-                          style={{
-                            fontSize: 10,
-                            fontWeight: 500,
-                            letterSpacing: '0.32em',
-                            color: PAPER_TERTIARY,
-                          }}
-                        >
-                          Shipping
-                        </p>
-                        <p
-                          className="mt-3 whitespace-pre-line"
-                          style={{
-                            fontFamily: SERIF,
-                            fontWeight: 400,
-                            fontSize: 22,
-                            lineHeight: 1.3,
-                            color: PAPER_INK,
-                          }}
-                        >
-                          {activeVersion.shipping_note}
-                        </p>
-                      </div>
+                  </div>
+                ) : (
+                  <>
+                    <PaperPricingTable
+                      snapshot={livePricingSnapshot}
+                      currency={activeVersion.currency!}
+                      displayQuantities={activeVersion.display_quantities}
+                      quoteMinQuantity={activeVersion.quote_min_quantity}
+                      quoteMaxQuantity={activeVersion.quote_max_quantity}
+                      quantitySurcharges={quantitySurcharges}
+                      personalisationPricing={activePersonalisationPricing}
+                    />
+                    {personalisationBreakevenQty != null && (
+                      <p className="mt-3 text-[13px] text-ink-mute leading-relaxed">
+                        A minimum personalisation charge applies below {personalisationBreakevenQty.toLocaleString()} cards.
+                      </p>
                     )}
+                    {/* Shipping note as a quiet footer line inside the
+                        Pricing PanelShell (same treatment as the aside
+                        copy above). Avoids floating a stranded half-
+                        width shipping card below the panel when
+                        split-name tooling isn't applicable. */}
+                    {activeVersion.shipping_note && (
+                      <p className="mt-3 text-[12px] text-ink-mute whitespace-pre-line text-right border-t border-line-soft pt-3">
+                        {activeVersion.shipping_note}
+                      </p>
+                    )}
+                  </>
+                )}
+              </PanelShell>
+
+              {/* Split-name tooling callout — full-width card below
+                  the Pricing PanelShell when applicable. */}
+              {!activeVersion.custom_quote &&
+                activeVersion.names.length >= 2 &&
+                activeVersion.split_name_surcharge_snapshot != null &&
+                activeVersion.split_name_surcharge_snapshot > 0 && (
+                  <div className="order-8 lg:order-none rounded-[10px] bg-surface border border-line p-4 mt-4">
+                    <span className="eyebrow text-brand">Split-name tooling</span>
+                    <p className="mt-2 text-[15px] leading-snug text-ink font-medium">
+                      Add{' '}
+                      <span className="num font-medium">
+                        {formatPrice(
+                          (activeVersion.names.length - 1) *
+                            activeVersion.split_name_surcharge_snapshot,
+                          activeVersion.currency!,
+                        )}
+                      </span>{' '}
+                      to the prices above
+                    </p>
+                    <p className="mt-1.5 text-[12px] text-ink-mute">
+                      {activeVersion.names.length - 1} extra{' '}
+                      {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
+                      {formatPrice(
+                        activeVersion.split_name_surcharge_snapshot,
+                        activeVersion.currency!,
+                      )}{' '}
+                      tooling
+                    </p>
                   </div>
                 )}
-            </div>
-          </section>
+            </>
           )}
 
           {/* ───── About {material} ─────
@@ -3760,72 +3235,27 @@ export default function CustomerProofPage() {
               !is_per_direction_pricing gate makes that explicit and
               survives any future schema drift. */}
           {!activeVersion.is_per_direction_pricing && activeVersion.material_description && (
-            <section
-              aria-labelledby="section-material-heading"
-              style={{ background: PAPER_TINT_1, color: PAPER_INK }}
-            >
-              {/* Outer padding matches the Plates section's
-                  py-20 sm:py-24 rhythm. Section sits in the
-                  PAPER_TINT_1 slot just above the footer — same
-                  cream variant the Revision timeline uses, the
-                  README's "tinted bands break visual fatigue"
-                  pattern at the top and bottom of the long-scroll
-                  page. */}
-              <div className="mx-auto max-w-[1080px] px-8 py-20 sm:px-8 sm:py-24">
-                {/* Mono kicker above the h2 — editorial frame
-                    for the About section. Always renders,
-                    regardless of whether the material has
-                    curated key_features, because it's section
-                    chrome rather than feature-list chrome. */}
-                <p
-                  className="mb-3 font-paper-mono uppercase"
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 500,
-                    letterSpacing: '0.32em',
-                    color: ACCENT,
-                  }}
-                >
-                  Material notes
-                </p>
-                <h2
-                  id="section-material-heading"
-                  className="leading-none border-b-2 pb-4 break-words"
-                  style={{
-                    fontFamily: SERIF,
-                    fontWeight: 400,
-                    fontSize: 'clamp(40px, 9vw, 56px)',
-                    color: PAPER_INK,
-                    borderColor: 'rgba(26,22,18,0.8)',
-                  }}
-                >
-                  About our {activeVersion.material_display.toLowerCase()} cards
-                </h2>
-                {/* Hairline ACCENT rule between heading and the
-                    content grid. Replaces the grid's former mt-8
-                    with its own vertical margins (mt-6 mb-5).
-                    Pairs with the kicker as section chrome; both
-                    render unconditionally. */}
-                <div
-                  aria-hidden
-                  className="mt-6 mb-5 h-px w-12"
-                  style={{ background: ACCENT }}
-                />
-                  {/* Balanced two-column grid at md+ (narrative
-                      left, key features right). Stacks to a
-                      single column below the breakpoint in
-                      reading order: narrative → features. When
-                      key_features is null or empty the right
-                      column renders an empty <div>; the grid
-                      keeps its two-column shape so narrative
-                      width (max-w-[62ch]) stays stable and the
-                      right side reads as deliberate breathing
-                      room rather than the layout reshaping. */}
-                  <div className="grid gap-10 md:grid-cols-2">
-                    <p
-                      className="max-w-[62ch] whitespace-pre-line font-body"
-                      style={{ fontSize: 15, lineHeight: 1.7, color: PAPER_SECONDARY }}
-                    >
+            <section aria-labelledby="section-material-heading" className="order-9 lg:order-none">
+              <PanelShell
+                eyebrow="Material notes"
+                title={`About our ${activeVersion.material_display.toLowerCase()} cards`}
+                icon={BookOpen}
+                accent={tokens.brand}
+              >
+                  <h2 id="section-material-heading" className="sr-only">
+                    About our {activeVersion.material_display.toLowerCase()} cards
+                  </h2>
+                  {/* One-third / two-third grid at md+ (narrative
+                      left, key features right) — matches the Thickness
+                      and Construction cards. Stacks to a single
+                      column below the breakpoint in reading order:
+                      narrative → features. When key_features is
+                      null or empty the right column renders an
+                      empty <div> so the grid shape stays stable
+                      and narrative width (max-w-[62ch]) doesn't
+                      reshape across materials. */}
+                  <div className="grid gap-8 md:grid-cols-[1fr_2fr] md:items-start">
+                    <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-ink-soft">
                       {activeVersion.material_description}
                     </p>
                     <div>
@@ -3834,33 +3264,23 @@ export default function CustomerProofPage() {
                           {title, body} pair. Gated on presence
                           of curated features; right column
                           wrapper stays regardless so the grid
-                          shape stays stable across materials.
-                          items-baseline aligns the 24px serif
-                          numeral's baseline with the title's
-                          baseline — standard editorial
-                          treatment, numeral reads tall. */}
+                          shape stays stable across materials. */}
                       {activeVersion.key_features && activeVersion.key_features.length > 0 && (
-                        <ul className="max-w-[62ch] space-y-[1.15rem]">
+                        <ul className="max-w-[62ch] space-y-4">
                           {activeVersion.key_features.map((feature, i) => (
-                            <li key={i} className="grid grid-cols-[40px_1fr] items-baseline gap-3">
+                            <li key={i} className="grid grid-cols-[36px_1fr] items-baseline gap-3">
                               <span
-                                aria-hidden
-                                className="leading-none"
-                                style={{ fontFamily: SERIF, fontSize: 24, color: ACCENT }}
+                                aria-hidden="true"
+                                className="num font-medium text-brand leading-none"
+                                style={{ fontSize: 22 }}
                               >
                                 {String(i + 1).padStart(2, '0')}
                               </span>
                               <div>
-                                <p
-                                  className="mb-0.5 font-body"
-                                  style={{ fontSize: 14, fontWeight: 500, color: PAPER_INK }}
-                                >
+                                <p className="mb-0.5 text-[14px] font-medium text-ink">
                                   {feature.title}
                                 </p>
-                                <p
-                                  className="font-body"
-                                  style={{ fontSize: 13, lineHeight: 1.55, color: PAPER_TERTIARY }}
-                                >
+                                <p className="text-[13px] leading-[1.55] text-ink-mute">
                                   {feature.body}
                                 </p>
                               </div>
@@ -3872,53 +3292,42 @@ export default function CustomerProofPage() {
                   </div>
 
                   {/* Material disclaimer — full-width below the
-                      grid, conditional. Stronger vertical break
-                      (mt-10) than the previous single-column
-                      layout's mt-6 so the disclaimer reads as a
-                      summary row rather than a continuation of
-                      either column above it. max-w-[62ch] keeps
-                      the reading width sensible within the
-                      wider container. */}
+                      grid, conditional. Sits inside the same
+                      PanelShell so it reads as part of the same
+                      surface rather than a separate block. */}
                   {activeVersion.material_disclaimer && (
-                    <p
-                      className="mt-10 max-w-[62ch] whitespace-pre-line font-body"
-                      style={{ fontSize: 13, lineHeight: 1.6, color: PAPER_TERTIARY }}
-                    >
+                    <p className="mt-8 max-w-[62ch] whitespace-pre-line text-[13px] leading-[1.6] text-ink-mute border-t border-line-soft pt-5">
                       {activeVersion.material_disclaimer}
                     </p>
                   )}
-              </div>
+              </PanelShell>
             </section>
           )}
 
-        </>
+          </div>
+        </main>
       )}
 
-      {/* ───── Footer ───── */}
-      <footer className="text-white" style={{ background: INK }}>
-        {/* Brand rule again on top of the footer — bookends the
-            page with the 4-colour signature. */}
-        <BrandRule />
-        <div className="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-3 px-8 py-10 sm:px-8">
-          <div className="flex items-center gap-3">
-            <img src="/logo-cards.png" alt="Plasma" className="h-8 w-auto opacity-70" />
-            <span style={{ ...REG_A_BASE, color: LABEL_DARK }}>
-              © PlasmaDesign
-            </span>
-          </div>
-          {/* Proof ref · version — drops either piece when its
-              underlying value isn't available (override proofs
-              with null helpscout_conversation_id; the rare
-              no-version page state). Full collapse when both
-              are missing so the footer doesn't render an empty
-              paragraph. */}
-          {(proofRef || activeVersion) && (
-            <p style={{ ...REG_A_BASE, color: LABEL_DARK }}>
-              {proofRef}
-              {proofRef && activeVersion ? ' · ' : ''}
-              {activeVersion ? `v${activeVersion.version_number}` : ''}
-            </p>
-          )}
+      {/* Footer — replaces the dark-ink BrandRule footer with the
+          prototype's quiet two-column line on canvas. Left: eyebrow-
+          styled brand mark. Right: privacy reminder + version ref.
+          Both lines sit at 12px in ink-mute on the warm-cream canvas. */}
+      <footer className="mx-auto max-w-[1280px] px-6 sm:px-7 mt-6 mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 py-4 border-t border-line text-[12px] text-ink-mute">
+          <span className="eyebrow">PlasmaDesign · craft-press business cards</span>
+          <span className="flex items-center gap-3">
+            <span>This proof URL is private. Please don't share publicly.</span>
+            {(proofRef || activeVersion) && (
+              <span className="hidden sm:inline-flex items-center gap-2">
+                <span className="w-px h-3 bg-line" aria-hidden="true" />
+                <span className="font-mono">
+                  {proofRef}
+                  {proofRef && activeVersion ? ' · ' : ''}
+                  {activeVersion ? `v${activeVersion.version_number}` : ''}
+                </span>
+              </span>
+            )}
+          </span>
         </div>
       </footer>
 
@@ -4070,11 +3479,13 @@ function PlateCard({
         <button
           type="button"
           onClick={() => image.signed_url && onClick()}
-          // ring colour set explicitly to the ACCENT-50 token used
-          // across the page; without it Tailwind falls back to its
-          // default blue ring. ring-offset-2 sits against PAPER_CREAM
-          // (default white offset reads correctly on cream).
-          className="block w-full overflow-hidden focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[rgba(123,63,242,0.5)]"
+          // Focus halo uses outline-2 + outline-offset-1 to match the
+          // design-system primitive pattern (see Input.tsx for the
+          // Tailwind v4 ring-vs-outline rationale). Colour: brand
+          // coral, pulled via arbitrary-value syntax so the focused
+          // halo lands consistently across the bridged custom
+          // properties.
+          className="block w-full overflow-hidden rounded-[6px] border border-line bg-canvas focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)] cursor-zoom-in"
           // captionLabel carries recipient + side ("MARIE · FRONT") so
           // every plate on the page has a distinct accessible name. The
           // page-level descriptor (`alt`, e.g. "Marie — proof version 2")
@@ -4087,56 +3498,37 @@ function PlateCard({
             .join(', ')}
         >
           {image.signed_url ? (
-            <img
-              src={image.signed_url}
-              alt={alt}
-              className="block w-full"
-              style={{ background: '#f4f1ea' }}
-            />
+            <img src={image.signed_url} alt={alt} className="block w-full bg-canvas" />
           ) : (
-            <div className="aspect-[5/3] w-full" style={{ background: '#f4f1ea' }} />
+            <div className="aspect-[5/3] w-full bg-canvas" />
           )}
         </button>
-        {/* Three-column caption per README §4 screenshot:
-            dot + RECIPIENT · SIDE on the left, filename in muted
-            mono in the middle, plain "Download ↓" link on the
-            right. items-start so each column anchors at the top
-            of the row; the Download link's invisible 44px tap
-            target extends downward without pushing the other
-            columns out of vertical register. */}
-        <figcaption className="mt-4 grid grid-cols-1 items-start gap-2 border-t border-[rgba(26,22,18,0.10)] pt-3 text-[12px] leading-[18px] lg:grid-cols-[auto_1fr_auto] lg:gap-6">
-          <div className="flex items-start gap-2 min-w-0">
-            <span
-              aria-hidden
-              className="mt-[6px] h-[6px] w-[6px] shrink-0 rounded-[1px]"
-              style={{ background: brandColor }}
-            />
-            {captionLabel && (
+        {/* Two-line caption. Top line: brand-dot + RECIPIENT · SIDE on
+            the left, plain "Download ↓" link on the right. The
+            filename sits on its own full-width line below, so a long
+            recipient name can never squeeze it down to a useless
+            "Proo…" stub (the old three-column grid did exactly that
+            once a name and filename competed for one narrow row). The
+            recipient name wraps rather than truncating — names matter
+            more than the internal filename. All label copy reads
+            `.eyebrow` typography (mono, uppercase, 0.18em tracking). */}
+        <figcaption className="mt-3 border-t border-line-soft pt-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2 min-w-0">
               <span
-                className="font-paper-mono uppercase break-words"
-                style={{
-                  fontSize: 12,
-                  fontWeight: 500,
-                  letterSpacing: '0.22em',
-                  color: '#1a1612',
-                }}
-              >
-                {captionLabel}
-              </span>
-            )}
-          </div>
-          <div className="flex items-start min-w-0">
-            {image.original_filename && (
-              <span
-                className="font-paper-mono truncate min-w-0"
-                style={{ fontSize: 12, color: 'rgba(26,22,18,0.45)' }}
-                title={image.original_filename}
-              >
-                {image.original_filename}
-              </span>
-            )}
-          </div>
-          <div className="text-right">
+                aria-hidden="true"
+                className="mt-[5px] h-[6px] w-[6px] shrink-0 rounded-[2px]"
+                style={{ background: brandColor }}
+              />
+              {captionLabel && (
+                <span
+                  className="eyebrow text-ink break-words"
+                  style={{ letterSpacing: '0.18em' }}
+                >
+                  {captionLabel}
+                </span>
+              )}
+            </div>
             {image.signed_url && (
               <a
                 href={downloadHref}
@@ -4144,36 +3536,38 @@ function PlateCard({
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                // Plain mono text link — no pill, no border.
-                // min-h-[44px] + items-start gives a 44px tap
-                // target while keeping the visible text aligned
-                // at the top of the column, in register with the
-                // dot/label and filename baselines in cols 1-2.
-                className="inline-flex min-h-[44px] items-start font-paper-mono uppercase transition-colors hover:text-[#1a1612] focus-visible:outline-none focus-visible:underline"
-                style={{
-                  fontSize: 12,
-                  fontWeight: 500,
-                  letterSpacing: '0.22em',
-                  color: PAPER_TERTIARY,
-                }}
+                // -my-2 py-2 expands the tap target vertically (~36px)
+                // without stretching the row's visual height, so the
+                // link stays in register with the recipient label.
+                className="inline-flex shrink-0 items-center -my-2 py-2 eyebrow text-ink-mute hover:text-ink transition-colors focus:outline-none focus-visible:underline"
+                style={{ letterSpacing: '0.18em' }}
               >
                 Download ↓
               </a>
             )}
           </div>
+          {image.original_filename && (
+            <span
+              className="mt-1.5 block font-mono text-[12px] text-ink-dim truncate"
+              title={image.original_filename}
+            >
+              {image.original_filename}
+            </span>
+          )}
         </figcaption>
       </figure>
     </div>
   )
 }
 
-// Spec sheet row on the paper-tinted Specs band. Mono label
-// (Red Hat Mono small caps) on the left, sans value (Inter Tight)
-// on the right. Hairline top border stacks multiple rows as a
-// spec sheet rather than a card grid. Type values share the
-// docket-cell tokens from the hero (4c) since both are spec-sheet
-// reads — labels small-caps mono, values body-sans.
-function PaperSpecRow({
+// Spec row inside the Specification PanelShell. Eyebrow-style mono
+// label on the left, sans value on the right. divide-y on the
+// parent <dl> paints the hairlines between rows; this component
+// just provides the label/value pair. Optional swatchHex left in
+// the API for parity with the previous PaperSpecRow shape (the
+// LayeredConstructionPanel could plug into the same component), but
+// none of the live call sites use it today.
+function SpecRow({
   label,
   value,
   swatchHex,
@@ -4183,22 +3577,11 @@ function PaperSpecRow({
   swatchHex?: string
 }) {
   return (
-    <div className="grid grid-cols-[140px_1fr] items-baseline gap-6 border-t border-[rgba(26,22,18,0.12)] py-5 sm:grid-cols-[200px_1fr] sm:gap-8">
-      <dt
-        className="font-paper-mono uppercase"
-        style={{
-          fontSize: 9,
-          fontWeight: 500,
-          letterSpacing: '0.28em',
-          color: 'rgba(26,22,18,0.5)',
-        }}
-      >
+    <div className="grid grid-cols-[130px_1fr] items-baseline gap-4 py-3 sm:grid-cols-[180px_1fr] sm:gap-6">
+      <dt className="eyebrow" style={{ letterSpacing: '0.22em' }}>
         {label}
       </dt>
-      <dd
-        className="whitespace-pre-line font-body"
-        style={{ fontSize: 15, fontWeight: 400, color: '#1a1612' }}
-      >
+      <dd className="whitespace-pre-line text-[14px] leading-[1.5] text-ink font-medium">
         {swatchHex ? (
           <span className="inline-flex items-center gap-2.5">
             <CoreColourSwatch hex={swatchHex} size={16} ariaLabel={`${value} swatch`} />
@@ -4311,19 +3694,11 @@ function PaperPricingTable({
         <table className="w-full border-collapse">
           <caption className="sr-only">{`Pricing by quantity in ${currency}`}</caption>
           <thead>
-            <tr style={{ borderBottom: '1px solid rgba(26,22,18,0.15)' }}>
-              <th
-                scope="col"
-                className="py-4 text-left font-paper-mono uppercase"
-                style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
-              >
-                Total quantity
+            <tr className="border-b border-line">
+              <th scope="col" className="eyebrow py-3 text-left">
+                Quantity
               </th>
-              <th
-                scope="col"
-                className="py-4 text-right font-paper-mono uppercase"
-                style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
-              >
+              <th scope="col" className="eyebrow py-3 text-right">
                 Price
               </th>
             </tr>
@@ -4332,24 +3707,22 @@ function PaperPricingTable({
             {rows.map(({ qty, price }) => {
               const personalisation = personalisationSurcharges[qty] ?? 0
               const total = price + personalisation
-              const groupBorder = hasPersonalisation
-                ? { borderBottom: '1px solid rgba(26,22,18,0.10)' }
-                : undefined
               return (
                 <Fragment key={qty}>
                   <tr
-                    style={hasPersonalisation ? undefined : { borderBottom: '1px solid rgba(26,22,18,0.10)' }}
+                    className={hasPersonalisation ? '' : 'border-b border-line-soft'}
                   >
                     <td
-                      className="py-5 leading-none"
-                      style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 28, color: '#1a1612' }}
+                      className="py-4 leading-none num font-medium text-ink text-[19px] sm:text-[24px]"
                       rowSpan={hasPersonalisation ? 3 : 1}
                     >
                       {qty.toLocaleString()}
                     </td>
                     <td
-                      className={hasPersonalisation ? 'pt-5 pb-1 text-right' : 'py-5 text-right'}
-                      style={{ fontFamily: MONO, fontSize: 16, color: '#1a1612' }}
+                      className={[
+                        hasPersonalisation ? 'pt-4 pb-1' : 'py-4',
+                        'text-right num text-[15px] text-ink',
+                      ].join(' ')}
                     >
                       {formatPrice(price, currency)}
                     </td>
@@ -4357,30 +3730,18 @@ function PaperPricingTable({
                   {hasPersonalisation && (
                     <>
                       <tr>
-                        <td
-                          className="py-1 text-right font-paper-mono uppercase"
-                          style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.18em', color: PAPER_TERTIARY }}
-                        >
+                        <td className="py-1 text-right eyebrow">
                           Personalisation
                         </td>
-                        <td
-                          className="py-1 text-right"
-                          style={{ fontFamily: MONO, fontSize: 13, color: PAPER_TERTIARY }}
-                        >
+                        <td className="py-1 text-right num text-[12px] text-ink-mute">
                           + {formatPrice(personalisation, currency)}
                         </td>
                       </tr>
-                      <tr style={groupBorder}>
-                        <td
-                          className="pt-1 pb-5 text-right font-paper-mono uppercase"
-                          style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.18em', color: PAPER_INK }}
-                        >
+                      <tr className={hasPersonalisation ? 'border-b border-line-soft' : ''}>
+                        <td className="pt-1 pb-4 text-right eyebrow text-ink font-semibold">
                           Total
                         </td>
-                        <td
-                          className="pt-1 pb-5 text-right"
-                          style={{ fontFamily: MONO, fontSize: 17, fontWeight: 600, color: PAPER_INK }}
-                        >
+                        <td className="pt-1 pb-4 text-right num font-semibold text-[15px] text-ink">
                           {formatPrice(total, currency)}
                         </td>
                       </tr>
@@ -4417,22 +3778,24 @@ function PaperPricingTable({
       <table className="w-full border-collapse">
         <caption className="sr-only">{`Pricing by quantity in ${currency}`}</caption>
         <thead>
-          <tr style={{ borderBottom: '1px solid rgba(26,22,18,0.15)' }}>
-            <th
-              scope="col"
-              className="py-4 pr-2 text-left font-paper-mono uppercase sm:pr-4"
-              style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
-            >
-              Total quantity
+          <tr className="border-b border-line">
+            <th scope="col" className="eyebrow py-3 pr-2 text-left sm:pr-4">
+              Quantity
             </th>
             {variants.map((v) => (
               <th
                 key={v.variant_id}
                 scope="col"
-                className="py-4 pl-2 text-right font-paper-mono uppercase sm:pl-4"
-                style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
+                className="eyebrow py-3 pl-2 text-right sm:pl-4"
               >
-                {v.display}
+                {/* Compact unit on mobile (e.g. "300µm") so the four
+                    columns fit without horizontal scroll; full label
+                    ("300 micron") on sm+. normal-case keeps the µm unit
+                    lowercase — the eyebrow's uppercase would turn µ into
+                    a capital Mu that reads as "M". Non-micron variants
+                    (ink counts, finishes) are unaffected by the replace. */}
+                <span className="sm:hidden normal-case">{v.display.replace(/\s*microns?\b/i, 'µm')}</span>
+                <span className="hidden sm:inline">{v.display}</span>
               </th>
             ))}
           </tr>
@@ -4441,17 +3804,11 @@ function PaperPricingTable({
           {visibleQuantities.map((qty) => {
             const surcharge = quantitySurcharges[qty] ?? 0
             const personalisation = personalisationSurcharges[qty] ?? 0
-            const groupBorder = hasPersonalisation
-              ? { borderBottom: '1px solid rgba(26,22,18,0.10)' }
-              : undefined
             return (
               <Fragment key={qty}>
-                <tr
-                  style={hasPersonalisation ? undefined : { borderBottom: '1px solid rgba(26,22,18,0.10)' }}
-                >
+                <tr className={hasPersonalisation ? '' : 'border-b border-line-soft'}>
                   <td
-                    className="py-4 pr-2 leading-none sm:pr-4"
-                    style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 24, color: '#1a1612' }}
+                    className="py-4 pr-2 leading-none num font-medium text-ink text-[17px] sm:text-[22px] sm:pr-4"
                     rowSpan={hasPersonalisation ? 3 : 1}
                   >
                     {qty.toLocaleString()}
@@ -4462,8 +3819,10 @@ function PaperPricingTable({
                       return (
                         <td
                           key={v.variant_id}
-                          className={hasPersonalisation ? 'pt-4 pb-1 pl-2 text-right sm:pl-4' : 'py-4 pl-2 text-right sm:pl-4'}
-                          style={{ fontFamily: MONO, fontSize: 14, color: 'rgba(26,22,18,0.45)' }}
+                          className={[
+                            hasPersonalisation ? 'pt-4 pb-1' : 'py-4',
+                            'pl-2 text-right num text-[14px] text-ink-dim sm:pl-4',
+                          ].join(' ')}
                         >
                           —
                         </td>
@@ -4473,11 +3832,12 @@ function PaperPricingTable({
                     return (
                       <td
                         key={v.variant_id}
-                        className={hasPersonalisation ? 'pt-4 pb-1 pl-2 text-right sm:pl-4' : 'py-4 pl-2 text-right sm:pl-4'}
+                        className={[
+                          hasPersonalisation ? 'pt-4 pb-1' : 'py-4',
+                          'pl-2 text-right num text-[13px] sm:text-[15px] text-ink sm:pl-4',
+                        ].join(' ')}
                       >
-                        <div style={{ fontFamily: MONO, fontSize: 15, color: '#1a1612' }}>
-                          {formatPrice(price, currency)}
-                        </div>
+                        {formatPrice(price, currency)}
                       </td>
                     )
                   })}
@@ -4488,38 +3848,26 @@ function PaperPricingTable({
                       {variants.map((v, idx) => (
                         <td
                           key={v.variant_id}
-                          className="py-1 pl-2 text-right sm:pl-4"
-                          style={{ fontFamily: MONO, fontSize: 12, color: PAPER_TERTIARY }}
+                          className="py-1 pl-2 text-right num text-[12px] text-ink-mute sm:pl-4"
                         >
                           {idx === 0 && (
-                            <span
-                              className="mr-2 font-paper-mono uppercase"
-                              style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.18em' }}
-                            >
-                              Personalisation
-                            </span>
+                            <span className="mr-2 eyebrow">Personalisation</span>
                           )}
                           + {formatPrice(personalisation, currency)}
                         </td>
                       ))}
                     </tr>
-                    <tr style={groupBorder}>
+                    <tr className="border-b border-line-soft">
                       {variants.map((v, idx) => {
                         const base = v.prices[String(qty)]
                         if (base == null) {
                           return (
                             <td
                               key={v.variant_id}
-                              className="pt-1 pb-4 pl-2 text-right sm:pl-4"
-                              style={{ fontFamily: MONO, fontSize: 13, color: 'rgba(26,22,18,0.45)' }}
+                              className="pt-1 pb-4 pl-2 text-right num text-[13px] text-ink-dim sm:pl-4"
                             >
                               {idx === 0 && (
-                                <span
-                                  className="mr-2 font-paper-mono uppercase"
-                                  style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em' }}
-                                >
-                                  Total
-                                </span>
+                                <span className="mr-2 eyebrow font-semibold">Total</span>
                               )}
                               —
                             </td>
@@ -4532,14 +3880,9 @@ function PaperPricingTable({
                             className="pt-1 pb-4 pl-2 text-right sm:pl-4"
                           >
                             {idx === 0 && (
-                              <span
-                                className="mr-2 font-paper-mono uppercase"
-                                style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em', color: PAPER_INK }}
-                              >
-                                Total
-                              </span>
+                              <span className="mr-2 eyebrow font-semibold text-ink">Total</span>
                             )}
-                            <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 600, color: PAPER_INK }}>
+                            <span className="num font-semibold text-[15px] text-ink">
                               {formatPrice(total, currency)}
                             </span>
                           </td>
@@ -4702,17 +4045,10 @@ function QuantityLookup({
   }
 
   return (
-    <div
-      className="mt-8 py-6 px-7 rounded-md"
-      style={{
-        border: '1px solid rgba(26,22,18,0.18)',
-        background: PAPER_TINT_1,
-      }}
-    >
+    <div className="mt-6 py-5 px-5 rounded-[10px] bg-canvas border border-line">
       <h3
         id="quantity-picker-heading"
-        className="mb-4"
-        style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, lineHeight: 1.1, color: PAPER_INK }}
+        className="mb-3 font-display font-medium tracking-[-0.02em] text-ink leading-tight text-[17px] sm:text-[22px]"
       >
         Need a price for a specific quantity?
       </h3>
@@ -4736,20 +4072,13 @@ function QuantityLookup({
           onKeyDown={(e) => { if (e.key === 'Escape') setRaw('') }}
           placeholder="Enter quantity"
           aria-labelledby="quantity-picker-heading"
-          className="font-paper-mono min-w-0 flex-1 rounded-md px-5 py-3.5 placeholder:text-[rgba(26,22,18,0.45)] focus:outline-none"
-          style={{
-            fontSize: 16,
-            color: PAPER_INK,
-            border: '1px solid rgba(26,22,18,0.25)',
-            background: '#ffffff',
-          }}
-          onFocus={(e) => { e.currentTarget.style.borderColor = 'rgba(26,22,18,0.7)' }}
-          onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(26,22,18,0.25)' }}
+          // Focus halo follows the design-system primitive pattern
+          // (see Input.tsx) — outline-2 + offset + brand colour via
+          // arbitrary-value syntax. No `outline-none` at base so the
+          // Tailwind v4 outline-style cascade lands correctly.
+          className="font-mono min-w-0 flex-1 h-[44px] rounded-[8px] px-4 text-[15px] text-ink bg-surface border border-line placeholder:text-ink-dim transition-colors focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
         />
-        <span
-          aria-hidden
-          style={{ fontFamily: SERIF, fontSize: 20, color: 'rgba(26,22,18,0.55)' }}
-        >
+        <span aria-hidden="true" className="text-ink-mute" style={{ fontSize: 18 }}>
           →
         </span>
       </div>
@@ -4763,37 +4092,30 @@ function QuantityLookup({
           ("For 1,000", "Below our listed range. Lowest tier:")
           so announcing just it is sufficient feedback. */}
       {caption && (
-        <div className="mt-8">
+        <div className="mt-6">
           <p
             aria-live="polite"
             role="status"
-            style={{
-              fontFamily: SERIF,
-              fontWeight: 400,
-              fontSize: 16,
-              lineHeight: 1.4,
-              color: PAPER_SECONDARY,
-            }}
+            className="text-[14px] leading-snug text-ink-soft"
           >
             {caption}
           </p>
           {tiers.length > 0 && (
-            <div className="mt-4 overflow-x-auto">
+            <div className="mt-3 overflow-x-auto">
               <table className="w-full border-collapse">
                 <caption className="sr-only">{`Closest pricing tiers in ${currency}`}</caption>
                 <thead>
-                  <tr style={{ borderBottom: '1px solid rgba(26,22,18,0.15)' }}>
+                  <tr className="border-b border-line">
                     {/* Blank header above the qty column — the
-                        serif quantity in each body row is
-                        self-describing, no "Total quantity"
-                        heading needed. */}
-                    <th aria-hidden className="py-3 pr-4" />
+                        large numeral in each body row is self-
+                        describing, no "Total quantity" heading
+                        needed. */}
+                    <th aria-hidden="true" className="py-3 pr-4" />
                     {variants.map((v) => (
                       <th
                         key={v.variant_id}
                         scope="col"
-                        className="py-3 pl-4 text-right font-paper-mono uppercase"
-                        style={{ fontSize: 12, fontWeight: 500, letterSpacing: '0.22em', color: PAPER_TERTIARY }}
+                        className="eyebrow py-3 pl-4 text-right"
                       >
                         {v.display}
                       </th>
@@ -4803,17 +4125,12 @@ function QuantityLookup({
                 <tbody>
                   {tiers.map((qty) => {
                     const personalisation = personalisationAt(qty)
-                    const groupBorder = hasPersonalisation
-                      ? { borderBottom: '1px solid rgba(26,22,18,0.10)' }
-                      : undefined
                     return (
                       <Fragment key={qty}>
-                        <tr
-                          style={hasPersonalisation ? undefined : { borderBottom: '1px solid rgba(26,22,18,0.10)' }}
-                        >
+                        <tr className={hasPersonalisation ? '' : 'border-b border-line-soft'}>
                           <td
-                            className="py-4 pr-4 leading-none"
-                            style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 24, color: '#1a1612' }}
+                            className="py-4 pr-4 leading-none num text-ink"
+                            style={{ fontSize: 22, fontWeight: 500 }}
                             rowSpan={hasPersonalisation ? 3 : 1}
                           >
                             {qty.toLocaleString()}
@@ -4824,8 +4141,10 @@ function QuantityLookup({
                               return (
                                 <td
                                   key={v.variant_id}
-                                  className={hasPersonalisation ? 'pt-4 pb-1 pl-4 text-right' : 'py-4 pl-4 text-right'}
-                                  style={{ fontFamily: MONO, fontSize: 14, color: 'rgba(26,22,18,0.45)' }}
+                                  className={[
+                                    hasPersonalisation ? 'pt-4 pb-1' : 'py-4',
+                                    'pl-4 text-right num text-[14px] text-ink-dim',
+                                  ].join(' ')}
                                 >
                                   —
                                 </td>
@@ -4834,11 +4153,12 @@ function QuantityLookup({
                             return (
                               <td
                                 key={v.variant_id}
-                                className={hasPersonalisation ? 'pt-4 pb-1 pl-4 text-right' : 'py-4 pl-4 text-right'}
+                                className={[
+                                  hasPersonalisation ? 'pt-4 pb-1' : 'py-4',
+                                  'pl-4 text-right num text-[15px] text-ink',
+                                ].join(' ')}
                               >
-                                <div style={{ fontFamily: MONO, fontSize: 16, color: '#1a1612' }}>
-                                  {formatPrice(price, currency)}
-                                </div>
+                                {formatPrice(price, currency)}
                               </td>
                             )
                           })}
@@ -4849,38 +4169,26 @@ function QuantityLookup({
                               {variants.map((v, idx) => (
                                 <td
                                   key={v.variant_id}
-                                  className="py-1 pl-4 text-right"
-                                  style={{ fontFamily: MONO, fontSize: 12, color: PAPER_TERTIARY }}
+                                  className="py-1 pl-4 text-right num text-[12px] text-ink-mute"
                                 >
                                   {idx === 0 && (
-                                    <span
-                                      className="mr-2 font-paper-mono uppercase"
-                                      style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.18em' }}
-                                    >
-                                      Personalisation
-                                    </span>
+                                    <span className="mr-2 eyebrow">Personalisation</span>
                                   )}
                                   + {formatPrice(personalisation, currency)}
                                 </td>
                               ))}
                             </tr>
-                            <tr style={groupBorder}>
+                            <tr className="border-b border-line-soft">
                               {variants.map((v, idx) => {
                                 const price = priceAt(qty, v)
                                 if (price == null) {
                                   return (
                                     <td
                                       key={v.variant_id}
-                                      className="pt-1 pb-4 pl-4 text-right"
-                                      style={{ fontFamily: MONO, fontSize: 13, color: 'rgba(26,22,18,0.45)' }}
+                                      className="pt-1 pb-4 pl-4 text-right num text-[13px] text-ink-dim"
                                     >
                                       {idx === 0 && (
-                                        <span
-                                          className="mr-2 font-paper-mono uppercase"
-                                          style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em' }}
-                                        >
-                                          Total
-                                        </span>
+                                        <span className="mr-2 eyebrow font-semibold">Total</span>
                                       )}
                                       —
                                     </td>
@@ -4893,14 +4201,9 @@ function QuantityLookup({
                                     className="pt-1 pb-4 pl-4 text-right"
                                   >
                                     {idx === 0 && (
-                                      <span
-                                        className="mr-2 font-paper-mono uppercase"
-                                        style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em', color: PAPER_INK }}
-                                      >
-                                        Total
-                                      </span>
+                                      <span className="mr-2 eyebrow font-semibold text-ink">Total</span>
                                     )}
-                                    <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 600, color: PAPER_INK }}>
+                                    <span className="num font-semibold text-[15px] text-ink">
                                       {formatPrice(total, currency)}
                                     </span>
                                   </td>
@@ -5085,44 +4388,37 @@ function buildImageGroups(images: GridImage[]): ImageGroup[] {
   return groups
 }
 
-// Loading / 404 / abandoned screens. All three share the paper
-// register of the live page so the customer never lands on a
-// surface that looks like a different site. Eyebrow → headline
-// → quiet body, on PAPER_CREAM, with the same SERIF / MONO
-// hierarchy.
+// Loading / 404 / abandoned screens. Restyled to the PlasmaDesign
+// Stock Control design system landed in reskin PRs 1-2: warm-cream
+// canvas, IBM Plex Sans display headings, mono eyebrows, hairline
+// borders. Same content, new chrome.
 function PlasmaEyebrow() {
   return (
-    <p
-      className="font-paper-mono uppercase"
-      style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
-    >
-      Plasma Design
-    </p>
+    <div className="inline-flex items-center gap-2">
+      <PlasmaWordmark size="sm" tagline="Proofs" />
+    </div>
   )
 }
 
 function LoadingScreen() {
   return (
-    <div className="flex min-h-dvh items-center justify-center" style={{ background: PAPER_CREAM }}>
+    <div className="flex min-h-dvh items-center justify-center bg-canvas text-ink">
       <div className="text-center">
         <PlasmaEyebrow />
+        {/* motion-reduce:animate-none disables the rotation for users
+            with `prefers-reduced-motion: reduce`. The static ring still
+            renders so the layout doesn't collapse — paired with the
+            visible "Loading proof" text below it the loading state
+            remains comprehensible without motion. role/aria-label give
+            SR users an explicit cue that loading is in progress
+            (the .animate-spin div alone isn't announced). */}
         <div
-          // motion-reduce:animate-none disables the rotation for users
-          // with `prefers-reduced-motion: reduce`. The static ring still
-          // renders so the layout doesn't collapse — paired with the
-          // visible "Loading proof" text below it the loading state
-          // remains comprehensible without motion. role/aria-label give
-          // SR users an explicit cue that loading is in progress
-          // (the .animate-spin div alone isn't announced).
           role="status"
           aria-label="Loading"
-          className="mx-auto mt-6 h-7 w-7 animate-spin motion-reduce:animate-none rounded-full border-2"
-          style={{ borderColor: 'rgba(26,22,18,0.15)', borderTopColor: PAPER_INK }}
+          className="mx-auto mt-8 h-7 w-7 animate-spin motion-reduce:animate-none rounded-full border-2 border-line"
+          style={{ borderTopColor: 'var(--c-ink)' }}
         />
-        <p
-          className="mt-4 font-paper-mono uppercase"
-          style={{ fontSize: 10, letterSpacing: '0.24em', color: PAPER_TERTIARY }}
-        >
+        <p className="eyebrow mt-5" style={{ letterSpacing: '0.24em' }}>
           Loading proof
         </p>
       </div>
@@ -5132,24 +4428,16 @@ function LoadingScreen() {
 
 function NotFoundScreen() {
   return (
-    <div className="flex min-h-dvh items-center justify-center" style={{ background: PAPER_CREAM }}>
+    <div className="flex min-h-dvh items-center justify-center bg-canvas text-ink">
       <div className="text-center px-6">
         <PlasmaEyebrow />
-        <h1
-          className="mt-6"
-          style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(48px, 9vw, 72px)', lineHeight: 1, color: PAPER_INK }}
-        >
-          Not found
-        </h1>
-        <p
-          className="mx-auto mt-4 max-w-sm"
-          style={{ fontFamily: SERIF, fontSize: 18, lineHeight: 1.45, color: PAPER_TERTIARY }}
-        >
+        <h1 className="h-display mt-8">Not found</h1>
+        <p className="body-soft mx-auto mt-4 max-w-sm">
           This proof link isn't valid or has expired. If you were sent here recently, please get in touch.
         </p>
         <p
-          className="mt-8 font-paper-mono uppercase"
-          style={{ fontSize: 10, letterSpacing: '0.32em', color: 'rgba(26,22,18,0.30)' }}
+          className="eyebrow mt-10"
+          style={{ letterSpacing: '0.32em', color: 'var(--c-ink-dim)' }}
         >
           404
         </p>
@@ -5159,69 +4447,35 @@ function NotFoundScreen() {
 }
 
 function AbandonedScreen({ proof }: { proof: PublicProof }) {
+  // Same masthead rule as the live page: company prominent when
+  // present (with the contact name as a muted sub-line), contact
+  // name prominent when no company. Keeps the customer's brand
+  // presence coherent across the live and abandoned screens.
+  const trimmedCompany = proof.company?.trim() ?? ''
+  const trimmedName = proof.customer_name?.trim() ?? ''
+  const companyProminent = trimmedCompany.length > 0
+  const primary = companyProminent ? proof.company! : proof.customer_name
+  const subline = companyProminent && trimmedName.length > 0 ? proof.customer_name : null
   return (
-    <div className="min-h-dvh" style={{ background: PAPER_CREAM }}>
+    <div className="min-h-dvh bg-canvas text-ink">
       <div className="mx-auto max-w-4xl px-4 py-12 sm:px-6 sm:py-16 lg:px-8">
         <header className="mb-12">
-          <p
-            className="font-paper-mono uppercase"
-            style={{ fontSize: 11, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
-          >
-            Proof for
-          </p>
-          {/* Same masthead rule as the live page: company prominent
-              when present (with the contact name as a muted sub-
-              line), contact name prominent when no company. Keeps
-              the customer's brand presence coherent across the live
-              and abandoned screens. */}
-          {(() => {
-            const trimmedCompany = proof.company?.trim() ?? ''
-            const trimmedName = proof.customer_name?.trim() ?? ''
-            const companyProminent = trimmedCompany.length > 0
-            const primary = companyProminent ? proof.company! : proof.customer_name
-            const subline = companyProminent && trimmedName.length > 0
-              ? proof.customer_name
-              : null
-            return (
-              <>
-                <h1
-                  className="mt-3"
-                  style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 'clamp(36px, 7vw, 56px)', lineHeight: 1.05, color: PAPER_INK }}
-                >
-                  {primary}
-                </h1>
-                {subline && (
-                  <p
-                    className="mt-2"
-                    style={{ fontFamily: SERIF, fontSize: 22, color: PAPER_TERTIARY }}
-                  >
-                    {subline}
-                  </p>
-                )}
-              </>
-            )
-          })()}
+          <span className="eyebrow">Proof for</span>
+          <h1 className="h1 mt-3" style={{ fontSize: 'clamp(36px, 7vw, 56px)' }}>
+            {primary}
+          </h1>
+          {subline && (
+            <p className="body-soft mt-2" style={{ fontSize: 22 }}>
+              {subline}
+            </p>
+          )}
         </header>
-        <div
-          className="rounded-2xl p-10 text-center"
-          style={{ background: PAPER_TINT_1, border: '1px solid rgba(26,22,18,0.10)' }}
-        >
-          <p
-            className="font-paper-mono uppercase"
-            style={{ fontSize: 10, fontWeight: 500, letterSpacing: '0.32em', color: PAPER_TERTIARY }}
-          >
+        <div className="rounded-[14px] p-10 text-center bg-surface border border-line">
+          <span className="eyebrow" style={{ letterSpacing: '0.32em' }}>
             Closed
-          </p>
-          <h2
-            className="mt-3"
-            style={{ fontFamily: SERIF, fontWeight: 400, fontSize: 30, color: PAPER_INK }}
-          >
-            This proof is closed
-          </h2>
-          <p
-            className="mx-auto mt-3 max-w-md"
-            style={{ fontFamily: SERIF, fontSize: 17, lineHeight: 1.5, color: PAPER_TERTIARY }}
-          >
+          </span>
+          <h2 className="h2 mt-3">This proof is closed</h2>
+          <p className="body-soft mx-auto mt-3 max-w-md" style={{ fontSize: 16 }}>
             If you'd like to revisit your business cards, please get in touch.
           </p>
         </div>

@@ -1,86 +1,78 @@
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { supabase } from '../../lib/supabase'
-import { QuoteLink } from '../../components/QuoteLink'
+import { NavLink, Outlet } from 'react-router-dom'
+import {
+  Users,
+  Building2,
+  Layers,
+  PoundSterling,
+  Clock,
+  Tag,
+  Palette,
+  AlertCircle,
+  ClipboardList,
+  Settings,
+  type LucideIcon,
+} from 'lucide-react'
+import { DesignerChrome } from '../../design'
 
-// Sub-nav tabs for the admin area. Rendered as NavLinks so the active tab
-// picks up routing-aware styling. Add more entries here to extend the shell.
-const TABS: { to: string; label: string }[] = [
-  { to: '/admin/users', label: 'Users' },
-  { to: '/admin/customers', label: 'Customers' },
-  { to: '/admin/materials', label: 'Materials' },
-  { to: '/admin/pricing', label: 'Pricing' },
-  { to: '/admin/lead-times', label: 'Lead times' },
-  { to: '/admin/card-weights', label: 'Card weights' },
-  { to: '/admin/core-colours', label: 'Paper colours' },
-  { to: '/admin/needs-attention', label: 'Needs attention' },
-  { to: '/admin/activity', label: 'Activity' },
-  { to: '/admin/settings', label: 'Settings' },
+// Sub-nav for the admin area — a left sidebar (screen 06) rather than
+// a top tab strip. NavLinks pick up routing-aware active styling. Each
+// row carries a Lucide icon per the handoff. Add entries here to extend
+// the shell.
+const TABS: { to: string; label: string; icon: LucideIcon }[] = [
+  { to: '/admin/users', label: 'Users', icon: Users },
+  { to: '/admin/materials', label: 'Materials', icon: Layers },
+  { to: '/admin/pricing', label: 'Pricing', icon: PoundSterling },
+  { to: '/admin/lead-times', label: 'Lead times', icon: Clock },
+  { to: '/admin/card-weights', label: 'Card weights', icon: Tag },
+  { to: '/admin/core-colours', label: 'Paper colours', icon: Palette },
+  { to: '/admin/customers', label: 'Customers', icon: Building2 },
+  { to: '/admin/needs-attention', label: 'Needs attention', icon: AlertCircle },
+  { to: '/admin/activity', label: 'Activity', icon: ClipboardList },
+  { to: '/admin/settings', label: 'Settings', icon: Settings },
 ]
 
 export default function AdminLayout() {
-  const navigate = useNavigate()
-
-  async function handleSignOut() {
-    await supabase.auth.signOut()
-    navigate('/login')
-  }
-
+  // DesignerChrome owns the wordmark + global nav pills + user pill +
+  // sign-out + edit-profile (PR 31). The admin sub-nav is a left
+  // sidebar below it (PR 38). active="admin" highlights the Admin nav
+  // pill; the sidebar highlights the current admin section.
   return (
-    <div className="min-h-dvh bg-gray-50">
-      {/* Header — matches the designer dashboard's branding strip. */}
-      <div className="border-b border-gray-200 bg-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-5 sm:px-6 lg:px-8">
-          <div>
-            <p className="text-sm font-medium uppercase tracking-widest text-gray-400">PlasmaDesign</p>
-            <h1 className="mt-1 text-2xl font-bold text-gray-900">Admin</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            {/* QuoteLink lives in the per-page header on six pages today.
-                Future "extract shared header" pass should inline this
-                once and remove the per-page insertions. */}
-            <QuoteLink />
-            <Link
-              to="/"
-              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
-            >
-              ← Back to projects
-            </Link>
-            <button
-              onClick={handleSignOut}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
-            >
-              Sign out
-            </button>
-          </div>
-        </div>
+    <DesignerChrome active="admin">
+      <div className="min-h-dvh bg-canvas">
+        <div className="mx-auto max-w-[1280px] px-4 py-8 sm:px-6 lg:px-8 lg:grid lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-8">
+          {/* Admin sidebar — vertical list at lg+, horizontally
+              scrollable strip below lg so it doesn't eat vertical
+              space on phones. Sticky at lg+ so it stays in view while
+              the editor scrolls. */}
+          <aside className="mb-6 lg:mb-0 lg:sticky lg:top-6 lg:self-start">
+            <div className="eyebrow text-ink-mute mb-2 px-2.5 hidden lg:block">Admin</div>
+            <nav className="flex gap-1 overflow-x-auto lg:flex-col lg:gap-0.5">
+              {TABS.map(({ to, label, icon: Icon }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  className={({ isActive }) =>
+                    [
+                      'inline-flex items-center gap-2.5 whitespace-nowrap rounded-[8px] px-2.5 py-2 text-[13px] transition-colors',
+                      isActive
+                        ? 'bg-surface border border-line text-ink'
+                        : 'border border-transparent text-ink-mute hover:bg-surface hover:text-ink',
+                    ].join(' ')
+                  }
+                >
+                  <Icon size={15} aria-hidden="true" className="shrink-0" />
+                  {label}
+                </NavLink>
+              ))}
+            </nav>
+          </aside>
 
-        {/* Sub-nav */}
-        <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
-          <nav className="-mb-px flex gap-6">
-            {TABS.map((tab) => (
-              <NavLink
-                key={tab.to}
-                to={tab.to}
-                className={({ isActive }) =>
-                  [
-                    'border-b-2 px-1 pb-3 text-sm font-medium transition-colors',
-                    isActive
-                      ? 'border-gray-900 text-gray-900'
-                      : 'border-transparent text-gray-500 hover:border-gray-200 hover:text-gray-900',
-                  ].join(' ')
-                }
-              >
-                {tab.label}
-              </NavLink>
-            ))}
-          </nav>
+          {/* Page content */}
+          <main className="min-w-0">
+            <Outlet />
+          </main>
         </div>
       </div>
-
-      {/* Page content */}
-      <main className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
-        <Outlet />
-      </main>
-    </div>
+    </DesignerChrome>
   )
 }

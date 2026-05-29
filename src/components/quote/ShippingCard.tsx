@@ -71,26 +71,26 @@ export function ShippingCard({
 
   if (state.kind === 'loading') {
     return (
-      <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-        <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+      <div className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+        <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim">
           Shipping
         </p>
-        <div className="mt-3 h-7 w-32 animate-pulse rounded bg-gray-100" />
-        <div className="mt-2 h-3 w-48 animate-pulse rounded bg-gray-100" />
+        <div className="mt-3 h-7 w-32 animate-pulse rounded bg-canvas" />
+        <div className="mt-2 h-3 w-48 animate-pulse rounded bg-canvas" />
       </div>
     )
   }
 
   if (state.kind === 'unavailable') {
     return (
-      <div className="rounded-2xl bg-amber-50 p-6 shadow-sm ring-1 ring-amber-200">
-        <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+      <div className="rounded-2xl bg-low-soft p-6 shadow-sm ring-1 ring-low">
+        <p className="text-xs font-semibold uppercase tracking-widest text-low">
           Shipping
         </p>
-        <p className="mt-2 text-sm font-medium text-amber-900">
+        <p className="mt-2 text-sm font-medium text-low">
           No FedEx Priority service to this destination
         </p>
-        <p className="mt-2 text-xs text-amber-800">
+        <p className="mt-2 text-xs text-low">
           Confirm the destination postcode and country, or quote shipping separately.
         </p>
       </div>
@@ -99,11 +99,11 @@ export function ShippingCard({
 
   if (state.kind === 'error') {
     return (
-      <div className="rounded-2xl bg-amber-50 p-6 shadow-sm ring-1 ring-amber-200">
-        <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+      <div className="rounded-2xl bg-low-soft p-6 shadow-sm ring-1 ring-low">
+        <p className="text-xs font-semibold uppercase tracking-widest text-low">
           Shipping
         </p>
-        <p className="mt-2 break-words text-sm font-medium text-amber-900">
+        <p className="mt-2 break-words text-sm font-medium text-low">
           {state.message}
         </p>
       </div>
@@ -125,15 +125,15 @@ export function ShippingCard({
       ? Math.round((state.rate.totalGbp / (1 + vatRate)) * 100) / 100
       : null
     return (
-      <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-        <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+      <div className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+        <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim">
           Shipping · {displayCurrency}
         </p>
-        <p className="mt-1 text-sm font-medium text-gray-700">
+        <p className="mt-1 text-sm font-medium text-ink-soft">
           DPD UK · {regionLabel(state.rate.region)}
         </p>
 
-        <dl className="mt-4 space-y-1.5 text-sm text-gray-600">
+        <dl className="mt-4 space-y-1.5 text-sm text-ink-soft">
           {parcelWeightGrams != null && (
             <div className="flex items-baseline justify-between">
               <dt>Parcel weight</dt>
@@ -148,16 +148,16 @@ export function ShippingCard({
           )}
         </dl>
 
-        <div className="mt-4 flex items-baseline justify-between border-t border-gray-100 pt-3">
-          <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+        <div className="mt-4 flex items-baseline justify-between border-t border-line-soft pt-3">
+          <span className="text-xs font-semibold uppercase tracking-widest text-ink-mute">
             Total shipping
           </span>
-          <span className="text-2xl font-bold tabular-nums text-gray-900">
+          <span className="text-2xl font-bold tabular-nums text-ink">
             {formatPrice(totalDisplay, displayCurrency)}
           </span>
         </div>
         {showVatFootnote && exVatTotal != null && (
-          <p className="mt-2 text-xs text-gray-400 tabular-nums">
+          <p className="mt-2 text-xs text-ink-dim tabular-nums">
             Includes {Math.round(vatRate * 100)}% VAT · {formatPrice(exVatTotal, 'GBP', 2)} ex VAT
           </p>
         )}
@@ -190,15 +190,15 @@ export function ShippingCard({
   // total. The conversion still applies silently.
 
   return (
-    <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200">
-      <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+    <div className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+      <p className="text-xs font-semibold uppercase tracking-widest text-ink-dim">
         Shipping · {displayCurrency}
       </p>
-      <p className="mt-1 text-sm font-medium text-gray-700">
+      <p className="mt-1 text-sm font-medium text-ink-soft">
         {rate.serviceName ?? 'FedEx International Priority'}
       </p>
 
-      <dl className="mt-4 space-y-1.5 text-sm text-gray-600">
+      <dl className="mt-4 space-y-1.5 text-sm text-ink-soft">
         {parcelWeightGrams != null && (
           <div className="flex items-baseline justify-between">
             <dt>Parcel weight</dt>
@@ -252,11 +252,11 @@ export function ShippingCard({
         )}
       </dl>
 
-      <div className="mt-4 flex items-baseline justify-between border-t border-gray-100 pt-3">
-        <span className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+      <div className="mt-4 flex items-baseline justify-between border-t border-line-soft pt-3">
+        <span className="text-xs font-semibold uppercase tracking-widest text-ink-mute">
           Total shipping
         </span>
-        <span className="text-2xl font-bold tabular-nums text-gray-900">
+        <span className="text-2xl font-bold tabular-nums text-ink">
           {formatPrice(adjustedTotalGbp * multiplier, displayCurrency)}
         </span>
       </div>
@@ -265,12 +265,12 @@ export function ShippingCard({
           "zero-rated for VAT" line on those currencies. Cache
           indicator still surfaces when applicable. */}
       {displayCurrency === 'GBP' ? (
-        <p className="mt-2 text-xs text-gray-400">
+        <p className="mt-2 text-xs text-ink-dim">
           Shipping is zero-rated for VAT.
           {rate.cached ? ' · Cached rate' : ''}
         </p>
       ) : rate.cached ? (
-        <p className="mt-2 text-xs text-gray-400">Cached rate</p>
+        <p className="mt-2 text-xs text-ink-dim">Cached rate</p>
       ) : null}
     </div>
   )

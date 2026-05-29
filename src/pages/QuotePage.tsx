@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { DesignerChrome } from '../design'
 import { supabase } from '../lib/supabase'
 import { formatPrice } from '../lib/currency'
 import type { Currency } from '../lib/types'
@@ -723,34 +723,30 @@ export default function QuotePage() {
   }, [selectedVariantId, quantity, currency, names, perExtraNameSurcharge, finishSurchargeAtCurrent, personalisationSurchargeAtCurrent, discountPercent, variantTiers, tiersFresh])
 
   return (
-    <div className="min-h-dvh bg-gray-50">
+    <DesignerChrome
+      active="quote"
+      actions={
+        <button
+          type="button"
+          onClick={handleReset}
+          disabled={!isFormDirty}
+          className="rounded border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink-soft hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Reset form
+        </button>
+      }
+    >
+    <div className="min-h-dvh bg-canvas">
       <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
-        <div className="mb-8 flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium uppercase tracking-widest text-gray-400">PlasmaDesign</p>
-            <h1 className="mt-1 text-2xl font-bold text-gray-900">Quote compiler</h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleReset}
-              disabled={!isFormDirty}
-              className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:border-gray-400 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-gray-200"
-            >
-              Reset form
-            </button>
-            <Link
-              to="/"
-              className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
-            >
-              ← Projects
-            </Link>
-          </div>
+        <div className="mb-8">
+          <div className="eyebrow text-ink-mute">⌘ K · Quick quote</div>
+          <h1 className="mt-1.5 font-display font-medium tracking-[-0.02em] text-ink leading-tight" style={{ fontSize: 'clamp(24px, 4vw, 32px)' }}>Quote compiler</h1>
+          <p className="mt-1 text-sm text-ink-mute">Pick a material, a variant, a currency. Copy the price into Help Scout. No proof created.</p>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[1fr_22rem]">
           {/* ── Selection card ───────────────────────────────────────────── */}
-          <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-gray-200 sm:p-8">
+          <div className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line sm:p-8">
             {/* Tab order: material → variant → currency → quantity →
                 names → add-on toggles → metadata → custom-quote flags.
                 Currency precedes quantity because QuantityInput is
@@ -759,7 +755,7 @@ export default function QuotePage() {
                 back-tab. */}
             <div className="space-y-8">
               {materialsLoading ? (
-                <p className="text-sm text-gray-400">Loading materials…</p>
+                <p className="text-sm text-ink-dim">Loading materials…</p>
               ) : (
                 <div className="space-y-3">
                   {/* Collapsed bar — only renders when a material
@@ -886,7 +882,7 @@ export default function QuotePage() {
                   Names render. */}
               {showPersonalisationToggle && personalisationPricing && (
                 <div>
-                  <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+                  <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-line bg-surface px-4 py-3">
                     <input
                       type="checkbox"
                       checked={hasPersonalisation}
@@ -900,13 +896,13 @@ export default function QuotePage() {
                         // surcharge under the personalisation total.
                         if (next && names !== 1) setNames(1)
                       }}
-                      className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 text-gray-900 focus:ring-gray-400"
+                      className="mt-0.5 h-4 w-4 cursor-pointer rounded border-line text-ink focus:ring-brand"
                     />
                     <div>
-                      <div className="text-sm font-medium text-gray-700">
+                      <div className="text-sm font-medium text-ink-soft">
                         Add personalisation
                       </div>
-                      <div className="text-xs text-gray-500">
+                      <div className="text-xs text-ink-mute">
                         {currency === 'USD'
                           ? `$${personalisationPricing.per_card_rate.toFixed(2)} per card with a $${personalisationPricing.min_charge.toFixed(0)} minimum charge.`
                           : currency === 'EUR'
@@ -971,11 +967,12 @@ export default function QuotePage() {
 
           {/* ── Price column ─────────────────────────────────────────────── */}
           <div className="space-y-4">
-            {/* Designer-only view switch. Suppressed in spread mode
-                (shipping card is never rendered in spread, so the
-                toggle has nothing to gate) and in the custom-quote
-                bailout (no product price to hide either). The price-
-                column blocks below honour quoteView so the toggle
+            {/* Designer-only view switch, sat just above the results so it
+                reads as a header for the Total/shipping cards it controls.
+                Suppressed in spread mode (shipping card is never rendered
+                in spread, so the toggle has nothing to gate) and in the
+                custom-quote bailout (no product price to hide either). The
+                price-column blocks below honour quoteView so the toggle
                 actually flips what's rendered. */}
             {!spreadMode && !customQuote && selectedMaterialId && (
               <div className="flex items-center justify-end">
@@ -1077,14 +1074,14 @@ export default function QuotePage() {
                      surface a clear affordance rather than a stale
                      placeholder if it ever does. */
                   quoteView !== 'shipping' && (
-                    <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 p-8">
-                      <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+                    <div className="rounded-2xl border-2 border-low bg-low-soft p-8">
+                      <p className="text-xs font-semibold uppercase tracking-widest text-low">
                         No prices available
                       </p>
-                      <p className="mt-3 text-2xl font-bold leading-tight text-amber-900">
+                      <p className="mt-3 text-2xl font-bold leading-tight text-low">
                         {selectedMaterial?.display_name ?? 'This material'} isn't priced in {currency} yet
                       </p>
-                      <p className="mt-3 text-sm text-amber-800">
+                      <p className="mt-3 text-sm text-low">
                         Try a different currency, pick another material, or flag this for Rob — there's no live tier data to quote against here.
                       </p>
                     </div>
@@ -1244,18 +1241,18 @@ export default function QuotePage() {
                      'custom' lead-time state is unreachable here. */
                   <div className="space-y-3">
                     {leadTimeState?.kind === 'standard' && (
-                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
+                      <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-line bg-surface px-4 py-3">
                         <input
                           type="checkbox"
                           checked={effectiveIncludeLeadTime}
                           onChange={(e) => handleIncludeLeadTimeChange(e.target.checked)}
-                          className="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-300 text-gray-900 focus:ring-gray-400"
+                          className="mt-0.5 h-4 w-4 cursor-pointer rounded border-line text-ink focus:ring-brand"
                         />
                         <div>
-                          <div className="text-sm font-medium text-gray-700">
+                          <div className="text-sm font-medium text-ink-soft">
                             Include lead time in copied quote
                           </div>
-                          <div className="text-xs text-gray-500">
+                          <div className="text-xs text-ink-mute">
                             Appends a short lead-time line to the copied quote body.
                           </div>
                         </div>
@@ -1300,8 +1297,8 @@ export default function QuotePage() {
                 jump to the suggested quantity. Suppressed in the
                 bailout state. */}
             {!spreadMode && !customQuote && quoteView !== 'shipping' && tiersFresh && quantity != null && !result.validTier && (result.snap.lower || result.snap.upper) && (
-              <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-amber-200">
-                <p className="text-xs font-semibold uppercase tracking-widest text-amber-700">
+              <div className="rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-low">
+                <p className="text-xs font-semibold uppercase tracking-widest text-low">
                   No tier at {quantity.toLocaleString()}
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -1309,7 +1306,7 @@ export default function QuotePage() {
                     <button
                       type="button"
                       onClick={() => setQuantity(result.snap.lower!.quantity)}
-                      className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-50"
+                      className="rounded border border-low bg-surface px-3 py-2 text-sm font-medium text-low hover:bg-low-soft"
                     >
                       Snap to {result.snap.lower.quantity.toLocaleString()} ({formatPrice(result.snap.lower.totalPrice, currency)})
                     </button>
@@ -1318,7 +1315,7 @@ export default function QuotePage() {
                     <button
                       type="button"
                       onClick={() => setQuantity(result.snap.upper!.quantity)}
-                      className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-50"
+                      className="rounded border border-low bg-surface px-3 py-2 text-sm font-medium text-low hover:bg-low-soft"
                     >
                       Snap to {result.snap.upper.quantity.toLocaleString()} ({formatPrice(result.snap.upper.totalPrice, currency)})
                     </button>
@@ -1330,5 +1327,6 @@ export default function QuotePage() {
         </div>
       </div>
     </div>
+    </DesignerChrome>
   )
 }
