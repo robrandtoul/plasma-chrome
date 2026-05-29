@@ -2130,23 +2130,26 @@ export default function CustomerProofPage() {
           below (max-w-1280 / px-6 sm:px-7) so the wordmark's left edge
           lines up with the cards rather than sitting inboard. */}
       <header
-        className="sticky top-0 z-[5] bg-canvas border-b border-line"
+        className="sticky top-0 z-[5] bg-ink text-on-ink"
       >
         <div className="mx-auto max-w-[1280px] flex items-center gap-4 px-6 sm:px-7 py-3.5">
-          {/* Wordmark steps down to the standard md size on phones,
-              where the enlarged xl lockup feels oversized; xl returns
-              at sm+. PlasmaWordmark takes a single size, so we render
-              both and toggle via wrapper spans (visibility lives on the
-              span so it can't fight the component's own inline-flex). */}
-          <span className="inline-flex sm:hidden">
-            <PlasmaWordmark size="md" tagline="Proofs" />
-          </span>
-          <span className="hidden sm:inline-flex">
-            <PlasmaWordmark size="xl" tagline="Proofs" />
-          </span>
+          {/* Full-colour Plasma logo lockup on the ink banner — the
+              only branding the customer sees. White-text variant
+              designed for dark backgrounds; steps up a touch at sm+
+              where the masthead has more room. */}
+          <img
+            src="/logo-dark.png"
+            alt="PlasmaDesign Proofs"
+            className="h-7 sm:h-9 w-auto"
+          />
           <div className="ml-auto flex items-center gap-4">
             {lastUpdated && (
-              <span className="eyebrow hidden sm:inline">Last updated {lastUpdated}</span>
+              <span
+                className="eyebrow hidden sm:inline"
+                style={{ color: 'rgba(255,255,255,0.65)' }}
+              >
+                Last updated {lastUpdated}
+              </span>
             )}
           </div>
         </div>
