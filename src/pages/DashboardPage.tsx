@@ -18,7 +18,7 @@ import {
   viewedStateTitle,
   type ViewedState,
 } from '../lib/viewedState'
-import { designerPreviewPath } from '../lib/customerProofUrl'
+import { openDesignerPreview } from '../lib/customerProofUrl'
 import { logAudit } from '../lib/audit'
 // QuoteLink imported + rendered inside DesignerChrome (PR 31) so
 // every designer page surfaces the same new-tab "phone rings"
@@ -408,14 +408,12 @@ function OverflowMenu({
           onClick={(e) => e.stopPropagation()}
         >
           {proof.current_version_id ? (
-            <a
+            <button
+              type="button"
               role="menuitem"
-              href={designerPreviewPath(proof.proof_id)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block px-3 py-2 text-ink-soft hover:bg-canvas"
-              onClick={() => setOpen(false)}
-            >Preview</a>
+              className="block w-full text-left px-3 py-2 text-ink-soft hover:bg-canvas"
+              onClick={() => { setOpen(false); openDesignerPreview(proof.proof_id) }}
+            >Preview</button>
           ) : (
             <span role="menuitem" aria-disabled className="block cursor-not-allowed px-3 py-2 text-ink-dim">Preview</span>
           )}
@@ -1260,7 +1258,7 @@ function ActionStrip({ proof, canAddVersion, minePinned, onToggleMinePin, onSnoo
 
       {/* Preview */}
       {proof.current_version_id ? (
-        <RowActionButton label="Preview" href={designerPreviewPath(proof.proof_id)}>
+        <RowActionButton label="Preview" onClick={() => openDesignerPreview(proof.proof_id)}>
           <EyeIcon className="h-4 w-4" />
         </RowActionButton>
       ) : <StripSpacer />}
