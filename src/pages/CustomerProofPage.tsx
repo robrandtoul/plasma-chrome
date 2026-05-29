@@ -3441,41 +3441,32 @@ function PlateCard({
             <div className="aspect-[5/3] w-full bg-canvas" />
           )}
         </button>
-        {/* Three-column caption: brand-dot + RECIPIENT · SIDE on the
-            left, filename in muted mono in the middle, plain
-            "Download ↓" link on the right. items-start so each
-            column anchors at the top of the row; the Download link's
-            invisible 44px tap target extends downward without
-            pushing the other columns out of vertical register. All
-            label-style copy reads `.eyebrow` typography (mono,
-            uppercase, 0.18em tracking). */}
-        <figcaption className="mt-3 grid grid-cols-1 items-start gap-2 border-t border-line-soft pt-3 lg:grid-cols-[auto_1fr_auto] lg:gap-6">
-          <div className="flex items-start gap-2 min-w-0">
-            <span
-              aria-hidden="true"
-              className="mt-[5px] h-[6px] w-[6px] shrink-0 rounded-[2px]"
-              style={{ background: brandColor }}
-            />
-            {captionLabel && (
+        {/* Two-line caption. Top line: brand-dot + RECIPIENT · SIDE on
+            the left, plain "Download ↓" link on the right. The
+            filename sits on its own full-width line below, so a long
+            recipient name can never squeeze it down to a useless
+            "Proo…" stub (the old three-column grid did exactly that
+            once a name and filename competed for one narrow row). The
+            recipient name wraps rather than truncating — names matter
+            more than the internal filename. All label copy reads
+            `.eyebrow` typography (mono, uppercase, 0.18em tracking). */}
+        <figcaption className="mt-3 border-t border-line-soft pt-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-2 min-w-0">
               <span
-                className="eyebrow text-ink break-words"
-                style={{ letterSpacing: '0.18em' }}
-              >
-                {captionLabel}
-              </span>
-            )}
-          </div>
-          <div className="flex items-start min-w-0">
-            {image.original_filename && (
-              <span
-                className="font-mono text-[12px] text-ink-dim truncate min-w-0"
-                title={image.original_filename}
-              >
-                {image.original_filename}
-              </span>
-            )}
-          </div>
-          <div className="text-right">
+                aria-hidden="true"
+                className="mt-[5px] h-[6px] w-[6px] shrink-0 rounded-[2px]"
+                style={{ background: brandColor }}
+              />
+              {captionLabel && (
+                <span
+                  className="eyebrow text-ink break-words"
+                  style={{ letterSpacing: '0.18em' }}
+                >
+                  {captionLabel}
+                </span>
+              )}
+            </div>
             {image.signed_url && (
               <a
                 href={downloadHref}
@@ -3483,17 +3474,24 @@ function PlateCard({
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                // min-h-[44px] + items-start gives a 44px tap target
-                // while keeping the visible text aligned at the top
-                // of the column, in register with the dot/label and
-                // filename baselines in cols 1-2.
-                className="inline-flex min-h-[44px] items-start eyebrow text-ink-mute hover:text-ink transition-colors focus:outline-none focus-visible:underline"
+                // -my-2 py-2 expands the tap target vertically (~36px)
+                // without stretching the row's visual height, so the
+                // link stays in register with the recipient label.
+                className="inline-flex shrink-0 items-center -my-2 py-2 eyebrow text-ink-mute hover:text-ink transition-colors focus:outline-none focus-visible:underline"
                 style={{ letterSpacing: '0.18em' }}
               >
                 Download ↓
               </a>
             )}
           </div>
+          {image.original_filename && (
+            <span
+              className="mt-1.5 block font-mono text-[12px] text-ink-dim truncate"
+              title={image.original_filename}
+            >
+              {image.original_filename}
+            </span>
+          )}
         </figcaption>
       </figure>
     </div>
