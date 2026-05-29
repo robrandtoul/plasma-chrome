@@ -45,6 +45,8 @@ import {
 type SortMode  = 'activity' | 'date' | 'name'
 type GroupMode = 'time' | 'company'
 type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week' | 'not_viewed' | 'changes_requested'
+// Server-side tile counts (migration 000202) — one number per TileKey.
+type TileCounts = Record<TileKey, number>
 type ChipKey   = 'all' | 'metal' | 'paper' | 'plastic' | 'carbon' | 'wood' | 'acrylic'
 
 // Reason chip text per rule. Templated against rule_meta.days where
@@ -1724,6 +1726,11 @@ export default function DashboardPage() {
   const { session } = useAuth()
   const userId = session?.user.id ?? null
   const [projects, setProjects]           = useState<DashboardProject[]>([])
+  // Server-computed tile counts (migration 000202). Counted across every
+  // proof in the DB, not the loaded `projects` subset, so the headline
+  // numbers stay correct no matter how many proofs exist. Null until the
+  // RPC resolves.
+  const [tileCounts, setTileCounts]       = useState<TileCounts | null>(null)
   // current_version_id → signed thumbnail URL. Populated in
   // loadDashboard after the projects fetch by batch-signing the
   // first front image of each version. Empty entries (no version
@@ -1879,15 +1886,23 @@ export default function DashboardPage() {
       .eq('is_active', true)
       .not('lead_time_min_days', 'is', null)
 
+    // Server-side stat-tile counts (migration 000202). Counted across
+    // every proof, so the headline numbers don't depend on the (capped)
+    // projects fetch above.
+    const countsPromise = supabase.rpc('dashboard_tile_counts')
+
     const [
       { data: projectRows },
       { data: events },
       { data: pinRows },
       { data: leadTimeRows },
-    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise])
+      { data: counts },
+    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise])
 
     const typedProjects = (projectRows ?? []) as DashboardProject[]
     setProjects(typedProjects)
+
+    if (counts) setTileCounts(counts as TileCounts)
 
     setLatestEvents((events ?? []) as DashboardLatestEvent[])
     setLeadTimes((leadTimeRows ?? []) as LeadTime[])
@@ -2049,95 +2064,21 @@ export default function DashboardPage() {
     setTileFilter((prev) => (prev === t ? null : t))
   }
 
-  // Tile counts — all computed client-side so counts and filters use exactly
-  // the same predicates. Currently-snoozed projects are always excluded:
-  // they live in the dedicated Snoozed section regardless of their other
-  // state. Note `isCurrentlySnoozed` rather than `snoozed_until == null`:
-  // 000186 widened the view's lateral so recently-expired snoozes still
-  // surface snoozed_until for the 24-hour grace window that powers
-  // recentlyAwakened(). Needs-attention projects are excluded from every
-  // other tile so each project belongs to exactly one tile.
-  // No abandoned-status guard: every rule in proofs_needing_attention()
-  // is gated on an active status, so rule_code is always null on an
-  // abandoned proof. The count therefore depends only on `projects`,
-  // matching the needs_attention click-through filter predicate.
-  const needsAttentionCount = useMemo(() =>
-    projects.filter((p) =>
-      p.rule_code != null &&
-      !isCurrentlySnoozed(p)
-    ).length,
-  [projects])
-
-  const notViewedCount = useMemo(() =>
-    projects.filter((p) => {
-      const isActive = p.status === 'in_progress' || p.status === 'dormant'
-      return (
-        p.rule_code == null &&
-        !isCurrentlySnoozed(p) &&
-        isActive &&
-        p.current_version_id !== null &&
-        p.current_version_viewed_at === null
-      )
-    }).length,
-  [projects])
-
-  const awaitingCustomerCount = useMemo(() =>
-    projects.filter((p) =>
-      p.rule_code == null &&
-      !isCurrentlySnoozed(p) &&
-      p.status === 'in_progress' &&
-      p.current_version_id !== null &&
-      p.current_version_viewed_at !== null
-    ).length,
-  [projects])
-
-  // Changes requested — proofs where the customer's most recent action on the
-  // current version was a change request and no newer version has been shipped
-  // since. Detection uses latest_non_view_event_* (migration 000198), not
-  // latest_event_*: the latter includes synthetic 'view' rows, so a customer
-  // simply re-opening the proof after requesting changes would otherwise mask
-  // the outstanding request (PV-2026W22-087). The change request's own
-  // timestamp is compared against version_created_at — a newer version uploaded
-  // in response would be later. Needs-attention proofs (the overdue subset,
-  // captured by the request_changes_no_version rule) are excluded so each proof
-  // belongs to exactly one tile — overdue change requests escalate to the Needs
-  // attention tile.
-  const changesRequestedCount = useMemo(() =>
-    projects.filter((p) => {
-      if (p.rule_code != null) return false
-      if (isCurrentlySnoozed(p)) return false
-      if (p.status !== 'in_progress') return false
-      if (p.latest_non_view_event_type !== 'request_changes') return false
-      if (!p.latest_non_view_event_at || !p.version_created_at) return false
-      return new Date(p.latest_non_view_event_at).getTime() > new Date(p.version_created_at).getTime()
-    }).length,
-  [projects])
-
-  // Dormant / Approved-this-week counts. Migration 000152's
-  // dashboard_tile_counts() returns server-side counts that do not
-  // filter snoozed proofs (the snooze filter is applied in 000164's
-  // proofs_needing_attention() only). Computing these client-side with
-  // the same isCurrentlySnoozed guard ensures the tile count matches
-  // the number of rows shown when the tile is clicked (the click-through
-  // filter below drops currently-snoozed proofs when any tile filter is
-  // active). Mirrors the alignment fix from PV-2026W19-015
-  // (awaiting_customer) for the remaining two tiles.
-  const dormantCount = useMemo(() =>
-    projects.filter((p) =>
-      !isCurrentlySnoozed(p) &&
-      p.status === 'dormant'
-    ).length,
-  [projects])
-
-  const approvedThisWeekCount = useMemo(() => {
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
-    return projects.filter((p) => {
-      if (isCurrentlySnoozed(p)) return false
-      if (p.status !== 'approved') return false
-      if (!p.approved_at) return false
-      return new Date(p.approved_at).getTime() >= sevenDaysAgo
-    }).length
-  }, [projects])
+  // Tile counts come from the server (dashboard_tile_counts RPC, migration
+  // 000202) so they count across every proof in the database rather than
+  // the capped `projects` fetch — the headline numbers stay correct no
+  // matter how many proofs exist. The SQL predicates are kept in exact
+  // lockstep with the click-through filters below (each tile excludes
+  // currently-snoozed proofs, and needs-attention proofs are excluded from
+  // the other tiles so each proof belongs to exactly one tile). Null until
+  // the RPC resolves; falls back to 0 so the tiles render a number rather
+  // than a blank during the first paint.
+  const needsAttentionCount   = tileCounts?.needs_attention ?? 0
+  const notViewedCount        = tileCounts?.not_viewed ?? 0
+  const awaitingCustomerCount = tileCounts?.awaiting_customer ?? 0
+  const changesRequestedCount = tileCounts?.changes_requested ?? 0
+  const dormantCount          = tileCounts?.dormant ?? 0
+  const approvedThisWeekCount = tileCounts?.approved_this_week ?? 0
 
   // Filter pipeline: search → chip → tile → status. All AND-combined.
   const filteredProjects = useMemo(() => {
