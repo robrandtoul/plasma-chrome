@@ -2184,8 +2184,13 @@ export default function CustomerProofPage() {
         // materials), pull its display string from the snapshot.
         // Multi-variant materials (e.g. ink-count grids) collapse to
         // null and the stats line reads with just material name.
+        // Suppress the variant label when it's the catch-all 'default'
+        // placeholder (materials with no thickness / ink-count / finish
+        // dimension, e.g. acrylic). It carries no customer-meaningful
+        // info and otherwise reads as "DEFAULT ACRYLIC (PERSPEX)".
         const variantLabel =
-          livePricingSnapshot.variants.length === 1
+          livePricingSnapshot.variants.length === 1 &&
+          livePricingSnapshot.variants[0].display !== 'Default'
             ? livePricingSnapshot.variants[0].display
             : null
         const materialLabel = activeVersion.material_display
