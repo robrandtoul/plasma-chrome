@@ -1854,11 +1854,13 @@ export default function DashboardPage() {
     // (proof_pins table). The page will throw / render the empty
     // state until all three migrations have been pushed to the
     // linked Supabase project.
-    const projectsPromise = supabase
-      .from('public_dashboard_projects')
-      .select('*')
-      .order('last_activity_at', { ascending: false, nullsFirst: false })
-      .limit(2000)
+    // Working-set list (migration 000203): active + recently-closed
+    // proofs, plus anything pinned, instead of every proof capped at 2000.
+    // The tile counts (dashboard_tile_counts, 000202) still span ALL
+    // proofs, so scoping this list doesn't skew the headline numbers; and
+    // every tile's click-through members are active/recent, so they're
+    // present in this set. Long-closed history is reachable via search (C).
+    const projectsPromise = supabase.rpc('dashboard_list')
 
     // Note: dashboard_tile_counts() RPC used to be fetched here, but
     // every tile now sources its count client-side from `projects`
