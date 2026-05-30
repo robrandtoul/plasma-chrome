@@ -217,9 +217,12 @@ export function ProofDetailView({
         )}
       </div>
 
-      {/* "Both sides" — floats top-left over the proof. The semi-
+      {/* Close affordance — floats top-left over the proof. The semi-
           opaque surface pill keeps it legible whatever the proof
-          looks like underneath. */}
+          looks like underneath. Labelled "Both sides" only when the
+          group actually has more than one side to step through;
+          single-side cards get a plain "Back" so the label doesn't
+          promise a second side that isn't there. */}
       <button
         ref={closeButtonRef}
         type="button"
@@ -228,7 +231,7 @@ export function ProofDetailView({
         style={{ backdropFilter: 'blur(4px)', letterSpacing: '0.18em' }}
       >
         <ChevronLeft size={14} aria-hidden="true" />
-        Both sides
+        {canStep ? 'Both sides' : 'Back'}
       </button>
 
       {/* Bottom-centred stack: caption on top, Request changes CTA
