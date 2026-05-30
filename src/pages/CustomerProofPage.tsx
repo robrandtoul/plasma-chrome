@@ -3332,7 +3332,7 @@ export default function CustomerProofPage() {
           Both lines sit at 12px in ink-mute on the warm-cream canvas. */}
       <footer className="mx-auto max-w-[1280px] px-gutter mt-6 mb-4">
         <div className="flex flex-wrap items-center justify-between gap-3 py-4 border-t border-line text-[12px] text-ink-mute">
-          <span className="eyebrow">PlasmaDesign · craft-press business cards</span>
+          <span className="eyebrow">PlasmaDesign · innovative business cards</span>
           <span className="flex items-center gap-3">
             <span>This proof URL is private. Please don't share publicly.</span>
             {(proofRef || activeVersion) && (
