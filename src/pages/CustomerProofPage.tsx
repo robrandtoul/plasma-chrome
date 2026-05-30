@@ -4412,12 +4412,12 @@ function LoadingScreen() {
   return (
     <div className="flex min-h-dvh items-center justify-center bg-canvas bg-draftsman text-ink">
       <div className="text-center">
-        {/* Loading-only — wordmark scaled 1.75x so it reads as the
+        {/* Loading-only — wordmark scaled 1.4x so it reads as the
             page's centrepiece while the proof RPC resolves. 404 keeps
             the default size. */}
         <div
           className="inline-block"
-          style={{ transform: 'scale(1.75)', transformOrigin: 'center' }}
+          style={{ transform: 'scale(1.4)', transformOrigin: 'center' }}
         >
           <PlasmaEyebrow />
         </div>
