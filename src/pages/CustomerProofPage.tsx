@@ -4435,7 +4435,7 @@ function LoadingScreen() {
 
 function NotFoundScreen() {
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-canvas text-ink">
+    <div className="flex min-h-dvh items-center justify-center bg-canvas bg-draftsman text-ink">
       <div className="text-center px-6">
         <PlasmaEyebrow />
         <h1 className="h-display mt-8">Not found</h1>
