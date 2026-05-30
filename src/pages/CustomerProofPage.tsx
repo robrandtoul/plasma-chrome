@@ -4412,7 +4412,15 @@ function LoadingScreen() {
   return (
     <div className="flex min-h-dvh items-center justify-center bg-canvas bg-draftsman text-ink">
       <div className="text-center">
-        <PlasmaEyebrow />
+        {/* Loading-only — wordmark scaled 1.75x so it reads as the
+            page's centrepiece while the proof RPC resolves. 404 keeps
+            the default size. */}
+        <div
+          className="inline-block"
+          style={{ transform: 'scale(1.75)', transformOrigin: 'center' }}
+        >
+          <PlasmaEyebrow />
+        </div>
         {/* motion-reduce:animate-none disables the rotation for users
             with `prefers-reduced-motion: reduce`. The static ring still
             renders so the layout doesn't collapse — paired with the
