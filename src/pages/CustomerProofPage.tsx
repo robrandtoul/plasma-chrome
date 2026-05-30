@@ -2,7 +2,8 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Send, Check, Layers, PoundSterling, DollarSign, Euro, BookOpen, Info, Eye, type LucideIcon } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { PlasmaWordmark, Pill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, StatusRule, tokens, type PillColour } from '../design'
+import { Pill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, StatusRule, tokens, type PillColour } from '../design'
+import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
 import { compilePersonalisationSurcharges, personalisationBreakeven } from '../lib/personalisation'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
@@ -714,6 +715,16 @@ export default function CustomerProofPage() {
 
   async function loadProof(proofId: string) {
     setLoading(true)
+    // Minimum display floor for the loading animation. Without this a
+    // fast RPC + image fetch can resolve in <150ms, flashing the
+    // animation away before it visibly plays. We don't pad the
+    // not-found path (it shows no animation), only the success path
+    // below — hold for whatever remains of LOADING_MIN_MS since the
+    // fetch began, so the loader reads as deliberate rather than a
+    // flicker. 900ms is long enough for the registration "snap" or a
+    // couple of stacked cards to land without feeling sluggish.
+    const startedAt = Date.now()
+    const LOADING_MIN_MS = 900
     // React Router keeps this component mounted across /p/:id →
     // /p/:otherId navigations, so without an explicit reset the
     // conditional setters below leave the previous proof's data in
@@ -823,6 +834,13 @@ export default function CustomerProofPage() {
       }
     }
 
+    // Hold out the remainder of the minimum display floor so the
+    // loading animation always gets a beat to play (see startedAt
+    // above). No-op when the fetch already took longer than the floor.
+    const elapsed = Date.now() - startedAt
+    if (elapsed < LOADING_MIN_MS) {
+      await new Promise((resolve) => setTimeout(resolve, LOADING_MIN_MS - elapsed))
+    }
     setLoading(false)
   }
 
@@ -4391,63 +4409,57 @@ function buildImageGroups(images: GridImage[]): ImageGroup[] {
 // Stock Control design system landed in reskin PRs 1-2: warm-cream
 // canvas, IBM Plex Sans display headings, mono eyebrows, hairline
 // borders. Same content, new chrome.
-function PlasmaEyebrow() {
+// Login-style ink panel carrying the colour PNG logo. Forms the dark
+// half of a split layout (50/50 on wide screens; a dark band on top
+// when stacked), so the white-on-dark logo gets its proper backing
+// while the other half stays draftsman paper. Shared by the loading
+// + 404 screens, mirroring LoginPage's brand panel.
+function LogoPanel() {
   return (
-    <div className="inline-flex items-center gap-2">
-      <PlasmaWordmark size="sm" tagline="Proofs" />
+    <div className="relative overflow-hidden bg-ink text-white flex flex-col gap-8 px-8 py-12 min-[880px]:p-16 min-h-[240px] min-[880px]:min-h-0">
+      <img
+        src="/logo-dark.png"
+        alt="PlasmaDesign Proofs"
+        className="self-start h-[44px] sm:h-[52px] w-auto"
+      />
+      <p
+        className="mt-auto font-mono uppercase text-[11px]"
+        style={{ letterSpacing: '0.2em', color: 'rgba(255,255,255,0.55)' }}
+      >
+        Proof viewer
+      </p>
     </div>
   )
 }
 
 function LoadingScreen() {
+  // One of three on-brand animations, picked at random per load
+  // (LoadingProofAnimation), centred on the draftsman paper. No logo
+  // here — the animation is the centrepiece while the RPC resolves.
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-canvas bg-draftsman text-ink">
-      <div className="text-center">
-        {/* Loading-only — wordmark scaled 1.4x so it reads as the
-            page's centrepiece while the proof RPC resolves. 404 keeps
-            the default size. */}
-        <div
-          className="inline-block"
-          style={{ transform: 'scale(1.4)', transformOrigin: 'center' }}
-        >
-          <PlasmaEyebrow />
-        </div>
-        {/* motion-reduce:animate-none disables the rotation for users
-            with `prefers-reduced-motion: reduce`. The static ring still
-            renders so the layout doesn't collapse — paired with the
-            visible "Loading proof" text below it the loading state
-            remains comprehensible without motion. role/aria-label give
-            SR users an explicit cue that loading is in progress
-            (the .animate-spin div alone isn't announced). */}
-        <div
-          role="status"
-          aria-label="Loading"
-          className="mx-auto mt-8 h-7 w-7 animate-spin motion-reduce:animate-none rounded-full border-2 border-line"
-          style={{ borderTopColor: 'var(--c-ink)' }}
-        />
-        <p className="eyebrow mt-5" style={{ letterSpacing: '0.24em' }}>
-          Loading proof
-        </p>
-      </div>
+    <div className="flex min-h-dvh items-center justify-center bg-canvas bg-draftsman text-ink px-6">
+      <LoadingProofAnimation />
     </div>
   )
 }
 
 function NotFoundScreen() {
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-canvas bg-draftsman text-ink">
-      <div className="text-center px-6">
-        <PlasmaEyebrow />
-        <h1 className="h-display mt-8">Not found</h1>
-        <p className="body-soft mx-auto mt-4 max-w-sm">
-          This proof link isn't valid or has expired. If you were sent here recently, please get in touch.
-        </p>
-        <p
-          className="eyebrow mt-10"
-          style={{ letterSpacing: '0.32em', color: 'var(--c-ink-dim)' }}
-        >
-          404
-        </p>
+    <div className="min-h-dvh grid grid-cols-1 min-[880px]:grid-cols-2 bg-canvas">
+      <LogoPanel />
+      <div className="flex flex-col justify-center bg-canvas bg-draftsman text-ink px-8 py-12 min-[880px]:px-16">
+        <div className="max-w-sm">
+          <h1 className="h-display">Not found</h1>
+          <p className="body-soft mt-4">
+            This proof link isn't valid or has expired. If you were sent here recently, please get in touch.
+          </p>
+          <p
+            className="eyebrow mt-10"
+            style={{ letterSpacing: '0.32em', color: 'var(--c-ink-dim)' }}
+          >
+            404
+          </p>
+        </div>
       </div>
     </div>
   )

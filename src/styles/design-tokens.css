@@ -182,6 +182,73 @@ html, body { font-family: var(--font-body); color: var(--c-ink); background: var
   background-position: 0 0;
 }
 
+/* ─── Proof loading animations ──────────────────────────────
+   Three on-brand variants for the customer loading screen, one
+   picked at random per page load by <LoadingProofAnimation>. Pure
+   CSS/SVG; all honour prefers-reduced-motion (settle to a static
+   final frame). Namespaced `pl-` to avoid utility clashes. */
+.pl-stage { position: relative; display: grid; place-items: center; }
+
+/* 1 — registration / CMYK build */
+.pl-reg { position: relative; width: 150px; height: 96px; }
+.pl-reg .pl-layer { position: absolute; inset: 0; border-radius: 8px; mix-blend-mode: multiply; opacity: .85; }
+.pl-reg .pl-cy { background: #27aae1; animation: pl-reg-cy 2.6s ease-in-out infinite; }
+.pl-reg .pl-ma { background: #ec008c; animation: pl-reg-ma 2.6s ease-in-out infinite; }
+.pl-reg .pl-ye { background: #ffd200; animation: pl-reg-ye 2.6s ease-in-out infinite; }
+@keyframes pl-reg-cy { 0%,12% { transform: translate(-14px,-9px) } 45%,72% { transform: translate(0,0) } 100% { transform: translate(-14px,-9px) } }
+@keyframes pl-reg-ma { 0%,12% { transform: translate(12px,8px) }  45%,72% { transform: translate(0,0) } 100% { transform: translate(12px,8px) } }
+@keyframes pl-reg-ye { 0%,12% { transform: translate(9px,-11px) }  45%,72% { transform: translate(0,0) } 100% { transform: translate(9px,-11px) } }
+.pl-cmark { position: absolute; width: 14px; height: 14px; border: 1.5px solid var(--c-ink); }
+.pl-cmark.tl { top: -22px; left: -22px; border-right: 0; border-bottom: 0; }
+.pl-cmark.tr { top: -22px; right: -22px; border-left: 0; border-bottom: 0; }
+.pl-cmark.bl { bottom: -22px; left: -22px; border-right: 0; border-top: 0; }
+.pl-cmark.br { bottom: -22px; right: -22px; border-left: 0; border-top: 0; }
+
+/* 2 — stacking cards (material palette) */
+.pl-stack { position: relative; width: 150px; height: 120px; }
+.pl-stack .pl-card { position: absolute; left: 50%; top: 50%; width: 120px; height: 74px; margin: -37px 0 0 -60px; border-radius: 9px; box-shadow: 0 6px 16px rgba(22,19,17,.16); }
+.pl-stack .pl-c1 { background: linear-gradient(135deg,#d9dce1,#b7bcc4); animation: pl-stk 2.4s ease-in-out infinite;       --r: -6deg; }
+.pl-stack .pl-c2 { background: linear-gradient(135deg,#e8c9a0,#c98a52); animation: pl-stk 2.4s ease-in-out infinite .25s;  --r: -2deg; }
+.pl-stack .pl-c3 { background: linear-gradient(135deg,#3a3550,#171327); animation: pl-stk 2.4s ease-in-out infinite .5s;   --r: 2deg; }
+.pl-stack .pl-c4 { background: linear-gradient(135deg,#fbf7ef,#ece2cf); animation: pl-stk 2.4s ease-in-out infinite .75s;  --r: 6deg; }
+@keyframes pl-stk { 0% { transform: translateY(-90px) rotate(-8deg); opacity: 0 } 18% { opacity: 1 } 38%,90%,100% { transform: translateY(0) rotate(var(--r,0deg)); opacity: 1 } }
+
+/* 3 — plotter draws the card */
+.pl-plot { width: 170px; height: 120px; }
+.pl-plot rect, .pl-plot line { fill: none; stroke: var(--c-ink); stroke-width: 1.6; stroke-linecap: round; }
+.pl-plot .pl-outline { stroke-dasharray: 380; stroke-dashoffset: 380; animation: pl-draw 2.8s ease-in-out infinite; }
+.pl-plot .pl-marks { stroke: var(--c-ink-mute); stroke-dasharray: 120; stroke-dashoffset: 120; animation: pl-draw 2.8s ease-in-out infinite .15s; }
+@keyframes pl-draw { 0% { stroke-dashoffset: 380 } 55% { stroke-dashoffset: 0 } 82% { stroke-dashoffset: 0; opacity: 1 } 100% { stroke-dashoffset: 0; opacity: 0 } }
+
+/* 4 — halftone bloom (dots pulse in a radial ripple) */
+.pl-halftone { display: grid; grid-template-columns: repeat(7,14px); grid-auto-rows: 14px; gap: 7px; }
+.pl-halftone i { width: 14px; height: 14px; border-radius: 50%; background: var(--c-ink); transform: scale(.18); animation: pl-dot 2.4s ease-in-out infinite; }
+@keyframes pl-dot { 0%,100% { transform: scale(.18); opacity: .55 } 50% { transform: scale(1); opacity: 1 } }
+
+/* 5 — embossing rise (a shape presses up into relief) */
+.pl-emb { position: relative; width: 150px; height: 92px; border-radius: 9px; background: linear-gradient(135deg,#fbf7ef,#ece2cf); box-shadow: 0 6px 16px rgba(22,19,17,.14); }
+.pl-emb .pl-relief { position: absolute; left: 50%; top: 50%; width: 70px; height: 42px; margin: -21px 0 0 -35px; border-radius: 6px; background: linear-gradient(135deg,#fff,#e6ddc9); animation: pl-emb 2.4s ease-in-out infinite; }
+@keyframes pl-emb { 0%,100% { box-shadow: inset 1px 1px 2px rgba(22,19,17,.18), inset -1px -1px 2px rgba(255,255,255,.7); transform: scale(.99) } 50% { box-shadow: 2px 4px 8px rgba(22,19,17,.22), -1px -1px 3px rgba(255,255,255,.9); transform: scale(1.04) } }
+
+/* 6 — ink-roller sweep (a bar lays a band of accent across the card) */
+.pl-roll { position: relative; width: 160px; height: 92px; border-radius: 9px; overflow: hidden; background: #fff; border: 1px solid var(--c-line); box-shadow: 0 6px 16px rgba(22,19,17,.12); }
+.pl-roll .pl-ink { position: absolute; inset: 0; background: var(--c-brand); transform: translateX(-101%); animation: pl-ink 2.6s ease-in-out infinite; }
+.pl-roll .pl-bar { position: absolute; top: -6px; bottom: -6px; width: 16px; left: 0; border-radius: 8px; background: linear-gradient(90deg,#2a2438,#4a4263); box-shadow: 0 0 10px rgba(22,19,17,.3); animation: pl-bar 2.6s ease-in-out infinite; }
+@keyframes pl-ink { 0% { transform: translateX(-101%) } 55% { transform: translateX(0) } 82% { transform: translateX(0) } 100% { transform: translateX(101%) } }
+@keyframes pl-bar { 0% { transform: translateX(-12px) } 55% { transform: translateX(160px) } 82% { transform: translateX(160px) } 100% { transform: translateX(176px) } }
+
+@media (prefers-reduced-motion: reduce) {
+  .pl-reg .pl-layer, .pl-stack .pl-card, .pl-plot .pl-outline, .pl-plot .pl-marks,
+  .pl-halftone i, .pl-emb .pl-relief, .pl-roll .pl-ink, .pl-roll .pl-bar { animation: none !important; }
+  .pl-reg .pl-cy, .pl-reg .pl-ma, .pl-reg .pl-ye { transform: translate(0,0); }
+  .pl-plot .pl-outline, .pl-plot .pl-marks { stroke-dashoffset: 0; }
+  .pl-stack .pl-card { opacity: 1; transform: translateY(0) rotate(var(--r,0deg)); }
+  .pl-halftone i { transform: scale(1); opacity: 1; }
+  /* ink-roller settles fully inked, bar parked off the right edge */
+  .pl-roll .pl-ink { transform: translateX(0); }
+  .pl-roll .pl-bar { transform: translateX(176px); }
+}
+
 /* ─── Semantic typography classes ───────────────────────── */
 .h-display {
   font-family: var(--font-display);
