@@ -3,6 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- iPad/iPhone Home Screen icon: the PlasmaWordmark layers mark
+         (ink square + white layers glyph) rendered to a 180x180 PNG.
+         iOS rounds the corners itself, so the PNG is a full-bleed
+         square. apple-mobile-web-app-* make a saved shortcut open
+         chrome-free with a dark status bar and a short title. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Proof Viewer" />
     <!-- maximum-scale=1 stops iOS Safari's auto-zoom-on-focus on
          form fields (the cause of the page-zoom + horizontal-scroll
          issue when tapping into the quote compiler's inputs). iOS
