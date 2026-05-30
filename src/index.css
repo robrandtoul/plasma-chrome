@@ -94,6 +94,27 @@
 }
 
 /*
+  Edge-to-edge page gutter. Mirrors the reskin's `px-6 sm:px-7`
+  horizontal padding but raises the left/right padding to clear the
+  iPhone notch / camera housing when the page runs under the safe
+  area (viewport-fit=cover, set in index.html). Full-bleed dark
+  bands therefore reach both physical screen edges in landscape
+  while their contents never slide beneath the notch. On every
+  non-notched device env(safe-area-inset-*) resolves to 0, so max()
+  falls back to the plain 1.5rem / 1.75rem padding — a no-op there.
+  Plain (unlayered) rules so the sm breakpoint overrides cleanly. */
+.px-gutter {
+  padding-left: max(1.5rem, env(safe-area-inset-left));
+  padding-right: max(1.5rem, env(safe-area-inset-right));
+}
+@media (min-width: 640px) {
+  .px-gutter {
+    padding-left: max(1.75rem, env(safe-area-inset-left));
+    padding-right: max(1.75rem, env(safe-area-inset-right));
+  }
+}
+
+/*
   Block horizontal scrolling caused by transient layout overshoot
   (e.g. a button with `mr-[-2px]` for an off-grid ring) without
   breaking `position: sticky` for descendants. `overflow-x: hidden`
