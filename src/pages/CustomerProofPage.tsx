@@ -721,10 +721,11 @@ export default function CustomerProofPage() {
     // not-found path (it shows no animation), only the success path
     // below — hold for whatever remains of LOADING_MIN_MS since the
     // fetch began, so the loader reads as deliberate rather than a
-    // flicker. 900ms is long enough for the registration "snap" or a
-    // couple of stacked cards to land without feeling sluggish.
+    // flicker. 1400ms gives the animation a full beat to play (the
+    // registration "snap", a fan of stacked cards, the roller sweep)
+    // without feeling sluggish.
     const startedAt = Date.now()
-    const LOADING_MIN_MS = 900
+    const LOADING_MIN_MS = 1400
     // React Router keeps this component mounted across /p/:id →
     // /p/:otherId navigations, so without an explicit reset the
     // conditional setters below leave the previous proof's data in
