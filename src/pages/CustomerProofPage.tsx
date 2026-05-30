@@ -2118,7 +2118,7 @@ export default function CustomerProofPage() {
   return (
     <div
       className={[
-        'antialiased bg-canvas text-ink font-body',
+        'antialiased bg-canvas bg-draftsman text-ink font-body',
         actionPanelOpen ? 'pb-[50vh] sm:pb-0 sm:pr-[400px]' : '',
       ].join(' ')}
     >
@@ -2724,7 +2724,7 @@ export default function CustomerProofPage() {
             return (
               <section
                 aria-labelledby="section-proofs-heading"
-                className="order-4 lg:order-none bg-canvas text-ink"
+                className="order-4 lg:order-none bg-canvas bg-draftsman text-ink"
               >
                 {/* V2 section header: "The set" h2 + count eyebrow
                     + gradient hairline. Right slot still hosts the
@@ -4410,9 +4410,17 @@ function PlasmaEyebrow() {
 
 function LoadingScreen() {
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-canvas text-ink">
+    <div className="flex min-h-dvh items-center justify-center bg-canvas bg-draftsman text-ink">
       <div className="text-center">
-        <PlasmaEyebrow />
+        {/* Loading-only — wordmark scaled 1.4x so it reads as the
+            page's centrepiece while the proof RPC resolves. 404 keeps
+            the default size. */}
+        <div
+          className="inline-block"
+          style={{ transform: 'scale(1.4)', transformOrigin: 'center' }}
+        >
+          <PlasmaEyebrow />
+        </div>
         {/* motion-reduce:animate-none disables the rotation for users
             with `prefers-reduced-motion: reduce`. The static ring still
             renders so the layout doesn't collapse — paired with the

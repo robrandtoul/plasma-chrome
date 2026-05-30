@@ -90,6 +90,12 @@
   --c-hatch-a: #ece4d3;
   --c-hatch-b: #fbf7f0;
 
+  /* Draftsman-paper grid (customer-facing page). Minor 24px + major
+     96px lines, drawn in the existing hairline tokens so the cream
+     canvas colour is unchanged. */
+  --draftsman-minor: 24px;
+  --draftsman-major: 96px;
+
   /* ── Elevation: shadows are very subtle. ──────────────── */
   --shadow-card:  0 1px 0 rgba(0,0,0,0.04) inset;
   --shadow-sm:    0 1px 2px rgba(22,19,17,0.04);
@@ -110,6 +116,26 @@
 
 /* ─── Body baseline ─────────────────────────────────────── */
 html, body { font-family: var(--font-body); color: var(--c-ink); background: var(--c-bg); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+/* ─── Draftsman-paper grid ──────────────────────────────────
+   Subtle engineering / drafting-paper background. Four layered
+   linear gradients: major grid every 96px in --c-line, minor
+   grid every 24px in --c-line-soft. Background colour falls
+   through to whatever element sets it (typically --c-bg) so
+   the cream canvas is unchanged. */
+.bg-draftsman {
+  background-image:
+    linear-gradient(to right,  var(--c-line)      1px, transparent 1px),
+    linear-gradient(to bottom, var(--c-line)      1px, transparent 1px),
+    linear-gradient(to right,  var(--c-line-soft) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--c-line-soft) 1px, transparent 1px);
+  background-size:
+    var(--draftsman-major) var(--draftsman-major),
+    var(--draftsman-major) var(--draftsman-major),
+    var(--draftsman-minor) var(--draftsman-minor),
+    var(--draftsman-minor) var(--draftsman-minor);
+  background-position: 0 0;
+}
 
 /* ─── Semantic typography classes ───────────────────────── */
 .h-display {
