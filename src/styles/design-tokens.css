@@ -114,6 +114,41 @@
   --space-12: 48px;
 }
 
+/* ─── Customer-page accent trial: indigo ────────────────────
+   Scoped override of the brand ramp. CustomerProofPage toggles the
+   `customer-accent` class on <html> while it is mounted (see that
+   file's effect), so this re-colours the customer proof page only.
+   Designer / admin / login surfaces never carry the class and keep
+   the coral brand. Because the brand utilities (Tailwind `bg-brand`
+   etc.) and the JS `tokens.brand` value all resolve through these
+   `--c-brand-*` custom properties at point of use, overriding them
+   on this ancestor re-scopes every accent inside, portals included.
+   The semantic aliases are re-stated explicitly so they pick up the
+   override regardless of var()-resolution order. */
+.customer-accent {
+  --c-brand-50:  #f8f5fe;
+  --c-brand-100: #ebe1fc;
+  --c-brand-200: #d5c0f9;
+  --c-brand-300: #b38df5;
+  --c-brand-400: #9661f1;
+  --c-brand-500: #7c3aed;  /* primary */
+  --c-brand-600: #6831c7;
+  --c-brand-700: #52269c;
+  --c-brand-800: #3e1d77;
+  --c-brand-900: #2a1451;
+  --c-brand:      #7c3aed;
+  --c-brand-soft: #ebe1fc;
+  --c-brand-ink:  #2a1451;
+
+  /* Approved-signal trial: cyan family (customer page only), option B.
+     The approved pill / status is coloured-text-on-soft-bg, so a
+     deepened cyan (#0a6f69, ~5.4:1 on the tint — legible) is the text
+     and a pale #2fe4db tint the background. Keeps the cyan family Rob
+     picked while staying readable, consistent with the soft pills. */
+  --c-in-stock:      #0a6f69;
+  --c-in-stock-soft: #dafaf9;
+}
+
 /* ─── Body baseline ─────────────────────────────────────── */
 html, body { font-family: var(--font-body); color: var(--c-ink); background: var(--c-bg); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
 
