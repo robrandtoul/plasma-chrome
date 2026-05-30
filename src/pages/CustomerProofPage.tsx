@@ -4410,7 +4410,7 @@ function PlasmaEyebrow() {
 
 function LoadingScreen() {
   return (
-    <div className="flex min-h-dvh items-center justify-center bg-canvas text-ink">
+    <div className="flex min-h-dvh items-center justify-center bg-canvas bg-draftsman text-ink">
       <div className="text-center">
         <PlasmaEyebrow />
         {/* motion-reduce:animate-none disables the rotation for users
