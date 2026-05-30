@@ -9,8 +9,13 @@
          10+ ignores user-scalable=no for accessibility, so an
          intentional pinch-zoom still works. interactive-widget
          keeps the layout viewport stable when the soft keyboard
-         appears so focused inputs don't shove the page sideways. -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, interactive-widget=resizes-content" />
+         appears so focused inputs don't shove the page sideways.
+         viewport-fit=cover lets full-bleed bands (e.g. the customer
+         page's dark header) reach the physical screen edges in
+         landscape instead of Safari insetting the whole page by the
+         safe area; the `.px-gutter` utility then keeps content clear
+         of the notch. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, interactive-widget=resizes-content, viewport-fit=cover" />
     <!-- Type families (IBM Plex Sans + IBM Plex Mono) load via the
          @import inside src/styles/design-tokens.css. No <link> tags
          needed here. -->

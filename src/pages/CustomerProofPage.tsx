@@ -2132,7 +2132,7 @@ export default function CustomerProofPage() {
       <header
         className="sticky top-0 z-[5] bg-ink text-on-ink"
       >
-        <div className="mx-auto max-w-[1280px] flex items-center gap-4 px-6 sm:px-7 py-3.5">
+        <div className="mx-auto max-w-[1280px] flex items-center gap-4 px-gutter py-3.5">
           {/* Full-colour Plasma logo lockup on the ink banner — the
               only branding the customer sees. White-text variant
               designed for dark backgrounds; steps up a touch at sm+
@@ -2199,7 +2199,7 @@ export default function CustomerProofPage() {
         ].filter(Boolean) as string[]
         return (
           <div className="bg-ink text-on-ink">
-            <div className="mx-auto max-w-[1280px] flex flex-wrap items-center gap-3 sm:gap-4 px-6 sm:px-7 py-3.5">
+            <div className="mx-auto max-w-[1280px] flex flex-wrap items-center gap-3 sm:gap-4 px-gutter py-3.5">
               {company && (
                 <>
                   <span className="eyebrow" style={{ color: 'rgba(255,255,255,0.55)' }}>
@@ -2237,7 +2237,7 @@ export default function CustomerProofPage() {
            QR -> Spec -> Thickness/Construction -> Pricing -> Material
            notes -> About this proof). Each card resets to lg:order-none
            so the desktop two-column layout is untouched. */
-        <main className="mx-auto max-w-[1280px] px-6 sm:px-7 py-8 flex flex-col gap-6 lg:grid lg:grid-cols-[360px_1fr] lg:gap-8 lg:items-start">
+        <main className="mx-auto max-w-[1280px] px-gutter py-8 flex flex-col gap-6 lg:grid lg:grid-cols-[360px_1fr] lg:gap-8 lg:items-start">
 
           {/* Left rail — sticky on lg+, scrolls with viewport on
               smaller screens. top-[120px] accounts for sticky
@@ -3320,7 +3320,7 @@ export default function CustomerProofPage() {
           prototype's quiet two-column line on canvas. Left: eyebrow-
           styled brand mark. Right: privacy reminder + version ref.
           Both lines sit at 12px in ink-mute on the warm-cream canvas. */}
-      <footer className="mx-auto max-w-[1280px] px-6 sm:px-7 mt-6 mb-4">
+      <footer className="mx-auto max-w-[1280px] px-gutter mt-6 mb-4">
         <div className="flex flex-wrap items-center justify-between gap-3 py-4 border-t border-line text-[12px] text-ink-mute">
           <span className="eyebrow">PlasmaDesign · craft-press business cards</span>
           <span className="flex items-center gap-3">
