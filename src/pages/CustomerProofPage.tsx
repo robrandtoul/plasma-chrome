@@ -3385,7 +3385,7 @@ export default function CustomerProofPage() {
               )
             }
           }}
-          hideRequestChanges={actionPanel != null}
+          hideRequestChanges={actionPanel != null || !ctasLive}
           panelOpen={actionPanel != null}
           onCurrentSideChange={setDetailViewSide}
         />
