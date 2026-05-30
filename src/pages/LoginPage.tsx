@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate, Navigate } from 'react-router-dom'
-import { Layers, KeyRound, Bell, Info } from 'lucide-react'
+import { KeyRound, Bell, Info } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { ButtonInk, Field, Input, LetterpressMotif } from '../design'
@@ -81,26 +81,13 @@ export default function LoginPage() {
       <div
         className="relative overflow-hidden text-white bg-ink flex flex-col gap-8 px-8 py-12 min-[880px]:p-16 min-h-[320px] min-[880px]:min-h-0"
       >
-        {/* Inverted wordmark — hand-rolled rather than reusing
-            PlasmaWordmark because that primitive is ink-on-cream
-            by default and the only consumer that needs the
-            inverted variant is this brand panel. */}
-        <div className="relative z-[2] inline-flex items-center gap-3">
-          <span className="inline-flex items-center justify-center w-10 h-10 rounded-[8px] bg-white text-ink">
-            <Layers size={20} aria-hidden="true" />
-          </span>
-          <div className="leading-none">
-            <div className="font-display font-medium tracking-[-0.02em] text-[24px]">
-              PlasmaDesign
-            </div>
-            <div
-              className="font-mono font-medium uppercase mt-1 text-white/55"
-              style={{ fontSize: 10, letterSpacing: '0.2em' }}
-            >
-              Proofs
-            </div>
-          </div>
-        </div>
+        {/* Full-colour Plasma logo lockup — the same white-text PNG
+            the customer-facing proof header uses on its ink banner. */}
+        <img
+          src="/logo-dark.png"
+          alt="PlasmaDesign Proofs"
+          className="relative z-[2] self-start h-[50px] w-auto"
+        />
 
         <div className="relative z-[2] mt-auto">
           <h1
