@@ -2118,7 +2118,7 @@ export default function CustomerProofPage() {
   return (
     <div
       className={[
-        'antialiased bg-canvas text-ink font-body',
+        'antialiased bg-canvas bg-draftsman text-ink font-body',
         actionPanelOpen ? 'pb-[50vh] sm:pb-0 sm:pr-[400px]' : '',
       ].join(' ')}
     >
@@ -2724,7 +2724,7 @@ export default function CustomerProofPage() {
             return (
               <section
                 aria-labelledby="section-proofs-heading"
-                className="order-4 lg:order-none bg-canvas text-ink"
+                className="order-4 lg:order-none bg-canvas bg-draftsman text-ink"
               >
                 {/* V2 section header: "The set" h2 + count eyebrow
                     + gradient hairline. Right slot still hosts the
