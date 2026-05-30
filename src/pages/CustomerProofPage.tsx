@@ -1053,7 +1053,7 @@ export default function CustomerProofPage() {
   // inside the Approve modal as a per-action tick box gating
   // Confirm — see the modal block at the bottom of this file.
   // Request changes stays ungated end-to-end.
-  function renderActionBand(name: string): React.ReactNode {
+  function renderActionBand(name: string, opts?: { headerPillAbove?: boolean }): React.ReactNode {
     if (!activeVersion) return null
     if (!activeVersion.approvals_enabled) return null
 
@@ -1146,9 +1146,20 @@ export default function CustomerProofPage() {
     // "done" rather than as a state to act on.
     if (state.kind === 'approved') {
       const approvedDate = formatApprovedDate(state.createdAt)
+      // When a header approval pill already labels this card
+      // (headerPillAbove), drop the band's own approved pill and show
+      // only the audit detail (who / when / comment) — otherwise the
+      // card carries two identical approved pills. If there's no detail
+      // to add, render nothing and let the header pill stand alone. The
+      // all-shared one-off path has no header pill, so it keeps the pill
+      // here as its sole approved indicator.
+      const showPill = !opts?.headerPillAbove
+      if (!showPill && !state.actorName && !approvedDate && !state.comment) {
+        return null
+      }
       return (
         <div className="mt-6 flex flex-col gap-1.5 sm:items-start">
-          <Pill colour="in-stock">{'Approved' + forSuffix}</Pill>
+          {showPill && <Pill colour="in-stock">{'Approved' + forSuffix}</Pill>}
           {(state.actorName || approvedDate) && (
             <span className="text-sm text-ink-soft">
               {state.actorName ? `Approved by ${state.actorName}` : 'Approved'}
@@ -2232,6 +2243,49 @@ export default function CustomerProofPage() {
                     .filter(Boolean)
                     .join(', ')
                 : 'Some proofs already signed off, others awaiting review'
+              // Approved → loud "signed off" card: filled in-stock
+              // register, a check medallion, and the status promoted
+              // from an 11px pill to a heading. Partially-approved keeps
+              // the quieter pill+text strip (it's an in-progress state,
+              // not a result to celebrate). The border tracks the
+              // in-stock token via color-mix so it follows the approved
+              // colour rather than being frozen green.
+              if (isApprovedKind) {
+                return (
+                  <div
+                    className="order-1 lg:order-none relative flex items-center gap-3.5 rounded-[14px] bg-in-stock-soft px-5 py-4 shadow-card"
+                    style={{ border: '1px solid color-mix(in srgb, var(--c-in-stock) 35%, transparent)' }}
+                  >
+                    <StatusRule colour={tokens.inStock} />
+                    <span
+                      aria-hidden="true"
+                      className="grid place-items-center shrink-0 rounded-full"
+                      style={{ width: 36, height: 36, background: 'var(--c-in-stock)', color: 'var(--c-on-in-stock)' }}
+                    >
+                      <svg width="18" height="18" viewBox="0 0 12 12" fill="none">
+                        <path
+                          d="M2.5 6.5L5 9L9.5 3.5"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </span>
+                    <div className="min-w-0 leading-tight">
+                      <p
+                        className="font-display font-medium tracking-[-0.01em]"
+                        style={{ color: 'var(--c-in-stock)', fontSize: 20 }}
+                      >
+                        {label}
+                      </p>
+                      <p className="mt-0.5 text-[13px] text-ink-soft" aria-label={detailAria}>
+                        {detailVisible}
+                      </p>
+                    </div>
+                  </div>
+                )
+              }
               return (
                 <div className="order-1 lg:order-none flex flex-wrap items-center gap-3 rounded-[10px] bg-surface border border-line px-4 py-3">
                   <Pill colour={pillColour}>{label}</Pill>
@@ -2940,7 +2994,7 @@ export default function CustomerProofPage() {
                               afterthought. */}
                           {group.heading != null && (
                             <div className="border-t border-line-soft px-5 py-4">
-                              {renderActionBand(group.heading)}
+                              {renderActionBand(group.heading, { headerPillAbove: pill != null })}
                             </div>
                           )}
                         </div>
