@@ -251,6 +251,18 @@ export default function CustomerProofPage() {
     return () => { document.title = previous }
   }, [proof])
 
+  // Customer-page-only accent trial. Flags <html> with `customer-accent`
+  // while this page is mounted so the scoped brand-ramp override in
+  // design-tokens.css applies here only; every designer / back-end
+  // surface keeps the coral brand. Cleared on unmount (navigating away
+  // from /p/:id), and covers all render states — loading, not-found,
+  // abandoned, and the live page — since they all render inside this
+  // mounted component, including any body-level portals (lightbox).
+  useEffect(() => {
+    document.documentElement.classList.add('customer-accent')
+    return () => document.documentElement.classList.remove('customer-accent')
+  }, [])
+
   // Element that had focus when the panel opened — restored on close
   // so keyboard users land back on the per-recipient Approve /
   // Request changes button rather than at <body> with the page's tab
@@ -1312,32 +1324,7 @@ export default function CustomerProofPage() {
         : null
       return (
         <div className="flex flex-col gap-1.5">
-          <span
-            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 eyebrow self-start"
-            style={{
-              background: 'rgba(14,155,78,0.14)',
-              color: 'var(--c-in-stock)',
-              border: '1px solid rgba(14,155,78,0.3)',
-              letterSpacing: '0.14em',
-            }}
-          >
-            <svg
-              width="9"
-              height="9"
-              viewBox="0 0 12 12"
-              fill="none"
-              aria-hidden="true"
-            >
-              <path
-                d="M2.5 6.5L5 9L9.5 3.5"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            Approved
-          </span>
+          <Pill colour="in-stock" className="self-start">Approved</Pill>
           <span className="text-[14px] text-ink-soft leading-snug">
             {dateStr ? `Approved on ${dateStr}.` : 'Approved.'}
           </span>
@@ -1487,32 +1474,7 @@ export default function CustomerProofPage() {
           : 'This direction was selected.'
       return (
         <div className="flex flex-col gap-2">
-          <span
-            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 eyebrow self-start"
-            style={{
-              background: 'rgba(14,155,78,0.14)',
-              color: 'var(--c-in-stock)',
-              border: '1px solid rgba(14,155,78,0.3)',
-              letterSpacing: '0.14em',
-            }}
-          >
-            <svg
-              width="9"
-              height="9"
-              viewBox="0 0 12 12"
-              fill="none"
-              aria-hidden="true"
-            >
-              <path
-                d="M2.5 6.5L5 9L9.5 3.5"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            Selected
-          </span>
+          <Pill colour="in-stock" className="self-start">Selected</Pill>
           <span className="font-display font-medium text-ink text-[17px] leading-snug">
             {headlineText}
           </span>
@@ -1693,7 +1655,7 @@ export default function CustomerProofPage() {
                   className="bg-surface border rounded-[14px] overflow-hidden flex flex-col"
                   style={{
                     borderColor: isChosen
-                      ? 'rgba(14,155,78,0.4)'
+                      ? 'color-mix(in srgb, var(--c-in-stock) 40%, transparent)'
                       : 'var(--c-line)',
                     opacity: dimmed ? 0.55 : 1,
                     transition: 'opacity 200ms ease-out',
@@ -2927,32 +2889,7 @@ export default function CustomerProofPage() {
                               </div>
                             </div>
                             {pill && (
-                              <span
-                                className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 eyebrow"
-                                style={{
-                                  background: 'rgba(14,155,78,0.14)',
-                                  color: 'var(--c-in-stock)',
-                                  border: '1px solid rgba(14,155,78,0.3)',
-                                  letterSpacing: '0.14em',
-                                }}
-                              >
-                                <svg
-                                  width="9"
-                                  height="9"
-                                  viewBox="0 0 12 12"
-                                  fill="none"
-                                  aria-hidden="true"
-                                >
-                                  <path
-                                    d="M2.5 6.5L5 9L9.5 3.5"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
-                                </svg>
-                                {pill}
-                              </span>
+                              <Pill colour="in-stock">{pill}</Pill>
                             )}
                             <span className="inline-flex items-center gap-1.5 eyebrow text-ink-mute">
                               <Eye size={12} aria-hidden="true" />
