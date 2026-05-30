@@ -147,6 +147,16 @@
      picked while staying readable, consistent with the soft pills. */
   --c-in-stock:      #0a6f69;
   --c-in-stock-soft: #dafaf9;
+
+  /* Paper: nudge the warm cream off its slight orange lean so the
+     canvas complements the violet/cyan scheme instead of the old
+     coral. Canvas + draftsman-grid hairlines shift together (a
+     de-oranged warm-neutral paper) so the grid doesn't stay beige.
+     Surfaces stay pure white. Customer page only. */
+  --c-bg:        #f9f8f5;
+  --c-line:      #e9e6df;
+  --c-line-soft: #f2efe9;
+  --c-hatch-b:   #f9f8f5;
 }
 
 /* ─── Body baseline ─────────────────────────────────────── */
