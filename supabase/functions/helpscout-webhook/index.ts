@@ -22,10 +22,10 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
-function json(body: unknown, status = 200): Response {
+function json(body: unknown, status = 200, extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
   })
 }
 
@@ -81,20 +81,20 @@ function replyDirection(eventHeader: string | null, payload: Record<string, unkn
   return 'staff'
 }
 
-Deno.serve(async (req) => {
+async function handle(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
   const secret = Deno.env.get('HELPSCOUT_WEBHOOK_SECRET')
   if (!secret) {
     console.error('[helpscout-webhook] HELPSCOUT_WEBHOOK_SECRET not set')
-    return json({ error: 'server misconfigured' }, 500)
+    return json({ error: 'HELPSCOUT_WEBHOOK_SECRET not set' }, 500)
   }
 
   // Read the raw body once — needed verbatim for the HMAC, then parsed.
   const rawBody = await req.text()
   const signature = req.headers.get('x-helpscout-signature')
   if (!(await verifySignature(rawBody, signature, secret))) {
-    return json({ error: 'invalid signature' }, 401)
+    return json({ error: 'invalid signature', hadSignatureHeader: signature != null }, 401)
   }
 
   let payload: Record<string, unknown>
@@ -117,7 +117,7 @@ Deno.serve(async (req) => {
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   if (!supabaseUrl || !serviceKey) {
     console.error('[helpscout-webhook] missing supabase env')
-    return json({ error: 'server misconfigured' }, 500)
+    return json({ error: 'missing supabase env' }, 500)
   }
   const admin = createClient(supabaseUrl, serviceKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -138,11 +138,24 @@ Deno.serve(async (req) => {
 
   if (error) {
     console.error('[helpscout-webhook] update failed:', error.message)
-    // 500 so Help Scout retries — the write is idempotent.
-    return json({ error: 'update failed' }, 500)
+    // Return the DB message so it's visible in the Help Scout delivery log.
+    return json({ error: 'update failed', detail: error.message }, 500)
   }
 
   // 200 whether or not a proof matched (most HS conversations aren't proofs);
   // a matched-but-empty result is a normal no-op, not an error.
   return json({ ok: true, matched: data?.length ?? 0, direction })
+}
+
+Deno.serve(async (req) => {
+  try {
+    return await handle(req)
+  } catch (err) {
+    // Never let an unexpected throw become an opaque EDGE_FUNCTION_ERROR — log
+    // it and surface the message in the response body + a header so it's
+    // readable from the Help Scout delivery log or the Supabase request log.
+    const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+    console.error('[helpscout-webhook] crashed:', msg, err instanceof Error ? err.stack : '')
+    return json({ error: 'crash', detail: msg }, 500, { 'x-debug-error': msg.slice(0, 180) })
+  }
 })

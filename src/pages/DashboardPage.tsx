@@ -964,7 +964,7 @@ function ProjectRow({
           reads as a clean six-column table; at narrower widths some
           columns drop (Material, Versions, Updated) so Customer +
           Status stay legible. */}
-      <div className="grid items-center gap-3 grid-cols-[56px_minmax(0,1fr)_auto_auto] sm:grid-cols-[56px_minmax(0,1fr)_140px_auto] md:grid-cols-[56px_minmax(0,1fr)_140px_60px_70px_24px_110px]">
+      <div className="grid items-center gap-3 grid-cols-[56px_minmax(0,1fr)_auto_auto] sm:grid-cols-[56px_minmax(0,1fr)_140px_auto] md:grid-cols-[56px_minmax(0,1fr)_140px_60px_70px_24px_160px]">
         {/* Thumbnail — real signed-URL image when loadThumbnails has
             produced one for this version. Falls through to a dark
             plate with the project's initials when no URL is available
