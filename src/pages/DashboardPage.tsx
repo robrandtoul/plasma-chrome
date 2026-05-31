@@ -20,6 +20,8 @@ import {
 } from '../lib/viewedState'
 import { openDesignerPreview } from '../lib/customerProofUrl'
 import { logAudit } from '../lib/audit'
+import { attentionReason } from '../lib/needsAttention'
+import { ResolvePopover } from '../components/ResolvePopover'
 // QuoteLink imported + rendered inside DesignerChrome (PR 31) so
 // every designer page surfaces the same new-tab "phone rings"
 // affordance without re-importing.
@@ -32,6 +34,7 @@ import {
   buildSnoozedSection,
   isCurrentlySnoozed,
   proofBucket,
+  recentHelpscoutActivity,
   type DashboardProject,
   type DesignerColour,
   type NeedsAttentionRule,
@@ -50,26 +53,8 @@ type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved
 type TileCounts = Record<TileKey, number>
 type ChipKey   = 'all' | 'metal' | 'paper' | 'plastic' | 'carbon' | 'wood' | 'acrylic'
 
-// Reason chip text per rule. Templated against rule_meta.days where
-// the rule has a threshold. Kept here rather than in a shared lib
-// because the dashboard is the only renderer; the admin editor uses
-// its own humanised labels (rule name + description) for the cards.
-function reasonChipText(code: NeedsAttentionRule, days: number | undefined): string {
-  switch (code) {
-    case 'request_changes_no_version':
-      return `Customer requested changes ${days ?? '—'} days ago, no new version`
-    case 'helpscout_follow_up_tag':
-      return 'Help Scout conversation tagged "follow up"'
-    case 'sent_never_viewed':
-      return `Sent ${days ?? '—'} days ago, never opened`
-    case 'viewed_not_actioned':
-      return `Last viewed ${days ?? '—'} days ago, no action since`
-    case 'approaching_dormant':
-      return `Approaching dormant — ${days ?? '—'} days since last activity`
-    case 'stuck_in_progress':
-      return `Stuck in progress — no activity for ${days ?? '—'} days`
-  }
-}
+// Reason + resolution text per rule now live in ../lib/needsAttention so the
+// reason chip, the pill tooltip, and the detail page all read one source.
 
 interface DashboardLatestEvent {
   id: string
@@ -841,12 +826,6 @@ interface ProjectRowProps {
   project: DashboardProject
   minePinned: boolean
   teamPinned: boolean
-  // Render the inline rule-reason chip as a third row line. Set true only
-  // while the Needs attention tile filter is active — outside that view
-  // the row stays at its two-line height, and the reason remains visible
-  // on hover via the `title` attribute (kept for keyboard / screen-reader
-  // parity).
-  showReason: boolean
   /** Signed URL for the project's first front image. Undefined while
    *  loadThumbnails is in flight or when the version has no images;
    *  the row falls through to the dark-plate initials placeholder. */
@@ -855,18 +834,21 @@ interface ProjectRowProps {
   onToggleTeamPin: (proofId: string) => void
   onSnooze: (proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) => Promise<void>
   onUnsnooze: (proofId: string, ruleCode: NeedsAttentionRule) => Promise<void>
+  // Refresh the dashboard after the resolve popover auto-snoozes a proof
+  // (so the now-snoozed row drops off the Needs-attention list).
+  onAfterResolve: () => void
 }
 
 function ProjectRow({
   project,
   minePinned,
   teamPinned,
-  showReason,
   thumbnailUrl,
   onToggleMinePin,
   onToggleTeamPin,
   onSnooze,
   onUnsnooze,
+  onAfterResolve,
 }: ProjectRowProps) {
   // Hover popover + click lightbox state. Both gate on a real
   // thumbnailUrl — when no image is available (placeholder rendering)
@@ -959,7 +941,7 @@ function ProjectRow({
         project.current_version_viewed_at
           ? `Viewed ${relativeTime(project.current_version_viewed_at)}`
           : viewedStateTitle(viewedStateFor(project)),
-        project.rule_code ? reasonChipText(project.rule_code, project.rule_meta?.days) : null,
+        project.rule_code ? attentionReason(project.rule_code, project.rule_meta?.days) : null,
         !project.rule_code && isCurrentlySnoozed(project) ? `Snoozed until ${formatSnoozeUntil(project.snoozed_until!)}` : null,
         ts ? `${verb} ${relativeTime(ts)}` : null,
       ].filter(Boolean).join(' · ')}
@@ -1054,14 +1036,45 @@ function ProjectRow({
         <div className="min-w-0">
           <div className="truncate text-[15px] font-medium text-ink">{projectName}</div>
           {subline && <div className="truncate text-xs text-ink-mute mt-0.5">{subline}</div>}
-          {/* Reason chip — third row line, visible only when the Needs
-              attention tile filter is active. */}
-          {showReason && project.rule_code && (
-            <div className="mt-1 flex items-center gap-1.5 text-xs text-out">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-out" aria-hidden="true" />
-              <span className="truncate">{reasonChipText(project.rule_code, project.rule_meta?.days)}</span>
-            </div>
+          {/* Reason chip — third row line, shown on every Needs-attention
+              row so the triggering rule is always visible (not just when
+              the tile filter is active). Clicking it opens the resolve
+              popover (reason + how to resolve + Open Help Scout / Send a
+              reminder / Start new version). The chip sits in the name
+              column, which the hover action strip doesn't cover, so it
+              stays clickable on hover. */}
+          {project.rule_code && (
+            <ResolvePopover
+              proofId={project.proof_id}
+              ruleCode={project.rule_code}
+              days={project.rule_meta?.days}
+              helpscoutUrl={project.helpscout_conversation_url}
+              hasHelpscoutConversation={!!project.helpscout_conversation_id}
+              versionId={project.current_version_id}
+              versionNumber={project.current_version_number}
+              contactFullName={project.contact_name}
+              companyName={project.company_name}
+              onSnoozed={onAfterResolve}
+              className="mt-1 max-w-full cursor-pointer"
+            >
+              <span className="flex min-w-0 items-center gap-1.5 text-xs text-out">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-out" aria-hidden="true" />
+                <span className="truncate">{attentionReason(project.rule_code, project.rule_meta?.days)}</span>
+              </span>
+            </ResolvePopover>
           )}
+          {/* Help Scout activity chip (000208) — shows why a recently-chased
+              proof has dropped off Needs attention, so the suppression isn't
+              silent. */}
+          {(() => {
+            const hs = recentHelpscoutActivity(project)
+            if (!hs) return null
+            return (
+              <div className="mt-1 truncate text-xs text-ink-mute">
+                {hs.kind === 'customer' ? 'Customer replied' : 'Chased'} {relativeTime(hs.at)}
+              </div>
+            )
+          })()}
         </div>
 
         {/* Material — hidden below sm. Variant sub-line will land in
@@ -2545,7 +2558,7 @@ export default function DashboardPage() {
                                         onToggleTeamPin={toggleTeamPin}
                                         onSnooze={handleSnooze}
                                         onUnsnooze={handleUnsnooze}
-                                        showReason={tileFilter === 'needs_attention'}
+                                        onAfterResolve={() => loadDashboard()}
                                       />
                                     </div>
                                   )}
@@ -2562,7 +2575,7 @@ export default function DashboardPage() {
                                     onToggleTeamPin={toggleTeamPin}
                                     onSnooze={handleSnooze}
                                     onUnsnooze={handleUnsnooze}
-                                    showReason={tileFilter === 'needs_attention'}
+                                    onAfterResolve={() => loadDashboard()}
                                   />
                                 ))
                               )}

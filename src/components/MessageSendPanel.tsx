@@ -57,7 +57,10 @@ export interface MessageSendPanelProps {
   proofId: string
   versionId: string
   versionNumber: number
-  templateId: 'first_proof' | 'revision'
+  // reply_templates id to seed the editor body from (e.g. 'first_proof',
+  // 'revision', or a 'nudge_*' reminder). Falls back to DEFAULT_BODIES when the
+  // row is missing; the send path is template-agnostic (posts the edited body).
+  templateId: string
   context: TemplateContext
   hasHelpScoutConversation: boolean
   onSent: () => void
@@ -278,11 +281,21 @@ export default function MessageSendPanel({
     )
   }
 
-  const lastCustomerThread = contextData?.threads.find((t) => t.authorType === 'customer')
-  const lastReplyThread = contextData?.threads.find((t) => t.type === 'reply')
-  const olderThreads = contextData?.threads.filter(
-    (t) => t.id !== lastCustomerThread?.id && t.id !== lastReplyThread?.id,
-  ).slice(0, 5) ?? []
+  // Conversation messages, oldest → newest, so the thread reads top-to-bottom
+  // like an email chain with the reply box beneath it. Two cleanups:
+  //   * drop empty-body rows — Help Scout 'lineitem' system events (assignments,
+  //     status/tag changes) and the proof-viewer's own customer-thread posts come
+  //     back with no text and would render as "(empty body)" noise.
+  //   * sort ascending by createdAt (the edge function returns newest-first).
+  const messages = [...(contextData?.threads ?? [])]
+    .filter((t) => t.bodyText.trim() !== '')
+    .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''))
+  // Collapse all but the most recent few behind a "show earlier" toggle, kept
+  // above the recent ones so the order stays chronological when expanded.
+  const RECENT_COUNT = 4
+  const hasEarlier = messages.length > RECENT_COUNT
+  const earlierMessages = hasEarlier ? messages.slice(0, messages.length - RECENT_COUNT) : []
+  const recentMessages = hasEarlier ? messages.slice(messages.length - RECENT_COUNT) : messages
 
   return (
     <div className="space-y-4">
@@ -303,38 +316,39 @@ export default function MessageSendPanel({
         )}
 
         {contextData && (
-          <div className="space-y-4">
-            {lastCustomerThread ? (
-              <ThreadCard label="Customer's last message" thread={lastCustomerThread} />
-            ) : (
-              <p className="text-sm text-ink-dim">No customer messages yet.</p>
-            )}
-            {lastReplyThread && (
-              <ThreadCard label="Your last reply" thread={lastReplyThread} muted />
-            )}
-            {olderThreads.length > 0 && !showOlder && (
-              <button
-                type="button"
-                onClick={() => setShowOlder(true)}
-                className="text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
-              >
-                Show more of the thread ({olderThreads.length})
-              </button>
-            )}
-            {showOlder && olderThreads.map((t) => (
-              <ThreadCard key={t.id} thread={t} muted />
-            ))}
-            <div>
-              <a
-                href={contextData.url}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
-              >
-                Open in Help Scout
-              </a>
+          messages.length === 0 ? (
+            <p className="text-sm text-ink-dim">No messages in this conversation yet.</p>
+          ) : (
+            <div className="space-y-4">
+              {hasEarlier && !showOlder && (
+                <button
+                  type="button"
+                  onClick={() => setShowOlder(true)}
+                  className="text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
+                >
+                  Show {earlierMessages.length} earlier message{earlierMessages.length === 1 ? '' : 's'}
+                </button>
+              )}
+              {/* Oldest → newest; customer messages prominent, staff replies muted.
+                  The newest message lands directly above the reply editor. */}
+              {showOlder && earlierMessages.map((t) => (
+                <ThreadCard key={t.id} thread={t} muted={t.authorType !== 'customer'} />
+              ))}
+              {recentMessages.map((t) => (
+                <ThreadCard key={t.id} thread={t} muted={t.authorType !== 'customer'} />
+              ))}
+              <div>
+                <a
+                  href={contextData.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs font-medium text-ink-mute underline-offset-2 hover:text-ink hover:underline"
+                >
+                  Open in Help Scout
+                </a>
+              </div>
             </div>
-          </div>
+          )
         )}
       </section>
 

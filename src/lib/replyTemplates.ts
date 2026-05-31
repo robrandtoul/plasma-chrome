@@ -174,4 +174,14 @@ export const DEFAULT_BODIES: Record<string, string> = {
     `Thanks, we've recorded your changes for {version_label}:<br><br>{? change_notes}{change_notes}<br><br>{/?}We'll get an updated proof over to you shortly.`,
   proof_variant_selection_confirmation:
     `Thanks, we've recorded your selection for {version_label}: {chosen_variant}.<br><br>{? change_notes}{change_notes}<br><br>{/?}We'll incorporate this and get an updated proof over to you shortly.`,
+  // Needs-attention reminders (one-click nudges from the resolve popover).
+  // Seeded in 000207; designer_picked variable set; no sign-off.
+  nudge_sent_never_viewed:
+    `Hi {first_name},\n\nJust checking the proof of your cards{? company} for {company}{/?} reached you — it doesn't look like it's been opened yet. Here's the link again whenever you have a moment:\n\n{url}`,
+  nudge_viewed_not_actioned:
+    `Hi {first_name},\n\nHope you've had a chance to look over the proof{? company} for {company}{/?}. Any thoughts, or are you happy for us to go ahead? Here's the link if you'd like another look:\n\n{url}`,
+  nudge_approaching_dormant:
+    `Hi {first_name},\n\nJust a quick nudge on your card proof{? company} for {company}{/?} before it slips off our active list. Let us know if you'd like any changes — here's the link:\n\n{url}`,
+  nudge_stuck_in_progress:
+    `Hi {first_name},\n\nChecking in on your card proof{? company} for {company}{/?} — we haven't heard back in a little while. Happy to help with any tweaks; here's the link again:\n\n{url}`,
 }

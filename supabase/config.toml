@@ -412,6 +412,12 @@ verify_jwt = false
 [functions.helpscout-status]
 verify_jwt = false
 
+# helpscout-webhook is called by Help Scout (no Supabase JWT). It verifies
+# an HMAC-SHA1 signature against HELPSCOUT_WEBHOOK_SECRET over the raw body
+# before doing any work, so the open endpoint is gated server-side.
+[functions.helpscout-webhook]
+verify_jwt = false
+
 # customer-proof-images is anon-callable: customers reach the proof
 # page without a Supabase session, so the function must accept
 # requests without a verified user JWT. The handler does its own

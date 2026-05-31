@@ -33,6 +33,7 @@ import {
   type ViewedState,
 } from '../lib/viewedState'
 import { proofBucket, type BucketInput } from '../lib/dashboardGrouping'
+import { ResolvePopover } from '../components/ResolvePopover'
 
 interface Proof {
   id: string
@@ -367,7 +368,7 @@ export default function ProofDetailPage() {
     // status fallback rather than breaking the page load.
     void supabase
       .from('public_dashboard_projects')
-      .select('status, current_version_id, current_version_viewed_at, latest_non_view_event_type, latest_non_view_event_at, version_created_at, rule_code, snoozed_until')
+      .select('status, current_version_id, current_version_viewed_at, latest_non_view_event_type, latest_non_view_event_at, version_created_at, rule_code, rule_meta, snoozed_until')
       .eq('proof_id', proofId)
       .maybeSingle()
       .then(({ data }) => {
@@ -1419,7 +1420,25 @@ export default function ProofDetailPage() {
             <div className="flex flex-col items-end gap-3 shrink-0">
               <div className="flex items-center gap-2">
                 {statusBucket
-                  ? <ProofStatusPill label={statusBucket.label} colour={statusBucket.colour} />
+                  ? (statusBucket.bucket === 'needs_attention' && bucketRow?.rule_code
+                      ? (
+                        <ResolvePopover
+                          proofId={proof.id}
+                          ruleCode={bucketRow.rule_code}
+                          days={bucketRow.rule_meta?.days}
+                          helpscoutUrl={proof.helpscout_conversation_url}
+                          hasHelpscoutConversation={!!proof.helpscout_conversation_id}
+                          versionId={currentVersion?.id ?? null}
+                          versionNumber={currentVersion?.version_number ?? null}
+                          contactFullName={proof.contacts.full_name}
+                          companyName={proof.contacts.companies?.name ?? null}
+                          onSnoozed={() => { if (id) loadProof(id) }}
+                          className="cursor-pointer"
+                        >
+                          <ProofStatusPill label={statusBucket.label} colour={statusBucket.colour} />
+                        </ResolvePopover>
+                      )
+                      : <ProofStatusPill label={statusBucket.label} colour={statusBucket.colour} />)
                   : <ProofStatusPill status={proof.status} />}
                 {currentIsCustomQuote && (
                   <span

@@ -5,7 +5,7 @@
 // determines where a proof appears in the time-bucketed list after a
 // snooze expires.
 
-import { recentlyAwakened, isCurrentlySnoozed, groupByTime, buildSnoozedSection, proofBucket } from './dashboardGrouping'
+import { recentlyAwakened, isCurrentlySnoozed, groupByTime, buildSnoozedSection, proofBucket, recentHelpscoutActivity } from './dashboardGrouping'
 import type { DashboardProject } from './dashboardGrouping'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -75,6 +75,8 @@ function makeProject(overrides: Partial<DashboardProject> = {}): DashboardProjec
     snoozed_by_initials:        null,
     snoozed_by_colour:          null,
     designer_avatar_url:        null,
+    helpscout_last_reply_at:          null,
+    helpscout_last_customer_reply_at: null,
     ...overrides,
   }
 }
@@ -372,6 +374,32 @@ test('terminal status wins over the in_progress workflow sub-states (dormant, un
   // status takes precedence over not_viewed, matching the left-cap order.
   const p = makeProject({ status: 'dormant', current_version_id: 'v1', current_version_viewed_at: null })
   assertEqual(proofBucket(p).bucket, 'dormant')
+})
+
+// ── recentHelpscoutActivity() ─────────────────────────────────────────────────
+
+console.log('\nrecentHelpscoutActivity()')
+
+test('null when there is no Help Scout reply activity', () => {
+  assertEqual(recentHelpscoutActivity(makeProject()), null)
+})
+
+test('returns the staff reply when it is recent', () => {
+  const p = makeProject({ helpscout_last_reply_at: hoursAgo(2) })
+  assertEqual(recentHelpscoutActivity(p)?.kind, 'staff')
+})
+
+test('returns the most recent of staff vs customer', () => {
+  const p = makeProject({
+    helpscout_last_reply_at: daysAgo(2),
+    helpscout_last_customer_reply_at: hoursAgo(3),
+  })
+  assertEqual(recentHelpscoutActivity(p)?.kind, 'customer')
+})
+
+test('null when the most recent reply is older than the window', () => {
+  const p = makeProject({ helpscout_last_reply_at: daysAgo(5) })
+  assertEqual(recentHelpscoutActivity(p, 3), null)
 })
 
 // ── Summary ───────────────────────────────────────────────────────────────────

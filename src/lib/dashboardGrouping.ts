@@ -54,6 +54,11 @@ export interface DashboardProject {
   snoozed_by_name: string | null
   snoozed_by_initials: string | null
   snoozed_by_colour: DesignerColour | null
+  // Help Scout reply activity (000208) — stamped by the helpscout-webhook edge
+  // function. A recent reply suppresses the chase needs-attention rules; the
+  // dashboard surfaces it as a "Chased / Customer replied Nd ago" chip.
+  helpscout_last_reply_at: string | null
+  helpscout_last_customer_reply_at: string | null
 }
 
 export type SectionKind = 'pinned' | 'team' | 'snoozed' | 'time' | 'company'
@@ -169,6 +174,7 @@ export interface BucketInput {
   latest_non_view_event_at: string | null
   version_created_at: string | null
   rule_code: NeedsAttentionRule | null
+  rule_meta: { days?: number } | null
   snoozed_until: string | null
 }
 
@@ -225,6 +231,30 @@ export function proofBucket(p: BucketInput): BucketDisplay {
     bucket = 'not_viewed'
   }
   return { bucket, ...BUCKET_META[bucket] }
+}
+
+// ── Help Scout activity chip ──────────────────────────────────────────────────
+
+export interface HelpscoutActivity {
+  kind: 'staff' | 'customer'
+  at: string
+}
+
+/**
+ * The most recent Help Scout reply (staff or customer) on the proof's
+ * conversation if it landed within `withinDays` days, else null. Powers the
+ * dashboard's "Chased / Customer replied Nd ago" chip — and mirrors why the
+ * chase rules are suppressed (the default 3 days matches the rule guard's
+ * default grace window).
+ */
+export function recentHelpscoutActivity(p: DashboardProject, withinDays = 3): HelpscoutActivity | null {
+  const candidates: HelpscoutActivity[] = []
+  if (p.helpscout_last_reply_at) candidates.push({ kind: 'staff', at: p.helpscout_last_reply_at })
+  if (p.helpscout_last_customer_reply_at) candidates.push({ kind: 'customer', at: p.helpscout_last_customer_reply_at })
+  if (candidates.length === 0) return null
+  const newest = candidates.sort((a, b) => b.at.localeCompare(a.at))[0]
+  const cutoff = Date.now() - withinDays * 86_400_000
+  return new Date(newest.at).getTime() >= cutoff ? newest : null
 }
 
 // ── Grouping functions ────────────────────────────────────────────────────────
