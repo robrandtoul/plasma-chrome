@@ -1099,8 +1099,11 @@ function ProjectRow({
         </div>
 
         {/* Owner avatar — md+ only. No version yet → no designer to
-            attribute → empty slot kept so the grid column stays. */}
-        <div className="hidden md:flex items-center justify-center">
+            attribute → empty slot kept so the grid column stays. Fades
+            out on row hover/focus-within (same as the status pill below)
+            so the action overlay can take over the right edge without
+            its bg-canvas left edge slicing through the avatar. */}
+        <div className="hidden md:flex items-center justify-center transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
           {project.current_version_id && <DesignerAvatar p={project} />}
         </div>
 
