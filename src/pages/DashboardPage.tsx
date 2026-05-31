@@ -539,7 +539,8 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
     target.setHours(0, 0, 0, 0)
     return Math.max(1, Math.ceil((target.getTime() - Date.now()) / 3_600_000))
   }
-  const ref = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const popRef = useRef<HTMLDivElement>(null)
 
   // Shared dismissal path. Every close — outside click, Escape,
   // explicit Close button — drops the popover back to a clean state
@@ -556,7 +557,13 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
   useEffect(() => {
     if (!open) return
     function onDocClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) resetState()
+      // The popover is portalled to <body>, so the click-outside test must
+      // exclude BOTH the trigger button and the portalled popover — else a
+      // click inside the popover registers as "outside" and dismisses it
+      // before the item's handler fires (mirrors OverflowMenu's pattern).
+      const t = e.target as Node
+      if (btnRef.current?.contains(t) || popRef.current?.contains(t)) return
+      resetState()
     }
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') resetState()
@@ -595,10 +602,29 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
     resetState()
   }
 
+  // Position the popover via a fixed-position portal so it escapes the row
+  // card's overflow-hidden (which was clipping it — same fix the ⋯
+  // OverflowMenu and ThumbnailPopover already use). The strip + menu
+  // variants right-align under the trigger; the small amber chip button
+  // (default) left-aligns. Clamped to stay on-screen.
+  const POPOVER_W = 224 // matches the old w-56
+  const POPOVER_H_GUESS = 320
+  const popPos = open && btnRef.current
+    ? (() => {
+        const r = btnRef.current!.getBoundingClientRect()
+        const left = (stripStyle || menuStyle)
+          ? Math.max(16, r.right - POPOVER_W)
+          : Math.max(16, Math.min(r.left, window.innerWidth - POPOVER_W - 16))
+        const top = Math.max(16, Math.min(r.bottom + 4, window.innerHeight - POPOVER_H_GUESS - 16))
+        return { left, top, width: POPOVER_W }
+      })()
+    : null
+
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative">
       {menuStyle ? (
         <button
+          ref={btnRef}
           type="button"
           role="menuitem"
           aria-label="Snooze this alert"
@@ -610,6 +636,7 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
         </button>
       ) : (
         <button
+          ref={btnRef}
           type="button"
           aria-label="Snooze this alert"
           title="Snooze this alert"
@@ -623,14 +650,13 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
           <ClockIcon className={stripStyle ? 'h-4 w-4' : 'h-3 w-3'} />
         </button>
       )}
-      {open && (
+      {open && popPos && createPortal(
         <div
           role="dialog"
+          ref={popRef}
           aria-label="Snooze options"
-          className={[
-            'absolute z-30 w-56 overflow-hidden rounded-[10px] bg-surface py-2 shadow-md border border-line',
-            menuStyle ? 'right-0 top-full mt-1' : stripStyle ? 'right-0 top-8' : 'left-0 top-6',
-          ].join(' ')}
+          style={popPos}
+          className="fixed z-[60] overflow-hidden rounded-[10px] bg-surface py-2 shadow-md border border-line"
           onClick={(e) => e.stopPropagation()}
         >
           {customMode ? (
@@ -694,7 +720,8 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
               className="mt-1 w-full py-1 text-xs text-ink-mute hover:text-ink-soft"
             >Cancel</button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
@@ -1927,13 +1954,14 @@ export default function DashboardPage() {
     // ref so every loadDashboard() caller re-fetches for the active search.
     const projectsPromise = supabase.rpc('dashboard_list', { p_search: serverSearchRef.current })
 
-    // Note: dashboard_tile_counts() RPC used to be fetched here, but
-    // every tile now sources its count client-side from `projects`
-    // so the round-trip is dead weight. The SQL function is still
-    // emitted by migration 000152 and unchanged on the server; the
-    // dropping of the read here is purely a frontend cleanup. See
-    // PV-2026W19-015 (awaiting_customer) and PV-2026W20-014
-    // (dormant / approved_this_week) for the alignment history.
+    // Note: the stat-tile counts come from the dashboard_tile_counts()
+    // RPC, fetched below in the same Promise.all (see countsPromise).
+    // Migration 000187 dropped the function during the brief client-side
+    // era, then 000202 reintroduced it so the headline numbers span ALL
+    // proofs rather than only the (capped) dashboard_list() working set.
+    // The RPC predicates are kept in lockstep with the client-side
+    // click-through filters below. See PV-2026W19-015 (awaiting_customer)
+    // and PV-2026W20-014 (dormant / approved_this_week) for the history.
     const eventsPromise = supabase
       .from('dashboard_latest_events')
       .select('*')
