@@ -33,8 +33,20 @@ export function designerPreviewPath(proofId: string): string {
 // embed (e.g. a preview pane) without allow-popups. In that case fall
 // back to same-tab navigation so the action never silently does nothing.
 // Used by every "Preview" / "Open customer view" control.
+//
+// Note: we deliberately do NOT pass "noopener" in the features string.
+// Per spec, window.open returns null whenever "noopener" is set — even
+// on a successful open — which would make the fallback below fire every
+// time and navigate the current tab on top of the new one (the page
+// opening in both tabs). Instead we null out `opener` on the returned
+// window, which gives the same security guarantee with a trustworthy
+// return value.
 export function openDesignerPreview(proofId: string): void {
   const path = designerPreviewPath(proofId)
-  const opened = window.open(path, '_blank', 'noopener,noreferrer')
-  if (!opened) window.location.assign(path)
+  const opened = window.open(path, '_blank')
+  if (opened) {
+    opened.opener = null
+  } else {
+    window.location.assign(path)
+  }
 }
