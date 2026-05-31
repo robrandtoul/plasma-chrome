@@ -5,7 +5,7 @@
 // determines where a proof appears in the time-bucketed list after a
 // snooze expires.
 
-import { recentlyAwakened, isCurrentlySnoozed, groupByTime, buildSnoozedSection } from './dashboardGrouping'
+import { recentlyAwakened, isCurrentlySnoozed, groupByTime, buildSnoozedSection, proofBucket } from './dashboardGrouping'
 import type { DashboardProject } from './dashboardGrouping'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -288,6 +288,90 @@ test('recently-awakened proofs are excluded from the snoozed section', () => {
   const sections = buildSnoozedSection([recentlyAwoken, stillSnoozed])
   assertEqual(sections[0].projects.length, 1)
   assertEqual(sections[0].projects[0].proof_id, 'snoozed')
+})
+
+// ── proofBucket() ─────────────────────────────────────────────────────────────
+//
+// One proof → one workflow bucket, shared by the status pill, the row's left
+// cap, and the matching headline tile. These tests pin the precedence order.
+
+console.log('\nproofBucket()')
+
+test('in_progress with an unopened current version → not_viewed', () => {
+  const p = makeProject({ status: 'in_progress', current_version_id: 'v1', current_version_viewed_at: null })
+  assertEqual(proofBucket(p).bucket, 'not_viewed')
+  assertEqual(proofBucket(p).label, 'Not viewed')
+})
+
+test('in_progress, current version viewed, nothing else → awaiting_customer', () => {
+  const p = makeProject({ status: 'in_progress', current_version_id: 'v1', current_version_viewed_at: hoursAgo(2) })
+  assertEqual(proofBucket(p).bucket, 'awaiting_customer')
+})
+
+test('change request raised after the current version → changes_requested', () => {
+  const p = makeProject({
+    status: 'in_progress',
+    current_version_id: 'v1',
+    current_version_viewed_at: hoursAgo(2),
+    version_created_at: daysAgo(3),
+    latest_non_view_event_type: 'request_changes',
+    latest_non_view_event_at: daysAgo(1),
+  })
+  assertEqual(proofBucket(p).bucket, 'changes_requested')
+})
+
+test('change request older than the current version does not fire → awaiting_customer', () => {
+  const p = makeProject({
+    status: 'in_progress',
+    current_version_id: 'v1',
+    current_version_viewed_at: hoursAgo(2),
+    version_created_at: daysAgo(1),
+    latest_non_view_event_type: 'request_changes',
+    latest_non_view_event_at: daysAgo(3), // answered by a newer version
+  })
+  assertEqual(proofBucket(p).bucket, 'awaiting_customer')
+})
+
+test('terminal statuses map straight through', () => {
+  assertEqual(proofBucket(makeProject({ status: 'approved'  })).bucket, 'approved')
+  assertEqual(proofBucket(makeProject({ status: 'dormant'   })).bucket, 'dormant')
+  assertEqual(proofBucket(makeProject({ status: 'abandoned' })).bucket, 'abandoned')
+})
+
+test('rule_code (needs attention) wins over the in_progress workflow state', () => {
+  const p = makeProject({
+    status: 'in_progress',
+    current_version_id: 'v1',
+    current_version_viewed_at: hoursAgo(2), // would otherwise be awaiting_customer
+    rule_code: 'sent_never_viewed',
+  })
+  assertEqual(proofBucket(p).bucket, 'needs_attention')
+})
+
+test('rule_code wins even on a dormant proof', () => {
+  const p = makeProject({ status: 'dormant', rule_code: 'approaching_dormant' })
+  assertEqual(proofBucket(p).bucket, 'needs_attention')
+})
+
+test('an active snooze wins over everything, including a rule_code', () => {
+  const p = makeProject({
+    status: 'in_progress',
+    rule_code: 'stuck_in_progress',
+    snoozed_until: hoursFromNow(12),
+  })
+  assertEqual(proofBucket(p).bucket, 'snoozed')
+})
+
+test('a recently-expired snooze (grace window) does not count as snoozed', () => {
+  const p = makeProject({ status: 'in_progress', current_version_id: 'v1', snoozed_until: hoursAgo(2) })
+  assertEqual(proofBucket(p).bucket, 'not_viewed')
+})
+
+test('terminal status wins over the in_progress workflow sub-states (dormant, unviewed)', () => {
+  // A dormant proof whose current version was never viewed: the Dormant
+  // status takes precedence over not_viewed, matching the left-cap order.
+  const p = makeProject({ status: 'dormant', current_version_id: 'v1', current_version_viewed_at: null })
+  assertEqual(proofBucket(p).bucket, 'dormant')
 })
 
 // ── Summary ───────────────────────────────────────────────────────────────────

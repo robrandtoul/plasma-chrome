@@ -31,6 +31,7 @@ import {
   groupByCompany,
   buildSnoozedSection,
   isCurrentlySnoozed,
+  proofBucket,
   type DashboardProject,
   type DesignerColour,
   type NeedsAttentionRule,
@@ -906,6 +907,12 @@ function ProjectRow({
   }, [])
   const navigate = useNavigate()
   const canAddVersion = project.status === 'in_progress' || project.status === 'dormant'
+
+  // Single source of truth for this row's status pill label/colour and the
+  // coloured left cap below — both now read from the same workflow bucket
+  // the headline tiles use (proofBucket), so the pill can no longer say
+  // "In review" while the tiles speak a different vocabulary.
+  const bucket = proofBucket(project)
   const { verb, ts } = activityVerb(project)
   // Project name: prefer company name (matches the existing Recent
   // projects card), fall back to contact name. There's no separate
@@ -965,18 +972,10 @@ function ProjectRow({
         project.status === 'dormant' ? 'opacity-60' : '',
       ].join(' ')}
       style={{
-        // Left-border colour map. Each rule maps to a design-system
-        // token so the row's status accent reads in the same palette
-        // as the stat tile that filters to it. Snooze + dormant
-        // overrides use the same hues their corresponding tiles use.
-        borderLeftColor:
-          isCurrentlySnoozed(project)                                       ? '#7c3aed' :  // matches violet tile
-          project.rule_code                                                 ? 'var(--c-out)' :  // matches rose Needs attention tile
-          project.status === 'approved'                                     ? 'var(--c-in-stock)' :  // matches green Approved tile
-          project.status === 'dormant'                                      ? 'var(--c-ink-dim)' :   // matches neutral Dormant tile
-          project.status === 'abandoned'                                    ? 'var(--c-ink-mute)' :  // quieter still
-          project.current_version_id && project.current_version_viewed_at  ? 'var(--c-allocated)' : // matches sky Awaiting tile
-                                                                              'var(--c-low)',        // matches amber Not viewed tile
+        // Left-border colour comes from the same workflow bucket as the
+        // status pill (proofBucket), so the cap, the pill, and the headline
+        // tile that counts this proof always share one hue + vocabulary.
+        borderLeftColor: bucket.colour,
       }}
     >
       {/* Columnar grid layout per the mockup. At md+ widths the row
@@ -1096,7 +1095,7 @@ function ProjectRow({
             row hover/focus-within so the action overlay can take over
             the right edge without layout jump. */}
         <div className="flex justify-end items-center transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
-          <ProofStatusPill status={project.status} />
+          <ProofStatusPill label={bucket.label} colour={bucket.colour} />
         </div>
       </div>
 

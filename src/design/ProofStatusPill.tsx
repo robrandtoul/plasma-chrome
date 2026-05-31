@@ -27,13 +27,36 @@ const STATUS_MAP: Record<ProofStatus, StatusEntry> = {
 }
 
 interface ProofStatusPillProps extends HTMLAttributes<HTMLSpanElement> {
-  status: ProofStatus
-  /** Override the default label (e.g. append "on 27 May"). */
+  status?: ProofStatus
+  /** Override the default label (e.g. append "on 27 May", or a workflow-bucket label). */
   label?: string
+  /**
+   * When set, render a soft pill in this CSS colour (token var or hex)
+   * instead of the status-derived Tailwind classes. This is how the
+   * dashboard + detail pages drive the pill from the workflow buckets
+   * (proofBucket) so its label and colour match the headline tiles.
+   */
+  colour?: string
 }
 
-export function ProofStatusPill({ status, label, className = '', ...rest }: ProofStatusPillProps) {
-  const entry = STATUS_MAP[status]
+export function ProofStatusPill({ status, label, colour, className = '', ...rest }: ProofStatusPillProps) {
+  // Bucket-driven path: caller passes a label + the bucket's CSS colour;
+  // we render a soft pill (14% tint background + solid text), the same
+  // idiom the stat tiles and avatar badges use.
+  if (colour) {
+    const cls = ['pill', className].filter(Boolean).join(' ')
+    return (
+      <span
+        className={cls}
+        style={{ color: colour, background: `color-mix(in srgb, ${colour} 14%, transparent)` }}
+        {...rest}
+      >
+        {label}
+      </span>
+    )
+  }
+  // Legacy status path (kept for the design demo + any raw-status caller).
+  const entry = STATUS_MAP[status ?? 'in_progress']
   const cls = ['pill', entry.cls, className].filter(Boolean).join(' ')
   return (
     <span className={cls} {...rest}>

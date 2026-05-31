@@ -32,6 +32,7 @@ import {
   viewedStateTitle,
   type ViewedState,
 } from '../lib/viewedState'
+import { proofBucket, type BucketInput } from '../lib/dashboardGrouping'
 
 interface Proof {
   id: string
@@ -112,6 +113,11 @@ export default function ProofDetailPage() {
   const navigate = useNavigate()
   const { role, session } = useAuth()
   const [proof, setProof] = useState<Proof | null>(null)
+  // Workflow-bucket fields for this proof, read from public_dashboard_projects
+  // so the status pill here matches the dashboard's pill + the headline tiles
+  // (same proofBucket logic). Null until loaded / if the row can't be read —
+  // the pill falls back to the raw status in that case.
+  const [bucketRow, setBucketRow] = useState<BucketInput | null>(null)
   const [versions, setVersions] = useState<ModalVersion[]>([])
   // proof_version_id → signed thumbnail URL. Populated alongside
   // versions inside loadProof by batch-signing the first front image
@@ -354,6 +360,19 @@ export default function ProofDetailPage() {
     setProof(proofResult.data as unknown as Proof)
     setVersions(loadedVersions)
     setLoading(false)
+
+    // Pull this proof's workflow-bucket fields from public_dashboard_projects
+    // so the status pill reads identically to the dashboard (proofBucket).
+    // Non-blocking + best-effort: a failure just leaves the pill on the raw
+    // status fallback rather than breaking the page load.
+    void supabase
+      .from('public_dashboard_projects')
+      .select('status, current_version_id, current_version_viewed_at, latest_non_view_event_type, latest_non_view_event_at, version_created_at, rule_code, snoozed_until')
+      .eq('proof_id', proofId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!isStale() && data) setBucketRow(data as unknown as BucketInput)
+      })
 
     // Per-version thumbnails. Same pattern as the dashboard
     // (loadThumbnails in PR 26): collect every version id, fetch
@@ -1221,6 +1240,9 @@ export default function ProofDetailPage() {
 
   const currentVersion = versions.find((v) => v.is_current)
   const currentIsCustomQuote = !!currentVersion?.custom_quote
+  // Workflow bucket for the status pill — matches the dashboard. Falls back to
+  // the raw status pill until the bucket row loads (or if it can't be read).
+  const statusBucket = bucketRow ? proofBucket(bucketRow) : null
 
   // Override-aware Mark-as-approved confirm copy. Counted from the
   // already-loaded `approvals` state — handleApprove re-fetches
@@ -1396,7 +1418,9 @@ export default function ProofDetailPage() {
             {/* Right: status pill + primary actions + destructive row. */}
             <div className="flex flex-col items-end gap-3 shrink-0">
               <div className="flex items-center gap-2">
-                <ProofStatusPill status={proof.status} />
+                {statusBucket
+                  ? <ProofStatusPill label={statusBucket.label} colour={statusBucket.colour} />
+                  : <ProofStatusPill status={proof.status} />}
                 {currentIsCustomQuote && (
                   <span
                     className="pill"

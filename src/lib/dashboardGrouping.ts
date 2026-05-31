@@ -121,6 +121,112 @@ export function recentlyAwakened(p: DashboardProject): boolean {
   return expiry <= now && expiry >= now - 24 * 60 * 60 * 1000
 }
 
+// ── Status bucket (single source of truth) ────────────────────────────────────
+//
+// The dashboard headline tiles slice proofs into workflow buckets (Needs
+// attention / Not viewed / Awaiting customer / Changes requested / Snoozed /
+// Dormant / Approved). The per-row status pill and the row's coloured
+// left-edge cap historically used a *different* taxonomy — the four raw DB
+// statuses — so a row's pill could read "In review" while no headline tile
+// carried that word. proofBucket() collapses all three onto one vocabulary:
+// every proof resolves to exactly one bucket, and the pill, the cap, and the
+// matching tile all read their label + colour from here.
+//
+// Precedence mirrors the tile predicates in dashboard_tile_counts()
+// (migration 000202) and the established left-cap order:
+//   snoozed > needs-attention > approved > dormant > abandoned >
+//   changes-requested > awaiting-customer > not-viewed
+// The terminal statuses (approved/dormant/abandoned) win over the in_progress
+// workflow sub-states, matching the left cap; needs-attention and snooze sit
+// above everything, matching how the tiles exclude those proofs from the
+// workflow counts.
+
+export type ProofBucket =
+  | 'needs_attention'
+  | 'approved'
+  | 'dormant'
+  | 'abandoned'
+  | 'changes_requested'
+  | 'awaiting_customer'
+  | 'not_viewed'
+  | 'snoozed'
+
+export interface BucketDisplay {
+  bucket: ProofBucket
+  label: string
+  /** CSS colour (design-system token var or hex) shared by pill + cap + tile. */
+  colour: string
+}
+
+// The fields proofBucket() needs. DashboardProject is a superset, so a full
+// dashboard row satisfies this directly; the proof detail page fetches just
+// these columns from public_dashboard_projects to render the same pill.
+export interface BucketInput {
+  status: ProofStatus
+  current_version_id: string | null
+  current_version_viewed_at: string | null
+  latest_non_view_event_type: 'approve' | 'request_changes' | 'designer_override_approve' | null
+  latest_non_view_event_at: string | null
+  version_created_at: string | null
+  rule_code: NeedsAttentionRule | null
+  snoozed_until: string | null
+}
+
+// Label + colour per bucket. Colours are the same tokens/hexes the headline
+// tiles use (TILE_COLOUR in DashboardPage), so a row's pill and cap always
+// match the tile that counts it. Dormant uses the neutral ink-mute token (the
+// Dormant tile's tone); Abandoned — which has no tile — takes the quieter
+// ink-dim so the two greys stay distinguishable.
+const BUCKET_META: Record<ProofBucket, { label: string; colour: string }> = {
+  needs_attention:   { label: 'Needs attention',   colour: 'var(--c-out)' },
+  changes_requested: { label: 'Changes requested', colour: '#0d9488' },
+  awaiting_customer: { label: 'Awaiting customer', colour: 'var(--c-allocated)' },
+  not_viewed:        { label: 'Not viewed',        colour: 'var(--c-low)' },
+  snoozed:           { label: 'Snoozed',           colour: '#7c3aed' },
+  approved:          { label: 'Approved',          colour: 'var(--c-in-stock)' },
+  dormant:           { label: 'Dormant',           colour: 'var(--c-ink-mute)' },
+  abandoned:         { label: 'Abandoned',         colour: 'var(--c-ink-dim)' },
+}
+
+// Mirrors the changes_requested tile predicate (dashboard_tile_counts,
+// 000202): the latest non-view customer event is a change request raised
+// after the current version was uploaded (so a later page-view doesn't mask
+// it, and a request answered by a fresh version doesn't linger).
+function isChangesRequested(p: BucketInput): boolean {
+  return (
+    p.latest_non_view_event_type === 'request_changes' &&
+    !!p.latest_non_view_event_at &&
+    !!p.version_created_at &&
+    new Date(p.latest_non_view_event_at).getTime() > new Date(p.version_created_at).getTime()
+  )
+}
+
+/**
+ * Resolve a proof to the single workflow bucket its pill, left cap, and
+ * matching headline tile all share. See the precedence note above.
+ */
+export function proofBucket(p: BucketInput): BucketDisplay {
+  let bucket: ProofBucket
+  if (p.snoozed_until && new Date(p.snoozed_until).getTime() > Date.now()) {
+    bucket = 'snoozed'
+  } else if (p.rule_code != null) {
+    bucket = 'needs_attention'
+  } else if (p.status === 'approved') {
+    bucket = 'approved'
+  } else if (p.status === 'dormant') {
+    bucket = 'dormant'
+  } else if (p.status === 'abandoned') {
+    bucket = 'abandoned'
+  } else if (isChangesRequested(p)) {
+    bucket = 'changes_requested'
+  } else if (p.current_version_id && p.current_version_viewed_at) {
+    bucket = 'awaiting_customer'
+  } else {
+    bucket = 'not_viewed'
+  }
+  return { bucket, ...BUCKET_META[bucket] }
+}
+
 // ── Grouping functions ────────────────────────────────────────────────────────
 
 export function groupByTime(projects: DashboardProject[]): ProjectSection[] {
