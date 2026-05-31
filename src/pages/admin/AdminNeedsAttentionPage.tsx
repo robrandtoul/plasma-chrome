@@ -62,9 +62,9 @@ const RULE_SPECS: RuleSpec[] = [
   {
     code: 'approaching_dormant',
     label: 'Approaching dormant',
-    description: 'Fires when last activity is within N days of the 30-day dormant cutoff. Calendar days only — gives you a window to ping the customer before the auto-mark kicks in.',
+    description: 'Fires when last activity is within N days of the dormant cutoff (set above). Calendar days only — gives you a window to ping the customer before the auto-mark kicks in.',
     hasThreshold: true,
-    // Approaching-dormant fires against a calendar 30-day cutoff,
+    // Approaching-dormant fires against the calendar dormant cutoff,
     // so the working-vs-calendar toggle would be meaningless here.
     hasCalendarToggle: false,
   },
@@ -90,11 +90,20 @@ const DEFAULT_RULES: Rules = {
   stuck_in_progress:          { enabled: true,  threshold_days: 10, calendar: false, priority: 6 },
 }
 
+// Days of inactivity before the nightly cron flips an in_progress proof
+// to dormant. Stored in its own site_settings column (migration 000209),
+// read here alongside the rules. The "Approaching dormant" rule above
+// counts its threshold back from this number.
+const DEFAULT_DORMANCY_CUTOFF = 90
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AdminNeedsAttentionPage() {
   const [savedRules, setSavedRules] = useState<Rules | null>(null)
   const [draft, setDraft]           = useState<Rules | null>(null)
+  // Dormant cutoff lives in its own column, edited beside the rules.
+  const [savedCutoff, setSavedCutoff] = useState<number>(DEFAULT_DORMANCY_CUTOFF)
+  const [draftCutoff, setDraftCutoff] = useState<number>(DEFAULT_DORMANCY_CUTOFF)
   // The order designers see in the UI. Initialised from the saved
   // priority field, then mutated by drag-and-drop. Saving rewrites
   // the priority field on each rule to (1-indexed position).
@@ -112,14 +121,17 @@ export default function AdminNeedsAttentionPage() {
   async function load() {
     const { data, error } = await supabase
       .from('site_settings')
-      .select('needs_attention_rules')
+      .select('needs_attention_rules, dormancy_threshold_days')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'site_settings row missing'); return }
     const rules = (data.needs_attention_rules ?? DEFAULT_RULES) as Rules
+    const cutoff = (data.dormancy_threshold_days ?? DEFAULT_DORMANCY_CUTOFF) as number
     setSavedRules(rules)
     setDraft(rules)
     setOrder(orderFromPriority(rules))
+    setSavedCutoff(cutoff)
+    setDraftCutoff(cutoff)
   }
 
   function orderFromPriority(rules: Rules): RuleCode[] {
@@ -132,6 +144,7 @@ export default function AdminNeedsAttentionPage() {
   // persisted (rule fields or order).
   const dirty = useMemo(() => {
     if (!draft || !savedRules) return false
+    if (draftCutoff !== savedCutoff) return true
     if (JSON.stringify(orderFromPriority(savedRules)) !== JSON.stringify(order)) return true
     for (const code of RULE_SPECS.map((s) => s.code)) {
       const a = draft[code]
@@ -141,7 +154,7 @@ export default function AdminNeedsAttentionPage() {
       }
     }
     return false
-  }, [draft, savedRules, order])
+  }, [draft, savedRules, order, draftCutoff, savedCutoff])
 
   function patchRule<K extends keyof Rule>(code: RuleCode, key: K, value: Rule[K]) {
     setDraft((d) => d ? { ...d, [code]: { ...d[code], [key]: value } } : d)
@@ -178,7 +191,7 @@ export default function AdminNeedsAttentionPage() {
 
     const { error } = await supabase
       .from('site_settings')
-      .update({ needs_attention_rules: next })
+      .update({ needs_attention_rules: next, dormancy_threshold_days: draftCutoff })
       .eq('id', 1)
 
     setSaving(false)
@@ -192,12 +205,13 @@ export default function AdminNeedsAttentionPage() {
       targetType: 'setting',
       targetId: 'needs_attention_rules',
       targetLabel: 'Needs-attention rules',
-      beforeValue: savedRules,
-      afterValue: next,
+      beforeValue: { rules: savedRules, dormancy_threshold_days: savedCutoff },
+      afterValue: { rules: next, dormancy_threshold_days: draftCutoff },
     })
 
     setSavedRules(next)
     setDraft(next)
+    setSavedCutoff(draftCutoff)
     setSavedAt(Date.now())
   }
 
@@ -205,6 +219,7 @@ export default function AdminNeedsAttentionPage() {
     setConfirmReset(false)
     setDraft(DEFAULT_RULES)
     setOrder(orderFromPriority(DEFAULT_RULES))
+    setDraftCutoff(DEFAULT_DORMANCY_CUTOFF)
     // Don't auto-save — leave the diff visible so the admin still has
     // to click Save. Matches Bob-rule-of-least-surprise: reset
     // populates the form, the user commits.
@@ -259,6 +274,29 @@ export default function AdminNeedsAttentionPage() {
           >
             {saving ? 'Saving…' : 'Save'}
           </button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-line">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-ink">Dormant cutoff</h3>
+          <p className="mt-1 text-xs text-ink-mute">
+            A project with no activity for this many calendar days is automatically marked <span className="font-medium">dormant</span> by the nightly job. The “Approaching dormant” rule below counts its threshold back from this number.
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={draftCutoff}
+            onChange={(e) => {
+              const n = Number(e.target.value)
+              setDraftCutoff(Number.isFinite(n) ? Math.max(1, Math.floor(n)) : DEFAULT_DORMANCY_CUTOFF)
+            }}
+            className="w-20 rounded border border-line px-2 py-1 text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+          />
+          <span className="text-xs text-ink-mute">days</span>
         </div>
       </div>
 
