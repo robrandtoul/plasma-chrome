@@ -183,21 +183,32 @@ export function dbShape(
   }
 }
 
-// Human-readable resolution for the running-resolution banner.
+// Plain-English resolution for the running-resolution banner. Base
+// phrase per shape, with ", personalised per card" appended only on the
+// membership variants when personalisation is on.
 export function resolvedShapeLabel(shape: ResolvedShape | null): string | null {
   if (!shape) return null
   switch (shape.kind) {
     case 'recipients':
-      return 'Recipients'
+      return 'A separate card for each named person'
     case 'set-single':
     case 'set-collection': {
-      const parts = ['Set', shape.kind === 'set-single' ? 'single' : 'collection']
-      if (shape.style === 'membership') parts.push('membership')
-      if (shape.personalised) parts.push('personalised')
-      return parts.join(' · ')
+      const membership = shape.style === 'membership'
+      let base: string
+      if (shape.kind === 'set-single') {
+        base = membership ? 'A single membership card' : 'A single business card design'
+      } else {
+        base = membership
+          ? 'Several membership cards, all produced'
+          : 'Several business card designs, all produced'
+      }
+      // Personalisation is membership-only; append the per-card note.
+      return membership && shape.personalised ? `${base}, personalised per card` : base
     }
     case 'selection':
-      return shape.perDirection ? 'Selection · per-direction pricing' : 'Selection'
+      return shape.perDirection
+        ? 'Design options on different materials, customer picks one'
+        : 'Design options for the customer to choose from'
     case 'split-guard':
       return null
   }
@@ -381,7 +392,6 @@ export function ProofShapeWizard({
   onChange,
   materialChosen,
   materialSupportsPersonalisation,
-  personalisationHelper,
   disabled = false,
 }: {
   answers: WizardAnswers
@@ -392,7 +402,9 @@ export function ProofShapeWizard({
   // The chosen material's supports_personalisation capability. When
   // false, Step 6 is never shown (spec section 5).
   materialSupportsPersonalisation: boolean
-  // Live per-card rate / minimum-charge helper, rendered under Step 6.
+  // Live per-card rate / minimum-charge helper. Kept in the prop type so
+  // callers (NewVersionPage) can still pass it, but no longer rendered —
+  // Step 6 is labels-only.
   personalisationHelper?: string
   // On the edit page the shape is locked at creation, so the wizard
   // renders read-only (collapsed rows, no Change controls).
@@ -446,20 +458,20 @@ export function ProofShapeWizard({
         {/* ── Step 1 — always asked ─────────────────────────────────── */}
         {answers.scope == null ? (
           <QuestionBlock
-            legend="Is the customer ordering all of the designs shown, or picking one to move forward with?"
+            legend="Will the customer order everything in this version, or choose one option from it?"
             name="wizard-scope"
             selected={answers.scope}
             disabled={disabled}
             onSelect={(v: 'all' | 'one') => set({ scope: v, ...clearFromScope })}
             options={[
-              { value: 'all', label: 'Ordering all of them', sub: 'Everything in this proof gets produced.' },
-              { value: 'one', label: 'Picking one', sub: "You're presenting alternatives and they'll choose a single one to go ahead with." },
+              { value: 'all', label: 'Order everything', sub: 'If approved, everything in this version gets produced.' },
+              { value: 'one', label: 'Choose one option', sub: "You're presenting alternatives and they pick a single one to move forward with." },
             ]}
           />
         ) : (
           <AnsweredRow
             label="Ordering"
-            value={answers.scope === 'all' ? 'Ordering all of them' : 'Picking one'}
+            value={answers.scope === 'all' ? 'Order everything' : 'Choose one option'}
             disabled={disabled}
             onChange={() => set({ scope: null, ...clearFromScope })}
           />
@@ -471,28 +483,20 @@ export function ProofShapeWizard({
             {/* Step 2 — allocated to a named person? */}
             {answers.allocated == null ? (
               <QuestionBlock
-                legend="Is each batch of cards allocated to a specific named person?"
+                legend="Will each batch of cards be allocated to a specific named person?"
                 name="wizard-allocated"
                 selected={answers.allocated}
                 disabled={disabled}
                 onSelect={(v: 'yes' | 'no') => set({ allocated: v, ...clearFromAllocated })}
-                note={
-                  <>
-                    A high-volume run where every batch shares one template and only a name or number
-                    changes is <strong>not</strong> Recipients. It belongs on the Set branch with
-                    membership + personalisation — you approve one template plus the data rule, you do
-                    not proof each batch.
-                  </>
-                }
                 options={[
-                  { value: 'yes', label: 'Yes, a batch per person', sub: "You'll proof a separate batch for each person. Choose this for bespoke, per-person artwork." },
-                  { value: 'no', label: 'No, not allocated to a person', sub: 'Names and numbers, if any, are added as variable data, not proofed per person.' },
+                  { value: 'yes', label: 'Yes, a batch per person', sub: "You'll upload proofs for each person." },
+                  { value: 'no', label: 'No, not for a named person', sub: "The cards aren't intended for a specific person." },
                 ]}
               />
             ) : (
               <AnsweredRow
                 label="Allocated"
-                value={answers.allocated === 'yes' ? 'Yes, a batch per person' : 'No, not allocated to a person'}
+                value={answers.allocated === 'yes' ? 'Yes, a batch per person' : 'No, not for a named person'}
                 disabled={disabled}
                 onChange={() => set({ allocated: null, ...clearFromAllocated })}
               />
@@ -504,14 +508,14 @@ export function ProofShapeWizard({
                 {/* Step 3 — how many layouts? */}
                 {answers.layouts == null ? (
                   <QuestionBlock
-                    legend="How many different layouts are in this set?"
+                    legend="How many different layouts are in this version?"
                     name="wizard-layouts"
                     selected={answers.layouts}
                     disabled={disabled}
                     onSelect={(v: 'one' | 'several') => set({ layouts: v, ...clearFromLayouts })}
                     options={[
-                      { value: 'one', label: 'One layout', sub: 'A single design, produced as one run.' },
-                      { value: 'several', label: 'Several layouts', sub: 'More than one design produced together, like a set of informational cards or a gold / silver / bronze series. Each layout after the first adds a tooling charge.' },
+                      { value: 'one', label: 'One layout', sub: 'A single design.' },
+                      { value: 'several', label: 'Several layouts', sub: 'More than one layout. Each layout after the first adds a tooling charge.' },
                     ]}
                   />
                 ) : (
@@ -602,14 +606,14 @@ export function ProofShapeWizard({
                       disabled={disabled}
                       onSelect={(v: 'standard' | 'membership') => set({ style: v, ...clearFromStyle })}
                       options={[
-                        { value: 'standard', label: 'Standard', sub: 'A plain card with no per-card variation.' },
-                        { value: 'membership', label: 'Membership', sub: 'A membership-style card. No individual names are entered here, and you can switch on personalisation.' },
+                        { value: 'standard', label: 'Business card', sub: "A conventional business card displaying the holder's details." },
+                        { value: 'membership', label: 'Membership card', sub: 'A membership-style card. No names are entered, and you can switch on per-card personalisation.' },
                       ]}
                     />
                   ) : (
                     <AnsweredRow
                       label="Card style"
-                      value={answers.style === 'standard' ? 'Standard' : 'Membership'}
+                      value={answers.style === 'standard' ? 'Business card' : 'Membership card'}
                       disabled={disabled}
                       onChange={() => set({ style: null, ...clearFromStyle })}
                     />
@@ -631,10 +635,9 @@ export function ProofShapeWizard({
                         selected={answers.personalised}
                         disabled={disabled}
                         onSelect={(v: 'yes' | 'no') => set({ personalised: v })}
-                        footnote={personalisationHelper}
                         options={[
-                          { value: 'yes', label: 'Yes, every card is unique', sub: 'Priced per card with a minimum charge, added on top of the base price.' },
-                          { value: 'no', label: 'No, every card is identical' },
+                          { value: 'yes', label: 'Yes, every card is unique.' },
+                          { value: 'no', label: 'No, every card is identical.' },
                         ]}
                       />
                     ) : (
@@ -661,14 +664,14 @@ export function ProofShapeWizard({
         {isOne && (
           answers.pickMaterial == null ? (
             <QuestionBlock
-              legend="Are the options all on the same material?"
+              legend="Are the options to be presented all on the same material?"
               name="wizard-pick-material"
               selected={answers.pickMaterial}
               disabled={disabled}
               onSelect={(v: 'same' | 'different') => set({ pickMaterial: v })}
               options={[
-                { value: 'same', label: 'Same material', sub: 'Every alternative is the same stock; only the design differs.' },
-                { value: 'different', label: 'Different materials', sub: 'The alternatives are on different stocks, so each is priced on its own.' },
+                { value: 'same', label: 'Same material', sub: 'Every alternative is the same material; only the design differs.' },
+                { value: 'different', label: 'Different materials', sub: 'The alternatives are on different materials, so each is priced on its own.' },
               ]}
             />
           ) : (
