@@ -2646,8 +2646,17 @@ export default function NewVersionPage() {
       materialChosen: !!selectedMaterialId,
       materialSupportsPersonalisation: !!selectedMaterial?.supports_personalisation,
     })
-    const fs = deriveFormState(shape)
-    if (!fs) return
+    // When the shape is unresolved (e.g. the designer reopened Step 1
+    // via Change), reset the wizard-derived mode flags to their
+    // defaults rather than leaving the last resolved state stale — so
+    // the form doesn't hold ghost membership/personalised flags until
+    // it re-resolves. Save is already gated on wizardResolved, so this
+    // is purely UI cleanliness. Material selection is deliberately left
+    // alone: material is orthogonal to shape and must persist across
+    // wizard changes (letterpress + its layer panel stay put).
+    const fs =
+      deriveFormState(shape) ??
+      { isVariantRound: false, isPerDirectionPricing: false, cardType: 'business' as const, hasPersonalisation: false }
     if (fs.isVariantRound !== isVariantRound) applyVariantRoundMode(fs.isVariantRound)
     setIsPerDirectionPricing(fs.isPerDirectionPricing)
     if (fs.cardType !== cardType) {
