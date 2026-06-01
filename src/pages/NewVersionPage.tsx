@@ -32,6 +32,7 @@ import {
   deriveFormState,
   deriveAnswersFromShape,
   isWizardResolved,
+  dbShape,
   type WizardAnswers,
 } from '../components/ProofShapeWizard'
 
@@ -496,6 +497,20 @@ export default function NewVersionPage() {
   // designer routes the proof; on v2+ creation it's seeded from the
   // inherited shape so a continuation doesn't force re-answering.
   const [wizardAnswers, setWizardAnswers] = useState<WizardAnswers>(EMPTY_ANSWERS)
+
+  // ── Set (collection) layouts (Phase 2) ───────────────────────────────────
+  // One row per titled layout in a Set (collection). `title` is the
+  // customer-facing layout heading; `files` is that layout's queued
+  // image set (each File becomes a proof_version_images row with
+  // layout_id pointing at the saved proof_layouts row). `key` is a
+  // stable client-side id for React. Seeded with two empty rows when the
+  // wizard first resolves to set_collection (mirrors the variantRows
+  // seeding); preserved across shape flips so a designer can switch back
+  // without losing their config. Only persisted on the set_collection
+  // save path.
+  type LayoutDraftRow = { key: string; title: string; files: File[] }
+  const [layoutRows, setLayoutRows] = useState<LayoutDraftRow[]>([])
+  const layoutEditorRef = useRef<HTMLDivElement>(null)
 
   // ── Form collapse state (Tier 2c) ─────────────────────────────────────────
   // The form is collapsed by default on v2+ creation behind a tight
@@ -2654,6 +2669,17 @@ export default function NewVersionPage() {
     // is purely UI cleanliness. Material selection is deliberately left
     // alone: material is orthogonal to shape and must persist across
     // wizard changes (letterpress + its layer panel stay put).
+    // Seed two empty layout rows the first time the wizard resolves to a
+    // Set (collection), so the layout editor renders with something to
+    // fill in (mirrors the variantRows seeding). Preserved on later
+    // changes so the designer's config survives flips.
+    if (shape?.kind === 'set-collection' && layoutRows.length === 0) {
+      setLayoutRows([
+        { key: uuidv4(), title: '', files: [] },
+        { key: uuidv4(), title: '', files: [] },
+      ])
+    }
+
     const fs =
       deriveFormState(shape) ??
       { isVariantRound: false, isPerDirectionPricing: false, cardType: 'business' as const, hasPersonalisation: false }
@@ -2681,37 +2707,17 @@ export default function NewVersionPage() {
     setSubmitAttempted(true)
 
     // Block save until the proof-type wizard resolves to a concrete,
-    // persistable shape. Set (collection) is preview-only in Phase 1
-    // (its layout titles have no storage yet), so it never saves —
-    // belt-and-braces on top of the disabled Save button.
-    {
-      const shape = resolveShape(wizardAnswers, {
-        materialChosen: !!selectedMaterialId,
-        materialSupportsPersonalisation: !!selectedMaterial?.supports_personalisation,
-      })
-      if (!isWizardResolved(shape)) {
-        setFormExpanded(true)
-        if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-        setToast({ kind: 'validation', text: 'Answer the proof-type questions to continue.' })
-        toastTimerRef.current = setTimeout(
-          () => setToast((curr) => (curr?.kind === 'validation' ? null : curr)),
-          5000,
-        )
-        return
-      }
-      if (shape?.kind === 'set-collection') {
-        setFormExpanded(true)
-        if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-        setToast({
-          kind: 'validation',
-          text: 'Set (collection) is preview-only for now — layout titles save in the next update.',
-        })
-        toastTimerRef.current = setTimeout(
-          () => setToast((curr) => (curr?.kind === 'validation' ? null : curr)),
-          5000,
-        )
-        return
-      }
+    // persistable shape (the split guard and incomplete paths don't
+    // save). Belt-and-braces on top of the disabled Save button.
+    if (!isWizardResolved(wizardShape)) {
+      setFormExpanded(true)
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      setToast({ kind: 'validation', text: 'Answer the proof-type questions to continue.' })
+      toastTimerRef.current = setTimeout(
+        () => setToast((curr) => (curr?.kind === 'validation' ? null : curr)),
+        5000,
+      )
+      return
     }
 
     // Missing required fields: surface highlights + scroll to the first one in
@@ -2749,6 +2755,11 @@ export default function NewVersionPage() {
         { key: 'variantsCount',  ref: variantEditorRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'variantsLabels', ref: variantEditorRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'variantsImages', ref: variantEditorRef as unknown as React.RefObject<HTMLElement | null> },
+        // Set (collection) layout editor — all three target the same
+        // editor surface, whichever fails first scrolls there.
+        { key: 'layoutsCount',   ref: layoutEditorRef as unknown as React.RefObject<HTMLElement | null> },
+        { key: 'layoutsTitles',  ref: layoutEditorRef as unknown as React.RefObject<HTMLElement | null> },
+        { key: 'layoutsImages',  ref: layoutEditorRef as unknown as React.RefObject<HTMLElement | null> },
       ]
       const first = order.find(o => !validations[o.key])
       // Defer the scroll until React has committed the
@@ -2846,6 +2857,10 @@ export default function NewVersionPage() {
           // designs (often via per-direction pricing), so
           // personalisation is unconditionally false on this path.
           has_personalisation: false,
+          // Resolved proof-type-wizard shape (000210). A variant round
+          // always resolves to 'selection'; the wizard is the single
+          // source, so we write its mapping rather than re-deriving.
+          shape: dbShape(wizardShape),
         })
         .select('id, version_number')
         .single()
@@ -2995,6 +3010,171 @@ export default function NewVersionPage() {
         id: versionData.id,
         number: versionData.version_number,
       })
+      setSubmitting(false)
+      return
+    }
+
+    // ── Set (collection) save path (Phase 2) ─────────────────────────
+    // Priced like a standard proof (material / currency / options) but
+    // no-name (names=[]), plus proof_layouts rows and per-layout images
+    // (layout_id). Mirrors the variant-round path's
+    // insert → children → uploads → images shape, with the same
+    // roll-back-on-failure ordering. Carry-forward of layout approvals
+    // for a *new version of an existing collection* is handled with the
+    // edit/continue machinery in a later step; this path covers creating
+    // a collection.
+    if (isSetCollectionShape) {
+      const material = materials.find((m) => m.id === selectedMaterialId)!
+      const parsedInkNames: string[] = requiresInkNames
+        ? inkNamesArray.slice(0, inkCount).map((s) => s.trim())
+        : inkNamesText.split(',').map((s) => s.trim()).filter(Boolean)
+      const currencyForInsert: Currency = currency ?? 'GBP'
+
+      // 1. Insert the version row. Collections are no-name (names=[]),
+      //    card_type membership, shape='set_collection'. Personalisation
+      //    uses the same eligibility gate as the standard path.
+      const { data: versionData, error: versionErr } = await supabase
+        .from('proof_versions')
+        .insert({
+          proof_id: proofId,
+          material_id: selectedMaterialId,
+          material_display: material.display_name,
+          ink_names: parsedInkNames,
+          currency: currencyForInsert,
+          displayed_variant_ids: selectedVariantIds,
+          change_notes: changeNotes.trim() || null,
+          material_options: selectedOptions,
+          custom_quote: isCustomQuote,
+          names: [],
+          card_type: cardType,
+          cloned_from_version_id: v1Carry?.versionId ?? null,
+          front_colour_id: requiresLayerColours ? selectedFrontColourId : null,
+          core_colour_id:  requiresLayerColours ? selectedCoreColourId  : null,
+          back_colour_id:  requiresLayerColours ? selectedBackColourId  : null,
+          is_variant_round: false,
+          is_per_direction_pricing: false,
+          has_personalisation:
+            material.supports_personalisation
+            && cardType === 'membership'
+            && !isCustomQuote
+            && hasPersonalisation,
+          shape: dbShape(wizardShape),
+        })
+        .select('id, version_number')
+        .single()
+
+      if (versionErr || !versionData) {
+        setError(`Failed to save version: ${versionErr?.message ?? 'Unknown error'}`)
+        setSubmitting(false)
+        return
+      }
+
+      // 2. Insert proof_layouts. sort_order follows the editor order;
+      //    titles trimmed (validation already enforced non-empty).
+      const layoutInserts = layoutRows.map((row, idx) => ({
+        proof_version_id: versionData.id,
+        title: row.title.trim(),
+        sort_order: idx,
+      }))
+      const { data: insertedLayouts, error: layoutErr } = await supabase
+        .from('proof_layouts')
+        .insert(layoutInserts)
+        .select('id, sort_order')
+        .order('sort_order')
+      if (layoutErr || !insertedLayouts) {
+        // ON DELETE CASCADE on proof_layouts removes any inserted rows
+        // with the version.
+        await supabase.from('proof_versions').delete().eq('id', versionData.id)
+        setError(`Failed to save layouts: ${layoutErr?.message ?? 'Unknown error'}`)
+        setSubmitting(false)
+        return
+      }
+
+      // Map sort_order → DB layout id for image attribution.
+      const layoutIdByOrder = new Map<number, string>()
+      for (const l of insertedLayouts as Array<{ id: string; sort_order: number }>) {
+        layoutIdByOrder.set(l.sort_order, l.id)
+      }
+
+      // 3. Upload every layout's files in parallel, each tagged with its
+      //    layout id so the image row can be stamped with layout_id.
+      type Upload = { layoutId: string; file: File; path: string }
+      const uploadQueue: Upload[] = []
+      layoutRows.forEach((row, idx) => {
+        const layoutId = layoutIdByOrder.get(idx)
+        if (!layoutId) return
+        for (const file of row.files) {
+          uploadQueue.push({ layoutId, file, path: `${proofId}/${uuidv4()}.jpg` })
+        }
+      })
+
+      const uploadResults = await Promise.all(
+        uploadQueue.map(async (u) => {
+          const { error: upErr } = await supabase.storage
+            .from('proof-images')
+            .upload(u.path, u.file, { contentType: u.file.type, upsert: false })
+          return { ...u, error: upErr }
+        }),
+      )
+      const failedUpload = uploadResults.find((r) => r.error)
+      if (failedUpload) {
+        const successPaths = uploadResults.filter((r) => !r.error).map((r) => r.path)
+        if (successPaths.length > 0) {
+          await supabase.storage.from('proof-images').remove(successPaths)
+        }
+        await supabase.from('proof_versions').delete().eq('id', versionData.id)
+        setError(`Image upload failed: ${failedUpload.error!.message}`)
+        setSubmitting(false)
+        return
+      }
+
+      // 4. Insert proof_version_images. layout_id set; associated_name
+      //    and round_variant_id null (a collection image isn't
+      //    per-recipient or per-variant — the 000138 trigger permits
+      //    this on a non-variant-round version). material_option carries
+      //    the single chosen option (or null); side is 'front' —
+      //    collections are one image bucket per layout.
+      const stampedOption = selectedOptions[0] ?? null
+      const imageInserts = uploadResults.map((u, i) => ({
+        proof_version_id: versionData.id,
+        image_path: u.path,
+        material_option: stampedOption,
+        original_filename: u.file.name,
+        associated_name: null,
+        side: 'front' as const,
+        round_variant_id: null,
+        layout_id: u.layoutId,
+        sort_order: i,
+      }))
+      const { error: imgInsertErr } = await supabase
+        .from('proof_version_images')
+        .insert(imageInserts)
+      if (imgInsertErr) {
+        await supabase.storage.from('proof-images').remove(uploadResults.map((r) => r.path))
+        await supabase.from('proof_versions').delete().eq('id', versionData.id)
+        setError(`Failed to save images: ${imgInsertErr.message}`)
+        setSubmitting(false)
+        return
+      }
+
+      void logAudit({
+        action: 'version.added',
+        targetType: 'version',
+        targetId: versionData.id,
+        targetLabel: `${proofName || 'project'} — set (collection)`,
+        metadata: {
+          proof_id: proofId,
+          shape: 'set_collection',
+          layout_count: layoutRows.length,
+          has_personalisation:
+            material.supports_personalisation
+            && cardType === 'membership'
+            && !isCustomQuote
+            && hasPersonalisation,
+        },
+      })
+
+      setSavedVersion({ id: versionData.id, number: versionData.version_number })
       setSubmitting(false)
       return
     }
@@ -3205,6 +3385,10 @@ export default function NewVersionPage() {
           && cardType === 'membership'
           && !isCustomQuote
           && hasPersonalisation,
+        // Resolved proof-type-wizard shape (000210). This path handles
+        // recipients and set_single; the wizard is the single source so
+        // we write its mapping rather than re-deriving from flags.
+        shape: dbShape(wizardShape),
       })
       .select('id, version_number')
       .single()
@@ -3884,8 +4068,31 @@ export default function NewVersionPage() {
   // is hidden in the standard-proof branch).
   const isPerDirectionRound = isVariantRound && isPerDirectionPricing
 
+  // ── Wizard-resolved shape (drives render conditionals + Save gate) ────────
+  const wizardShape = resolveShape(wizardAnswers, {
+    materialChosen: !!selectedMaterialId,
+    materialSupportsPersonalisation: !!selectedMaterial?.supports_personalisation,
+  })
+  // The proof must route to a concrete shape before it can save.
+  const wizardResolved = isWizardResolved(wizardShape)
+  // Recipients is the only shape that keeps the per-name roster; every
+  // other shape is no-name (Set) or single-bucket (Selection).
+  const isRecipientsShape = wizardShape?.kind === 'recipients'
+  // Set (collection): images come from the per-layout editor, not the
+  // standard slot grid, and the layout-specific validations below apply.
+  const isSetCollectionShape = wizardShape?.kind === 'set-collection'
+
+  // Set (collection) validations: 2+ layouts, each with a non-empty
+  // title and at least one image. Short-circuit to true on every other
+  // shape so they never gate non-collection saves.
+  const layoutsCountValid  = !isSetCollectionShape || layoutRows.length >= 2
+  const layoutsTitlesValid = !isSetCollectionShape || layoutRows.every((r) => r.title.trim().length > 0)
+  const layoutsImagesValid = !isSetCollectionShape || layoutRows.every((r) => r.files.length > 0)
+
   const validations = {
-    images:         isVariantRound ? true : everySlotHasImage,
+    // Standard per-slot image grid is replaced by the per-layout editor
+    // on a collection, so it short-circuits here (layouts* keys cover it).
+    images:         (isVariantRound || isSetCollectionShape) ? true : everySlotHasImage,
     pricingDisplay: isPerDirectionRound ? true : pricingDisplay !== null,
     material:       isPerDirectionRound ? true : !!selectedMaterialId,
     variant:        isPerDirectionRound ? true : (!variantRequired || selectedVariantIds.length > 0),
@@ -3907,6 +4114,9 @@ export default function NewVersionPage() {
     variantsCount:  variantsCountValid,
     variantsLabels: variantsLabelsValid,
     variantsImages: variantsImagesValid,
+    layoutsCount:   layoutsCountValid,
+    layoutsTitles:  layoutsTitlesValid,
+    layoutsImages:  layoutsImagesValid,
   } as const
   const isValid = Object.values(validations).every(Boolean)
   // Rose-tint a field whenever its validation fails, regardless of
@@ -3921,24 +4131,10 @@ export default function NewVersionPage() {
   // filled, so the form acts as its own progress indicator.
   const shouldHighlight = (k: keyof typeof validations) => !validations[k]
 
-  // ── Wizard-resolved shape (drives render conditionals + Save gate) ────────
-  const wizardShape = resolveShape(wizardAnswers, {
-    materialChosen: !!selectedMaterialId,
-    materialSupportsPersonalisation: !!selectedMaterial?.supports_personalisation,
-  })
-  // The proof must route to a concrete shape before it can save.
-  const wizardResolved = isWizardResolved(wizardShape)
-  // Recipients is the only shape that keeps the per-name roster; every
-  // other shape is no-name (Set) or single-bucket (Selection).
-  const isRecipientsShape = wizardShape?.kind === 'recipients'
-  // Set (collection) is preview-only in Phase 1 — its layout titles
-  // have no storage yet, so Save is blocked to stop a half-formed
-  // collection silently dropping them. (Resolved + clickable; just
-  // not persistable.)
-  const isSetCollectionShape = wizardShape?.kind === 'set-collection'
-  // The form can save only once the proof is routed to a concrete,
-  // persistable shape AND all required fields are valid.
-  const canSave = isValid && wizardResolved && !isSetCollectionShape
+  // The form can save once the proof is routed to a concrete, persistable
+  // shape AND all required fields are valid. Set (collection) is no longer
+  // excluded — its layouts* validations above gate it instead (Phase 2).
+  const canSave = isValid && wizardResolved
 
   // Specific images message. Priority: no-slot universe first
   // (can't save an empty shape — unreachable once names becomes
@@ -4864,7 +5060,7 @@ export default function NewVersionPage() {
                 image bucket too. State is preserved across mode
                 flips so a designer can switch back without losing
                 their layout config. */}
-            {!isVariantRound && (<>
+            {!isVariantRound && !isSetCollectionShape && (<>
             <div className="mt-10 mb-7">
               <h3 className="text-base font-semibold text-ink">Layout</h3>
               <p className="mt-0.5 text-xs text-ink-mute">Names, sides, and how the card splits.</p>
@@ -5233,6 +5429,112 @@ export default function NewVersionPage() {
             </section>
           )}
 
+          {/* ── Set (collection) layouts editor (Phase 2) ─────────────
+              One titled layout per row, each with its own image zone.
+              On save each row becomes a proof_layouts row plus
+              proof_version_images stamped with that layout's id. Reuses
+              VariantDropZone (the round-variant image plumbing) per the
+              spec — collections are one image bucket per layout. The
+              standard Layout sub-section, the per-slot image grid, and
+              the QR section are all hidden on this shape; this editor
+              replaces them. */}
+          {isSetCollectionShape && (
+            <section
+              ref={layoutEditorRef}
+              className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line"
+            >
+              <div className="mb-6">
+                <h2 className="text-base font-semibold text-ink">Layouts</h2>
+                <p className="mt-0.5 text-xs text-ink-mute">
+                  One titled layout per design in the set (e.g. "ECG card", "Infarction card"). The customer approves every layout. Each layout after the first adds a tooling charge.
+                </p>
+              </div>
+              <ul className="space-y-4">
+                {layoutRows.map((row, idx) => {
+                  const titleInvalid = submitAttempted && row.title.trim().length === 0
+                  const imagesInvalid = submitAttempted && row.files.length === 0
+                  const updateRow = (patch: Partial<LayoutDraftRow>) =>
+                    setLayoutRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)))
+                  return (
+                    <li key={row.key} className="rounded-xl border border-line bg-canvas p-5">
+                      <div className="flex items-start gap-3">
+                        <span className="mt-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink text-xs font-semibold text-on-ink">
+                          {idx + 1}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <label className="mb-1.5 block text-sm font-medium text-ink-soft">
+                            Layout title
+                          </label>
+                          <input
+                            type="text"
+                            value={row.title}
+                            placeholder={idx === 0 ? 'e.g. ECG card' : idx === 1 ? 'e.g. Infarction card' : ''}
+                            onChange={(e) => updateRow({ title: e.target.value })}
+                            className={[
+                              'w-full rounded border bg-surface px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2',
+                              titleInvalid
+                                ? 'border-out focus:border-out focus:ring-out'
+                                : 'border-line focus:border-brand focus:ring-brand',
+                            ].join(' ')}
+                          />
+                          {titleInvalid && (
+                            <p className="mt-1.5 text-xs font-medium text-out">Required</p>
+                          )}
+                          <div className="mt-4">
+                            <VariantDropZone
+                              label="Layout images"
+                              files={row.files}
+                              onAddFiles={(picked) => updateRow({ files: [...row.files, ...picked] })}
+                              onRemoveFile={(fi) =>
+                                updateRow({ files: row.files.filter((_, fj) => fj !== fi) })
+                              }
+                              invalid={imagesInvalid}
+                              invalidText="Add at least one image for this layout."
+                            />
+                          </div>
+                        </div>
+                        {layoutRows.length > 2 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setLayoutRows((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            className="shrink-0 text-xs font-medium text-ink-soft underline underline-offset-4 hover:text-ink"
+                            aria-label={`Remove layout ${idx + 1}`}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+              <div className="mt-4 space-y-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLayoutRows((prev) => [...prev, { key: uuidv4(), title: '', files: [] }])
+                  }
+                  className="rounded border border-line bg-surface px-3 py-1.5 text-sm font-medium text-ink-soft shadow-sm hover:border-line"
+                >
+                  + Add layout
+                </button>
+                {(shouldHighlight('layoutsCount') ||
+                  shouldHighlight('layoutsTitles') ||
+                  shouldHighlight('layoutsImages')) && (
+                  <p className="text-xs font-medium text-out">
+                    {!layoutsCountValid
+                      ? 'Add at least 2 layouts.'
+                      : !layoutsTitlesValid
+                        ? 'Every layout needs a title.'
+                        : 'Every layout needs at least one image.'}
+                  </p>
+                )}
+              </div>
+            </section>
+          )}
+
           {/* Unified image section.
               Per-(option, name) drop targets and empty slots unify
               carry, replacement, and fresh upload into one grid.
@@ -5248,7 +5550,7 @@ export default function NewVersionPage() {
               variant editor above handles image attribution there. */}
           </div>
           <div className="space-y-6">
-          {!isVariantRound && (
+          {!isVariantRound && !isSetCollectionShape && (
           <section ref={imageSectionRef} className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">
               {v1Carry ? `Proof images, carrying from v${v1Carry.versionNumber}` : 'Proof images'}
@@ -5815,7 +6117,7 @@ export default function NewVersionPage() {
               follow-up. The schema supports per-variant QRs via
               round_variant_id, so adding this back is purely a UI
               concern. */}
-          {!isVariantRound && (
+          {!isVariantRound && !isSetCollectionShape && (
             <QrCodeUploadSection
               // displayQrEntries decorates each existing entry with
               // the page-derived effective keep + artworkChanged
@@ -5868,16 +6170,6 @@ export default function NewVersionPage() {
           content scrolls clear of this bar. */}
       {!savedVersion && (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 backdrop-blur">
-          {/* Set (collection) is preview-only in Phase 1: the layout
-              titles have no storage yet, so saving is blocked rather
-              than persist a half-formed collection that drops them. */}
-          {isSetCollectionShape && (
-            <div className="mx-auto max-w-2xl px-4 pt-3 sm:px-6">
-              <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                Set (collection) is preview-only for now — layout titles save in the next update.
-              </p>
-            </div>
-          )}
           <div className="mx-auto flex max-w-2xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
             <Link
               to={`/proofs/${proofId}`}
@@ -5890,13 +6182,11 @@ export default function NewVersionPage() {
               form="new-version-form"
               disabled={submitting || !canSave}
               title={
-                isSetCollectionShape
-                  ? 'Set (collection) is preview-only for now — layout titles save in the next update.'
-                  : !wizardResolved
-                    ? 'Answer the proof-type questions to continue.'
-                    : !isValid
-                      ? missingFieldsHint(validations, optionLabelSingular)
-                      : undefined
+                !wizardResolved
+                  ? 'Answer the proof-type questions to continue.'
+                  : !isValid
+                    ? missingFieldsHint(validations, optionLabelSingular)
+                    : undefined
               }
               aria-label={!canSave ? 'Save version, not yet available' : undefined}
               className={[

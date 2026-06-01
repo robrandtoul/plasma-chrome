@@ -51,11 +51,6 @@ export type WizardAnswers = {
   personalised: 'yes' | 'no' | null
   // Pick-one Step 2: same material or different.
   pickMaterial: 'same' | 'different' | null
-  // Set (collection) layout titles. Free-form, stored in a dedicated
-  // field in Phase 2 — NOT the names array. In Phase 1 this is
-  // collected for preview only and never persisted (Save is blocked
-  // on the collection path).
-  layoutTitles: string[]
 }
 
 export const EMPTY_ANSWERS: WizardAnswers = {
@@ -67,7 +62,6 @@ export const EMPTY_ANSWERS: WizardAnswers = {
   style: null,
   personalised: null,
   pickMaterial: null,
-  layoutTitles: ['', ''],
 }
 
 // ── Resolved shape ────────────────────────────────────────────────────────────
@@ -162,6 +156,28 @@ export function deriveFormState(shape: ResolvedShape | null): FormModeState | nu
       return { isVariantRound: false, isPerDirectionPricing: false, cardType: 'membership', hasPersonalisation: shape.personalised }
     case 'selection':
       return { isVariantRound: true, isPerDirectionPricing: shape.perDirection, cardType: 'business', hasPersonalisation: false }
+    case 'split-guard':
+      return null
+  }
+}
+
+// The DB value for proof_versions.shape (000210). The wizard's resolved
+// shape is the single source; this is the one place the kind maps to the
+// stored string, so the save paths never re-derive it. Returns null for
+// the split guard and incomplete paths (which never save).
+export function dbShape(
+  shape: ResolvedShape | null,
+): 'recipients' | 'set_single' | 'set_collection' | 'selection' | null {
+  if (!shape) return null
+  switch (shape.kind) {
+    case 'recipients':
+      return 'recipients'
+    case 'set-single':
+      return 'set_single'
+    case 'set-collection':
+      return 'set_collection'
+    case 'selection':
+      return 'selection'
     case 'split-guard':
       return null
   }
@@ -372,7 +388,6 @@ export function ProofShapeWizard({
   const reachesStyle =
     onSetBranch &&
     (answers.layouts === 'one' || (isSeveral && (answers.sameMaterial === 'yes' || keptTogether)))
-  const isCollection = reachesStyle && isSeveral
 
   return (
     <section className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
@@ -594,18 +609,10 @@ export function ProofShapeWizard({
                   ) : null
                 )}
 
-                {/* Set (collection) layout-title editor — the real Phase 2
-                    UI, collected here for preview. NOT persisted in
-                    Phase 1: Save is blocked on the collection path, so a
-                    half-formed collection can never silently drop its
-                    titles. */}
-                {isCollection && (
-                  <LayoutTitlesEditor
-                    titles={answers.layoutTitles}
-                    disabled={disabled}
-                    onChange={(titles) => set({ layoutTitles: titles })}
-                  />
-                )}
+                {/* The per-layout title + image editor for a Set
+                    (collection) lives in the version form below (it owns
+                    the image uploads), not in the wizard — the wizard
+                    only resolves the shape. */}
               </>
             )}
           </>
@@ -644,66 +651,5 @@ export function ProofShapeWizard({
         </div>
       )}
     </section>
-  )
-}
-
-// Dedicated free-form layout-title editor for Set (collection). Titles
-// are NOT recipient names — they describe each design (e.g. "ECG card",
-// "Infarction card"). In Phase 2 these persist to a dedicated column.
-function LayoutTitlesEditor({
-  titles,
-  onChange,
-  disabled,
-}: {
-  titles: string[]
-  onChange: (titles: string[]) => void
-  disabled?: boolean
-}) {
-  const safe = titles.length >= 2 ? titles : [...titles, ...Array(2 - titles.length).fill('')]
-  return (
-    <div className="rounded border border-line bg-canvas px-4 py-3">
-      <p className="text-sm font-semibold text-ink">Layout titles</p>
-      <p className="mt-0.5 text-xs text-ink-mute">
-        One title per layout in this set (e.g. "ECG card", "Infarction card"). Each layout after the
-        first adds a tooling charge.
-      </p>
-      <div className="mt-3 space-y-2">
-        {safe.map((title, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <input
-              type="text"
-              value={title}
-              disabled={disabled}
-              placeholder={`Layout ${i + 1} title`}
-              onChange={(e) => {
-                const next = [...safe]
-                next[i] = e.target.value
-                onChange(next)
-              }}
-              className="w-full rounded border border-line bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-mute focus:border-ink focus:outline-none focus:ring-1 focus:ring-brand disabled:opacity-60"
-            />
-            {!disabled && safe.length > 2 && (
-              <button
-                type="button"
-                onClick={() => onChange(safe.filter((_, j) => j !== i))}
-                className="shrink-0 text-xs font-medium text-ink-soft underline underline-offset-4 hover:text-ink"
-                aria-label={`Remove layout ${i + 1}`}
-              >
-                Remove
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
-      {!disabled && (
-        <button
-          type="button"
-          onClick={() => onChange([...safe, ''])}
-          className="mt-3 text-xs font-medium text-ink-soft underline underline-offset-4 hover:text-ink"
-        >
-          Add another layout
-        </button>
-      )}
-    </div>
   )
 }
