@@ -25,6 +25,15 @@ import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { computeQrArtworkChangedSlots, isQrSlotFlagged, resolveQrEffectiveKeep } from '../lib/qrCarryForward'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LAYER_COLOUR_MATERIAL_CODES } from '../lib/letterpress'
+import {
+  ProofShapeWizard,
+  EMPTY_ANSWERS,
+  resolveShape,
+  deriveFormState,
+  deriveAnswersFromShape,
+  isWizardResolved,
+  type WizardAnswers,
+} from '../components/ProofShapeWizard'
 
 interface Material {
   id: string
@@ -478,6 +487,15 @@ export default function NewVersionPage() {
   }
   const [variantRows, setVariantRows] = useState<VariantDraftRow[]>([])
   const variantEditorRef = useRef<HTMLDivElement>(null)
+
+  // ── Proof-type wizard (docs/proof-type-wizard-spec.md) ───────────────────
+  // The wizard's answers are the single source that resolves a proof
+  // shape and drives the existing mode state (isVariantRound,
+  // isPerDirectionPricing, cardType, hasPersonalisation) via
+  // handleWizardChange below. On v1 creation it starts blank so the
+  // designer routes the proof; on v2+ creation it's seeded from the
+  // inherited shape so a continuation doesn't force re-answering.
+  const [wizardAnswers, setWizardAnswers] = useState<WizardAnswers>(EMPTY_ANSWERS)
 
   // ── Form collapse state (Tier 2c) ─────────────────────────────────────────
   // The form is collapsed by default on v2+ creation behind a tight
@@ -1047,6 +1065,20 @@ export default function NewVersionPage() {
         // version itself flips to variant-round.
         setHasPersonalisation(
           !!inherited.has_personalisation && !isVariantRoundSource,
+        )
+        // Seed the proof-type wizard from the inherited shape so a
+        // v2+ continuation shows resolved instead of forcing the
+        // designer to re-route. v(N) of a variant round continues as
+        // a standard proof of the chosen direction (setIsVariantRound
+        // is never re-asserted on this page), so derive from the
+        // standard-proof shape regardless of the source's round flag.
+        setWizardAnswers(
+          deriveAnswersFromShape({
+            isVariantRound: false,
+            isPerDirectionPricing: false,
+            cardType: inherited.card_type,
+            hasPersonalisation: !!inherited.has_personalisation && !isVariantRoundSource,
+          }),
         )
         // Default the snapshot to the v1 state-defaults — only
         // overwritten if there's at least one v1 image to derive
@@ -2576,6 +2608,56 @@ export default function NewVersionPage() {
     // copy, never the saved payload.
   }
 
+  // Flip variant-round mode and run the side-effects the old Round-
+  // mode radio used to do inline: seed two empty variant rows on the
+  // first entry into variant mode, and clear any pending QR state
+  // (the QR section is hidden in variant rounds, and a stale entry
+  // would silently re-emerge — and leak its object URL — on a flip
+  // back to a standard proof).
+  function applyVariantRoundMode(next: boolean) {
+    setIsVariantRound(next)
+    if (next && variantRows.length === 0) {
+      setVariantRows([
+        { key: uuidv4(), display_name: '', frontFiles: [], backFiles: null },
+        { key: uuidv4(), display_name: '', frontFiles: [], backFiles: null },
+      ])
+    }
+    if (next) {
+      setQrEntries((prev) => {
+        for (const e of prev) {
+          if (e.source === 'new' && e.previewUrl) URL.revokeObjectURL(e.previewUrl)
+        }
+        return []
+      })
+      setQrKeepOverrides({})
+    }
+  }
+
+  // Single point where the wizard's resolved shape drives the form's
+  // existing mode state. Keeping the mapping here (and in
+  // deriveFormState) means the Phase 2 `shape` column drops in without
+  // a refactor. Routes the cardType flip through handleCardTypeChange
+  // so its approval-orphan guard still fires, and clears recipient
+  // names when entering the no-name Set branch so they can't persist
+  // invisibly past the switch.
+  function handleWizardChange(next: WizardAnswers) {
+    setWizardAnswers(next)
+    const shape = resolveShape(next, {
+      materialChosen: !!selectedMaterialId,
+      materialSupportsPersonalisation: !!selectedMaterial?.supports_personalisation,
+    })
+    const fs = deriveFormState(shape)
+    if (!fs) return
+    if (fs.isVariantRound !== isVariantRound) applyVariantRoundMode(fs.isVariantRound)
+    setIsPerDirectionPricing(fs.isPerDirectionPricing)
+    if (fs.cardType !== cardType) {
+      const enteringSet = fs.cardType === 'membership' && cardType === 'business'
+      handleCardTypeChange(fs.cardType)
+      if (enteringSet) setNames([])
+    }
+    setHasPersonalisation(fs.hasPersonalisation)
+  }
+
   function toggleVariant(variantId: string) {
     setSelectedVariantIds((prev) =>
       prev.includes(variantId) ? prev.filter((id) => id !== variantId) : [...prev, variantId]
@@ -2588,6 +2670,40 @@ export default function NewVersionPage() {
     e.preventDefault()
     setError('')
     setSubmitAttempted(true)
+
+    // Block save until the proof-type wizard resolves to a concrete,
+    // persistable shape. Set (collection) is preview-only in Phase 1
+    // (its layout titles have no storage yet), so it never saves —
+    // belt-and-braces on top of the disabled Save button.
+    {
+      const shape = resolveShape(wizardAnswers, {
+        materialChosen: !!selectedMaterialId,
+        materialSupportsPersonalisation: !!selectedMaterial?.supports_personalisation,
+      })
+      if (!isWizardResolved(shape)) {
+        setFormExpanded(true)
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+        setToast({ kind: 'validation', text: 'Answer the proof-type questions to continue.' })
+        toastTimerRef.current = setTimeout(
+          () => setToast((curr) => (curr?.kind === 'validation' ? null : curr)),
+          5000,
+        )
+        return
+      }
+      if (shape?.kind === 'set-collection') {
+        setFormExpanded(true)
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+        setToast({
+          kind: 'validation',
+          text: 'Set (collection) is preview-only for now — layout titles save in the next update.',
+        })
+        toastTimerRef.current = setTimeout(
+          () => setToast((curr) => (curr?.kind === 'validation' ? null : curr)),
+          5000,
+        )
+        return
+      }
+    }
 
     // Missing required fields: surface highlights + scroll to the first one in
     // document order. No save attempt, no network. Live validation clears the
@@ -3796,6 +3912,25 @@ export default function NewVersionPage() {
   // filled, so the form acts as its own progress indicator.
   const shouldHighlight = (k: keyof typeof validations) => !validations[k]
 
+  // ── Wizard-resolved shape (drives render conditionals + Save gate) ────────
+  const wizardShape = resolveShape(wizardAnswers, {
+    materialChosen: !!selectedMaterialId,
+    materialSupportsPersonalisation: !!selectedMaterial?.supports_personalisation,
+  })
+  // The proof must route to a concrete shape before it can save.
+  const wizardResolved = isWizardResolved(wizardShape)
+  // Recipients is the only shape that keeps the per-name roster; every
+  // other shape is no-name (Set) or single-bucket (Selection).
+  const isRecipientsShape = wizardShape?.kind === 'recipients'
+  // Set (collection) is preview-only in Phase 1 — its layout titles
+  // have no storage yet, so Save is blocked to stop a half-formed
+  // collection silently dropping them. (Resolved + clickable; just
+  // not persistable.)
+  const isSetCollectionShape = wizardShape?.kind === 'set-collection'
+  // The form can save only once the proof is routed to a concrete,
+  // persistable shape AND all required fields are valid.
+  const canSave = isValid && wizardResolved && !isSetCollectionShape
+
   // Specific images message. Priority: no-slot universe first
   // (can't save an empty shape — unreachable once names becomes
   // required, kept as belt-and-braces), then the first empty
@@ -4346,148 +4481,20 @@ export default function NewVersionPage() {
               formExpanded effect sets this open immediately. */}
           {formExpanded && (
           <>
-          {/* ── Round mode (build-plan step 5B) ──────────────────────
-              Toggle between a standard proof (existing per-recipient
-              workflow) and a variant round (N parallel directions
-              the customer compares side-by-side). Default Standard;
-              flipping to Variant round seeds an empty 2-row variant
-              editor below and hides the Layout sub-section + image
-              bucket. The two modes are mutually exclusive — variant
-              rounds are single-bucket-only by design. */}
-          <section className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
-            <div className="mb-5">
-              <h3 className="text-base font-semibold text-ink">Round mode</h3>
-              <p className="mt-0.5 text-xs text-ink-mute">
-                Standard proof or a variant round (parallel directions for the customer to choose between).
-              </p>
-            </div>
-            <fieldset className="grid gap-3 sm:grid-cols-2">
-              <legend className="sr-only">Round mode</legend>
-              {([
-                { value: false, label: 'Standard proof', sub: 'One design, optionally per recipient.' },
-                { value: true, label: 'Variant round', sub: 'Multiple parallel directions, customer picks one.' },
-              ] as const).map((opt) => {
-                const selected = isVariantRound === opt.value
-                return (
-                  <label
-                    key={String(opt.value)}
-                    className={[
-                      'cursor-pointer rounded border px-4 py-3 transition-colors',
-                      'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
-                      selected
-                        ? 'border-ink bg-ink text-on-ink'
-                        : 'border-line bg-surface text-ink-soft hover:border-line',
-                    ].join(' ')}
-                  >
-                    <input
-                      type="radio"
-                      name="round-mode"
-                      checked={selected}
-                      onChange={() => {
-                        setIsVariantRound(opt.value)
-                        // Seed two empty rows on first flip into
-                        // variant mode so the editor renders with
-                        // something to fill in. Subsequent flips
-                        // preserve whatever rows the designer
-                        // already configured (mirrors the cardType
-                        // flip pattern).
-                        if (opt.value && variantRows.length === 0) {
-                          setVariantRows([
-                            { key: uuidv4(), display_name: '', frontFiles: [], backFiles: null },
-                            { key: uuidv4(), display_name: '', frontFiles: [], backFiles: null },
-                          ])
-                        }
-                        // The QR section is hidden in variant-round
-                        // mode, but a pending state survives the
-                        // flip and would silently re-emerge on a
-                        // flip back to Standard, including any new-
-                        // entry object URLs that leak memory. Clear
-                        // qrEntries and revoke new previews so the
-                        // state transition is clean.
-                        if (opt.value) {
-                          setQrEntries((prev) => {
-                            for (const e of prev) {
-                              if (e.source === 'new' && e.previewUrl) {
-                                URL.revokeObjectURL(e.previewUrl)
-                              }
-                            }
-                            return []
-                          })
-                          setQrKeepOverrides({})
-                        }
-                      }}
-                      className="sr-only"
-                    />
-                    <div className="text-sm font-semibold">{opt.label}</div>
-                    <div
-                      className={[
-                        'mt-1 text-xs',
-                        selected ? 'text-ink-dim' : 'text-ink-mute',
-                      ].join(' ')}
-                    >
-                      {opt.sub}
-                    </div>
-                  </label>
-                )
-              })}
-            </fieldset>
-
-            {/* Pricing-mode sub-toggle (000142, renamed 000144 after
-                designer feedback that "mixed materials" was the wrong
-                framing). Only renders inside the variant-round
-                branch. Default shared pricing; flipping to per-
-                direction pricing hides the version-level material /
-                currency / pricing / variant-tier / ink-names
-                sections. State preserved across mode flips. */}
-            {isVariantRound && (
-              <div className="mt-5">
-                <p className="mb-1 text-sm font-medium text-ink-soft">
-                  Pricing mode
-                </p>
-                <p className="mb-2 text-xs text-ink-mute">
-                  Do all directions share one price, or are they priced individually?
-                </p>
-                <fieldset className="grid gap-3 sm:grid-cols-2">
-                  <legend className="sr-only">Pricing mode</legend>
-                  {([
-                    { value: false, label: 'Same price across directions', sub: 'One tier covers them all' },
-                    { value: true, label: 'Different prices per direction', sub: 'Quoted by email' },
-                  ] as const).map((opt) => {
-                    const selected = isPerDirectionPricing === opt.value
-                    return (
-                      <label
-                        key={String(opt.value)}
-                        className={[
-                          'cursor-pointer rounded border px-4 py-3 transition-colors',
-                          'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
-                          selected
-                            ? 'border-ink bg-ink text-on-ink'
-                            : 'border-line bg-surface text-ink-soft hover:border-line',
-                        ].join(' ')}
-                      >
-                        <input
-                          type="radio"
-                          name="pricing-mode"
-                          checked={selected}
-                          onChange={() => setIsPerDirectionPricing(opt.value)}
-                          className="sr-only"
-                        />
-                        <div className="text-sm font-semibold">{opt.label}</div>
-                        <div
-                          className={[
-                            'mt-1 text-xs',
-                            selected ? 'text-ink-dim' : 'text-ink-mute',
-                          ].join(' ')}
-                        >
-                          {opt.sub}
-                        </div>
-                      </label>
-                    )
-                  })}
-                </fieldset>
-              </div>
-            )}
-          </section>
+          {/* ── Proof type (the wizard) ──────────────────────────────
+              Replaces the old Round-mode toggle. A single-page,
+              progressive-disclosure wizard whose resolved shape is the
+              single source that drives isVariantRound /
+              isPerDirectionPricing / cardType / hasPersonalisation via
+              handleWizardChange. The rest of the form below adapts to
+              the resolved shape (per docs/proof-type-wizard-spec.md). */}
+          <ProofShapeWizard
+            answers={wizardAnswers}
+            onChange={handleWizardChange}
+            materialChosen={!!selectedMaterialId}
+            materialSupportsPersonalisation={!!selectedMaterial?.supports_personalisation}
+            personalisationHelper={personalisationHelperText(currency, personalisationPricing)}
+          />
 
           {/* Pricing display — required choice between standard grid and custom quote */}
           {/* Commercial — pricing display + currency. The two
@@ -4854,50 +4861,10 @@ export default function NewVersionPage() {
               <p className="mt-0.5 text-xs text-ink-mute">Names, sides, and how the card splits.</p>
             </div>
 
-            {/* Card type — segmented pill mirroring Sidedness. v1
-                defaults to Business. v2+ inheritance derives from
-                v(N-1).names.length === 0 (membership) vs non-
-                empty (business). Flipping Business → Membership
-                orphans any per-name v1 images; the handler fires
-                the same approval-invalidation confirm as the
-                other shape flips before applying. */}
-            <div className="mb-8">
-              <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-ink-soft">
-                <span>Card type</span>
-                {carry.cardType.isCarried && inheritedVersionNumber != null && (
-                  <CarriedPill edited={carry.cardType.isEdited} versionNumber={inheritedVersionNumber} />
-                )}
-              </label>
-              <div style={carriedFieldStyle(carry.cardType.isCarried, carry.cardType.isEdited)}>
-                <fieldset className="inline-flex rounded border border-line bg-surface p-0.5">
-                  <legend className="sr-only">Card type</legend>
-                  {(['business', 'membership'] as const).map((opt) => {
-                    const selected = cardType === opt
-                    return (
-                      <label
-                        key={opt}
-                        className={[
-                          'cursor-pointer rounded px-5 py-2 text-sm font-semibold transition-colors',
-                          'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
-                          selected ? '' : 'text-ink-mute hover:text-ink',
-                        ].join(' ')}
-                        style={selected ? selectedChipStyle(carry.cardType.isCarried, carry.cardType.isEdited) : undefined}
-                      >
-                        <input
-                          type="radio"
-                          name="cardType"
-                          value={opt}
-                          checked={selected}
-                          onChange={() => handleCardTypeChange(opt)}
-                          className="sr-only"
-                        />
-                        {opt === 'business' ? 'Business card' : 'Membership card'}
-                      </label>
-                    )
-                  })}
-                </fieldset>
-              </div>
-            </div>
+            {/* Card type is no longer a standalone control here — the
+                proof-type wizard at the top of the form governs it
+                (business = Recipients, membership = the Set branch) via
+                handleCardTypeChange. See ProofShapeWizard. */}
 
             {/* Chip input backs the proof_versions.names array.
                 Visible in both modes now — Business mode treats
@@ -4911,9 +4878,15 @@ export default function NewVersionPage() {
                 snapshots the per-currency split-name tooling
                 surcharge onto the version on save (runs
                 regardless of mode). */}
+            {/* Names roster shows only on the Recipients shape — every
+                other shape resolved by the wizard is no-name (Set) or
+                single-bucket (Selection). Set (collection) layout titles
+                live in the wizard's dedicated editor, not here, so the
+                names array keeps meaning "named recipients" only. */}
+            {isRecipientsShape && (
             <div ref={namesRef} className="mb-8">
               <label className="mb-2.5 flex items-center gap-2 text-sm font-medium text-ink-soft">
-                <span>{cardType === 'business' ? 'Names on this order' : 'Variants'}</span>
+                <span>Names on this order</span>
                 {carry.names.isCarried && inheritedVersionNumber != null && (
                   <CarriedPill edited={carry.names.isEdited} versionNumber={inheritedVersionNumber} />
                 )}
@@ -4922,22 +4895,9 @@ export default function NewVersionPage() {
                 <NameChipInput
                   names={names}
                   onChange={handleNamesChange}
-                  placeholder={
-                    cardType === 'business'
-                      ? 'Who is this proof for? Press Enter after each name'
-                      : 'e.g. Bronze, Silver, Gold. Press Enter after each variant'
-                  }
-                  ariaLabel={
-                    cardType === 'business' ? 'Names on this order' : 'Tier variants'
-                  }
+                  placeholder="Who is this proof for? Press Enter after each name"
+                  ariaLabel="Names on this order"
                 />
-                {/* Below-input subtitle for the optional/membership
-                    case, replacing the label's previous (optional)
-                    annotation. Keeps the label clean and harmonises
-                    with the rest of the form's helper rhythm. */}
-                {cardType === 'membership' && (
-                  <p className="mt-1.5 text-xs text-ink-mute">Optional.</p>
-                )}
                 {shouldHighlight('names') && (
                   <p className="mt-1.5 text-xs font-medium text-out">
                     Add at least one name.
@@ -4945,6 +4905,7 @@ export default function NewVersionPage() {
                 )}
               </div>
             </div>
+            )}
 
             {/* Shape controls — sidedness + shared. Together with
                 names[] and the material's options, these drive
@@ -5047,40 +5008,12 @@ export default function NewVersionPage() {
             </div>
             </>)}
 
-            {/* Personalisation add-on (migration 000172). Visible only
-                when the material supports it, the version is a
-                membership card, and it isn't a custom-quote or a
-                variant round. Hidden (not disabled) when the gate
-                isn't met. The variant-round gate is also enforced
-                at the DB level by the CHECK constraint added in
-                000173 (mirrors EditVersionPage). */}
-            {selectedMaterial?.supports_personalisation
-              && cardType === 'membership'
-              && !isCustomQuote
-              && !isVariantRound && (
-              <div className="mt-10">
-                <h3 className="text-base font-semibold text-ink">Personalisation</h3>
-                <p className="mt-0.5 text-xs text-ink-mute">
-                  Unique data per card, like member numbers or names.
-                </p>
-                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded border border-line bg-surface px-4 py-3">
-                  <input
-                    type="checkbox"
-                    checked={hasPersonalisation}
-                    onChange={(e) => setHasPersonalisation(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 cursor-pointer rounded border-line text-ink focus:ring-brand"
-                  />
-                  <div>
-                    <div className="text-sm font-medium text-ink-soft">
-                      Add personalisation
-                    </div>
-                    <div className="text-xs text-ink-mute">
-                      {personalisationHelperText(currency, personalisationPricing)}
-                    </div>
-                  </div>
-                </label>
-              </div>
-            )}
+            {/* Personalisation is no longer a standalone checkbox here.
+                The proof-type wizard's Step 6 governs hasPersonalisation
+                (membership style + a material that supports it). The
+                same gate — supports_personalisation, membership,
+                !custom-quote, !variant-round — is enforced in the wizard
+                and at the DB level (000173 CHECK). */}
 
           </section>
           )}
@@ -5926,6 +5859,16 @@ export default function NewVersionPage() {
           content scrolls clear of this bar. */}
       {!savedVersion && (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 backdrop-blur">
+          {/* Set (collection) is preview-only in Phase 1: the layout
+              titles have no storage yet, so saving is blocked rather
+              than persist a half-formed collection that drops them. */}
+          {isSetCollectionShape && (
+            <div className="mx-auto max-w-2xl px-4 pt-3 sm:px-6">
+              <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                Set (collection) is preview-only for now — layout titles save in the next update.
+              </p>
+            </div>
+          )}
           <div className="mx-auto flex max-w-2xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
             <Link
               to={`/proofs/${proofId}`}
@@ -5936,12 +5879,20 @@ export default function NewVersionPage() {
             <button
               type="submit"
               form="new-version-form"
-              disabled={submitting || !isValid}
-              title={!isValid ? missingFieldsHint(validations, optionLabelSingular) : undefined}
-              aria-label={!isValid ? `Save version, ${missingFieldsHint(validations, optionLabelSingular)}` : undefined}
+              disabled={submitting || !canSave}
+              title={
+                isSetCollectionShape
+                  ? 'Set (collection) is preview-only for now — layout titles save in the next update.'
+                  : !wizardResolved
+                    ? 'Answer the proof-type questions to continue.'
+                    : !isValid
+                      ? missingFieldsHint(validations, optionLabelSingular)
+                      : undefined
+              }
+              aria-label={!canSave ? 'Save version, not yet available' : undefined}
               className={[
                 'rounded px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
-                isValid ? 'bg-ink hover:opacity-90' : 'bg-ink/60',
+                canSave ? 'bg-ink hover:opacity-90' : 'bg-ink/60',
                 'disabled:cursor-not-allowed disabled:opacity-50',
               ].join(' ')}
             >

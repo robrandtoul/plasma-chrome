@@ -18,6 +18,7 @@ import { VariantDropZone } from '../components/VariantDropZone'
 import type { Currency, LetterpressCoreColour, PricingSnapshot } from '../lib/types'
 import { usePersonalisationPricing } from '../lib/quote/usePersonalisationPricing'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
+import { ProofShapeWizard, deriveAnswersFromShape } from '../components/ProofShapeWizard'
 import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSection'
 import type { QrKind } from '../lib/qrCodes'
 import { LAYER_COLOUR_MATERIAL_CODES } from '../lib/letterpress'
@@ -1601,6 +1602,28 @@ export default function EditVersionPage() {
             {proofCompany && <p className="mt-1 text-sm text-ink-dim">{proofCompany}</p>}
           </div>
           {actionRow}
+        </div>
+
+        {/* ── Proof type (read-only on edit) ───────────────────────────
+            The shape is fixed at creation (cardType and variant-round
+            aren't editable here), so the wizard renders disabled,
+            showing the resolved shape derived live from the loaded
+            fields. Personalisation stays editable via its own checkbox
+            below; toggling it updates this banner because the answers
+            are re-derived each render. See ProofShapeWizard. */}
+        <div className="mb-6">
+          <ProofShapeWizard
+            answers={deriveAnswersFromShape({
+              isVariantRound,
+              isPerDirectionPricing: false,
+              cardType,
+              hasPersonalisation,
+            })}
+            onChange={() => {}}
+            materialChosen
+            materialSupportsPersonalisation={materialSupportsPersonalisation}
+            disabled
+          />
         </div>
 
         {/* ── Locked variant-round notice (build-plan step 5.5 / item 4) ──
