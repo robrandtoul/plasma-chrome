@@ -18,7 +18,12 @@ import { VariantDropZone } from '../components/VariantDropZone'
 import type { Currency, LetterpressCoreColour, PricingSnapshot } from '../lib/types'
 import { usePersonalisationPricing } from '../lib/quote/usePersonalisationPricing'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
-import { ProofShapeWizard, deriveAnswersFromShape } from '../components/ProofShapeWizard'
+import { ProofShapeWizard, deriveAnswersFromVersion } from '../components/ProofShapeWizard'
+import {
+  LayoutsEditor,
+  layoutRowImageCount,
+  type LayoutEditRow,
+} from '../components/LayoutsEditor'
 import { QrCodeUploadSection, type QrEntry } from '../components/QrCodeUploadSection'
 import type { QrKind } from '../lib/qrCodes'
 import { LAYER_COLOUR_MATERIAL_CODES } from '../lib/letterpress'
@@ -136,6 +141,18 @@ export default function EditVersionPage() {
     back: VariantEditSide | null
   }
   const [variantEditRows, setVariantEditRows] = useState<VariantEditRow[]>([])
+  // ── Set (collection) edit state (Phase 2) ────────────────────────────────
+  // shape is loaded from proof_versions.shape and is read-only on edit
+  // (you can't turn a collection into something else). When it's
+  // 'set_collection' the Layouts editor renders and layoutEditRows holds
+  // the editable layouts (loaded from proof_layouts + their images).
+  // loadedLayoutIds is the set present at load, diffed on save to find
+  // removed layouts (whose proof_name_approvals row needs explicit
+  // deletion — the image rows cascade via the FK, the approval doesn't).
+  const [shape, setShape] = useState<string | null>(null)
+  const [layoutEditRows, setLayoutEditRows] = useState<LayoutEditRow[]>([])
+  const [loadedLayoutIds, setLoadedLayoutIds] = useState<string[]>([])
+  const layoutEditorRef = useRef<HTMLDivElement>(null)
   const [materialDisplay, setMaterialDisplay] = useState('')
   // Two ink states: one for the comma-separated optional UI, one for the
   // per-ink mandatory UI. Only the one matching the loaded material's
@@ -251,12 +268,12 @@ export default function EditVersionPage() {
       supabase.from('proofs').select('helpscout_conversation_id, contacts(full_name, companies(name))').eq('id', pid).single(),
       supabase
         .from('proof_versions')
-        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, names, core_colour_id, front_colour_id, back_colour_id, is_variant_round, card_type, has_personalisation, materials(code, display_quantities, requires_ink_names, option_label, multi_variant, supports_personalisation)')
+        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, names, core_colour_id, front_colour_id, back_colour_id, is_variant_round, card_type, has_personalisation, shape, materials(code, display_quantities, requires_ink_names, option_label, multi_variant, supports_personalisation)')
         .eq('id', vid)
         .single(),
       supabase
         .from('proof_version_images')
-        .select('id, image_path, sort_order, material_option, original_filename, associated_name, side, round_variant_id, is_qr_code, qr_decoded_data, qr_kind, qr_vcard_slug')
+        .select('id, image_path, sort_order, material_option, original_filename, associated_name, side, round_variant_id, layout_id, is_qr_code, qr_decoded_data, qr_kind, qr_vcard_slug')
         .eq('proof_version_id', vid)
         .order('sort_order'),
     ])
@@ -290,6 +307,60 @@ export default function EditVersionPage() {
     setMaterialSupportsPersonalisation(!!materialMeta.supports_personalisation)
     setCardType((v.card_type as 'business' | 'membership') ?? 'business')
     setHasPersonalisation(!!v.has_personalisation)
+    setShape((v.shape as string | null) ?? null)
+
+    // Set (collection): load the editable layouts from proof_layouts +
+    // their images (grouped by layout_id, with signed URLs). Each row
+    // remembers its own proof_layouts.id (sourceLayoutId) + title +
+    // image-id set, which the save diff and the per-version approval
+    // handling key on. loadedLayoutIds drives the removed-layout diff.
+    if (v.shape === 'set_collection') {
+      const { data: layoutData } = await supabase
+        .from('proof_layouts')
+        .select('id, title, sort_order')
+        .eq('proof_version_id', vid)
+        .order('sort_order')
+      const layouts = (layoutData ?? []) as Array<{ id: string; title: string; sort_order: number }>
+      const allImgs = (imagesResult.data ?? []) as Array<{
+        id: string
+        image_path: string
+        original_filename: string | null
+        layout_id: string | null
+        is_qr_code: boolean
+        sort_order: number
+      }>
+      const rows: LayoutEditRow[] = []
+      for (const l of layouts) {
+        const imgs = allImgs
+          .filter((im) => im.layout_id === l.id && !im.is_qr_code)
+          .sort((a, b) => a.sort_order - b.sort_order)
+        const existingImages = await Promise.all(
+          imgs.map(async (im) => {
+            const { data } = await supabase.storage
+              .from('proof-images')
+              .createSignedUrl(im.image_path, 3600)
+            return {
+              id: im.id,
+              imagePath: im.image_path,
+              signedUrl: data?.signedUrl ?? '',
+              originalFilename: im.original_filename,
+            }
+          }),
+        )
+        rows.push({
+          key: l.id,
+          sourceLayoutId: l.id,
+          title: l.title,
+          sourceTitle: l.title,
+          sourceImageIds: imgs.map((im) => im.id),
+          existingImages,
+          removedExistingIds: [],
+          newFiles: [],
+        })
+      }
+      setLayoutEditRows(rows)
+      setLoadedLayoutIds(layouts.map((l) => l.id))
+    }
     setSelectedFrontColourId((v.front_colour_id as string | null) ?? null)
     setSelectedCoreColourId((v.core_colour_id as string | null) ?? null)
     setSelectedBackColourId((v.back_colour_id as string | null) ?? null)
@@ -570,13 +641,24 @@ export default function EditVersionPage() {
   // EditVersionPage doesn't allow material swaps, so
   // requiresLayerColours resolves to a stable value once loadAll runs.
   const requiresLayerColours = LAYER_COLOUR_MATERIAL_CODES.has(materialCode)
+  // Set (collection): the standard per-slot image grid is replaced by
+  // the Layouts editor, so the standard `images` check short-circuits and
+  // the layout checks take over (2+ layouts, each titled with 1+ image).
+  const isSetCollection = shape === 'set_collection'
+  const layoutsCountValid  = !isSetCollection || layoutEditRows.length >= 2
+  const layoutsTitlesValid = !isSetCollection || layoutEditRows.every((r) => r.title.trim().length > 0)
+  const layoutsImagesValid = !isSetCollection || layoutEditRows.every((r) => layoutRowImageCount(r) > 0)
+
   const validations = {
-    images:      imagesFinishKeys.every(fk => (editImagesByOption[fk] ?? []).length > 0),
+    images:      isSetCollection ? true : imagesFinishKeys.every(fk => (editImagesByOption[fk] ?? []).length > 0),
     material:    materialDisplay.trim() !== '',
     inkNames:    !requiresInkNames || (editInkCount > 0 && inkNameValidities.every(Boolean)),
     frontColour: !requiresLayerColours || selectedFrontColourId !== null,
     coreColour:  !requiresLayerColours || selectedCoreColourId !== null,
     backColour:  !requiresLayerColours || selectedBackColourId !== null,
+    layoutsCount:  layoutsCountValid,
+    layoutsTitles: layoutsTitlesValid,
+    layoutsImages: layoutsImagesValid,
   } as const
   const isValid = Object.values(validations).every(Boolean)
   const shouldHighlight = (k: keyof typeof validations) => submitAttempted && !validations[k]
@@ -1053,6 +1135,171 @@ export default function EditVersionPage() {
       // versions is null (per-direction-pricing or mixed) so it's
       // omitted from the banner.
       setSavedVersionForPreview({ currency: null })
+      return
+    }
+
+    // ── Set (collection) edit save (Phase 2) ──────────────────────────
+    // Fully editable: titles, images, add/remove layouts. Diff path,
+    // not the standard image grid — a collection's images are
+    // layout-scoped. Steps: version-level fields → delete removed
+    // layouts (+ their approval rows; images cascade, approvals don't) →
+    // update existing / insert new layouts → delete removed images →
+    // upload + insert new images. Approvals on EDITED layouts are left
+    // as-is (reset on content change is a new-version concern, handled
+    // in NewVersionPage carry-forward); only REMOVED layouts' approvals
+    // are cleaned up here.
+    if (isSetCollection) {
+      const ok =
+        layoutEditRows.length >= 2 &&
+        layoutEditRows.every((r) => r.title.trim().length > 0) &&
+        layoutEditRows.every((r) => layoutRowImageCount(r) > 0)
+      if (!ok) {
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+        setToast({ kind: 'validation', text: 'Please complete all required fields to save' })
+        toastTimerRef.current = setTimeout(
+          () => setToast((curr) => (curr?.kind === 'validation' ? null : curr)),
+          5000,
+        )
+        return
+      }
+      setSubmitting(true)
+
+      // 1. Version-level fields (the subset the edit form exposes; names
+      //    stays empty on a collection).
+      const { error: vErr } = await supabase
+        .from('proof_versions')
+        .update({
+          material_display: materialDisplay.trim(),
+          ink_names: requiresInkNames
+            ? inkNamesArray.map((s) => s.trim())
+            : inkNamesText.split(',').map((s) => s.trim()).filter(Boolean),
+          change_notes: changeNotes.trim() || null,
+          custom_quote: pricingDisplay === 'custom',
+          names: [],
+          front_colour_id: requiresLayerColours ? selectedFrontColourId : null,
+          core_colour_id:  requiresLayerColours ? selectedCoreColourId  : null,
+          back_colour_id:  requiresLayerColours ? selectedBackColourId  : null,
+          has_personalisation:
+            materialSupportsPersonalisation
+            && cardType === 'membership'
+            && pricingDisplay !== 'custom'
+            && hasPersonalisation,
+        })
+        .eq('id', versionId!)
+      if (vErr) {
+        setError(`Failed to save version: ${vErr.message}`)
+        setSubmitting(false)
+        return
+      }
+
+      // 2. Removed layouts (present at load, absent now). Delete the
+      //    layout (images cascade via the FK) AND its approval row,
+      //    keyed name = layout_id::text (does NOT cascade — orphan
+      //    cleanup, item 6).
+      const currentSourceIds = new Set(
+        layoutEditRows.map((r) => r.sourceLayoutId).filter((id): id is string => !!id),
+      )
+      const removedLayoutIds = loadedLayoutIds.filter((id) => !currentSourceIds.has(id))
+      if (removedLayoutIds.length > 0) {
+        await supabase
+          .from('proof_name_approvals')
+          .delete()
+          .eq('proof_version_id', versionId!)
+          .in('name', removedLayoutIds)
+        await supabase.from('proof_layouts').delete().in('id', removedLayoutIds)
+      }
+
+      // 3. Update existing layouts (title + sort_order); insert new ones.
+      //    Resolve each row's layout id for image attribution below.
+      const layoutIdByRowKey = new Map<string, string>()
+      for (let i = 0; i < layoutEditRows.length; i++) {
+        const row = layoutEditRows[i]
+        if (row.sourceLayoutId) {
+          const { error: upErr } = await supabase
+            .from('proof_layouts')
+            .update({ title: row.title.trim(), sort_order: i })
+            .eq('id', row.sourceLayoutId)
+          if (upErr) {
+            setError(`Failed to update layout: ${upErr.message}`)
+            setSubmitting(false)
+            return
+          }
+          layoutIdByRowKey.set(row.key, row.sourceLayoutId)
+        } else {
+          const { data: ins, error: insErr } = await supabase
+            .from('proof_layouts')
+            .insert({ proof_version_id: versionId!, title: row.title.trim(), sort_order: i })
+            .select('id')
+            .single()
+          if (insErr || !ins) {
+            setError(`Failed to add layout: ${insErr?.message ?? 'Unknown error'}`)
+            setSubmitting(false)
+            return
+          }
+          layoutIdByRowKey.set(row.key, (ins as { id: string }).id)
+        }
+      }
+
+      // 4. Removed existing images: delete rows + storage.
+      const removedImageIds = layoutEditRows.flatMap((r) => r.removedExistingIds)
+      if (removedImageIds.length > 0) {
+        const { data: removedRows } = await supabase
+          .from('proof_version_images')
+          .select('image_path')
+          .in('id', removedImageIds)
+        const paths = (removedRows ?? []).map((r: any) => r.image_path as string)
+        await supabase.from('proof_version_images').delete().in('id', removedImageIds)
+        if (paths.length > 0) await safeRemoveImagePaths(paths)
+      }
+
+      // 5. Upload + insert new images, stamped with the resolved layout id.
+      const stampedOption = selectedOptions[0] ?? null
+      type NewUp = { rowKey: string; file: File; path: string }
+      const queue: NewUp[] = []
+      for (const row of layoutEditRows) {
+        for (const file of row.newFiles) {
+          queue.push({ rowKey: row.key, file, path: `${proofId}/${uuidv4()}.jpg` })
+        }
+      }
+      const ups = await Promise.all(
+        queue.map(async (u) => {
+          const { error: upErr } = await supabase.storage
+            .from('proof-images')
+            .upload(u.path, u.file, { contentType: u.file.type, upsert: false })
+          return { ...u, error: upErr }
+        }),
+      )
+      const failedUp = ups.find((u) => u.error)
+      if (failedUp) {
+        const okPaths = ups.filter((u) => !u.error).map((u) => u.path)
+        if (okPaths.length > 0) await safeRemoveImagePaths(okPaths)
+        setError(`Image upload failed: ${failedUp.error!.message}`)
+        setSubmitting(false)
+        return
+      }
+      if (ups.length > 0) {
+        const inserts = ups.map((u, i) => ({
+          proof_version_id: versionId!,
+          image_path: u.path,
+          material_option: stampedOption,
+          original_filename: u.file.name,
+          associated_name: null,
+          side: 'front' as const,
+          round_variant_id: null,
+          layout_id: layoutIdByRowKey.get(u.rowKey)!,
+          sort_order: 1000 + i,
+        }))
+        const { error: insErr } = await supabase.from('proof_version_images').insert(inserts)
+        if (insErr) {
+          await safeRemoveImagePaths(ups.map((u) => u.path))
+          setError(`Failed to save images: ${insErr.message}`)
+          setSubmitting(false)
+          return
+        }
+      }
+
+      setSubmitting(false)
+      setSavedVersionForPreview({ currency })
       return
     }
 
@@ -1613,7 +1860,8 @@ export default function EditVersionPage() {
             are re-derived each render. See ProofShapeWizard. */}
         <div className="mb-6">
           <ProofShapeWizard
-            answers={deriveAnswersFromShape({
+            answers={deriveAnswersFromVersion({
+              shape,
               isVariantRound,
               isPerDirectionPricing: false,
               cardType,
@@ -1847,7 +2095,9 @@ export default function EditVersionPage() {
 
           </div>
           <div className="space-y-6">
-          {/* Images */}
+          {/* Images — standard per-slot grid. Replaced by the Layouts
+              editor on a Set (collection). */}
+          {!isSetCollection && (
           <section ref={imageSectionRef} className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">
               Proof images
@@ -1981,13 +2231,30 @@ export default function EditVersionPage() {
               <p className="mt-2 text-xs font-medium text-out">{imagesHint}</p>
             )}
           </section>
+          )}
+
+          {/* Set (collection): the editable Layouts editor replaces the
+              standard image grid — same shared component as the
+              new-version form. Titles + images editable, layouts
+              add/removable; the save diff is in handleSubmit. */}
+          {isSetCollection && (
+            <LayoutsEditor
+              rows={layoutEditRows}
+              onChange={setLayoutEditRows}
+              submitAttempted={submitAttempted}
+              editorRef={layoutEditorRef}
+              countInvalid={shouldHighlight('layoutsCount')}
+              titlesInvalid={shouldHighlight('layoutsTitles')}
+              imagesInvalid={shouldHighlight('layoutsImages')}
+            />
+          )}
 
           {/* QR codes (migrations 000168 / 000169).
               Standard-edit-form parity with NewVersionPage. Hidden
               in variant-round mode for v1 — variant-round QR
               rendering on the customer page is deferred to a
-              follow-up. */}
-          {!isVariantRound && (
+              follow-up. Hidden on collections (no per-layout QRs). */}
+          {!isVariantRound && !isSetCollection && (
             <QrCodeUploadSection
               value={qrEntries}
               onChange={setQrEntries}
