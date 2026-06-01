@@ -15,6 +15,10 @@ export type ActionPanelProps = {
     name: string
     type: 'approve' | 'request_changes'
     roundVariant?: { id: string; displayName: string } | null
+    // Human label when `name` isn't display-friendly — set for Set
+    // (collection) layouts, where `name` is a layout id and this carries
+    // the layout title.
+    displayName?: string
   }
   actionName: string
   setActionName: (value: string) => void
@@ -219,16 +223,24 @@ export function ActionPanel({
 
   const isVariantRound = !!actionPanel.roundVariant
   const isShared = actionPanel.name === SHARED_APPROVAL_KEY
+  // Display label for the slot. For a Set (collection) layout, `name` is
+  // a layout id (UUID) and `displayName` carries the layout title; the
+  // copy below branches on its presence so layouts read naturally
+  // ("the ECG card layout") instead of with the per-person possessive.
+  const isLayout = actionPanel.displayName != null
+  const slotLabel = actionPanel.displayName ?? actionPanel.name
 
   // Recipient line. For variant rounds this collapses to the chosen
   // direction name; for shared proofs (no per-recipient slot) it
   // collapses entirely so the eyebrow + helper copy carry the
-  // context. Otherwise renders "For <Name>'s card".
+  // context. Layouts read "Layout: <title>". Otherwise "For <Name>'s card".
   const recipientLine = isVariantRound
     ? actionPanel.roundVariant?.displayName ?? null
     : isShared
       ? null
-      : `For ${actionPanel.name}'s card`
+      : isLayout
+        ? `Layout: ${slotLabel}`
+        : `For ${actionPanel.name}'s card`
 
   // Header eyebrow: "Choose this direction" / "Request changes" /
   // "Approve". Variant rounds always sit on the request_changes type
@@ -264,7 +276,9 @@ export function ActionPanel({
     : isApprove
       ? isShared
         ? 'Approve this proof'
-        : `Approve ${actionPanel.name}'s design`
+        : isLayout
+          ? `Approve the ${slotLabel} layout`
+          : `Approve ${actionPanel.name}'s design`
       : 'Send change request'
 
   // Approve-only Confirm gating — disclaimer tick (when configured),
@@ -288,7 +302,9 @@ export function ActionPanel({
     : isApprove
       ? isShared
         ? 'Approve this proof'
-        : `Approve ${actionPanel.name}'s design`
+        : isLayout
+          ? `Approve the ${slotLabel} layout`
+          : `Approve ${actionPanel.name}'s design`
       : 'Request changes'
 
   // Approve uses the design system's ButtonInk (ink fill) as the

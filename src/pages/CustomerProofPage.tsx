@@ -178,6 +178,10 @@ export default function CustomerProofPage() {
         name: string
         type: 'approve' | 'request_changes'
         roundVariant?: { id: string; displayName: string } | null
+        // Human label for the slot when `name` isn't display-friendly.
+        // Set for Set (collection) layouts, where `name` is a layout id
+        // (UUID) and `displayName` carries the layout title.
+        displayName?: string
       }
     | null
   >(null)
@@ -426,15 +430,22 @@ export default function CustomerProofPage() {
     versionId: string,
     recipientName: string,
     type: 'approve' | 'request_changes',
+    // Human label for a collection layout slot (recipientName is the
+    // layout id; displayName is the layout title). Omitted for named
+    // recipients and shared bands.
+    displayName?: string,
   ) {
     actionPanelTriggerRef.current = document.activeElement as HTMLElement | null
-    setActionPanel({ versionId, name: recipientName, type })
+    setActionPanel({ versionId, name: recipientName, type, displayName })
     // Pre-fill actor_name with the recipient's name when it's a
     // named band — the actor is most often the recipient
     // themselves, with the field still editable in case someone's
     // approving on their behalf. Shared bands open empty since
-    // there's no recipient to default to.
-    setActionName(recipientName === SHARED_APPROVAL_KEY ? '' : recipientName)
+    // there's no recipient to default to. Collection layout slots also
+    // open empty — the slot key is a layout id, not a person's name.
+    setActionName(
+      recipientName === SHARED_APPROVAL_KEY || displayName != null ? '' : recipientName,
+    )
     setActionComment('')
     setActionError(null)
     // Per-action ack: every Approve open starts with the tick
@@ -1072,14 +1083,21 @@ export default function CustomerProofPage() {
   // inside the Approve modal as a per-action tick box gating
   // Confirm — see the modal block at the bottom of this file.
   // Request changes stays ungated end-to-end.
-  function renderActionBand(name: string, opts?: { headerPillAbove?: boolean }): React.ReactNode {
+  function renderActionBand(
+    name: string,
+    opts?: { headerPillAbove?: boolean; displayName?: string },
+  ): React.ReactNode {
     if (!activeVersion) return null
     if (!activeVersion.approvals_enabled) return null
 
     const state = getBandState(name)
     const named = name !== SHARED_APPROVAL_KEY
-    const recipientLabel = named ? name : 'this proof'
-    const forSuffix = named ? ` for ${name}` : ''
+    // Human-readable label. For a collection layout, `name` is a layout
+    // id (UUID) and `displayName` carries the layout title — keep slot
+    // identity on `name` everywhere, but show `displayLabel` to the user.
+    const displayLabel = opts?.displayName ?? name
+    const recipientLabel = named ? displayLabel : 'this proof'
+    const forSuffix = named ? ` for ${displayLabel}` : ''
     const key = bandKey(activeVersion.id, name)
     const successMessage = successMessages[key] ?? null
 
@@ -1118,7 +1136,7 @@ export default function CustomerProofPage() {
     if (state.kind === 'optimistic') {
       const approved = state.type === 'approve'
       const pillColour: PillColour = approved ? 'in-stock' : 'brand'
-      const label = (approved ? 'Approved' : 'Changes requested') + (named ? ` for ${name}` : '')
+      const label = (approved ? 'Approved' : 'Changes requested') + (named ? ` for ${displayLabel}` : '')
       return (
         <div
           role="status"
@@ -1240,7 +1258,11 @@ export default function CustomerProofPage() {
     ) {
       return null
     }
-    const approveLabel = `Approve ${recipientLabel}${named ? "'s design" : ''}`
+    // Collection layouts read "Approve ECG card" (no possessive); named
+    // recipients keep "Approve Alec's design"; shared keeps "Approve this proof".
+    const approveLabel = opts?.displayName
+      ? `Approve ${displayLabel}`
+      : `Approve ${recipientLabel}${named ? "'s design" : ''}`
     const showEarlierVersionWarning =
       !activeVersion.is_current && !proofIsApproved && latestVersion != null
     return (
@@ -1286,14 +1308,14 @@ export default function CustomerProofPage() {
             // sit side-by-side at sm+ and stack at <sm.
             <ButtonCoral
               icon={Send}
-              onClick={() => openActionPanel(activeVersion.id, name, 'request_changes')}
+              onClick={() => openActionPanel(activeVersion.id, name, 'request_changes', opts?.displayName)}
             >
               Request changes
             </ButtonCoral>
           )}
           <ButtonInk
             icon={Check}
-            onClick={() => openActionPanel(activeVersion.id, name, 'approve')}
+            onClick={() => openActionPanel(activeVersion.id, name, 'approve', opts?.displayName)}
           >
             {approveLabel}
           </ButtonInk>
@@ -1928,13 +1950,6 @@ export default function CustomerProofPage() {
         imagesByLayout.get(img.layout_id)!.push(img)
       }
     }
-    // Per-layout approval state. Rows are keyed name = layout id (text).
-    const approvedLayoutIds = new Set(
-      (activeVersion.approvals ?? [])
-        .filter((a) => a.state === 'approved')
-        .map((a) => a.name),
-    )
-
     // Running brand-colour index across all plates, in reading order.
     let colorIdx = 0
     return (
@@ -1965,7 +1980,6 @@ export default function CustomerProofPage() {
             const imgs = [...(imagesByLayout.get(layout.id) ?? [])].sort(
               (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
             )
-            const approved = approvedLayoutIds.has(layout.id)
             return (
               <div
                 key={layout.id}
@@ -2006,12 +2020,13 @@ export default function CustomerProofPage() {
                     />
                   ))}
                 </div>
+                {/* Per-layout approve-each band, keyed on the layout id
+                    (the slot identity the edge function + 000212
+                    finalisation use); the layout title is the display
+                    label. Reuses the standard per-recipient band, so the
+                    optimistic-update state machine works unchanged. */}
                 <div className="border-t border-line-soft px-5 py-4">
-                  {approved ? (
-                    <Pill colour="in-stock">Approved</Pill>
-                  ) : (
-                    <span className="eyebrow text-ink-mute">Awaiting approval</span>
-                  )}
+                  {renderActionBand(layout.id, { displayName: layout.title })}
                 </div>
               </div>
             )
@@ -3552,9 +3567,7 @@ export default function CustomerProofPage() {
               )
             }
           }}
-          hideRequestChanges={
-            actionPanel != null || isApproved || activeVersion?.shape === 'set_collection'
-          }
+          hideRequestChanges={actionPanel != null || isApproved}
           panelOpen={actionPanel != null}
           onCurrentSideChange={setDetailViewSide}
         />
