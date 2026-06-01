@@ -71,8 +71,13 @@ The flavour and the add-on:
   and is reached **only through the membership flavour**. It never appears on Recipients or on
   the Selection trunk.
 
-Different materials in a receive-all job (case 5) is a **guard**, not a shape: it prompts the
-designer to split the work into separate projects.
+A proof carries a single material, so several people who each need a different material can't
+share one proof — they are naturally separate projects, one proof per material. Case 5
+(several people, different materials) therefore routes to **Recipients** like any other named
+job; there is deliberately **no material question on the Recipients branch**, because that
+would tax the common single-material case for a split that the one-material-per-proof rule
+already forces. The same-material **guard** is needed only on the Set branch (Step 4), where
+several no-name layouts could otherwise be crammed onto one proof across materials.
 
 ### Case-to-shape map
 
@@ -82,7 +87,7 @@ designer to split the work into separate projects.
 | 2 | Cards for several people, same material | Recipients | many names |
 | 3 | Single design, project, no names | Set (single) | standard style |
 | 4 | Several designs, project, no names, same material | Set (collection) | per-layout tooling |
-| 5 | Several people, different materials | (guard) | split into separate projects |
+| 5 | Several people, different materials | Recipients | one proof per material — separate projects (no Recipients-branch guard) |
 | 6 | Membership card, no name | Set (single) | membership; personalisation optional |
 | 7 | Membership series (gold/silver/bronze) | Set (collection) | membership; personalisation optional |
 | 8 | Variants, same material, choose one | Selection | — |
@@ -268,8 +273,10 @@ authoritative, and pick the next migration number from the directory, never from
 - A **dedicated** field for Set layout titles (decision: do not reuse `names`).
 - `card_type` already exists and carries the membership flavour; `has_personalisation` already
   exists and is the personalisation flag. Both reused as-is; the wizard sets them.
-- The multi-material guard (Step 4) is UI-only; no schema needed. Case 5 produces separate
-  projects through the existing new-project flow.
+- The multi-material guard (Step 4) is UI-only; no schema needed, and it lives only on the Set
+  branch. Case 5 (several people, different materials) hits no guard — it is simply one
+  single-material Recipients proof per material, each created through the existing new-project
+  flow.
 - Any `public_*` view that is dropped and recreated must **re-state its grants** afterwards
   (`REVOKE SELECT ... FROM anon, public` and `GRANT SELECT ... TO authenticated`). This has
   bitten the repo before; the drop silently wipes grants with no error.
