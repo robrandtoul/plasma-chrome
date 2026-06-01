@@ -2520,15 +2520,19 @@ export default function CustomerProofPage() {
                       iff any image on the active version carries
                       side='back'; otherwise front only.
                       Pre-migration-000085 data with null sides reads
-                      as front only. */}
-                  <SpecRow
-                    label="Sides"
-                    value={
-                      (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
-                        ? 'Front and back'
-                        : 'Front only'
-                    }
-                  />
+                      as front only. Suppressed on a Set (collection):
+                      each layout carries its own images, so a single
+                      version-level "Sides" row is meaningless. */}
+                  {activeVersion.shape !== 'set_collection' && (
+                    <SpecRow
+                      label="Sides"
+                      value={
+                        (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
+                          ? 'Front and back'
+                          : 'Front only'
+                      }
+                    />
+                  )}
                   {lockedFinishVariant && (
                     <SpecRow label="Finish" value={lockedFinishVariant.display_name} />
                   )}
@@ -3414,6 +3418,41 @@ export default function CustomerProofPage() {
                     <p className="mt-1.5 text-[12px] text-ink-mute">
                       {activeVersion.names.length - 1} extra{' '}
                       {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
+                      {formatPrice(
+                        activeVersion.split_name_surcharge_snapshot,
+                        activeVersion.currency!,
+                      )}{' '}
+                      tooling
+                    </p>
+                  </div>
+                )}
+
+              {/* Per-layout tooling callout for a Set (collection) —
+                  wide-table block (3+ price columns). Mirrors the
+                  narrow-table copy added in step 4a; same (layouts − 1) ×
+                  per-item rate. Without this, a collection on a material
+                  with 3+ thicknesses showed no tooling line. */}
+              {activeVersion.shape === 'set_collection' &&
+                !activeVersion.custom_quote &&
+                activeVersion.layouts.length >= 2 &&
+                activeVersion.split_name_surcharge_snapshot != null &&
+                activeVersion.split_name_surcharge_snapshot > 0 && (
+                  <div className="order-8 lg:order-none rounded-[10px] bg-surface border border-line p-4 mt-4">
+                    <span className="eyebrow text-brand">Per-layout tooling</span>
+                    <p className="mt-2 text-[15px] leading-snug text-ink font-medium">
+                      Add{' '}
+                      <span className="num font-medium">
+                        {formatPrice(
+                          (activeVersion.layouts.length - 1) *
+                            activeVersion.split_name_surcharge_snapshot,
+                          activeVersion.currency!,
+                        )}
+                      </span>{' '}
+                      to the prices above
+                    </p>
+                    <p className="mt-1.5 text-[12px] text-ink-mute">
+                      {activeVersion.layouts.length - 1} extra{' '}
+                      {activeVersion.layouts.length - 1 === 1 ? 'layout' : 'layouts'} ×{' '}
                       {formatPrice(
                         activeVersion.split_name_surcharge_snapshot,
                         activeVersion.currency!,
