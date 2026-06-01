@@ -238,6 +238,45 @@ export function deriveAnswersFromShape(input: {
   return { ...base, scope: 'all', allocated: 'yes' }
 }
 
+// Seed the wizard from a loaded version, preferring the persisted shape
+// column (000210) over the flags. shape is authoritative for the
+// STRUCTURE (it's the only thing that tells set_single and set_collection
+// apart — flags can't), while has_personalisation / is_per_direction_pricing
+// fill in the sub-details. Falls back to the flags-only mapping when
+// shape is null (legacy rows the 000211 backfill didn't cover, e.g.
+// membership-with-tier-names). Used by both pages when loading an
+// existing version, fixing the bug where a collection mis-seeded as
+// set_single because the flags are identical.
+export function deriveAnswersFromVersion(input: {
+  shape: string | null
+  isVariantRound: boolean
+  isPerDirectionPricing: boolean
+  cardType: 'business' | 'membership'
+  hasPersonalisation: boolean
+}): WizardAnswers {
+  const base = { ...EMPTY_ANSWERS }
+  const style = input.hasPersonalisation ? ('membership' as const) : ('standard' as const)
+  const personalised = input.hasPersonalisation ? ('yes' as const) : ('no' as const)
+  switch (input.shape) {
+    case 'recipients':
+      return { ...base, scope: 'all', allocated: 'yes' }
+    case 'set_single':
+      return { ...base, scope: 'all', allocated: 'no', layouts: 'one', style, personalised }
+    case 'set_collection':
+      return { ...base, scope: 'all', allocated: 'no', layouts: 'several', sameMaterial: 'yes', style, personalised }
+    case 'selection':
+      return { ...base, scope: 'one', pickMaterial: input.isPerDirectionPricing ? 'different' : 'same' }
+    default:
+      // Null / unknown shape — fall back to the flags-only mapping.
+      return deriveAnswersFromShape({
+        isVariantRound: input.isVariantRound,
+        isPerDirectionPricing: input.isPerDirectionPricing,
+        cardType: input.cardType,
+        hasPersonalisation: input.hasPersonalisation,
+      })
+  }
+}
+
 // ── Presentational pieces ────────────────────────────────────────────────────
 
 type Option<V extends string> = { value: V; label: string; sub?: string }
