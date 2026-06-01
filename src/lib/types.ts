@@ -227,6 +227,26 @@ export interface PublicProofVersion {
   // section (gated on colour data presence) and the metal Thickness
   // guide (gated on material_code?.startsWith('metal_')).
   material_code: string | null
+  // ── Proof shape + layouts (migration 000210, Phase 2) ────────────────
+  // shape is the first-class proof-type-wizard resolution. Nullable —
+  // legacy rows backfilled in 000211, null falls back to flag-based
+  // rendering. layouts carries one entry per titled layout on a Set
+  // (collection), in sort order; empty array on every other shape.
+  // Per-layout images are the public_proof_version_images rows whose
+  // layout_id matches a layout's id; per-layout approvals are the
+  // proof_name_approvals rows whose name = layout id (text).
+  shape: 'recipients' | 'set_single' | 'set_collection' | 'selection' | null
+  layouts: ProofLayout[]
+}
+
+// One titled layout on a Set (collection) proof_version (migration
+// 000210). title is the customer-facing heading; id is the stable
+// identity that per-layout images (proof_version_images.layout_id) and
+// per-layout approvals (proof_name_approvals.name) key on.
+export interface ProofLayout {
+  id: string
+  title: string
+  sort_order: number
 }
 
 // One parallel design alternative on a variant-round proof_version

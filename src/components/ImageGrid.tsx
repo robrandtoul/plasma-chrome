@@ -33,6 +33,11 @@ export interface GridImage {
   // parent version has is_variant_round = true. Null on every image
   // of a standard version.
   round_variant_id?: string | null
+  // Migration 000210: layout a customer-page image belongs to on a Set
+  // (collection) version. customer-proof-images returns the row verbatim
+  // (select *), so this is already populated when the parent version is
+  // shape='set_collection'. Null on every other shape's images.
+  layout_id?: string | null
   // public_proof_version_images exposes sort_order (000014); the
   // edge function passes it through. Optional because not every
   // call site reads it — the customer-page variant-round render
