@@ -2000,7 +2000,11 @@ export default function CustomerProofPage() {
                     {imgs.length} {imgs.length === 1 ? 'image' : 'images'}
                   </span>
                 </div>
-                <div className="space-y-5 p-5">
+                {/* A lone image fills the width; two or more pair side
+                    by side from sm up (stacked on narrow mobile) and 3+
+                    wrap into the two-column grid — matching the dual
+                    front/back layout used in the standard sections. */}
+                <div className={imgs.length > 1 ? 'grid gap-5 p-5 sm:grid-cols-2' : 'p-5'}>
                   {imgs.map((img, idx) => (
                     <PlateCard
                       key={img.id}
