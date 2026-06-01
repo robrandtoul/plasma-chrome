@@ -6324,6 +6324,9 @@ function missingFieldItems(
   if (!validations.variantsCount) items.push('Add two or more variant directions')
   if (!validations.variantsLabels) items.push('Name each variant direction')
   if (!validations.variantsImages) items.push('Add at least one image per variant direction')
+  if (!validations.layoutsCount) items.push('Add at least 2 layouts')
+  if (!validations.layoutsTitles) items.push('Give every layout a title')
+  if (!validations.layoutsImages) items.push('Add at least one image to every layout')
   return items
 }
 
