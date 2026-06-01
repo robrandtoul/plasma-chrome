@@ -636,8 +636,8 @@ export function ProofShapeWizard({
                         disabled={disabled}
                         onSelect={(v: 'yes' | 'no') => set({ personalised: v })}
                         options={[
-                          { value: 'yes', label: 'Yes, every card is unique.' },
-                          { value: 'no', label: 'No, every card is identical.' },
+                          { value: 'yes', label: 'Yes, every card is unique' },
+                          { value: 'no', label: 'No, every card is identical' },
                         ]}
                       />
                     ) : (
