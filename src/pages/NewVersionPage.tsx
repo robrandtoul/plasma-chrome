@@ -5376,6 +5376,13 @@ export default function NewVersionPage() {
           )}
           </>
           )}
+          </div>
+          {/* Right column — the image/drop surface for whichever shape
+              is active (Variants editor / Layouts editor / standard
+              Proof images), then QR (standard only), then Change notes.
+              The three editing surfaces are mutually exclusive by shape,
+              so exactly one renders. */}
+          <div className="space-y-6">
 
           {/* ── Variant editor (build-plan step 5C) ──────────────────
               Variant rounds replace the per-recipient image bucket
@@ -5613,8 +5620,6 @@ export default function NewVersionPage() {
 
               Hidden on variant rounds (build-plan step 5) — the
               variant editor above handles image attribution there. */}
-          </div>
-          <div className="space-y-6">
           {!isVariantRound && !isSetCollectionShape && (
           <section ref={imageSectionRef} className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">
