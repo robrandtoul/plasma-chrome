@@ -79,7 +79,7 @@ export default function LoginPage() {
           and the stat row hidden — the form below is what matters
           on mobile, so the brand panel just sets the tone. */}
       <div
-        className="relative overflow-hidden text-white bg-ink flex flex-col gap-8 px-8 py-12 min-[880px]:p-16 min-h-[320px] min-[880px]:min-h-0"
+        className="relative overflow-hidden text-white bg-ink flex flex-col gap-8 px-8 pt-[calc(env(safe-area-inset-top)+3rem)] pb-12 min-[880px]:px-16 min-[880px]:py-16 min-h-[320px] min-[880px]:min-h-0"
       >
         {/* Full-colour Plasma logo lockup — the same white-text PNG
             the customer-facing proof header uses on its ink banner. */}
