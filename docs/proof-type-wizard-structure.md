@@ -23,11 +23,17 @@ these:
 | Set (collection) | `cardType=membership`, empty names, `shape=set_collection` |
 | Selection | `isVariantRound=true` (+ `isPerDirectionPricing=true` on different materials) |
 
-Flavour and add-on, on the **Set** branch only, never on Selection:
+Add-on, on the **Set** branch only, never on Selection:
 
-- **Card style** business vs membership. Styling does not change price.
-- **Personalisation** (per-card unique data). Reachable *only* through the membership style,
-  *only* when `materials.supports_personalisation` is true. It affects price.
+- **Personalisation** (per-card unique data). It is the single material-gated Set question:
+  shown once a material is chosen, only when `materials.supports_personalisation` is true. It
+  affects price. (The earlier "business vs membership card style" step was removed, see §6: a
+  non-personalised membership card and a business card resolved to an identical proof, so the
+  step asked a question that changed nothing.)
+
+A **kept-together multi-material Set (collection)** forces a custom quote: the single-material
+price grid can't price a set that spans materials, so the customer page hides pricing and the
+designer quotes manually. This reuses the existing `custom_quote` mechanism, no schema change.
 
 Reserved vocabulary, used verbatim: **layout** = one design, **set** = the whole proof,
 **batch** = a quantity of identical cards, **allocated** = tied to a named person,
@@ -85,19 +91,18 @@ Q1  Which best describes this proof?
 
 Set branch
   Q2  How many layouts are in this set?
-  ├─ One layout .................................. SET (single) → Q4
+  ├─ One layout .................................. SET (single)
   └─ Several layouts ............................. → Q3
       Q3  Are all the layouts on the same material?
-      ├─ Yes, one material ....................... SET (collection) → Q4
+      ├─ Yes, one material ....................... SET (collection)
       └─ No, different materials ................. → split / keep guard
             [Split into separate projects] ....... terminal guidance, not saveable
-            [Keep together anyway] ............... SET (collection) → Q4
-  Q4  What style of card is this?               (asked for every Set)
-  ├─ Business card ............................... personalisation not offered
-  └─ Membership card ............................. → Q5 (if material supports it)
-      Q5  Does every card carry its own unique details?   (membership + material supports)
-      ├─ Yes, every card is unique ............... personalisation ON
-      └─ No, every card is identical ............. personalisation OFF
+            [Keep together anyway] ............... SET (collection), forces a custom quote
+  Personalisation  (the single Set add-on; material-gated)
+  ├─ material supports personalisation → ask "Does every card carry its own unique details?"
+  │     ├─ Yes, every card is unique ............. personalisation ON
+  │     └─ No, every card is identical ........... personalisation OFF
+  └─ material doesn't support it (or none chosen yet) → not asked, personalisation OFF
 
 Selection branch
   QS  Are the alternatives all on the same material?
@@ -105,20 +110,26 @@ Selection branch
   └─ Different materials ......................... SELECTION (per-direction pricing)
 ```
 
+There is no longer a card-style step. Both Set shapes emit `cardType=membership` regardless,
+so a "business vs membership" question changed nothing except whether personalisation was
+offered; personalisation is now asked directly (material-gated), one step earlier in every
+membership-style job.
+
 ### Question count per case (lower is better)
 
-| Case | Shape | Questions | Previous |
-|------|-------|-----------|----------|
+| Case | Shape | Questions | Original 6-step |
+|------|-------|-----------|-----------------|
 | Card per person | Recipients | **1** | 2 |
-| Alternatives, same material | Selection | **2** | 2 |
-| Alternatives, different materials | Selection (pdp) | **2** | 2 |
-| One shared design, business | Set (single) | **3** | 4 |
-| One shared design, membership, +/- personalisation | Set (single) | 3–4 | 5 |
-| Several shared designs, same material, business | Set (collection) | 4 | 5 |
-| Several shared designs, membership, personalised | Set (collection) | 5–6 | 6 |
+| Alternatives (same or different material) | Selection | **2** | 2 |
+| One shared design, material without personalisation | Set (single) | **2** | 4 |
+| One shared design, personalised | Set (single) | **3** | 5 |
+| Several shared designs, same material | Set (collection) | **3** | 5 |
+| Several shared designs, same material, personalised | Set (collection) | **4** | 6 |
+| Several shared designs, kept together (different materials) | Set (collection) | **4**, forced custom quote | — |
 
-Recipients halves (2 → 1). Selection holds at 2. Every Set path loses a question because the
-old Step 1 (all vs one) and Step 2 (allocated) are now one question.
+Recipients is one click. Selection is two. Every Set path is shorter again now the card-style
+step is gone: a one-layout job on a material that doesn't offer personalisation is just two
+questions (which best describes this, then how many layouts).
 
 ---
 
@@ -139,8 +150,8 @@ old Step 1 (all vs one) and Step 2 (allocated) are now one question.
 
 The note is the one piece of routing guidance carried over from the old Step 2: it keeps a
 numbered / membership run (one shared template, a name or number as variable data) out of
-Recipients. It deliberately does not use the word *personalisation* — that word only appears at
-Q5.
+Recipients. It deliberately does not use the word *personalisation*; that word only appears at
+the personalisation step.
 
 ### Set branch
 
@@ -172,23 +183,22 @@ Choosing "different materials" reveals the guard:
 > Create each material as its own project from the new-project screen, so each one prices and
 > proofs correctly. This proof can't continue as a single set.
 
-**Q4 — What style of card is this?** *(asked for every Set)*
+"Keep together anyway" proceeds as a Set (collection), but because it spans materials the
+single-material grid can't price it, so the version is forced onto a custom quote: the
+PricingDisplayField locks to Custom (with a one-line reason) and the customer page hides
+pricing. See §6 for the wiring.
 
-- **Business card** — A standard card design. Every card is identical.
-- **Membership card** — A membership-style card. You can switch on personalisation so each card
-  carries its own details.
-
-**Q5 — Does every card carry its own unique details, such as a member name, sequential number,
-or unique QR code?** *(membership style only, and only once a material that supports
-personalisation is chosen in Specification)*
+**Personalisation — Does every card carry its own unique details, such as a member name,
+sequential number, or unique QR code?** *(the single Set add-on; asked once a material is chosen
+in Specification, and only if that material supports personalisation)*
 
 - **Yes, every card is unique** — Priced per card, with a minimum charge, on top of the base
   price.
 - **No, every card is identical**
 
-If the style is Membership but no material has been chosen yet, the step shows: *"Choose a
-material in Specification below to set personalisation."* If the chosen material does not support
-personalisation, Q5 is never shown and personalisation stays off.
+Before a material is chosen the step shows: *"Choose a material in Specification below to set
+personalisation."* If the chosen material does not support personalisation, the question is never
+shown and personalisation stays off.
 
 ### Selection branch
 
@@ -203,11 +213,10 @@ personalisation, Q5 is never shown and personalisation stays off.
 Shown in the running-resolution banner. Reworded to drop *produced*:
 
 - Recipients → "A separate card for each named person"
-- Set single, business → "One shared design, no individual names"
-- Set single, membership → "One membership card" (+ ", personalised per card")
-- Set collection, business → "Several shared designs, all kept together"
-- Set collection, membership → "Several membership cards, all kept together" (+ ", personalised
-  per card")
+- Set single, not personalised → "One shared design, no individual names"
+- Set single, personalised → "One shared design, personalised per card"
+- Set collection, not personalised → "Several shared designs, all kept together"
+- Set collection, personalised → "Several shared designs, all kept together, personalised per card"
 - Selection → "Alternative designs for the customer to choose from"
 - Selection (pdp) → "Alternative designs on different materials, customer chooses one"
 
@@ -251,23 +260,35 @@ Shown in the running-resolution banner. Reworded to drop *produced*:
 
 - The wizard stays a single-page progressive-disclosure, controlled component. It owns no
   business state; it calls `onChange` with the next answers and the host page resolves the shape.
-- Internal answer keys were restructured (`family` replaces `scope` + `allocated`;
-  `selectionMaterial` replaces `pickMaterial`; `style` is now `business | membership`). The two
-  version pages treat `WizardAnswers` as opaque and never read individual keys, so this is
+- The `style` answer key (business vs membership) was removed along with its question. The
+  ResolvedShape `set-single` / `set-collection` variants no longer carry `style`, and
+  `set-collection` gained a `multiMaterial` flag (true on the keep-together path). The two
+  version pages treat `WizardAnswers` as opaque and never read individual keys, so this stays
   contained to `ProofShapeWizard.tsx`.
-- The exported resolvers are unchanged in signature and output: `resolveShape`,
-  `deriveFormState`, `dbShape`, `resolvedShapeLabel`, `deriveAnswersFromVersion`,
-  `deriveAnswersFromShape`, `isWizardResolved`, `EMPTY_ANSWERS`, `WizardAnswers`. Each shape
-  still emits the same `{shape, cardType, isVariantRound, isPerDirectionPricing, personalisation}`.
+- The exported resolvers keep their signatures. `deriveFormState` gains one output field,
+  `forceCustomQuote` (true only for a kept-together multi-material collection); every other
+  emitted value is unchanged, and Recipients / Selection / Set single / Set collection emit the
+  same `{shape, cardType, isVariantRound, isPerDirectionPricing, personalisation}` as before.
+  `resolveShape`, `dbShape`, `resolvedShapeLabel`, `deriveAnswersFromVersion`,
+  `deriveAnswersFromShape`, `isWizardResolved`, `EMPTY_ANSWERS`, `WizardAnswers` are otherwise
+  as before.
+- Keep-together custom quote (NewVersionPage): `deriveFormState(...).forceCustomQuote` drives
+  two things, both reusing the existing `custom_quote` mechanism. `handleWizardChange` sets the
+  pricing display to Custom when it is true, and the PricingDisplayField is passed
+  `standardDisabled` + a reason so the grid can't be re-selected. Save then writes
+  `custom_quote = true` through the existing `isCustomQuote` path, and the customer page hides
+  pricing. No schema change.
 - `deriveAnswersFromVersion` still reconstructs answers for the read-only Edit view and the
   seed-from-prior path. A variant-round prior is still seeded by NewVersionPage as Set (single)
-  with `cardType=membership` (it passes `shape: 'set_single'`); the carry picker is untouched.
+  with `cardType=membership` (it passes `shape: 'set_single'`); the carry picker is untouched. A
+  set_collection seeds as same-material, since the keep-together override is UI-only, not stored.
 - The "Change" / unresolve path still clears flags via the host page's plain setters
   (`deriveFormState` returns null → NewVersionPage's plain-setter branch). The wizard never
   triggers `handleCardTypeChange` or a `window.confirm` itself, so the renderer-freeze fix holds.
-- Personalisation stays material-gated: Q5 only appears on membership style once a material that
-  supports personalisation is chosen, so personalisation can never be reached outside
-  membership + `supports_personalisation`.
+- Personalisation stays material-gated: the question only appears once a material that supports
+  personalisation is chosen, so personalisation can never be reached outside
+  `supports_personalisation`. With the style step gone it is offered for any Set on a supporting
+  material, not only a "membership-styled" one.
 - EditVersionPage renders the wizard `disabled` (read-only); the shape is locked at creation.
 
 ---
@@ -291,31 +312,30 @@ resolves to the option it sits on.
 
 **Q1 — which best describes this proof?**
 
-- *A card for each person* — "A 12-partner law firm wants a card for each partner, each showing
-  that partner's own name, title, and direct line, proofed one by one." → per-named-person,
-  individually proofed = **Recipients**. (Small count, own details, proofed one by one, so not a
-  shared/personalised run.)
-- *A shared set (no names)* — "A gym wants 500 membership cards carrying just the club logo and a
-  call to join, with no individual names, every one the same." → no names, customer wants them
-  all = **Set** branch.
+- *A card for each person* — "A law firm wants a batch of cards for each partner, each showing
+  that partner's own name, title, and direct line." → per-named-person, individually proofed =
+  **Recipients**.
+- *A shared set (no names)* — "A clinic's set of reference cards, ECG, blood pressure, dosage. A
+  gym's identical membership cards. Neither is tied to a named person and the customer intends to
+  order every card shown, so both belong here." → no names, customer keeps them all = **Set**
+  branch. (The "intends to order" wording is Rob's approved exception to the no-commitment rule.)
 - *Alternatives to choose from* — "A startup wants to see three different design directions for
   their card, then pick the one they like best and set the rest aside." → pick one, rest dropped
   = **Selection** branch.
 
 **Q2 — how many layouts are in this set?**
 
-- *One layout* — "A coffee shop wants a single loyalty card design with no names. Shown in three
-  foil colours it is still one design, so one layout." → one design = **Set (single)**. (Doubles
-  as the finish-variant clarifier: finishes do not multiply layouts.)
+- *One layout* — "A coffee shop wants a single loyalty card design, the same card for every
+  customer. One design, so one layout." → one design = **Set (single)**.
 - *Several layouts* — "A clinic wants four different information cards, for booking, aftercare,
   opening hours, and contact, all kept together as one set." → several different designs, kept
   together → Q3.
 
 **Q3 — are all the layouts on the same material?**
 
-- *Yes, one material* — "A members club wants gold, silver, and bronze tier cards, all three on
-  the same brushed steel, kept together as one set." → several layouts, one material =
-  **Set (collection)**. (Tiers differ by design, not by stock.)
+- *Yes, one material* — "The clinic's four reference cards, booking, aftercare, hours, and
+  contact, all on the same brushed steel. Different designs, one material, so they stay together
+  and are priced the same." → several layouts, one material = **Set (collection)**.
 - *No, different materials* — "A restaurant group wants a walnut menu card, an acrylic table
   card, and a copper loyalty card, each on its own material." → several layouts on different
   materials → the split / keep guard.
@@ -326,27 +346,17 @@ resolves to the option it sits on.
   differently, so you split them into three projects, one per material, each priced correctly." →
   the recommended route; ends as separate single-material projects (not a saveable single set).
 - *Keep together anyway* — "The customer wants to see the walnut and acrylic cards together as one
-  set, so you keep them in one proof even though each material would normally be its own project."
-  → the override; proceeds as **Set (collection)**.
+  set, so you keep them in one proof. The page won't show pricing, so you'll quote it manually." →
+  the override; proceeds as **Set (collection)** and forces a custom quote.
 
-**Q4 — what style of card is this?**
-
-- *Business card* — "An estate agent wants a stack of standard cards showing the branch address
-  and phone number, with no individual names and nothing changing from card to card." → a
-  standard no-name card, no personalisation offered.
-- *Membership card* — "A wine club wants a membership-style card with their crest and a tier band,
-  not a standard business card. This style is the one that lets you switch on personalisation." →
-  membership style, the gateway to Q5.
-
-**Q5 — does every card carry its own unique details?**
+**Personalisation — does every card carry its own unique details?**
 
 - *Yes, every card is unique* — "A members club wants each card to carry the member's name, a
-  sequential number, and a unique QR code, so no two cards are the same." → membership + per-card
-  data = **personalisation on**. (One template plus a data rule, not a card proofed per person, so
-  this is Set, never Recipients.)
-- *No, every card is identical* — "A festival wants 2,000 membership-style passes all carrying
-  exactly the same design, with no member names or numbers." → membership styling, no per-card
-  data = **personalisation off**.
+  sequential number, and a unique QR code, so no two cards are the same." → per-card data =
+  **personalisation on**. (One template plus a data rule, not a card proofed per person, so this
+  is Set, never Recipients.)
+- *No, every card is identical* — "A festival wants 2,000 identical passes, all the same design,
+  with no member names or numbers." → no per-card data = **personalisation off**.
 
 **Selection QS — are the alternatives all on the same material?**
 
@@ -354,9 +364,9 @@ resolves to the option it sits on.
   same matte black metal, then pick the one they prefer." → alternatives on one material =
   **Selection**.
 - *Different materials* — "A client wants to see their card on walnut next to the same design on
-  brushed steel, then pick one and set the other aside. Each material is priced on its own." →
-  alternatives on different materials = **Selection (per-direction pricing)**. (Pick-one-and-drop,
-  so it is Selection, not a finish/material option dimension on one design.)
+  brushed steel, then pick one and set the other aside. The page won't show pricing, so you'll
+  quote each option manually." → alternatives on different materials = **Selection (per-direction
+  pricing)**. (Pick-one-and-drop, so it is Selection, not a finish/material option dimension.)
 
 ### Affordance behaviour
 

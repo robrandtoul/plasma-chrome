@@ -2802,6 +2802,11 @@ export default function NewVersionPage() {
       if (enteringSet) setNames([])
     }
     setHasPersonalisation(fs.hasPersonalisation)
+    // A kept-together multi-material Set (collection) can't be priced by
+    // the single-material grid, so force the version onto a custom quote.
+    // The PricingDisplayField is also locked to Custom while this path is
+    // active (standardDisabled below), so this won't fight a switch-back.
+    if (fs.forceCustomQuote && pricingDisplay !== 'custom') setPricingDisplay('custom')
   }
 
   function toggleVariant(variantId: string) {
@@ -4291,6 +4296,11 @@ export default function NewVersionPage() {
   // Set (collection): images come from the per-layout editor, not the
   // standard slot grid, and the layout-specific validations below apply.
   const isSetCollectionShape = wizardShape?.kind === 'set-collection'
+  // A kept-together multi-material collection forces a custom quote (the
+  // single-material grid can't price it). Surfaced via deriveFormState and
+  // applied by locking the PricingDisplayField to Custom (below) and by
+  // setPricingDisplay('custom') in handleWizardChange.
+  const wizardForcesCustomQuote = deriveFormState(wizardShape)?.forceCustomQuote ?? false
 
   // Set (collection) validations: 2+ layouts, each with a non-empty
   // title and at least one image. Short-circuit to true on every other
@@ -4943,6 +4953,12 @@ export default function NewVersionPage() {
                   invalid={shouldHighlight('pricingDisplay')}
                   forwardRef={pricingDisplayRef}
                   tone={chipTone(carry.pricingDisplay.isCarried, carry.pricingDisplay.isEdited)}
+                  standardDisabled={wizardForcesCustomQuote}
+                  disabledReason={
+                    wizardForcesCustomQuote
+                      ? "This set spans more than one material, so the price grid can't price it. The customer page hides pricing and you quote it manually."
+                      : undefined
+                  }
                 />
               </div>
             </div>
