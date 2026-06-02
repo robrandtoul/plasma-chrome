@@ -2775,9 +2775,25 @@ export default function NewVersionPage() {
       setLayoutRows([makeEmptyLayoutRow(), makeEmptyLayoutRow()])
     }
 
-    const fs =
-      deriveFormState(shape) ??
-      { isVariantRound: false, isPerDirectionPricing: false, cardType: 'business' as const, hasPersonalisation: false }
+    const fs = deriveFormState(shape)
+    if (!fs) {
+      // Unresolved — a wizard step was reopened (e.g. "Change" on
+      // Step 1). Clear the wizard-derived flags with PLAIN setters; do
+      // NOT route the card-type reset through handleCardTypeChange. That
+      // is a user-intent handler with a destructive-image window.confirm
+      // + cleanup, and firing it as a side effect of reopening a step
+      // popped a spurious confirm (and froze the page) on
+      // membership-cardType priors (set_single / set_collection, and —
+      // since cd924fa — variant-round continuations). Save is gated on
+      // wizardResolved, so a plain reset is sufficient; the resolved
+      // branch below re-runs handleCardTypeChange when the designer
+      // re-answers and commits a real shape.
+      if (isVariantRound) applyVariantRoundMode(false)
+      setIsPerDirectionPricing(false)
+      if (cardType !== 'business') setCardType('business')
+      setHasPersonalisation(false)
+      return
+    }
     if (fs.isVariantRound !== isVariantRound) applyVariantRoundMode(fs.isVariantRound)
     setIsPerDirectionPricing(fs.isPerDirectionPricing)
     if (fs.cardType !== cardType) {
