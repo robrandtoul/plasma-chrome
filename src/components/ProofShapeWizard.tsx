@@ -1,13 +1,25 @@
 // ProofShapeWizard — the guided proof-type chooser that replaces the
 // old "Standard proof vs Variant round" toggle at the top of the
-// version form (spec: docs/proof-type-wizard-spec.md, section 4).
+// version form (structure: docs/proof-type-wizard-structure.md, which
+// reworks the question script in docs/proof-type-wizard-spec.md §4).
 //
 // It is a SINGLE-PAGE PROGRESSIVE-DISCLOSURE wizard, not a paged
 // Next/Back flow: only the first unanswered question is shown open;
 // answered questions collapse to a compact row with a "Change"
 // control; reopening a question via "Change" clears that answer and
-// every answer after it. Changing the first question resets the
-// whole trunk.
+// every answer after it.
+//
+// STRUCTURE (see the structure doc for the rationale). The first
+// question is a single three-way that maps 1:1 onto the three shapes,
+// phrased by the customer's RELATIONSHIP to the artwork rather than by
+// counting it:
+//   Q1  Which best describes this proof?
+//       • A card for each person   → Recipients      (resolves in one question)
+//       • A shared set (no names)  → Set branch (Q2…)
+//       • Alternatives to choose   → Selection branch (QS)
+// Counting only happens on the Set branch (Q2 "how many layouts"), with
+// "layout" defined on the spot so a finish variant of one design can't
+// be miscounted as several.
 //
 // The wizard is a CONTROLLED component. It owns no business state —
 // the host page passes the current `answers`, gets `onChange` back,
@@ -30,69 +42,71 @@ import { useId, type ReactNode } from 'react'
 
 // ── Answer model ────────────────────────────────────────────────────────────
 // One field per question in the script. null = not yet answered. The
-// two trunks (receive-all vs pick-one) share this object; only the
-// fields relevant to the chosen trunk are ever populated.
+// two branches (Set vs Selection) share this object; only the fields
+// relevant to the chosen branch are ever populated. The host pages
+// treat this type as opaque (they never read individual keys), so the
+// key names are an internal concern of this module.
 export type WizardAnswers = {
-  // Step 1 (always): ordering all vs picking one.
-  scope: 'all' | 'one' | null
-  // Receive-all Step 2: is each batch allocated to a named person?
-  allocated: 'yes' | 'no' | null
-  // Receive-all Step 3: how many layouts in this set?
+  // Q1 (always): the structural family. Merges the old scope (all/one)
+  // and allocated (yes/no) questions, since a pick-one job is never
+  // per-named-person — the 2×2 has one empty cell, leaving three options.
+  family: 'recipients' | 'set' | 'selection' | null
+  // Set Q2: how many layouts in this set?
   layouts: 'one' | 'several' | null
-  // Receive-all Step 4 (only when several layouts): same material?
+  // Set Q3 (only when several layouts): same material guard.
   sameMaterial: 'yes' | 'no' | null
-  // Receive-all Step 4 follow-up (only when different materials):
-  // split into separate projects, or keep together anyway.
+  // Set Q3 follow-up (only when different materials): split into
+  // separate projects, or keep together anyway.
   multiMaterialChoice: 'split' | 'keep' | null
-  // Receive-all Step 5 (Set branch): card style.
-  style: 'standard' | 'membership' | null
-  // Receive-all Step 6 (membership + material supports it):
-  // personalisation on/off.
+  // Set Q4: card style. Business vs membership; membership is the gate
+  // to personalisation. Both styles still emit cardType='membership'
+  // in the Phase-1 schema (see deriveFormState) — style only controls
+  // whether Q5 is offered and how the resolution reads.
+  style: 'business' | 'membership' | null
+  // Set Q5 (membership style + material supports it): personalisation.
   personalised: 'yes' | 'no' | null
-  // Pick-one Step 2: same material or different.
-  pickMaterial: 'same' | 'different' | null
+  // Selection QS: same material or different.
+  selectionMaterial: 'same' | 'different' | null
 }
 
 export const EMPTY_ANSWERS: WizardAnswers = {
-  scope: null,
-  allocated: null,
+  family: null,
   layouts: null,
   sameMaterial: null,
   multiMaterialChoice: null,
   style: null,
   personalised: null,
-  pickMaterial: null,
+  selectionMaterial: null,
 }
 
 // ── Resolved shape ────────────────────────────────────────────────────────────
 export type ResolvedShape =
   | { kind: 'recipients' }
-  | { kind: 'set-single'; style: 'standard' | 'membership'; personalised: boolean }
-  | { kind: 'set-collection'; style: 'standard' | 'membership'; personalised: boolean }
+  | { kind: 'set-single'; style: 'business' | 'membership'; personalised: boolean }
+  | { kind: 'set-collection'; style: 'business' | 'membership'; personalised: boolean }
   | { kind: 'selection'; perDirection: boolean }
-  | { kind: 'split-guard' } // Step 4 "split" chosen — deliberately not a saveable shape
+  | { kind: 'split-guard' } // Q3 "split" chosen — deliberately not a saveable shape
 
 // Map answers → resolved shape, or null while the path is incomplete.
-// `materialSupportsPersonalisation` and `materialChosen` gate Step 6:
+// `materialSupportsPersonalisation` and `materialChosen` gate Q5:
 // a membership Set on a material that supports personalisation is only
-// "resolved" once Step 6 is answered; on a material that does not
-// support it, Step 6 is skipped and personalisation is forced off.
+// "resolved" once Q5 is answered; on a material that does not support
+// it, Q5 is skipped and personalisation is forced off.
 export function resolveShape(
   a: WizardAnswers,
   opts: { materialChosen: boolean; materialSupportsPersonalisation: boolean },
 ): ResolvedShape | null {
-  if (a.scope === 'one') {
-    if (a.pickMaterial === 'same') return { kind: 'selection', perDirection: false }
-    if (a.pickMaterial === 'different') return { kind: 'selection', perDirection: true }
+  if (a.family === 'recipients') return { kind: 'recipients' }
+
+  if (a.family === 'selection') {
+    if (a.selectionMaterial === 'same') return { kind: 'selection', perDirection: false }
+    if (a.selectionMaterial === 'different') return { kind: 'selection', perDirection: true }
     return null
   }
-  if (a.scope !== 'all') return null
 
-  // Receive-all trunk.
-  if (a.allocated === 'yes') return { kind: 'recipients' }
-  if (a.allocated !== 'no') return null
+  if (a.family !== 'set') return null
 
-  // Not allocated → Set branch. Determine single vs collection.
+  // Set branch. Determine single vs collection.
   let collection: boolean
   if (a.layouts === 'one') {
     collection = false
@@ -108,20 +122,20 @@ export function resolveShape(
     return null
   }
 
-  // Step 5 — card style.
+  // Q4 — card style.
   if (a.style == null) return null
 
-  // Step 6 — personalisation, only on membership style.
+  // Q5 — personalisation, only on membership style.
   let personalised = false
   if (a.style === 'membership') {
     if (opts.materialChosen && opts.materialSupportsPersonalisation) {
-      // Step 6 is required to resolve.
+      // Q5 is required to resolve.
       if (a.personalised === 'yes') personalised = true
       else if (a.personalised === 'no') personalised = false
       else return null
     } else {
       // Material not chosen yet, or doesn't support personalisation —
-      // Step 6 is never shown and personalisation stays off.
+      // Q5 is never shown and personalisation stays off.
       personalised = false
     }
   }
@@ -150,7 +164,7 @@ export function deriveFormState(shape: ResolvedShape | null): FormModeState | nu
     case 'set-single':
     case 'set-collection':
       // The no-name shared-design shape is membership-with-empty-names
-      // in the current schema. Standard vs membership STYLE both land
+      // in the current schema. Business vs membership STYLE both land
       // on cardType='membership' today; only personalisation differs.
       // The Phase 2 shape column will disambiguate them.
       return { isVariantRound: false, isPerDirectionPricing: false, cardType: 'membership', hasPersonalisation: shape.personalised }
@@ -185,7 +199,8 @@ export function dbShape(
 
 // Plain-English resolution for the running-resolution banner. Base
 // phrase per shape, with ", personalised per card" appended only on the
-// membership variants when personalisation is on.
+// membership variants when personalisation is on. Display only — no
+// commitment language ("produced" / "goes ahead") per the tone rules.
 export function resolvedShapeLabel(shape: ResolvedShape | null): string | null {
   if (!shape) return null
   switch (shape.kind) {
@@ -196,19 +211,19 @@ export function resolvedShapeLabel(shape: ResolvedShape | null): string | null {
       const membership = shape.style === 'membership'
       let base: string
       if (shape.kind === 'set-single') {
-        base = membership ? 'A single membership card' : 'A single business card design'
+        base = membership ? 'One membership card' : 'One shared design, no individual names'
       } else {
         base = membership
-          ? 'Several membership cards, all produced'
-          : 'Several business card designs, all produced'
+          ? 'Several membership cards, all kept together'
+          : 'Several shared designs, all kept together'
       }
       // Personalisation is membership-only; append the per-card note.
       return membership && shape.personalised ? `${base}, personalised per card` : base
     }
     case 'selection':
       return shape.perDirection
-        ? 'Design options on different materials, customer picks one'
-        : 'Design options for the customer to choose from'
+        ? 'Alternative designs on different materials, customer chooses one'
+        : 'Alternative designs for the customer to choose from'
     case 'split-guard':
       return null
   }
@@ -233,20 +248,19 @@ export function deriveAnswersFromShape(input: {
 }): WizardAnswers {
   const base = { ...EMPTY_ANSWERS }
   if (input.isVariantRound) {
-    return { ...base, scope: 'one', pickMaterial: input.isPerDirectionPricing ? 'different' : 'same' }
+    return { ...base, family: 'selection', selectionMaterial: input.isPerDirectionPricing ? 'different' : 'same' }
   }
   if (input.cardType === 'membership') {
     return {
       ...base,
-      scope: 'all',
-      allocated: 'no',
+      family: 'set',
       layouts: 'one',
-      style: input.hasPersonalisation ? 'membership' : 'standard',
+      style: input.hasPersonalisation ? 'membership' : 'business',
       personalised: input.hasPersonalisation ? 'yes' : 'no',
     }
   }
   // business + standard proof → Recipients.
-  return { ...base, scope: 'all', allocated: 'yes' }
+  return { ...base, family: 'recipients' }
 }
 
 // Seed the wizard from a loaded version, preferring the persisted shape
@@ -266,17 +280,21 @@ export function deriveAnswersFromVersion(input: {
   hasPersonalisation: boolean
 }): WizardAnswers {
   const base = { ...EMPTY_ANSWERS }
-  const style = input.hasPersonalisation ? ('membership' as const) : ('standard' as const)
+  // Style can only be inferred from personalisation in Phase 1 (the
+  // schema has no style column): a plain membership card and a plain
+  // business-style set both read as 'business' here. That's harmless —
+  // style only drives the label + the Q5 gate, not the emitted cardType.
+  const style = input.hasPersonalisation ? ('membership' as const) : ('business' as const)
   const personalised = input.hasPersonalisation ? ('yes' as const) : ('no' as const)
   switch (input.shape) {
     case 'recipients':
-      return { ...base, scope: 'all', allocated: 'yes' }
+      return { ...base, family: 'recipients' }
     case 'set_single':
-      return { ...base, scope: 'all', allocated: 'no', layouts: 'one', style, personalised }
+      return { ...base, family: 'set', layouts: 'one', style, personalised }
     case 'set_collection':
-      return { ...base, scope: 'all', allocated: 'no', layouts: 'several', sameMaterial: 'yes', style, personalised }
+      return { ...base, family: 'set', layouts: 'several', sameMaterial: 'yes', style, personalised }
     case 'selection':
-      return { ...base, scope: 'one', pickMaterial: input.isPerDirectionPricing ? 'different' : 'same' }
+      return { ...base, family: 'selection', selectionMaterial: input.isPerDirectionPricing ? 'different' : 'same' }
     default:
       // Null / unknown shape — fall back to the flags-only mapping.
       return deriveAnswersFromShape({
@@ -301,6 +319,7 @@ function QuestionBlock<V extends string>({
   disabled,
   note,
   footnote,
+  cols = 2,
 }: {
   legend: string
   name: string
@@ -310,12 +329,18 @@ function QuestionBlock<V extends string>({
   disabled?: boolean
   note?: ReactNode
   footnote?: ReactNode
+  // 2 = side-by-side binary choices (default); 1 = full-width stacked
+  // cards, used for the three-way Q1 where the descriptions are longer.
+  cols?: 1 | 2
 }) {
   return (
     <div>
       <p className="text-sm font-semibold text-ink">{legend}</p>
       {note && <div className="mt-1 text-xs text-ink-mute">{note}</div>}
-      <fieldset className="mt-3 grid gap-3 sm:grid-cols-2" disabled={disabled}>
+      <fieldset
+        className={['mt-3 grid gap-3', cols === 2 ? 'sm:grid-cols-2' : ''].join(' ')}
+        disabled={disabled}
+      >
         <legend className="sr-only">{legend}</legend>
         {options.map((opt) => {
           const isSelected = selected === opt.value
@@ -397,14 +422,14 @@ export function ProofShapeWizard({
   answers: WizardAnswers
   onChange: (next: WizardAnswers) => void
   // Whether a material has been chosen in the Specification section
-  // below. Step 4/5/6's material-dependent behaviour reveals once set.
+  // below. Q5's material-dependent behaviour reveals once set.
   materialChosen: boolean
   // The chosen material's supports_personalisation capability. When
-  // false, Step 6 is never shown (spec section 5).
+  // false, Q5 is never shown (spec section 5).
   materialSupportsPersonalisation: boolean
   // Live per-card rate / minimum-charge helper. Kept in the prop type so
   // callers (NewVersionPage) can still pass it, but no longer rendered —
-  // Step 6 is labels-only.
+  // Q5 is labels-only.
   personalisationHelper?: string
   // On the edit page the shape is locked at creation, so the wizard
   // renders read-only (collapsed rows, no Change controls).
@@ -414,38 +439,43 @@ export function ProofShapeWizard({
   const shape = resolveShape(answers, { materialChosen, materialSupportsPersonalisation })
   const label = resolvedShapeLabel(shape)
 
-  // Patch helper that clears every answer downstream of the one being
-  // set, so a revisit never leaves stale state below it.
+  // Patch helper. Each setter pairs its patch with a "clear everything
+  // downstream" object so a revisit never leaves stale state below it.
   function set(patch: Partial<WizardAnswers>) {
     onChange({ ...answers, ...patch })
   }
 
   // Clearing helpers, ordered by the question pipeline.
-  const clearFromScope = { allocated: null, layouts: null, sameMaterial: null, multiMaterialChoice: null, style: null, personalised: null, pickMaterial: null } as const
-  const clearFromAllocated = { layouts: null, sameMaterial: null, multiMaterialChoice: null, style: null, personalised: null } as const
-  const clearFromLayouts = { sameMaterial: null, multiMaterialChoice: null, style: null, personalised: null } as const
-  const clearFromSameMaterial = { multiMaterialChoice: null, style: null, personalised: null } as const
-  const clearFromStyle = { personalised: null } as const
+  const clearAfterFamily = { layouts: null, sameMaterial: null, multiMaterialChoice: null, style: null, personalised: null, selectionMaterial: null } as const
+  const clearAfterLayouts = { sameMaterial: null, multiMaterialChoice: null, style: null, personalised: null } as const
+  const clearAfterSameMaterial = { multiMaterialChoice: null, style: null, personalised: null } as const
+  const clearAfterStyle = { personalised: null } as const
 
-  const isAll = answers.scope === 'all'
-  const isOne = answers.scope === 'one'
+  const isSet = answers.family === 'set'
+  const isSelection = answers.family === 'selection'
 
-  // Whether the Set branch (single or collection) is reached.
-  const onSetBranch = isAll && answers.allocated === 'no'
   const isSeveral = answers.layouts === 'several'
   const splitChosen = isSeveral && answers.sameMaterial === 'no' && answers.multiMaterialChoice === 'split'
   const keptTogether = isSeveral && answers.sameMaterial === 'no' && answers.multiMaterialChoice === 'keep'
-  // Does the Set branch proceed to Step 5 (card style)?
+  // Does the Set branch proceed to Q4 (card style)?
   const reachesStyle =
-    onSetBranch &&
+    isSet &&
     (answers.layouts === 'one' || (isSeveral && (answers.sameMaterial === 'yes' || keptTogether)))
+
+  // Human-readable value for the collapsed Q1 row.
+  const familyValue =
+    answers.family === 'recipients'
+      ? 'A card for each person'
+      : answers.family === 'set'
+        ? 'A shared set (no names)'
+        : 'Alternatives to choose from'
 
   return (
     <section className="rounded-2xl bg-surface p-8 shadow-sm ring-1 ring-line">
       <div className="mb-5">
         <h3 className="text-base font-semibold text-ink">Proof type</h3>
         <p className="mt-0.5 text-xs text-ink-mute">
-          A few quick questions set up the right shape for this proof.
+          A question or two sets up the right shape for this proof.
         </p>
       </div>
 
@@ -455,231 +485,232 @@ export function ProofShapeWizard({
       </p>
 
       <div className="space-y-3">
-        {/* ── Step 1 — always asked ─────────────────────────────────── */}
-        {answers.scope == null ? (
+        {/* ── Q1 — always asked. Three-way: the structural family. ───── */}
+        {answers.family == null ? (
           <QuestionBlock
-            legend="Will the customer order everything in this version, or choose one option from it?"
-            name="wizard-scope"
-            selected={answers.scope}
+            legend="Which best describes this proof?"
+            name="wizard-family"
+            cols={1}
+            selected={answers.family}
             disabled={disabled}
-            onSelect={(v: 'all' | 'one') => set({ scope: v, ...clearFromScope })}
+            onSelect={(v: 'recipients' | 'set' | 'selection') => set({ family: v, ...clearAfterFamily })}
+            note="A run of cards that share one design, with only a name or number changing, is a shared set, not a card for each person."
             options={[
-              { value: 'all', label: 'Order everything', sub: 'If approved, everything in this version gets produced.' },
-              { value: 'one', label: 'Choose one option', sub: "You're presenting alternatives and they pick a single one to move forward with." },
+              {
+                value: 'recipients',
+                label: 'A card for each person',
+                sub: 'Each named person has their own card with their own details, proofed one by one. The customer wants them all.',
+              },
+              {
+                value: 'set',
+                label: 'A shared set (no names)',
+                sub: 'No card is tied to a named person. The customer wants every design you show, whether that is one design or several.',
+              },
+              {
+                value: 'selection',
+                label: 'Alternatives to choose from',
+                sub: 'You show alternative designs and the customer picks the one they want. The rest are set aside.',
+              },
             ]}
           />
         ) : (
           <AnsweredRow
-            label="Ordering"
-            value={answers.scope === 'all' ? 'Order everything' : 'Choose one option'}
+            label="This proof is"
+            value={familyValue}
             disabled={disabled}
-            onChange={() => set({ scope: null, ...clearFromScope })}
+            onChange={() => set({ family: null, ...clearAfterFamily })}
           />
         )}
 
-        {/* ── Receive-all trunk ─────────────────────────────────────── */}
-        {isAll && (
+        {/* ── Set branch ────────────────────────────────────────────── */}
+        {isSet && (
           <>
-            {/* Step 2 — allocated to a named person? */}
-            {answers.allocated == null ? (
+            {/* Q2 — how many layouts? */}
+            {answers.layouts == null ? (
               <QuestionBlock
-                legend="Will each batch of cards be allocated to a specific named person?"
-                name="wizard-allocated"
-                selected={answers.allocated}
+                legend="How many layouts are in this set?"
+                name="wizard-layouts"
+                selected={answers.layouts}
                 disabled={disabled}
-                onSelect={(v: 'yes' | 'no') => set({ allocated: v, ...clearFromAllocated })}
+                onSelect={(v: 'one' | 'several') => set({ layouts: v, ...clearAfterLayouts })}
+                note="A layout is one design. The same design shown in different finishes, colours, or materials is still one layout."
                 options={[
-                  { value: 'yes', label: 'Yes, a batch per person', sub: "You'll upload proofs for each person." },
-                  { value: 'no', label: 'No, not for a named person', sub: "The cards aren't intended for a specific person." },
+                  { value: 'one', label: 'One layout', sub: 'A single design.' },
+                  {
+                    value: 'several',
+                    label: 'Several layouts',
+                    sub: 'Two or more different designs, all kept together. Each layout after the first adds a tooling charge.',
+                  },
                 ]}
               />
             ) : (
               <AnsweredRow
-                label="Allocated"
-                value={answers.allocated === 'yes' ? 'Yes, a batch per person' : 'No, not for a named person'}
+                label="Layouts"
+                value={answers.layouts === 'one' ? 'One layout' : 'Several layouts'}
                 disabled={disabled}
-                onChange={() => set({ allocated: null, ...clearFromAllocated })}
+                onChange={() => set({ layouts: null, ...clearAfterLayouts })}
               />
             )}
 
-            {/* Set branch (not allocated) */}
-            {answers.allocated === 'no' && (
-              <>
-                {/* Step 3 — how many layouts? */}
-                {answers.layouts == null ? (
+            {/* Q3 — same material? (only when several layouts) */}
+            {isSeveral && (
+              answers.sameMaterial == null ? (
+                <QuestionBlock
+                  legend="Are all the layouts on the same material?"
+                  name="wizard-same-material"
+                  selected={answers.sameMaterial}
+                  disabled={disabled}
+                  onSelect={(v: 'yes' | 'no') => set({ sameMaterial: v, ...clearAfterSameMaterial })}
+                  options={[
+                    { value: 'yes', label: 'Yes, one material' },
+                    {
+                      value: 'no',
+                      label: 'No, different materials',
+                      sub: 'Each material is normally quoted and proofed as its own project, so it prices correctly.',
+                    },
+                  ]}
+                />
+              ) : (
+                <AnsweredRow
+                  label="Material"
+                  value={answers.sameMaterial === 'yes' ? 'Yes, one material' : 'No, different materials'}
+                  disabled={disabled}
+                  onChange={() => set({ sameMaterial: null, ...clearAfterSameMaterial })}
+                />
+              )
+            )}
+
+            {/* Q3 follow-up — split vs keep together */}
+            {isSeveral && answers.sameMaterial === 'no' && (
+              answers.multiMaterialChoice == null ? (
+                <div className="rounded border border-line bg-canvas px-4 py-3">
+                  <p className="text-sm text-ink-soft">
+                    A set uses one material. Different materials are normally split into separate
+                    projects so each one prices correctly.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => set({ multiMaterialChoice: 'split', style: null, personalised: null })}
+                      className="rounded border border-ink bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-60"
+                    >
+                      Split into separate projects
+                    </button>
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => set({ multiMaterialChoice: 'keep', style: null, personalised: null })}
+                      className="rounded border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink-soft hover:border-ink/40 disabled:opacity-60"
+                    >
+                      Keep together anyway
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <AnsweredRow
+                  label="Different materials"
+                  value={answers.multiMaterialChoice === 'split' ? 'Split into separate projects' : 'Keep together anyway'}
+                  disabled={disabled}
+                  onChange={() => set({ multiMaterialChoice: null, style: null, personalised: null })}
+                />
+              )
+            )}
+
+            {/* Split guard — terminal guidance, no saveable shape */}
+            {splitChosen && (
+              <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                Create each material as its own project from the new-project screen, so each one
+                prices and proofs correctly. This proof can't continue as a single set.
+              </div>
+            )}
+
+            {/* Q4 — card style (every Set) */}
+            {reachesStyle && (
+              answers.style == null ? (
+                <QuestionBlock
+                  legend="What style of card is this?"
+                  name="wizard-style"
+                  selected={answers.style}
+                  disabled={disabled}
+                  onSelect={(v: 'business' | 'membership') => set({ style: v, ...clearAfterStyle })}
+                  options={[
+                    { value: 'business', label: 'Business card', sub: 'A standard card design. Every card is identical.' },
+                    {
+                      value: 'membership',
+                      label: 'Membership card',
+                      sub: 'A membership-style card. You can switch on personalisation so each card carries its own details.',
+                    },
+                  ]}
+                />
+              ) : (
+                <AnsweredRow
+                  label="Card style"
+                  value={answers.style === 'business' ? 'Business card' : 'Membership card'}
+                  disabled={disabled}
+                  onChange={() => set({ style: null, ...clearAfterStyle })}
+                />
+              )
+            )}
+
+            {/* Q5 — personalisation. Only on membership style, only once
+                a material is chosen and supports it. */}
+            {reachesStyle && answers.style === 'membership' && (
+              !materialChosen ? (
+                <div className="rounded border border-line bg-canvas px-4 py-3 text-xs text-ink-mute">
+                  Choose a material in Specification below to set personalisation.
+                </div>
+              ) : materialSupportsPersonalisation ? (
+                answers.personalised == null ? (
                   <QuestionBlock
-                    legend="How many different layouts are in this version?"
-                    name="wizard-layouts"
-                    selected={answers.layouts}
+                    legend="Does every card carry its own unique details, such as a member name, sequential number, or unique QR code?"
+                    name="wizard-personalised"
+                    selected={answers.personalised}
                     disabled={disabled}
-                    onSelect={(v: 'one' | 'several') => set({ layouts: v, ...clearFromLayouts })}
+                    onSelect={(v: 'yes' | 'no') => set({ personalised: v })}
                     options={[
-                      { value: 'one', label: 'One layout', sub: 'A single design.' },
-                      { value: 'several', label: 'Several layouts', sub: 'More than one layout. Each layout after the first adds a tooling charge.' },
+                      { value: 'yes', label: 'Yes, every card is unique', sub: 'Priced per card, with a minimum charge, on top of the base price.' },
+                      { value: 'no', label: 'No, every card is identical' },
                     ]}
                   />
                 ) : (
                   <AnsweredRow
-                    label="Layouts"
-                    value={answers.layouts === 'one' ? 'One layout' : 'Several layouts'}
+                    label="Personalisation"
+                    value={answers.personalised === 'yes' ? 'Yes, every card is unique' : 'No, every card is identical'}
                     disabled={disabled}
-                    onChange={() => set({ layouts: null, ...clearFromLayouts })}
+                    onChange={() => set({ personalised: null })}
                   />
-                )}
-
-                {/* Step 4 — same material? (only when several layouts) */}
-                {isSeveral && (
-                  answers.sameMaterial == null ? (
-                    <QuestionBlock
-                      legend="Are they all on the same material?"
-                      name="wizard-same-material"
-                      selected={answers.sameMaterial}
-                      disabled={disabled}
-                      onSelect={(v: 'yes' | 'no') => set({ sameMaterial: v, ...clearFromSameMaterial })}
-                      options={[
-                        { value: 'yes', label: 'Yes, same material' },
-                        { value: 'no', label: 'No, different materials', sub: 'These are normally quoted and proofed as separate projects so each material prices correctly. Want to split them?' },
-                      ]}
-                    />
-                  ) : (
-                    <AnsweredRow
-                      label="Material"
-                      value={answers.sameMaterial === 'yes' ? 'Yes, same material' : 'No, different materials'}
-                      disabled={disabled}
-                      onChange={() => set({ sameMaterial: null, ...clearFromSameMaterial })}
-                    />
-                  )
-                )}
-
-                {/* Step 4 follow-up — split vs keep together */}
-                {isSeveral && answers.sameMaterial === 'no' && (
-                  answers.multiMaterialChoice == null ? (
-                    <div className="rounded border border-line bg-canvas px-4 py-3">
-                      <p className="text-sm text-ink-soft">
-                        These are normally quoted and proofed as separate projects so each material
-                        prices correctly. Want to split them?
-                      </p>
-                      <div className="mt-3 flex flex-wrap gap-3">
-                        <button
-                          type="button"
-                          disabled={disabled}
-                          onClick={() => set({ multiMaterialChoice: 'split', style: null, personalised: null })}
-                          className="rounded border border-ink bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-60"
-                        >
-                          Split into separate projects
-                        </button>
-                        <button
-                          type="button"
-                          disabled={disabled}
-                          onClick={() => set({ multiMaterialChoice: 'keep', style: null, personalised: null })}
-                          className="rounded border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink-soft hover:border-ink/40 disabled:opacity-60"
-                        >
-                          Keep together anyway
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <AnsweredRow
-                      label="Different materials"
-                      value={answers.multiMaterialChoice === 'split' ? 'Split into separate projects' : 'Keep together anyway'}
-                      disabled={disabled}
-                      onChange={() => set({ multiMaterialChoice: null, style: null, personalised: null })}
-                    />
-                  )
-                )}
-
-                {/* Split guard — terminal guidance, no saveable shape */}
-                {splitChosen && (
-                  <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                    Create each material as its own project from the new-project screen, so each one
-                    prices and proofs correctly. This proof can't continue as a single set.
-                  </div>
-                )}
-
-                {/* Step 5 — card style (Set branch only) */}
-                {reachesStyle && (
-                  answers.style == null ? (
-                    <QuestionBlock
-                      legend="What style of card is this?"
-                      name="wizard-style"
-                      selected={answers.style}
-                      disabled={disabled}
-                      onSelect={(v: 'standard' | 'membership') => set({ style: v, ...clearFromStyle })}
-                      options={[
-                        { value: 'standard', label: 'Business card', sub: "A conventional business card displaying the holder's details." },
-                        { value: 'membership', label: 'Membership card', sub: 'A membership-style card. No names are entered, and you can switch on per-card personalisation.' },
-                      ]}
-                    />
-                  ) : (
-                    <AnsweredRow
-                      label="Card style"
-                      value={answers.style === 'standard' ? 'Business card' : 'Membership card'}
-                      disabled={disabled}
-                      onChange={() => set({ style: null, ...clearFromStyle })}
-                    />
-                  )
-                )}
-
-                {/* Step 6 — personalisation. Only on membership style,
-                    only once a material is chosen and supports it. */}
-                {reachesStyle && answers.style === 'membership' && (
-                  !materialChosen ? (
-                    <div className="rounded border border-line bg-canvas px-4 py-3 text-xs text-ink-mute">
-                      Choose a material in Specification below to set personalisation.
-                    </div>
-                  ) : materialSupportsPersonalisation ? (
-                    answers.personalised == null ? (
-                      <QuestionBlock
-                        legend="Does every card carry its own unique details, such as a member name, sequential number, or unique QR code?"
-                        name="wizard-personalised"
-                        selected={answers.personalised}
-                        disabled={disabled}
-                        onSelect={(v: 'yes' | 'no') => set({ personalised: v })}
-                        options={[
-                          { value: 'yes', label: 'Yes, every card is unique' },
-                          { value: 'no', label: 'No, every card is identical' },
-                        ]}
-                      />
-                    ) : (
-                      <AnsweredRow
-                        label="Personalisation"
-                        value={answers.personalised === 'yes' ? 'Yes, every card is unique' : 'No, every card is identical'}
-                        disabled={disabled}
-                        onChange={() => set({ personalised: null })}
-                      />
-                    )
-                  ) : null
-                )}
-
-                {/* The per-layout title + image editor for a Set
-                    (collection) lives in the version form below (it owns
-                    the image uploads), not in the wizard — the wizard
-                    only resolves the shape. */}
-              </>
+                )
+              ) : null
             )}
+
+            {/* The per-layout title + image editor for a Set
+                (collection) lives in the version form below (it owns
+                the image uploads), not in the wizard — the wizard
+                only resolves the shape. */}
           </>
         )}
 
-        {/* ── Pick-one trunk ────────────────────────────────────────── */}
-        {isOne && (
-          answers.pickMaterial == null ? (
+        {/* ── Selection branch ──────────────────────────────────────── */}
+        {isSelection && (
+          answers.selectionMaterial == null ? (
             <QuestionBlock
-              legend="Are the options to be presented all on the same material?"
-              name="wizard-pick-material"
-              selected={answers.pickMaterial}
+              legend="Are the alternatives all on the same material?"
+              name="wizard-selection-material"
+              selected={answers.selectionMaterial}
               disabled={disabled}
-              onSelect={(v: 'same' | 'different') => set({ pickMaterial: v })}
+              onSelect={(v: 'same' | 'different') => set({ selectionMaterial: v })}
               options={[
-                { value: 'same', label: 'Same material', sub: 'Every alternative is the same material; only the design differs.' },
-                { value: 'different', label: 'Different materials', sub: 'The alternatives are on different materials, so each is priced on its own.' },
+                { value: 'same', label: 'Same material', sub: 'Every alternative is the same material. Only the design differs.' },
+                { value: 'different', label: 'Different materials', sub: 'Each alternative is on a different material, so each is priced on its own.' },
               ]}
             />
           ) : (
             <AnsweredRow
-              label="Options material"
-              value={answers.pickMaterial === 'same' ? 'Same material' : 'Different materials'}
+              label="Alternatives"
+              value={answers.selectionMaterial === 'same' ? 'Same material' : 'Different materials'}
               disabled={disabled}
-              onChange={() => set({ pickMaterial: null })}
+              onChange={() => set({ selectionMaterial: null })}
             />
           )
         )}
