@@ -521,10 +521,10 @@ function QuestionBlock<V extends string>({
         {options.map((opt) => {
           const isSelected = selected === opt.value
           return (
-            <div key={opt.value} className="relative">
+            <div key={opt.value} className="relative h-full">
               <label
                 className={[
-                  'block rounded border px-4 py-3 pr-10 transition-colors',
+                  'block h-full rounded border px-4 py-3 pr-10 transition-colors',
                   'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
                   disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer',
                   isSelected
