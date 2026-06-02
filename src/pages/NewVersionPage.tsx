@@ -1080,7 +1080,13 @@ export default function NewVersionPage() {
         //               associated_name IS NULL AND side='front'
         //               (shared side is always 'front' by
         //               convention — see state declaration above)
-        setCardType(inherited.card_type)
+        // A variant-round prior continues as a single, no-name design —
+        // Set (single), whose canonical mapping is card_type='membership'
+        // with empty names. Force membership on that path so the no-name
+        // shape validates (the names roster is hidden on a Set) and
+        // persists as a consistent set_single; otherwise keep the
+        // inherited card type.
+        setCardType(isVariantRoundSource ? 'membership' : inherited.card_type)
         // Personalisation flag carries across version bumps. The
         // form gate (material + cardType + !isVariantRound) still
         // applies on render, so an inherited true will visually
@@ -1098,17 +1104,20 @@ export default function NewVersionPage() {
         // the persisted shape column (000210) when present so a
         // collection seeds as a collection rather than mis-seeding as
         // set_single (the flags can't tell them apart). v(N) of a
-        // variant round continues as a standard proof of the chosen
-        // direction (setIsVariantRound is never re-asserted on this
-        // page), so on that path we ignore the source's shape and derive
-        // from the standard-proof flags.
-        const seedShape = isVariantRoundSource ? null : inherited.shape
+        // variant round continues the one chosen direction as a single
+        // no-name design (setIsVariantRound is never re-asserted on this
+        // page; the "Continuing from which direction?" carry picker picks
+        // the direction), so seed it as Set (single) — accurate and
+        // data-consistent, resolving to "A single business card design"
+        // — rather than letting the flags fall through to recipients /
+        // "Order everything".
+        const seedShape = isVariantRoundSource ? 'set_single' : inherited.shape
         setWizardAnswers(
           deriveAnswersFromVersion({
             shape: seedShape,
             isVariantRound: false,
             isPerDirectionPricing: false,
-            cardType: inherited.card_type,
+            cardType: isVariantRoundSource ? 'membership' : inherited.card_type,
             hasPersonalisation: !!inherited.has_personalisation && !isVariantRoundSource,
           }),
         )
