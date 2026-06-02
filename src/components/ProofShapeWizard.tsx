@@ -14,9 +14,9 @@
 // phrased by the customer's RELATIONSHIP to the artwork rather than by
 // counting it:
 //   Q1  Which best describes this proof?
-//       • A card for each person   → Recipients      (resolves in one question)
-//       • A shared set (no names)  → Set branch (Q2…)
-//       • Alternatives to choose   → Selection branch (QS)
+//       • A batch of cards for one or more people → Recipients (one question)
+//       • Cards with no personal contact details  → Set branch (Q2…)
+//       • Alternatives to choose from             → Selection branch (QS)
 // Counting only happens on the Set branch (Q2 "how many layouts"), with
 // "layout" defined on the spot so a finish variant of one design can't
 // be miscounted as several.
@@ -648,9 +648,9 @@ export function ProofShapeWizard({
   // Human-readable value for the collapsed Q1 row.
   const familyValue =
     answers.family === 'recipients'
-      ? 'A card for each person'
+      ? 'A batch of cards for one or more people'
       : answers.family === 'set'
-        ? 'A shared set (no names)'
+        ? 'Cards with no personal contact details'
         : 'Alternatives to choose from'
 
   return (
@@ -677,18 +677,17 @@ export function ProofShapeWizard({
             selected={answers.family}
             disabled={disabled}
             onSelect={(v: 'recipients' | 'set' | 'selection') => set({ family: v, ...clearAfterFamily })}
-            note="A run of cards that share one design, with only a name or number changing, is a shared set, not a card for each person."
             options={[
               {
                 value: 'recipients',
-                label: 'A card for each person',
-                sub: 'Each named person has their own cards with their own details. The customer wants them all.',
+                label: 'A batch of cards for one or more people',
+                sub: 'Each named person has their own cards showing their own contact details. The customer wants them all.',
                 scenario: SCENARIOS.q1Recipients,
               },
               {
                 value: 'set',
-                label: 'A shared set (no names)',
-                sub: 'No card is tied to a named person. The customer wants every design you show, whether that is one design or several.',
+                label: 'Cards with no personal contact details',
+                sub: "No card shows an individual's contact details. The customer wants every design you show, whether one design or several.",
                 scenario: SCENARIOS.q1Set,
               },
               {
@@ -719,7 +718,7 @@ export function ProofShapeWizard({
                 selected={answers.layouts}
                 disabled={disabled}
                 onSelect={(v: 'one' | 'several') => set({ layouts: v, ...clearAfterLayouts })}
-                note="A layout is one design. The same design shown in different finishes, colours, or materials is still one layout."
+                note="A layout is one design. The same design shown in different finishes is still one layout."
                 options={[
                   { value: 'one', label: 'One layout', sub: 'A single design.', scenario: SCENARIOS.q2One },
                   {

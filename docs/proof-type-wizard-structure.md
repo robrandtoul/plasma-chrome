@@ -85,8 +85,8 @@ them into a single three-way first question that maps 1:1 onto the three shapes.
 
 ```
 Q1  Which best describes this proof?
-├─ A card for each person ........................ RECIPIENTS        (done — 1 question)
-├─ A shared set (no names) ....................... → Q2 (Set branch)
+├─ A batch of cards for one or more people ....... RECIPIENTS   (resolves in one question)
+├─ Cards with no personal contact details ........ → Q2 (Set branch)
 └─ Alternatives to choose from ................... → QS (Selection branch)
 
 Set branch
@@ -138,26 +138,25 @@ questions (which best describes this, then how many layouts).
 ### Q1 — always asked (three options, stacked)
 
 > **Which best describes this proof?**
-> *Note:* A run of cards that share one design, with only a name or number changing, is a
-> shared set, not a card for each person.
 
-- **A card for each person** — Each named person has their own card with their own details,
-  proofed one by one. The customer wants them all.
-- **A shared set (no names)** — No card is tied to a named person. The customer wants every
-  design you show, whether that is one design or several.
+- **A batch of cards for one or more people** — Each named person has their own cards showing
+  their own contact details. The customer wants them all.
+- **Cards with no personal contact details** — No card shows an individual's contact details.
+  The customer wants every design you show, whether one design or several.
 - **Alternatives to choose from** — You show alternative designs and the customer picks the one
   they want. The rest are set aside.
 
-The note is the one piece of routing guidance carried over from the old Step 2: it keeps a
-numbered / membership run (one shared template, a name or number as variable data) out of
-Recipients. It deliberately does not use the word *personalisation*; that word only appears at
-the personalisation step.
+Q1 no longer carries an explanatory note. The labels themselves now carry the distinction that
+used to need one: a card showing a person's own contact details is per-recipient, while a card
+with no personal contact details is a shared set, even when a name or number is printed on it (a
+numbered pass, a membership card). So a numbered or membership run lands on the shared-set option
+without a separate routing note.
 
 ### Set branch
 
 **Q2 — How many layouts are in this set?**
-> *Note:* A layout is one design. The same design shown in different finishes, colours, or
-> materials is still one layout.
+> *Note:* A layout is one design. The same design shown in different finishes is still one
+> layout.
 
 - **One layout** — A single design.
 - **Several layouts** — Two or more different designs, all kept together. Each layout after the
@@ -312,10 +311,10 @@ resolves to the option it sits on.
 
 **Q1 — which best describes this proof?**
 
-- *A card for each person* — "A law firm wants a batch of cards for each partner, each showing
-  that partner's own name, title, and direct line." → per-named-person, individually proofed =
-  **Recipients**.
-- *A shared set (no names)* — "A clinic's set of reference cards, ECG, blood pressure, dosage. A
+- *A batch of cards for one or more people* — "A law firm wants a batch of cards for each
+  partner, each showing that partner's own name, title, and direct line." → per-named-person,
+  individually proofed = **Recipients**.
+- *Cards with no personal contact details* — "A clinic's set of reference cards, ECG, blood pressure, dosage. A
   gym's identical membership cards. Neither is tied to a named person and the customer intends to
   order every card shown, so both belong here." → no names, customer keeps them all = **Set**
   branch. (The "intends to order" wording is Rob's approved exception to the no-commitment rule.)
