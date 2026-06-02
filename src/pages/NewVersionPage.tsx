@@ -2796,6 +2796,30 @@ export default function NewVersionPage() {
     // selection against the snapshot — no manual flag clear needed.
   }
 
+  // When a new version lands on an already-approved proof, the new
+  // (unapproved) version becomes current, so the proof shouldn't keep
+  // reading 'approved' (the customer would see an approve action on an
+  // "approved" proof). Flip it back to in_progress and clear approved_at.
+  // The `.eq('status', 'approved')` guard makes this a no-op for any
+  // other status (in_progress / dormant / abandoned). This is NOT a
+  // Reopen: the prior version's proof_name_approvals rows are left
+  // untouched as history; only the parent proof's status is reset, so
+  // the new current version is approved afresh by the customer (and the
+  // maybe_finalize trigger flips the proof back to approved once every
+  // slot on the new version is approved).
+  async function resetApprovedProofToInProgress() {
+    const { error } = await supabase
+      .from('proofs')
+      .update({ status: 'in_progress', approved_at: null })
+      .eq('id', proofId!)
+      .eq('status', 'approved')
+    if (error) {
+      // Non-fatal: the version saved. Log and proceed — worst case the
+      // designer reopens manually.
+      console.error('[NewVersionPage] reset approved→in_progress failed', error)
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setError('')
@@ -3099,6 +3123,9 @@ export default function NewVersionPage() {
         },
       })
 
+      // Reset an approved parent proof now this new version is current.
+      await resetApprovedProofToInProgress()
+
       // Success — reuse the standard post-save flow. Setting
       // savedVersion triggers the existing summary card render.
       setSavedVersion({
@@ -3334,6 +3361,9 @@ export default function NewVersionPage() {
             && hasPersonalisation,
         },
       })
+
+      // Reset an approved parent proof now this new version is current.
+      await resetApprovedProofToInProgress()
 
       setSavedVersion({ id: versionData.id, number: versionData.version_number })
       setSubmitting(false)
@@ -3989,6 +4019,9 @@ export default function NewVersionPage() {
         custom_quote: pricingDisplay === 'custom',
       },
     })
+
+    // Reset an approved parent proof now this new version is current.
+    await resetApprovedProofToInProgress()
 
     // Hand off to the MessageSendPanel. The render branch below
     // detects savedVersion and swaps the form for the panel; on
