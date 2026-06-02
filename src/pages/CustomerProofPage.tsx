@@ -2262,7 +2262,7 @@ export default function CustomerProofPage() {
       <header
         className="sticky top-0 z-[5] bg-ink text-on-ink"
       >
-        <div className="mx-auto max-w-[1280px] flex items-center gap-4 px-gutter pt-6 pb-3.5">
+        <div className="mx-auto max-w-[1280px] flex items-center gap-4 px-gutter pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-3.5">
           {/* Full-colour Plasma logo lockup on the ink banner — the
               only branding the customer sees. White-text variant
               designed for dark backgrounds; steps up a touch at sm+
