@@ -178,6 +178,10 @@ export default function CustomerProofPage() {
         name: string
         type: 'approve' | 'request_changes'
         roundVariant?: { id: string; displayName: string } | null
+        // Human label for the slot when `name` isn't display-friendly.
+        // Set for Set (collection) layouts, where `name` is a layout id
+        // (UUID) and `displayName` carries the layout title.
+        displayName?: string
       }
     | null
   >(null)
@@ -426,15 +430,22 @@ export default function CustomerProofPage() {
     versionId: string,
     recipientName: string,
     type: 'approve' | 'request_changes',
+    // Human label for a collection layout slot (recipientName is the
+    // layout id; displayName is the layout title). Omitted for named
+    // recipients and shared bands.
+    displayName?: string,
   ) {
     actionPanelTriggerRef.current = document.activeElement as HTMLElement | null
-    setActionPanel({ versionId, name: recipientName, type })
+    setActionPanel({ versionId, name: recipientName, type, displayName })
     // Pre-fill actor_name with the recipient's name when it's a
     // named band — the actor is most often the recipient
     // themselves, with the field still editable in case someone's
     // approving on their behalf. Shared bands open empty since
-    // there's no recipient to default to.
-    setActionName(recipientName === SHARED_APPROVAL_KEY ? '' : recipientName)
+    // there's no recipient to default to. Collection layout slots also
+    // open empty — the slot key is a layout id, not a person's name.
+    setActionName(
+      recipientName === SHARED_APPROVAL_KEY || displayName != null ? '' : recipientName,
+    )
     setActionComment('')
     setActionError(null)
     // Per-action ack: every Approve open starts with the tick
@@ -1072,14 +1083,21 @@ export default function CustomerProofPage() {
   // inside the Approve modal as a per-action tick box gating
   // Confirm — see the modal block at the bottom of this file.
   // Request changes stays ungated end-to-end.
-  function renderActionBand(name: string, opts?: { headerPillAbove?: boolean }): React.ReactNode {
+  function renderActionBand(
+    name: string,
+    opts?: { headerPillAbove?: boolean; displayName?: string },
+  ): React.ReactNode {
     if (!activeVersion) return null
     if (!activeVersion.approvals_enabled) return null
 
     const state = getBandState(name)
     const named = name !== SHARED_APPROVAL_KEY
-    const recipientLabel = named ? name : 'this proof'
-    const forSuffix = named ? ` for ${name}` : ''
+    // Human-readable label. For a collection layout, `name` is a layout
+    // id (UUID) and `displayName` carries the layout title — keep slot
+    // identity on `name` everywhere, but show `displayLabel` to the user.
+    const displayLabel = opts?.displayName ?? name
+    const recipientLabel = named ? displayLabel : 'this proof'
+    const forSuffix = named ? ` for ${displayLabel}` : ''
     const key = bandKey(activeVersion.id, name)
     const successMessage = successMessages[key] ?? null
 
@@ -1118,7 +1136,7 @@ export default function CustomerProofPage() {
     if (state.kind === 'optimistic') {
       const approved = state.type === 'approve'
       const pillColour: PillColour = approved ? 'in-stock' : 'brand'
-      const label = (approved ? 'Approved' : 'Changes requested') + (named ? ` for ${name}` : '')
+      const label = (approved ? 'Approved' : 'Changes requested') + (named ? ` for ${displayLabel}` : '')
       return (
         <div
           role="status"
@@ -1240,7 +1258,11 @@ export default function CustomerProofPage() {
     ) {
       return null
     }
-    const approveLabel = `Approve ${recipientLabel}${named ? "'s design" : ''}`
+    // Collection layouts read "Approve ECG card" (no possessive); named
+    // recipients keep "Approve Alec's design"; shared keeps "Approve this proof".
+    const approveLabel = opts?.displayName
+      ? `Approve ${displayLabel}`
+      : `Approve ${recipientLabel}${named ? "'s design" : ''}`
     const showEarlierVersionWarning =
       !activeVersion.is_current && !proofIsApproved && latestVersion != null
     return (
@@ -1286,14 +1308,14 @@ export default function CustomerProofPage() {
             // sit side-by-side at sm+ and stack at <sm.
             <ButtonCoral
               icon={Send}
-              onClick={() => openActionPanel(activeVersion.id, name, 'request_changes')}
+              onClick={() => openActionPanel(activeVersion.id, name, 'request_changes', opts?.displayName)}
             >
               Request changes
             </ButtonCoral>
           )}
           <ButtonInk
             icon={Check}
-            onClick={() => openActionPanel(activeVersion.id, name, 'approve')}
+            onClick={() => openActionPanel(activeVersion.id, name, 'approve', opts?.displayName)}
           >
             {approveLabel}
           </ButtonInk>
@@ -1902,6 +1924,122 @@ export default function CustomerProofPage() {
     ? allVersionImages.filter(img => img.material_option === effectiveOptionCode)
     : allVersionImages
 
+  // ── Set (collection) render (Phase 2, step 4a — read-only) ───────────────
+  // One section per layout, in sort_order, each with its title, its
+  // images (grouped by layout_id), and a read-only approval status.
+  // Approve-each is enforced by the 000212 finalisation: each layout's
+  // approval row is keyed name = layout_id::text, so the per-layout
+  // state reads straight off activeVersion.approvals by id. The approve
+  // action itself (and the proof-action edge change it needs) is a
+  // separate gated step — here the detail view's Request-changes CTA is
+  // suppressed so the lightbox is a pure viewer. Mirrors the
+  // shared-standalone card chrome from the standard branch.
+  function renderSetCollection(): React.ReactNode {
+    if (!activeVersion || activeVersion.shape !== 'set_collection') return null
+    const layouts = [...(activeVersion.layouts ?? [])].sort(
+      (a, b) => a.sort_order - b.sort_order || a.id.localeCompare(b.id),
+    )
+    if (layouts.length === 0) return null
+
+    // Group the version's artwork images (non-QR) by layout_id.
+    const imagesByLayout = new Map<string, GridImage[]>()
+    for (const l of layouts) imagesByLayout.set(l.id, [])
+    for (const img of displayImages) {
+      if (img.is_qr_code) continue
+      if (img.layout_id && imagesByLayout.has(img.layout_id)) {
+        imagesByLayout.get(img.layout_id)!.push(img)
+      }
+    }
+    // Running brand-colour index across all plates, in reading order.
+    let colorIdx = 0
+    return (
+      <section
+        aria-labelledby="section-proofs-heading"
+        className="order-4 lg:order-none bg-canvas bg-draftsman text-ink"
+      >
+        <div className="mb-6 flex flex-wrap items-baseline gap-3 sm:gap-4">
+          <h2
+            id="section-proofs-heading"
+            className="font-display font-medium tracking-[-0.02em] text-ink leading-tight"
+            style={{ fontSize: 'clamp(22px, 3vw, 28px)' }}
+          >
+            The set
+          </h2>
+          <span className="eyebrow">
+            {layouts.length} layouts · you approve each
+          </span>
+          <span
+            aria-hidden="true"
+            className="hidden sm:block flex-1 h-px"
+            style={{ background: 'linear-gradient(to right, var(--c-line), transparent)' }}
+          />
+        </div>
+
+        <div className="space-y-5">
+          {layouts.map((layout, lIdx) => {
+            const imgs = [...(imagesByLayout.get(layout.id) ?? [])].sort(
+              (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
+            )
+            return (
+              <div
+                key={layout.id}
+                className="bg-surface border border-line rounded-[14px] overflow-hidden"
+              >
+                <div className="flex items-center gap-3 px-5 py-4 border-b border-line-soft">
+                  <span className="grid place-items-center h-9 w-9 rounded-full bg-ink text-on-ink text-xs font-semibold">
+                    {lIdx + 1}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="font-display font-medium text-ink text-[17px] leading-tight truncate">
+                      {layout.title}
+                    </div>
+                    <div className="eyebrow mt-0.5">Layout</div>
+                  </div>
+                  <span className="ml-auto inline-flex items-center gap-1.5 eyebrow text-ink-mute">
+                    <Eye size={12} aria-hidden="true" />
+                    {imgs.length} {imgs.length === 1 ? 'image' : 'images'}
+                  </span>
+                </div>
+                {/* A lone image fills the width; two or more pair side
+                    by side from sm up (stacked on narrow mobile) and 3+
+                    wrap into the two-column grid — matching the dual
+                    front/back layout used in the standard sections. */}
+                <div className={imgs.length > 1 ? 'grid gap-5 p-5 sm:grid-cols-2' : 'p-5'}>
+                  {imgs.map((img, idx) => (
+                    <PlateCard
+                      key={img.id}
+                      image={img}
+                      brandColor={BRAND_ORDER[(colorIdx++) % BRAND_ORDER.length]}
+                      alt={`Proof version ${activeVersion.version_number} — ${layout.title}`}
+                      onClick={() =>
+                        openDetailView({
+                          images: imgs,
+                          index: idx,
+                          displayLabel: layout.title,
+                          versionId: activeVersion.id,
+                          recipientName: layout.id,
+                        })
+                      }
+                      recipientLabel={layout.title}
+                    />
+                  ))}
+                </div>
+                {/* Per-layout approve-each band, keyed on the layout id
+                    (the slot identity the edge function + 000212
+                    finalisation use); the layout title is the display
+                    label. Reuses the standard per-recipient band, so the
+                    optimistic-update state machine works unchanged. */}
+                <div className="border-t border-line-soft px-5 py-4">
+                  {renderActionBand(layout.id, { displayName: layout.title })}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </section>
+    )
+  }
+
   // Live pricing snapshot for the active version (Phase 2). Replaces
   // the proof_versions.pricing_snapshot read with a derivation from
   // tierRows + variantRows scoped to the active version's material
@@ -2382,15 +2520,19 @@ export default function CustomerProofPage() {
                       iff any image on the active version carries
                       side='back'; otherwise front only.
                       Pre-migration-000085 data with null sides reads
-                      as front only. */}
-                  <SpecRow
-                    label="Sides"
-                    value={
-                      (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
-                        ? 'Front and back'
-                        : 'Front only'
-                    }
-                  />
+                      as front only. Suppressed on a Set (collection):
+                      each layout carries its own images, so a single
+                      version-level "Sides" row is meaningless. */}
+                  {activeVersion.shape !== 'set_collection' && (
+                    <SpecRow
+                      label="Sides"
+                      value={
+                        (versionImages[activeVersion.id] ?? []).some((img) => img.side === 'back')
+                          ? 'Front and back'
+                          : 'Front only'
+                      }
+                    />
+                  )}
                   {lockedFinishVariant && (
                     <SpecRow label="Finish" value={lockedFinishVariant.display_name} />
                   )}
@@ -2506,6 +2648,47 @@ export default function CustomerProofPage() {
                       <p className="mt-1.5 text-[12px] text-ink-mute">
                         {activeVersion.names.length - 1} extra{' '}
                         {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
+                        {formatPrice(
+                          activeVersion.split_name_surcharge_snapshot,
+                          activeVersion.currency!,
+                        )}{' '}
+                        tooling
+                      </p>
+                    </div>
+                  )}
+
+                {/* Per-layout tooling callout for a Set (collection).
+                    Mathematically identical to the split-name surcharge:
+                    (layouts − 1) × the per-item rate already snapshotted
+                    on the version (the trigger stamps it from
+                    material/currency regardless of the empty names
+                    roster). Noun relabelled from "name" to "layout". The
+                    split-name callout above is gated on names.length >= 2,
+                    which is always false on a collection, so the two never
+                    both render. If the set is membership + personalised,
+                    the personalisation line renders separately from the
+                    pricing display above — both lines show. */}
+                {activeVersion.shape === 'set_collection' &&
+                  !activeVersion.custom_quote &&
+                  activeVersion.layouts.length >= 2 &&
+                  activeVersion.split_name_surcharge_snapshot != null &&
+                  activeVersion.split_name_surcharge_snapshot > 0 && (
+                    <div className="order-8 lg:order-none rounded-[10px] bg-surface border border-line p-4">
+                      <span className="eyebrow text-brand">Per-layout tooling</span>
+                      <p className="mt-2 text-[15px] leading-snug text-ink font-medium">
+                        Add{' '}
+                        <span className="num font-medium">
+                          {formatPrice(
+                            (activeVersion.layouts.length - 1) *
+                              activeVersion.split_name_surcharge_snapshot,
+                            activeVersion.currency!,
+                          )}
+                        </span>{' '}
+                        to the prices above
+                      </p>
+                      <p className="mt-1.5 text-[12px] text-ink-mute">
+                        {activeVersion.layouts.length - 1} extra{' '}
+                        {activeVersion.layouts.length - 1 === 1 ? 'layout' : 'layouts'} ×{' '}
                         {formatPrice(
                           activeVersion.split_name_surcharge_snapshot,
                           activeVersion.currency!,
@@ -2660,6 +2843,13 @@ export default function CustomerProofPage() {
             // step 5 produces a real variant-round version.
             if (activeVersion?.is_variant_round) {
               return renderVariantRound()
+            }
+            // Set (collection) branch (Phase 2). Routes ahead of the
+            // standard per-recipient derivation; a collection has
+            // is_variant_round=false so the variant branch above never
+            // catches it, and shape='set_collection' takes it here.
+            if (activeVersion?.shape === 'set_collection') {
+              return renderSetCollection()
             }
             const groups = buildImageGroups(displayImages)
             const sharedGroup = groups.find((g) => g.kind === 'shared') ?? null
@@ -3228,6 +3418,41 @@ export default function CustomerProofPage() {
                     <p className="mt-1.5 text-[12px] text-ink-mute">
                       {activeVersion.names.length - 1} extra{' '}
                       {activeVersion.names.length - 1 === 1 ? 'name' : 'names'} ×{' '}
+                      {formatPrice(
+                        activeVersion.split_name_surcharge_snapshot,
+                        activeVersion.currency!,
+                      )}{' '}
+                      tooling
+                    </p>
+                  </div>
+                )}
+
+              {/* Per-layout tooling callout for a Set (collection) —
+                  wide-table block (3+ price columns). Mirrors the
+                  narrow-table copy added in step 4a; same (layouts − 1) ×
+                  per-item rate. Without this, a collection on a material
+                  with 3+ thicknesses showed no tooling line. */}
+              {activeVersion.shape === 'set_collection' &&
+                !activeVersion.custom_quote &&
+                activeVersion.layouts.length >= 2 &&
+                activeVersion.split_name_surcharge_snapshot != null &&
+                activeVersion.split_name_surcharge_snapshot > 0 && (
+                  <div className="order-8 lg:order-none rounded-[10px] bg-surface border border-line p-4 mt-4">
+                    <span className="eyebrow text-brand">Per-layout tooling</span>
+                    <p className="mt-2 text-[15px] leading-snug text-ink font-medium">
+                      Add{' '}
+                      <span className="num font-medium">
+                        {formatPrice(
+                          (activeVersion.layouts.length - 1) *
+                            activeVersion.split_name_surcharge_snapshot,
+                          activeVersion.currency!,
+                        )}
+                      </span>{' '}
+                      to the prices above
+                    </p>
+                    <p className="mt-1.5 text-[12px] text-ink-mute">
+                      {activeVersion.layouts.length - 1} extra{' '}
+                      {activeVersion.layouts.length - 1 === 1 ? 'layout' : 'layouts'} ×{' '}
                       {formatPrice(
                         activeVersion.split_name_surcharge_snapshot,
                         activeVersion.currency!,

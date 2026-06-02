@@ -817,14 +817,16 @@ Deno.serve(async (req) => {
   const { data: versionRow, error: versionErr } = await admin
     .from('proof_versions')
     .select(
-      'id, proof_id, material_id, currency, displayed_variant_ids, names, material_options, is_variant_round, version_number, ' +
+      // shape (000210) drives the additive Set (collection) branch below.
+      'id, proof_id, material_id, currency, displayed_variant_ids, names, material_options, is_variant_round, shape, version_number, ' +
       'proofs:proof_id ( helpscout_conversation_id, created_by ), ' +
       // is_qr_code joined per migration 000168 so the QR-confirmation
       // enforcement block below can decide whether the slot actually
       // needs the tick before counting qr_confirmed in the upsert.
       // qr_kind + qr_vcard_slug (migrations 000192 / 000194) feed the
-      // hosted-vCard snapshot below.
-      'proof_version_images ( original_filename, sort_order, associated_name, is_qr_code, qr_kind, qr_vcard_slug )',
+      // hosted-vCard snapshot below. layout_id (000210) lets the
+      // collection branch scope a slot's QRs + files to one layout.
+      'proof_version_images ( original_filename, sort_order, associated_name, is_qr_code, qr_kind, qr_vcard_slug, layout_id )',
     )
     .eq('id', proofVersionId)
     .maybeSingle()
@@ -845,6 +847,7 @@ Deno.serve(async (req) => {
     names: string[] | null
     material_options: string[] | null
     is_variant_round: boolean
+    shape: string | null
     version_number: number
     proofs: {
       helpscout_conversation_id: string | null
@@ -857,7 +860,28 @@ Deno.serve(async (req) => {
       is_qr_code: boolean
       qr_kind: string | null
       qr_vcard_slug: string | null
+      layout_id: string | null
     }>
+  }
+
+  // ── Set (collection) detection (Phase 2, additive) ───────────────────────
+  // A collection's approval slots are its layouts, not recipient names.
+  // Everything below is gated on isCollection so the recipient / shared /
+  // variant-round paths stay byte-for-byte unchanged. No live proof is
+  // set_collection until the feature ships, so this branch is inert on
+  // existing data.
+  const isCollection = v.shape === 'set_collection'
+  let collectionLayouts: Array<{ id: string; title: string }> = []
+  if (isCollection) {
+    const { data: layoutRows, error: layoutErr } = await admin
+      .from('proof_layouts')
+      .select('id, title')
+      .eq('proof_version_id', proofVersionId)
+    if (layoutErr) {
+      console.error('[proof-action] layout lookup failed', layoutErr)
+      return failed('unknown', 500, layoutErr.message)
+    }
+    collectionLayouts = (layoutRows ?? []) as Array<{ id: string; title: string }>
   }
 
   // ── Validate recipient name against the version's allowed set ────────────
@@ -866,7 +890,15 @@ Deno.serve(async (req) => {
   // pv.names is empty so the only valid name is the sentinel.
   const recipientRoster = Array.isArray(v.names) ? v.names : []
   const allowedNames = new Set<string>([SHARED_APPROVAL_KEY, ...recipientRoster])
-  if (!allowedNames.has(recipientName)) {
+  if (isCollection) {
+    // On a collection the slot identity is a layout id (recipientName
+    // carries proof_layouts.id::text), validated against this version's
+    // layouts. names is empty on a collection so the standard check
+    // below would reject it.
+    if (!collectionLayouts.some((l) => l.id === recipientName)) {
+      return failed('validation', 400, 'unknown layout for this version')
+    }
+  } else if (!allowedNames.has(recipientName)) {
     return failed('validation', 400, 'unknown recipient name')
   }
 
@@ -1009,6 +1041,12 @@ Deno.serve(async (req) => {
     const hasNames = recipientRoster.length > 0
     const slotQrImages = (v.proof_version_images ?? []).filter((img) => {
       if (!img.is_qr_code) return false
+      if (isCollection) {
+        // A collection layout's QRs are the QR rows stamped with that
+        // layout_id; recipientName carries the layout id. Mirrors the
+        // 000212 finalisation QR gate keyed on layout_id.
+        return img.layout_id === recipientName
+      }
       if (recipientName === SHARED_APPROVAL_KEY) {
         // __shared__ only collects QRs as a slot when names is
         // empty. On split-name versions the sentinel isn't a
@@ -1056,6 +1094,7 @@ Deno.serve(async (req) => {
   // logic).
   const fileNames = (v.proof_version_images ?? [])
     .filter((img) => {
+      if (isCollection) return img.layout_id === recipientName
       if (recipientName === SHARED_APPROVAL_KEY) return img.associated_name == null
       return img.associated_name === recipientName || img.associated_name == null
     })
@@ -1227,6 +1266,41 @@ Deno.serve(async (req) => {
     })
   }
 
+  // ── Set (collection) Help Scout policy (Phase 2) ─────────────────────────
+  // A collection is approve-each across N layouts. Posting to the HS
+  // thread + firing a confirmation reply on every single layout approval
+  // would email the customer N times. Instead, intermediate layout
+  // approvals are recorded silently (the per-layout state is visible on
+  // the proof page); the single confirmation fires only when the final
+  // layout approval flips the WHOLE proof to approved. The 000212
+  // finalisation trigger runs synchronously inside the upsert above, so
+  // re-reading proofs.status here reflects whether this was the last
+  // layout. Change requests are unaffected — each is discrete, actionable
+  // feedback the team needs, so they post + reply per request as usual.
+  if (isCollection && eventType === 'approve') {
+    const { data: proofStatusRow } = await admin
+      .from('proofs')
+      .select('status')
+      .eq('id', v.proof_id)
+      .maybeSingle()
+    const proofNowApproved =
+      (proofStatusRow as { status: string } | null)?.status === 'approved'
+    if (!proofNowApproved) {
+      return json({ status: 'ok', event_id: eventId })
+    }
+  }
+
+  // Thread copy uses a human label, not the raw slot key. On a collection
+  // the slot key is a layout id (a UUID): for a final-layout approval the
+  // whole set is approved, so suppress the per-slot suffix (use the
+  // shared sentinel → "Approved by X."); for a change request, surface
+  // the layout title → "Changes requested by X for ECG card".
+  const threadRecipientName = isCollection
+    ? eventType === 'approve'
+      ? SHARED_APPROVAL_KEY
+      : (collectionLayouts.find((l) => l.id === recipientName)?.title ?? 'this layout')
+    : recipientName
+
   // ── Help Scout customer thread (best-effort) ─────────────────────────────
   // From here on, any failure returns 'partial' rather than rolling back —
   // the customer's intent is recorded in proof_events; the HS notification
@@ -1303,7 +1377,7 @@ Deno.serve(async (req) => {
   const text = buildCustomerThreadText(
     eventType,
     actorName,
-    recipientName,
+    threadRecipientName,
     comment,
     fileNames,
     proofUrl,
