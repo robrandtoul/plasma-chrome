@@ -38,7 +38,9 @@
 //   personalisation = per-card unique data (member name as variable
 //                     data, numbering, IDs, QR)
 
-import { useId, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { Info } from 'lucide-react'
 
 // ── Answer model ────────────────────────────────────────────────────────────
 // One field per question in the script. null = not yet answered. The
@@ -306,9 +308,195 @@ export function deriveAnswersFromVersion(input: {
   }
 }
 
+// ── Worked-example scenarios ──────────────────────────────────────────────────
+// One concrete, Plasma-specific situation per selectable option, revealed
+// behind the info affordance next to each option. These ADD to the option's
+// helper text, they do not restate it: the helper says what the option MEANS
+// (at a glance), the scenario shows a real job where you would pick it. Keyed
+// by question + option value so editing the copy is a one-line change here, in
+// one place. Every scenario has been walked through the decision tree in
+// docs/proof-type-wizard-structure.md and genuinely resolves to its own option.
+const SCENARIOS = {
+  // Q1 — the structural family.
+  q1Recipients:
+    "A 12-partner law firm wants a card for each partner, each showing that partner's own name, title, and direct line, proofed one by one.",
+  q1Set:
+    'A gym wants 500 membership cards carrying just the club logo and a call to join, with no individual names, every one the same.',
+  q1Selection:
+    'A startup wants to see three different design directions for their card, then pick the one they like best and set the rest aside.',
+  // Q2 — how many layouts (Set branch).
+  q2One:
+    'A coffee shop wants a single loyalty card design with no names. Shown in three foil colours it is still one design, so one layout.',
+  q2Several:
+    'A clinic wants four different information cards, for booking, aftercare, opening hours, and contact, all kept together as one set.',
+  // Q3 — same-material guard (Set, several layouts).
+  q3Same:
+    'A members club wants gold, silver, and bronze tier cards, all three on the same brushed steel, kept together as one set.',
+  q3Different:
+    'A restaurant group wants a walnut menu card, an acrylic table card, and a copper loyalty card, each on its own material.',
+  // Q3 follow-up — the different-materials guard.
+  guardSplit:
+    'Those walnut, acrylic, and copper cards each price differently, so you split them into three projects, one per material, each priced correctly.',
+  guardKeep:
+    'The customer wants to see the walnut and acrylic cards together as one set, so you keep them in one proof even though each material would normally be its own project.',
+  // Q4 — card style (Set branch).
+  q4Business:
+    'An estate agent wants a stack of standard cards showing the branch address and phone number, with no individual names and nothing changing from card to card.',
+  q4Membership:
+    'A wine club wants a membership-style card with their crest and a tier band, not a standard business card. This style is the one that lets you switch on personalisation.',
+  // Q5 — personalisation (Set, membership style).
+  q5Unique:
+    "A members club wants each card to carry the member's name, a sequential number, and a unique QR code, so no two cards are the same.",
+  q5Identical:
+    'A festival wants 2,000 membership-style passes all carrying exactly the same design, with no member names or numbers.',
+  // Selection QS — same or different material.
+  qsSame:
+    'A bar wants to see two different designs for their loyalty card, both on the same matte black metal, then pick the one they prefer.',
+  qsDifferent:
+    'A client wants to see their card on walnut next to the same design on brushed steel, then pick one and set the other aside. Each material is priced on its own.',
+} as const
+
 // ── Presentational pieces ────────────────────────────────────────────────────
 
-type Option<V extends string> = { value: V; label: string; sub?: string }
+// A small, accessible worked-example affordance: an info icon beside an option
+// that reveals its scenario on hover, keyboard focus, AND tap, and dismisses on
+// mouse-out, blur, Escape, outside click, and scroll. The popover is portaled
+// to <body> so the option card can never clip it, and it is clamped to the
+// viewport so it stays readable on a narrow screen.
+//
+// The trigger is rendered as an absolutely-positioned SIBLING of the option's
+// <label>, never a child, so activating it can never select the option. It
+// stays interactive even when the radios are disabled (the read-only edit
+// view), which is why selection-disabling lives on the <input>, not the
+// <fieldset>.
+const TIP_WIDTH = 264
+
+function InfoTooltip({
+  scenario,
+  optionLabel,
+  onDark = false,
+  className = '',
+}: {
+  scenario: string
+  optionLabel: string
+  // Trigger sits on a dark (selected) card — lighten the icon to suit.
+  onDark?: boolean
+  className?: string
+}) {
+  const tipId = useId()
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
+  const [hovered, setHovered] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const [pinned, setPinned] = useState(false) // tap / click keeps it open
+  const open = hovered || focused || pinned
+
+  useEffect(() => {
+    if (!open) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setPinned(false)
+        setHovered(false)
+        setFocused(false)
+        triggerRef.current?.blur()
+      }
+    }
+    function onDown(e: MouseEvent) {
+      const t = e.target as Node
+      if (triggerRef.current?.contains(t) || cardRef.current?.contains(t)) return
+      setPinned(false)
+      setHovered(false)
+    }
+    function onScroll() {
+      setPinned(false)
+      setHovered(false)
+    }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onDown)
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onScroll)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onDown)
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onScroll)
+    }
+  }, [open])
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={`Example: ${optionLabel}`}
+        aria-describedby={open ? tipId : undefined}
+        aria-expanded={open}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onClick={(e) => {
+          // Never let the click reach (or select) the option card.
+          e.stopPropagation()
+          setPinned((v) => !v)
+        }}
+        className={[
+          'inline-flex h-5 w-5 items-center justify-center rounded-full transition-colors',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
+          onDark ? 'text-on-ink/70 hover:text-on-ink' : 'text-ink-mute hover:text-ink',
+          className,
+        ].join(' ')}
+      >
+        <Info size={14} aria-hidden="true" />
+      </button>
+      {open && triggerRef.current && (
+        <TooltipCard id={tipId} anchor={triggerRef.current} cardRef={cardRef}>
+          {scenario}
+        </TooltipCard>
+      )}
+    </>
+  )
+}
+
+// Portaled popover card, positioned from the trigger's bounding rect and
+// clamped to the viewport. Prefers below the trigger, flips above when there
+// isn't room beneath. Same portal approach as ResolvePopover's PopoverCard.
+function TooltipCard({
+  id,
+  anchor,
+  cardRef,
+  children,
+}: {
+  id: string
+  anchor: HTMLElement
+  cardRef: React.RefObject<HTMLDivElement | null>
+  children: ReactNode
+}) {
+  const rect = anchor.getBoundingClientRect()
+  const left = Math.max(
+    12,
+    Math.min(rect.left + rect.width / 2 - TIP_WIDTH / 2, window.innerWidth - TIP_WIDTH - 12),
+  )
+  const spaceBelow = window.innerHeight - rect.bottom
+  const style: CSSProperties =
+    spaceBelow > 180
+      ? { left, top: rect.bottom + 8, width: TIP_WIDTH }
+      : { left, bottom: window.innerHeight - rect.top + 8, width: TIP_WIDTH }
+  return createPortal(
+    <div
+      ref={cardRef}
+      id={id}
+      role="tooltip"
+      className="fixed z-50 rounded-[10px] border border-line bg-surface p-3 text-xs leading-snug text-ink-soft shadow-md"
+      style={style}
+    >
+      {children}
+    </div>,
+    document.body,
+  )
+}
+
+type Option<V extends string> = { value: V; label: string; sub?: string; scenario: string }
 
 function QuestionBlock<V extends string>({
   legend,
@@ -337,41 +525,49 @@ function QuestionBlock<V extends string>({
     <div>
       <p className="text-sm font-semibold text-ink">{legend}</p>
       {note && <div className="mt-1 text-xs text-ink-mute">{note}</div>}
-      <fieldset
-        className={['mt-3 grid gap-3', cols === 2 ? 'sm:grid-cols-2' : ''].join(' ')}
-        disabled={disabled}
-      >
+      {/* Selection-disabling lives on each <input>, NOT on the <fieldset>, so
+          the per-option info trigger stays interactive in the read-only edit
+          view (a fieldset[disabled] would disable the info buttons too). */}
+      <fieldset className={['mt-3 grid gap-3', cols === 2 ? 'sm:grid-cols-2' : ''].join(' ')}>
         <legend className="sr-only">{legend}</legend>
         {options.map((opt) => {
           const isSelected = selected === opt.value
           return (
-            <label
-              key={opt.value}
-              className={[
-                'rounded border px-4 py-3 transition-colors',
-                'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
-                disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer',
-                isSelected
-                  ? 'border-ink bg-ink text-on-ink'
-                  : 'border-line bg-surface text-ink-soft hover:border-ink/40',
-              ].join(' ')}
-            >
-              <input
-                type="radio"
-                name={name}
-                value={opt.value}
-                checked={isSelected}
-                disabled={disabled}
-                onChange={() => onSelect(opt.value)}
-                className="sr-only"
+            <div key={opt.value} className="relative">
+              <label
+                className={[
+                  'block rounded border px-4 py-3 pr-10 transition-colors',
+                  'focus-within:ring-2 focus-within:ring-brand focus-within:ring-offset-1',
+                  disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer',
+                  isSelected
+                    ? 'border-ink bg-ink text-on-ink'
+                    : 'border-line bg-surface text-ink-soft hover:border-ink/40',
+                ].join(' ')}
+              >
+                <input
+                  type="radio"
+                  name={name}
+                  value={opt.value}
+                  checked={isSelected}
+                  disabled={disabled}
+                  onChange={() => onSelect(opt.value)}
+                  className="sr-only"
+                />
+                <div className="text-sm font-semibold">{opt.label}</div>
+                {opt.sub && (
+                  <div className={['mt-1 text-xs', isSelected ? 'text-on-ink/80' : 'text-ink-mute'].join(' ')}>
+                    {opt.sub}
+                  </div>
+                )}
+              </label>
+              {/* Sibling of the label, so a click here never selects the option. */}
+              <InfoTooltip
+                scenario={opt.scenario}
+                optionLabel={opt.label}
+                onDark={isSelected}
+                className="absolute right-2.5 top-2.5"
               />
-              <div className="text-sm font-semibold">{opt.label}</div>
-              {opt.sub && (
-                <div className={['mt-1 text-xs', isSelected ? 'text-on-ink/80' : 'text-ink-mute'].join(' ')}>
-                  {opt.sub}
-                </div>
-              )}
-            </label>
+            </div>
           )
         })}
       </fieldset>
@@ -500,16 +696,19 @@ export function ProofShapeWizard({
                 value: 'recipients',
                 label: 'A card for each person',
                 sub: 'Each named person has their own card with their own details, proofed one by one. The customer wants them all.',
+                scenario: SCENARIOS.q1Recipients,
               },
               {
                 value: 'set',
                 label: 'A shared set (no names)',
                 sub: 'No card is tied to a named person. The customer wants every design you show, whether that is one design or several.',
+                scenario: SCENARIOS.q1Set,
               },
               {
                 value: 'selection',
                 label: 'Alternatives to choose from',
                 sub: 'You show alternative designs and the customer picks the one they want. The rest are set aside.',
+                scenario: SCENARIOS.q1Selection,
               },
             ]}
           />
@@ -535,11 +734,12 @@ export function ProofShapeWizard({
                 onSelect={(v: 'one' | 'several') => set({ layouts: v, ...clearAfterLayouts })}
                 note="A layout is one design. The same design shown in different finishes, colours, or materials is still one layout."
                 options={[
-                  { value: 'one', label: 'One layout', sub: 'A single design.' },
+                  { value: 'one', label: 'One layout', sub: 'A single design.', scenario: SCENARIOS.q2One },
                   {
                     value: 'several',
                     label: 'Several layouts',
                     sub: 'Two or more different designs, all kept together. Each layout after the first adds a tooling charge.',
+                    scenario: SCENARIOS.q2Several,
                   },
                 ]}
               />
@@ -562,11 +762,12 @@ export function ProofShapeWizard({
                   disabled={disabled}
                   onSelect={(v: 'yes' | 'no') => set({ sameMaterial: v, ...clearAfterSameMaterial })}
                   options={[
-                    { value: 'yes', label: 'Yes, one material' },
+                    { value: 'yes', label: 'Yes, one material', scenario: SCENARIOS.q3Same },
                     {
                       value: 'no',
                       label: 'No, different materials',
                       sub: 'Each material is normally quoted and proofed as its own project, so it prices correctly.',
+                      scenario: SCENARIOS.q3Different,
                     },
                   ]}
                 />
@@ -588,23 +789,29 @@ export function ProofShapeWizard({
                     A set uses one material. Different materials are normally split into separate
                     projects so each one prices correctly.
                   </p>
-                  <div className="mt-3 flex flex-wrap gap-3">
-                    <button
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => set({ multiMaterialChoice: 'split', style: null, personalised: null })}
-                      className="rounded border border-ink bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-60"
-                    >
-                      Split into separate projects
-                    </button>
-                    <button
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => set({ multiMaterialChoice: 'keep', style: null, personalised: null })}
-                      className="rounded border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink-soft hover:border-ink/40 disabled:opacity-60"
-                    >
-                      Keep together anyway
-                    </button>
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <span className="inline-flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => set({ multiMaterialChoice: 'split', style: null, personalised: null })}
+                        className="rounded border border-ink bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:opacity-60"
+                      >
+                        Split into separate projects
+                      </button>
+                      <InfoTooltip scenario={SCENARIOS.guardSplit} optionLabel="Split into separate projects" />
+                    </span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => set({ multiMaterialChoice: 'keep', style: null, personalised: null })}
+                        className="rounded border border-line bg-surface px-4 py-2 text-sm font-semibold text-ink-soft hover:border-ink/40 disabled:opacity-60"
+                      >
+                        Keep together anyway
+                      </button>
+                      <InfoTooltip scenario={SCENARIOS.guardKeep} optionLabel="Keep together anyway" />
+                    </span>
                   </div>
                 </div>
               ) : (
@@ -635,11 +842,12 @@ export function ProofShapeWizard({
                   disabled={disabled}
                   onSelect={(v: 'business' | 'membership') => set({ style: v, ...clearAfterStyle })}
                   options={[
-                    { value: 'business', label: 'Business card', sub: 'A standard card design. Every card is identical.' },
+                    { value: 'business', label: 'Business card', sub: 'A standard card design. Every card is identical.', scenario: SCENARIOS.q4Business },
                     {
                       value: 'membership',
                       label: 'Membership card',
                       sub: 'A membership-style card. You can switch on personalisation so each card carries its own details.',
+                      scenario: SCENARIOS.q4Membership,
                     },
                   ]}
                 />
@@ -669,8 +877,8 @@ export function ProofShapeWizard({
                     disabled={disabled}
                     onSelect={(v: 'yes' | 'no') => set({ personalised: v })}
                     options={[
-                      { value: 'yes', label: 'Yes, every card is unique', sub: 'Priced per card, with a minimum charge, on top of the base price.' },
-                      { value: 'no', label: 'No, every card is identical' },
+                      { value: 'yes', label: 'Yes, every card is unique', sub: 'Priced per card, with a minimum charge, on top of the base price.', scenario: SCENARIOS.q5Unique },
+                      { value: 'no', label: 'No, every card is identical', scenario: SCENARIOS.q5Identical },
                     ]}
                   />
                 ) : (
@@ -701,8 +909,8 @@ export function ProofShapeWizard({
               disabled={disabled}
               onSelect={(v: 'same' | 'different') => set({ selectionMaterial: v })}
               options={[
-                { value: 'same', label: 'Same material', sub: 'Every alternative is the same material. Only the design differs.' },
-                { value: 'different', label: 'Different materials', sub: 'Each alternative is on a different material, so each is priced on its own.' },
+                { value: 'same', label: 'Same material', sub: 'Every alternative is the same material. Only the design differs.', scenario: SCENARIOS.qsSame },
+                { value: 'different', label: 'Different materials', sub: 'Each alternative is on a different material, so each is priced on its own.', scenario: SCENARIOS.qsDifferent },
               ]}
             />
           ) : (

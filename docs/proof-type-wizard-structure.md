@@ -269,3 +269,110 @@ Shown in the running-resolution banner. Reworded to drop *produced*:
   supports personalisation is chosen, so personalisation can never be reached outside
   membership + `supports_personalisation`.
 - EditVersionPage renders the wizard `disabled` (read-only); the shape is locked at creation.
+
+---
+
+## 7. Worked-example tooltips
+
+Every selectable option carries a small info affordance (an "i" icon beside the option) that
+reveals a one-line, Plasma-specific worked example. Two registers, kept distinct: the option's
+**helper text** says what the option *means* at a glance; the **tooltip** shows a real job where
+you would pick it. The tooltip never restates the helper.
+
+The copy is data-driven: a single `SCENARIOS` map at the top of `ProofShapeWizard.tsx`, keyed by
+question + option, co-located with the option definitions. Editing or adding a scenario is a
+one-line change in that one place. It is hardcoded in the component, exactly like the helper
+text, with no admin editor and no schema.
+
+### The scenarios (option -> example)
+
+Each line ends with the path it walks through the decision tree (section 3), confirming it
+resolves to the option it sits on.
+
+**Q1 — which best describes this proof?**
+
+- *A card for each person* — "A 12-partner law firm wants a card for each partner, each showing
+  that partner's own name, title, and direct line, proofed one by one." → per-named-person,
+  individually proofed = **Recipients**. (Small count, own details, proofed one by one, so not a
+  shared/personalised run.)
+- *A shared set (no names)* — "A gym wants 500 membership cards carrying just the club logo and a
+  call to join, with no individual names, every one the same." → no names, customer wants them
+  all = **Set** branch.
+- *Alternatives to choose from* — "A startup wants to see three different design directions for
+  their card, then pick the one they like best and set the rest aside." → pick one, rest dropped
+  = **Selection** branch.
+
+**Q2 — how many layouts are in this set?**
+
+- *One layout* — "A coffee shop wants a single loyalty card design with no names. Shown in three
+  foil colours it is still one design, so one layout." → one design = **Set (single)**. (Doubles
+  as the finish-variant clarifier: finishes do not multiply layouts.)
+- *Several layouts* — "A clinic wants four different information cards, for booking, aftercare,
+  opening hours, and contact, all kept together as one set." → several different designs, kept
+  together → Q3.
+
+**Q3 — are all the layouts on the same material?**
+
+- *Yes, one material* — "A members club wants gold, silver, and bronze tier cards, all three on
+  the same brushed steel, kept together as one set." → several layouts, one material =
+  **Set (collection)**. (Tiers differ by design, not by stock.)
+- *No, different materials* — "A restaurant group wants a walnut menu card, an acrylic table
+  card, and a copper loyalty card, each on its own material." → several layouts on different
+  materials → the split / keep guard.
+
+**The different-materials guard**
+
+- *Split into separate projects* — "Those walnut, acrylic, and copper cards each price
+  differently, so you split them into three projects, one per material, each priced correctly." →
+  the recommended route; ends as separate single-material projects (not a saveable single set).
+- *Keep together anyway* — "The customer wants to see the walnut and acrylic cards together as one
+  set, so you keep them in one proof even though each material would normally be its own project."
+  → the override; proceeds as **Set (collection)**.
+
+**Q4 — what style of card is this?**
+
+- *Business card* — "An estate agent wants a stack of standard cards showing the branch address
+  and phone number, with no individual names and nothing changing from card to card." → a
+  standard no-name card, no personalisation offered.
+- *Membership card* — "A wine club wants a membership-style card with their crest and a tier band,
+  not a standard business card. This style is the one that lets you switch on personalisation." →
+  membership style, the gateway to Q5.
+
+**Q5 — does every card carry its own unique details?**
+
+- *Yes, every card is unique* — "A members club wants each card to carry the member's name, a
+  sequential number, and a unique QR code, so no two cards are the same." → membership + per-card
+  data = **personalisation on**. (One template plus a data rule, not a card proofed per person, so
+  this is Set, never Recipients.)
+- *No, every card is identical* — "A festival wants 2,000 membership-style passes all carrying
+  exactly the same design, with no member names or numbers." → membership styling, no per-card
+  data = **personalisation off**.
+
+**Selection QS — are the alternatives all on the same material?**
+
+- *Same material* — "A bar wants to see two different designs for their loyalty card, both on the
+  same matte black metal, then pick the one they prefer." → alternatives on one material =
+  **Selection**.
+- *Different materials* — "A client wants to see their card on walnut next to the same design on
+  brushed steel, then pick one and set the other aside. Each material is priced on its own." →
+  alternatives on different materials = **Selection (per-direction pricing)**. (Pick-one-and-drop,
+  so it is Selection, not a finish/material option dimension on one design.)
+
+### Affordance behaviour
+
+- **Trigger.** A small `Info` icon (lucide, 14px in a 20px hit area, muted so it stays
+  subordinate to the label), rendered as an absolutely-positioned *sibling* of the option's
+  `<label>`, never a child. Clicking it can therefore never select the option; clicking anywhere
+  else on the card still selects it.
+- **Reveal** on hover, on keyboard focus, and on tap (a tap pins it open on touch, where there is
+  no hover).
+- **Dismiss** on mouse-out, on blur, on Escape (which also returns focus out of the trigger so it
+  does not immediately reopen), on outside click, and on scroll or resize.
+- **Accessibility.** The trigger is a real `<button>` (keyboard reachable, focus-visible ring),
+  labelled `Example: <option>`, with `aria-describedby` pointing at the popover while it is open.
+  The popover has `role="tooltip"`. The trigger stays interactive even when the option radios are
+  disabled (the read-only edit view), so selection-disabling lives on each `<input>`, not on the
+  `<fieldset>`.
+- **Positioning.** The popover is portaled to `<body>` so the option card can never clip it, is
+  placed below the icon (flipping above when there is no room), and is clamped to the viewport
+  with a 12px margin so it stays readable on a narrow screen. It never shifts page layout.
