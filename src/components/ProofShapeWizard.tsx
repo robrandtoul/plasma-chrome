@@ -681,13 +681,13 @@ export function ProofShapeWizard({
               {
                 value: 'recipients',
                 label: 'A batch of cards for one or more people',
-                sub: 'Each named person has their own cards showing their own contact details. The customer wants them all.',
+                sub: 'Each named person has their own cards showing their own contact details.',
                 scenario: SCENARIOS.q1Recipients,
               },
               {
                 value: 'set',
                 label: 'Cards with no personal contact details',
-                sub: "No card shows an individual's contact details. The customer wants every design you show, whether one design or several.",
+                sub: "No card shows an individual's contact details. This can be one design or several.",
                 scenario: SCENARIOS.q1Set,
               },
               {

@@ -140,9 +140,9 @@ questions (which best describes this, then how many layouts).
 > **Which best describes this proof?**
 
 - **A batch of cards for one or more people** — Each named person has their own cards showing
-  their own contact details. The customer wants them all.
+  their own contact details.
 - **Cards with no personal contact details** — No card shows an individual's contact details.
-  The customer wants every design you show, whether one design or several.
+  This can be one design or several.
 - **Alternatives to choose from** — You show alternative designs and the customer picks the one
   they want. The rest are set aside.
 
