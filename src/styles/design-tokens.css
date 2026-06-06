@@ -125,23 +125,23 @@
    on this ancestor re-scopes every accent inside, portals included.
    The semantic aliases are re-stated explicitly so they pick up the
    override regardless of var()-resolution order. Ramp anchored on
-   #56be98 (primary / --c-brand-500); lighter tints and darker shades
+   #58c59d (primary / --c-brand-500); lighter tints and darker shades
    are derived around it on the same hue, mirroring the coral ramp's
    cadence. */
 .customer-accent {
   --c-brand-50:  #eef8f4;
-  --c-brand-100: #d7f0e6;
-  --c-brand-200: #b0e2ce;
-  --c-brand-300: #83cfb1;
-  --c-brand-400: #6cc8a4;
-  --c-brand-500: #56be98;  /* primary */
-  --c-brand-600: #3ea47f;
-  --c-brand-700: #328567;  /* deep */
-  --c-brand-800: #24634d;
-  --c-brand-900: #184233;
-  --c-brand:      #56be98;
-  --c-brand-soft: #d7f0e6;
-  --c-brand-ink:  #184233;
+  --c-brand-100: #d8f0e7;
+  --c-brand-200: #b2e2cf;
+  --c-brand-300: #85cfb3;
+  --c-brand-400: #6ec9aa;
+  --c-brand-500: #58c59d;  /* primary */
+  --c-brand-600: #3faa84;
+  --c-brand-700: #32896a;  /* deep */
+  --c-brand-800: #24664f;
+  --c-brand-900: #184436;
+  --c-brand:      #58c59d;
+  --c-brand-soft: #d8f0e7;
+  --c-brand-ink:  #184436;
 
   /* Approved-signal trial: cyan family (customer page only), option B.
      The approved pill / status is coloured-text-on-soft-bg, so a
