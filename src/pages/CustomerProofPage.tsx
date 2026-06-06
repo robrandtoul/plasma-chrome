@@ -1303,22 +1303,23 @@ export default function CustomerProofPage() {
               Go to the latest version
             </ButtonGhost>
           ) : (
-            // Request changes — coral / brand-tinted CTA, paired
-            // with the ink Approve to its right. The two CTAs
-            // sit side-by-side at sm+ and stack at <sm.
-            <ButtonCoral
+            // Request changes — the ink (dark) secondary CTA, paired
+            // with the brand-tinted Approve to its right (the positive
+            // primary action gets the accent). The two CTAs sit
+            // side-by-side at sm+ and stack at <sm.
+            <ButtonInk
               icon={Send}
               onClick={() => openActionPanel(activeVersion.id, name, 'request_changes', opts?.displayName)}
             >
               Request changes
-            </ButtonCoral>
+            </ButtonInk>
           )}
-          <ButtonInk
+          <ButtonCoral
             icon={Check}
             onClick={() => openActionPanel(activeVersion.id, name, 'approve', opts?.displayName)}
           >
             {approveLabel}
-          </ButtonInk>
+          </ButtonCoral>
         </div>
       </div>
     )

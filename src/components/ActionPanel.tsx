@@ -307,14 +307,14 @@ export function ActionPanel({
           : `Approve ${actionPanel.name}'s design`
       : 'Request changes'
 
-  // Approve uses the design system's ButtonInk (ink fill) as the
-  // primary "Confirm" CTA. request-changes / variant-round use
-  // ButtonCoral so the panel reads as the brand "designer action
-  // needed" surface, mirroring the per-recipient action band on the
-  // overview. The previous Direction-B brand-blue (#3a2c91) Send CTA
-  // is retired — it predated the design system and no other surface
-  // uses that hue.
-  const PrimaryCTA = isApprove ? ButtonInk : ButtonCoral
+  // Approve uses ButtonCoral (the brand / teal fill) as the primary
+  // "Confirm" CTA — the positive primary action carries the accent.
+  // request-changes / variant-round use ButtonInk (dark fill) so the
+  // panel's CTA mirrors the per-recipient action band on the overview
+  // (Approve = brand, Request changes = ink). The previous Direction-B
+  // brand-blue (#3a2c91) Send CTA is retired — it predated the design
+  // system and no other surface uses that hue.
+  const PrimaryCTA = isApprove ? ButtonCoral : ButtonInk
 
   return (
     <>

@@ -114,7 +114,7 @@
   --space-12: 48px;
 }
 
-/* ─── Customer-page accent trial: indigo ────────────────────
+/* ─── Customer-page accent: teal ───────────────────
    Scoped override of the brand ramp. CustomerProofPage toggles the
    `customer-accent` class on <html> while it is mounted (see that
    file's effect), so this re-colours the customer proof page only.
@@ -124,21 +124,24 @@
    `--c-brand-*` custom properties at point of use, overriding them
    on this ancestor re-scopes every accent inside, portals included.
    The semantic aliases are re-stated explicitly so they pick up the
-   override regardless of var()-resolution order. */
+   override regardless of var()-resolution order. Ramp anchored on
+   #56be98 (primary / --c-brand-500); lighter tints and darker shades
+   are derived around it on the same hue, mirroring the coral ramp's
+   cadence. */
 .customer-accent {
-  --c-brand-50:  #f8f5fe;
-  --c-brand-100: #ebe1fc;
-  --c-brand-200: #d5c0f9;
-  --c-brand-300: #b38df5;
-  --c-brand-400: #9661f1;
-  --c-brand-500: #7c3aed;  /* primary */
-  --c-brand-600: #6831c7;
-  --c-brand-700: #52269c;
-  --c-brand-800: #3e1d77;
-  --c-brand-900: #2a1451;
-  --c-brand:      #7c3aed;
-  --c-brand-soft: #ebe1fc;
-  --c-brand-ink:  #2a1451;
+  --c-brand-50:  #eef8f4;
+  --c-brand-100: #d7f0e6;
+  --c-brand-200: #b0e2ce;
+  --c-brand-300: #83cfb1;
+  --c-brand-400: #6cc8a4;
+  --c-brand-500: #56be98;  /* primary */
+  --c-brand-600: #3ea47f;
+  --c-brand-700: #328567;  /* deep */
+  --c-brand-800: #24634d;
+  --c-brand-900: #184233;
+  --c-brand:      #56be98;
+  --c-brand-soft: #d7f0e6;
+  --c-brand-ink:  #184233;
 
   /* Approved-signal trial: cyan family (customer page only), option B.
      The approved pill / status is coloured-text-on-soft-bg, so a
@@ -149,7 +152,7 @@
   --c-in-stock-soft: #dafaf9;
 
   /* Paper: nudge the warm cream off its slight orange lean so the
-     canvas complements the violet/cyan scheme instead of the old
+     canvas complements the teal/cyan scheme instead of the old
      coral. Canvas + draftsman-grid hairlines shift together (a
      de-oranged warm-neutral paper) so the grid doesn't stay beige.
      Surfaces stay pure white. Customer page only. */
