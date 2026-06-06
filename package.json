@@ -13,6 +13,7 @@
     "db:push:confirm": "tsx scripts/db-push-confirm.ts",
     "db:status": "npx supabase migration list --linked",
     "db:clean-fixtures": "tsx scripts/clean-test-fixtures.ts",
+    "db:empty-proof-images": "tsx scripts/empty-proof-images-bucket.ts",
     "check:price-list": "tsx scripts/check-price-list-golden.ts"
   },
   "dependencies": {
