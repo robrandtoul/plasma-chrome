@@ -92,7 +92,7 @@ export function DesignerHeader({
   const visibleNav = NAV.filter((n) => n.id !== 'admin' || role === 'admin')
   return (
     <header className="sticky top-0 z-[5] bg-surface border-b border-line">
-      <div className="mx-auto max-w-[1280px] flex items-center gap-4 px-4 py-3 sm:gap-5 sm:px-7">
+      <div className="mx-auto max-w-[1280px] flex items-center gap-4 px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 sm:gap-5 sm:px-7">
         <Link to="/" className="flex-shrink-0">
           <PlasmaWordmark tagline="Proofs" />
         </Link>
