@@ -64,7 +64,7 @@ export default function SetNewPasswordPage() {
           </h1>
           <p className="mt-5 text-[15px] text-white/65 max-w-[460px] leading-[1.55]">
             {isError
-              ? 'This recovery link is no longer valid. An admin can send you a fresh one.'
+              ? 'This recovery link is no longer valid. Request a fresh one from the sign-in screen, or ask an admin.'
               : 'Choose a new password for your account. You will be signed in straight after.'}
           </p>
         </div>
@@ -83,7 +83,7 @@ export default function SetNewPasswordPage() {
             <div className="mt-6 flex flex-col gap-5 max-w-[400px]">
               <p className="text-[14px] text-ink-soft leading-[1.5]">
                 {recoveryError ??
-                  'This reset link has expired or has already been used. Ask an admin to send you a new one.'}
+                  'This reset link has expired or has already been used. Request a new one from the sign-in screen, or ask an admin.'}
               </p>
               <ButtonInk
                 onClick={() => {

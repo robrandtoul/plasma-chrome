@@ -50,7 +50,7 @@ function readRecoveryFromHash(): { state: RecoveryState; error: string | null } 
     return {
       state: 'error',
       error:
-        'This reset link has expired or has already been used. Ask an admin to send you a new one.',
+        'This reset link has expired or has already been used. Request a new one from the sign-in screen, or ask an admin.',
     }
   }
   if (params.get('type') === 'recovery') return { state: 'set', error: null }
