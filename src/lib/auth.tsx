@@ -1,22 +1,80 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './supabase'
 
 export type UserRole = 'admin' | 'designer'
+
+// Password-recovery (admin-triggered email link) state.
+//   'set'   -> on a valid recovery link; show the set-new-password screen.
+//   'error' -> the link was expired or already used; show a friendly notice.
+export type RecoveryState = 'none' | 'set' | 'error'
 
 interface AuthContextValue {
   session: Session | null
   /** Current user's role. null while we're still loading it or when signed out. */
   role: UserRole | null
   loading: boolean
+  /** Password-recovery flow state, driven by the recovery link's URL hash and
+      the PASSWORD_RECOVERY auth event. */
+  recovery: RecoveryState
+  recoveryError: string | null
+  /** Leave the recovery flow (after a successful set, or from the error screen)
+      and tidy the URL hash. */
+  endRecovery: () => void
 }
 
-const AuthContext = createContext<AuthContextValue>({ session: null, role: null, loading: true })
+const AuthContext = createContext<AuthContextValue>({
+  session: null,
+  role: null,
+  loading: true,
+  recovery: 'none',
+  recoveryError: null,
+  endRecovery: () => {},
+})
+
+// Capture the URL hash at module load, BEFORE supabase-js's detectSessionInUrl
+// consumes it. The admin recovery email links to
+// https://...supabase.co/auth/v1/verify?...&type=recovery&redirect_to=<app>,
+// which verifies and redirects to the app with tokens in the URL hash (implicit
+// flow). Reading the hash here means:
+//   * we can show the set-password screen even if the PASSWORD_RECOVERY event
+//     fires before our onAuthStateChange listener subscribes, and
+//   * we can recognise an expired / already-used link, which arrives as
+//     #error=access_denied&error_code=otp_expired&error_description=... and
+//     fires no auth event at all.
+const INITIAL_HASH = typeof window !== 'undefined' ? window.location.hash : ''
+
+function readRecoveryFromHash(): { state: RecoveryState; error: string | null } {
+  const params = new URLSearchParams(INITIAL_HASH.replace(/^#/, ''))
+  if (params.get('error') || params.get('error_code') || params.get('error_description')) {
+    return {
+      state: 'error',
+      error:
+        'This reset link has expired or has already been used. Ask an admin to send you a new one.',
+    }
+  }
+  if (params.get('type') === 'recovery') return { state: 'set', error: null }
+  return { state: 'none', error: null }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [role, setRole] = useState<UserRole | null>(null)
   const [loading, setLoading] = useState(true)
+  const [recoveryInit] = useState(readRecoveryFromHash)
+  const [recovery, setRecovery] = useState<RecoveryState>(recoveryInit.state)
+  const [recoveryError, setRecoveryError] = useState<string | null>(recoveryInit.error)
+
+  const endRecovery = useCallback(() => {
+    setRecovery('none')
+    setRecoveryError(null)
+    // Drop the recovery hash so a refresh doesn't re-open the screen. (For a
+    // successful 'set' supabase-js has already cleaned the token hash; this also
+    // covers the error case, whose hash carries no token.)
+    if (typeof window !== 'undefined' && window.location.hash) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -58,6 +116,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void supabase.auth.getSession().then(({ data }) => bootstrap(data.session))
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
+      // A recovery link establishes a session and fires PASSWORD_RECOVERY; flag
+      // it so the app shows the set-password screen instead of dropping the user
+      // on the dashboard signed in (the bug this fixes). The initial-hash read
+      // above is the backstop for the case where this fires before we subscribe.
+      if (event === 'PASSWORD_RECOVERY') setRecovery('set')
       // INITIAL_SESSION fires once on subscribe; getSession() above
       // already handles that bootstrap, so skip to avoid a redundant
       // role re-fetch.
@@ -83,7 +146,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  return <AuthContext.Provider value={{ session, role, loading }}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider
+      value={{ session, role, loading, recovery, recoveryError, endRecovery }}
+    >
+      {children}
+    </AuthContext.Provider>
+  )
 }
 
 export function useAuth() {

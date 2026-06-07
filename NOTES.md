@@ -47,3 +47,38 @@ Site live at https://proofs.plasmadesign.co.uk. Connected to the GitHub repo; au
 - No 404 route for unknown paths (falls through to the login redirect).
 - Design system not applied — all pages use placeholder Tailwind classes.
 - Hostinger DNS / custom subdomain not yet configured.
+
+# Session notes — 7 June 2026: password recovery completion
+
+## Auth / password recovery (Supabase project: xpcjanqrcgzjmwketxtt, "proof-viewer")
+
+Password resets are **admin-triggered** (designers / admins; customers never sign
+in). The admin Users tab already fires the recovery email via the
+`admin-user-password` edge function (`mode: 'reset_email'`, which calls
+`generateLink({ type: 'recovery' })`). This session added the missing frontend
+piece so the link actually completes:
+
+- `src/lib/auth.tsx` — `AuthProvider` now exposes `recovery` / `recoveryError` /
+  `endRecovery`. It catches the `PASSWORD_RECOVERY` auth event, and also reads the
+  URL hash at module load (captured before supabase-js consumes it) as a backstop,
+  so it works even if the event fires before the listener subscribes, and so it can
+  recognise an expired / already-used link (`#error=...&error_code=otp_expired`).
+- `src/pages/SetNewPasswordPage.tsx` — new full-screen set-new-password view
+  (LoginPage styling), min 8 chars, `supabase.auth.updateUser({ password })`, with
+  a friendly "link expired" state.
+- `src/App.tsx` — `AppShell` renders the recovery screen whenever `recovery !== 'none'`,
+  before the router, so a recovery link no longer drops the user on the dashboard.
+
+No self-service "Forgot your password?" on the login screen (deliberate; admin-only).
+
+## Supabase Auth config (already done, on this project — do not change)
+
+Configured 7 June 2026:
+- URL Configuration: Site URL `https://proofs.plasmadesign.co.uk`; redirect URLs
+  `https://proofs.plasmadesign.co.uk` and `https://proofs.plasmadesign.co.uk/**`.
+- Custom SMTP via Resend (Supabase secret/key name `supabase-proofs-smtp`), sender
+  `PlasmaDesign Proof Viewer <noreply@invite.plasmadesign.co.uk>`.
+- Branded "Reset password" and "Invite user" email templates (Proof Viewer wording),
+  `{{ .ConfirmationURL }}` intact.
+
+Recovery emails are admin-triggered; there is no self-service reset.

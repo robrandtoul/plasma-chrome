@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { AuthProvider } from './lib/auth'
+import { AuthProvider, useAuth } from './lib/auth'
+import SetNewPasswordPage from './pages/SetNewPasswordPage'
 import { useQuoteShortcut } from './lib/useQuoteShortcut'
 import RequireAuth from './components/RequireAuth'
 import RequireAdmin from './components/RequireAdmin'
@@ -34,6 +35,11 @@ import DesignDemo from './design/_demo'
 // programmatically; today it just window.opens a new tab.
 function AppShell() {
   useQuoteShortcut()
+  const { recovery } = useAuth()
+  // A password-recovery link signs the user in, so without this they would land
+  // on the dashboard and never be prompted. Take over the whole app until they
+  // set a new password (or acknowledge an expired link).
+  if (recovery !== 'none') return <SetNewPasswordPage />
   return (
     <Routes>
       {/* Public */}
