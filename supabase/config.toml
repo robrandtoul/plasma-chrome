@@ -426,6 +426,12 @@ verify_jwt = false
 [functions.customer-proof-images]
 verify_jwt = false
 
+# acknowledge-disclaimer: anon-callable from the unauthenticated proof
+# page (the customer ticks the disclaimer before viewing). Matches the
+# verify_jwt=false the function ran with on the standalone proofs project.
+[functions.acknowledge-disclaimer]
+verify_jwt = false
+
 # proof-action: anon-callable for the same reason — Phase 2 customer
 # Approve / Request changes flow runs on the unauthenticated proof
 # page. Defence in depth lives inside the handler: settings.approvals_
