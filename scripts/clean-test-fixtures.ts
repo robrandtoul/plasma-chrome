@@ -52,6 +52,9 @@ if (!url || !serviceKey) {
 }
 
 const sb = createClient(url, serviceKey, {
+  // Proof data lives in the `proofs` schema of the shared stock project;
+  // table names collide with stock's public schema under one PostgREST.
+  db: { schema: 'proofs' },
   auth: { persistSession: false, autoRefreshToken: false },
 })
 

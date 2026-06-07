@@ -58,7 +58,9 @@ export async function requireAdmin(req: Request): Promise<CallerContext | Respon
   const admin = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-    { auth: { persistSession: false, autoRefreshToken: false } },
+    // Proof data lives in the `proofs` schema of the shared stock project;
+    // table names collide with stock's public schema under one PostgREST.
+    { db: { schema: 'proofs' }, auth: { persistSession: false, autoRefreshToken: false } },
   )
   const { data: profile } = await admin
     .from('profiles')
@@ -72,7 +74,7 @@ export async function requireAdmin(req: Request): Promise<CallerContext | Respon
   const user = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-    { global: { headers: { Authorization: authHeader } } },
+    { db: { schema: 'proofs' }, global: { headers: { Authorization: authHeader } } },
   )
 
   const callerEmail = userData.user.email ?? ''
@@ -115,7 +117,9 @@ export async function requireDesigner(req: Request): Promise<CallerContext | Res
   const admin = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-    { auth: { persistSession: false, autoRefreshToken: false } },
+    // Proof data lives in the `proofs` schema of the shared stock project;
+    // table names collide with stock's public schema under one PostgREST.
+    { db: { schema: 'proofs' }, auth: { persistSession: false, autoRefreshToken: false } },
   )
   const { data: profile } = await admin
     .from('profiles')
@@ -130,7 +134,7 @@ export async function requireDesigner(req: Request): Promise<CallerContext | Res
   const user = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-    { global: { headers: { Authorization: authHeader } } },
+    { db: { schema: 'proofs' }, global: { headers: { Authorization: authHeader } } },
   )
 
   const callerEmail = userData.user.email ?? ''

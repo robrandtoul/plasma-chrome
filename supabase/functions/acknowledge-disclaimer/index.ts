@@ -103,6 +103,9 @@ Deno.serve(async (req) => {
   // sees a projection via public_proofs) and write the ack
   // columns.
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
+    // Proof data lives in the `proofs` schema of the shared stock project;
+    // table names collide with stock's public schema under one PostgREST.
+    db: { schema: 'proofs' },
     auth: { persistSession: false },
   })
 

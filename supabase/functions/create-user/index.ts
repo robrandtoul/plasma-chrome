@@ -30,23 +30,29 @@ Deno.serve(async (req) => {
 
   // Create the auth user. email_confirm: true skips the verification email
   // — the admin is sharing credentials out-of-band so the user can sign in
-  // immediately.
+  // immediately. app: 'proofs' stamps the new auth user as belonging to
+  // this app so any app-aware provisioning routes to the proofs schema.
   const { data: created, error: createErr } = await admin.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
+    app_metadata: { app: 'proofs' },
   })
   if (createErr || !created?.user) {
     return json({ error: createErr?.message ?? 'Failed to create auth user' }, 500)
   }
 
-  // The handle_new_user trigger has already inserted a profile row (id only).
-  // Fill in the full_name now. On failure, roll the auth user back so the
-  // system doesn't end up with an orphan.
+  // Create the proofs profile EXPLICITLY. We do NOT rely on the
+  // handle_new_user trigger: the admin API sets app_metadata AFTER
+  // inserting the auth.users row, so an app-aware trigger sees no app at
+  // insert time and creates nothing. proofs.profiles has NO email column
+  // (the email lives on auth.users), and role defaults to 'designer', so
+  // we upsert only { id, full_name }. Upsert is idempotent if the trigger
+  // ever does run. On failure, roll the auth user back so the system
+  // doesn't end up with an orphan.
   const { error: profileErr } = await admin
     .from('profiles')
-    .update({ full_name })
-    .eq('id', created.user.id)
+    .upsert({ id: created.user.id, full_name }, { onConflict: 'id' })
   if (profileErr) {
     await admin.auth.admin.deleteUser(created.user.id)
     return json({ error: `Failed to save profile: ${profileErr.message}` }, 500)
