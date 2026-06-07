@@ -12,11 +12,15 @@
 // affects the dashboard chip wording, never whether the flag is quieted.
 //
 // Auth: this endpoint is public (verify_jwt = false — Help Scout sends no JWT).
-// The only gate is the HMAC-SHA1 signature check against HELPSCOUT_WEBHOOK_SECRET
+// The only gate is the HMAC-SHA1 signature check against PROOFS_HELPSCOUT_WEBHOOK_SECRET
 // over the raw request body, so that verification must run before any work.
 //
 // Env:
-//   HELPSCOUT_WEBHOOK_SECRET            — the webhook's signing secret.
+//   PROOFS_HELPSCOUT_WEBHOOK_SECRET     — the proofs webhook's signing secret.
+//     Renamed from HELPSCOUT_WEBHOOK_SECRET for the merged stock project: the
+//     stock-control app's own Help Scout order-webhook receivers already use
+//     HELPSCOUT_WEBHOOK_SECRET with a different secret, so proofs needs its own
+//     env var to avoid a collision (one project, two distinct webhooks).
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY — service-role client (RLS bypass,
 //                                         writes scoped to helpscout_* columns).
 
@@ -84,10 +88,10 @@ function replyDirection(eventHeader: string | null, payload: Record<string, unkn
 async function handle(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
-  const secret = Deno.env.get('HELPSCOUT_WEBHOOK_SECRET')
+  const secret = Deno.env.get('PROOFS_HELPSCOUT_WEBHOOK_SECRET')
   if (!secret) {
-    console.error('[helpscout-webhook] HELPSCOUT_WEBHOOK_SECRET not set')
-    return json({ error: 'HELPSCOUT_WEBHOOK_SECRET not set' }, 500)
+    console.error('[helpscout-webhook] PROOFS_HELPSCOUT_WEBHOOK_SECRET not set')
+    return json({ error: 'PROOFS_HELPSCOUT_WEBHOOK_SECRET not set' }, 500)
   }
 
   // Read the raw body once — needed verbatim for the HMAC, then parsed.
