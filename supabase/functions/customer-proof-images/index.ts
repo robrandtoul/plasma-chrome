@@ -89,6 +89,9 @@ Deno.serve(async (req) => {
   // already PII-clean but we still need stable access regardless
   // of any future RLS tightening on the views themselves.
   const supabase = createClient(supabaseUrl, serviceKey, {
+    // Proof data lives in the `proofs` schema of the shared stock project;
+    // table/view names collide with stock's public schema under one PostgREST.
+    db: { schema: 'proofs' },
     auth: { persistSession: false },
   })
 

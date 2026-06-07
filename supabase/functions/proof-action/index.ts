@@ -708,6 +708,9 @@ Deno.serve(async (req) => {
     return failed('unknown', 500, 'server misconfigured')
   }
   const admin = createClient(supabaseUrl, serviceKey, {
+    // Proof data lives in the `proofs` schema of the shared stock project;
+    // table/RPC names collide with stock's public schema under one PostgREST.
+    db: { schema: 'proofs' },
     auth: { persistSession: false, autoRefreshToken: false },
   })
 

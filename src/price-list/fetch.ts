@@ -32,6 +32,11 @@ async function callOnce(currency: string, signal?: AbortSignal): Promise<ApiPayl
     signal,
     headers: {
       'Content-Type': 'application/json',
+      // Proof data lives in the `proofs` schema of the shared stock
+      // project; the function name collides with stock's public schema
+      // under one PostgREST, so the schema must be selected explicitly.
+      'Accept-Profile': 'proofs',
+      'Content-Profile': 'proofs',
       apikey: SUPABASE_ANON_KEY,
       Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
     },

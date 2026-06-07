@@ -120,6 +120,9 @@ async function handle(req: Request): Promise<Response> {
     return json({ error: 'missing supabase env' }, 500)
   }
   const admin = createClient(supabaseUrl, serviceKey, {
+    // Proof data lives in the `proofs` schema of the shared stock project;
+    // table names collide with stock's public schema under one PostgREST.
+    db: { schema: 'proofs' },
     auth: { persistSession: false, autoRefreshToken: false },
   })
 

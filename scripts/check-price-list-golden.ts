@@ -31,6 +31,11 @@ async function main(): Promise<void> {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      // Proof data lives in the `proofs` schema of the shared stock
+      // project; the function name collides with stock's public schema
+      // under one PostgREST, so the schema must be selected explicitly.
+      'Accept-Profile': 'proofs',
+      'Content-Profile': 'proofs',
       apikey: anonKey!,
       Authorization: `Bearer ${anonKey!}`,
     },
