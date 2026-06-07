@@ -2,7 +2,7 @@
 // set a user's password. Two modes share one endpoint so the auth-gate +
 // audit-log + UUID validation logic stays in one place.
 //
-//   mode: 'reset_email'  → fires the standard Supabase recovery flow
+//   mode: 'reset_email'  → sends the standard Supabase recovery email
 //   mode: 'set'          → updates the password directly (override case)
 //
 // Returns { status: 'ok' } on success or { status: 'failed', reason }
@@ -10,6 +10,7 @@
 // non-200 responses, matching the shape used by the proof-action
 // function.
 
+import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { CORS_HEADERS, json, requireAdmin } from '../_shared/admin.ts'
 import { logAudit } from '../_shared/audit.ts'
 
@@ -60,7 +61,7 @@ Deno.serve(async (req) => {
   }
 
   // Resolve the target user via service role so we have the email for
-  // generateLink + a readable label for the audit row. Returns 404
+  // the recovery send + a readable label for the audit row. Returns 404
   // shape via 'user_not_found' if the auth row is missing — surfaces
   // an obvious error rather than silently failing the action.
   const { data: target, error: getErr } = await admin.auth.admin.getUserById(userId)
@@ -83,14 +84,18 @@ Deno.serve(async (req) => {
     (targetProfile?.full_name as string | null) ?? targetEmail
 
   if (mode === 'reset_email') {
-    // generateLink with type 'recovery' both creates the recovery link
-    // AND triggers Supabase's recovery-email template if SMTP is wired
-    // up. The link itself isn't returned to the admin — the customer
-    // gets it via email.
-    const { error: linkErr } = await admin.auth.admin.generateLink({
-      type: 'recovery',
-      email: targetEmail,
-    })
+    // resetPasswordForEmail actually SENDS the recovery email via the
+    // project's SMTP using the "Reset password" template. (The previous
+    // implementation used admin.generateLink, which only creates a link
+    // and never sends anything — the admin saw "ok" but no email went
+    // out.) The redirect target falls back to the project's Site URL,
+    // so no URL is hard-coded here.
+    const anonClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      { auth: { persistSession: false, autoRefreshToken: false } },
+    )
+    const { error: linkErr } = await anonClient.auth.resetPasswordForEmail(targetEmail)
     if (linkErr) return fail('reset_email_failed', linkErr.message, 500)
 
     await logAudit(admin, {
