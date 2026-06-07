@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate, Navigate } from 'react-router-dom'
-import { KeyRound, Bell, Info } from 'lucide-react'
+import { KeyRound, Bell, Info, MailCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { ButtonInk, Field, Input, LetterpressMotif } from '../design'
@@ -21,6 +21,11 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // 'signin' is the normal email + password form. 'forgot' swaps it for the
+  // self-serve reset form; once a link has been sent, `sent` shows the
+  // confirmation in its place.
+  const [mode, setMode] = useState<'signin' | 'forgot'>('signin')
+  const [sent, setSent] = useState(false)
 
   // Admin-editable login copy (migration 000206), fetched via the anon
   // public_settings RPC. Seeded with the shipped defaults so the first
@@ -70,6 +75,25 @@ export default function LoginPage() {
     } else {
       navigate('/')
     }
+  }
+
+  async function handleForgot(e: FormEvent) {
+    e.preventDefault()
+    setError('')
+    setSubmitting(true)
+    // resetPasswordForEmail sends the project's "Reset password" email. The
+    // link returns to this origin (which matches the project's Site URL in
+    // production), where auth.tsx's PASSWORD_RECOVERY handling shows the
+    // set-new-password screen. We never reveal whether the address exists.
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin,
+    })
+    setSubmitting(false)
+    if (error) {
+      setError(error.message)
+      return
+    }
+    setSent(true)
   }
 
   return (
@@ -129,50 +153,132 @@ export default function LoginPage() {
           </p>
         </div>
 
-        <form
-          onSubmit={handleSubmit}
-          className="flex flex-col gap-3.5 max-w-[460px]"
-        >
-          <Field label="Email" htmlFor="login-email">
-            <Input
-              id="login-email"
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="h-11"
-            />
-          </Field>
-          <Field label="Password" htmlFor="login-password">
-            <Input
-              id="login-password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="h-11"
-            />
-          </Field>
-          {error && (
-            <div
-              role="alert"
-              className="flex items-start gap-1.5 rounded-md bg-out-soft px-3 py-2 text-[13px] text-out"
-            >
-              <Info size={14} aria-hidden="true" className="mt-[2px] flex-shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
-          <ButtonInk
-            type="submit"
-            block
-            busy={submitting}
-            className="mt-1.5 h-[52px] text-[15px]"
+        {mode === 'signin' ? (
+          <form
+            onSubmit={handleSubmit}
+            className="flex flex-col gap-3.5 max-w-[460px]"
           >
-            {submitting ? 'Signing in…' : 'Sign in'}
-          </ButtonInk>
-        </form>
+            <Field label="Email" htmlFor="login-email">
+              <Input
+                id="login-email"
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="h-11"
+              />
+            </Field>
+            <Field label="Password" htmlFor="login-password">
+              <Input
+                id="login-password"
+                type="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="h-11"
+              />
+            </Field>
+            {error && (
+              <div
+                role="alert"
+                className="flex items-start gap-1.5 rounded-md bg-out-soft px-3 py-2 text-[13px] text-out"
+              >
+                <Info size={14} aria-hidden="true" className="mt-[2px] flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+            <ButtonInk
+              type="submit"
+              block
+              busy={submitting}
+              className="mt-1.5 h-[52px] text-[15px]"
+            >
+              {submitting ? 'Signing in…' : 'Sign in'}
+            </ButtonInk>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('forgot')
+                setError('')
+                setSent(false)
+              }}
+              className="self-start text-[13px] font-medium text-brand hover:underline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)] rounded-[2px]"
+            >
+              Forgot your password?
+            </button>
+          </form>
+        ) : sent ? (
+          <div className="flex flex-col gap-4 max-w-[460px]">
+            <div className="flex items-start gap-1.5 rounded-md border border-line bg-surface px-3 py-2.5 text-[13px] text-ink-soft">
+              <MailCheck size={14} aria-hidden="true" className="mt-[2px] flex-shrink-0 text-brand" />
+              <span>
+                If an account exists for {email || 'that address'}, a reset link
+                is on its way. Open it on this device, then set a new password.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('signin')
+                setSent(false)
+                setError('')
+              }}
+              className="self-start text-[13px] font-medium text-brand hover:underline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)] rounded-[2px]"
+            >
+              Back to sign in
+            </button>
+          </div>
+        ) : (
+          <form
+            onSubmit={handleForgot}
+            className="flex flex-col gap-3.5 max-w-[460px]"
+          >
+            <Field
+              label="Email"
+              htmlFor="forgot-email"
+              hint="We'll email you a link to set a new password."
+            >
+              <Input
+                id="forgot-email"
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="h-11"
+              />
+            </Field>
+            {error && (
+              <div
+                role="alert"
+                className="flex items-start gap-1.5 rounded-md bg-out-soft px-3 py-2 text-[13px] text-out"
+              >
+                <Info size={14} aria-hidden="true" className="mt-[2px] flex-shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+            <ButtonInk
+              type="submit"
+              block
+              busy={submitting}
+              className="mt-1.5 h-[52px] text-[15px]"
+            >
+              {submitting ? 'Sending…' : 'Send reset link'}
+            </ButtonInk>
+            <button
+              type="button"
+              onClick={() => {
+                setMode('signin')
+                setError('')
+              }}
+              className="self-start text-[13px] font-medium text-brand hover:underline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)] rounded-[2px]"
+            >
+              Back to sign in
+            </button>
+          </form>
+        )}
 
         <div className="flex items-center gap-3 max-w-[460px]">
           <span className="flex-1 h-px bg-line-soft" aria-hidden="true" />
@@ -187,7 +293,7 @@ export default function LoginPage() {
               aria-hidden="true"
               className="mt-[2px] flex-shrink-0 text-brand"
             />
-            Lost your password? Reset is admin-only, ask Rob.
+            Lost your password? Use "Forgot your password?" above, or ask Rob.
           </li>
           <li className="flex items-start gap-2">
             <Bell
