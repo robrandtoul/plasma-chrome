@@ -191,7 +191,7 @@ function QrSection({
           codes get the room. Stacks to one column below md, in reading
           order (instructions first, then the codes). */}
       <div className="grid gap-6 md:gap-8 md:grid-cols-[1fr_2fr] md:items-start">
-        <div className="space-y-4">
+        <div className="space-y-4 min-w-0">
           <p className="text-[14px] leading-[1.6] text-ink-soft m-0 whitespace-pre-line">
             {intro}
           </p>
@@ -199,7 +199,7 @@ function QrSection({
             {vcard}
           </p>
         </div>
-        <div>{children}</div>
+        <div className="min-w-0">{children}</div>
       </div>
     </PanelShell>
   )
@@ -244,7 +244,7 @@ function QrCodeCard({
           </div>
         )}
       </div>
-      <div>
+      <div className="min-w-0">
         <KindBadge kind={kind} />
         <div className="mt-3">
           <DecodedContents kind={kind} data={decoded} vcardSlug={image.qr_vcard_slug ?? null} />
@@ -614,7 +614,7 @@ function FieldGroup({
       <div className="eyebrow pt-1" style={{ letterSpacing: '0.14em' }}>
         {label}
       </div>
-      <div className="text-ink">{children}</div>
+      <div className="text-ink min-w-0 break-words">{children}</div>
     </div>
   )
 }
