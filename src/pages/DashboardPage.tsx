@@ -1090,15 +1090,18 @@ function ProjectRow({
               </span>
             </ResolvePopover>
           )}
-          {/* Help Scout activity chip (000208) — shows why a recently-chased
-              proof has dropped off Needs attention, so the suppression isn't
-              silent. */}
+          {/* Help Scout activity chip (000208) — shows recent Help Scout
+              activity (our last contact, or a customer reply) that's keeping a
+              proof off Needs attention, so the suppression isn't silent. Note
+              the staff timestamp is stamped on any outbound reply including the
+              initial proof-send, so the label stays neutral ("Last contact"),
+              never claiming a follow-up happened. */}
           {(() => {
             const hs = recentHelpscoutActivity(project)
             if (!hs) return null
             return (
               <div className="mt-1 truncate text-xs text-ink-mute">
-                {hs.kind === 'customer' ? 'Customer replied' : 'Chased'} {relativeTime(hs.at)}
+                {hs.kind === 'customer' ? 'Customer replied' : 'Last contact'} {relativeTime(hs.at)}
               </div>
             )
           })()}
