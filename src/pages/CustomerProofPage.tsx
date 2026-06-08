@@ -3766,7 +3766,12 @@ function PlateCard({
             <div className="flex items-start gap-2 min-w-0">
               <span
                 aria-hidden="true"
-                className="mt-[5px] h-[6px] w-[6px] shrink-0 rounded-[2px]"
+                // Centre the 6px dot on the first line of the .eyebrow
+                // label (10px line-box): (10 − 6) / 2 = 2px top margin.
+                // items-start on the row keeps the dot on the FIRST line
+                // when a long recipient name wraps, rather than centring
+                // it across the whole wrapped block.
+                className="mt-[2px] h-[6px] w-[6px] shrink-0 rounded-[2px]"
                 style={{ background: brandColor }}
               />
               {captionLabel && (
