@@ -1135,7 +1135,7 @@ export default function CustomerProofPage() {
     // states render at page load and don't need announcing.
     if (state.kind === 'optimistic') {
       const approved = state.type === 'approve'
-      const pillColour: PillColour = approved ? 'in-stock' : 'brand'
+      const pillColour: PillColour = approved ? 'in-stock' : 'low'
       const label = (approved ? 'Approved' : 'Changes requested') + (named ? ` for ${displayLabel}` : '')
       return (
         <div
@@ -1212,14 +1212,19 @@ export default function CustomerProofPage() {
       )
     }
 
-    // Changes requested — coral / brand pill on a quiet card.
-    // brand-soft for the changes-requested treatment so it sits
-    // on the page as a clear "action needed" state without
+    // Changes requested — amber pill on a quiet neutral card. Amber
+    // (the design system's "action needed" signal) is deliberately
+    // distinct from the green Approved pill so the customer can tell at
+    // a glance which they did; it's deepened to a legible shade on this
+    // page (see the --c-low override in .customer-accent). The card
+    // stays neutral — matching the Approved / optimistic outcome bands
+    // rather than the louder amber-tinted "Heads up" warning — so it
+    // reads as a calm "logged, a new version is coming" state without
     // shouting at the customer who already submitted feedback.
     if (state.kind === 'changes_requested') {
       return (
-        <div className="mt-6 flex flex-col gap-2 rounded-[10px] bg-brand-50 border border-brand-200 px-5 py-4">
-          <Pill colour="brand">Changes requested</Pill>
+        <div className="mt-6 flex flex-col gap-2 rounded-[10px] bg-surface border border-line px-5 py-4">
+          <Pill colour="low">Changes requested</Pill>
           {(state.actorName || state.createdAt) && (
             <span className="text-[15px] text-ink leading-snug">
               {state.actorName ? `by ${state.actorName}` : ''}
