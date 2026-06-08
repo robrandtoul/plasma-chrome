@@ -551,6 +551,13 @@ async function vcardRpc<T>(
         apikey: anonKey,
         Authorization: `Bearer ${anonKey}`,
         'Content-Type': 'application/json',
+        // vCard data now lives in the `qr` schema of the merged stock
+        // project; under one PostgREST the RPC names would otherwise
+        // resolve against the default public schema, so the schema must
+        // be selected explicitly. RPC POSTs read via Accept-Profile and
+        // route the request body via Content-Profile.
+        'Accept-Profile': 'qr',
+        'Content-Profile': 'qr',
       },
       body: JSON.stringify(body),
       signal: ctrl.signal,
