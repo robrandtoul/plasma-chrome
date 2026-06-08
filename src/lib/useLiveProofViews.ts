@@ -77,7 +77,10 @@ export function useLiveProofViews({ proofId, versionIds, onView }: UseLiveProofV
         'postgres_changes',
         {
           event: 'INSERT',
-          schema: 'public',
+          // proof_version_views lives in the `proofs` schema after the
+          // consolidation; targeting 'public' meant the filter never matched
+          // and the live "viewed" dot silently never fired.
+          schema: 'proofs',
           table: 'proof_version_views',
           filter,
         },
