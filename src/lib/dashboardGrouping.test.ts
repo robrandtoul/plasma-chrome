@@ -334,6 +334,67 @@ test('change request older than the current version does not fire → awaiting_c
   assertEqual(proofBucket(p).bucket, 'awaiting_customer')
 })
 
+test('customer replied by email after our last reply and the current version → customer_replied', () => {
+  const p = makeProject({
+    status: 'in_progress',
+    current_version_id: 'v1',
+    current_version_viewed_at: hoursAgo(2), // would otherwise be awaiting_customer
+    version_created_at: daysAgo(3),
+    helpscout_last_reply_at: daysAgo(2),    // our last reply
+    helpscout_last_customer_reply_at: hoursAgo(3), // newer customer reply → our move
+  })
+  assertEqual(proofBucket(p).bucket, 'customer_replied')
+  assertEqual(proofBucket(p).label, 'Replied by email')
+})
+
+test('customer reply we have already answered (staff reply newer) → not customer_replied', () => {
+  const p = makeProject({
+    status: 'in_progress',
+    current_version_id: 'v1',
+    current_version_viewed_at: hoursAgo(2),
+    version_created_at: daysAgo(3),
+    helpscout_last_customer_reply_at: daysAgo(2),
+    helpscout_last_reply_at: hoursAgo(1), // we replied since → no longer our move
+  })
+  assertEqual(proofBucket(p).bucket, 'awaiting_customer')
+})
+
+test('customer reply older than the current version → not customer_replied', () => {
+  const p = makeProject({
+    status: 'in_progress',
+    current_version_id: 'v1',
+    current_version_viewed_at: hoursAgo(2),
+    version_created_at: hoursAgo(1),          // we shipped a newer version since the reply
+    helpscout_last_customer_reply_at: daysAgo(2),
+  })
+  assertEqual(proofBucket(p).bucket, 'awaiting_customer')
+})
+
+test('customer reply on a thread we never replied to → customer_replied', () => {
+  const p = makeProject({
+    status: 'in_progress',
+    current_version_id: 'v1',
+    current_version_viewed_at: hoursAgo(2),
+    version_created_at: daysAgo(3),
+    helpscout_last_reply_at: null,            // no staff timestamp to beat
+    helpscout_last_customer_reply_at: hoursAgo(3),
+  })
+  assertEqual(proofBucket(p).bucket, 'customer_replied')
+})
+
+test('a sidebar change request outranks an email reply (both present) → changes_requested', () => {
+  const p = makeProject({
+    status: 'in_progress',
+    current_version_id: 'v1',
+    current_version_viewed_at: hoursAgo(2),
+    version_created_at: daysAgo(3),
+    latest_non_view_event_type: 'request_changes',
+    latest_non_view_event_at: daysAgo(1),
+    helpscout_last_customer_reply_at: hoursAgo(3), // also replied by email
+  })
+  assertEqual(proofBucket(p).bucket, 'changes_requested')
+})
+
 test('terminal statuses map straight through', () => {
   assertEqual(proofBucket(makeProject({ status: 'approved'  })).bucket, 'approved')
   assertEqual(proofBucket(makeProject({ status: 'dormant'   })).bucket, 'dormant')

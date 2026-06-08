@@ -368,7 +368,7 @@ export default function ProofDetailPage() {
     // status fallback rather than breaking the page load.
     void supabase
       .from('public_dashboard_projects')
-      .select('status, current_version_id, current_version_viewed_at, latest_non_view_event_type, latest_non_view_event_at, version_created_at, rule_code, rule_meta, snoozed_until')
+      .select('status, current_version_id, current_version_viewed_at, latest_non_view_event_type, latest_non_view_event_at, version_created_at, rule_code, rule_meta, snoozed_until, helpscout_last_reply_at, helpscout_last_customer_reply_at')
       .eq('proof_id', proofId)
       .maybeSingle()
       .then(({ data }) => {
