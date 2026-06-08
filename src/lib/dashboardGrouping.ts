@@ -138,9 +138,12 @@ export function recentlyAwakened(p: DashboardProject): boolean {
 // matching tile all read their label + colour from here.
 //
 // Precedence mirrors the tile predicates in dashboard_tile_counts()
-// (migration 000202) and the established left-cap order:
+// (migration 000213) and the established left-cap order:
 //   snoozed > needs-attention > approved > dormant > abandoned >
-//   changes-requested > awaiting-customer > not-viewed
+//   changes-requested > customer-replied > awaiting-customer > not-viewed
+// changes-requested and customer-replied are the two "customer responded"
+// sub-states (sidebar vs email) that share the one headline tile; the
+// sidebar request ranks higher as the more specific signal.
 // The terminal statuses (approved/dormant/abandoned) win over the in_progress
 // workflow sub-states, matching the left cap; needs-attention and snooze sit
 // above everything, matching how the tiles exclude those proofs from the
@@ -152,6 +155,7 @@ export type ProofBucket =
   | 'dormant'
   | 'abandoned'
   | 'changes_requested'
+  | 'customer_replied'
   | 'awaiting_customer'
   | 'not_viewed'
   | 'snoozed'
@@ -176,6 +180,11 @@ export interface BucketInput {
   rule_code: NeedsAttentionRule | null
   rule_meta: { days?: number } | null
   snoozed_until: string | null
+  // Help Scout reply activity (000208) — used by the customer_replied
+  // bucket to detect a customer who responded by email rather than via
+  // the in-app sidebar.
+  helpscout_last_reply_at: string | null
+  helpscout_last_customer_reply_at: string | null
 }
 
 // Label + colour per bucket. Colours are the same tokens/hexes the headline
@@ -183,9 +192,15 @@ export interface BucketInput {
 // match the tile that counts it. Dormant uses the neutral ink-mute token (the
 // Dormant tile's tone); Abandoned — which has no tile — takes the quieter
 // ink-dim so the two greys stay distinguishable.
+// changes_requested and customer_replied share the teal hue: both feed the
+// single "Customer responded" headline tile (TILE_COLOUR.turquoise), so they
+// stay in the same colour family. They differ by label only — "Changes
+// requested" (sidebar; owes a new version) vs "Replied by email" (Help Scout
+// reply; go read the thread) — which is the distinction the designer acts on.
 const BUCKET_META: Record<ProofBucket, { label: string; colour: string }> = {
   needs_attention:   { label: 'Needs attention',   colour: 'var(--c-out)' },
   changes_requested: { label: 'Changes requested', colour: '#0d9488' },
+  customer_replied:  { label: 'Replied by email',  colour: '#0d9488' },
   awaiting_customer: { label: 'Awaiting customer', colour: 'var(--c-allocated)' },
   not_viewed:        { label: 'Not viewed',        colour: 'var(--c-low)' },
   snoozed:           { label: 'Snoozed',           colour: '#7c3aed' },
@@ -194,17 +209,39 @@ const BUCKET_META: Record<ProofBucket, { label: string; colour: string }> = {
   abandoned:         { label: 'Abandoned',         colour: 'var(--c-ink-dim)' },
 }
 
-// Mirrors the changes_requested tile predicate (dashboard_tile_counts,
-// 000202): the latest non-view customer event is a change request raised
-// after the current version was uploaded (so a later page-view doesn't mask
-// it, and a request answered by a fresh version doesn't linger).
-function isChangesRequested(p: BucketInput): boolean {
+// Mirrors the change-request half of the customer_responded tile predicate
+// (dashboard_tile_counts, 000213): the latest non-view customer event is a
+// change request raised after the current version was uploaded (so a later
+// page-view doesn't mask it, and a request answered by a fresh version
+// doesn't linger). Exported so the dashboard click-through filter reuses the
+// exact same test, keeping the tile and the list in lockstep.
+export function isChangesRequested(p: BucketInput): boolean {
   return (
     p.latest_non_view_event_type === 'request_changes' &&
     !!p.latest_non_view_event_at &&
     !!p.version_created_at &&
     new Date(p.latest_non_view_event_at).getTime() > new Date(p.version_created_at).getTime()
   )
+}
+
+// Mirrors the "replied by email" half of the customer_responded tile predicate
+// (dashboard_tile_counts, 000213): the customer's last Help Scout reply is
+// newer than our last reply (so a thread we've answered doesn't count) AND
+// newer than the current version's upload (so a reply already answered by a
+// fresh version doesn't linger). A never-replied-to thread still counts (no
+// staff timestamp to beat); a null version date can't gate it out. This is the
+// email-response path — the customer responded on the conversation rather than
+// via the in-app sidebar.
+export function isCustomerReplied(p: BucketInput): boolean {
+  if (!p.helpscout_last_customer_reply_at) return false
+  const cust = new Date(p.helpscout_last_customer_reply_at).getTime()
+  if (p.helpscout_last_reply_at && cust <= new Date(p.helpscout_last_reply_at).getTime()) {
+    return false
+  }
+  if (p.version_created_at && cust <= new Date(p.version_created_at).getTime()) {
+    return false
+  }
+  return true
 }
 
 /**
@@ -225,6 +262,10 @@ export function proofBucket(p: BucketInput): BucketDisplay {
     bucket = 'abandoned'
   } else if (isChangesRequested(p)) {
     bucket = 'changes_requested'
+  } else if (isCustomerReplied(p)) {
+    // Below changes_requested: a structured sidebar request is the more
+    // specific signal, so it wins when both apply (avoids double labelling).
+    bucket = 'customer_replied'
   } else if (p.current_version_id && p.current_version_viewed_at) {
     bucket = 'awaiting_customer'
   } else {

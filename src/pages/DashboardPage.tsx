@@ -33,6 +33,8 @@ import {
   groupByCompany,
   buildSnoozedSection,
   isCurrentlySnoozed,
+  isChangesRequested,
+  isCustomerReplied,
   proofBucket,
   recentHelpscoutActivity,
   type DashboardProject,
@@ -48,8 +50,8 @@ import {
 
 type SortMode  = 'activity' | 'date' | 'name'
 type GroupMode = 'time' | 'company'
-type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week' | 'not_viewed' | 'changes_requested'
-// Server-side tile counts (migration 000202) — one number per TileKey.
+type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week' | 'not_viewed' | 'customer_responded'
+// Server-side tile counts (migration 000213) — one number per TileKey.
 type TileCounts = Record<TileKey, number>
 type ChipKey   = 'all' | 'metal' | 'paper' | 'plastic' | 'carbon' | 'wood' | 'acrylic'
 
@@ -2174,7 +2176,7 @@ export default function DashboardPage() {
   const needsAttentionCount   = tileCounts?.needs_attention ?? 0
   const notViewedCount        = tileCounts?.not_viewed ?? 0
   const awaitingCustomerCount = tileCounts?.awaiting_customer ?? 0
-  const changesRequestedCount = tileCounts?.changes_requested ?? 0
+  const customerRespondedCount = tileCounts?.customer_responded ?? 0
   const dormantCount          = tileCounts?.dormant ?? 0
   const approvedThisWeekCount = tileCounts?.approved_this_week ?? 0
 
@@ -2217,18 +2219,19 @@ export default function DashboardPage() {
         const isActive = p.status === 'in_progress' || p.status === 'dormant'
         if (p.rule_code != null || !isActive || !p.current_version_id || p.current_version_viewed_at !== null) return false
       }
-      if (tileFilter === 'changes_requested') {
-        // Mirror of changesRequestedCount: latest non-view customer event on the
-        // proof is a change request, with no newer version uploaded since. Uses
-        // latest_non_view_event_* (migration 000198) so a later page-view doesn't
-        // mask the request (PV-2026W22-087). The overdue subset is captured by
-        // the request_changes_no_version needs-attention rule and shown there
+      if (tileFilter === 'customer_responded') {
+        // Mirror of customerRespondedCount (dashboard_tile_counts, 000213): the
+        // customer responded to the current proof, either via the in-app
+        // sidebar (a change request newer than the current version) OR by
+        // replying on the linked Help Scout conversation more recently than our
+        // last reply. Reuses the exact predicates the row pill uses
+        // (isChangesRequested / isCustomerReplied) so the tile and list agree.
+        // The overdue change-request subset is captured by the
+        // request_changes_no_version needs-attention rule and shown there
         // instead — rule_code != null excludes them here.
         if (p.rule_code != null) return false
         if (p.status !== 'in_progress') return false
-        if (p.latest_non_view_event_type !== 'request_changes') return false
-        if (!p.latest_non_view_event_at || !p.version_created_at) return false
-        if (new Date(p.latest_non_view_event_at).getTime() <= new Date(p.version_created_at).getTime()) return false
+        if (!isChangesRequested(p) && !isCustomerReplied(p)) return false
       }
       // Hide abandoned proofs unless the designer has toggled them on via
       // the Abandoned checkbox — but never hide them while a search is
@@ -2388,11 +2391,11 @@ export default function DashboardPage() {
                     onClick={() => toggleTile('awaiting_customer')}
                   />
                   <StatTile
-                    label="Changes requested"
-                    count={changesRequestedCount}
-                    active={tileFilter === 'changes_requested'}
+                    label="Customer responded"
+                    count={customerRespondedCount}
+                    active={tileFilter === 'customer_responded'}
                     tone="turquoise"
-                    onClick={() => toggleTile('changes_requested')}
+                    onClick={() => toggleTile('customer_responded')}
                   />
                   <StatTile
                     label="Approved this week"
