@@ -56,7 +56,7 @@ export interface DashboardProject {
   snoozed_by_colour: DesignerColour | null
   // Help Scout reply activity (000208) — stamped by the helpscout-webhook edge
   // function. A recent reply suppresses the chase needs-attention rules; the
-  // dashboard surfaces it as a "Chased / Customer replied Nd ago" chip.
+  // dashboard surfaces it as a "Last contact / Customer replied Nd ago" chip.
   helpscout_last_reply_at: string | null
   helpscout_last_customer_reply_at: string | null
 }
@@ -243,7 +243,7 @@ export interface HelpscoutActivity {
 /**
  * The most recent Help Scout reply (staff or customer) on the proof's
  * conversation if it landed within `withinDays` days, else null. Powers the
- * dashboard's "Chased / Customer replied Nd ago" chip — and mirrors why the
+ * dashboard's "Last contact / Customer replied Nd ago" chip — and mirrors why the
  * chase rules are suppressed (the default 3 days matches the rule guard's
  * default grace window).
  */

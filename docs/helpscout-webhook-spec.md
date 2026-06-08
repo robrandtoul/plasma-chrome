@@ -76,14 +76,17 @@ rule is one of the four chase rules AND
 grace_days`. The dashboard view + tile counts derive from this function, so they
 update for free.
 
-`public_dashboard_projects` exposes both timestamps (for the "Chased / Customer
-replied Nd ago" chip).
+`public_dashboard_projects` exposes both timestamps (for the "Last contact /
+Customer replied Nd ago" chip).
 
 ## Frontend
 
 A muted chip on the dashboard row when there's recent Help Scout activity:
-"Chased Nd ago" (staff) or "Customer replied Nd ago" (customer), so a suppressed
-proof doesn't just silently vanish.
+"Last contact Nd ago" (staff) or "Customer replied Nd ago" (customer), so a
+suppressed proof doesn't just silently vanish. The staff label is deliberately
+neutral — `helpscout_last_reply_at` is stamped on any outbound reply, including
+the initial proof-send, so it can't claim a follow-up ("Chased") actually
+happened.
 
 ## Security
 
