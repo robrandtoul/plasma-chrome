@@ -2989,33 +2989,40 @@ export default function CustomerProofPage() {
                     className="hidden sm:block flex-1 h-px"
                     style={{ background: 'linear-gradient(to right, var(--c-line), transparent)' }}
                   />
-                  {showOptionSwitcher && (
-                    <div className="basis-full sm:basis-auto sm:ml-auto">
-                      <MaterialOptionTabs
-                        label={optionLabelSingular}
-                        // Inside the !is_per_direction_pricing gate; null
-                        // currency only reaches code that this branch
-                        // never renders (per migration 000142).
-                        currency={activeVersion.currency!}
-                        showSurcharges={!activeVersion.custom_quote}
-                        onSelect={setActiveOptionCode}
-                        tabs={versionOptions.map((code) => {
-                          const o = materialOptions.find(
-                            (x) =>
-                              x.material_id === activeVersion.material_id &&
-                              x.code === code,
-                          )
-                          return {
-                            code,
-                            displayName: o?.display_name ?? code,
-                            surchargeFromPrice: optionFromPrice(code),
-                            isActive: effectiveOptionCode === code,
-                          }
-                        })}
-                      />
-                    </div>
-                  )}
                 </div>
+
+                {/* Finish / Species chooser. Lifted out of the section
+                    header right-slot (where the tiny eyebrow label made
+                    it easy to miss) into a full-width bar of its own,
+                    sitting directly above the plate grid so the choice
+                    reads as a deliberate step. Only renders when the
+                    version offers 2+ material options. */}
+                {showOptionSwitcher && (
+                  <div className="mb-5">
+                    <MaterialOptionTabs
+                      label={optionLabelSingular}
+                      // Inside the !is_per_direction_pricing gate; null
+                      // currency only reaches code that this branch
+                      // never renders (per migration 000142).
+                      currency={activeVersion.currency!}
+                      showSurcharges={!activeVersion.custom_quote}
+                      onSelect={setActiveOptionCode}
+                      tabs={versionOptions.map((code) => {
+                        const o = materialOptions.find(
+                          (x) =>
+                            x.material_id === activeVersion.material_id &&
+                            x.code === code,
+                        )
+                        return {
+                          code,
+                          displayName: o?.display_name ?? code,
+                          surchargeFromPrice: optionFromPrice(code),
+                          isActive: effectiveOptionCode === code,
+                        }
+                      })}
+                    />
+                  </div>
+                )}
 
                 {/* V2 contact-sheet card layout. Each recipient
                     (or the shared-standalone group) renders as a
