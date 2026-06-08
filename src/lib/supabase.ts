@@ -19,12 +19,45 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL, STAFF_COOKIE_DOMAIN } from './env'
 // deploys it is host-only (STAFF_COOKIE_DOMAIN is null). @supabase/ssr
 // chunks the cookie automatically, so sessions over the ~4KB single-cookie
 // limit still work.
+//
+// Bounded auth lock: supabase-js serialises token refresh across tabs with a
+// navigator Web Lock named after the storageKey. Because all three plasmadesign
+// apps now share one project (one storageKey) under the SSO cookie, they share
+// one lock, so a second app/tab holding it can stall getSession() and block
+// first paint (the "blank screen, refresh fixes it" hang). Cap the wait and, if
+// the lock can't be acquired in time, run the critical section unserialised
+// rather than hang the UI. We deliberately keep the shared storageKey (changing
+// it would break cross-app SSO); this only bounds how long we wait for the lock.
+async function boundedAuthLock<R>(
+  name: string,
+  _acquireTimeout: number,
+  fn: () => Promise<R>,
+): Promise<R> {
+  if (typeof navigator === 'undefined' || !navigator.locks?.request) return fn()
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 2000)
+  try {
+    return await navigator.locks.request(name, { signal: ctrl.signal }, () => fn())
+  } catch (err) {
+    // AbortError => we couldn't acquire within 2s; proceed without the lock
+    // (worst case a rare concurrent token refresh, which supabase-js recovers
+    // from) instead of leaving the user on a blank screen.
+    if (err instanceof DOMException && err.name === 'AbortError') return fn()
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export const supabase = createBrowserClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   db: { schema: 'proofs' },
   auth: {
     autoRefreshToken: true,
     detectSessionInUrl: true,
     persistSession: true,
+    // Preserved by createBrowserClient (it only overrides flowType /
+    // autoRefreshToken / detectSessionInUrl / persistSession / storage).
+    lock: boundedAuthLock,
   },
   cookieOptions: {
     sameSite: 'lax',
