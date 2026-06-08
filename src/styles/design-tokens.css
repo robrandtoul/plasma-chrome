@@ -151,6 +151,16 @@
   --c-in-stock:      #0a6f69;
   --c-in-stock-soft: #dafaf9;
 
+  /* Changes-requested / "Heads up" signal: deepened amber (customer
+     page only). The amber pill is coloured-text-on-soft-tint like the
+     others, and the root #e8a200 was far too light to read on its own
+     pale tint (~1.8:1). Deepen the text to #8a5a00 (~6:1 on the tint)
+     and warm the soft background, exactly as the approved pill above
+     was deepened to a legible cyan. Keeps changes-requested clearly
+     distinct from the green approved signal on this page. */
+  --c-low:      #8a5a00;
+  --c-low-soft: #fff1d6;
+
   /* Paper: nudge the warm cream off its slight orange lean so the
      canvas complements the teal/cyan scheme instead of the old
      coral. Canvas + draftsman-grid hairlines shift together (a
