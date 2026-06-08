@@ -1,3 +1,4 @@
+import { SwatchBook } from 'lucide-react'
 import { formatPrice } from '../lib/currency'
 import type { Currency } from '../lib/types'
 
@@ -16,17 +17,20 @@ type MaterialOptionTabsProps = {
   showSurcharges: boolean
 }
 
-// Material option / finish selector. Sits in the right slot of the
-// Plates section header. Rendered as a segmented control (the same
-// idiom as CurrencyField on the designer side) so it reads
-// unmistakably as a "pick one" toggle rather than as quiet caption
-// text — the whole strip is one bordered track on a surface fill,
-// and the active segment lifts out with a soft-coral fill + inset
-// coral ring. The "Finish" / "Species" label leads in as a mono
-// eyebrow.
+// Material option / finish chooser. Previously this lived as a quiet
+// strip in the right slot of the Plates section header, where the tiny
+// mono "FINISH" eyebrow made it easy to miss. It's now a self-contained
+// bordered bar that sits full-width directly above the plate grid:
 //
-// Behaviour preserved verbatim from the Direction-B version — only
-// the visual chrome changes.
+//   • a swatch icon + a plain-English call to action ("Choose your
+//     finish") so it reads unmistakably as a thing to act on;
+//   • a one-line hint that switching previews the result;
+//   • a segmented control of larger, higher-contrast pills — the active
+//     segment lifts out with a soft-coral fill + inset coral ring.
+//
+// The label ("Finish" / "Species") drives both the heading and the
+// segment text. Selection behaviour is unchanged — only the chrome and
+// placement.
 export function MaterialOptionTabs({
   label,
   tabs,
@@ -35,9 +39,28 @@ export function MaterialOptionTabs({
   showSurcharges,
 }: MaterialOptionTabsProps) {
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      <span className="eyebrow text-ink-mute">{label}</span>
-      <div className="inline-flex flex-wrap rounded border border-line bg-surface p-0.5">
+    <div className="flex flex-col gap-4 rounded-[14px] border border-line bg-surface px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      {/* Call to action — icon cue + prompt + preview hint */}
+      <div className="flex items-center gap-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-brand-50 text-brand">
+          <SwatchBook size={17} aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          <div className="font-display font-medium leading-tight text-ink text-[15px]">
+            Choose your {label.toLowerCase()}
+          </div>
+          <div className="mt-0.5 text-[12px] leading-tight text-ink-mute">
+            Switch to preview each option
+          </div>
+        </div>
+      </div>
+
+      {/* Segmented control. On mobile it's a full-width single row that
+          must not wrap (the wrap looked broken on an iPhone); if the
+          options ever exceed the width it scrolls horizontally rather
+          than stacking. On sm+ it shrinks back to a content-width strip
+          beside the prompt. */}
+      <div className="flex w-full flex-nowrap gap-1 rounded-full border border-line bg-canvas p-1 sm:inline-flex sm:w-auto sm:shrink-0">
         {tabs.map((tab) => (
           <button
             key={tab.code}
@@ -45,14 +68,19 @@ export function MaterialOptionTabs({
             aria-pressed={tab.isActive}
             onClick={() => onSelect(tab.code)}
             className={[
-              'inline-flex items-baseline gap-1.5 rounded px-3 py-1.5 transition-colors',
+              // Mobile: equal-width thirds, surcharge stacked under the
+              // name so three options never wrap or clip on an iPhone.
+              // sm+: natural-width inline pills with the surcharge beside
+              // the name (the original treatment).
+              'flex flex-1 flex-col items-center justify-center gap-0.5 rounded-full px-3 py-1.5 text-center transition-colors',
+              'sm:flex-none sm:flex-row sm:items-baseline sm:gap-1.5 sm:px-4 sm:py-2',
               tab.isActive
                 ? 'bg-brand-50 text-brand outline outline-1 -outline-offset-1 outline-brand'
-                : 'text-ink-mute hover:text-ink',
+                : 'text-ink-soft hover:bg-surface hover:text-ink',
               'focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]',
             ].join(' ')}
           >
-            <span className="text-[13px] font-medium leading-none">
+            <span className="text-[14px] font-medium leading-none">
               {tab.displayName}
             </span>
             {showSurcharges && tab.surchargeFromPrice != null && (
