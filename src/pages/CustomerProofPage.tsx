@@ -1135,14 +1135,10 @@ export default function CustomerProofPage() {
     // states render at page load and don't need announcing.
     if (state.kind === 'optimistic') {
       const approved = state.type === 'approve'
-      const pillColour: PillColour = approved ? 'in-stock' : 'low'
+      const tone: CapTone = approved ? 'green' : 'amber'
       const label = (approved ? 'Approved' : 'Changes requested') + (named ? ` for ${displayLabel}` : '')
       return (
-        <div
-          role="status"
-          className="mt-6 flex flex-col gap-2 rounded-[10px] bg-surface border border-line px-5 py-4"
-        >
-          <Pill colour={pillColour}>{label}</Pill>
+        <OutcomeCapCard tone={tone} label={label} role="status">
           <span className="text-[15px] text-ink leading-snug">
             by {state.actorName}
             {formatBandDate(state.createdAt) ? ` on ${formatBandDate(state.createdAt)}` : ''}.
@@ -1157,11 +1153,11 @@ export default function CustomerProofPage() {
               {successMessage}
             </p>
           )}
-        </div>
+        </OutcomeCapCard>
       )
     }
 
-    // Carried — green carry-forward banner. Reads "Approved
+    // Carried — green carry-forward card. Reads "Approved
     // (carried from v{N})" so the customer understands the slot
     // was approved on an earlier version and pulled through.
     if (state.kind === 'carried') {
@@ -1170,33 +1166,18 @@ export default function CustomerProofPage() {
           ? `Carried from v${state.carriedFromVersionNumber}`
           : 'Carried from a previous version'
       return (
-        <div className="mt-6 flex flex-col gap-2 rounded-[10px] bg-surface border border-line px-5 py-4">
-          <Pill colour="in-stock">{'Approved' + forSuffix}</Pill>
+        <OutcomeCapCard tone="green" label={'Approved' + forSuffix}>
           <span className="text-[14px] text-ink-soft">{subtitle}</span>
-        </div>
+        </OutcomeCapCard>
       )
     }
 
-    // Approved — minimal status line in the same horizontal slot
-    // the buttons would occupy. Pill + actor/date/comment.
-    // Quieter than the carried banner because the slot reads as
-    // "done" rather than as a state to act on.
+    // Approved — green cap card with the audit detail (who / when /
+    // comment) below.
     if (state.kind === 'approved') {
       const approvedDate = formatApprovedDate(state.createdAt)
-      // When a header approval pill already labels this card
-      // (headerPillAbove), drop the band's own approved pill and show
-      // only the audit detail (who / when / comment) — otherwise the
-      // card carries two identical approved pills. If there's no detail
-      // to add, render nothing and let the header pill stand alone. The
-      // all-shared one-off path has no header pill, so it keeps the pill
-      // here as its sole approved indicator.
-      const showPill = !opts?.headerPillAbove
-      if (!showPill && !state.actorName && !approvedDate && !state.comment) {
-        return null
-      }
-      return (
-        <div className="mt-6 flex flex-col gap-1.5 sm:items-start">
-          {showPill && <Pill colour="in-stock">{'Approved' + forSuffix}</Pill>}
+      const detail = (
+        <>
           {(state.actorName || approvedDate) && (
             <span className="text-sm text-ink-soft">
               {state.actorName ? `Approved by ${state.actorName}` : 'Approved'}
@@ -1208,23 +1189,38 @@ export default function CustomerProofPage() {
               &ldquo;{state.comment}&rdquo;
             </p>
           )}
-        </div>
+        </>
+      )
+      // Per-recipient context (headerPillAbove): the recipient card
+      // header already shows the green Approved pill, so render only the
+      // audit detail — no cap — to avoid duplicating the indicator. If
+      // there's no detail to add, render nothing and let the header pill
+      // stand alone.
+      if (opts?.headerPillAbove) {
+        if (!state.actorName && !approvedDate && !state.comment) return null
+        return (
+          <div className="mt-6 flex flex-col gap-1.5 sm:items-start">{detail}</div>
+        )
+      }
+      // Standalone (all-shared one-off, collection layout): the cap is
+      // this slot's sole approved indicator.
+      return (
+        <OutcomeCapCard tone="green" label={'Approved' + forSuffix}>
+          {detail}
+        </OutcomeCapCard>
       )
     }
 
-    // Changes requested — amber pill on a quiet neutral card. Amber
-    // (the design system's "action needed" signal) is deliberately
-    // distinct from the green Approved pill so the customer can tell at
-    // a glance which they did; it's deepened to a legible shade on this
-    // page (see the --c-low override in .customer-accent). The card
-    // stays neutral — matching the Approved / optimistic outcome bands
-    // rather than the louder amber-tinted "Heads up" warning — so it
-    // reads as a calm "logged, a new version is coming" state without
-    // shouting at the customer who already submitted feedback.
+    // Changes requested — amber cap card. Amber (the design system's
+    // "action needed" signal) is deliberately distinct from the green
+    // Approved cap so the customer can tell at a glance which they did;
+    // it's deepened to a legible shade on this page (see the --c-low
+    // override in .customer-accent). The label carries the recipient in
+    // named contexts ("Changes requested for X"), matching the Approved
+    // cap; shared / standalone stays plain "Changes requested".
     if (state.kind === 'changes_requested') {
       return (
-        <div className="mt-6 flex flex-col gap-2 rounded-[10px] bg-surface border border-line px-5 py-4">
-          <Pill colour="low">Changes requested</Pill>
+        <OutcomeCapCard tone="amber" label={'Changes requested' + forSuffix}>
           {(state.actorName || state.createdAt) && (
             <span className="text-[15px] text-ink leading-snug">
               {state.actorName ? `by ${state.actorName}` : ''}
@@ -1240,7 +1236,7 @@ export default function CustomerProofPage() {
               &ldquo;{state.comment}&rdquo;
             </p>
           )}
-        </div>
+        </OutcomeCapCard>
       )
     }
 
@@ -3675,6 +3671,58 @@ export default function CustomerProofPage() {
           actionEarlierVersionAcked={actionEarlierVersionAcked}
           setActionEarlierVersionAcked={setActionEarlierVersionAcked}
         />
+      )}
+    </div>
+  )
+}
+
+type CapTone = 'amber' | 'green'
+
+// Soft-cap colours pulled from the raw --c-* tokens (NOT the Tailwind
+// --color-* utilities). The @theme indirection resolves --color-* once
+// at :root, so a `bg-low-soft`/`text-in-stock` class would render the
+// default coral/amber rather than the customer-page values; the raw
+// --c-* tokens are what the .customer-accent override actually rescopes.
+const CAP_TONE: Record<CapTone, { color: string; background: string }> = {
+  amber: { color: 'var(--c-low)', background: 'var(--c-low-soft)' },
+  green: { color: 'var(--c-in-stock)', background: 'var(--c-in-stock-soft)' },
+}
+
+// Outcome card with a full-width coloured cap across the top — green for
+// Approved, amber for Changes requested — and the audit detail (who /
+// when / comment) in a quiet body below. Replaces the older inset-pill
+// treatment so the result reads as a prominent header at a glance. The
+// leading dot inherits the cap text colour. `children` is optional so a
+// cap-only card (no detail) collapses cleanly.
+function OutcomeCapCard({
+  tone,
+  label,
+  role,
+  children,
+}: {
+  tone: CapTone
+  label: React.ReactNode
+  role?: string
+  children?: React.ReactNode
+}) {
+  return (
+    <div
+      role={role}
+      className="mt-6 overflow-hidden rounded-[10px] border border-line bg-surface"
+    >
+      <div
+        className="flex items-center gap-2 px-5 py-2.5 font-mono font-semibold uppercase"
+        style={{ ...CAP_TONE[tone], fontSize: '11px', letterSpacing: '0.14em' }}
+      >
+        <span
+          aria-hidden="true"
+          className="h-[7px] w-[7px] shrink-0 rounded-[2px]"
+          style={{ background: 'currentColor' }}
+        />
+        <span className="break-words">{label}</span>
+      </div>
+      {children != null && (
+        <div className="flex flex-col gap-1.5 px-5 py-4">{children}</div>
       )}
     </div>
   )
