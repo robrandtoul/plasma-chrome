@@ -239,7 +239,7 @@ function QrCodeCard({
           <div className="block w-full max-w-[120px] aspect-square bg-canvas border border-dashed border-line rounded-[6px]" />
         )}
         {sharedLabel && (
-          <div className="eyebrow mt-2" style={{ letterSpacing: '0.16em' }}>
+          <div className="eyebrow mt-2" style={{ letterSpacing: '0.16em', whiteSpace: 'normal', lineHeight: 1.5 }}>
             Shared across all cards
           </div>
         )}
