@@ -267,3 +267,40 @@ export async function postStaffReply(
   const threadId = threadIdRaw ? Number(threadIdRaw) : NaN
   return Number.isFinite(threadId) ? threadId : 0
 }
+
+// PATCH /v2/conversations/{id}/threads/{threadId} — hide ("collapse") a
+// thread. Help Scout's `hidden` state drops the thread from the
+// customer-facing / published view and shows it collapsed in the agent
+// view, while keeping it in the trail. Per the API docs the target
+// "must be a non-draft customer or reply thread", so this is valid for
+// the staff confirmation reply (a reply thread) but not for notes.
+//
+// Timing note for the proof-action confirmation flow: Help Scout sends
+// the outbound email for a reply at reply-creation time, so hiding the
+// thread *after* postStaffReply returns does NOT unsend the email the
+// customer already received — it only tidies the designer's view of the
+// conversation. Always create the reply first, then hide it.
+//
+// HS responds 204 No Content on success.
+export async function hideThread(
+  token: string,
+  conversationId: string,
+  threadId: number,
+): Promise<void> {
+  const resp = await fetch(
+    `https://api.helpscout.net/v2/conversations/${conversationId}/threads/${threadId}`,
+    {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ op: 'replace', path: '/hidden', value: true }),
+    },
+  )
+  if (!resp.ok) {
+    const upstream = await resp.text().catch(() => '<body read failed>')
+    throw new HsError(resp.status, `Help Scout hide-thread error (${resp.status}): ${upstream}`)
+  }
+}

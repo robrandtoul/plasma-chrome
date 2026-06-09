@@ -74,6 +74,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import {
   fetchConversationOwnership,
   getAccessToken,
+  hideThread,
   HsError,
   postStaffReply,
 } from '../_shared/helpscout.ts'
@@ -1582,6 +1583,28 @@ Deno.serve(async (req) => {
             senderId,
             replyThreadId,
           })
+          // Collapse the confirmation reply in the designer's Help Scout
+          // view. This is the "copy of the message from us to the
+          // customer" — it must exist (Help Scout emails it to the
+          // customer at creation time, above) but it clutters the
+          // thread for the team, so we hide it after it's sent. The
+          // customer-thread post ("Approved by …") stays expanded.
+          //
+          // Own try/catch so a hide failure is logged as exactly that
+          // and not mislabelled as a reply failure by the outer catch —
+          // the reply (and its email) have already succeeded by here, so
+          // a hide miss is purely cosmetic. Skipped when the thread id
+          // couldn't be parsed (0), since there's nothing to target.
+          if (replyThreadId > 0) {
+            try {
+              await hideThread(token, conversationId, replyThreadId)
+              console.log('[proof-action] confirmation reply hidden', { replyThreadId })
+            } catch (hideErr) {
+              console.warn('[proof-action] confirmation reply hide failed', hideErr)
+            }
+          } else {
+            console.warn('[proof-action] confirmation reply hide skipped: no thread id')
+          }
         }
       }
     }
