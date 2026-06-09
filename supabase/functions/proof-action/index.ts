@@ -262,54 +262,6 @@ async function hsPostCustomerThread(
   return Number.isFinite(threadId) && threadId > 0 ? threadId : 0
 }
 
-// Delay before the deferred hide fires. Gives Help Scout's outbound
-// email pipeline time to send the confirmation reply's email before the
-// thread flips to hidden, closing any chance the hide races the
-// not-yet-sent email. 5s is comfortably longer than the queue needs;
-// because the hide runs in the background (see deferHideThread) the
-// customer waits for none of it.
-const HIDE_DELAY_MS = 5_000
-
-// Hide (collapse) a thread without blocking the response. The PATCH is
-// registered as a background task via EdgeRuntime.waitUntil so it runs
-// AFTER the HTTP response is returned — zero added latency for the
-// customer — and only after HIDE_DELAY_MS, so Help Scout has sent the
-// reply's email first. The task swallows its own errors: a hide miss is
-// purely cosmetic (the reply and its email are already durable by the
-// time this is scheduled), so it must never surface as a request
-// failure.
-//
-// Fallback: outside the Supabase edge runtime (local `functions serve`
-// / tests) EdgeRuntime is absent, so the task is awaited inline
-// instead — correct, just not deferred, which only matters off
-// production. This function itself never throws and returns effectively
-// immediately on the production path (registration is synchronous; the
-// delay lives inside the backgrounded task).
-async function deferHideThread(
-  token: string,
-  conversationId: string,
-  threadId: number,
-): Promise<void> {
-  const task = (async () => {
-    await new Promise((resolve) => setTimeout(resolve, HIDE_DELAY_MS))
-    try {
-      await hideThread(token, conversationId, threadId)
-      console.log('[proof-action] confirmation reply hidden', { threadId })
-    } catch (hideErr) {
-      console.warn('[proof-action] confirmation reply hide failed', hideErr)
-    }
-  })()
-
-  const edgeRuntime = (globalThis as unknown as {
-    EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void }
-  }).EdgeRuntime
-  if (edgeRuntime?.waitUntil) {
-    edgeRuntime.waitUntil(task)
-  } else {
-    await task
-  }
-}
-
 // ── Customer thread copy ──────────────────────────────────────────────────────
 //
 // Phrasing per the Phase 2 prompt. Plain text — Help Scout renders
@@ -1638,15 +1590,26 @@ Deno.serve(async (req) => {
           // thread for the team, so we hide it once it's been sent. The
           // customer-thread post ("Approved by …") stays expanded.
           //
-          // Deferred to a background task (deferHideThread): it runs
-          // after the response and after a short delay, so it never adds
-          // latency for the customer and never races Help Scout's
-          // outbound email. The helper swallows its own errors — a hide
-          // miss is purely cosmetic by this point. Skipped when the
-          // thread id couldn't be parsed (0), since there's nothing to
-          // target.
+          // Hidden INLINE (not via a background task): Supabase can tear
+          // the worker down the moment the response is returned, which
+          // killed the earlier EdgeRuntime.waitUntil + delay approach
+          // before it ever ran. Running the PATCH here, inside the
+          // request, is deterministic. It's safe to fire immediately
+          // after the reply: Help Scout commits the outbound email at
+          // reply-creation time, so hiding the thread afterwards never
+          // unsends it (confirmed live — hidden confirmation replies
+          // still carry an `openedAt`, i.e. the customer received and
+          // opened them). Own try/catch so a hide miss is logged as
+          // exactly that and never fails the customer's request — the
+          // reply and its email are already durable here. Skipped when
+          // the thread id couldn't be parsed (0).
           if (replyThreadId > 0) {
-            await deferHideThread(token, conversationId, replyThreadId)
+            try {
+              await hideThread(token, conversationId, replyThreadId)
+              console.log('[proof-action] confirmation reply hidden', { replyThreadId })
+            } catch (hideErr) {
+              console.warn('[proof-action] confirmation reply hide failed', hideErr)
+            }
           } else {
             console.warn('[proof-action] confirmation reply hide skipped: no thread id')
           }
