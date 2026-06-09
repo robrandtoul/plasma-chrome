@@ -363,7 +363,9 @@ Either way the working-hours check stays inside the function.
 ledger rows written (structurally excluded from caps), Outbox panel shows the
 fully-rendered would-send list + skip reasons + run heartbeat. The cadence
 simulation counts dry rows so spacing and cap exhaustion are visible
-night-over-night; dry rows are purged at the Phase 2 flip.
+night-over-night; dry rows are **retained** at the Phase 2 flip (structurally
+excluded from cap maths) — they form the counterfactual baseline cohort for
+the Analytics section below.
 
 *Acceptance — a quiet week proves nothing without these:*
 
@@ -404,6 +406,42 @@ proof that also satisfies `sent_never_viewed` — encoded in the job's input
 query with a logged outcome, never decided silently by the 000154 priority
 ordering. Reconcile the `enabled` drift (000154 seeds the tag rule enabled on
 live; `DEFAULT_RULES` has it false).
+
+## Analytics — measuring effectiveness
+
+Derived, not collected: every metric computes from data the design already
+records (`proof_nudges`, `proof_version_views`, `proof_events`,
+`helpscout_last_customer_reply_at`, `nudge_runs`). No new tracking. One new
+derived object: a `nudge_outcomes` SQL view — per sent nudge, the first
+subsequent non-bot view, first customer action (approve / request_changes /
+HS customer reply), and their time deltas, with an `attributed` flag (action
+within a 72 h window and before any later outbound touch).
+
+Headline metrics (rolling 30/90 days, split by rule and nudge number):
+
+- **Response rate** (primary): % of nudges followed by a customer action
+  within 7 days. Actions, not views — the bot-filter noise makes views
+  untrustworthy as a primary signal.
+- **Open rate** (indicative): % followed by a first non-bot view within
+  3 days.
+- **Funnel**: eligible → nudge 1 → nudge 2 → exhausted → human outcome, with
+  drop-off at each step. The nudge-1 (same thread) vs nudge-2 (new
+  conversation) response comparison doubles as the deliverability signal: if
+  fresh conversations outperform, original sends are landing in spam.
+- **Operational health**: skip-reason mix (`recipient_mismatch`,
+  `skipped_closed_conversation`, `suppressed_sibling`, …), opt-out rate, cap
+  exhaustion rate — guardrails firing too often is its own finding.
+
+**Counterfactual baseline**: the Phase 1 dry-run rows record exactly which
+proofs *would* have been nudged while nudging nobody — their natural response
+rate over the same windows is the baseline Phase 2 sends are judged against
+(like-for-like: stalled proofs vs stalled proofs, not stalled vs healthy).
+This is why dry rows are retained, not purged.
+
+Surface: a "Reminder performance" card on Admin → Needs-attention beside the
+automation dials it informs. Honesty note in the UI copy: percentages are
+noisy below ~30 nudges; judge trends, not single weeks. Wording A/B tests
+stay out of scope until volume supports them.
 
 ## Open decisions (Rob)
 
