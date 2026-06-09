@@ -1558,6 +1558,14 @@ function LatestActivityPanel({
             const visual = ACTIVITY_VISUAL[e.event_type]
             const Icon = visual.icon
             const verb = visual.verbCopy(e.version_number)
+            // Lead with the company name (matches the Recent projects
+            // card, which leads with company and relegates the person
+            // to a subline). Fall back to the actor's name when the
+            // proof has no company, and in that case skip the secondary
+            // actor line so it doesn't read as "Clayton Furry / Clayton
+            // Furry".
+            const primaryLabel = e.company_name || e.actor_name
+            const showActor = Boolean(e.company_name) && e.actor_name !== primaryLabel
             const failed =
               e.event_type !== 'view' &&
               e.event_type !== 'designer_override_approve' &&
@@ -1589,10 +1597,23 @@ function LatestActivityPanel({
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="text-[14px] leading-snug text-ink">
-                    <span className="font-semibold">{e.actor_name}</span>{' '}
+                    <span className="font-semibold">{primaryLabel}</span>{' '}
                     <span className="text-ink-soft">{verb}</span>
                   </p>
                   <div className="mt-1 flex flex-wrap items-center gap-2">
+                    {showActor && (
+                      <>
+                        <span className="text-[12px] leading-none text-ink-soft">
+                          {e.actor_name}
+                        </span>
+                        <span
+                          aria-hidden="true"
+                          className="text-[10px] leading-none text-ink-mute"
+                        >
+                          ·
+                        </span>
+                      </>
+                    )}
                     <span
                       className="eyebrow text-ink-mute"
                       title={formatAbsoluteDateTime(e.created_at)}
