@@ -217,7 +217,7 @@ export default function AdminMaterialEditor() {
     setTiers((prev) => [...prev, created as Tier])
     const variant = variants.find((v) => v.id === variantId)
     void logAudit({
-      action: 'price_tier.created',
+      action: 'price_tier_created',
       targetType: 'price_tier',
       targetId: (created as Tier).id,
       targetLabel: `${material?.display_name ?? ''} ${variant?.display_name ?? ''} @ qty ${quantity}`,

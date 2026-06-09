@@ -217,7 +217,12 @@ export default function AdminNeedsAttentionPage() {
 
   async function resetToDefaults() {
     setConfirmReset(false)
-    setDraft(DEFAULT_RULES)
+    // Merge defaults OVER the saved object rather than replacing it, so
+    // non-rule scalar keys stored alongside the six rules in the
+    // needs_attention_rules JSONB survive a reset+save. Today that's
+    // helpscout_reply_grace_days (000208); DEFAULT_RULES spread last
+    // still resets all six rule objects to their defaults (PV-2026W22-239).
+    setDraft({ ...(savedRules ?? {}), ...DEFAULT_RULES })
     setOrder(orderFromPriority(DEFAULT_RULES))
     setDraftCutoff(DEFAULT_DORMANCY_CUTOFF)
     // Don't auto-save — leave the diff visible so the admin still has

@@ -183,6 +183,7 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'proof.snoozed',                   label: 'Project snoozed' },
     { code: 'proof.unsnoozed',                 label: 'Project unsnoozed' },
     { code: 'proof.reply_sent',                label: 'Reply sent to customer' },
+    { code: 'proof.internal_notes_updated',    label: 'Internal notes updated' },
   ]},
   { name: 'Customer-facing', actions: [
     { code: 'version.viewed',                label: 'Proof viewed' },
@@ -200,6 +201,9 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'setting.approvals_enabled_updated',                label: 'Approvals toggle changed' },
     { code: 'setting.approve_confirmation_copy_updated',        label: 'Approve confirmation copy updated' },
     { code: 'setting.request_changes_confirmation_copy_updated', label: 'Request-changes confirmation copy updated' },
+    { code: 'setting.about_proof_copy_updated',                 label: 'About-this-proof note updated' },
+    { code: 'setting.qr_panel_intro_copy_updated',              label: 'QR panel review-instructions copy updated' },
+    { code: 'setting.qr_panel_vcard_copy_updated',              label: 'QR panel Plasma vCard note updated' },
     { code: 'setting.replies_enabled_updated',                  label: 'Reply templates toggle changed' },
     { code: 'setting.team_pin_added',                           label: 'Team pin added' },
     { code: 'setting.team_pin_removed',                         label: 'Team pin removed' },
@@ -211,6 +215,7 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'setting.domestic_uk_mainland_rate_gbp_updated',    label: 'UK mainland shipping rate updated' },
     { code: 'setting.domestic_uk_ni_rate_gbp_updated',          label: 'Northern Ireland shipping rate updated' },
     { code: 'setting.login_copy_updated',                       label: 'Login page copy updated' },
+    { code: 'setting.metal_thickness_notes_updated',            label: 'Metal thickness notes updated' },
   ]},
 ]
 
