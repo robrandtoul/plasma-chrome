@@ -341,22 +341,23 @@ Either way the working-hours check stays inside the function.
 
 **Preconditions (hard blockers, in order):**
 
-1. **Topology.** Live proofs live in the `proofs` schema of the merged stock
-   project — NOT the CLI-linked `xpcjanqrcgzjmwketxtt`, which has zero proofs.
-   The CLI link, local `.env`, and CLAUDE.md's migration workflow all still
-   point at the old project. Re-point the toolchain (or explicitly retire
-   `pnpm db:diff` / `db:push:confirm` for this work), adopt the live project's
-   schema-qualification convention for the new migrations, and apply
-   everything from Rob's Terminal per the prod-gating rule. Building against
-   the wrong project would make the dry-run week pass vacuously. First step:
-   a one-line proof count against both projects (Rob's Terminal or the
-   Supabase dashboard) to confirm where the live rows actually are — the
-   zero-proofs claim about the old project is corroborated but not yet
-   verified against the live database.
-2. **Webhook.** Confirm `helpscout-webhook` is firing in prod (HS app →
-   delivery log). The grace window, customer-reply hard-skip, and
-   send-evidence fallback all read columns only it writes.
-3. **Sender identity.** Confirm `HELPSCOUT_DEFAULT_USER_ID` is set in prod.
+1. **Topology — ✅ verified 2026-06-09** (Rob, dashboard SQL editor): live
+   proofs are in the **stock-control** project, `proofs.proofs` (25 proofs);
+   the CLI-linked `xpcjanqrcgzjmwketxtt` still carries the full migrated
+   schema in `public` but has **zero rows and null activity** — an empty
+   schema copy that would make a misdirected dry-run pass vacuously.
+   **Remaining work:** the CLI link, local `.env`, and CLAUDE.md's migration
+   workflow all still point at the old project. Re-point the toolchain (or
+   explicitly retire `pnpm db:diff` / `db:push:confirm` for this work), adopt
+   the live project's schema-qualification convention for the new migrations,
+   and apply everything from Rob's Terminal per the prod-gating rule.
+2. **Webhook — ✅ verified 2026-06-09**: `helpscout-webhook` is firing in
+   prod. 25/25 proofs HS-linked, 25/25 carry `helpscout_last_reply_at`
+   stamps, 10/25 carry customer-reply stamps, newest stamps same-day. The
+   grace window, customer-reply hard-skip, and send-evidence fallback all
+   have live data behind them.
+3. **Sender identity.** Confirm `HELPSCOUT_DEFAULT_USER_ID` is set in prod
+   (stock-control → Edge Functions → Secrets).
 
 **Phase 1 — dry run (~1 week).** Full pipeline nightly in `dry_run` mode:
 ledger rows written (structurally excluded from caps), Outbox panel shows the
