@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Send, Check, Layers, PoundSterling, DollarSign, Euro, BookOpen, Info, Eye, type LucideIcon } from 'lucide-react'
+import { Send, Check, Layers, PoundSterling, DollarSign, Euro, BookOpen, Info, Eye, History, type LucideIcon } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { Pill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, StatusRule, tokens, type PillColour } from '../design'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
@@ -409,6 +409,20 @@ export default function CustomerProofPage() {
       for (const img of preloaders) img.src = ''
     }
   }, [versionImages, activeVersion?.id])
+
+  // Version filmstrip: keep the card being viewed in sight. The strip
+  // is chronological (oldest left), so on first paint the current
+  // version sits at the far right and would start off-screen on
+  // narrow viewports without this. Re-centres when the customer
+  // switches versions or expands the collapsed older drafts.
+  const versionStripRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const el = versionStripRef.current
+    if (!el) return
+    const card = el.querySelector<HTMLElement>('[data-strip-active]')
+    if (!card) return
+    el.scrollTo({ left: card.offsetLeft - (el.clientWidth - card.offsetWidth) / 2 })
+  }, [activeVersion?.id, showAllVersions])
 
   // ── Phase 2.5 per-recipient action helpers ──────────────────────────────
 
@@ -2724,21 +2738,23 @@ export default function CustomerProofPage() {
               real two-column flex container on lg+. */}
           <div className="contents lg:flex lg:flex-col lg:gap-7 lg:min-w-0">
 
-            {/* Version switcher — chronological, click switches the
-                active version via setActiveVersion. Two parts: a plain-
-                English status line ("You're viewing the latest version")
-                so the customer knows where they are and that other
-                versions exist, then a pill row where every version that
-                is NOT the one being viewed is rendered as a mint, eye-
-                icon button that clearly reads as tappable. The bare
-                "History" eyebrow + muted older chips read as passive
-                captions and customers were missing the switcher entirely
-                — going back to an older Help Scout link (which always
+            {/* Version filmstrip — chronological picture cards, one per
+                version, each showing that draft's first front plate plus
+                a one-line change-note snippet. Replaces the old text-pill
+                row, which customers were missing entirely: on a page
+                where status chips and finishing toggles are all pills,
+                one more pill row read as passive metadata, so customers
+                went back to an older Help Scout link (which always
                 resolves to current) instead of clicking through here.
-                The active "you are here" pill stays solid ink; the
-                actionable pills are now the boldest in the row. When
-                there are many revisions the older ones still collapse
-                behind a "+N earlier" chip so the row stays compact. */}
+                Thumbnails are a different visual species — they read as
+                content, give a reason to click (what changed), and can't
+                be confused with the finishing toggles. Header swaps
+                between a quiet status line (viewing current) and an
+                amber banner with a one-click "Back to latest" (viewing
+                an earlier draft) so an old draft can never be silently
+                mistaken for the latest. Thumbnail bytes are already
+                warm via the historic-image preloader above; switching
+                stays a pure client-side state change. */}
             {versions.length > 1 && (() => {
               const RECENT = 5
               const tooMany = versions.length > RECENT + 1
@@ -2751,19 +2767,47 @@ export default function CustomerProofPage() {
               const collapsed = tooMany && !showAllVersions && activeInRecent
               const visible = collapsed ? versions.slice(recentStart) : versions
               const hiddenCount = collapsed ? recentStart : 0
+              const fmtDate = (iso: string) =>
+                new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
               const toggleCls =
-                'inline-flex items-center h-9 px-3.5 rounded-full text-[12px] border border-line bg-surface text-ink-mute hover:bg-canvas hover:text-ink transition-colors'
+                'shrink-0 self-stretch w-[84px] rounded-[10px] border border-line bg-surface flex items-center justify-center text-center px-2 text-[12px] text-ink-mute hover:bg-canvas hover:text-ink transition-colors'
               return (
-                <div className="order-3 lg:order-none flex flex-col gap-2.5">
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                    <span className="eyebrow">Versions</span>
-                    <span className="text-[13px] text-ink-soft">
-                      {activeVersion.is_current
-                        ? "You're viewing the latest version."
-                        : `You're viewing an earlier draft (v${activeVersion.version_number}).`}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2.5">
+                <div className="order-3 lg:order-none flex flex-col gap-3 min-w-0">
+                  {activeVersion.is_current ? (
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <span className="eyebrow">Versions</span>
+                      <span className="text-[13px] text-ink-soft">
+                        You're viewing the latest version. Tap an earlier draft to compare.
+                      </span>
+                    </div>
+                  ) : (
+                    // Earlier-draft banner. Same low/low-soft warning
+                    // tokens as the approval band's "Heads up" card.
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[10px] bg-low-soft border border-low px-4 py-3">
+                      <History
+                        className="w-[18px] h-[18px] shrink-0"
+                        style={{ color: 'var(--c-low)' }}
+                        aria-hidden="true"
+                      />
+                      <span className="text-[13px] text-ink leading-snug">
+                        You're looking at an earlier draft (v{activeVersion.version_number},{' '}
+                        {fmtDate(activeVersion.created_at)}).
+                      </span>
+                      {latestVersion && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveVersion(latestVersion)}
+                          className="sm:ml-auto inline-flex items-center h-8 px-3.5 rounded-full bg-ink text-on-ink text-[12px] hover:opacity-90 transition-opacity"
+                        >
+                          Back to latest (v{latestVersion.version_number})
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  <div
+                    ref={versionStripRef}
+                    className="relative flex items-stretch gap-3 overflow-x-auto pb-1.5"
+                  >
                     {collapsed && (
                       <button
                         type="button"
@@ -2777,61 +2821,90 @@ export default function CustomerProofPage() {
                     {visible.map((v) => {
                       const active = v.id === activeVersion.id
                       const isCurrent = v.is_current
-                      const dateLabel = new Date(v.created_at).toLocaleDateString('en-GB', {
-                        day: 'numeric',
-                        month: 'short',
-                      })
-                      // Active (the one on screen) = solid ink "you are
-                      // here". Every other version = mint eye-button that
-                      // looks unmistakably pressable.
-                      const cls = [
-                        'inline-flex items-center gap-2 h-10 px-3.5 rounded-full text-[13px] border transition',
-                        active ? 'bg-ink text-on-ink border-ink' : 'hover:brightness-95',
-                      ].join(' ')
-                      const style = active
-                        ? undefined
-                        : {
-                            backgroundColor: 'var(--c-brand-50)',
-                            color: 'var(--c-brand-900)',
-                            borderColor: 'var(--c-brand-300)',
-                          }
+                      const dateLabel = fmtDate(v.created_at)
+                      // QR rows never represent the artwork; prefer a
+                      // front plate, fall back to whatever comes first.
+                      const imgs = (versionImages[v.id] ?? []).filter((img) => !img.is_qr_code)
+                      const thumb = imgs.find((img) => img.side !== 'back') ?? imgs[0] ?? null
+                      const note = v.change_notes?.trim() || null
                       return (
                         <button
                           key={v.id}
                           type="button"
+                          data-strip-active={active ? 'true' : undefined}
                           onClick={() => setActiveVersion(v)}
                           aria-pressed={active}
                           aria-label={`${active ? 'Viewing' : 'View'} version ${v.version_number}, ${dateLabel}${isCurrent ? ' (latest)' : ''}`}
-                          className={cls}
-                          style={style}
+                          className={[
+                            'shrink-0 w-[150px] rounded-[10px] border bg-surface p-2 text-left transition-colors',
+                            active ? 'border-ink ring-1 ring-ink' : 'border-line hover:border-ink-dim',
+                          ].join(' ')}
+                          // Current-but-not-viewed keeps a mint border so
+                          // the latest draft stays the anchor of the strip.
+                          style={
+                            !active && isCurrent
+                              ? { borderColor: 'var(--c-brand-300)' }
+                              : undefined
+                          }
                         >
-                          {!active && (
-                            <Eye
-                              className="w-4 h-4 shrink-0"
-                              strokeWidth={2}
-                              aria-hidden="true"
-                              style={{ color: 'var(--c-brand-700)' }}
-                            />
-                          )}
-                          <span className="font-mono font-medium">v{v.version_number}</span>
-                          <span
-                            className={active ? 'text-on-ink/70' : undefined}
-                            style={active ? undefined : { color: 'var(--c-brand-300)' }}
-                            aria-hidden="true"
-                          >
-                            ·
-                          </span>
-                          <span className="text-[12px]">{dateLabel}</span>
-                          {isCurrent && (
-                            <span
-                              aria-hidden="true"
-                              className="ml-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]"
-                              // Light mint reads on the ink pill; deep
-                              // mint reads on the brand-50 button fill.
-                              style={{ color: active ? 'var(--c-brand-300)' : 'var(--c-brand-700)' }}
-                            >
-                              Current
+                          <div className="h-[84px] w-full overflow-hidden rounded-[6px] bg-canvas">
+                            {thumb ? (
+                              <img
+                                src={thumb.signed_url}
+                                alt=""
+                                loading="lazy"
+                                draggable={false}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center">
+                                <Layers className="w-5 h-5 text-ink-dim" aria-hidden="true" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="mt-2 flex items-baseline gap-1.5 px-0.5">
+                            <span className="font-mono text-[13px] font-medium text-ink">
+                              v{v.version_number}
                             </span>
+                            <span className="text-[11px] text-ink-mute">{dateLabel}</span>
+                            {isCurrent && (
+                              <span
+                                aria-hidden="true"
+                                className={[
+                                  'ml-auto rounded-[4px] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em]',
+                                  active ? 'bg-ink' : '',
+                                ].join(' ')}
+                                // Light mint reads on the ink chip; deep
+                                // mint on the brand-50 tint.
+                                style={
+                                  active
+                                    ? { color: 'var(--c-brand-300)' }
+                                    : {
+                                        backgroundColor: 'var(--c-brand-50)',
+                                        color: 'var(--c-brand-700)',
+                                      }
+                                }
+                              >
+                                Current
+                              </span>
+                            )}
+                            {active && !isCurrent && (
+                              <span
+                                aria-hidden="true"
+                                className="ml-auto rounded-[4px] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] bg-low-soft"
+                                style={{ color: 'var(--c-low)' }}
+                              >
+                                Viewing
+                              </span>
+                            )}
+                          </div>
+                          {note && (
+                            <p
+                              className="mt-1 px-0.5 text-[11px] leading-snug text-ink-mute truncate"
+                              title={note}
+                            >
+                              {note}
+                            </p>
                           )}
                         </button>
                       )
