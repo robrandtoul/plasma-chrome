@@ -1,9 +1,23 @@
 # Follow-up automation — Phase 1 rollout steps
 
+> **Status: EXECUTED 2026-06-10** (by Claude with Rob's explicit permission,
+> while PR #254 was under review). Migration applied via MCP
+> (`followup_automation_phase1` in the stock project's migration history),
+> all four functions deployed, vault secret + cron job created, first dry
+> run verified (9 candidates, dry_run mode, heartbeat clean — zero ledger
+> rows is correct while every reply stamp is younger than the 3-working-day
+> threshold; rows appear as stamps age). One deviation from the original
+> steps: the function's auth gate accepts any platform-verified JWT with the
+> `service_role` claim rather than requiring byte-equality with the injected
+> env key — the vault key is a differently-minted service-role JWT and the
+> first trigger 403'd (fixed, redeployed, re-verified). The steps below stay
+> as the reference for re-runs or a rebuild.
+
 Operational companion to `followup-automation-spec.md`. Everything here is
-prod-touching, so per the house rule Rob runs each step himself. Every SQL
-block pastes into the **stock-control** project's dashboard SQL editor;
-every shell line is self-contained and paste-safe.
+prod-touching, so per the house rule Rob runs each step himself (or
+explicitly delegates, as happened above). Every SQL block pastes into the
+**stock-control** project's dashboard SQL editor; every shell line is
+self-contained and paste-safe.
 
 The result of Phase 1: the pipeline runs every weekday morning in **dry-run**
 (nothing sends — `auto_nudges_enabled` defaults to off), and the dashboard
