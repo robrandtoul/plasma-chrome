@@ -283,11 +283,41 @@ Commit changes locally as you work. Rob typically pushes manually at the end of 
 
 Local dev: Rob runs `pnpm dev` in a separate terminal. Changes hot-reload so no deploy is needed to verify frontend work.
 
-For DB migrations, the dry-run reflex applies:
+### DB migrations — the merged-project workflow (verified 2026-06-10)
 
-1. **Always run `pnpm db:diff` first.** Read-only; lists every migration that's local-only (file exists in `supabase/migrations/` but hasn't been applied to the linked Supabase project). Quick gut-check before pushing.
-2. **Push via `pnpm db:push:confirm`** rather than `npx supabase db push --include-all` directly. Same end result, but the script bails out if MORE than one migration is pending (a signal that the mixed-naming-convention set has drifted), prints what's about to be pushed, and asks for explicit "yes" confirmation. After pushing, it re-runs the list to confirm both sides are in sync.
-3. The raw `npx supabase db push --include-all` is still available as an escape hatch — for example, when you've genuinely vetted multiple pending migrations and want to push them all. The script is the safety net you'd be bypassing.
+⚠ **The CLI push path is dead.** Live proof data moved (~2026-06-08) into the
+merged **stock-control** Supabase project (`bjvinrzbdrwebylkmbwy`), where
+proof-viewer lives in the **`proofs` schema**. The CLI link
+(`supabase/.temp/project-ref`), the local `.env`, and the `pnpm db:diff` /
+`db:push:confirm` / `db:status` scripts all still point at the retired
+standalone project `xpcjanqrcgzjmwketxtt` — which answers with the full
+schema and **zero rows**, so anything run against it passes vacuously. The
+merged project has no 000NNN migration history, so `supabase db push` at it
+would try to replay all ~220 migrations into the stock app. Never repoint the
+link for pushes.
+
+The working convention:
+
+1. **Author** new migrations in this repo as `supabase/migrations/000NNN_*.sql`
+   (numbering continues for audit trail; run `ls supabase/migrations/0002*`
+   first). Write them **schema-qualified** (`proofs.` prefixes); functions pin
+   the live convention `set search_path = proofs, public, extensions, pg_temp`
+   and SECURITY INVOKER/DEFINER per the live siblings.
+2. **Verify live state read-only first** via the Supabase MCP
+   (`execute_sql` on `bjvinrzbdrwebylkmbwy`) — column names, grants, existing
+   objects. The repo's historical migrations pin `search_path = public` and no
+   longer reproduce prod on fresh replay; the live DB is the truth.
+3. **Apply** per the prod-gating rule: Rob pastes the migration into the
+   stock-control dashboard SQL editor (or approves an MCP `apply_migration`
+   with a descriptive timestamped name). Claude never applies to prod
+   unilaterally.
+4. **Grants are explicit.** The proofs schema has NO default privileges —
+   a new table is born with no grants at all (service_role included). Every
+   `CREATE TABLE` must state its full grant matrix or the edge functions
+   silently lose access.
+
+Edge deploys: Homebrew `supabase` CLI with `--project-ref bjvinrzbdrwebylkmbwy`
+(see memory:feedback_proof_viewer_edge_deploy).
 
 ## Claude operating discipline
 

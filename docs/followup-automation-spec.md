@@ -102,7 +102,10 @@ current at send), `rule_code`, `template_id`, `source` (`auto` | `manual`),
 Constraints / indexes:
 
 - Unique claim key for auto sends: `(proof_id, rule_code, proof_version_id,
-  sent_date)` where `source = 'auto'` — the ON CONFLICT gate from rule #2.
+  sent_date)` where `source = 'auto' and state in ('sending', 'sent')` — the
+  ON CONFLICT gate from rule #2, scoped to the true idempotency domain so a
+  morning dry/test run can never silently block the same day's first live
+  send (the flip-day lockout the implementation review caught).
 - One automated send per conversation per day, **database-enforced**: partial
   unique index on `(helpscout_conversation_id, sent_date)` where
   `source = 'auto'` and state in (`sending`,`sent`).
@@ -135,7 +138,14 @@ on **every** run including zero-candidate runs.
 
 - Outbox panel shows "Last run: N hours ago"; age > ~25 h renders a
   needs-attention-style warning banner.
-- An **open run row gates auto-send** (pause until a human clears it).
+- **Any** open run row (not merely the newest) gates auto-send: live mode
+  demotes to dry-run until a human clears every crashed run via the
+  `resolve_nudge_run` RPC (the Outbox warning carries the button). A sibling
+  RPC, `resolve_stuck_nudge`, lets a designer resolve a crashed run's stale
+  `sending` claims after checking Help Scout — "it sent" → `sent`, "it
+  didn't" → `failed`; the Outbox lists them in a standing Needs-verification
+  section that survives across runs. Both RPCs are the only authenticated
+  write paths into the ledger tables.
 - Same panel carries a webhook-freshness indicator: newest
   `greatest(helpscout_last_reply_at, helpscout_last_customer_reply_at)` across
   all proofs — multi-day staleness at Plasma's HS volume signals a dead
@@ -454,6 +464,27 @@ stay out of scope until volume supports them.
    thread/subject for nudge #2 (it splits the HS history across two
    conversations for that proof).
 4. **The lifetime ceiling number** (spec says 6).
+
+## Deferred to Phase 2 — must build BEFORE the flip
+
+The Phase 1 build deliberately ships without these; each is required before
+(or shortly after) `auto_nudges_enabled` turns on, and this list is the
+marker so none goes silently missing:
+
+- **Exhaustion as a first-class dashboard state** (section 5). Phase 1
+  surfaces exhaustion only as `skipped_capped` Outbox rows; the dashboard
+  tile/chip, `attentionReason` copy variants, and the HS tag/assign are
+  Phase 2 work.
+- **Second nudge as a new Help Scout conversation** (section 6). Needed the
+  first time any live proof reaches nudge 2 — i.e. within `repeat_days` of
+  the flip.
+- **Review queue + automation for the other three chase rules.** The admin
+  dials store `mode` for all four rules now, but only `sent_never_viewed` is
+  consumed; the admin UI says so explicitly.
+- **One-proof re-validation when a human clicks send from a stale surface**
+  (rule #1's manual half). ResolvePopover renders from live dashboard data
+  and a human reads the body, so Phase 1 risk is low — but the re-check
+  should land with the review queue.
 
 ## Out of scope (this build)
 
