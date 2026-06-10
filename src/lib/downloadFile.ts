@@ -24,3 +24,22 @@ export function downloadBlob(blob: Blob, filename: string): void {
   // its download handler. 1s is plenty and doesn't leak meaningfully.
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
+
+// Force a Supabase Storage signed URL to download under a chosen
+// filename. Supabase signed URLs sit on the storage domain
+// (…supabase.co), a different origin from the app, so the browser
+// ignores the `<a download="…">` attribute on them — the customer's
+// saved file ends up named after the opaque storage path instead of
+// what they uploaded. Supabase honours a `download` query parameter on
+// the object endpoint and answers with
+// `Content-Disposition: attachment; filename="…"`, which the browser
+// obeys regardless of origin. The token in a signed URL covers only the
+// path + expiry, not this parameter, so appending it client-side is
+// safe and needs no re-signing. Returns the URL unchanged when there's
+// no filename to apply (e.g. legacy rows with a null original_filename).
+export function withDownloadName(signedUrl: string, filename?: string | null): string {
+  const name = (filename ?? '').trim()
+  if (!signedUrl || !name) return signedUrl
+  const sep = signedUrl.includes('?') ? '&' : '?'
+  return `${signedUrl}${sep}download=${encodeURIComponent(name)}`
+}
