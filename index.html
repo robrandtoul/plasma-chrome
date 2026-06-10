@@ -7,10 +7,14 @@
          (ink square + white layers glyph) rendered to a 180x180 PNG.
          iOS rounds the corners itself, so the PNG is a full-bleed
          square. apple-mobile-web-app-* make a saved shortcut open
-         chrome-free with a dark status bar and a short title. -->
+         chrome-free with a short title. The status-bar style is
+         `default` (dark text); the previous `black-translucent`
+         rendered as a solid black strip behind the Dynamic Island on
+         the installed app instead of letting the page colour reach
+         the top edge the way Safari does. -->
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Proof Viewer" />
     <!-- maximum-scale=1 stops iOS Safari's auto-zoom-on-focus on
          form fields (the cause of the page-zoom + horizontal-scroll
