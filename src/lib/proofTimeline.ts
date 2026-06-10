@@ -75,10 +75,21 @@ export interface TimelineSources {
     version_number: number
     created_at: string
     last_reply_sent_at: string | null
+    /** Designer auth ids — resolved to names via designerNamesById. */
+    created_by?: string | null
+    last_reply_sent_by?: string | null
   }>
   events: TimelineEventRow[]
   /** proof_version_id → non-bot view rows (any extra fields ignored). */
   viewsByVersion: ReadonlyMap<string, ReadonlyArray<{ viewed_at: string }>>
+  /**
+   * auth user id → designer full name, for attributing version-created
+   * and reply-sent entries ("Donna Lambe created v2"). Entries whose id
+   * is null/missing fall back to the unattributed milestone copy, so
+   * the map is optional and may be partial (deleted profiles, versions
+   * predating attribution, automated nudge sends).
+   */
+  designerNamesById?: ReadonlyMap<string, string>
 }
 
 // Within-a-second ties happen for real: maybe_finalize_proof_status
@@ -100,8 +111,10 @@ const TIE_RANK: Record<TimelineEntryType, number> = {
 }
 
 export function buildTimelineEntries(sources: TimelineSources): TimelineEntry[] {
-  const { proof, versions, events, viewsByVersion } = sources
+  const { proof, versions, events, viewsByVersion, designerNamesById } = sources
   const entries: TimelineEntry[] = []
+  const designerName = (id: string | null | undefined): string | null =>
+    (id && designerNamesById?.get(id)) || null
 
   const milestone = (
     id: string,
@@ -141,20 +154,29 @@ export function buildTimelineEntries(sources: TimelineSources): TimelineEntry[] 
   const versionNumberById = new Map<string, number>()
   for (const v of versions) {
     versionNumberById.set(v.id, v.version_number)
-    entries.push(milestone(`version_created:${v.id}`, 'version_created', v.created_at, `v${v.version_number} created`))
+    // Designer attribution where a name resolves; the unattributed
+    // milestone copy otherwise (versions predating created_by,
+    // deleted profiles, automated nudge sends).
+    const creator = designerName(v.created_by)
+    entries.push({
+      ...milestone(`version_created:${v.id}`, 'version_created', v.created_at, `v${v.version_number} created`),
+      ...(creator ? { actor: creator, verb: `created v${v.version_number}` } : {}),
+    })
     // Only the latest reply per version is stored (last_reply_sent_at
     // is overwritten on re-send), so a "Send again" replaces the
     // earlier entry rather than stacking — acceptable for a history
     // view; the precise audit trail lives in Help Scout.
     if (v.last_reply_sent_at) {
-      entries.push(
-        milestone(
+      const sender = designerName(v.last_reply_sent_by)
+      entries.push({
+        ...milestone(
           `reply_sent:${v.id}`,
           'reply_sent',
           v.last_reply_sent_at,
           `Reply sent for v${v.version_number}`,
         ),
-      )
+        ...(sender ? { actor: sender, verb: `sent a reply for v${v.version_number}` } : {}),
+      })
     }
   }
 

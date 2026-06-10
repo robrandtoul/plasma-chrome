@@ -186,6 +186,51 @@ test('newest first; same-instant approval milestone sorts above its approve even
   assert(entries[entries.length - 1].type === 'project_created', 'oldest entry should be project created')
 })
 
+test('version and reply entries attribute the designer when a name resolves', () => {
+  const entries = buildTimelineEntries(
+    baseSources({
+      versions: [
+        {
+          id: 'v1', version_number: 1, created_at: '2026-05-01T10:00:00Z',
+          last_reply_sent_at: '2026-05-01T11:00:00Z',
+          created_by: 'designer-1', last_reply_sent_by: 'designer-2',
+        },
+      ],
+      designerNamesById: new Map([
+        ['designer-1', 'Donna Lambe'],
+        ['designer-2', 'Jack Johnson'],
+      ]),
+    }),
+  )
+  const created = entries.find((e) => e.type === 'version_created')!
+  const reply = entries.find((e) => e.type === 'reply_sent')!
+  assert(created.actor === 'Donna Lambe', `creator actor: ${created.actor}`)
+  assert(created.verb === 'created v1', `creator verb: ${created.verb}`)
+  assert(reply.actor === 'Jack Johnson', `reply actor: ${reply.actor}`)
+  assert(reply.verb === 'sent a reply for v1', `reply verb: ${reply.verb}`)
+})
+
+test('attribution falls back to milestone copy when ids are null or unresolvable', () => {
+  const entries = buildTimelineEntries(
+    baseSources({
+      versions: [
+        {
+          id: 'v1', version_number: 1, created_at: '2026-05-01T10:00:00Z',
+          last_reply_sent_at: '2026-05-01T11:00:00Z',
+          // created_by resolves to nothing (deleted profile); reply
+          // sender null (automated nudge / pre-000215 row).
+          created_by: 'gone-user', last_reply_sent_by: null,
+        },
+      ],
+      designerNamesById: new Map(),
+    }),
+  )
+  const created = entries.find((e) => e.type === 'version_created')!
+  const reply = entries.find((e) => e.type === 'reply_sent')!
+  assert(created.actor === null && created.verb === 'v1 created', `creator fallback: ${created.actor} / ${created.verb}`)
+  assert(reply.actor === null && reply.verb === 'Reply sent for v1', `reply fallback: ${reply.actor} / ${reply.verb}`)
+})
+
 test('terms acknowledgement is attributed to the contact', () => {
   const entries = buildTimelineEntries(
     baseSources({

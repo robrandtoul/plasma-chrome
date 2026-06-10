@@ -118,7 +118,7 @@ export default function ProofTimeline(sources: TimelineSources) {
     () => buildTimelineEntries(sources),
     // The page replaces these references wholesale on every loadProof,
     // so reference identity is the right memo key.
-    [sources.proof, sources.versions, sources.events, sources.viewsByVersion],
+    [sources.proof, sources.versions, sources.events, sources.viewsByVersion, sources.designerNamesById],
   )
   const [expanded, setExpanded] = useState(false)
 

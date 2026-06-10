@@ -93,6 +93,14 @@ export interface ModalVersion {
   // ship surfaces per-version send history inside this modal;
   // Ship 3 doesn't render it here, only on the page.
   last_reply_sent_at: string | null
+  // Designer attribution for the Activity timeline. created_by is
+  // stamped by its default auth.uid() on insert; last_reply_sent_by
+  // (migration 000215) by the send-helpscout-reply edge function.
+  // Both auth user ids, resolved to names via a profiles lookup on
+  // ProofDetailPage. Null on rows predating the columns and on
+  // automated nudge sends.
+  created_by: string | null
+  last_reply_sent_by: string | null
   // Letterpress layer colours (migrations 000133 + 000135). Null on
   // any non-letterpress version, on per-direction-pricing variant
   // rounds (form-save forces null), and on legacy pre-000133

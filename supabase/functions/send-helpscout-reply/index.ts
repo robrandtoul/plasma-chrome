@@ -370,7 +370,12 @@ Deno.serve(async (req) => {
     try {
       const { error: updateErr } = await admin
         .from('proof_versions')
-        .update({ last_reply_sent_at: new Date().toISOString() })
+        .update({
+          last_reply_sent_at: new Date().toISOString(),
+          // Who sent it (migration 000215) — the Activity timeline's
+          // "<designer> sent a reply for vN" attribution.
+          last_reply_sent_by: callerId,
+        })
         .eq('id', versionId)
         .eq('proof_id', proofId)
       if (updateErr) {
