@@ -2788,10 +2788,16 @@ export default function CustomerProofPage() {
                   {(() => {
                     const onLatest = activeVersion.is_current
                     return (
+                      // Every text child pins leading-5 (a 20px line
+                      // box) and the band pins min-h: the eyebrow is
+                      // 10px/lh-1 and a bare 13px button would inherit
+                      // the page's 1.5 line-height (19.5px), so without
+                      // this the two states' rows differ by ~1.6px and
+                      // the strip nudges down on switch.
                       <div
                         role="status"
                         className={[
-                          'flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[10px] border px-4 py-3 transition-colors duration-300',
+                          'flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[10px] border px-4 py-3 min-h-[46px] transition-colors duration-300',
                           onLatest ? 'border-transparent' : 'bg-low-soft border-low',
                         ].join(' ')}
                       >
@@ -2806,7 +2812,7 @@ export default function CustomerProofPage() {
                         )}
                         <span
                           className={[
-                            'text-[13px] leading-snug transition-colors duration-300',
+                            'text-[13px] leading-5 transition-colors duration-300',
                             onLatest ? 'text-ink-soft' : 'text-ink',
                           ].join(' ')}
                         >
@@ -2818,7 +2824,7 @@ export default function CustomerProofPage() {
                           <button
                             type="button"
                             onClick={() => setActiveVersion(latestVersion)}
-                            className="sm:ml-auto text-[13px] font-medium text-ink underline underline-offset-2 decoration-ink/40 hover:decoration-ink whitespace-nowrap"
+                            className="sm:ml-auto text-[13px] leading-5 font-medium text-ink underline underline-offset-2 decoration-ink/40 hover:decoration-ink whitespace-nowrap"
                           >
                             Back to latest (v{latestVersion.version_number})
                           </button>
