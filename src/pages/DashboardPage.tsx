@@ -22,6 +22,7 @@ import { openDesignerPreview } from '../lib/customerProofUrl'
 import { logAudit } from '../lib/audit'
 import { attentionReason } from '../lib/needsAttention'
 import { ResolvePopover } from '../components/ResolvePopover'
+import { NudgeOutboxPanel } from '../components/NudgeOutboxPanel'
 // QuoteLink imported + rendered inside DesignerChrome (PR 31) so
 // every designer page surfaces the same new-tab "phone rings"
 // affordance without re-importing.
@@ -2653,6 +2654,10 @@ export default function DashboardPage() {
                     run many pages and a static panel hovering over
                     nothing related is more distracting than useful. */}
                 <LatestActivityPanel events={latestEvents} navigate={navigate} />
+                {/* Follow-up automation Outbox (Phase 1). Owns its own small
+                    nudge_runs / proof_nudges queries; the projects array is
+                    only passed for client-side contact/company labels. */}
+                <NudgeOutboxPanel projects={projects} />
                 <LeadTimesChart leadTimes={leadTimes} navigate={navigate} />
               </aside>
             </div>
