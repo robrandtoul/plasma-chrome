@@ -1644,7 +1644,16 @@ export default function CustomerProofPage() {
     const isLocked = lockState.kind === 'locked'
 
     return (
-      <div className="space-y-6">
+      // order-4 matches the standard plates section and the set-
+      // collection renderer. On mobile the right-column wrapper is
+      // display:contents, so this div becomes a direct flex item of
+      // <main> and re-sequences by order-*; without a class it
+      // defaulted to order 0 and the whole "Choose a direction"
+      // block jumped ABOVE the Proof-for card, the earlier-draft
+      // banner, and the version filmstrip — burying them below the
+      // direction artwork so the version switcher looked like it
+      // had vanished whenever a variant-round version was viewed.
+      <div className="order-4 lg:order-none space-y-6">
         {/* V2 contact-sheet treatment for the variant comparison.
             Inline section header ("Choose a direction" + count
             eyebrow + gradient hairline) matches the plates section
