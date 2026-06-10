@@ -410,11 +410,13 @@ export default function CustomerProofPage() {
     }
   }, [versionImages, activeVersion?.id])
 
-  // Version filmstrip: keep the card being viewed in sight. The strip
-  // is chronological (oldest left), so on first paint the current
-  // version sits at the far right and would start off-screen on
-  // narrow viewports without this. Re-centres when the customer
-  // switches versions or expands the collapsed older drafts.
+  // Version filmstrip: keep the card being viewed in sight when it
+  // changes. The strip is newest-first so the resting position is
+  // already correct on load (current = leftmost card at scrollLeft 0,
+  // no script needed — this effect is a no-op there); it earns its
+  // keep on switches, e.g. the customer has scrolled deep into a long
+  // history and taps "Back to latest", which would otherwise leave
+  // the now-active leftmost card off-screen.
   const versionStripRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     const el = versionStripRef.current
@@ -2738,12 +2740,12 @@ export default function CustomerProofPage() {
               real two-column flex container on lg+. */}
           <div className="contents lg:flex lg:flex-col lg:gap-7 lg:min-w-0">
 
-            {/* Version filmstrip — chronological picture cards, one per
-                version, each showing that draft's first front plate plus
-                a one-line change-note snippet. Replaces the old text-pill
-                row, which customers were missing entirely: on a page
-                where status chips and finishing toggles are all pills,
-                one more pill row read as passive metadata, so customers
+            {/* Version filmstrip — picture cards, one per version, each
+                showing that draft's first front plate plus a one-line
+                change-note snippet. Replaces the old text-pill row,
+                which customers were missing entirely: on a page where
+                status chips and finishing toggles are all pills, one
+                more pill row read as passive metadata, so customers
                 went back to an older Help Scout link (which always
                 resolves to current) instead of clicking through here.
                 Thumbnails are a different visual species — they read as
@@ -2754,19 +2756,34 @@ export default function CustomerProofPage() {
                 an earlier draft) so an old draft can never be silently
                 mistaken for the latest. Thumbnail bytes are already
                 warm via the historic-image preloader above; switching
-                stays a pure client-side state change. */}
+                stays a pure client-side state change.
+
+                Order is NEWEST FIRST, deliberately: with the strip
+                scrolled to its resting position (scrollLeft 0) the
+                current version is always on screen, on every viewport,
+                with no script's help. The first chronological cut had
+                current at the far right and relied on a scroll-into-
+                view effect that lost a race on initial load (data can
+                land before the strip mounts), leaving phones showing
+                v1-v3 with the current v4 undiscoverably off-screen.
+                Newest-first also matches version-history convention
+                (file managers, activity feeds) and puts the draft
+                customers most often want — the previous one — directly
+                beside Current. Deep history trails off the right edge,
+                where the cut-off card doubles as the swipe cue, and
+                the "+N earlier" collapse sits at the trailing end. */}
             {versions.length > 1 && (() => {
+              const ordered = [...versions].reverse()
               const RECENT = 5
-              const tooMany = versions.length > RECENT + 1
-              const activeIdx = versions.findIndex((v) => v.id === activeVersion.id)
-              const recentStart = Math.max(0, versions.length - RECENT)
-              const activeInRecent = activeIdx >= recentStart
+              const tooMany = ordered.length > RECENT + 1
+              const activeIdx = ordered.findIndex((v) => v.id === activeVersion.id)
+              const activeInRecent = activeIdx >= 0 && activeIdx < RECENT
               // Collapse only when there are many AND the customer is
               // viewing one of the recent versions — never hide the one
               // they're looking at. Manual expand overrides.
               const collapsed = tooMany && !showAllVersions && activeInRecent
-              const visible = collapsed ? versions.slice(recentStart) : versions
-              const hiddenCount = collapsed ? recentStart : 0
+              const visible = collapsed ? ordered.slice(0, RECENT) : ordered
+              const hiddenCount = collapsed ? ordered.length - RECENT : 0
               const fmtDate = (iso: string) =>
                 new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
               const toggleCls =
@@ -2836,16 +2853,6 @@ export default function CustomerProofPage() {
                     ref={versionStripRef}
                     className="relative flex items-stretch gap-3 overflow-x-auto pb-1.5"
                   >
-                    {collapsed && (
-                      <button
-                        type="button"
-                        onClick={() => setShowAllVersions(true)}
-                        className={toggleCls}
-                        aria-label={`Show ${hiddenCount} earlier versions`}
-                      >
-                        +{hiddenCount} earlier
-                      </button>
-                    )}
                     {visible.map((v) => {
                       const active = v.id === activeVersion.id
                       const isCurrent = v.is_current
@@ -2946,6 +2953,16 @@ export default function CustomerProofPage() {
                         </button>
                       )
                     })}
+                    {collapsed && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllVersions(true)}
+                        className={toggleCls}
+                        aria-label={`Show ${hiddenCount} earlier versions`}
+                      >
+                        +{hiddenCount} earlier
+                      </button>
+                    )}
                     {tooMany && !collapsed && activeInRecent && (
                       <button
                         type="button"
