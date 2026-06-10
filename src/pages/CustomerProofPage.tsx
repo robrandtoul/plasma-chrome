@@ -2773,37 +2773,59 @@ export default function CustomerProofPage() {
                 'shrink-0 self-stretch w-[84px] rounded-[10px] border border-line bg-surface flex items-center justify-center text-center px-2 text-[12px] text-ink-mute hover:bg-canvas hover:text-ink transition-colors'
               return (
                 <div className="order-3 lg:order-none flex flex-col gap-3 min-w-0">
-                  {activeVersion.is_current ? (
-                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                      <span className="eyebrow">Versions</span>
-                      <span className="text-[13px] text-ink-soft">
-                        You're viewing the latest version. Tap an earlier draft to compare.
-                      </span>
-                    </div>
-                  ) : (
-                    // Earlier-draft banner. Same low/low-soft warning
-                    // tokens as the approval band's "Heads up" card.
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[10px] bg-low-soft border border-low px-4 py-3">
-                      <History
-                        className="w-[18px] h-[18px] shrink-0"
-                        style={{ color: 'var(--c-low)' }}
-                        aria-hidden="true"
-                      />
-                      <span className="text-[13px] text-ink leading-snug">
-                        You're looking at an earlier draft (v{activeVersion.version_number},{' '}
-                        {fmtDate(activeVersion.created_at)}).
-                      </span>
-                      {latestVersion && (
-                        <button
-                          type="button"
-                          onClick={() => setActiveVersion(latestVersion)}
-                          className="sm:ml-auto inline-flex items-center h-8 px-3.5 rounded-full bg-ink text-on-ink text-[12px] hover:opacity-90 transition-opacity"
+                  {/* Header band — ONE persistent element for both
+                      states, so React keeps the same DOM node and the
+                      amber earlier-draft treatment cross-fades in via
+                      transition-colors instead of a new banner popping
+                      into flow and shoving the strip + artwork down.
+                      Geometry (padding, border width, type size, the
+                      back-link as an inline text link rather than a
+                      taller pill button) is identical in both states;
+                      only colours and copy swap. Amber uses the same
+                      low/low-soft warning tokens as the approval band's
+                      "Heads up" card. role="status" announces the state
+                      change to screen readers on version switch. */}
+                  {(() => {
+                    const onLatest = activeVersion.is_current
+                    return (
+                      <div
+                        role="status"
+                        className={[
+                          'flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[10px] border px-4 py-3 transition-colors duration-300',
+                          onLatest ? 'border-transparent' : 'bg-low-soft border-low',
+                        ].join(' ')}
+                      >
+                        {onLatest ? (
+                          <span className="eyebrow">Versions</span>
+                        ) : (
+                          <History
+                            className="w-[18px] h-[18px] shrink-0"
+                            style={{ color: 'var(--c-low)' }}
+                            aria-hidden="true"
+                          />
+                        )}
+                        <span
+                          className={[
+                            'text-[13px] leading-snug transition-colors duration-300',
+                            onLatest ? 'text-ink-soft' : 'text-ink',
+                          ].join(' ')}
                         >
-                          Back to latest (v{latestVersion.version_number})
-                        </button>
-                      )}
-                    </div>
-                  )}
+                          {onLatest
+                            ? "You're viewing the latest version. Tap an earlier draft to compare."
+                            : `You're looking at an earlier draft (v${activeVersion.version_number}, ${fmtDate(activeVersion.created_at)}).`}
+                        </span>
+                        {!onLatest && latestVersion && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveVersion(latestVersion)}
+                            className="sm:ml-auto text-[13px] font-medium text-ink underline underline-offset-2 decoration-ink/40 hover:decoration-ink whitespace-nowrap"
+                          >
+                            Back to latest (v{latestVersion.version_number})
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })()}
                   <div
                     ref={versionStripRef}
                     className="relative flex items-stretch gap-3 overflow-x-auto pb-1.5"
