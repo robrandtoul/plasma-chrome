@@ -2724,13 +2724,21 @@ export default function CustomerProofPage() {
               real two-column flex container on lg+. */}
           <div className="contents lg:flex lg:flex-col lg:gap-7 lg:min-w-0">
 
-            {/* Version pill row — chronological, click switches the
-                active version via setActiveVersion. When there are many
-                revisions the older ones collapse behind a "+N earlier"
-                chip so the row stays compact; the current (latest)
-                version carries a coral accent + dot so it's always the
-                identifiable anchor, kept distinct from the ink "you're
-                viewing this" fill. */}
+            {/* Version switcher — chronological, click switches the
+                active version via setActiveVersion. Two parts: a plain-
+                English status line ("You're viewing the latest version")
+                so the customer knows where they are and that other
+                versions exist, then a pill row where every version that
+                is NOT the one being viewed is rendered as a mint, eye-
+                icon button that clearly reads as tappable. The bare
+                "History" eyebrow + muted older chips read as passive
+                captions and customers were missing the switcher entirely
+                — going back to an older Help Scout link (which always
+                resolves to current) instead of clicking through here.
+                The active "you are here" pill stays solid ink; the
+                actionable pills are now the boldest in the row. When
+                there are many revisions the older ones still collapse
+                behind a "+N earlier" chip so the row stays compact. */}
             {versions.length > 1 && (() => {
               const RECENT = 5
               const tooMany = versions.length > RECENT + 1
@@ -2744,87 +2752,100 @@ export default function CustomerProofPage() {
               const visible = collapsed ? versions.slice(recentStart) : versions
               const hiddenCount = collapsed ? recentStart : 0
               const toggleCls =
-                'inline-flex items-center h-8 px-3 rounded-full text-[12px] border border-line bg-surface text-ink-mute hover:bg-canvas hover:text-ink transition-colors'
+                'inline-flex items-center h-9 px-3.5 rounded-full text-[12px] border border-line bg-surface text-ink-mute hover:bg-canvas hover:text-ink transition-colors'
               return (
-                <div className="order-3 lg:order-none flex flex-wrap items-center gap-2.5">
-                  <span className="eyebrow mr-1.5">History</span>
-                  {collapsed && (
-                    <button
-                      type="button"
-                      onClick={() => setShowAllVersions(true)}
-                      className={toggleCls}
-                      aria-label={`Show ${hiddenCount} earlier versions`}
-                    >
-                      +{hiddenCount} earlier
-                    </button>
-                  )}
-                  {visible.map((v) => {
-                    const active = v.id === activeVersion.id
-                    const isCurrent = v.is_current
-                    const dateLabel = new Date(v.created_at).toLocaleDateString('en-GB', {
-                      day: 'numeric',
-                      month: 'short',
-                    })
-                    const cls = [
-                      'inline-flex items-center gap-2 h-8 px-3 rounded-full text-[13px] transition-colors border',
-                      active
-                        ? 'bg-ink text-on-ink border-ink'
-                        : isCurrent
-                          ? '' // coral accent applied via inline style below
-                          : 'bg-surface text-ink-soft border-line hover:bg-canvas',
-                    ].join(' ')
-                    // Current-but-not-viewed: coral-tinted fill, coral
-                    // border, dark-coral text — the anchor of the row.
-                    const style =
-                      !active && isCurrent
-                        ? {
+                <div className="order-3 lg:order-none flex flex-col gap-2.5">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <span className="eyebrow">Versions</span>
+                    <span className="text-[13px] text-ink-soft">
+                      {activeVersion.is_current
+                        ? "You're viewing the latest version."
+                        : `You're viewing an earlier draft (v${activeVersion.version_number}).`}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    {collapsed && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllVersions(true)}
+                        className={toggleCls}
+                        aria-label={`Show ${hiddenCount} earlier versions`}
+                      >
+                        +{hiddenCount} earlier
+                      </button>
+                    )}
+                    {visible.map((v) => {
+                      const active = v.id === activeVersion.id
+                      const isCurrent = v.is_current
+                      const dateLabel = new Date(v.created_at).toLocaleDateString('en-GB', {
+                        day: 'numeric',
+                        month: 'short',
+                      })
+                      // Active (the one on screen) = solid ink "you are
+                      // here". Every other version = mint eye-button that
+                      // looks unmistakably pressable.
+                      const cls = [
+                        'inline-flex items-center gap-2 h-10 px-3.5 rounded-full text-[13px] border transition',
+                        active ? 'bg-ink text-on-ink border-ink' : 'hover:brightness-95',
+                      ].join(' ')
+                      const style = active
+                        ? undefined
+                        : {
                             backgroundColor: 'var(--c-brand-50)',
                             color: 'var(--c-brand-900)',
                             borderColor: 'var(--c-brand-300)',
                           }
-                        : undefined
-                    return (
-                      <button
-                        key={v.id}
-                        type="button"
-                        onClick={() => setActiveVersion(v)}
-                        aria-pressed={active}
-                        aria-label={`Version ${v.version_number}, ${dateLabel}${isCurrent ? ' (current)' : ''}`}
-                        className={cls}
-                        style={style}
-                      >
-                        <span className="font-mono font-medium">v{v.version_number}</span>
-                        <span
-                          className={active ? 'text-on-ink/70' : isCurrent ? '' : 'text-ink-dim'}
-                          aria-hidden="true"
+                      return (
+                        <button
+                          key={v.id}
+                          type="button"
+                          onClick={() => setActiveVersion(v)}
+                          aria-pressed={active}
+                          aria-label={`${active ? 'Viewing' : 'View'} version ${v.version_number}, ${dateLabel}${isCurrent ? ' (latest)' : ''}`}
+                          className={cls}
+                          style={style}
                         >
-                          ·
-                        </span>
-                        <span className="text-[12px]">{dateLabel}</span>
-                        {isCurrent && (
+                          {!active && (
+                            <Eye
+                              className="w-4 h-4 shrink-0"
+                              strokeWidth={2}
+                              aria-hidden="true"
+                              style={{ color: 'var(--c-brand-700)' }}
+                            />
+                          )}
+                          <span className="font-mono font-medium">v{v.version_number}</span>
                           <span
+                            className={active ? 'text-on-ink/70' : undefined}
+                            style={active ? undefined : { color: 'var(--c-brand-300)' }}
                             aria-hidden="true"
-                            className="ml-1 text-[10px] font-semibold uppercase tracking-[0.12em]"
-                            // Coral on the ink "viewing" pill (brand-300
-                            // reads on black); inherits the pill's
-                            // dark-coral text otherwise.
-                            style={active ? { color: 'var(--c-brand-300)' } : undefined}
                           >
-                            Current
+                            ·
                           </span>
-                        )}
+                          <span className="text-[12px]">{dateLabel}</span>
+                          {isCurrent && (
+                            <span
+                              aria-hidden="true"
+                              className="ml-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]"
+                              // Light mint reads on the ink pill; deep
+                              // mint reads on the brand-50 button fill.
+                              style={{ color: active ? 'var(--c-brand-300)' : 'var(--c-brand-700)' }}
+                            >
+                              Current
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                    {tooMany && !collapsed && activeInRecent && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllVersions(false)}
+                        className={toggleCls}
+                      >
+                        Show fewer
                       </button>
-                    )
-                  })}
-                  {tooMany && !collapsed && activeInRecent && (
-                    <button
-                      type="button"
-                      onClick={() => setShowAllVersions(false)}
-                      className={toggleCls}
-                    >
-                      Show fewer
-                    </button>
-                  )}
+                    )}
+                  </div>
                 </div>
               )
             })()}
