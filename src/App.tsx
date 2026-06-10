@@ -22,6 +22,8 @@ import AdminMaterialEditor from './pages/admin/AdminMaterialEditor'
 import AdminAddOnEditor from './pages/admin/AdminAddOnEditor'
 import AdminActivityPage from './pages/admin/AdminActivityPage'
 import AdminSettingsPage from './pages/admin/AdminSettingsPage'
+import AdminTemplatesPage from './pages/admin/AdminTemplatesPage'
+import AdminSiteCopyPage from './pages/admin/AdminSiteCopyPage'
 import AdminCreateMaterialPage from './pages/admin/AdminCreateMaterialPage'
 import AdminCoreColoursPage from './pages/admin/AdminCoreColoursPage'
 import AdminNeedsAttentionPage from './pages/admin/AdminNeedsAttentionPage'
@@ -83,6 +85,8 @@ function AppShell() {
         <Route path="core-colours" element={<AdminCoreColoursPage />} />
         <Route path="needs-attention" element={<AdminNeedsAttentionPage />} />
         <Route path="activity" element={<AdminActivityPage />} />
+        <Route path="templates" element={<AdminTemplatesPage />} />
+        <Route path="site-copy" element={<AdminSiteCopyPage />} />
         <Route path="settings" element={<AdminSettingsPage />} />
       </Route>
     </Routes>

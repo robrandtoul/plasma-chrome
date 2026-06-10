@@ -1,7 +1,7 @@
-// Admin section for editing customer-reply templates. Lives inside
-// AdminSettingsPage between Integrations and Materials.
+// Admin section for editing customer-reply templates. Renders as the
+// body of the /admin/templates page (AdminTemplatesPage).
 //
-// Two template families, rendered in their own sub-sections:
+// Three template families, rendered in their own sub-sections:
 //   * Pre-send messages — first_proof, revision. Composed by the
 //     designer in the new-version flow before they hit Send. Routed
 //     through the send-helpscout-reply edge function.
@@ -11,6 +11,11 @@
 //     function when a customer approves, requests changes, or picks
 //     a variant on a variant round. Edits affect every customer's
 //     confirmation email.
+//   * Needs-attention reminders — the four nudge_* bodies (000207)
+//     behind the one-click "send a reminder" action on the
+//     dashboard's Needs-attention chips, and the bodies the
+//     automated reminder system (the Outbox) sends in Phase 2.
+//     Each maps to one chase rule.
 //
 // Per template: insert toolbar (variable chips filtered by scope +
 // if-block button), blur-saving textarea, live preview pane with
@@ -59,7 +64,10 @@ function buildSampleContext(company: CompanyMode, version: VersionMode): Templat
   const versionN = version === 'v1' ? 1 : 2
   return {
     ...SAMPLE_BASE,
-    company: company === 'with' ? 'Plasma Design' : null,
+    // {company} is the CUSTOMER's company, so the sample must read as one —
+    // using our own name here made template previews look like the bodies
+    // referred to PlasmaDesign (and with the wrong spacing, at that).
+    company: company === 'with' ? 'Acme Ltd' : null,
     version_number: versionN,
     // Sample values for the proof-viewer (post-action) templates.
     // The version toggle drives version_label too so the two stay
@@ -76,12 +84,41 @@ function buildSampleContext(company: CompanyMode, version: VersionMode): Templat
   }
 }
 
-// System-triggered templates have ids prefixed `proof_*` and are
-// rendered into their own sub-section of the editor with a different
-// variable scope. See the convention comment in
-// src/lib/replyTemplates.ts for the rule.
+// Sub-section grouping, keyed off the id-prefix convention: `proof_*`
+// templates are the system-triggered post-action confirmations,
+// `nudge_*` templates are the needs-attention reminders (000207), and
+// everything else is a designer-composed pre-send message. See the
+// convention comment in src/lib/replyTemplates.ts for the rule.
+type TemplateGroupKey = 'pre_send' | 'post_action' | 'nudge'
+
+function templateGroup(id: string): TemplateGroupKey {
+  if (id.startsWith('proof_')) return 'post_action'
+  if (id.startsWith('nudge_')) return 'nudge'
+  return 'pre_send'
+}
+
+// Variable-chip scope per template. The nudge bodies resolve through
+// the same compose context as the pre-send messages, so they share
+// the 'designer_picked' variable set (first_name, full_name, company,
+// version_number, url) rather than the post-action one.
 function templateScope(id: string): TemplateVariableScope {
   return id.startsWith('proof_') ? 'proof_viewer' : 'designer_picked'
+}
+
+// Render order for the reminder group — one card per chase rule, in
+// the order the rules fire across a proof's lifetime rather than
+// alphabetical id order. Unknown ids sort to the end so a future
+// fifth nudge still renders.
+const NUDGE_ORDER = [
+  'nudge_sent_never_viewed',
+  'nudge_viewed_not_actioned',
+  'nudge_approaching_dormant',
+  'nudge_stuck_in_progress',
+]
+
+function nudgeRank(id: string): number {
+  const i = NUDGE_ORDER.indexOf(id)
+  return i === -1 ? NUDGE_ORDER.length : i
 }
 
 // ── Section ──────────────────────────────────────────────────────────────────
@@ -220,13 +257,21 @@ export default function AdminTemplatesSection() {
           <TemplateGroup
             heading="Pre-send messages"
             blurb="Composed by the designer in the new-version flow before they hit Send."
-            templates={templates.filter((t) => templateScope(t.id) === 'designer_picked')}
+            templates={templates.filter((t) => templateGroup(t.id) === 'pre_send')}
             onSaved={handleSaved}
           />
           <TemplateGroup
             heading="Post-action confirmations"
             blurb="Sent automatically by the proof viewer when a customer approves, requests changes, or picks a variant. Edits affect every customer's confirmation email."
-            templates={templates.filter((t) => templateScope(t.id) === 'proof_viewer')}
+            templates={templates.filter((t) => templateGroup(t.id) === 'post_action')}
+            onSaved={handleSaved}
+          />
+          <TemplateGroup
+            heading="Needs-attention reminders"
+            blurb="The one-click reminder bodies offered on the dashboard's Needs-attention chips, and the bodies the automated reminder system (the Outbox) sends in Phase 2. Each maps to one chase rule."
+            templates={templates
+              .filter((t) => templateGroup(t.id) === 'nudge')
+              .sort((a, b) => nudgeRank(a.id) - nudgeRank(b.id))}
             onSaved={handleSaved}
           />
           <VariableHelpPanel />
@@ -238,9 +283,9 @@ export default function AdminTemplatesSection() {
 
 // ── Template group (sub-section) ────────────────────────────────────────────
 //
-// Splits the editor into two visually-distinct groups so admins can
-// see at a glance which templates are designer-composed vs system-
-// triggered. The "Post-action confirmations" blurb spells out the
+// Splits the editor into visually-distinct groups so admins can see
+// at a glance which templates are designer-composed, system-
+// triggered, or reminders. The "Post-action confirmations" blurb spells out the
 // "edits affect every customer's confirmation email" warning so the
 // difference in editing impact is obvious before any change is made.
 

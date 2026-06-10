@@ -9,6 +9,8 @@ import {
   Palette,
   AlertCircle,
   ClipboardList,
+  MessageSquareText,
+  PenLine,
   Settings,
   type LucideIcon,
 } from 'lucide-react'
@@ -28,6 +30,8 @@ const TABS: { to: string; label: string; icon: LucideIcon }[] = [
   { to: '/admin/customers', label: 'Customers', icon: Building2 },
   { to: '/admin/needs-attention', label: 'Needs attention', icon: AlertCircle },
   { to: '/admin/activity', label: 'Activity', icon: ClipboardList },
+  { to: '/admin/templates', label: 'Templates', icon: MessageSquareText },
+  { to: '/admin/site-copy', label: 'Site copy', icon: PenLine },
   { to: '/admin/settings', label: 'Settings', icon: Settings },
 ]
 
