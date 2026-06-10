@@ -2869,7 +2869,11 @@ export default function CustomerProofPage() {
                               : undefined
                           }
                         >
-                          <div className="h-[84px] w-full overflow-hidden rounded-[6px] bg-canvas">
+                          {/* Badges overlay the thumbnail corner rather
+                              than sitting in the caption row — at 150px
+                              the chip crowded the row and forced the
+                              date to wrap on the Current card. */}
+                          <div className="relative h-[84px] w-full overflow-hidden rounded-[6px] bg-canvas">
                             {thumb ? (
                               <img
                                 src={thumb.signed_url}
@@ -2883,27 +2887,24 @@ export default function CustomerProofPage() {
                                 <Layers className="w-5 h-5 text-ink-dim" aria-hidden="true" />
                               </div>
                             )}
-                          </div>
-                          <div className="mt-2 flex items-baseline gap-1.5 px-0.5">
-                            <span className="font-mono text-[13px] font-medium text-ink">
-                              v{v.version_number}
-                            </span>
-                            <span className="text-[11px] text-ink-mute">{dateLabel}</span>
                             {isCurrent && (
                               <span
                                 aria-hidden="true"
                                 className={[
-                                  'ml-auto rounded-[4px] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em]',
-                                  active ? 'bg-ink' : '',
+                                  'absolute top-1.5 right-1.5 rounded-[4px] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] border',
+                                  active ? 'bg-ink border-ink' : '',
                                 ].join(' ')}
                                 // Light mint reads on the ink chip; deep
-                                // mint on the brand-50 tint.
+                                // mint on the brand-50 tint. The border
+                                // keeps the pale chip legible over light
+                                // artwork.
                                 style={
                                   active
                                     ? { color: 'var(--c-brand-300)' }
                                     : {
                                         backgroundColor: 'var(--c-brand-50)',
                                         color: 'var(--c-brand-700)',
+                                        borderColor: 'var(--c-brand-300)',
                                       }
                                 }
                               >
@@ -2913,12 +2914,20 @@ export default function CustomerProofPage() {
                             {active && !isCurrent && (
                               <span
                                 aria-hidden="true"
-                                className="ml-auto rounded-[4px] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] bg-low-soft"
+                                className="absolute top-1.5 right-1.5 rounded-[4px] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] bg-low-soft border border-low"
                                 style={{ color: 'var(--c-low)' }}
                               >
                                 Viewing
                               </span>
                             )}
+                          </div>
+                          <div className="mt-2 flex items-baseline gap-1.5 px-0.5">
+                            <span className="font-mono text-[13px] font-medium text-ink">
+                              v{v.version_number}
+                            </span>
+                            <span className="text-[11px] text-ink-mute whitespace-nowrap">
+                              {dateLabel}
+                            </span>
                           </div>
                           {note && (
                             <p
