@@ -4,6 +4,11 @@
 // designer-facing message editor, and Ship 3 routes the rendered text
 // through the Help Scout API send.
 //
+// ⚠ The server-side twin lives at supabase/functions/_shared/replyTemplates.ts
+// (used by proof-action and send-nudges — edge functions have no import path
+// into src/). The renderer and the nudge_* DEFAULT_BODIES are duplicated
+// there with a matching sync comment: change one, change both.
+//
 // Two pieces:
 //
 //   * renderTemplate(template, ctx): apply variable substitution and

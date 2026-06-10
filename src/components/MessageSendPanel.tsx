@@ -204,8 +204,11 @@ export default function MessageSendPanel({
     setSendError(null)
     setEditorState('sending')
 
+    // template_id travels as a label only — the server uses it to record
+    // 'nudge_*' sends in the proof_nudges ledger; the body it posts is
+    // whatever the designer edited here.
     const { data, error } = await supabase.functions.invoke('send-helpscout-reply', {
-      body: { proof_id: proofId, version_id: versionId, body },
+      body: { proof_id: proofId, version_id: versionId, body, template_id: templateId },
     })
 
     if (error) {

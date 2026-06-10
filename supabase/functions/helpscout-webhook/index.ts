@@ -134,13 +134,31 @@ async function handle(req: Request): Promise<Response> {
   const column = direction === 'customer'
     ? 'helpscout_last_customer_reply_at'
     : 'helpscout_last_reply_at'
-  const nowIso = new Date().toISOString()
 
-  // Update every proof linked to this conversation (normally one).
+  // Stamp from the event's own thread time where the payload carries it —
+  // Help Scout retries deliver late, and now() on a day-old retry would
+  // claim activity that never happened. Falls back to now() when no thread
+  // timestamp is embedded.
+  const embeddedThreads =
+    (payload?._embedded as { threads?: Array<Record<string, unknown>> } | undefined)?.threads
+  const newestThreadMs = Array.isArray(embeddedThreads)
+    ? embeddedThreads
+      .map((t) => Date.parse(String(t.createdAt ?? '')))
+      .filter(Number.isFinite)
+      .reduce((a, b) => Math.max(a, b), -Infinity)
+    : -Infinity
+  const stampIso = newestThreadMs > -Infinity
+    ? new Date(newestThreadMs).toISOString()
+    : new Date().toISOString()
+
+  // Update every proof linked to this conversation (normally one). The .or
+  // filter is a GREATEST guard: a late retry can never regress a stamp that
+  // a fresher delivery already advanced.
   const { data, error } = await admin
     .from('proofs')
-    .update({ [column]: nowIso })
+    .update({ [column]: stampIso })
     .eq('helpscout_conversation_id', String(conversationId))
+    .or(`${column}.is.null,${column}.lt.${stampIso}`)
     .select('id')
 
   if (error) {

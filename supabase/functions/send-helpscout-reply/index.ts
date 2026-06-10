@@ -21,7 +21,12 @@
 //   before per-designer attribution shipped, so no regression.
 //
 // POST body:
-//   { proof_id: string, version_id: string, body: string }
+//   { proof_id: string, version_id: string, body: string, template_id?: string }
+//
+// template_id is the reply_templates id the editor was seeded from. It is
+// a label only (the client renders and can freely edit the body), never
+// proof of content. When it is a 'nudge_*' template, a proof_nudges ledger
+// row is recorded after the send — see the block below the HS POST.
 //
 // Response (200):
 //   { thread_id: number }
@@ -178,11 +183,17 @@ Deno.serve(async (req) => {
     let proofId: string | undefined
     let versionId: string | undefined
     let body: string | undefined
+    let templateId: string | undefined
     try {
       const parsed = await req.json()
       proofId = typeof parsed?.proof_id === 'string' ? parsed.proof_id.trim() : undefined
       versionId = typeof parsed?.version_id === 'string' ? parsed.version_id.trim() : undefined
       body = typeof parsed?.body === 'string' ? parsed.body : undefined
+      // Optional template label (e.g. 'first_proof', 'nudge_sent_never_viewed').
+      // Absent / non-string / blank all collapse to undefined.
+      templateId = typeof parsed?.template_id === 'string'
+        ? parsed.template_id.trim() || undefined
+        : undefined
     } catch (parseErr) {
       console.error('[send-helpscout-reply] body parse failed', parseErr)
       return json({ error: 'Invalid JSON body', debug: debugFromError(parseErr) }, 400)
@@ -292,6 +303,61 @@ Deno.serve(async (req) => {
       )
     }
 
+    // Manual nudge ledger row (migration 000214). When the editor was
+    // seeded from a 'nudge_*' template, record the send in proof_nudges
+    // with source 'manual' so the automation's cap and cooldown maths
+    // count human touches — the spec keeps a single ledger for both
+    // channels. Failure to insert is logged but never fails the request:
+    // the reply has already landed in HS (same stance as the
+    // last_reply_sent_at write below).
+    //
+    // template_id is client-supplied, so it is gated to the four known nudge
+    // ids (free text must not invent rule_codes in the ledger), and the
+    // version must actually belong to the proof before the row is keyed to
+    // it — the cap maths trusts that pairing.
+    const NUDGE_RULES: Record<string, string> = {
+      nudge_sent_never_viewed: 'sent_never_viewed',
+      nudge_viewed_not_actioned: 'viewed_not_actioned',
+      nudge_approaching_dormant: 'approaching_dormant',
+      nudge_stuck_in_progress: 'stuck_in_progress',
+    }
+    if (templateId && NUDGE_RULES[templateId]) {
+      try {
+        const { data: versionRow } = await admin
+          .from('proof_versions')
+          .select('id')
+          .eq('id', versionId)
+          .eq('proof_id', proofId)
+          .maybeSingle()
+        if (!versionRow) {
+          console.error('[send-helpscout-reply] nudge ledger skipped: version does not belong to proof', { proofId, versionId })
+        } else {
+          const { error: nudgeErr } = await admin
+            .from('proof_nudges')
+            .insert({
+              proof_id: proofId,
+              proof_version_id: versionId,
+              rule_code: NUDGE_RULES[templateId],
+              template_id: templateId,
+              source: 'manual',
+              state: 'sent',
+              outcome: 'sent',
+              helpscout_conversation_id: conversationId,
+              helpscout_thread_id: result.thread_id || null,
+              sent_by: callerId,
+              rendered_body: body,
+            })
+          if (nudgeErr) {
+            console.error('[send-helpscout-reply] proof_nudges insert failed', nudgeErr)
+          } else {
+            console.log('[send-helpscout-reply] manual nudge recorded', { templateId })
+          }
+        }
+      } catch (nudgeThrow) {
+        console.error('[send-helpscout-reply] proof_nudges insert threw', nudgeThrow)
+      }
+    }
+
     // Denormalised hot-path indicator for the proof detail page's
     // Customer reply section. Updated after a successful HS POST so
     // designers see send state without querying audit_log (admin-only
@@ -299,12 +365,14 @@ Deno.serve(async (req) => {
     // surfaced as an error: the actual reply has already landed in HS,
     // so the column being stale is mildly degraded but not broken.
     // Audit log under action='proof.reply_sent' remains the canonical
-    // per-send history.
+    // per-send history. The proof_id guard stops a mismatched
+    // version_id stamping a version that belongs to another proof.
     try {
       const { error: updateErr } = await admin
         .from('proof_versions')
         .update({ last_reply_sent_at: new Date().toISOString() })
         .eq('id', versionId)
+        .eq('proof_id', proofId)
       if (updateErr) {
         console.error('[send-helpscout-reply] last_reply_sent_at update failed', updateErr)
       } else {

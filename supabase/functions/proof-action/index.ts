@@ -78,6 +78,7 @@ import {
   HsError,
   postStaffReply,
 } from '../_shared/helpscout.ts'
+import { renderTemplate } from '../_shared/replyTemplates.ts'
 
 // Allowlist of origins that this edge function trusts to build
 // customer-facing /p/{proof_id} links for the Help Scout thread post.
@@ -141,47 +142,12 @@ type Response_ =
 // with no import path back into src/.
 const SHARED_APPROVAL_KEY = '__shared__'
 
-// ── Reply template renderer (verbatim copy of src/lib/replyTemplates.ts) ─────
+// ── Reply template renderer ──────────────────────────────────────────────────
 //
-// Edge functions are Deno modules with no import path back into src/,
-// so we carry a small copy of the template renderer here. The two
-// must stay in sync — same as SHARED_APPROVAL_KEY above. The renderer
-// is small and the substitution syntax is unlikely to change; if a
-// second server-side renderer ever appears, extract then.
-//
-// Syntax matches the admin template editor:
-//   {variable}             — substitute ctx[variable], empty if null/undefined
-//   {? variable}body{/?}   — render body iff ctx[variable] is non-empty
-//                            (after .trim() for strings; null/undefined
-//                            collapse the block). No nesting.
-
-type TemplateContext = Record<string, string | number | null | undefined>
-
-function renderTemplate(template: string, ctx: TemplateContext): string {
-  // Pass 1: conditional blocks. Match {? var}body{/?} non-greedily so
-  // multiple blocks in one template resolve independently. The body
-  // recurses through substituteVariables so {var} tokens inside a
-  // surviving block render correctly. Empty / whitespace / null /
-  // undefined ctx values trim the whole block.
-  let s = template.replace(
-    /\{\?\s*(\w+)\s*\}([\s\S]*?)\{\/\?\}/g,
-    (_match, varName: string, body: string) => {
-      const v = ctx[varName]
-      const empty = v == null || (typeof v === 'string' && v.trim() === '')
-      return empty ? '' : substituteVariables(body, ctx)
-    },
-  )
-  // Pass 2: bare variables outside conditional blocks.
-  s = substituteVariables(s, ctx)
-  return s
-}
-
-function substituteVariables(text: string, ctx: TemplateContext): string {
-  return text.replace(/\{(\w+)\}/g, (_match, v: string) => {
-    const val = ctx[v]
-    return val == null ? '' : String(val)
-  })
-}
+// The inline copy that used to live here moved to _shared/replyTemplates.ts
+// when send-nudges became the second server-side renderer (the extraction
+// condition the old comment set). The _shared module carries the sync
+// comment against src/lib/replyTemplates.ts now.
 
 function json(body: Response_ | { error: string }, status = 200) {
   return new Response(JSON.stringify(body), {

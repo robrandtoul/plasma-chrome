@@ -5,6 +5,8 @@ import { ExternalLink } from 'lucide-react'
 import Modal from './Modal'
 import MessageSendPanel from './MessageSendPanel'
 import { attentionReason, attentionResolution, nudgeTemplateFor } from '../lib/needsAttention'
+import { supabase } from '../lib/supabase'
+import { logAudit } from '../lib/audit'
 import { snoozeProof } from '../lib/snooze'
 import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
@@ -67,8 +69,31 @@ export function ResolvePopover({
   const [open, setOpen] = useState(false)
   const [showSend, setShowSend] = useState(false)
   const [snoozeAfterSend, setSnoozeAfterSend] = useState(true)
+  // proofs.auto_nudge_disabled_at — the per-proof automation opt-out
+  // (migration 000214; the nightly nudge job hard-skips any proof with the
+  // stamp set). Fetched lazily when the popover opens; undefined = not yet
+  // loaded, so the toggle stays hidden rather than showing a wrong state.
+  const [autoNudgeDisabledAt, setAutoNudgeDisabledAt] = useState<string | null | undefined>(undefined)
+  const [autoNudgeBusy, setAutoNudgeBusy] = useState(false)
 
   const nudgeTemplate = nudgeTemplateFor(ruleCode)
+
+  // Fetch the opt-out stamp on first open. The dashboard view doesn't carry
+  // the column, so this is a one-row read against proofs.
+  useEffect(() => {
+    if (!open || autoNudgeDisabledAt !== undefined) return
+    let cancelled = false
+    void supabase
+      .from('proofs')
+      .select('auto_nudge_disabled_at')
+      .eq('id', proofId)
+      .single()
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return
+        setAutoNudgeDisabledAt(data.auto_nudge_disabled_at ?? null)
+      })
+    return () => { cancelled = true }
+  }, [open, proofId, autoNudgeDisabledAt])
 
   // Close on click-outside (ignoring the trigger + card) and on Esc.
   useEffect(() => {
@@ -96,6 +121,31 @@ export function ResolvePopover({
     version_number: versionNumber ?? '',
     url: `${window.location.origin}${customerProofPath(proofId)}`,
     designer_first_name: '',
+  }
+
+  // Set/clear the per-proof auto-chase opt-out. Designers have CRUD on
+  // proofs, so this is a direct column write; the audit row makes the
+  // on/off flip findable later.
+  async function setAutoChasing(disable: boolean) {
+    if (autoNudgeBusy) return
+    setAutoNudgeBusy(true)
+    const next = disable ? new Date().toISOString() : null
+    const { error } = await supabase
+      .from('proofs')
+      .update({ auto_nudge_disabled_at: next })
+      .eq('id', proofId)
+    setAutoNudgeBusy(false)
+    if (error) {
+      console.error('[ResolvePopover] auto-chase toggle failed:', error)
+      return
+    }
+    setAutoNudgeDisabledAt(next)
+    void logAudit({
+      action: disable ? 'proof.auto_nudge_disabled' : 'proof.auto_nudge_enabled',
+      targetType: 'proof',
+      targetId: proofId,
+      metadata: { source: 'resolve_popover' },
+    })
   }
 
   async function handleSent() {
@@ -173,6 +223,35 @@ export function ResolvePopover({
                 </a>
               )}
             </div>
+
+            {/* Quiet per-proof opt-out from automated chasing. Hidden until
+                the lazy fetch above resolves so a wrong state never shows. */}
+            {autoNudgeDisabledAt !== undefined && (
+              <div className="mt-2.5 border-t border-line-soft pt-2">
+                {autoNudgeDisabledAt === null ? (
+                  <button
+                    type="button"
+                    disabled={autoNudgeBusy}
+                    onClick={() => void setAutoChasing(true)}
+                    className="text-[11px] text-ink-mute underline underline-offset-2 hover:text-ink disabled:opacity-50"
+                  >
+                    Stop auto-chasing this proof
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2 text-[11px] text-ink-mute">
+                    <span>Auto-chasing off</span>
+                    <button
+                      type="button"
+                      disabled={autoNudgeBusy}
+                      onClick={() => void setAutoChasing(false)}
+                      className="underline underline-offset-2 hover:text-ink disabled:opacity-50"
+                    >
+                      Undo
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </PopoverCard>
       )}

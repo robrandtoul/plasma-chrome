@@ -21,6 +21,54 @@ interface Rule {
 
 type Rules = Record<RuleCode, Rule>
 
+// ── Automation config (follow-up automation, Phase 1) ────────────────────────
+//
+// Per-rule automation dials live under a top-level `automation` key inside
+// the needs_attention_rules JSONB — a SIBLING of the six rule objects, not a
+// field on them, because Reset-to-defaults replaces rule objects wholesale
+// but preserves unknown top-level keys (PV-2026W22-239). Seeded by migration
+// 000214; read fail-closed by the send-nudges job (mode must be exactly
+// 'auto' to send).
+
+type ChaseRuleCode =
+  | 'sent_never_viewed'
+  | 'viewed_not_actioned'
+  | 'approaching_dormant'
+  | 'stuck_in_progress'
+
+const CHASE_RULE_CODES: ChaseRuleCode[] = [
+  'sent_never_viewed',
+  'viewed_not_actioned',
+  'approaching_dormant',
+  'stuck_in_progress',
+]
+
+type AutomationMode = 'auto' | 'review' | 'off'
+
+interface RuleAutomation {
+  mode?: AutomationMode
+  /** Working days between automated reminders (spacing). */
+  repeat_days?: number
+  /** Automated reminders per proof version before exhaustion. */
+  max_nudges?: number
+}
+
+type AutomationConfig = Partial<Record<ChaseRuleCode, RuleAutomation>> & {
+  /** Per-proof ceiling on automated reminders across all versions + rules. */
+  lifetime_max?: number
+}
+
+// The full needs_attention_rules JSONB document: the six rule objects plus
+// the non-rule top-level keys that ride alongside them. Modelling them in
+// the type makes it visible that the save/reset object spreads preserve
+// them (PV-2026W22-239): `automation` is edited by this page's
+// Automated-reminders section; `helpscout_reply_grace_days` (000208) is
+// read by the rules engine and has no UI yet.
+type RulesDoc = Rules & {
+  automation?: AutomationConfig
+  helpscout_reply_grace_days?: number
+}
+
 interface RuleSpec {
   code: RuleCode
   label: string
@@ -99,11 +147,20 @@ const DEFAULT_DORMANCY_CUTOFF = 90
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AdminNeedsAttentionPage() {
-  const [savedRules, setSavedRules] = useState<Rules | null>(null)
-  const [draft, setDraft]           = useState<Rules | null>(null)
+  const [savedRules, setSavedRules] = useState<RulesDoc | null>(null)
+  const [draft, setDraft]           = useState<RulesDoc | null>(null)
   // Dormant cutoff lives in its own column, edited beside the rules.
   const [savedCutoff, setSavedCutoff] = useState<number>(DEFAULT_DORMANCY_CUTOFF)
   const [draftCutoff, setDraftCutoff] = useState<number>(DEFAULT_DORMANCY_CUTOFF)
+  // settings.auto_nudges_enabled — the automation master switch (migration
+  // 000214). Lives on the settings table, not site_settings, and saves
+  // immediately on toggle with its own audit action (mirroring the
+  // AdminSettingsPage per-field pattern) rather than riding the rules Save
+  // button. Null until loaded; reads fail-closed, so a load failure renders
+  // the switch off.
+  const [autoNudgesEnabled, setAutoNudgesEnabled] = useState<boolean | null>(null)
+  const [autoNudgesSaving, setAutoNudgesSaving]   = useState(false)
+  const [autoNudgesError, setAutoNudgesError]     = useState<string | null>(null)
   // The order designers see in the UI. Initialised from the saved
   // priority field, then mutated by drag-and-drop. Saving rewrites
   // the priority field on each rule to (1-indexed position).
@@ -125,13 +182,23 @@ export default function AdminNeedsAttentionPage() {
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'site_settings row missing'); return }
-    const rules = (data.needs_attention_rules ?? DEFAULT_RULES) as Rules
+    const rules = (data.needs_attention_rules ?? DEFAULT_RULES) as RulesDoc
     const cutoff = (data.dormancy_threshold_days ?? DEFAULT_DORMANCY_CUTOFF) as number
     setSavedRules(rules)
     setDraft(rules)
     setOrder(orderFromPriority(rules))
     setSavedCutoff(cutoff)
     setDraftCutoff(cutoff)
+
+    // The master switch lives on the settings table (000214). A read
+    // failure leaves the switch rendered off (fail-closed) rather than
+    // failing the whole page — the rules above are still editable.
+    const { data: settingsRow } = await supabase
+      .from('settings')
+      .select('auto_nudges_enabled')
+      .eq('id', 1)
+      .single()
+    setAutoNudgesEnabled(settingsRow?.auto_nudges_enabled === true)
   }
 
   function orderFromPriority(rules: Rules): RuleCode[] {
@@ -146,6 +213,10 @@ export default function AdminNeedsAttentionPage() {
     if (!draft || !savedRules) return false
     if (draftCutoff !== savedCutoff) return true
     if (JSON.stringify(orderFromPriority(savedRules)) !== JSON.stringify(order)) return true
+    // The automation dials ride the same Save button as the rules.
+    if (JSON.stringify(draft.automation ?? null) !== JSON.stringify(savedRules.automation ?? null)) {
+      return true
+    }
     for (const code of RULE_SPECS.map((s) => s.code)) {
       const a = draft[code]
       const b = savedRules[code]
@@ -158,6 +229,53 @@ export default function AdminNeedsAttentionPage() {
 
   function patchRule<K extends keyof Rule>(code: RuleCode, key: K, value: Rule[K]) {
     setDraft((d) => d ? { ...d, [code]: { ...d[code], [key]: value } } : d)
+  }
+
+  function patchAutomation(code: ChaseRuleCode, patch: Partial<RuleAutomation>) {
+    setDraft((d) => {
+      if (!d) return d
+      const automation: AutomationConfig = { ...(d.automation ?? {}) }
+      automation[code] = { ...(automation[code] ?? {}), ...patch }
+      return { ...d, automation }
+    })
+  }
+
+  function patchLifetimeMax(value: number) {
+    setDraft((d) => d ? { ...d, automation: { ...(d.automation ?? {}), lifetime_max: value } } : d)
+  }
+
+  // Master-switch toggle — optimistic write to settings.auto_nudges_enabled
+  // with rollback on failure, audited under its own action so flipping
+  // automation on/off is findable in the audit log independently of rule
+  // edits.
+  async function toggleAutoNudges() {
+    if (autoNudgesEnabled === null || autoNudgesSaving) return
+    const prev = autoNudgesEnabled
+    const next = !prev
+    setAutoNudgesSaving(true)
+    setAutoNudgesError(null)
+    setAutoNudgesEnabled(next)
+
+    const { error } = await supabase
+      .from('settings')
+      .update({ auto_nudges_enabled: next, updated_at: new Date().toISOString() })
+      .eq('id', 1)
+
+    setAutoNudgesSaving(false)
+    if (error) {
+      setAutoNudgesEnabled(prev)
+      setAutoNudgesError(error.message)
+      return
+    }
+
+    void logAudit({
+      action: 'setting.auto_nudges_enabled_updated',
+      targetType: 'setting',
+      targetId: 'auto_nudges_enabled',
+      targetLabel: 'Automated reminders (auto-send)',
+      beforeValue: { auto_nudges_enabled: prev },
+      afterValue: { auto_nudges_enabled: next },
+    })
   }
 
   function onDragStart(code: RuleCode) {
@@ -185,8 +303,10 @@ export default function AdminNeedsAttentionPage() {
     if (!draft || !savedRules) return
     setSaving(true)
     // Re-derive priority from current display order so saves always
-    // produce a contiguous 1..N priority sequence.
-    const next: Rules = { ...draft }
+    // produce a contiguous 1..N priority sequence. The object spread keeps
+    // the non-rule top-level keys (automation, helpscout_reply_grace_days)
+    // intact — see the RulesDoc type note (PV-2026W22-239).
+    const next: RulesDoc = { ...draft }
     order.forEach((code, i) => { next[code] = { ...next[code], priority: i + 1 } })
 
     const { error } = await supabase
@@ -218,10 +338,12 @@ export default function AdminNeedsAttentionPage() {
   async function resetToDefaults() {
     setConfirmReset(false)
     // Merge defaults OVER the saved object rather than replacing it, so
-    // non-rule scalar keys stored alongside the six rules in the
+    // non-rule top-level keys stored alongside the six rules in the
     // needs_attention_rules JSONB survive a reset+save. Today that's
-    // helpscout_reply_grace_days (000208); DEFAULT_RULES spread last
-    // still resets all six rule objects to their defaults (PV-2026W22-239).
+    // helpscout_reply_grace_days (000208) and automation (000214 — the
+    // Automated-reminders dials below must NOT be clobbered by a rules
+    // reset); DEFAULT_RULES spread last still resets all six rule objects
+    // to their defaults (PV-2026W22-239).
     setDraft({ ...(savedRules ?? {}), ...DEFAULT_RULES })
     setOrder(orderFromPriority(DEFAULT_RULES))
     setDraftCutoff(DEFAULT_DORMANCY_CUTOFF)
@@ -302,6 +424,137 @@ export default function AdminNeedsAttentionPage() {
             className="w-20 rounded border border-line px-2 py-1 text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
           />
           <span className="text-xs text-ink-mute">days</span>
+        </div>
+      </div>
+
+      {/* ── Automated reminders (follow-up automation, Phase 1) ──────────── */}
+      <div className="space-y-3">
+        <div>
+          <h3 className="text-base font-bold text-ink">Automated reminders</h3>
+          <p className="mt-1 text-sm text-ink-mute">
+            How the nightly job treats each chase rule. Auto-send rules email the customer automatically once the master switch is on; Review first rules queue a one-click send for a designer; Off rules are left alone. The Outbox panel on the dashboard shows what each run did (or would have done).
+          </p>
+        </div>
+
+        {/* Master switch — settings.auto_nudges_enabled. Saves immediately
+            on toggle, independently of the rules Save button. */}
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-line">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-ink">Send automated reminders</h3>
+            <p className="mt-1 text-xs text-ink-mute">
+              Off = the nightly job runs in dry-run: it computes and logs to the Outbox but sends nothing. On = rules set to Auto-send below email customers for real. Saves immediately.
+            </p>
+            {autoNudgesError && (
+              <p className="mt-1 text-xs text-out">Save failed: {autoNudgesError}</p>
+            )}
+          </div>
+          <Toggle
+            value={autoNudgesEnabled === true}
+            onChange={() => void toggleAutoNudges()}
+            label="Send automated reminders"
+          />
+        </div>
+
+        {/* Per-rule dials — the `automation` top-level key inside
+            needs_attention_rules, saved through the page's Save button.
+            Mode reads fail-closed: anything that isn't exactly 'auto' or
+            'review' renders (and saves) as Off, matching the sender's own
+            fail-closed read. */}
+        <div className="rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-line">
+          {CHASE_RULE_CODES.map((code) => {
+            const spec = RULE_SPECS.find((r) => r.code === code)!
+            const auto = draft.automation?.[code]
+            const mode: AutomationMode =
+              auto?.mode === 'auto' ? 'auto' : auto?.mode === 'review' ? 'review' : 'off'
+            return (
+              <div
+                key={code}
+                className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-b border-line-soft py-3 first:pt-0 last:border-b-0 last:pb-0"
+              >
+                <div className="min-w-0 text-sm font-medium text-ink">{spec.label}</div>
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+                  <Segmented
+                    value={mode}
+                    options={[
+                      { value: 'auto',   label: 'Auto-send' },
+                      { value: 'review', label: 'Review first' },
+                      { value: 'off',    label: 'Off' },
+                    ]}
+                    onChange={(v) => patchAutomation(code, { mode: v })}
+                  />
+                  {mode === 'auto' && (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium uppercase tracking-wider text-ink-mute">Every</label>
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={auto?.repeat_days ?? 3}
+                          onChange={(e) => {
+                            const n = Number(e.target.value)
+                            patchAutomation(code, { repeat_days: Number.isFinite(n) ? Math.max(1, Math.floor(n)) : 3 })
+                          }}
+                          className="w-16 rounded border border-line px-2 py-1 text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                        />
+                        <span className="text-xs text-ink-mute">working days</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium uppercase tracking-wider text-ink-mute">Max</label>
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={auto?.max_nudges ?? 2}
+                          onChange={(e) => {
+                            const n = Number(e.target.value)
+                            patchAutomation(code, { max_nudges: Number.isFinite(n) ? Math.max(1, Math.floor(n)) : 2 })
+                          }}
+                          className="w-16 rounded border border-line px-2 py-1 text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+                        />
+                        <span className="text-xs text-ink-mute">per version</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+                {/* Phase 1 wires only sent_never_viewed into the sender; the
+                    other three rules' dials are stored but consumed by
+                    nothing yet, so don't let the controls imply live
+                    behaviour. Configurable ahead of time on purpose. */}
+                {code !== 'sent_never_viewed' && (
+                  <p className="w-full text-xs text-ink-mute">
+                    Stored now — takes effect when the Phase 2 review queue ships.
+                  </p>
+                )}
+              </div>
+            )
+          })}
+
+          {/* Lifetime ceiling — automation.lifetime_max, the per-proof cap
+              across every version and rule so a long revision cycle can't
+              accumulate unbounded email. */}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t border-line pt-4">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-ink">Lifetime ceiling</div>
+              <p className="mt-1 text-xs text-ink-mute">
+                Hard cap on automated reminders per project, across every version and rule.
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={draft.automation?.lifetime_max ?? 6}
+                onChange={(e) => {
+                  const n = Number(e.target.value)
+                  patchLifetimeMax(Number.isFinite(n) ? Math.max(1, Math.floor(n)) : 6)
+                }}
+                className="w-16 rounded border border-line px-2 py-1 text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+              />
+              <span className="text-xs text-ink-mute">reminders</span>
+            </div>
+          </div>
         </div>
       </div>
 

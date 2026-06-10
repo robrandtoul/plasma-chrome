@@ -34,9 +34,12 @@
 //     admin-test-helpscout, and contact-form-submit each use it for
 //     different purposes.
 //   * Conversation search by email or number — single-caller utilities.
-//   * Threads embed (?embed=threads)        — fetch-helpscout-conversation-
-//     context's richer shape; pulling it in would force a branching
-//     parameter on this module's fetchConversation. Stays local.
+//
+// The threads embed (?embed=threads) used to stay local to
+// fetch-helpscout-conversation-context for single-caller reasons; send-nudges
+// became the second caller (conversation status + recipient + newest-thread
+// checks from one GET), so fetchConversationWithThreads now lives here as a
+// separate function rather than a branching parameter on fetchConversation.
 
 // Single canonical error type. Every shared helper throws this on any
 // non-success path so callers can branch on `err instanceof HsError`
@@ -160,6 +163,50 @@ export async function fetchConversationOwnership(
     primaryCustomerId: conv.primaryCustomer?.id ?? null,
     assigneeId: conv.assignee?.id ?? null,
   }
+}
+
+// A single thread from the ?embed=threads conversation shape. createdBy.type
+// distinguishes staff ('user') from customer ('customer') authorship;
+// createdAt orders the trail.
+export interface HsThread {
+  id: number
+  type?: string
+  body?: string
+  createdAt?: string
+  createdBy?: {
+    id?: number
+    type?: 'user' | 'customer' | string
+    first?: string
+    last?: string
+    email?: string
+  }
+}
+
+// fetchConversation's shape plus the embedded thread trail. Two callers:
+// fetch-helpscout-conversation-context (the new-proof form's context
+// preview) and send-nudges (status gate + recipient match + the
+// newest-customer-thread belt-and-braces check, all from one GET).
+export interface HsConversationWithThreads extends HsConversation {
+  _embedded?: {
+    threads?: HsThread[]
+  }
+}
+
+// GET /v2/conversations/{id}?embed=threads. Same null-on-404 contract as
+// fetchConversation.
+export async function fetchConversationWithThreads(
+  token: string,
+  id: number | string,
+): Promise<HsConversationWithThreads | null> {
+  const resp = await fetch(`https://api.helpscout.net/v2/conversations/${id}?embed=threads`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  })
+  if (resp.status === 404) return null
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '<body read failed>')
+    throw new HsError(resp.status, `Help Scout conversation fetch (${resp.status}): ${text}`)
+  }
+  return await resp.json() as HsConversationWithThreads
 }
 
 // Subset of the Help Scout customer resource the project currently
