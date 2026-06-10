@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Send, Check, Layers, PoundSterling, DollarSign, Euro, BookOpen, Info, Eye, type LucideIcon } from 'lucide-react'
+import { Send, Check, Layers, PoundSterling, DollarSign, Euro, BookOpen, Info, Eye, History, type LucideIcon } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { Pill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, StatusRule, tokens, type PillColour } from '../design'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
@@ -409,6 +409,20 @@ export default function CustomerProofPage() {
       for (const img of preloaders) img.src = ''
     }
   }, [versionImages, activeVersion?.id])
+
+  // Version filmstrip: keep the card being viewed in sight. The strip
+  // is chronological (oldest left), so on first paint the current
+  // version sits at the far right and would start off-screen on
+  // narrow viewports without this. Re-centres when the customer
+  // switches versions or expands the collapsed older drafts.
+  const versionStripRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const el = versionStripRef.current
+    if (!el) return
+    const card = el.querySelector<HTMLElement>('[data-strip-active]')
+    if (!card) return
+    el.scrollTo({ left: card.offsetLeft - (el.clientWidth - card.offsetWidth) / 2 })
+  }, [activeVersion?.id, showAllVersions])
 
   // ── Phase 2.5 per-recipient action helpers ──────────────────────────────
 
@@ -2724,13 +2738,23 @@ export default function CustomerProofPage() {
               real two-column flex container on lg+. */}
           <div className="contents lg:flex lg:flex-col lg:gap-7 lg:min-w-0">
 
-            {/* Version pill row — chronological, click switches the
-                active version via setActiveVersion. When there are many
-                revisions the older ones collapse behind a "+N earlier"
-                chip so the row stays compact; the current (latest)
-                version carries a coral accent + dot so it's always the
-                identifiable anchor, kept distinct from the ink "you're
-                viewing this" fill. */}
+            {/* Version filmstrip — chronological picture cards, one per
+                version, each showing that draft's first front plate plus
+                a one-line change-note snippet. Replaces the old text-pill
+                row, which customers were missing entirely: on a page
+                where status chips and finishing toggles are all pills,
+                one more pill row read as passive metadata, so customers
+                went back to an older Help Scout link (which always
+                resolves to current) instead of clicking through here.
+                Thumbnails are a different visual species — they read as
+                content, give a reason to click (what changed), and can't
+                be confused with the finishing toggles. Header swaps
+                between a quiet status line (viewing current) and an
+                amber banner with a one-click "Back to latest" (viewing
+                an earlier draft) so an old draft can never be silently
+                mistaken for the latest. Thumbnail bytes are already
+                warm via the historic-image preloader above; switching
+                stays a pure client-side state change. */}
             {versions.length > 1 && (() => {
               const RECENT = 5
               const tooMany = versions.length > RECENT + 1
@@ -2743,88 +2767,195 @@ export default function CustomerProofPage() {
               const collapsed = tooMany && !showAllVersions && activeInRecent
               const visible = collapsed ? versions.slice(recentStart) : versions
               const hiddenCount = collapsed ? recentStart : 0
+              const fmtDate = (iso: string) =>
+                new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
               const toggleCls =
-                'inline-flex items-center h-8 px-3 rounded-full text-[12px] border border-line bg-surface text-ink-mute hover:bg-canvas hover:text-ink transition-colors'
+                'shrink-0 self-stretch w-[84px] rounded-[10px] border border-line bg-surface flex items-center justify-center text-center px-2 text-[12px] text-ink-mute hover:bg-canvas hover:text-ink transition-colors'
               return (
-                <div className="order-3 lg:order-none flex flex-wrap items-center gap-2.5">
-                  <span className="eyebrow mr-1.5">History</span>
-                  {collapsed && (
-                    <button
-                      type="button"
-                      onClick={() => setShowAllVersions(true)}
-                      className={toggleCls}
-                      aria-label={`Show ${hiddenCount} earlier versions`}
-                    >
-                      +{hiddenCount} earlier
-                    </button>
-                  )}
-                  {visible.map((v) => {
-                    const active = v.id === activeVersion.id
-                    const isCurrent = v.is_current
-                    const dateLabel = new Date(v.created_at).toLocaleDateString('en-GB', {
-                      day: 'numeric',
-                      month: 'short',
-                    })
-                    const cls = [
-                      'inline-flex items-center gap-2 h-8 px-3 rounded-full text-[13px] transition-colors border',
-                      active
-                        ? 'bg-ink text-on-ink border-ink'
-                        : isCurrent
-                          ? '' // coral accent applied via inline style below
-                          : 'bg-surface text-ink-soft border-line hover:bg-canvas',
-                    ].join(' ')
-                    // Current-but-not-viewed: coral-tinted fill, coral
-                    // border, dark-coral text — the anchor of the row.
-                    const style =
-                      !active && isCurrent
-                        ? {
-                            backgroundColor: 'var(--c-brand-50)',
-                            color: 'var(--c-brand-900)',
-                            borderColor: 'var(--c-brand-300)',
-                          }
-                        : undefined
+                <div className="order-3 lg:order-none flex flex-col gap-3 min-w-0">
+                  {/* Header band — ONE persistent element for both
+                      states, so React keeps the same DOM node and the
+                      amber earlier-draft treatment cross-fades in via
+                      transition-colors instead of a new banner popping
+                      into flow and shoving the strip + artwork down.
+                      Geometry (padding, border width, type size, the
+                      back-link as an inline text link rather than a
+                      taller pill button) is identical in both states;
+                      only colours and copy swap. Amber uses the same
+                      low/low-soft warning tokens as the approval band's
+                      "Heads up" card. role="status" announces the state
+                      change to screen readers on version switch. */}
+                  {(() => {
+                    const onLatest = activeVersion.is_current
                     return (
-                      <button
-                        key={v.id}
-                        type="button"
-                        onClick={() => setActiveVersion(v)}
-                        aria-pressed={active}
-                        aria-label={`Version ${v.version_number}, ${dateLabel}${isCurrent ? ' (current)' : ''}`}
-                        className={cls}
-                        style={style}
+                      // Every text child pins leading-5 (a 20px line
+                      // box) and the band pins min-h: the eyebrow is
+                      // 10px/lh-1 and a bare 13px button would inherit
+                      // the page's 1.5 line-height (19.5px), so without
+                      // this the two states' rows differ by ~1.6px and
+                      // the strip nudges down on switch.
+                      <div
+                        role="status"
+                        className={[
+                          'flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[10px] border px-4 py-3 min-h-[46px] transition-colors duration-300',
+                          onLatest ? 'border-transparent' : 'bg-low-soft border-low',
+                        ].join(' ')}
                       >
-                        <span className="font-mono font-medium">v{v.version_number}</span>
-                        <span
-                          className={active ? 'text-on-ink/70' : isCurrent ? '' : 'text-ink-dim'}
-                          aria-hidden="true"
-                        >
-                          ·
-                        </span>
-                        <span className="text-[12px]">{dateLabel}</span>
-                        {isCurrent && (
-                          <span
+                        {onLatest ? (
+                          <span className="eyebrow">Versions</span>
+                        ) : (
+                          <History
+                            className="w-[18px] h-[18px] shrink-0"
+                            style={{ color: 'var(--c-low)' }}
                             aria-hidden="true"
-                            className="ml-1 text-[10px] font-semibold uppercase tracking-[0.12em]"
-                            // Coral on the ink "viewing" pill (brand-300
-                            // reads on black); inherits the pill's
-                            // dark-coral text otherwise.
-                            style={active ? { color: 'var(--c-brand-300)' } : undefined}
-                          >
-                            Current
-                          </span>
+                          />
                         )}
-                      </button>
+                        <span
+                          className={[
+                            'text-[13px] leading-5 transition-colors duration-300',
+                            onLatest ? 'text-ink-soft' : 'text-ink',
+                          ].join(' ')}
+                        >
+                          {onLatest
+                            ? "You're viewing the latest version. Tap an earlier draft to compare."
+                            : `You're looking at an earlier draft (v${activeVersion.version_number}, ${fmtDate(activeVersion.created_at)}).`}
+                        </span>
+                        {!onLatest && latestVersion && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveVersion(latestVersion)}
+                            className="sm:ml-auto text-[13px] leading-5 font-medium text-ink underline underline-offset-2 decoration-ink/40 hover:decoration-ink whitespace-nowrap"
+                          >
+                            Back to latest (v{latestVersion.version_number})
+                          </button>
+                        )}
+                      </div>
                     )
-                  })}
-                  {tooMany && !collapsed && activeInRecent && (
-                    <button
-                      type="button"
-                      onClick={() => setShowAllVersions(false)}
-                      className={toggleCls}
-                    >
-                      Show fewer
-                    </button>
-                  )}
+                  })()}
+                  <div
+                    ref={versionStripRef}
+                    className="relative flex items-stretch gap-3 overflow-x-auto pb-1.5"
+                  >
+                    {collapsed && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllVersions(true)}
+                        className={toggleCls}
+                        aria-label={`Show ${hiddenCount} earlier versions`}
+                      >
+                        +{hiddenCount} earlier
+                      </button>
+                    )}
+                    {visible.map((v) => {
+                      const active = v.id === activeVersion.id
+                      const isCurrent = v.is_current
+                      const dateLabel = fmtDate(v.created_at)
+                      // QR rows never represent the artwork; prefer a
+                      // front plate, fall back to whatever comes first.
+                      const imgs = (versionImages[v.id] ?? []).filter((img) => !img.is_qr_code)
+                      const thumb = imgs.find((img) => img.side !== 'back') ?? imgs[0] ?? null
+                      const note = v.change_notes?.trim() || null
+                      return (
+                        <button
+                          key={v.id}
+                          type="button"
+                          data-strip-active={active ? 'true' : undefined}
+                          onClick={() => setActiveVersion(v)}
+                          aria-pressed={active}
+                          aria-label={`${active ? 'Viewing' : 'View'} version ${v.version_number}, ${dateLabel}${isCurrent ? ' (latest)' : ''}`}
+                          className={[
+                            'shrink-0 w-[150px] rounded-[10px] border bg-surface p-2 text-left transition-colors',
+                            active ? 'border-ink ring-1 ring-ink' : 'border-line hover:border-ink-dim',
+                          ].join(' ')}
+                          // Current-but-not-viewed keeps a mint border so
+                          // the latest draft stays the anchor of the strip.
+                          style={
+                            !active && isCurrent
+                              ? { borderColor: 'var(--c-brand-300)' }
+                              : undefined
+                          }
+                        >
+                          {/* Badges overlay the thumbnail corner rather
+                              than sitting in the caption row — at 150px
+                              the chip crowded the row and forced the
+                              date to wrap on the Current card. */}
+                          <div className="relative h-[84px] w-full overflow-hidden rounded-[6px] bg-canvas">
+                            {thumb ? (
+                              <img
+                                src={thumb.signed_url}
+                                alt=""
+                                loading="lazy"
+                                draggable={false}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center">
+                                <Layers className="w-5 h-5 text-ink-dim" aria-hidden="true" />
+                              </div>
+                            )}
+                            {isCurrent && (
+                              <span
+                                aria-hidden="true"
+                                className={[
+                                  'absolute top-1.5 right-1.5 rounded-[4px] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] border',
+                                  active ? 'bg-ink border-ink' : '',
+                                ].join(' ')}
+                                // Light mint reads on the ink chip; deep
+                                // mint on the brand-50 tint. The border
+                                // keeps the pale chip legible over light
+                                // artwork.
+                                style={
+                                  active
+                                    ? { color: 'var(--c-brand-300)' }
+                                    : {
+                                        backgroundColor: 'var(--c-brand-50)',
+                                        color: 'var(--c-brand-700)',
+                                        borderColor: 'var(--c-brand-300)',
+                                      }
+                                }
+                              >
+                                Current
+                              </span>
+                            )}
+                            {active && !isCurrent && (
+                              <span
+                                aria-hidden="true"
+                                className="absolute top-1.5 right-1.5 rounded-[4px] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] bg-low-soft border border-low"
+                                style={{ color: 'var(--c-low)' }}
+                              >
+                                Viewing
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-2 flex items-baseline gap-1.5 px-0.5">
+                            <span className="font-mono text-[13px] font-medium text-ink">
+                              v{v.version_number}
+                            </span>
+                            <span className="text-[11px] text-ink-mute whitespace-nowrap">
+                              {dateLabel}
+                            </span>
+                          </div>
+                          {note && (
+                            <p
+                              className="mt-1 px-0.5 text-[11px] leading-snug text-ink-mute truncate"
+                              title={note}
+                            >
+                              {note}
+                            </p>
+                          )}
+                        </button>
+                      )
+                    })}
+                    {tooMany && !collapsed && activeInRecent && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllVersions(false)}
+                        className={toggleCls}
+                      >
+                        Show fewer
+                      </button>
+                    )}
+                  </div>
                 </div>
               )
             })()}
