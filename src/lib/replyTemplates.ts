@@ -164,7 +164,7 @@ export const TEMPLATE_VARIABLES: TemplateVariableMeta[] = [
 
 // Bodies do not include a sign-off: Help Scout auto-appends the
 // configured signature to every outgoing reply, so a manual
-// "Many thanks, Plasma Design" duplicates it for the customer.
+// "Many thanks, PlasmaDesign" duplicates it for the customer.
 // Bug audit PV-2026W19-001 flagged the original drift.
 export const DEFAULT_BODIES: Record<string, string> = {
   // Pre-send messages

@@ -1730,8 +1730,8 @@ export default function EditVersionPage() {
       version_number: versionNumber,
       url: customerUrl,
       // Designer accounts are deferred; the variable resolves to
-      // empty today. Templates currently hardcode "Plasma Design"
-      // in the signoff so the empty value is fine.
+      // empty today. Sign-offs come from the Help Scout signature
+      // (the templates carry none), so the empty value is fine.
       designer_first_name: '',
     }
     return (
