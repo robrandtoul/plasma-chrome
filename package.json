@@ -14,7 +14,8 @@
     "db:status": "npx supabase migration list --linked",
     "db:clean-fixtures": "tsx scripts/clean-test-fixtures.ts",
     "db:empty-proof-images": "tsx scripts/empty-proof-images-bucket.ts",
-    "check:price-list": "tsx scripts/check-price-list-golden.ts"
+    "check:price-list": "tsx scripts/check-price-list-golden.ts",
+    "test:nudges": "tsx supabase/functions/_shared/nudgeDecision.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.5.2",

@@ -448,6 +448,14 @@ verify_jwt = false
 [functions.contact-form-submit]
 verify_jwt = false
 
+# send-nudges: triggered by pg_cron on the merged project via net.http_post
+# with the service-role key as Bearer (same pattern as the stock app's
+# outsourced-tracking-refresh job). verify_jwt stays ON — the platform JWT
+# check runs first, then the handler requires the Bearer to BE the
+# service-role key (timing-safe), so designer/anon JWTs cannot trigger runs.
+[functions.send-nudges]
+verify_jwt = true
+
 [analytics]
 enabled = true
 port = 54327

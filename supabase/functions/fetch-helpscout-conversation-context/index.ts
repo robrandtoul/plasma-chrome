@@ -42,7 +42,12 @@ import { requireDesigner } from '../_shared/admin.ts'
 // block at the call site reads .message and surfaces as 502 to
 // the client, which is unchanged behaviour vs the previous local
 // helper that threw plain Error.
-import { getAccessToken, HsError } from '../_shared/helpscout.ts'
+import {
+  fetchConversationWithThreads,
+  getAccessToken,
+  HsError,
+  type HsThread,
+} from '../_shared/helpscout.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -57,49 +62,8 @@ function json(body: unknown, status = 200) {
   })
 }
 
-interface HsThread {
-  id: number
-  type?: string
-  body?: string
-  createdAt?: string
-  createdBy?: {
-    id?: number
-    type?: 'user' | 'customer' | string
-    first?: string
-    last?: string
-    email?: string
-  }
-}
-
-interface HsConversationWithThreads {
-  id: number
-  number?: number
-  subject?: string | null
-  _embedded?: {
-    threads?: HsThread[]
-  }
-}
-
-async function fetchConversationWithThreads(
-  token: string,
-  conversationId: string,
-): Promise<HsConversationWithThreads | null> {
-  const resp = await fetch(
-    `https://api.helpscout.net/v2/conversations/${conversationId}?embed=threads`,
-    {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    },
-  )
-  if (resp.status === 404) return null
-  if (!resp.ok) {
-    const text = await resp.text()
-    // Use the shared HsError class so the outer catch (and any future
-    // status-aware branching) can `instanceof HsError` and read .status,
-    // matching the rest of _shared/helpscout.ts's helpers.
-    throw new HsError(resp.status, `Help Scout conversation fetch (${resp.status}): ${text}`)
-  }
-  return await resp.json() as HsConversationWithThreads
-}
+// HsThread / HsConversationWithThreads / fetchConversationWithThreads moved
+// to _shared/helpscout.ts when send-nudges became their second caller.
 
 // Plain-text projection of an HTML body. Strips tags, decodes the
 // few common entities Help Scout emits, collapses whitespace. Good
