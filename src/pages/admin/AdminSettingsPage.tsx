@@ -4,9 +4,12 @@ import { logAudit } from '../../lib/audit'
 import { invalidatePublicSettings } from '../../lib/publicSettings'
 import { invalidateApprovalSettings } from '../../lib/approvalSettings'
 import { invalidateShippingSettings } from '../../lib/shippingSettings'
-import AdminTemplatesSection from './AdminTemplatesSection'
-import MetalThicknessNotesSection from './MetalThicknessNotesSection'
-import LoginCopySection from './LoginCopySection'
+import { FieldRow, inputClass } from './settingsControls'
+
+// /admin/settings — the operational cards only: Customer approvals,
+// Designer defaults, Help Scout, Shipping. The customer-facing copy
+// fields moved to /admin/site-copy and the reply templates to
+// /admin/templates; each page loads just the settings columns it owns.
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,14 +17,6 @@ type PricingDisplayValue = 'standard' | 'custom_quote'
 type CurrencyValue = 'GBP' | 'EUR' | 'USD'
 
 interface Settings {
-  disclaimer_text: string
-  company_name: string
-  reply_email: string
-  /** "About this proof" footer note on the customer page (000199). */
-  about_proof_copy: string
-  /** "QR code contents" panel copy on the customer page (000200). */
-  qr_panel_intro_copy: string
-  qr_panel_vcard_copy: string
   /** null means "no default — force the designer to choose". */
   default_pricing_display: PricingDisplayValue | null
   default_currency: CurrencyValue | null
@@ -53,12 +48,6 @@ type HelpScoutFailReason =
 
 /** Stable audit action string per field. */
 const AUDIT_ACTION: Record<keyof Settings, string> = {
-  disclaimer_text:                   'setting.disclaimer_updated',
-  company_name:                      'setting.company_name_updated',
-  reply_email:                       'setting.reply_email_updated',
-  about_proof_copy:                  'setting.about_proof_copy_updated',
-  qr_panel_intro_copy:               'setting.qr_panel_intro_copy_updated',
-  qr_panel_vcard_copy:               'setting.qr_panel_vcard_copy_updated',
   default_pricing_display:           'setting.default_pricing_display_updated',
   default_currency:                  'setting.default_currency_updated',
   approvals_enabled:                 'setting.approvals_enabled_updated',
@@ -92,7 +81,11 @@ export default function AdminSettingsPage() {
   useEffect(() => { load() }, [])
 
   async function load() {
-    const { data, error } = await supabase.from('settings').select('*').eq('id', 1).single()
+    const { data, error } = await supabase
+      .from('settings')
+      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp')
+      .eq('id', 1)
+      .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
     setSettings(data as Settings)
     setDrafts({})
@@ -174,14 +167,6 @@ export default function AdminSettingsPage() {
       beforeValue: { [field]: prevValue },
       afterValue: { [field]: nextValue },
     })
-  }
-
-  // Single-field blur handler for text inputs.
-  function onTextBlur(field: keyof Settings) {
-    if (!settings) return
-    const draft = drafts[field]
-    if (draft === undefined) return
-    void saveField(field, draft as any)
   }
 
   // Blur handler for the two customer-approval confirmation copy
@@ -286,134 +271,6 @@ export default function AdminSettingsPage() {
           Changes save automatically. Customer-facing values update within a minute.
         </p>
       </div>
-
-      {/* ── Customer-facing ─────────────────────────────────────────── */}
-      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
-        <h3 className="mb-4 text-sm font-semibold text-ink">Customer-facing</h3>
-        <div className="space-y-5">
-          <FieldRow
-            label="Disclaimer copy"
-            help="Shown on every customer-facing proof page. Paragraph breaks in this field render as spacing on the page."
-            saved={recentlySaved('disclaimer_text')}
-            working={working.disclaimer_text}
-            error={errors.disclaimer_text}
-          >
-            <textarea
-              value={drafts.disclaimer_text ?? settings.disclaimer_text}
-              onChange={(e) => setDrafts((d) => ({ ...d, disclaimer_text: e.target.value }))}
-              onBlur={() => onTextBlur('disclaimer_text')}
-              rows={6}
-              className={inputClass}
-              placeholder="Please check this proof carefully before approving…"
-            />
-          </FieldRow>
-
-          <FieldRow
-            label="Company name"
-            help="Used in references on the customer page (e.g. 'not the responsibility of [company name]')."
-            saved={recentlySaved('company_name')}
-            working={working.company_name}
-            error={errors.company_name}
-          >
-            <input
-              type="text"
-              value={drafts.company_name ?? settings.company_name}
-              onChange={(e) => setDrafts((d) => ({ ...d, company_name: e.target.value }))}
-              onBlur={() => onTextBlur('company_name')}
-              className={inputClass}
-            />
-          </FieldRow>
-
-          <FieldRow
-            label="Reply email"
-            help="The email address customers should reply to when requesting changes. Shown on the customer page."
-            saved={recentlySaved('reply_email')}
-            working={working.reply_email}
-            error={errors.reply_email}
-          >
-            <input
-              type="email"
-              value={drafts.reply_email ?? settings.reply_email}
-              onChange={(e) => {
-                setDrafts((d) => ({ ...d, reply_email: e.target.value }))
-                // Clear a stale "Invalid email" pill the moment the
-                // user keeps typing — without this, the error stuck
-                // around even after the value was reverted to the
-                // saved one and stayed up against the next save.
-                if (errors.reply_email) {
-                  setErrors((er) => ({ ...er, reply_email: undefined }))
-                }
-              }}
-              onBlur={() => {
-                const draft = drafts.reply_email
-                if (draft == null) return
-                if (draft !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft)) {
-                  setErrors((e) => ({ ...e, reply_email: 'Invalid email' }))
-                  setDrafts((d) => ({ ...d, reply_email: settings.reply_email }))
-                  return
-                }
-                // Successful path — clear any prior error pill so the
-                // FieldRow doesn't display "Saved" and "Invalid"
-                // simultaneously after a fix-up edit.
-                if (errors.reply_email) {
-                  setErrors((er) => ({ ...er, reply_email: undefined }))
-                }
-                onTextBlur('reply_email')
-              }}
-              className={inputClass}
-              placeholder="hello@plasmadesign.co.uk"
-            />
-          </FieldRow>
-
-          <FieldRow
-            label="About this proof note"
-            help="The quiet note at the bottom of every customer proof page, explaining that on-screen colours and finish are an approximation of the real card."
-            saved={recentlySaved('about_proof_copy')}
-            working={working.about_proof_copy}
-            error={errors.about_proof_copy}
-          >
-            <textarea
-              value={drafts.about_proof_copy ?? settings.about_proof_copy}
-              onChange={(e) => setDrafts((d) => ({ ...d, about_proof_copy: e.target.value }))}
-              onBlur={() => onTextBlur('about_proof_copy')}
-              rows={5}
-              className={inputClass}
-            />
-          </FieldRow>
-
-          <FieldRow
-            label="QR panel — review instructions"
-            help="First paragraph of the 'QR code contents' panel, shown on proofs that include QR codes. The standing 'please double-check each QR code' instruction. Leave blank to use the built-in default."
-            saved={recentlySaved('qr_panel_intro_copy')}
-            working={working.qr_panel_intro_copy}
-            error={errors.qr_panel_intro_copy}
-          >
-            <textarea
-              value={drafts.qr_panel_intro_copy ?? settings.qr_panel_intro_copy ?? ''}
-              onChange={(e) => setDrafts((d) => ({ ...d, qr_panel_intro_copy: e.target.value }))}
-              onBlur={() => onTextBlur('qr_panel_intro_copy')}
-              rows={4}
-              className={inputClass}
-            />
-          </FieldRow>
-
-          <FieldRow
-            label="QR panel — Plasma vCard note"
-            help="Second paragraph of the 'QR code contents' panel, explaining what scanning a Plasma vCard QR does. Leave blank to use the built-in default."
-            saved={recentlySaved('qr_panel_vcard_copy')}
-            working={working.qr_panel_vcard_copy}
-            error={errors.qr_panel_vcard_copy}
-          >
-            <textarea
-              value={drafts.qr_panel_vcard_copy ?? settings.qr_panel_vcard_copy ?? ''}
-              onChange={(e) => setDrafts((d) => ({ ...d, qr_panel_vcard_copy: e.target.value }))}
-              onBlur={() => onTextBlur('qr_panel_vcard_copy')}
-              rows={4}
-              className={inputClass}
-            />
-          </FieldRow>
-        </div>
-      </section>
 
       {/* ── Customer approvals (Phase 2) ──────────────────────────── */}
       <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
@@ -632,15 +489,6 @@ export default function AdminSettingsPage() {
           </p>
         </div>
       </section>
-
-      {/* ── Login page copy ──────────────────────────────────── */}
-      <LoginCopySection />
-
-      {/* ── Metal thickness notes ────────────────────────────── */}
-      <MetalThicknessNotesSection />
-
-      {/* ── Reply templates ──────────────────────────────────── */}
-      <AdminTemplatesSection />
     </div>
   )
 }
@@ -725,28 +573,6 @@ function Dot({ color }: { color: 'amber' | 'green' | 'red' }) {
   return <span aria-hidden className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${cls}`} />
 }
 
-function FieldRow({ label, help, saved, working, error, children }: {
-  label: string
-  help: string
-  saved?: boolean
-  working?: boolean
-  error?: string
-  children: React.ReactNode
-}) {
-  return (
-    <div>
-      <div className="mb-1 flex items-center gap-3">
-        <label className="text-sm font-medium text-ink-soft">{label}</label>
-        {working && <span className="text-xs text-ink-dim">Saving…</span>}
-        {saved && !working && <span className="text-xs text-in-stock">Saved</span>}
-        {error && <span className="text-xs text-out">{error}</span>}
-      </div>
-      {children}
-      <p className="mt-1.5 text-xs text-ink-mute">{help}</p>
-    </div>
-  )
-}
-
 // Local copy of the app-wide toggle (gray-900 / gray-200, h-6 w-11,
 // role="switch") matching the AdminTemplatesSection toggle so the
 // Customer-approvals flow gate visually echoes the Send-replies gate.
@@ -813,12 +639,6 @@ function RadioGroup<T extends string | null>({ value, onChange, options }: {
 
 function humanFieldLabel(field: keyof Settings): string {
   return {
-    disclaimer_text: 'Disclaimer copy',
-    company_name: 'Company name',
-    reply_email: 'Reply email',
-    about_proof_copy: 'About this proof note',
-    qr_panel_intro_copy: 'QR panel — review instructions',
-    qr_panel_vcard_copy: 'QR panel — Plasma vCard note',
     default_pricing_display: 'Default pricing display',
     default_currency: 'Default currency',
     approvals_enabled: 'Customer-facing approval flow enabled',
@@ -830,5 +650,3 @@ function humanFieldLabel(field: keyof Settings): string {
     domestic_uk_ni_rate_gbp: 'Northern Ireland shipping rate (£, inc VAT)',
   }[field]
 }
-
-const inputClass = 'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'

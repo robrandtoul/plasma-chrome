@@ -81,6 +81,28 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0
 }
 
+// Role claim of an ALREADY-PLATFORM-VERIFIED JWT. Safe to trust precisely
+// because config.toml pins verify_jwt = true for this function: the gateway
+// has validated the signature before the handler runs, so decoding the
+// payload here is reading a verified claim, not trusting client input.
+// (If verify_jwt were ever turned off, this gate would become forgeable —
+// the config comment carries the same warning.) Needed because a project
+// can hold more than one legitimately-minted service-role JWT, so a byte
+// compare against the injected env key is too brittle (the first live
+// trigger failed exactly that way).
+function bearerRole(bearer: string): string | null {
+  const parts = bearer.split('.')
+  if (parts.length !== 3) return null
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4)
+    const payload = JSON.parse(atob(padded)) as { role?: unknown }
+    return typeof payload.role === 'string' ? payload.role : null
+  } catch {
+    return null
+  }
+}
+
 // gov.uk bank-holidays feed, england-and-wales division. Best-effort with a
 // short timeout; the embedded fallback list keeps a gov.uk outage from
 // stopping the morning run.
@@ -170,9 +192,14 @@ Deno.serve(async (req) => {
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
   if (!serviceKey || !supabaseUrl) return json({ error: 'missing supabase env' }, 500)
 
-  // Only the service-role key itself may trigger a run.
+  // Only service-role credentials may trigger a run: either the exact
+  // injected key, or any platform-verified JWT carrying the service_role
+  // claim (the cron job's vault-stored key is a differently-minted
+  // service-role JWT, so byte equality alone is not enough).
   const bearer = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
-  if (!bearer || !timingSafeEqual(bearer, serviceKey)) {
+  const authorised = bearer !== '' &&
+    (timingSafeEqual(bearer, serviceKey) || bearerRole(bearer) === 'service_role')
+  if (!authorised) {
     return json({ error: 'forbidden' }, 403)
   }
 
