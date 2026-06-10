@@ -1,4 +1,5 @@
 import type { KeyboardEvent } from 'react'
+import { withDownloadName } from '../lib/downloadFile'
 
 // Shared keyboard handler for the click-to-zoom card wrappers.
 // Wrappers are <div role="button"> rather than real <button>
@@ -114,7 +115,7 @@ function Caption({ label, filename, signedUrl }: { label: string; filename?: str
             + rel="noopener" is the graceful fallback when the browser
             ignores the download attribute on a cross-origin URL. */}
         <a
-          href={signedUrl}
+          href={withDownloadName(signedUrl, filename ?? 'proof.jpg')}
           download={filename ?? 'proof.jpg'}
           target="_blank"
           rel="noopener noreferrer"

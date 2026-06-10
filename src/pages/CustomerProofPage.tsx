@@ -10,6 +10,7 @@ import { SHARED_APPROVAL_KEY } from '../lib/types'
 import type { ProofEventState } from '../lib/types'
 import { deriveSharedApprovalState } from '../lib/sharedApproval'
 import { formatPrice } from '../lib/currency'
+import { withDownloadName } from '../lib/downloadFile'
 import { type GridImage } from '../components/ImageGrid'
 import { MaterialOptionTabs } from '../components/MaterialOptionTabs'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
@@ -3765,8 +3766,12 @@ function PlateCard({
   onClick: () => void
   recipientLabel?: string
 }) {
-  const downloadHref = image.signed_url ?? '#'
   const downloadName = image.original_filename ?? 'proof.jpg'
+  // Append the storage `download` param so the file saves under the
+  // original filename even though the signed URL is cross-origin (the
+  // browser otherwise ignores the `download` attribute below). See
+  // withDownloadName for the full rationale.
+  const downloadHref = image.signed_url ? withDownloadName(image.signed_url, downloadName) : '#'
   // Compose "{RECIPIENT} · {SIDE}" per README §4 screenshot
   // pattern. Falls back gracefully when either piece is missing:
   // recipient-only → "{RECIPIENT}", side-only → "{SIDE}",
