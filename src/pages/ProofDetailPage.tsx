@@ -34,6 +34,8 @@ import {
 } from '../lib/viewedState'
 import { proofBucket, type BucketInput } from '../lib/dashboardGrouping'
 import { ResolvePopover } from '../components/ResolvePopover'
+import ProofTimeline from '../components/ProofTimeline'
+import type { TimelineEventRow } from '../lib/proofTimeline'
 
 interface Proof {
   id: string
@@ -161,6 +163,10 @@ export default function ProofDetailPage() {
   const [eventsByVersionAndName, setEventsByVersionAndName] = useState<
     Map<string, ProofEventAuditDetail>
   >(new Map())
+  // Every proof_events row for this project, unreduced — feeds the
+  // Activity timeline panel. Populated from the same fetch as the
+  // eventsByVersionAndName reduction above (no extra round-trip).
+  const [timelineEvents, setTimelineEvents] = useState<TimelineEventRow[]>([])
   // Tracks which Names rollup row is expanded into the audit panel.
   // Single-string key ensures only one panel is open at a time.
   const [expandedAuditKey, setExpandedAuditKey] = useState<string | null>(null)
@@ -470,13 +476,25 @@ export default function ProofDetailPage() {
           | { display_name: string }[]
           | null
       }
+      const flatRows: TimelineEventRow[] = []
       for (const r of (eventRows ?? []) as unknown as RawEventRow[]) {
+        const embed = r.proof_round_variants
+        const variantDisplayName = Array.isArray(embed)
+          ? (embed[0]?.display_name ?? null)
+          : (embed?.display_name ?? null)
+        flatRows.push({
+          id: r.id,
+          proof_version_id: r.proof_version_id,
+          event_type: r.event_type,
+          actor_name: r.actor_name,
+          name: r.name,
+          comment: r.comment,
+          helpscout_thread_id: r.helpscout_thread_id,
+          created_at: r.created_at,
+          variant_display_name: variantDisplayName,
+        })
         const k = `${r.proof_version_id}|${r.name ?? SHARED_APPROVAL_KEY}`
         if (!map.has(k)) {
-          const embed = r.proof_round_variants
-          const variantDisplayName = Array.isArray(embed)
-            ? (embed[0]?.display_name ?? null)
-            : (embed?.display_name ?? null)
           map.set(k, {
             id: r.id,
             event_type: r.event_type,
@@ -492,8 +510,10 @@ export default function ProofDetailPage() {
         }
       }
       setEventsByVersionAndName(map)
+      setTimelineEvents(flatRows)
     } else {
       setEventsByVersionAndName(new Map())
+      setTimelineEvents([])
     }
 
     // Approved-artwork join. Only bothers with the fetch when the
@@ -2384,6 +2404,28 @@ export default function ProofDetailPage() {
             </section>
           )
         })()}
+
+        {/* Activity timeline — per-project history assembled client-side
+            from data this page already loads (proof_events, non-bot
+            views, version rows, status timestamps). The dashboard's
+            Latest-activity card answers "what happened across all
+            projects"; this panel answers "what happened on this one".
+            No extra fetches — see buildTimelineEntries in
+            src/lib/proofTimeline.ts for the merge + view dedupe rules. */}
+        <div className="mt-12">
+          <ProofTimeline
+            proof={{
+              created_at: proof.created_at,
+              approved_at: proof.approved_at,
+              abandoned_at: proof.abandoned_at,
+              disclaimer_acknowledged_at: proof.disclaimer_acknowledged_at,
+              contactName: proof.contacts.full_name,
+            }}
+            versions={versions}
+            events={timelineEvents}
+            viewsByVersion={viewsByVersion}
+          />
+        </div>
 
         {/* Danger zone — permanent delete, kept subtle to avoid accidental
             clicks. Admin-only to match the DB gate (migration 000074),
