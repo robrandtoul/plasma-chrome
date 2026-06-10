@@ -2375,7 +2375,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <ButtonCoral icon={Plus} onClick={() => navigate('/proofs/new')}>
-                    New proof
+                    New project
                   </ButtonCoral>
                 </div>
               </div>
