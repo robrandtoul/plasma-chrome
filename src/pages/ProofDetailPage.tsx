@@ -167,6 +167,11 @@ export default function ProofDetailPage() {
   // Activity timeline panel. Populated from the same fetch as the
   // eventsByVersionAndName reduction above (no extra round-trip).
   const [timelineEvents, setTimelineEvents] = useState<TimelineEventRow[]>([])
+  // auth user id → designer full name, for the timeline's "Donna
+  // created v2" / "Donna sent a reply for v2" attribution. Resolved
+  // from profiles (open authenticated SELECT) because audit_log —
+  // the other place these names live — is admin-only by RLS.
+  const [designerNames, setDesignerNames] = useState<Map<string, string>>(new Map())
   // Tracks which Names rollup row is expanded into the audit panel.
   // Single-string key ensures only one panel is open at a time.
   const [expandedAuditKey, setExpandedAuditKey] = useState<string | null>(null)
@@ -351,7 +356,7 @@ export default function ProofDetailPage() {
         .single(),
       supabase
         .from('proof_versions')
-        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, last_reply_sent_at, displayed_variant_ids, is_variant_round, is_per_direction_pricing, material_options, has_personalisation, front_colour_id, core_colour_id, back_colour_id, materials(display_quantities)')
+        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, created_by, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, last_reply_sent_at, last_reply_sent_by, displayed_variant_ids, is_variant_round, is_per_direction_pricing, material_options, has_personalisation, front_colour_id, core_colour_id, back_colour_id, materials(display_quantities)')
         .eq('proof_id', proofId)
         .order('version_number', { ascending: false }),
     ])
@@ -392,6 +397,35 @@ export default function ProofDetailPage() {
       if (isStale()) return
       setVersionThumbs(m)
     })
+
+    // Resolve designer names for the timeline's attribution lines.
+    // One small .in() lookup on profiles covering both created_by and
+    // last_reply_sent_by across every version. Non-blocking and
+    // best-effort — a failure just leaves entries on the
+    // unattributed milestone copy ("v2 created").
+    const designerIds = Array.from(
+      new Set(
+        loadedVersions
+          .flatMap((v) => [v.created_by, v.last_reply_sent_by])
+          .filter((id): id is string => id != null),
+      ),
+    )
+    if (designerIds.length > 0) {
+      void supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', designerIds)
+        .then(({ data }) => {
+          if (isStale() || !data) return
+          const map = new Map<string, string>()
+          for (const r of data as Array<{ id: string; full_name: string | null }>) {
+            if (r.full_name) map.set(r.id, r.full_name)
+          }
+          setDesignerNames(map)
+        })
+    } else {
+      setDesignerNames(new Map())
+    }
 
     // Pull non-bot view rows for every version on this proof. Same
     // query shape as the dashboard's map; kept separate so reload
@@ -2424,6 +2458,7 @@ export default function ProofDetailPage() {
             versions={versions}
             events={timelineEvents}
             viewsByVersion={viewsByVersion}
+            designerNamesById={designerNames}
           />
         </div>
 

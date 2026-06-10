@@ -15,9 +15,22 @@ const ago = (ms: number) => new Date(now - ms).toISOString()
 
 // ── Fixture 1: split-name project mid-review ─────────────────────────────────
 
+const designerNamesById = new Map([
+  ['designer-donna', 'Donna Lambe'],
+  ['designer-jack', 'Jack Johnson'],
+])
+
 const versions = [
-  { id: 'v1', version_number: 1, created_at: ago(9 * DAY), last_reply_sent_at: ago(9 * DAY - HOUR) },
-  { id: 'v2', version_number: 2, created_at: ago(5 * DAY), last_reply_sent_at: ago(5 * DAY - HOUR / 2) },
+  {
+    id: 'v1', version_number: 1, created_at: ago(9 * DAY), last_reply_sent_at: ago(9 * DAY - HOUR),
+    created_by: 'designer-donna', last_reply_sent_by: 'designer-donna',
+  },
+  {
+    id: 'v2', version_number: 2, created_at: ago(5 * DAY), last_reply_sent_at: ago(5 * DAY - HOUR / 2),
+    // Reply sender null — exercises the unattributed fallback
+    // (automated nudge / pre-000215 row).
+    created_by: 'designer-jack', last_reply_sent_by: null,
+  },
 ]
 
 const events: TimelineEventRow[] = [
@@ -104,6 +117,7 @@ createRoot(document.getElementById('root')!).render(
           versions={versions}
           events={events}
           viewsByVersion={viewsByVersion}
+          designerNamesById={designerNamesById}
         />
         <ProofTimeline
           proof={{

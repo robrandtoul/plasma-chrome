@@ -600,8 +600,13 @@ async function run(admin: Admin): Promise<Response> {
           sent++
 
           // Send evidence for the next cycle + the proof detail page.
+          // last_reply_sent_by is explicitly NULLed (migration 000215):
+          // an automated reminder re-stamps last_reply_sent_at, and
+          // leaving a previous manual sender's id in place would
+          // attribute this nudge to the wrong designer on the
+          // Activity timeline. NULL renders unattributed.
           await admin.from('proof_versions')
-            .update({ last_reply_sent_at: new Date().toISOString() })
+            .update({ last_reply_sent_at: new Date().toISOString(), last_reply_sent_by: null })
             .eq('id', c.versionId)
             .eq('proof_id', c.proofId)
 
