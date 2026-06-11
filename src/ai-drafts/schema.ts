@@ -52,7 +52,8 @@ export const CLASSIFY_SCHEMA = {
     currency_hint: {
       type: 'string',
       enum: [...CURRENCY_VALUES, 'unknown'],
-      description: 'From explicit currency symbols, country clues, or the email domain. unknown if unclear.',
+      description:
+        "ONLY from explicit evidence in the thread: currency symbols or codes, a stated country/city/address, a phone country code, or an email/web domain (.co.uk, .com.au, .de...). With no such evidence you MUST answer 'unknown' — never guess a default.",
     },
   },
 } as const
@@ -77,7 +78,7 @@ export const DRAFT_SCHEMA = {
     note_body: {
       type: ['string', 'null'],
       description:
-        'Internal working shown to the team: category, key reasoning, every figure with its source, anything to double-check. Null when abstaining.',
+        'Internal working shown to the team: category, key reasoning, every figure with its claimed source, anything to double-check. When abstaining, this may carry an ACTION note instead (e.g. "ready to invoice — generate and send the order link; qty/specs confirmed: …", or "route to Graphics").',
     },
     figures_used: {
       type: 'array',

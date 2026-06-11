@@ -154,8 +154,10 @@ const MATERIAL_SYNONYMS: Record<string, string[]> = {
   metal_titanium: ['titanium'],
   carbon_fibre: ['carbon fibre', 'carbon fiber'],
   carbon_fibre_cnc: ['cnc', 'carbon fibre cnc', 'cut carbon'],
+  // 'paper' alone is ambiguous between the two paper families — both match,
+  // and the briefing tells the drafter to disambiguate from thread cues.
   paper_standard: ['paper', 'standard paper', 'uv spot', 'foil'],
-  paper_letterpress: ['letterpress', 'colorplan', 'cotton'],
+  paper_letterpress: ['paper', 'letterpress', 'colorplan', 'cotton', 'duplex'],
   paper_letterpress_gilded: ['gilding', 'gilded', 'edge gilding'],
   plastic_translucent: ['translucent', 'frosted', 'tinted', 'satin', 'plastic'],
   plastic_full_colour: ['full colour plastic', 'full color plastic', 'pvc'],

@@ -11,8 +11,27 @@ import {
   buildDraftSystem,
   buildDraftUser,
 } from './prompts'
-import type { GroundingData, PipelineResult, ThreadMessage } from './types'
+import type { ClassifyResult, GroundingData, PipelineResult, ThreadMessage } from './types'
 import { PILOT_CATEGORIES } from './types'
+import { normaliseBody } from './htmlText'
+
+// The website's artwork-request form has a fixed structure; submissions are
+// Graphics work and the auto-responder already acknowledged them, so they
+// are routed deterministically — no AI call, no draft (review item 8).
+// Keyed on the MESSAGE, never the subject: the "Artwork request from…"
+// subject persists for the whole conversation, including later turns that
+// SHOULD draft.
+const ARTWORK_FORM_RES = [
+  /Card Specifications[\s\S]{0,3000}Customer Details/,
+  /api\.typeform\.com\/responses\/files/,
+]
+
+export function isArtworkFormSubmission(thread: ThreadMessage[]): boolean {
+  const lastCustomer = [...thread].reverse().find((m) => m.role === 'customer')
+  if (!lastCustomer) return false
+  const body = normaliseBody(lastCustomer.body)
+  return ARTWORK_FORM_RES.some((re) => re.test(body))
+}
 
 export interface PipelineInput {
   conversationId: number | string
@@ -28,6 +47,32 @@ export async function runPipeline(
   grounding: GroundingData,
 ): Promise<PipelineResult> {
   const usage = { inputTokens: 0, outputTokens: 0 }
+
+  // 0. Deterministic pre-gate: artwork-form submissions route to Graphics
+  // without any AI involvement.
+  if (isArtworkFormSubmission(input.thread)) {
+    const classification: ClassifyResult = {
+      is_genuine_customer_email: true,
+      category: 'artwork',
+      confidence: 'high',
+      summary: 'Artwork-request form submission (deterministic pre-gate)',
+      mentioned_materials: [],
+      mentioned_quantities: [],
+      currency_hint: 'unknown',
+    }
+    return {
+      conversationId: input.conversationId,
+      classification,
+      grounded: false,
+      draft: null,
+      guardrails: null,
+      outcome: 'abstained',
+      abstainOrBlockReason:
+        'artwork-request form submission — route to Graphics (auto-responder already acknowledged)',
+      noteWarnings: [],
+      usage,
+    }
+  }
 
   // 1. Classify.
   const classify = await callClassify(
@@ -52,10 +97,13 @@ export async function runPipeline(
     }
   }
 
-  // 2. Category/confidence gate — only pilot categories at medium+ confidence
-  // reach the drafter. Silence is a feature.
-  const inPilot = PILOT_CATEGORIES.has(classification.category)
-  if (!inPilot || classification.confidence === 'low') {
+  // 2. Category/confidence gate — pilot categories at medium+ confidence
+  // reach the drafter; artwork also passes through, but only for the
+  // two-line Graphics handoff the house rules describe (review item 12).
+  // Everything else: silence is a feature.
+  const draftable =
+    PILOT_CATEGORIES.has(classification.category) || classification.category === 'artwork'
+  if (!draftable || classification.confidence === 'low') {
     return {
       conversationId: input.conversationId,
       classification,
@@ -63,7 +111,7 @@ export async function runPipeline(
       draft: null,
       guardrails: null,
       outcome: 'abstained',
-      abstainOrBlockReason: inPilot
+      abstainOrBlockReason: draftable
         ? `low classifier confidence (${classification.category})`
         : `category outside pilot scope (${classification.category})`,
       noteWarnings: [],
@@ -101,7 +149,7 @@ export async function runPipeline(
 
   // 4. Hard gates on the rendered draft text. Echo-only links (proof URLs)
   // must already exist in the inbound thread.
-  const allowed = buildAllowedFigures(grounding, input.thread)
+  const allowed = buildAllowedFigures(grounding, input.thread, slice)
   const threadUrls = threadUrlSet(input.thread)
   const verdict = runGuardrails(draft.draft_body, allowed, threadUrls)
 

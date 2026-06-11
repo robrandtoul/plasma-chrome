@@ -1,8 +1,11 @@
 // Per-category exemplars: real customer questions paired with the replies the
-// team actually sent. "Show, don't tell" — these teach voice and structure.
-// Seeded from real June 2026 threads; the backtest tune loop promotes more.
-// Figures inside exemplars are illustrative of FORMAT — current figures always
-// come from the grounding data, never from memory of these examples.
+// team actually sent (lightly edited where the review set a new convention).
+// "Show, don't tell" — these teach voice and structure. Figures inside
+// exemplars are illustrative of FORMAT — current figures always come from the
+// grounding data, never from memory of these examples.
+//
+// Cycle 1 additions (Rob/Chris review, 2026-06-11): Vincent (explain the why),
+// Lisa (reorder playbook), Aidan (route-to-Graphics handoff).
 
 import type { Category } from '../types'
 
@@ -35,7 +38,40 @@ This quote excludes shipping.
 
 We are currently quoting around 13-15 business days for gold metal cards.
 
-Please let me know if you would like to go ahead or if you have any questions.`,
+Please let me know if any further information would help.`,
+  },
+  {
+    // Real reply, kept because it explains the WHY behind an artwork
+    // adjustment (CNC bit radius) — the house style for recommendations.
+    category: 'quote_request',
+    customer: 'I am curious about incorporating my card designs onto carbon fibre and the costs associated.',
+    reply: `Hi Vincent,
+
+Thanks very much for your message. It's great to hear from you.
+
+We'd be happy to work on a batch of carbon fibre cards for you.
+
+When we produced your metal cards before, the cut through details were created using a chemical milling process. Carbon fibre needs a different method. To create cut throughs in CF we use CNC with a 0.5 mm bit, which means the minimum internal radius we can achieve is 1 mm.
+
+To work within that limit, we have made adjustments to the artwork. The cut through text has been increased in size so that it can be machined cleanly. I have attached proofs for the front and back of the carbon fibre card so you can see how this translates in practice. Pricing for various quantities can be found on the left side of these proofs.
+
+I look forward to hearing your thoughts. Very happy to adjust things to your preference.`,
+  },
+  {
+    // Real reply: the reorder playbook — assume same specs, confirm them
+    // back, reference the previous proof, no re-asking, momentum preserved.
+    category: 'quote_request',
+    customer:
+      "Hi there, I'd like to get a quote for placing another order for metal business cards, please. It'll be the same Galt Strategies design from the past, just a new name & contact. Will you please send over the cost breakdown + shipping expectations?",
+    reply: `Hi Lisa,
+
+Happy to help with a new set of the Galt Strategies metal cards.
+
+I'll attach a copy of the proof from the last order dated November 2024. Pricing for the different quantities is shown on the left side of that document. For reference, your previous batches were produced in 500 micron steel with a natural surface finish.
+
+Current turnaround time is 11 to 13 business days.
+
+Please feel free to send through the details for the new colleague. Once we have their name and contact information, we'll revise the artwork and send a fresh proof for approval.`,
   },
   {
     category: 'capability_question',
@@ -69,8 +105,10 @@ Due to the setup costs involved, we typically don't produce fewer than 25 cards 
 I hope this information is helpful. Please don't hesitate to come back to me with any further questions.`,
   },
   {
+    // UK evidence in-thread -> free dispatch. Contrast with the next example.
     category: 'sample_request',
-    customer: 'Hello, would it be possible to receive a couple of samples of your metal cards before we place a larger order?',
+    customer:
+      'Hello, would it be possible to receive a couple of samples of your metal cards before we place a larger order? We are based in Manchester.',
     reply: `Hi Anja,
 
 Thanks for getting in touch.
@@ -78,6 +116,32 @@ Thanks for getting in touch.
 Yes, that's no problem at all, we'd be happy to send some samples out to you.
 
 Please could you send over the best postal address and we will get those on their way.`,
+  },
+  {
+    // No UK evidence (or clearly international) -> the samples page, where
+    // anyone can order a pack and cover the shipping.
+    category: 'sample_request',
+    customer:
+      'I am considering your cards for my business and would love to see the quality in person before ordering. Do you offer samples?',
+    reply: `Hi Preston,
+
+Thanks for getting in touch, and happy to help with that.
+
+The easiest route is to order a sample pack through our site, so it ships straight to you: https://www.plasmadesign.co.uk/order-samples
+
+Please let me know if any further information would help while you compare the options.`,
+  },
+  {
+    // The route-to-Graphics handoff: design work is acknowledged warmly in
+    // two lines, never quoted — the proof carries pricing.
+    category: 'artwork',
+    customer:
+      "Hi Jack, hope you're well! We haven't spoken since my last order but I was hoping you could provide a quote for 100 white and 100 blue cards with a few minor tweaks. I'd like to add my name, position, and landline to the cards. The feedback I've had so far has been nothing short of WOW.",
+    reply: `Hi Aidan,
+
+Lovely to hear from you, and thank you for the kind words about the cards.
+
+I'm handing this over to our graphics team now — they'll update the design with your name, position and landline and be in touch shortly with a fresh proof, which will include pricing for the quantities.`,
   },
 ]
 

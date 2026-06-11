@@ -8,8 +8,8 @@
 // The blast radius is additionally capped in code: output can only become a
 // human-reviewed draft, and guardrails reject unapproved URLs / figures.
 
-import { APPROVED_LINKS } from './briefing/approvedLinks'
 import { exemplarsFor } from './briefing/exemplars'
+import { SITE_PAGES } from './briefing/sitePages'
 import { HOUSE_RULES } from './briefing/houseRules'
 import { TONE_GUIDE } from './briefing/toneGuide'
 import type { GroundingSlice } from './grounding'
@@ -79,7 +79,10 @@ business cards (metal, carbon fibre, letterpress, standard paper, translucent
 plastic, full colour plastic, wood, acrylic). Classify the thread below.
 
 Category guide:
-- quote_request: asks what something costs, or for a quote.
+- quote_request: asks what something costs, or for a quote. BUT if fulfilling
+  the request means producing or updating a design (new proof, tweaked
+  details, revised artwork), classify it as artwork even when price is
+  mentioned — proofs carry pricing, so the design work is the real request.
 - lead_time: asks how long production/delivery takes.
 - capability_question: asks whether we can make/do something (materials,
   finishes, print methods, design features).
@@ -88,7 +91,10 @@ Category guide:
   now needs order details (quantity, billing/delivery address) to invoice.
 - order_status: asks where an existing order is, or for changes to one.
 - invoice_copy: asks for a copy of an invoice or receipt.
-- artwork: discussion of artwork files, designs, or proofs in progress.
+- artwork: discussion of artwork files, designs, or proofs in progress, AND
+  any request whose substance is design work — a new design, changes or new
+  contact details on an existing design, a revised proof — even when the
+  email also asks about cost.
 - complaint: unhappy customer, problem with an order, chasing something overdue.
 - other: anything else genuine.
 
@@ -150,8 +156,11 @@ export function buildDraftSystem(category: Category, slice: GroundingSlice): str
 HOUSE RULES — these are facts and policies you must follow exactly:
 ${HOUSE_RULES.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
-APPROVED LINKS — the only URLs you may ever include in a reply:
-${APPROVED_LINKS.map((l) => `- ${l.prefix} (${l.purpose})`).join('\n')}
+PAGES YOU MAY LINK — the only URLs you may ever include in a reply (plus a
+proof URL only when it already appears in the thread). Link the page that
+fits; for broad product interest prefer the product overview page and the
+matching price list:
+${SITE_PAGES.map((l) => `- ${l.url} (${l.purpose})`).join('\n')}
 
 EXAMPLES OF OUR REPLIES (voice and structure — figures in them may be out of
 date; current figures come ONLY from the pricing data below):
@@ -160,7 +169,8 @@ ${exemplars}
 CURRENT PRICING DATA (currency ${slice.currency}${slice.currencyAssumed ? ' — ASSUMED: the thread gives no currency clue. If quoting prices, confirm the customer is UK-based or invite them to say where they are, and record the assumption in note_body' : ''}; GBP figures include VAT):
 ${materialsBlock(slice)}
 
-CATALOGUE INDEX (starting prices and minimums only):
+CATALOGUE INDEX (grounding for when the customer ASKS about cost or minimums —
+never volunteer these figures unprompted):
 ${catalogueIndexBlock(slice)}
 
 CURRENT LEAD TIMES:
@@ -174,6 +184,10 @@ thread, as a draft a member of the team will review before sending.
 - Use only approved links, and only when genuinely helpful.
 - If the thread already contains answers (quantities, addresses, specs), do
   not ask for them again — confirm them back instead.
+- If the request is really design work (a new proof, updated details on an
+  existing design), write the two-line Graphics handoff from the house rules
+  instead of quoting — or abstain if Graphics is clearly already mid-flow on
+  this thread.
 - If you cannot answer correctly from the data here, or the email needs
   judgment we have not given you (complaints, artwork quality opinions,
   bespoke feasibility), set should_draft to false with a short reason.
