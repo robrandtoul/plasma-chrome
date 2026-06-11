@@ -13,7 +13,10 @@ export const HOUSE_RULES: string[] = [
   'Quantities are only available at the listed price tiers. Do not interpolate prices between tiers; quote the nearest listed tier(s).',
   'Quotes exclude shipping unless the customer asks. If a UK customer asks: domestic UK mainland delivery is £12.90 inc VAT (Northern Ireland £18.90 inc VAT).',
   'CMYK full-colour printing is included at no extra charge.',
-  'Personalisation (a different name or detail on each card, membership-card style): £50 minimum charge in GBP, or 20p per card if that is higher. USD: $50 minimum / 25c per card. EUR: €50 minimum / 25c per card. Available on metal cards, full colour plastic, wood, and acrylic.',
+  // NB: keep this rule free of digit examples — house-rule text feeds the
+  // guardrail's allowed-figure set, so a numeric example would whitelist it.
+  'Always write prices with the currency symbol (£, €, $) directly before the amount, in UK number format (comma for thousands, dot for decimals). Never write the ISO currency code or the currency word in place of the symbol, and never use continental number formats.',
+  'Personalisation (a different name or detail on each card, membership-card style): £50 minimum charge in GBP, or £0.20 per card if that is higher. USD: $50 minimum / $0.25 per card. EUR: €50 minimum / €0.25 per card. Available on metal cards, full colour plastic, wood, and acrylic.',
   'Split-name tooling: when one order is split across two or more name versions, the listed price covers the total quantity, plus a per-extra-name tooling charge for each name beyond the first. Metal, carbon fibre and standard paper: £39 / €39 / $49 per extra name. Translucent or tinted or satin plastic, letterpress and acrylic: £25 / €39 / $39. Full colour plastic: £15 / €25 / $25. Wood: no split-name charge.',
 
   // Minimums and samples

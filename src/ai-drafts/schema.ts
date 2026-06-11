@@ -15,6 +15,9 @@ export const CATEGORY_VALUES = [
   'other',
 ] as const
 
+export const CONFIDENCE_VALUES = ['high', 'medium', 'low'] as const
+export const CURRENCY_VALUES = ['GBP', 'EUR', 'USD'] as const
+
 export const CLASSIFY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -34,7 +37,7 @@ export const CLASSIFY_SCHEMA = {
         'True only for a real customer (or prospective customer) writing to Plasma Design. False for marketing, spam, automated notifications, supplier emails.',
     },
     category: { type: 'string', enum: [...CATEGORY_VALUES] },
-    confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+    confidence: { type: 'string', enum: [...CONFIDENCE_VALUES] },
     summary: { type: 'string', description: 'One or two sentences: what the customer wants.' },
     mentioned_materials: {
       type: 'array',
@@ -48,7 +51,7 @@ export const CLASSIFY_SCHEMA = {
     },
     currency_hint: {
       type: 'string',
-      enum: ['GBP', 'EUR', 'USD', 'unknown'],
+      enum: [...CURRENCY_VALUES, 'unknown'],
       description: 'From explicit currency symbols, country clues, or the email domain. unknown if unclear.',
     },
   },
@@ -84,7 +87,7 @@ export const DRAFT_SCHEMA = {
         required: ['amount', 'currency', 'source'],
         properties: {
           amount: { type: 'number' },
-          currency: { type: 'string', enum: ['GBP', 'EUR', 'USD'] },
+          currency: { type: 'string', enum: [...CURRENCY_VALUES] },
           source: { type: 'string', description: 'Where this figure came from in the briefing data.' },
         },
       },

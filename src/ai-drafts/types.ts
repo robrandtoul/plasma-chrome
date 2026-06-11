@@ -2,19 +2,13 @@
 // The same core runs under two callers: the local backtest harness (Phase 1)
 // and, later, the drafting edge function (Phase 2).
 
-export type Currency = 'GBP' | 'EUR' | 'USD'
+import { CATEGORY_VALUES, CONFIDENCE_VALUES, CURRENCY_VALUES } from './schema'
 
-export type Category =
-  | 'quote_request'
-  | 'lead_time'
-  | 'capability_question'
-  | 'sample_request'
-  | 'order_details_collection'
-  | 'order_status'
-  | 'invoice_copy'
-  | 'artwork'
-  | 'complaint'
-  | 'other'
+// Single source of truth for the wire enums is schema.ts — these types derive
+// from the same tuples the JSON schemas spread, so drift cannot compile.
+export type Currency = (typeof CURRENCY_VALUES)[number]
+export type Category = (typeof CATEGORY_VALUES)[number]
+export type Confidence = (typeof CONFIDENCE_VALUES)[number]
 
 // Categories the drafter is allowed to write for in Phase 1. Everything else
 // is classified (triage signal) but never drafted — silence is a feature.
@@ -50,7 +44,7 @@ export interface FixtureConversation {
 export interface ClassifyResult {
   is_genuine_customer_email: boolean
   category: Category
-  confidence: 'high' | 'medium' | 'low'
+  confidence: Confidence
   summary: string
   mentioned_materials: string[]
   mentioned_quantities: number[]
@@ -72,11 +66,20 @@ export interface DraftResult {
   links_used: string[]
 }
 
-// A money figure the pipeline is allowed to quote, with provenance for the note.
+// A money figure the pipeline is allowed to quote, with provenance for the
+// note. `kind` constrains how the guardrail may compose figures into sums:
+// a tier (price-grid total) may combine with ONE add-on (an option surcharge
+// for the same material+quantity, or a house-rule charge like personalisation)
+// — never tier+tier or addon+addon, which would make the acceptance set so
+// dense that hallucinated figures pass.
 export interface GroundingFigure {
   amount: number
   currency: Currency
   description: string
+  kind: 'tier' | 'addon'
+  // For option surcharges: ties the add-on to its base tier row.
+  matKey?: string
+  quantity?: number
 }
 
 export interface MaterialLeadTime {
@@ -128,5 +131,8 @@ export interface PipelineResult {
   // 'skipped' — not a genuine customer email.
   outcome: 'drafted' | 'abstained' | 'blocked' | 'skipped'
   abstainOrBlockReason: string | null
+  // Advisory only (never blocks): unreconciled figures/links inside the
+  // internal note, so reviewers know the note's workings are unvalidated.
+  noteWarnings: string[]
   usage: { inputTokens: number; outputTokens: number }
 }

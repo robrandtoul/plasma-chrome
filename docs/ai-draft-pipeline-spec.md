@@ -94,20 +94,36 @@ unreconciled figures regardless of what the email said.
 
 ## Guardrails (hard gates, code not model)
 
-**Money figures.** Every `£ / € / $` figure in `draft_body` must reconcile against the
-grounding set for that conversation:
+**Money figures.** Every money mention in `draft_body` — symbol form (£305), ISO form
+(GBP 305 / 305 GBP), word form (305 pounds), pence/cent shorthand (20p, 25c), with UK
+or continental separators, space/apostrophe grouping, and k/m suffixes — must
+reconcile against the allowed-figure set:
 
-- exact match to a grounding figure (price tier, surcharge, lead-time-irrelevant), or
-- a sum of up to two grounding figures (e.g. £279 base + £50 personalisation = £329), or
-- a VAT transform (÷1.2 or ×1.2, GBP only) of an accepted figure (e.g. £329 → £274.17
-  ex VAT), within 1p tolerance.
+- a known figure standing alone: price tier, option surcharge, house-rule charge, or a
+  figure **staff** already stated in the thread (customer-quoted figures are never
+  added — a customer cannot seed a price), or
+- a **tier + one add-on** sum: an option surcharge for the same material+quantity row,
+  or a house-rule charge (£279 base + £50 personalisation = £329). Never tier+tier or
+  add-on+add-on — that composition density would let hallucinated figures pass
+  (measured in review: unconstrained sums accepted ~94% of plausible round figures;
+  kind-constrained sums ~33%), or
+- a VAT transform (÷1.2 or ×1.2, GBP only) of an accepted figure, ±1p on the
+  transformed value.
 
-Anything else → draft blocked, reason logged. The model also self-reports
-`figures_used` (amount + source description) so the note can show its working, but the
-gate runs on the *rendered draft text*, not on the self-report.
+Ambiguous amount tokens parse to a sentinel that can never reconcile (fail closed).
+Anything else → draft blocked, reason logged. The gate runs on the *rendered draft
+text*, never on the model's `figures_used` self-report. ⚠️ House-rule text feeds the
+allowed set — never put illustrative digit examples in a house rule.
 
-**URLs.** Every URL in `draft_body` must prefix-match the approved-links list
-(`src/ai-drafts/briefing/approvedLinks.ts`). Unknown URL → blocked.
+**URLs.** Every URL in `draft_body` — scheme'd, www-prefixed, bare autolinkable
+domain, or mailto:/tel:/data: — must prefix-match the approved-links list
+(`src/ai-drafts/briefing/approvedLinks.ts`). Links flagged `echoOnly` (customer proof
+pages) must additionally already appear in the inbound thread, so the model cannot
+fabricate a plausible proof URL. Unknown → blocked.
+
+**Internal note (advisory).** `note_body` gets the same checks as warnings only —
+shown to the reviewer as "unvalidated", never blocking (legitimate workings contain
+arithmetic outside the gate's transforms, e.g. per-card unit prices).
 
 **Abstention.** The drafter can return `should_draft: false` with a reason (complaint
 detected, missing information, out-of-scope material, thread already answered). The

@@ -97,6 +97,9 @@ function collectFigures(byCurrency: Record<Currency, GroundingMaterial[]>): Grou
             amount: tier.total_price,
             currency,
             description: `${material.display_name} ${variant.display_name} x${tier.quantity}`,
+            kind: 'tier',
+            matKey: material.code,
+            quantity: tier.quantity,
           })
         }
       }
@@ -105,6 +108,9 @@ function collectFigures(byCurrency: Record<Currency, GroundingMaterial[]>): Grou
           amount: s.surcharge,
           currency,
           description: `${material.display_name} ${s.option_code} surcharge x${s.quantity}`,
+          kind: 'addon',
+          matKey: material.code,
+          quantity: s.quantity,
         })
       }
     }
@@ -157,21 +163,32 @@ const MATERIAL_SYNONYMS: Record<string, string[]> = {
   acrylic: ['acrylic', 'perspex', 'clear card'],
 }
 
+// Generic words that legitimately appear in mentions but would match half the
+// catalogue through the reverse-containment direction.
+const MATCH_STOPLIST = new Set(['card', 'cards', 'business', 'metal'])
+
 export function matchMaterials(mentioned: string[], available: GroundingMaterial[]): string[] {
   const availableCodes = new Set(available.map((m) => m.code))
-  const haystack = mentioned.map((m) => m.toLowerCase())
+  // Empty/trivial mentions would otherwise match the whole catalogue via the
+  // reverse-containment direction.
+  const haystack = mentioned
+    .map((m) => m.trim().toLowerCase())
+    .filter((m) => m.length >= 3 && !MATCH_STOPLIST.has(m))
   const matched = new Set<string>()
   for (const m of available) {
     const names = [m.display_name.toLowerCase(), ...(MATERIAL_SYNONYMS[m.code] ?? [])]
     for (const text of haystack) {
-      if (names.some((n) => text.includes(n) || n.includes(text))) {
+      if (names.some((n) => text.includes(n) || (text.length >= 4 && n.includes(text)))) {
         matched.add(m.code)
       }
     }
   }
-  // Metal family talk ("metal cards") with no specific metal named: include
+  // Metal family talk ("metal cards") with no SPECIFIC metal named: include
   // the everyday metals so the drafter can offer the usual starting points.
-  if (matched.size === 0 && haystack.some((t) => t.includes('metal'))) {
+  // Fires even when a non-metal material also matched ("metal or wood?").
+  const metalMatched = [...matched].some((code) => code.startsWith('metal_'))
+  const mentionsMetal = mentioned.some((t) => t.toLowerCase().includes('metal'))
+  if (!metalMatched && mentionsMetal) {
     for (const code of ['metal_steel', 'metal_gold', 'metal_matte_black']) {
       if (availableCodes.has(code)) matched.add(code)
     }
@@ -181,6 +198,9 @@ export function matchMaterials(mentioned: string[], available: GroundingMaterial
 
 export interface GroundingSlice {
   currency: Currency
+  // True when the classifier could not infer a currency and GBP was assumed —
+  // the draft prompt and the reviewer's note both surface this.
+  currencyAssumed: boolean
   materials: GroundingMaterial[]
   leadTimes: MaterialLeadTime[]
   catalogueIndex: { code: string; display_name: string; minQuantity: number | null; startingPrice: number | null }[]
@@ -204,5 +224,11 @@ export function sliceGrounding(
       startingPrice: prices.length ? Math.min(...prices) : null,
     }
   })
-  return { currency, materials, leadTimes: grounding.leadTimes, catalogueIndex }
+  return {
+    currency,
+    currencyAssumed: currencyHint === 'unknown',
+    materials,
+    leadTimes: grounding.leadTimes,
+    catalogueIndex,
+  }
 }

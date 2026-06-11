@@ -5,6 +5,10 @@
 export interface ApprovedLink {
   prefix: string
   purpose: string
+  // echoOnly: the prefix alone is not enough — the exact URL must already
+  // appear in the inbound thread. Stops the model fabricating plausible
+  // per-customer URLs (e.g. proof links) under an approved prefix.
+  echoOnly?: boolean
 }
 
 export const APPROVED_LINKS: ApprovedLink[] = [
@@ -15,7 +19,7 @@ export const APPROVED_LINKS: ApprovedLink[] = [
   { prefix: 'https://www.plasmadesign.co.uk/support', purpose: 'support / contact form' },
   { prefix: 'https://www.plasmadesign.co.uk/', purpose: 'site home and product pages' },
   { prefix: 'https://plasmadesign.co.uk/', purpose: 'site without www' },
-  // Customer proof links (live phase: the system may reference an existing
-  // proof URL already present in the thread).
-  { prefix: 'https://proofs.plasmadesign.co.uk/p/', purpose: 'customer proof page' },
+  // Customer proof links: only echoable — the exact URL must already exist
+  // in the thread; the model cannot mint one.
+  { prefix: 'https://proofs.plasmadesign.co.uk/p/', purpose: 'customer proof page', echoOnly: true },
 ]

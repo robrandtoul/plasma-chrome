@@ -3,7 +3,7 @@
 // edge function (Phase 2). See docs/ai-draft-pipeline-spec.md.
 
 import { callClassify, callDraft } from './anthropic'
-import { buildAllowedFigures, runGuardrails } from './guardrails'
+import { buildAllowedFigures, runGuardrails, threadUrlSet } from './guardrails'
 import { sliceGrounding } from './grounding'
 import {
   buildClassifySystem,
@@ -47,6 +47,7 @@ export async function runPipeline(
       guardrails: null,
       outcome: 'skipped',
       abstainOrBlockReason: 'not a genuine customer email',
+      noteWarnings: [],
       usage,
     }
   }
@@ -65,6 +66,7 @@ export async function runPipeline(
       abstainOrBlockReason: inPilot
         ? `low classifier confidence (${classification.category})`
         : `category outside pilot scope (${classification.category})`,
+      noteWarnings: [],
       usage,
     }
   }
@@ -92,13 +94,21 @@ export async function runPipeline(
       guardrails: null,
       outcome: 'abstained',
       abstainOrBlockReason: draft.abstain_reason ?? 'model abstained without a reason',
+      noteWarnings: [],
       usage,
     }
   }
 
-  // 4. Hard gates on the rendered draft text.
+  // 4. Hard gates on the rendered draft text. Echo-only links (proof URLs)
+  // must already exist in the inbound thread.
   const allowed = buildAllowedFigures(grounding, input.thread)
-  const verdict = runGuardrails(draft.draft_body, allowed)
+  const threadUrls = threadUrlSet(input.thread)
+  const verdict = runGuardrails(draft.draft_body, allowed, threadUrls)
+
+  // Advisory pass over the internal note: warnings only, never blocking —
+  // legitimate working notes contain arithmetic outside the gate's
+  // transforms (unit prices, per-card breakdowns).
+  const noteVerdict = draft.note_body ? runGuardrails(draft.note_body, allowed, threadUrls) : { ok: true as const }
 
   return {
     conversationId: input.conversationId,
@@ -108,6 +118,7 @@ export async function runPipeline(
     guardrails: verdict,
     outcome: verdict.ok ? 'drafted' : 'blocked',
     abstainOrBlockReason: verdict.ok ? null : verdict.reasons.join('; '),
+    noteWarnings: noteVerdict.ok ? [] : noteVerdict.reasons,
     usage,
   }
 }
