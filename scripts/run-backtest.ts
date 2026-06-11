@@ -74,17 +74,24 @@ function loadCases(): { cases: BacktestCase[]; unusable: { file: string; reason:
       unusable.push({ file, reason: 'empty thread' })
       continue
     }
-    const sorted = [...fixture.thread].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    const firstStaffIx = sorted.findIndex((m) => m.role === 'staff')
-    if (firstStaffIx === -1) {
-      unusable.push({ file, reason: 'no staff reply to compare against' })
+    const sorted = [...fixture.thread].sort(
+      (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
+    )
+    // Cut point: the first staff reply that ANSWERS a customer message — i.e.
+    // the first staff message with at least one customer message before it.
+    // (Threads can open with an outbound staff email; those earlier staff
+    // messages become input context, not the reply under test.)
+    const firstCustomerIx = sorted.findIndex((m) => m.role === 'customer')
+    if (firstCustomerIx === -1) {
+      unusable.push({ file, reason: 'no customer message in thread' })
       continue
     }
-    const inputThread = sorted.slice(0, firstStaffIx)
-    if (!inputThread.some((m) => m.role === 'customer')) {
-      unusable.push({ file, reason: 'no customer message before the first staff reply' })
+    const replyIx = sorted.findIndex((m, ix) => ix > firstCustomerIx && m.role === 'staff')
+    if (replyIx === -1) {
+      unusable.push({ file, reason: 'no staff reply after a customer message' })
       continue
     }
+    const inputThread = sorted.slice(0, replyIx)
     cases.push({
       fixture,
       input: {
@@ -93,7 +100,7 @@ function loadCases(): { cases: BacktestCase[]; unusable: { file: string; reason:
         customerFirstName: fixture.customerFirstName,
         thread: inputThread,
       },
-      actualReply: sorted[firstStaffIx],
+      actualReply: sorted[replyIx],
     })
   }
   return { cases, unusable }
