@@ -580,7 +580,7 @@ export default function CustomerProofPage() {
       !actionEarlierVersionAcked
     ) {
       setActionError(
-        'Please confirm you understand you are approving an earlier version.',
+        'Please confirm you understand you are approving a version other than the current one.',
       )
       return
     }
@@ -2801,7 +2801,7 @@ export default function CustomerProofPage() {
                 <div className="order-3 lg:order-none flex flex-col gap-3 min-w-0">
                   {/* Header band — ONE persistent element for both
                       states, so React keeps the same DOM node and the
-                      amber earlier-draft treatment cross-fades in via
+                      amber non-current-version treatment cross-fades in via
                       transition-colors instead of a new banner popping
                       into flow and shoving the strip + artwork down.
                       Geometry (padding, border width, type size, the
@@ -2843,8 +2843,8 @@ export default function CustomerProofPage() {
                           ].join(' ')}
                         >
                           {onLatest
-                            ? "You're viewing the latest version. Tap an earlier draft to compare."
-                            : `You're looking at an earlier draft (v${activeVersion.version_number}, ${fmtDate(activeVersion.created_at)}).`}
+                            ? "You're viewing the current version. Tap another version to compare."
+                            : `You're viewing v${activeVersion.version_number} (${fmtDate(activeVersion.created_at)}) — this isn't the current version.`}
                         </span>
                         {!onLatest && latestVersion && (
                           <button
@@ -2852,7 +2852,7 @@ export default function CustomerProofPage() {
                             onClick={() => setActiveVersion(latestVersion)}
                             className="sm:ml-auto text-[13px] leading-5 font-medium text-ink underline underline-offset-2 decoration-ink/40 hover:decoration-ink whitespace-nowrap"
                           >
-                            Back to latest (v{latestVersion.version_number})
+                            Back to current (v{latestVersion.version_number})
                           </button>
                         )}
                       </div>
