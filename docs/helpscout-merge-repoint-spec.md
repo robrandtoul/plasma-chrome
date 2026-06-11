@@ -1,8 +1,10 @@
 # Help Scout merge → proof re-point (webhook)
 
-Status: **v1 shipped + tested; the convo.merged payload turned out NOT to embed
-the merge threads, so v2 fetches them from the Help Scout API. Awaiting a final
-confirmation test merge after the v2 deploy.**
+Status: **live and confirmed working in production (2026-06-11).** The
+convo.merged payload does NOT embed the merge threads, so the handler fetches
+them from the Help Scout API; two production test merges re-pointed correctly
+(including auto-healing an already-stranded proof on a redelivered event). The
+temporary diagnostic audit actions have been removed.
 
 ## Why
 
@@ -73,39 +75,35 @@ This still assumes the event fires for the **surviving target** (so its
 ever represents the deleted source instead, the API fetch 404s and the
 diagnostic row (below) captures `api_status` so it's obvious.
 
-## Diagnostics (because edge-function console logs aren't queryable)
+## Diagnostics
 
-The Supabase MCP exposes only request-level edge logs, not `console.log` output,
-so the handler routes its diagnostics to `audit_log` where they can be read by
-SQL:
+The Supabase MCP exposes only request-level edge logs, not `console.log` output.
+While proving this out, the handler routed temporary diagnostics to `audit_log`
+(`helpscout.merge_no_repoint` on the no-op path, `helpscout.webhook_unhandled_event`
+for unexpected event types) so they could be read by SQL. Both were **removed**
+once merge sync was confirmed in production. The only audit row a merge now writes
+is the clean `proof.helpscout_link_remapped` on an actual re-point; a no-op merge
+(most merges — no linked proof) writes a single `console.log` line, no row. See
+memory:feedback_supabase_edge_logs_no_console for the general lesson.
 
-- On the **no-op path** (a merge that re-pointed nothing) it writes one
-  `helpscout.merge_no_repoint` row with `{ embedded_source_ids, api_status,
-  api_thread_count, source_ids, payload_top_keys }`.
-- For an **unexpected event type** (not a merge, reply, or created/moved trigger
-  — e.g. a differently-named merge event) it writes one
-  `helpscout.webhook_unhandled_event` row with the event header.
+## Rollout (complete)
 
-Both are temporary diagnostic actions; remove them once merge sync is proven in
-production. The success path writes only the clean
-`proof.helpscout_link_remapped` rows.
+1. ✅ Deploy `helpscout-webhook`
+   (`supabase functions deploy helpscout-webhook --project-ref bjvinrzbdrwebylkmbwy`,
+   Homebrew `supabase`, per memory:feedback_proof_viewer_edge_deploy).
+2. ✅ `convo.merged` ticked on the Help Scout webhook. No new secret — same
+   signature + `PROOFS_HELPSCOUT_WEBHOOK_SECRET`. The handler also calls the Help
+   Scout API, so `HELPSCOUT_APP_ID` / `HELPSCOUT_APP_SECRET` must be set as
+   function secrets (already present — the reply senders use them; project-wide).
+3. ✅ Confirmed: two production test merges re-pointed a linked test proof
+   (`proof.helpscout_link_remapped` rows), including auto-healing a proof
+   stranded by an earlier failed merge on a redelivered event.
+4. ✅ Temporary diagnostic audit actions removed.
 
-## Rollout
-
-1. Deploy the function:
-   `supabase functions deploy helpscout-webhook --project-ref bjvinrzbdrwebylkmbwy`
-   (Homebrew `supabase`, per memory:feedback_proof_viewer_edge_deploy).
-2. In Help Scout, on the existing proofs webhook, **tick the `convo.merged`
-   event** (done in v1 rollout). No new secret — same signature +
-   `PROOFS_HELPSCOUT_WEBHOOK_SECRET`. v2 additionally calls the Help Scout API,
-   so `HELPSCOUT_APP_ID` / `HELPSCOUT_APP_SECRET` must be set as function secrets
-   (already present — the reply senders use them; secrets are project-wide).
-3. Confirmation test merge: link a test proof to a throwaway conversation, merge
-   that conversation into another (same customer — Help Scout only merges within
-   one email), confirm the proof re-points and a `proof.helpscout_link_remapped`
-   audit row appears. If it doesn't, read the `helpscout.merge_no_repoint` /
-   `helpscout.webhook_unhandled_event` diagnostic row to see why.
-4. Once proven, remove the two diagnostic audit actions.
+To reproduce a test: link a test proof to a throwaway conversation, merge that
+conversation into another **of the same customer** (Help Scout only merges within
+one email), then confirm the proof re-points and a `proof.helpscout_link_remapped`
+audit row appears.
 
 ## Security
 
