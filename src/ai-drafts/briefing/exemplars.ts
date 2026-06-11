@@ -105,8 +105,10 @@ Due to the setup costs involved, we typically don't produce fewer than 25 cards 
 I hope this information is helpful. Please don't hesitate to come back to me with any further questions.`,
   },
   {
+    // UK evidence in-thread -> free dispatch. Contrast with the next example.
     category: 'sample_request',
-    customer: 'Hello, would it be possible to receive a couple of samples of your metal cards before we place a larger order?',
+    customer:
+      'Hello, would it be possible to receive a couple of samples of your metal cards before we place a larger order? We are based in Manchester.',
     reply: `Hi Anja,
 
 Thanks for getting in touch.
@@ -114,6 +116,20 @@ Thanks for getting in touch.
 Yes, that's no problem at all, we'd be happy to send some samples out to you.
 
 Please could you send over the best postal address and we will get those on their way.`,
+  },
+  {
+    // No UK evidence (or clearly international) -> the samples page, where
+    // anyone can order a pack and cover the shipping.
+    category: 'sample_request',
+    customer:
+      'I am considering your cards for my business and would love to see the quality in person before ordering. Do you offer samples?',
+    reply: `Hi Preston,
+
+Thanks for getting in touch, and happy to help with that.
+
+The easiest route is to order a sample pack through our site, so it ships straight to you: https://www.plasmadesign.co.uk/order-samples
+
+Please let me know if any further information would help while you compare the options.`,
   },
   {
     // The route-to-Graphics handoff: design work is acknowledged warmly in

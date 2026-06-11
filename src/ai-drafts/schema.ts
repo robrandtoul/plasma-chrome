@@ -52,7 +52,8 @@ export const CLASSIFY_SCHEMA = {
     currency_hint: {
       type: 'string',
       enum: [...CURRENCY_VALUES, 'unknown'],
-      description: 'From explicit currency symbols, country clues, or the email domain. unknown if unclear.',
+      description:
+        "ONLY from explicit evidence in the thread: currency symbols or codes, a stated country/city/address, a phone country code, or an email/web domain (.co.uk, .com.au, .de...). With no such evidence you MUST answer 'unknown' — never guess a default.",
     },
   },
 } as const
