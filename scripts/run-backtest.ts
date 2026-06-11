@@ -15,10 +15,10 @@
 import { config as loadEnv } from 'dotenv'
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fetchGrounding } from '../src/ai-drafts/grounding'
-import { runPipeline, type PipelineInput } from '../src/ai-drafts/pipeline'
-import { normaliseBody } from '../src/ai-drafts/htmlText'
-import type { FixtureConversation, PipelineResult, ThreadMessage } from '../src/ai-drafts/types'
+import { fetchGrounding } from '../supabase/functions/_shared/aiDrafts/grounding.ts'
+import { runPipeline, type PipelineInput } from '../supabase/functions/_shared/aiDrafts/pipeline.ts'
+import { normaliseBody } from '../supabase/functions/_shared/aiDrafts/htmlText.ts'
+import type { FixtureConversation, PipelineResult, ThreadMessage } from '../supabase/functions/_shared/aiDrafts/types.ts'
 
 loadEnv()
 

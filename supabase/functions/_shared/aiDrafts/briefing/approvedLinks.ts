@@ -5,7 +5,7 @@
 // a plausible-but-invented page slug blocks instead of 404ing on a customer
 // (review item 11/13). Rob owns this list via sitePages.ts.
 
-import { SITE_PAGES } from './sitePages'
+import { SITE_PAGES } from './sitePages.ts'
 
 export interface ApprovedLink {
   prefix: string

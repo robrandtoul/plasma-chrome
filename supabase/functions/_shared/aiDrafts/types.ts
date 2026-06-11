@@ -2,7 +2,7 @@
 // The same core runs under two callers: the local backtest harness (Phase 1)
 // and, later, the drafting edge function (Phase 2).
 
-import { CATEGORY_VALUES, CONFIDENCE_VALUES, CURRENCY_VALUES } from './schema'
+import { CATEGORY_VALUES, CONFIDENCE_VALUES, CURRENCY_VALUES } from './schema.ts'
 
 // Single source of truth for the wire enums is schema.ts — these types derive
 // from the same tuples the JSON schemas spread, so drift cannot compile.

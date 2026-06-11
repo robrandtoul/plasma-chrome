@@ -12,8 +12,8 @@
 // Run via: pnpm tsx scripts/check-price-list-golden.ts
 
 import { config as loadEnv } from 'dotenv'
-import { checkPayloadAgainstGolden, summariseResults } from '../src/price-list/golden-master'
-import type { ApiPayload } from '../src/price-list/render'
+import { checkPayloadAgainstGolden, summariseResults } from '../src/price-list/golden-master.ts'
+import type { ApiPayload } from '../src/price-list/render.ts'
 
 loadEnv()
 

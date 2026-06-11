@@ -351,3 +351,74 @@ export async function hideThread(
     throw new HsError(resp.status, `Help Scout hide-thread error (${resp.status}): ${upstream}`)
   }
 }
+
+// ── AI draft pipeline additions (Phase 2) ────────────────────────────────────
+
+// Create a DRAFT reply: visible to the team in the conversation's reply
+// editor, never emailed until a human sends it. Returns the new thread id
+// from the Resource-ID header when Help Scout provides it.
+export async function createDraftReply(
+  token: string,
+  conversationId: number | string,
+  customerId: number,
+  userId: number,
+  text: string,
+): Promise<string | null> {
+  const resp = await fetch(`https://api.helpscout.net/v2/conversations/${conversationId}/reply`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ customer: { id: customerId }, user: userId, text, draft: true }),
+  })
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '<body read failed>')
+    throw new HsError(resp.status, `Help Scout draft create (${resp.status}): ${body}`)
+  }
+  return resp.headers.get('Resource-ID')
+}
+
+// Create an internal note (never customer-visible).
+export async function createNote(
+  token: string,
+  conversationId: number | string,
+  userId: number,
+  text: string,
+): Promise<string | null> {
+  const resp = await fetch(`https://api.helpscout.net/v2/conversations/${conversationId}/notes`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ user: userId, text }),
+  })
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '<body read failed>')
+    throw new HsError(resp.status, `Help Scout note create (${resp.status}): ${body}`)
+  }
+  return resp.headers.get('Resource-ID')
+}
+
+// Add a tag, preserving existing tags (the PUT endpoint replaces the set).
+export async function addConversationTag(
+  token: string,
+  conversationId: number | string,
+  existingTags: string[],
+  newTag: string,
+): Promise<void> {
+  if (existingTags.includes(newTag)) return
+  const resp = await fetch(`https://api.helpscout.net/v2/conversations/${conversationId}/tags`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ tags: [...existingTags, newTag] }),
+  })
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '<body read failed>')
+    throw new HsError(resp.status, `Help Scout tag update (${resp.status}): ${body}`)
+  }
+}

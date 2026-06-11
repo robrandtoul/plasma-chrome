@@ -4,13 +4,14 @@
 // Deliberate choice — no service-role key needed locally, and the data is
 // exactly what a customer could already see. See docs/ai-draft-pipeline-spec.md.
 
+import { supabaseAnonKey, supabaseUrl } from './env.ts'
 import type {
   Currency,
   GroundingData,
   GroundingFigure,
   GroundingMaterial,
   MaterialLeadTime,
-} from './types'
+} from './types.ts'
 
 const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
 
@@ -38,10 +39,10 @@ interface Endpoint {
 }
 
 function endpoint(): Endpoint {
-  const url = process.env.VITE_SUPABASE_URL
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY
+  const url = supabaseUrl()
+  const anonKey = supabaseAnonKey()
   if (!url || !anonKey) {
-    throw new Error('grounding: VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY missing from env')
+    throw new Error('grounding: Supabase URL / anon key missing from env')
   }
   return { url, anonKey }
 }

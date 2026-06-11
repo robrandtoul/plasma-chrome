@@ -2,18 +2,18 @@
 // Two callers share this: the backtest harness (Phase 1) and the drafting
 // edge function (Phase 2). See docs/ai-draft-pipeline-spec.md.
 
-import { callClassify, callDraft } from './anthropic'
-import { buildAllowedFigures, runGuardrails, threadUrlSet } from './guardrails'
-import { sliceGrounding } from './grounding'
+import { callClassify, callDraft } from './anthropic.ts'
+import { buildAllowedFigures, runGuardrails, threadUrlSet } from './guardrails.ts'
+import { sliceGrounding } from './grounding.ts'
 import {
   buildClassifySystem,
   buildClassifyUser,
   buildDraftSystem,
   buildDraftUser,
-} from './prompts'
-import type { ClassifyResult, GroundingData, PipelineResult, ThreadMessage } from './types'
-import { PILOT_CATEGORIES } from './types'
-import { normaliseBody } from './htmlText'
+} from './prompts.ts'
+import type { ClassifyResult, GroundingData, PipelineResult, ThreadMessage } from './types.ts'
+import { PILOT_CATEGORIES } from './types.ts'
+import { normaliseBody } from './htmlText.ts'
 
 // The website's artwork-request form has a fixed structure; submissions are
 // Graphics work and the auto-responder already acknowledged them, so they
