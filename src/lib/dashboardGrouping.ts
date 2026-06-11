@@ -12,6 +12,7 @@ export type NeedsAttentionRule =
   | 'viewed_not_actioned'
   | 'approaching_dormant'
   | 'stuck_in_progress'
+  | 'approved_earlier_version'
 
 export interface DashboardProject {
   proof_id: string
@@ -47,7 +48,7 @@ export interface DashboardProject {
   latest_non_view_event_type: 'approve' | 'request_changes' | 'designer_override_approve' | null
   current_version_viewed_at: string | null
   rule_code: NeedsAttentionRule | null
-  rule_meta: { days?: number } | null
+  rule_meta: { days?: number; version?: number } | null
   snooze_rule_code: NeedsAttentionRule | null
   snoozed_until: string | null
   snooze_note: string | null
@@ -178,7 +179,7 @@ export interface BucketInput {
   latest_non_view_event_at: string | null
   version_created_at: string | null
   rule_code: NeedsAttentionRule | null
-  rule_meta: { days?: number } | null
+  rule_meta: { days?: number; version?: number } | null
   snoozed_until: string | null
   // Help Scout reply activity (000208) — used by the customer_replied
   // bucket to detect a customer who responded by email rather than via

@@ -27,6 +27,8 @@ export function attentionReason(code: NeedsAttentionRule, days: number | undefin
       return `Approaching dormant — ${days ?? '—'} days since last activity`
     case 'stuck_in_progress':
       return `Stuck in progress — no activity for ${days ?? '—'} days`
+    case 'approved_earlier_version':
+      return 'Customer approved an earlier version — current version not approved'
   }
 }
 
@@ -49,6 +51,8 @@ export function attentionResolution(code: NeedsAttentionRule): string {
       return 'Ping the customer before the proof auto-marks dormant.'
     case 'stuck_in_progress':
       return "Check in with the customer, or close the proof out if it's dead."
+    case 'approved_earlier_version':
+      return 'The customer approved a superseded version. Check with them, then get them to approve the current version — or open the approved version and “Set as current” if that’s the one they want.'
   }
 }
 
@@ -77,6 +81,11 @@ export function nudgeTemplateFor(code: NeedsAttentionRule): NudgeTemplateId | nu
     case 'stuck_in_progress':   return 'nudge_stuck_in_progress'
     case 'request_changes_no_version':
     case 'helpscout_follow_up_tag':
+    // approved_earlier_version → the fix is a designer reconciliation
+    // (re-approve the current version, or promote the approved one),
+    // not a customer nudge. Resolve popover falls through to snooze +
+    // the resolution copy.
+    case 'approved_earlier_version':
       return null
   }
 }
