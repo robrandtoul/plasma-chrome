@@ -25,7 +25,7 @@ import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, openDesignerPreview } from '../lib/customerProofUrl'
 // QuoteLink now lives inside DesignerChrome (PR 31).
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
-import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal } from 'lucide-react'
+import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle } from 'lucide-react'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -1318,6 +1318,63 @@ export default function ProofDetailPage() {
     ? 'bg-ink hover:opacity-90 text-on-ink'
     : 'bg-in-stock hover:opacity-90 text-on-ink'
 
+  // "Approved on an earlier version" surfacing. A customer can step
+  // back to an older version in the selector and approve it (after
+  // ticking the earlier-version acknowledgement). That approval lands
+  // on the non-current version and never finalizes the proof — the
+  // current version stays unapproved, so the proof sits in_progress
+  // and the approval looks like it did nothing. Detect it and show a
+  // clear banner so the designer isn't left guessing why "approved"
+  // didn't stick. Suppressed once the proof is fully approved (the
+  // approved state wins) or when there's no current version.
+  const staleApprovalSummary = (() => {
+    if (isApproved || !currentVersion) return null
+    // Names already approved on the current version (carried forward
+    // or re-approved) aren't stranded — exclude them.
+    const approvedOnCurrent = new Set(
+      approvals
+        .filter((a) => a.proof_version_id === currentVersion.id && a.state === 'approved')
+        .map((a) => a.name),
+    )
+    const stranded = approvals.filter(
+      (a) =>
+        a.state === 'approved' &&
+        a.proof_version_id !== currentVersion.id &&
+        !approvedOnCurrent.has(a.name),
+    )
+    if (stranded.length === 0) return null
+    const byVersion = new Map<
+      string,
+      { versionNumber: number; material: string | null; names: string[] }
+    >()
+    for (const a of stranded) {
+      const v = versions.find((x) => x.id === a.proof_version_id)
+      if (!v) continue
+      const entry = byVersion.get(v.id) ?? {
+        versionNumber: v.version_number,
+        material: v.material_display || null,
+        names: [],
+      }
+      const label = a.name === SHARED_APPROVAL_KEY ? 'Shared artwork' : a.name
+      if (!entry.names.includes(label)) entry.names.push(label)
+      byVersion.set(v.id, entry)
+    }
+    if (byVersion.size === 0) return null
+    return {
+      versions: [...byVersion.values()].sort((x, y) => y.versionNumber - x.versionNumber),
+      current: {
+        versionNumber: currentVersion.version_number,
+        material: currentVersion.material_display || null,
+      },
+    }
+  })()
+
+  // Joins a list of names British-style: "A", "A and B", "A, B and C".
+  const joinNames = (names: string[]): string =>
+    names.length <= 1
+      ? names[0] ?? ''
+      : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+
   return (
     <DesignerChrome active="proofs">
     <div className="min-h-dvh bg-canvas">
@@ -1628,6 +1685,40 @@ export default function ProofDetailPage() {
           {/* Hidden input for clipboard fallback. */}
           <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
         </section>
+
+        {/* "Approved on an earlier version" warning. Surfaces the
+            silent dead-end where a customer approved a superseded
+            version while the current version is still unapproved, so
+            the proof never finalizes. */}
+        {staleApprovalSummary && (
+          <section className="mb-8 rounded-2xl border border-low bg-low-soft p-5">
+            <div className="flex items-start gap-3">
+              <AlertTriangle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-low" />
+              <div className="min-w-0 text-[13px] leading-[1.6] text-ink-soft">
+                <p className="font-semibold text-ink">Customer approved an earlier version</p>
+                <p className="mt-1">
+                  {staleApprovalSummary.versions.map((v, i) => (
+                    <span key={v.versionNumber}>
+                      {i > 0 && '; '}
+                      {joinNames(v.names)} approved <strong>v{v.versionNumber}</strong>
+                      {v.material ? ` (${v.material})` : ''}
+                    </span>
+                  ))}
+                  , but <strong>v{staleApprovalSummary.current.versionNumber}</strong>
+                  {staleApprovalSummary.current.material
+                    ? ` (${staleApprovalSummary.current.material})`
+                    : ''}{' '}
+                  is the current version and hasn’t been approved.
+                </p>
+                <p className="mt-1.5 text-ink-mute">
+                  The proof won’t show as approved until the current version is approved. The
+                  customer may be choosing the earlier design — check with them, or open that
+                  version and “Set as current” if it’s the one they want.
+                </p>
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* Amber Internal metadata panel retired in PR 33. Help Scout
             link + Change affordance now live in the header card's
@@ -2290,6 +2381,21 @@ export default function ProofDetailPage() {
                             Custom quote
                           </span>
                         )}
+                        {/* A customer approval on a non-current
+                            version is otherwise invisible here (the
+                            row just reads "Archived"). Flag it so the
+                            stranded sign-off is spottable at a glance. */}
+                        {!v.is_current &&
+                          approvals.some(
+                            (a) => a.proof_version_id === v.id && a.state === 'approved',
+                          ) && (
+                            <span
+                              className="pill"
+                              style={{ color: 'var(--c-in-stock)', backgroundColor: 'var(--c-in-stock-soft)' }}
+                            >
+                              Customer approved
+                            </span>
+                          )}
                         {/* View-state dot — preserves the existing
                             three-state semantic at a glance. */}
                         <span
