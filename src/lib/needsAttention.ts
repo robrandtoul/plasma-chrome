@@ -28,7 +28,7 @@ export function attentionReason(code: NeedsAttentionRule, days: number | undefin
     case 'stuck_in_progress':
       return `Stuck in progress — no activity for ${days ?? '—'} days`
     case 'approved_earlier_version':
-      return 'Customer approved an earlier version — current version not approved'
+      return 'Customer approved a non-current version — current version not approved'
   }
 }
 
@@ -52,7 +52,7 @@ export function attentionResolution(code: NeedsAttentionRule): string {
     case 'stuck_in_progress':
       return "Check in with the customer, or close the proof out if it's dead."
     case 'approved_earlier_version':
-      return 'The customer approved a superseded version. Check with them, then get them to approve the current version — or open the approved version and “Set as current” if that’s the one they want.'
+      return 'The customer approved a version that isn’t the current one. Check with them, then get them to approve the current version — or open the approved version and “Set as current” if that’s the one they want.'
   }
 }
 

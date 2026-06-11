@@ -1695,7 +1695,7 @@ export default function ProofDetailPage() {
             <div className="flex items-start gap-3">
               <AlertTriangle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-low" />
               <div className="min-w-0 text-[13px] leading-[1.6] text-ink-soft">
-                <p className="font-semibold text-ink">Customer approved an earlier version</p>
+                <p className="font-semibold text-ink">Customer approved a non-current version</p>
                 <p className="mt-1">
                   {staleApprovalSummary.versions.map((v, i) => (
                     <span key={v.versionNumber}>
@@ -1712,7 +1712,7 @@ export default function ProofDetailPage() {
                 </p>
                 <p className="mt-1.5 text-ink-mute">
                   The proof won’t show as approved until the current version is approved. The
-                  customer may be choosing the earlier design — check with them, or open that
+                  customer may be choosing that design — check with them, or open that
                   version and “Set as current” if it’s the one they want.
                 </p>
               </div>

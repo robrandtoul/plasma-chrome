@@ -443,11 +443,11 @@ export function ActionPanel({
                   and QR ticks. */}
               {isApprove && isEarlierVersion && (
                 <div className="mt-1 flex flex-col gap-3 rounded-[10px] bg-low-soft border border-low px-4 py-4">
-                  <Pill colour="low">Earlier version</Pill>
+                  <Pill colour="low">Not the current version</Pill>
                   <p className="text-[14px] leading-[1.55] text-ink">
                     {earlierVersionNumber != null && latestVersionNumber != null
-                      ? `You are approving version ${earlierVersionNumber}. Version ${latestVersionNumber} is the most recent.`
-                      : 'You are approving an earlier version. A more recent version exists.'}
+                      ? `You are approving version ${earlierVersionNumber}. Version ${latestVersionNumber} is the current version.`
+                      : 'You are approving a version other than the current one.'}
                   </p>
                   <CheckboxRow
                     checked={actionEarlierVersionAcked}
@@ -455,8 +455,8 @@ export function ActionPanel({
                     onChange={setActionEarlierVersionAcked}
                     label={
                       earlierVersionNumber != null
-                        ? `I understand I am approving version ${earlierVersionNumber}, not the latest`
-                        : 'I understand I am approving an earlier version, not the latest'
+                        ? `I understand I am approving version ${earlierVersionNumber}, not the current version`
+                        : 'I understand I am approving a version other than the current one'
                     }
                   />
                 </div>

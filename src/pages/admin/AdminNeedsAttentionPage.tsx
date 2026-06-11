@@ -126,8 +126,8 @@ const RULE_SPECS: RuleSpec[] = [
   },
   {
     code: 'approved_earlier_version',
-    label: 'Customer approved an earlier version',
-    description: 'Fires when a customer approved a superseded version (via the version selector) while the current version is still unapproved — the proof never finalizes and the sign-off would otherwise be invisible. No threshold: fires as soon as the mismatch exists.',
+    label: 'Customer approved a non-current version',
+    description: 'Fires when a customer approved a version that is not the current one (via the version selector) while the current version is still unapproved — the proof never finalizes and the sign-off would otherwise be invisible. No threshold: fires as soon as the mismatch exists.',
     hasThreshold: false,
     hasCalendarToggle: false,
   },
