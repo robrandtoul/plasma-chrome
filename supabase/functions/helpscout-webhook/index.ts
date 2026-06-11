@@ -11,6 +11,10 @@
 //   * convo.created                → triggers the AI draft pipeline
 //   * convo.moved                  → triggers the AI draft pipeline (catches
 //                                    Graphics → Customer Support handoffs)
+//   * convo.merged                 → re-points any proof linked to the now-deleted
+//                                    source conversation onto the surviving target,
+//                                    so reminders/replies keep working after a merge.
+//                                    See docs/helpscout-merge-repoint-spec.md.
 // Reply-timestamp stamping runs ONLY for reply events — a created/moved
 // conversation must never fake a staff touch, or it would wrongly quiet the
 // needs-attention chase rules. The AI draft trigger is fire-and-forget
@@ -33,7 +37,8 @@
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY — service-role client (RLS bypass,
 //                                         writes scoped to helpscout_* columns).
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { logAudit } from '../_shared/audit.ts'
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined
 
@@ -41,6 +46,9 @@ declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | unde
 // trigger drafting.
 const REPLY_EVENT_RE = /reply/i
 const DRAFT_TRIGGER_RE = /^convo\.(created|moved|customer\.reply\.created)$/i
+// A merge deletes the source conversation and moves its threads into the
+// surviving target; any proof still holding the source id must be re-pointed.
+const MERGE_EVENT_RE = /^convo\.merged$/i
 
 // Fire-and-forget trigger of the ai-draft worker. Failures are logged, never
 // surfaced — drafting is an enhancement, the webhook's stamping contract
@@ -127,6 +135,101 @@ function replyDirection(eventHeader: string | null, payload: Record<string, unkn
   return 'staff'
 }
 
+// Handle a `convo.merged` event. Help Scout records a merge on the surviving
+// (target) conversation: each thread moved in from the deleted source keeps a
+// `merged` line-item whose action.associatedEntities.originalConversation names
+// that source. We read those source ids out of the payload's embedded threads
+// and re-point every proof still linked to a source onto this target — the link
+// the proof holds is now a dead id that 404s on every reminder/reply.
+//
+// Defensive: a single merge moves several threads, so the same source id appears
+// on multiple line-items — dedupe. Matching proofs by the conversation column
+// (not proof id) moves every proof sharing the dead id together. The whole thing
+// is idempotent: re-points only fire for source ids that still match a proof, so
+// a redelivered event (or old merge line-items in the thread list) is a no-op.
+//
+// If the payload carries no merge line-items (e.g. Help Scout's merge payload
+// turns out to represent the source, or omits embedded threads), we log the
+// shape and ack — no guessing. Confirm the real payload with a test merge during
+// rollout; see docs/helpscout-merge-repoint-spec.md.
+async function handleMerge(
+  admin: SupabaseClient,
+  targetConversationId: number | string,
+  payload: Record<string, unknown>,
+): Promise<Response> {
+  const targetId = String(targetConversationId)
+  const threads =
+    (payload?._embedded as { threads?: Array<Record<string, unknown>> } | undefined)?.threads
+
+  const sourceIds = new Set<string>()
+  if (Array.isArray(threads)) {
+    for (const t of threads) {
+      const action = t?.action as
+        | { type?: string; associatedEntities?: { originalConversation?: number | string } }
+        | undefined
+      if (action?.type === 'merged') {
+        const oc = action.associatedEntities?.originalConversation
+        if (oc != null) {
+          const s = String(oc)
+          if (s && s !== targetId) sourceIds.add(s)
+        }
+      }
+    }
+  }
+
+  if (sourceIds.size === 0) {
+    console.log('[helpscout-webhook] merge event with no embedded source ids', {
+      targetId,
+      hasEmbeddedThreads: Array.isArray(threads),
+      threadCount: Array.isArray(threads) ? threads.length : 0,
+    })
+    return json({ ok: true, merged: true, repointed: 0, note: 'no source ids in payload' })
+  }
+
+  const targetUrl = `https://secure.helpscout.net/conversation/${targetId}`
+  let repointed = 0
+  for (const sourceId of sourceIds) {
+    const { data, error } = await admin
+      .from('proofs')
+      .update({
+        helpscout_conversation_id: targetId,
+        helpscout_conversation_url: targetUrl,
+      })
+      .eq('helpscout_conversation_id', sourceId)
+      .select('id')
+    if (error) {
+      console.error('[helpscout-webhook] merge re-point failed', {
+        sourceId,
+        targetId,
+        error: error.message,
+      })
+      continue
+    }
+    const rows = (data ?? []) as Array<{ id: string }>
+    for (const row of rows) {
+      repointed++
+      await logAudit(admin, {
+        actorLabel: 'Help Scout (merge sync)',
+        action: 'proof.helpscout_link_remapped',
+        targetType: 'proof',
+        targetId: row.id,
+        beforeValue: { helpscout_conversation_id: sourceId },
+        afterValue: { helpscout_conversation_id: targetId, helpscout_conversation_url: targetUrl },
+        metadata: { reason: 'helpscout_conversation_merged', event: 'convo.merged' },
+      })
+    }
+    if (rows.length > 0) {
+      console.log('[helpscout-webhook] merge re-pointed proofs', {
+        sourceId,
+        targetId,
+        count: rows.length,
+      })
+    }
+  }
+
+  return json({ ok: true, merged: true, repointed })
+}
+
 async function handle(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
@@ -173,6 +276,12 @@ async function handle(req: Request): Promise<Response> {
   })
 
   const eventHeader = req.headers.get('x-helpscout-event') ?? ''
+
+  // Merge re-point: stands on its own (not a reply, must not trigger drafting).
+  // Heals proofs whose linked conversation was merged away before they 404.
+  if (MERGE_EVENT_RE.test(eventHeader)) {
+    return await handleMerge(admin, conversationId, payload)
+  }
 
   // AI draft trigger: created / moved / customer-reply conversations go to
   // the drafting worker, which gates on mailbox + mode + dedupe itself.
