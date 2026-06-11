@@ -16,7 +16,7 @@ import {
 import { htmlToText, looksLikeHtml, normaliseBody } from './htmlText.ts'
 import { renderThread } from './prompts.ts'
 import { matchMaterials, type GroundingSlice } from './grounding.ts'
-import { isArtworkFormSubmission } from './pipeline.ts'
+import { isArtworkFormSubmission, isAutomatedNotification } from './pipeline.ts'
 import { latestCustomerThreadId, mapThreads } from './hsMap.ts'
 import type { GroundingData, GroundingMaterial, ThreadMessage } from './types.ts'
 
@@ -351,6 +351,25 @@ const laterTurn: ThreadMessage[] = [
   { role: 'customer', createdAt: '3', author: 'Kevin', body: 'Approved! What do I owe you?' },
 ]
 check('later turn in same conversation NOT pre-gated', !isArtworkFormSubmission(laterTurn))
+
+// ── Automated-notification pre-filter (cost lever) ───────────────────────────
+
+const oneInbound: ThreadMessage[] = [{ role: 'customer', createdAt: '1', author: 'X', body: 'body' }]
+check('payment-received subject filtered', isAutomatedNotification('Payment of $1,948.90 Received', 'billing@plasmadesign.co.uk', oneInbound))
+check("you've-paid subject filtered", isAutomatedNotification("You've paid £11.95", 'x@example.com', oneInbound))
+check('worldpay transaction subject filtered', isAutomatedNotification('Worldpay CARD transaction Confirmation', 'x@example.com', oneInbound))
+check('squarespace order alert filtered', isAutomatedNotification('A New Order has Arrived (104568)', 'orders@squarespace.com', oneInbound))
+check('no-reply sender filtered', isAutomatedNotification('Anything at all', 'no-reply@somecompany.com', oneInbound))
+check('dpd domain filtered', isAutomatedNotification("We're expecting your parcel", 'track@dpd.co.uk', oneInbound))
+check('genuine quote NOT filtered', !isAutomatedNotification('Metal cards quote please', 'jane@acme.com', oneInbound))
+check('genuine "invoice copy" request NOT filtered', !isAutomatedNotification('Can I get a copy of my invoice?', 'jane@acme.com', oneInbound))
+check(
+  'notification-shaped subject but real exchange NOT filtered',
+  !isAutomatedNotification('Payment received — a question', 'jane@acme.com', [
+    ...oneInbound,
+    { role: 'staff', createdAt: '2', author: 'Chris', body: 'reply' },
+  ]),
+)
 
 // ── hsMap: Help Scout thread mapping ─────────────────────────────────────────
 

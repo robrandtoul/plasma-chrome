@@ -186,6 +186,8 @@ async function main(): Promise<void> {
 
   let totalIn = results.reduce((n, r) => n + (r.pipeline?.usage.inputTokens ?? 0), 0)
   let totalOut = results.reduce((n, r) => n + (r.pipeline?.usage.outputTokens ?? 0), 0)
+  let totalCacheWrite = results.reduce((n, r) => n + (r.pipeline?.usage.cacheWriteTokens ?? 0), 0)
+  let totalCacheRead = results.reduce((n, r) => n + (r.pipeline?.usage.cacheReadTokens ?? 0), 0)
 
   for (const [i, c] of cases.entries()) {
     process.stdout.write(`[${i + 1}/${cases.length}] ${c.fixture.conversationId} "${c.fixture.subject.slice(0, 50)}" ... `)
@@ -205,6 +207,8 @@ async function main(): Promise<void> {
         const pipeline = await runPipeline(c.input, grounding)
         totalIn += pipeline.usage.inputTokens
         totalOut += pipeline.usage.outputTokens
+        totalCacheWrite += pipeline.usage.cacheWriteTokens
+        totalCacheRead += pipeline.usage.cacheReadTokens
         results.push({ ...base, pipeline, error: null })
         console.log(`${pipeline.outcome} (${pipeline.classification.category}/${pipeline.classification.confidence})`)
       } catch (err) {
@@ -234,7 +238,12 @@ async function main(): Promise<void> {
   const model = process.env.AI_DRAFT_MODEL || 'claude-opus-4-8'
   const [inRate, outRate] = PRICING[model] ?? PRICING['claude-opus-4-8']
   const pricingNote = PRICING[model] ? model : `unknown model ${model} — Opus 4.8 rates assumed`
-  const costUsd = (totalIn / 1e6) * inRate + (totalOut / 1e6) * outRate
+  // Cache reads bill ~0.1x input; cache writes ~1.25x input.
+  const costUsd =
+    (totalIn / 1e6) * inRate +
+    (totalOut / 1e6) * outRate +
+    (totalCacheRead / 1e6) * inRate * 0.1 +
+    (totalCacheWrite / 1e6) * inRate * 1.25
   writeFileSync(join(reportDir, 'results.json'), JSON.stringify(results, null, 2))
   writeFileSync(join(reportDir, 'report.html'), buildHtmlReport(results, costUsd, pricingNote))
 
@@ -245,7 +254,7 @@ async function main(): Promise<void> {
   }
   console.log('\n── Summary ──')
   for (const [k, v] of [...tally.entries()].sort()) console.log(`  ${k}: ${v}`)
-  console.log(`  tokens: ${totalIn.toLocaleString()} in / ${totalOut.toLocaleString()} out (≈ $${costUsd.toFixed(2)} at ${pricingNote} rates)`)
+  console.log(`  tokens: ${totalIn.toLocaleString()} in / ${totalOut.toLocaleString()} out · cache ${totalCacheRead.toLocaleString()} read / ${totalCacheWrite.toLocaleString()} write (≈ $${costUsd.toFixed(2)} at ${pricingNote} rates)`)
   console.log(`\nReport: ${join(reportDir, 'report.html')}`)
 }
 

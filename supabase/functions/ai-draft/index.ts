@@ -111,7 +111,7 @@ Deno.serve(async (req) => {
       status?: string
       subject?: string
       tags?: { tag?: string }[]
-      primaryCustomer?: { id?: number; first?: string }
+      primaryCustomer?: { id?: number; first?: string; email?: string }
     }
     if (conv.mailboxId !== CUSTOMER_SUPPORT_MAILBOX_ID) {
       return json({ ok: true, skipped: 'not customer support mailbox' })
@@ -157,6 +157,7 @@ Deno.serve(async (req) => {
         conversationId,
         subject: conv.subject ?? '(no subject)',
         customerFirstName: conv.primaryCustomer?.first ?? '',
+        senderEmail: conv.primaryCustomer?.email,
         thread,
       },
       grounding,
@@ -199,6 +200,8 @@ Deno.serve(async (req) => {
         note_warnings: result.noteWarnings,
         usage_input: result.usage.inputTokens,
         usage_output: result.usage.outputTokens,
+        usage_cache_write: result.usage.cacheWriteTokens,
+        usage_cache_read: result.usage.cacheReadTokens,
         hs_draft_thread_id: hsDraftThreadId,
         hs_note_thread_id: hsNoteThreadId,
         completed_at: new Date().toISOString(),
