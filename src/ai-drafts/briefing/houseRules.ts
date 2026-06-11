@@ -44,6 +44,10 @@ export const HOUSE_RULES: string[] = [
   // flagged in the note for the reviewer, never asserted.
   'Known process constraints: cut-throughs in carbon fibre are CNC machined with a 0.5 mm bit, so the minimum internal radius is 1 mm — very fine cut-through detail may need enlarging. For any process constraint you are not certain of (minimum QR size per print method, minimum line weights), do not assert a figure: answer what you can and flag the specific check for the reviewer in the internal note.',
 
+  'Oleophobic (anti-fingerprint) coating: available on stainless steel, gold metal, copper and gun metal only, and not possible on mirror finishes. It is most effective on bare stainless steel, which is unplated and shows fingerprints most readily. Mirror is the most fingerprint-prone finish but also the easiest to wipe clean — worth saying when a customer weighs the two. It adds £0.10 per card ($0.10 / €0.10). Quote it as a per-card rate rather than a computed line total. Suggest it when fingerprint concerns come up on those metals.',
+  'Minimum reliable QR code size genuinely depends on the density of the code and needs a human eye — never assert a figure. Answer what you can and add a bracketed [CHECK ARTWORK: QR size/density viable for <process>?] gap for the reviewer.',
+  'For detailed artwork limitations (line weights, margins, file setup), point customers to the templates page on our site. Treat its specifics as indicative when reasoning — where a limitation is critical to the customer\'s decision, flag it in the internal note for the reviewer to confirm rather than asserting from the docs.',
+
   // Capabilities
   'On metal cards: etching, cut-throughs (openwork), and double-sided printing are all possible, including combined on the same card. Printed inks on metal have a slightly textured matte feel. Designs can be printed onto bare steel with a white underlayer beneath CMYK, and a bare metal border can be left to show the material.',
   'QR codes are fine on any card and can link to a hosted digital vCard so customers add details straight to their phone; we can set that up.',
