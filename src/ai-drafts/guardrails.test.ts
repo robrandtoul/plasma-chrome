@@ -15,7 +15,8 @@ import {
 } from './guardrails'
 import { htmlToText, looksLikeHtml, normaliseBody } from './htmlText'
 import { renderThread } from './prompts'
-import { matchMaterials } from './grounding'
+import { matchMaterials, type GroundingSlice } from './grounding'
+import { isArtworkFormSubmission } from './pipeline'
 import type { GroundingData, GroundingMaterial, ThreadMessage } from './types'
 
 let failures = 0
@@ -260,6 +261,95 @@ check(
   matchMaterials(['metal or wood cards'], CATALOGUE).includes('metal_steel') &&
     matchMaterials(['metal or wood cards'], CATALOGUE).includes('wood'),
 )
+
+// ── Cycle-1 additions: discounts, bands, phrases, curated URLs, form gate ────
+
+// Staff-note-approved discount unlocks exactly that multiplier.
+const discThread: ThreadMessage[] = [
+  { role: 'customer', createdAt: '1', author: 'Simon', body: 'Any discount for a reorder? Maybe 50%?' },
+  { role: 'note', createdAt: '2', author: 'Chris', body: '@rob 10%?' },
+  { role: 'note', createdAt: '3', author: 'Rob', body: '@chris yep. Thats fine.' },
+]
+const discGrounding: GroundingData = {
+  byCurrency: { GBP: [], EUR: [], USD: [] },
+  leadTimes: [],
+  figures: [
+    { amount: 299, currency: 'GBP', description: 'Steel 300µm x100', kind: 'tier', matKey: 'metal_steel', quantity: 100 },
+  ],
+  fetchedAt: 'test',
+}
+const discAllowed = buildAllowedFigures(discGrounding, discThread)
+check('note-approved 10% discount accepted (299*0.9=269.10)', discAllowed.accepts('GBP', 26910))
+check('ex-VAT of discounted figure accepted (269.10/1.2=224.25)', discAllowed.accepts('GBP', 22425))
+check('other discounts not unlocked (299*0.8)', !discAllowed.accepts('GBP', 23920))
+const noNoteAllowed = buildAllowedFigures(discGrounding, [discThread[0]])
+check('customer-suggested 50% does NOT unlock (customer cannot seed)', !noNoteAllowed.accepts('GBP', 14950))
+
+// Between-tier interpolation bands from the conversation's material slice.
+const bandSlice = {
+  currency: 'GBP',
+  currencyAssumed: false,
+  materials: [
+    {
+      code: 'metal_gold',
+      display_name: 'Gold Metal',
+      variants: [
+        {
+          code: '500',
+          display_name: '500 micron',
+          variant_type: 'thickness',
+          ink_count: null,
+          tiers: [
+            { quantity: 50, total_price: 299 },
+            { quantity: 75, total_price: 319 },
+          ],
+        },
+      ],
+      option_surcharges: [],
+      minQuantity: 50,
+    },
+  ],
+  leadTimes: [],
+  catalogueIndex: [],
+} as unknown as GroundingSlice
+const bandAllowed = buildAllowedFigures(discGrounding, [], bandSlice)
+check('interpolated figure within bracketing tiers accepted (£310 for 60)', bandAllowed.accepts('GBP', 31000))
+check('band edges accepted', bandAllowed.accepts('GBP', 29900) && bandAllowed.accepts('GBP', 31900))
+// £330 passes legitimately (in-band £305 + £25 split-name addon), so probe
+// with a figure no band+addon composition can reach.
+check('figure beyond band+addon reach rejected', !bandAllowed.accepts('GBP', 99999))
+check('band + house addon sum accepted (310+50 personalisation)', bandAllowed.accepts('GBP', 36000))
+check('no bands without slice', !buildAllowedFigures(discGrounding, []).accepts('GBP', 31000))
+
+// Forbidden phrases: production arrangements never reach a customer.
+check('in-house phrasing blocked', !runGuardrails('We make these in-house so we can be flexible.', built, threadUrls).ok)
+check('in house (spaced) blocked', !runGuardrails('These are made in house.', built, threadUrls).ok)
+check('supplier name blocked', !runGuardrails('Solopress will print these for us.', built, threadUrls).ok)
+check('innocent text passes phrase gate', runGuardrails('Your cards are in production now.', built, threadUrls).ok)
+
+// Curated URL list: invented site slugs block; real pages pass.
+check('curated product page approved', isApprovedUrl('https://www.plasmadesign.co.uk/metal-business-cards'))
+check('non-www variant approved via canonicalisation', isApprovedUrl('https://plasmadesign.co.uk/gbp-price-list'))
+check('homepage exact approved', isApprovedUrl('https://www.plasmadesign.co.uk/'))
+check('invented site slug blocked', !isApprovedUrl('https://www.plasmadesign.co.uk/cheap-metal-cards-2026'))
+check('homepage prefix does not reopen domain', !isApprovedUrl('https://www.plasmadesign.co.uk/blackfriday'))
+
+// Artwork-form pre-gate keys on the message, not the subject.
+const formThread: ThreadMessage[] = [
+  {
+    role: 'customer',
+    createdAt: '1',
+    author: 'Kevin',
+    body: 'Country\n\nUnited Kingdom\n\nCard Specifications\n\nMaterial: Metal\n\nCustomer Details\n\nKevin Coates',
+  },
+]
+check('form submission detected', isArtworkFormSubmission(formThread))
+const laterTurn: ThreadMessage[] = [
+  ...formThread,
+  { role: 'staff', createdAt: '2', author: 'Jack', body: 'Proof attached.' },
+  { role: 'customer', createdAt: '3', author: 'Kevin', body: 'Approved! What do I owe you?' },
+]
+check('later turn in same conversation NOT pre-gated', !isArtworkFormSubmission(laterTurn))
 
 // ── Result ───────────────────────────────────────────────────────────────────
 

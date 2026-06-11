@@ -18,14 +18,29 @@
 // to the allowed set — a customer cannot seed a price.
 //
 // URL GATE. Every URL — with scheme, www-prefixed, bare autolinkable domain,
-// or mailto:/tel:/data: — must prefix-match the approved-links list. Links
-// marked echoOnly (customer proof pages) additionally must already appear in
-// the inbound thread, so the model cannot fabricate a plausible proof URL.
+// or mailto:/tel:/data: — must match the approved-links list (curated real
+// site pages; no domain-wide prefix, so invented slugs block). Links marked
+// echoOnly (customer proof pages) additionally must already appear in the
+// inbound thread, so the model cannot fabricate a plausible proof URL.
+//
+// PHRASE GATE. Drafts must never reveal production arrangements: in-house
+// phrasing and supplier names block outright.
 
 import { APPROVED_LINKS } from './briefing/approvedLinks'
 import { HOUSE_RULES } from './briefing/houseRules'
+import type { GroundingSlice } from './grounding'
 import type { Currency, GroundingData, GuardrailVerdict, ThreadMessage } from './types'
 import { normaliseBody } from './htmlText'
+
+// Production arrangements are confidential (review item 9): in-house
+// phrasing and partner/supplier names must never reach a customer.
+const FORBIDDEN_PHRASES: { re: RegExp; label: string }[] = [
+  { re: /\bin[- ]house\b/i, label: 'production-location phrasing ("in-house")' },
+  { re: /solopress/i, label: 'supplier name' },
+  { re: /metallic\s+elephant/i, label: 'supplier name' },
+  { re: /\bqx\b/i, label: 'supplier name' },
+  { re: /\bdermid\b/i, label: 'supplier name' },
+]
 
 const SYMBOL_TO_CURRENCY: Record<string, Currency> = { '£': 'GBP', '€': 'EUR', $: 'USD' }
 const WORD_TO_CURRENCY: Record<string, Currency> = {
@@ -189,14 +204,28 @@ export function extractUrls(text: string): string[] {
   return urls
 }
 
+// Canonicalise before matching: lowercase, force the www host (both forms of
+// the site domain are equivalent), drop one trailing slash.
+function canonicalUrl(url: string): string {
+  return url
+    .toLowerCase()
+    .replace('://plasmadesign.co.uk', '://www.plasmadesign.co.uk')
+    .replace(/\/$/, '')
+}
+
 export function isApprovedUrl(url: string): boolean {
-  const lower = url.toLowerCase()
-  return APPROVED_LINKS.some((l) => lower.startsWith(l.prefix.toLowerCase()))
+  const candidate = canonicalUrl(url)
+  return APPROVED_LINKS.some((l) => {
+    const prefix = canonicalUrl(l.prefix)
+    return l.match === 'exact' ? candidate === prefix : candidate.startsWith(prefix)
+  })
 }
 
 function matchesEchoOnlyPrefix(url: string): boolean {
-  const lower = url.toLowerCase()
-  return APPROVED_LINKS.some((l) => l.echoOnly && lower.startsWith(l.prefix.toLowerCase()))
+  const candidate = canonicalUrl(url)
+  return APPROVED_LINKS.some(
+    (l) => l.echoOnly && candidate.startsWith(canonicalUrl(l.prefix)),
+  )
 }
 
 // ── Allowed-figure set ───────────────────────────────────────────────────────
@@ -220,6 +249,10 @@ export class AllowedFigures {
     EUR: new Map(),
     USD: new Map(),
   }
+  // Between-tier interpolation bands [lo, hi] for materials under discussion.
+  private readonly bands: Record<Currency, [number, number][]> = { GBP: [], EUR: [], USD: [] }
+  // Discount multipliers a staff note in the thread explicitly approved.
+  private discountPercents: number[] = []
 
   addTier(currency: Currency, pence: number, key?: string): void {
     if (pence <= 0) return
@@ -242,14 +275,29 @@ export class AllowedFigures {
     map.get(key)!.add(pence)
   }
 
-  // Level 0: standalone figure, or a semantically valid tier+addon sum.
+  addBand(currency: Currency, loPence: number, hiPence: number): void {
+    if (loPence > 0 && hiPence > loPence) this.bands[currency].push([loPence, hiPence])
+  }
+
+  setDiscountPercents(percents: number[]): void {
+    this.discountPercents = percents.filter((p) => p > 0 && p < 100)
+  }
+
+  private inBand(currency: Currency, pence: number): boolean {
+    return this.bands[currency].some(([lo, hi]) => pence >= lo && pence <= hi)
+  }
+
+  // Level 0: standalone figure, interpolation band, or a semantically valid
+  // tier+addon sum (the tier part may itself be an in-band interpolation).
   private accept0(currency: Currency, pence: number): boolean {
     if (this.tiers[currency].has(pence) || this.houseAddons[currency].has(pence)) return true
+    if (this.inBand(currency, pence)) return true
     for (const set of this.surchargesByKey[currency].values()) {
       if (set.has(pence)) return true
     }
     for (const addon of this.houseAddons[currency]) {
-      if (addon < pence && this.tiers[currency].has(pence - addon)) return true
+      if (addon >= pence) continue
+      if (this.tiers[currency].has(pence - addon) || this.inBand(currency, pence - addon)) return true
     }
     for (const [key, set] of this.surchargesByKey[currency]) {
       const rowTiers = this.tiersByKey[currency].get(key)
@@ -269,15 +317,33 @@ export class AllowedFigures {
     )
   }
 
+  // Core = level 0, or a staff-note-approved discount of a level-0 figure.
+  private acceptCore(currency: Currency, pence: number): boolean {
+    if (this.accept0(currency, pence)) return true
+    for (const p of this.discountPercents) {
+      const original = Math.round(pence / (1 - p / 100))
+      if (this.accept0Near(currency, original)) return true
+    }
+    return false
+  }
+
+  private acceptCoreNear(currency: Currency, pence: number): boolean {
+    return (
+      this.acceptCore(currency, pence) ||
+      this.acceptCore(currency, pence - 1) ||
+      this.acceptCore(currency, pence + 1)
+    )
+  }
+
   accepts(currency: Currency, pence: number): boolean {
     if (pence < 0) return false
-    if (this.accept0(currency, pence)) return true
+    if (this.acceptCore(currency, pence)) return true
     if (currency === 'GBP') {
       // VAT transforms: the draft figure may be inc-VAT of a known ex-VAT
-      // figure or ex-VAT of a known inc-VAT figure. ±1p only on the
-      // transformed value, to absorb rounding.
-      if (this.accept0Near('GBP', Math.round(pence * 1.2))) return true
-      if (this.accept0Near('GBP', Math.round(pence / 1.2))) return true
+      // figure or ex-VAT of a known inc-VAT figure (including discounted
+      // ones). ±1p only on the transformed value, to absorb rounding.
+      if (this.acceptCoreNear('GBP', Math.round(pence * 1.2))) return true
+      if (this.acceptCoreNear('GBP', Math.round(pence / 1.2))) return true
     }
     return false
   }
@@ -287,9 +353,12 @@ export class AllowedFigures {
   }
 }
 
+const NOTE_PERCENT_RE = /(\d{1,2})\s?%/g
+
 export function buildAllowedFigures(
   grounding: GroundingData,
   inputThread: ThreadMessage[],
+  slice?: GroundingSlice,
 ): AllowedFigures {
   const allowed = new AllowedFigures()
   for (const f of grounding.figures) {
@@ -308,13 +377,36 @@ export function buildAllowedFigures(
     }
   }
   // Figures STAFF already stated in the conversation (a previous quote, an
-  // internal note) are safe to repeat. Customer messages are untrusted input
-  // and must never write the allow-set — a customer cannot seed a price.
+  // internal note) are safe to repeat, and a percentage a staff note states
+  // ("10%?" ... "yep") unlocks exactly that discount multiplier. Customer
+  // messages are untrusted input and must never write the allow-set —
+  // a customer cannot seed a price or a discount.
+  const percents: number[] = []
   for (const message of inputThread) {
     if (message.role === 'customer') continue
-    for (const f of extractMoneyFigures(normaliseBody(message.body))) {
+    const body = normaliseBody(message.body)
+    for (const f of extractMoneyFigures(body)) {
       if (f.pence <= 0) continue
       for (const c of f.currencies) allowed.addTier(c, f.pence)
+    }
+    for (const m of body.matchAll(NOTE_PERCENT_RE)) {
+      percents.push(Number.parseInt(m[1], 10))
+    }
+  }
+  allowed.setDiscountPercents(percents)
+  // Between-tier interpolation bands for the materials under discussion
+  // (review item 4): any figure between two adjacent tier prices of a slice
+  // material is an acceptable interpolated quote.
+  if (slice) {
+    for (const material of slice.materials) {
+      for (const variant of material.variants) {
+        const sorted = [...variant.tiers].sort((a, b) => a.quantity - b.quantity)
+        for (let i = 0; i + 1 < sorted.length; i++) {
+          const lo = Math.round(Math.min(sorted[i].total_price, sorted[i + 1].total_price) * 100)
+          const hi = Math.round(Math.max(sorted[i].total_price, sorted[i + 1].total_price) * 100)
+          allowed.addBand(slice.currency, lo, hi)
+        }
+      }
     }
   }
   return allowed
@@ -350,6 +442,11 @@ export function runGuardrails(
         `figure ${figure.raw} does not reconcile against the pricing data (not a known figure, tier+add-on sum, or VAT conversion)`,
       )
     }
+  }
+
+  for (const { re, label } of FORBIDDEN_PHRASES) {
+    const m = draftBody.match(re)
+    if (m) reasons.push(`draft reveals production arrangements (${label}: "${m[0]}")`)
   }
 
   for (const url of extractUrls(draftBody)) {
