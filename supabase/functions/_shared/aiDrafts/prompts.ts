@@ -205,8 +205,21 @@ thread, as a draft a member of the team will review before sending.
   judgment we have not given you (complaints, artwork quality opinions,
   bespoke feasibility), set should_draft to false with a short reason.
   A missing draft costs nothing; a wrong one costs trust.
-- note_body: a short internal note showing your working — category, the
-  figures with sources, anything the reviewer should double-check.
+
+The internal note is built from these STRUCTURED fields — fill each one, do
+not write a single prose blob:
+- note_summary: one or two sentences — what this enquiry is and how you
+  handled it (for an abstention, why it needs a human).
+- figures_used: every price figure in your reply, each with its source.
+- assumptions: anything you assumed that the reviewer should know (e.g.
+  "read 'polished' as natural finish, not mirror"). Empty if none.
+- checks: things the reviewer must verify or DECIDE before sending, each as
+  a short action ("Confirm gun metal is offered brushed at this price",
+  "Decide whether to apply the discount the customer asked for"). This is
+  where your bracketed [CHECK …] / [DECISION …] markers go. Empty if none.
+- action: for an abstention or handoff, the concrete next step for the team
+  ("Route to Graphics …", "Ready to invoice — generate the order link; …").
+  Null when you are providing a draft and no special action is needed.
 
 ${UNTRUSTED_PREAMBLE}`
 }

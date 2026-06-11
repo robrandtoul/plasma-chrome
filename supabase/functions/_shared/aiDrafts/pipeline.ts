@@ -214,10 +214,12 @@ export async function runPipeline(
   const threadUrls = threadUrlSet(input.thread)
   const verdict = runGuardrails(draft.draft_body, allowed, threadUrls)
 
-  // Advisory pass over the internal note: warnings only, never blocking —
-  // legitimate working notes contain arithmetic outside the gate's
-  // transforms (unit prices, per-card breakdowns).
-  const noteVerdict = draft.note_body ? runGuardrails(draft.note_body, allowed, threadUrls) : { ok: true as const }
+  // Advisory: any self-reported figure that does not reconcile against the
+  // allowed set — surfaced to the reviewer, never blocking (the hard gate
+  // already ran on the draft body).
+  const noteWarnings = (draft.figures_used ?? [])
+    .filter((f) => !allowed.accepts(f.currency, Math.round(f.amount * 100)))
+    .map((f) => `self-reported figure ${f.amount} ${f.currency} (${f.source}) does not reconcile`)
 
   return {
     conversationId: input.conversationId,
@@ -227,7 +229,7 @@ export async function runPipeline(
     guardrails: verdict,
     outcome: verdict.ok ? 'drafted' : 'blocked',
     abstainOrBlockReason: verdict.ok ? null : verdict.reasons.join('; '),
-    noteWarnings: noteVerdict.ok ? [] : noteVerdict.reasons,
+    noteWarnings,
     usage,
   }
 }
