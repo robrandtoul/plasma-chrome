@@ -11,7 +11,8 @@ export interface SitePage {
 
 export const SITE_PAGES: SitePage[] = [
   // Pricing and process
-  { url: 'https://www.plasmadesign.co.uk/gbp-price-list', purpose: 'GBP price list' },
+  { url: 'https://www.plasmadesign.co.uk/price-list', purpose: 'price list (geolocating — sends the visitor to their currency page; the DEFAULT pricing link)' },
+  { url: 'https://www.plasmadesign.co.uk/gbp-price-list', purpose: 'GBP price list (only when deliberately targeting GBP)' },
   { url: 'https://www.plasmadesign.co.uk/euro-price-list', purpose: 'EUR price list' },
   { url: 'https://www.plasmadesign.co.uk/us-price-list', purpose: 'USD price list' },
   { url: 'https://www.plasmadesign.co.uk/turnaround-times', purpose: 'current lead times' },
