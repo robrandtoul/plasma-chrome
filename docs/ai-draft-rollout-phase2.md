@@ -71,17 +71,40 @@ applies anything to prod; Rob pastes/approves each step.
 
 ## Deferred to Phase 3 (build after live is stable)
 
-- Feedback loop: capture sent replies (`convo.agent.reply.created` already
-  arrives), diff against `draft_body`, edit-distance per category.
-- Admin Drafts panel: ledger stats, mode switch + per-category switches in
-  the UI, house-rules/exemplars editors (briefing graduates from repo files
-  to DB tables).
+- **Feedback loop (build first — it unlocks the headline metric):** capture
+  the reply the team actually sent (`convo.agent.reply.created` already
+  arrives at the webhook), store it against the draft, and compute an
+  edit-distance / "sent as-is | lightly edited | rewritten | discarded"
+  classification per row. Without this, the ledger can report *what* the
+  system decided but not *how good* the drafts were.
+- **Analytics (the evidence base for every graduation decision).** The ledger
+  is already collecting the raw material during shadow — category, confidence,
+  outcome, token + cache cost, and both timestamps — so these can chart over
+  history from day one. Metrics that change a decision, in priority order:
+  - *Acceptance rate per category* (needs the feedback loop): sent-unedited /
+    lightly-edited / rewritten / discarded. The headline number; drives which
+    categories are kept, extended, or (much later, on sustained evidence)
+    considered for auto-send.
+  - *Coverage / silence audit*: of genuine customer emails, the drafted vs
+    abstained vs skipped split, and where it stays silent — surfaces a
+    category it should help with but isn't.
+  - *Cost trend*: per-email cost, cache-hit rate, monthly spend (the
+    `usage_*` / `usage_cache_*` columns feed this directly).
+  - *Latency*: arrival → draft-ready (`created_at` → `completed_at`) — proves
+    the "draft waiting when you open the inbox" promise.
+  - *Health*: failure rate and error patterns, so a quietly-broken batch is
+    visible rather than mistaken for a quiet day.
+  Resist vanity metrics — the test for inclusion is "does this number change
+  what we do next?".
+- **Admin Drafts panel:** surfaces the analytics above; mode switch +
+  per-category switches in the UI; kill switch; house-rules/exemplars editors
+  (briefing graduates from repo files to DB tables).
 - Grounding enhancements from the review sessions: customer-context pack
   (past orders/materials/proofs + un-actioned-proof flags from the proofs
   schema), stock-control order status + DPD tracking, HS attachment metadata
   to the classifier, artwork image vision.
 - Weekly exemplar-promotion proposals; auto-send graduation discussion only
-  on sustained evidence.
+  on sustained evidence (read from the acceptance-rate analytics).
 
 ## Operational notes
 
