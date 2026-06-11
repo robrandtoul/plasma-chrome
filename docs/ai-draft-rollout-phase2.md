@@ -71,12 +71,44 @@ applies anything to prod; Rob pastes/approves each step.
 
 ## Deferred to Phase 3 (build after live is stable)
 
-- **Feedback loop (build first — it unlocks the headline metric):** capture
-  the reply the team actually sent (`convo.agent.reply.created` already
-  arrives at the webhook), store it against the draft, and compute an
-  edit-distance / "sent as-is | lightly edited | rewritten | discarded"
-  classification per row. Without this, the ledger can report *what* the
-  system decided but not *how good* the drafts were.
+- **Feedback loop (build first — it unlocks the headline metric).** Two
+  layers, deliberately separate:
+  - *Layer 1 — mechanical (the metric).* Capture the reply the team actually
+    sent (`convo.agent.reply.created` already arrives at the webhook), store
+    it against the draft, and compute an edit-distance / "sent as-is | lightly
+    edited | rewritten | discarded" classification per row. Cheap,
+    deterministic, no intelligence. Gives the acceptance number per category.
+  - *Layer 2 — semantic (the learning), on top of layer 1.* Periodically
+    (e.g. weekly), take the rows a human edited meaningfully, batch the
+    (draft → sent) pairs, and run an LLM pass that clusters them by what the
+    edits are *doing* — not by shared text — and proposes specific house-rule
+    or exemplar tweaks. This is the same kind of intelligence that writes the
+    drafts, turned around to read the corrections, so it catches a pattern
+    even when no two edits share a word ("the team keeps deleting the VAT line
+    on EUR quotes", "they keep softening hard refusals", "they keep trimming
+    the opening"). Pattern detection is fuzzy/semantic by design — exact-text
+    matching would detect almost nothing, since humans never edit identically.
+  - *Guard-rails on the learning (why a human stays in the seat).* Propose a
+    change only on **recurrence** across several independent conversations,
+    never a one-off (a one-off is usually a typo fix or a customer-specific
+    touch). Not every edit is a learnable rule — some are customer-specific,
+    some are the human being wrong, some are pure taste that varies by who
+    replied — so the machine cannot reliably tell "general policy" from
+    "one-off", and **every proposed rule lands in the admin Drafts panel for
+    Rob to approve or reject before it changes any future draft.** Surface
+    reviewer disagreement (Chris edits one way, Rob another) rather than
+    averaging it into a mushy rule. Net: detection is automated and clever;
+    the decision is always human and the output is always a concrete,
+    auditable rule in plain English. Glass box, not black box. This is the
+    industrialised version of the manual tune cycles (1–3) that built the
+    current briefing — same loop, the measurement half automated.
+  - Deliberately NOT in scope: automated fine-tuning of model weights, or
+    auto-injecting recent sent replies as examples without review (absorbs
+    bad/rushed replies as gospel, not auditable, drifts, poisoning risk, and
+    unnecessary at this volume). A possible Phase 4 middle path —
+    *dynamic exemplar retrieval* (fetch the most similar past blessed
+    email→reply pair per incoming email) — earns consideration only once the
+    human-curated loop has proven itself, and only from a blessed-replies pool.
 - **Analytics (the evidence base for every graduation decision).** The ledger
   is already collecting the raw material during shadow — category, confidence,
   outcome, token + cache cost, and both timestamps — so these can chart over
