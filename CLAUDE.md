@@ -276,6 +276,7 @@ Phase 4 — the `qr_snapshot jsonb` on `proof_name_approvals` — has since ship
 - Letterpress edge gilding prices
 - Decision on engraving / edge colour / die-cut pricing model
 - **Help Scout "follow up" tag sync (Phase 2b)** — populate `proofs.helpscout_tags` so the `helpscout_follow_up_tag` needs-attention rule can fire (HS → DB sync via webhook push or `pg_cron` pull). The rule, its admin config, and the dashboard reason/resolution tooltip copy all already exist; the rule is disabled by default and reads an always-empty column, so it never fires until this ships. See migration 000154 (column placeholder) and `src/lib/needsAttention.ts` (copy). **Note:** the inbound Help Scout webhook (`helpscout-webhook`) shipped for *reply-activity* sync (000208 / `docs/helpscout-webhook-spec.md`); folding `convo.tags` into that same webhook is the cheapest way to finish Phase 2b.
+- **AI draft pipeline Phases 2/3** — the email-drafting brain's live integration: webhook extension (`convo.created`/`convo.moved`), drafting edge function reusing `src/ai-drafts/`, `proofs.`-qualified ledger migration, HS draft-attribution verification, admin Drafts panel. Phase 1 (backtest harness, `pnpm backtest`) is built; rollout gated on the backtest review. Authoritative spec: `docs/ai-draft-pipeline-spec.md`.
 
 ## Git workflow
 
