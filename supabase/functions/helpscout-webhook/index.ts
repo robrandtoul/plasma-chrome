@@ -47,10 +47,11 @@ import { getAccessToken } from '../_shared/helpscout.ts'
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined
 
-// Events that mean "a reply happened" (stamp timestamps) vs events that only
-// trigger drafting.
+// Events that mean "a reply happened" (stamp timestamps) vs events forwarded
+// to the ai-draft worker. The worker drafts on created/moved/customer-reply
+// and captures sent-vs-draft feedback on agent-reply — it routes on the event.
 const REPLY_EVENT_RE = /reply/i
-const DRAFT_TRIGGER_RE = /^convo\.(created|moved|customer\.reply\.created)$/i
+const DRAFT_TRIGGER_RE = /^convo\.(created|moved|customer\.reply\.created|agent\.reply\.created)$/i
 // A merge deletes the source conversation and moves its threads into the
 // surviving target; any proof still holding the source id must be re-pointed.
 // Matched loosely (any event whose name contains "merge") so a naming variant
@@ -341,8 +342,10 @@ async function handle(req: Request): Promise<Response> {
     return await handleMerge(admin, conversationId, payload)
   }
 
-  // AI draft trigger: created / moved / customer-reply conversations go to
-  // the drafting worker, which gates on mailbox + mode + dedupe itself.
+  // AI draft worker: created / moved / customer-reply → drafting;
+  // agent-reply → sent-vs-draft feedback capture. The worker gates on
+  // mailbox + mode + dedupe (drafting) or an unmatched draft (feedback).
+  // agent-reply also falls through to the reply-stamping below.
   if (DRAFT_TRIGGER_RE.test(eventHeader)) {
     const trigger = triggerAiDraft(supabaseUrl, serviceKey, conversationId, eventHeader)
     if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(trigger)

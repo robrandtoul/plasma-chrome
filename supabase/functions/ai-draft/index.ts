@@ -32,6 +32,68 @@ import { fetchGrounding } from '../_shared/aiDrafts/grounding.ts'
 import { runPipeline } from '../_shared/aiDrafts/pipeline.ts'
 import { latestCustomerThreadId, mapThreads } from '../_shared/aiDrafts/hsMap.ts'
 import { modelId } from '../_shared/aiDrafts/anthropic.ts'
+import { classifyEdit } from '../_shared/aiDrafts/feedback.ts'
+import { normaliseBody } from '../_shared/aiDrafts/htmlText.ts'
+
+type AdminClient = ReturnType<typeof createClient>
+
+// Feedback loop (Phase 3): on a staff reply, compare the sent reply against
+// the AI draft we'd produced for that conversation and record how much it was
+// edited. Runs regardless of mode — in shadow it measures how close the
+// would-have-sent draft was to what the human actually sent; in live it
+// measures how much our draft was changed before sending. Fail-safe: any
+// ambiguity → no row written, never a wrong one.
+async function captureFeedback(admin: AdminClient, conversationId: number | string): Promise<Response> {
+  const { data: row, error } = await admin
+    .from('ai_drafts')
+    .select('id, draft_body, created_at')
+    .eq('helpscout_conversation_id', String(conversationId))
+    .not('draft_body', 'is', null)
+    .is('feedback_matched_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) return json({ error: `feedback lookup failed: ${error.message}` }, 500)
+  if (!row) return json({ ok: true, feedback: 'no unmatched draft' })
+
+  const hsAppId = Deno.env.get('HELPSCOUT_APP_ID') ?? ''
+  const hsAppSecret = Deno.env.get('HELPSCOUT_APP_SECRET') ?? ''
+  if (!hsAppId || !hsAppSecret) return json({ error: 'missing Help Scout env' }, 500)
+  const token = await getAccessToken(hsAppId, hsAppSecret)
+  const conversation = await fetchConversationWithThreads(token, conversationId)
+  if (!conversation) return json({ ok: true, feedback: 'conversation not found' })
+
+  const threads = conversation._embedded?.threads ?? []
+  const draftCreatedMs = Date.parse((row.created_at as string) ?? '0')
+  // Newest PUBLISHED staff reply sent at/after our draft was created. The
+  // state guard excludes our own unsent draft; the time guard excludes any
+  // older staff reply that predates the draft.
+  const sent = threads
+    .filter((t) =>
+      t.createdBy?.type === 'user' &&
+      t.state !== 'draft' &&
+      (t.type === 'message' || t.type === 'reply') &&
+      (t.body ?? '').trim() !== '' &&
+      Date.parse(t.createdAt ?? '0') >= draftCreatedMs)
+    .sort((a, b) => Date.parse(b.createdAt ?? '0') - Date.parse(a.createdAt ?? '0'))[0]
+  if (!sent) return json({ ok: true, feedback: 'no sent staff reply yet' })
+
+  const sentText = normaliseBody(sent.body ?? '')
+  const { similarity, editClass } = classifyEdit(row.draft_body as string, sentText)
+  const { error: updErr } = await admin
+    .from('ai_drafts')
+    .update({
+      sent_body: sentText.slice(0, 8000),
+      sent_at: sent.createdAt ?? new Date().toISOString(),
+      edit_similarity: similarity,
+      edit_class: editClass,
+      feedback_matched_at: new Date().toISOString(),
+    })
+    .eq('id', row.id)
+    .is('feedback_matched_at', null) // race guard: first writer wins
+  if (updErr) return json({ error: `feedback update failed: ${updErr.message}` }, 500)
+  return json({ ok: true, feedback: editClass, similarity })
+}
 
 const CUSTOMER_SUPPORT_MAILBOX_ID = Number(
   Deno.env.get('CUSTOMER_SUPPORT_MAILBOX_ID') ?? '33103',
@@ -87,6 +149,12 @@ Deno.serve(async (req) => {
       event?: string
     }
     if (conversationId == null) return json({ error: 'conversationId required' }, 400)
+
+    // Feedback branch: a staff reply event captures sent-vs-draft, regardless
+    // of mode and without the drafting path. Returns early.
+    if (event && /agent\.reply/i.test(event)) {
+      return await captureFeedback(admin, conversationId)
+    }
 
     // Mode gate first — 'off' must cost nothing.
     const { data: settings, error: settingsError } = await admin

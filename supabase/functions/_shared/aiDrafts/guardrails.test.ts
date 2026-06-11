@@ -18,6 +18,7 @@ import { renderThread } from './prompts.ts'
 import { matchMaterials, type GroundingSlice } from './grounding.ts'
 import { isArtworkFormSubmission, isAutomatedNotification } from './pipeline.ts'
 import { latestCustomerThreadId, mapThreads } from './hsMap.ts'
+import { classifyEdit, stripSignature } from './feedback.ts'
 import type { GroundingData, GroundingMaterial, ThreadMessage } from './types.ts'
 
 let failures = 0
@@ -387,6 +388,46 @@ eq('roles mapped', mapped.map((m) => m.role), ['customer', 'note', 'staff', 'cus
 eq('chronological order', mapped.map((m) => m.author), ['Sam', 'Jack', 'Chris', 'Sam'])
 eq('latest customer thread anchors dedupe', latestCustomerThreadId(hsThreads), 5)
 eq('no customer threads → null anchor', latestCustomerThreadId([hsThreads[0], hsThreads[3]]), null)
+
+// ── Feedback loop: sent-vs-draft classification ──────────────────────────────
+
+const draftEx = `Hi Joe,
+
+Happy to help. 100 stainless steel cards at 500 micron come to £329 inc VAT.
+
+We are currently quoting 12-14 working days. Please let me know if any further information would help.`
+
+// Sent untouched, with Help Scout signature appended → sent_as_is.
+const sentUntouched = `${draftEx}
+
+Kind regards,
+
+Rob - Customer Support
+support@plasmadesign.co.uk | +44 (0) 1794 367 200`
+check('signature stripped before diff', !stripSignature(sentUntouched).includes('Customer Support'))
+eq('untouched send (+sig) is sent_as_is', classifyEdit(draftEx, sentUntouched).editClass, 'sent_as_is')
+
+// A small wording tweak → lightly_edited.
+const sentLightlyEdited = `Hi Joe,
+
+Happy to help. 100 stainless steel cards at 500 micron come to £329 including VAT.
+
+We are currently quoting around 12-14 working days. Do let me know if anything else would help.
+
+Kind regards, Rob`
+eq('small tweak is lightly_edited', classifyEdit(draftEx, sentLightlyEdited).editClass, 'lightly_edited')
+
+// Same gist, heavily reworked → rewritten.
+const sentRewritten = `Hi Joe, thanks for your patience. For a run of 100 in 500 micron stainless the cost works out at £329 with VAT included, and our current lead time is roughly two to three weeks. Shout if you need anything else. Rob`
+check('heavy rework is rewritten or discarded', ['rewritten', 'discarded'].includes(classifyEdit(draftEx, sentRewritten).editClass))
+
+// Completely different reply → discarded.
+const sentDiscarded = `Hi Joe, unfortunately we can't help with this enquiry as it falls outside what we offer. Best of luck finding a supplier. Rob`
+eq('unrelated reply is discarded', classifyEdit(draftEx, sentDiscarded).editClass, 'discarded')
+
+check('similarity bounded 0..1', (() => { const s = classifyEdit(draftEx, sentLightlyEdited).similarity; return s >= 0 && s <= 1 })())
+eq('identical strings similarity 1', classifyEdit('abc', 'abc').similarity, 1)
+eq('HTML signature variant still strips', stripSignature('Body text\n\nMany thanks\nChris').trim(), 'Body text')
 
 // ── Result ───────────────────────────────────────────────────────────────────
 

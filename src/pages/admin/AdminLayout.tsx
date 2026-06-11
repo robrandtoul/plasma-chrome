@@ -11,6 +11,7 @@ import {
   ClipboardList,
   MessageSquareText,
   PenLine,
+  Sparkles,
   Settings,
   type LucideIcon,
 } from 'lucide-react'
@@ -32,6 +33,7 @@ const TABS: { to: string; label: string; icon: LucideIcon }[] = [
   { to: '/admin/activity', label: 'Activity', icon: ClipboardList },
   { to: '/admin/templates', label: 'Templates', icon: MessageSquareText },
   { to: '/admin/site-copy', label: 'Site copy', icon: PenLine },
+  { to: '/admin/ai-drafts', label: 'AI drafts', icon: Sparkles },
   { to: '/admin/settings', label: 'Settings', icon: Settings },
 ]
 

@@ -171,6 +171,9 @@ export async function fetchConversationOwnership(
 export interface HsThread {
   id: number
   type?: string
+  // 'published' | 'draft' | 'hidden' — distinguishes a sent reply from an
+  // unsent draft (the AI draft pipeline's feedback loop relies on this).
+  state?: string
   body?: string
   createdAt?: string
   createdBy?: {
