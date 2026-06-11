@@ -24,6 +24,7 @@ import AdminActivityPage from './pages/admin/AdminActivityPage'
 import AdminSettingsPage from './pages/admin/AdminSettingsPage'
 import AdminTemplatesPage from './pages/admin/AdminTemplatesPage'
 import AdminSiteCopyPage from './pages/admin/AdminSiteCopyPage'
+import AdminAiDraftsPage from './pages/admin/AdminAiDraftsPage'
 import AdminCreateMaterialPage from './pages/admin/AdminCreateMaterialPage'
 import AdminCoreColoursPage from './pages/admin/AdminCoreColoursPage'
 import AdminNeedsAttentionPage from './pages/admin/AdminNeedsAttentionPage'
@@ -87,6 +88,7 @@ function AppShell() {
         <Route path="activity" element={<AdminActivityPage />} />
         <Route path="templates" element={<AdminTemplatesPage />} />
         <Route path="site-copy" element={<AdminSiteCopyPage />} />
+        <Route path="ai-drafts" element={<AdminAiDraftsPage />} />
         <Route path="settings" element={<AdminSettingsPage />} />
       </Route>
     </Routes>
