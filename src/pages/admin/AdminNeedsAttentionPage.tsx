@@ -11,6 +11,7 @@ type RuleCode =
   | 'viewed_not_actioned'
   | 'approaching_dormant'
   | 'stuck_in_progress'
+  | 'approved_earlier_version'
 
 interface Rule {
   enabled: boolean
@@ -123,6 +124,13 @@ const RULE_SPECS: RuleSpec[] = [
     hasThreshold: true,
     hasCalendarToggle: true,
   },
+  {
+    code: 'approved_earlier_version',
+    label: 'Customer approved an earlier version',
+    description: 'Fires when a customer approved a superseded version (via the version selector) while the current version is still unapproved — the proof never finalizes and the sign-off would otherwise be invisible. No threshold: fires as soon as the mismatch exists.',
+    hasThreshold: false,
+    hasCalendarToggle: false,
+  },
 ]
 
 const DEFAULT_RULES: Rules = {
@@ -136,6 +144,11 @@ const DEFAULT_RULES: Rules = {
   viewed_not_actioned:        { enabled: true,  threshold_days: 5,  calendar: false, priority: 4 },
   approaching_dormant:        { enabled: true,  threshold_days: 5,  calendar: true,  priority: 5 },
   stuck_in_progress:          { enabled: true,  threshold_days: 10, calendar: false, priority: 6 },
+  // No threshold/calendar — fires the moment a stranded earlier-version
+  // approval exists (migration 000217). Priority 2 shares the ordinal with
+  // the disabled helpscout_follow_up_tag rule; the engine's rule_code
+  // tiebreak favours this one, which is the precedence we want.
+  approved_earlier_version:   { enabled: true,                                       priority: 2 },
 }
 
 // Days of inactivity before the nightly cron flips an in_progress proof
