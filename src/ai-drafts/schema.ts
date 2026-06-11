@@ -77,7 +77,7 @@ export const DRAFT_SCHEMA = {
     note_body: {
       type: ['string', 'null'],
       description:
-        'Internal working shown to the team: category, key reasoning, every figure with its source, anything to double-check. Null when abstaining.',
+        'Internal working shown to the team: category, key reasoning, every figure with its claimed source, anything to double-check. When abstaining, this may carry an ACTION note instead (e.g. "ready to invoice — generate and send the order link; qty/specs confirmed: …", or "route to Graphics").',
     },
     figures_used: {
       type: 'array',

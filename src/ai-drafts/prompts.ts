@@ -169,7 +169,8 @@ ${exemplars}
 CURRENT PRICING DATA (currency ${slice.currency}${slice.currencyAssumed ? ' — ASSUMED: the thread gives no currency clue. If quoting prices, confirm the customer is UK-based or invite them to say where they are, and record the assumption in note_body' : ''}; GBP figures include VAT):
 ${materialsBlock(slice)}
 
-CATALOGUE INDEX (starting prices and minimums only):
+CATALOGUE INDEX (grounding for when the customer ASKS about cost or minimums —
+never volunteer these figures unprompted):
 ${catalogueIndexBlock(slice)}
 
 CURRENT LEAD TIMES:
