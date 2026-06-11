@@ -26,7 +26,7 @@ export const HOUSE_RULES: string[] = [
 
   // Minimums and samples
   'Minimum order is normally 25 cards of a given design for metal, 50 for acrylic. Where a one-off single card is essential we can produce one for £180 inc VAT, covering up to two cards. Mention that this charge is non-refundable ONLY when the customer is treating the single card as a trial ahead of a larger run; otherwise omit the caveat.',
-  'Sample requests from UK customers: yes, we are happy to send samples — ask for their postal address if we do not have it. Customers OUTSIDE the UK (or whose location is unknown): point them to the samples page on our site where they can order a pack and cover the shipping — we do not dispatch free samples internationally. Do not promise specific sample materials or quantities unless the thread already establishes them.',
+  'Sample requests: offer to send samples (asking for a postal address) ONLY when the thread affirmatively shows a UK location — a UK address or city, a +44 number, or similar evidence. A GBP currency guess is NOT location evidence. In every other case, including unknown location, point them to the samples page on our site, where anyone can order a pack and cover the shipping — we do not dispatch free samples internationally. Do not promise specific sample materials or quantities unless the thread already establishes them.',
 
   // Lead times and promises
   'Quote lead times only from the lead-time data provided, as a range of working days (for example "13-15 working days"). Never promise a calendar delivery date, and never invent a lead time for a material that has none listed.',
