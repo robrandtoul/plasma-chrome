@@ -14,7 +14,11 @@
 //   * convo.merged                 → re-points any proof linked to the now-deleted
 //                                    source conversation onto the surviving target,
 //                                    so reminders/replies keep working after a merge.
-//                                    See docs/helpscout-merge-repoint-spec.md.
+//                                    The merge line-items are NOT in the webhook
+//                                    payload, so the handler fetches the target's
+//                                    threads from the Help Scout API (OAuth) to find
+//                                    the merged-in source ids. See
+//                                    docs/helpscout-merge-repoint-spec.md.
 // Reply-timestamp stamping runs ONLY for reply events — a created/moved
 // conversation must never fake a staff touch, or it would wrongly quiet the
 // needs-attention chase rules. The AI draft trigger is fire-and-forget
@@ -39,6 +43,7 @@
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { logAudit } from '../_shared/audit.ts'
+import { getAccessToken } from '../_shared/helpscout.ts'
 
 declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined
 
@@ -48,7 +53,9 @@ const REPLY_EVENT_RE = /reply/i
 const DRAFT_TRIGGER_RE = /^convo\.(created|moved|customer\.reply\.created)$/i
 // A merge deletes the source conversation and moves its threads into the
 // surviving target; any proof still holding the source id must be re-pointed.
-const MERGE_EVENT_RE = /^convo\.merged$/i
+// Matched loosely (any event whose name contains "merge") so a naming variant
+// still routes here — none of the other subscribed events contain "merge".
+const MERGE_EVENT_RE = /merge/i
 
 // Fire-and-forget trigger of the ai-draft worker. Failures are logged, never
 // surfaced — drafting is an enhancement, the webhook's stamping contract
@@ -135,35 +142,72 @@ function replyDirection(eventHeader: string | null, payload: Record<string, unkn
   return 'staff'
 }
 
-// Handle a `convo.merged` event. Help Scout records a merge on the surviving
-// (target) conversation: each thread moved in from the deleted source keeps a
-// `merged` line-item whose action.associatedEntities.originalConversation names
-// that source. We read those source ids out of the payload's embedded threads
-// and re-point every proof still linked to a source onto this target — the link
-// the proof holds is now a dead id that 404s on every reminder/reply.
+// GET /v2/conversations/{id}/threads and pull the merged-in source conversation
+// ids from the `merged` line-items. Help Scout records a merge on the surviving
+// (target) conversation; each thread moved in from a deleted source keeps a
+// line-item whose action.associatedEntities.originalConversation names that
+// source. We FETCH these rather than read them off the webhook payload because
+// the convo.merged payload does NOT embed the merge line-items (confirmed live —
+// the old embedded-threads path silently found nothing and never re-pointed).
 //
-// Defensive: a single merge moves several threads, so the same source id appears
-// on multiple line-items — dedupe. Matching proofs by the conversation column
-// (not proof id) moves every proof sharing the dead id together. The whole thing
-// is idempotent: re-points only fire for source ids that still match a proof, so
-// a redelivered event (or old merge line-items in the thread list) is a no-op.
+// Threads come back newest-first, so the line-items from a just-fired merge are
+// on page 1; no pagination needed for a fresh merge. Best-effort: a non-2xx
+// response returns an empty set plus the status, which the caller records in the
+// diagnostic row. Dedupe — one merge moves several threads, all naming the same
+// source.
+async function fetchMergeSourceIds(
+  token: string,
+  targetId: string,
+): Promise<{ sourceIds: string[]; threadCount: number; status: number }> {
+  const resp = await fetch(
+    `https://api.helpscout.net/v2/conversations/${targetId}/threads`,
+    { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } },
+  )
+  if (!resp.ok) return { sourceIds: [], threadCount: 0, status: resp.status }
+  const data = (await resp.json().catch(() => null)) as
+    | { _embedded?: { threads?: Array<Record<string, unknown>> } }
+    | null
+  const threads = data?._embedded?.threads ?? []
+  const ids = new Set<string>()
+  for (const t of threads) {
+    const action = t?.action as
+      | { type?: string; associatedEntities?: { originalConversation?: number | string } }
+      | undefined
+    if (action?.type === 'merged') {
+      const oc = action.associatedEntities?.originalConversation
+      if (oc != null) {
+        const s = String(oc)
+        if (s && s !== targetId) ids.add(s)
+      }
+    }
+  }
+  return { sourceIds: [...ids], threadCount: threads.length, status: resp.status }
+}
+
+// Handle a merge event. Re-point every proof still linked to a now-deleted source
+// conversation onto the surviving target (id + url), so reminders/replies keep
+// working. Matching proofs by the conversation column (not proof id) moves every
+// proof sharing a dead id together; idempotent — re-points only fire for source
+// ids that still match a proof, so a redelivered event is a no-op.
 //
-// If the payload carries no merge line-items (e.g. Help Scout's merge payload
-// turns out to represent the source, or omits embedded threads), we log the
-// shape and ack — no guessing. Confirm the real payload with a test merge during
-// rollout; see docs/helpscout-merge-repoint-spec.md.
+// Source ids come from a fast payload check first (in case Help Scout ever embeds
+// the merge line-items), then authoritatively from the Help Scout API. On the
+// no-op path a single `helpscout.merge_no_repoint` audit row records the shape we
+// saw — edge-function console logs aren't queryable, so this is the diagnostic
+// window. See docs/helpscout-merge-repoint-spec.md.
 async function handleMerge(
   admin: SupabaseClient,
   targetConversationId: number | string,
   payload: Record<string, unknown>,
 ): Promise<Response> {
   const targetId = String(targetConversationId)
-  const threads =
-    (payload?._embedded as { threads?: Array<Record<string, unknown>> } | undefined)?.threads
 
+  // Fast path: use embedded merge line-items if the payload ever carries them.
+  const embeddedThreads =
+    (payload?._embedded as { threads?: Array<Record<string, unknown>> } | undefined)?.threads
   const sourceIds = new Set<string>()
-  if (Array.isArray(threads)) {
-    for (const t of threads) {
+  if (Array.isArray(embeddedThreads)) {
+    for (const t of embeddedThreads) {
       const action = t?.action as
         | { type?: string; associatedEntities?: { originalConversation?: number | string } }
         | undefined
@@ -176,14 +220,29 @@ async function handleMerge(
       }
     }
   }
+  const embeddedCount = sourceIds.size
 
+  // Authoritative path: fetch the target's threads from the Help Scout API.
+  let apiStatus = 0
+  let apiThreadCount = 0
   if (sourceIds.size === 0) {
-    console.log('[helpscout-webhook] merge event with no embedded source ids', {
-      targetId,
-      hasEmbeddedThreads: Array.isArray(threads),
-      threadCount: Array.isArray(threads) ? threads.length : 0,
-    })
-    return json({ ok: true, merged: true, repointed: 0, note: 'no source ids in payload' })
+    const appId = Deno.env.get('HELPSCOUT_APP_ID')?.trim()
+    const appSecret = Deno.env.get('HELPSCOUT_APP_SECRET')?.trim()
+    if (!appId || !appSecret) {
+      console.error('[helpscout-webhook] merge: HELPSCOUT_APP_ID/SECRET not set; cannot fetch threads')
+      apiStatus = -2
+    } else {
+      try {
+        const token = await getAccessToken(appId, appSecret)
+        const fetched = await fetchMergeSourceIds(token, targetId)
+        apiStatus = fetched.status
+        apiThreadCount = fetched.threadCount
+        for (const s of fetched.sourceIds) sourceIds.add(s)
+      } catch (err) {
+        console.error('[helpscout-webhook] merge thread fetch failed', (err as Error).message)
+        apiStatus = -1
+      }
+    }
   }
 
   const targetUrl = `https://secure.helpscout.net/conversation/${targetId}`
@@ -227,7 +286,25 @@ async function handleMerge(
     }
   }
 
-  return json({ ok: true, merged: true, repointed })
+  // Diagnostic on the no-op path only (success stays clean): records exactly what
+  // a merge delivered when nothing re-pointed, since console logs aren't queryable.
+  if (repointed === 0) {
+    await logAudit(admin, {
+      actorLabel: 'Help Scout (merge sync)',
+      action: 'helpscout.merge_no_repoint',
+      targetType: 'helpscout_conversation',
+      targetId,
+      metadata: {
+        embedded_source_ids: embeddedCount,
+        api_status: apiStatus,
+        api_thread_count: apiThreadCount,
+        source_ids: [...sourceIds],
+        payload_top_keys: Object.keys(payload ?? {}),
+      },
+    })
+  }
+
+  return json({ ok: true, merged: true, repointed, source_ids: [...sourceIds] })
 }
 
 async function handle(req: Request): Promise<Response> {
@@ -292,6 +369,20 @@ async function handle(req: Request): Promise<Response> {
 
   // Stamping below is the reply-activity contract: reply events only.
   if (!REPLY_EVENT_RE.test(eventHeader)) {
+    // Diagnostic: capture genuinely-unexpected events (not a merge, not a
+    // created/moved draft trigger, not a reply) so a mis-named merge event is
+    // visible via audit_log — console logs aren't queryable here. Bounded:
+    // created/moved/reply are excluded, so normal traffic doesn't write rows.
+    // Remove once merge sync is proven in production.
+    if (!DRAFT_TRIGGER_RE.test(eventHeader)) {
+      await logAudit(admin, {
+        actorLabel: 'Help Scout (webhook)',
+        action: 'helpscout.webhook_unhandled_event',
+        targetType: 'helpscout_conversation',
+        targetId: String(conversationId),
+        metadata: { event_header: eventHeader, payload_top_keys: Object.keys(payload ?? {}) },
+      })
+    }
     return json({ ok: true, stamped: false, event: eventHeader })
   }
 
