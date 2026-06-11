@@ -29,3 +29,8 @@ _tmp_*
 
 # Local Netlify folder
 .netlify
+
+# Backtest eval set: real customer emails pulled from Help Scout. Local only —
+# never committed (PII). Regenerate with the pull workflow; see backtest/README.md.
+backtest/fixtures/
+backtest/reports/
