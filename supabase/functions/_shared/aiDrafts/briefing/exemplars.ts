@@ -7,7 +7,7 @@
 // Cycle 1 additions (Rob/Chris review, 2026-06-11): Vincent (explain the why),
 // Lisa (reorder playbook), Aidan (route-to-Graphics handoff).
 
-import type { Category } from '../types'
+import type { Category } from '../types.ts'
 
 export interface Exemplar {
   category: Category

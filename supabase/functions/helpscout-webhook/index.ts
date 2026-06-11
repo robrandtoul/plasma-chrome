@@ -6,7 +6,16 @@
 //
 // Subscribed events (configured in Help Scout):
 //   * convo.agent.reply.created    → stamps proofs.helpscout_last_reply_at
-//   * convo.customer.reply.created → stamps proofs.helpscout_last_customer_reply_at
+//   * convo.customer.reply.created → stamps proofs.helpscout_last_customer_reply_at,
+//                                    and triggers the AI draft pipeline
+//   * convo.created                → triggers the AI draft pipeline
+//   * convo.moved                  → triggers the AI draft pipeline (catches
+//                                    Graphics → Customer Support handoffs)
+// Reply-timestamp stamping runs ONLY for reply events — a created/moved
+// conversation must never fake a staff touch, or it would wrongly quiet the
+// needs-attention chase rules. The AI draft trigger is fire-and-forget
+// (EdgeRuntime.waitUntil) so webhook acking stays fast; the ai-draft
+// function does its own mailbox/mode/dedupe gating.
 // Both timestamps suppress the four chase rules (the suppression guard in
 // proofs_needing_attention uses greatest() of the two), so direction only
 // affects the dashboard chip wording, never whether the flag is quieted.
@@ -25,6 +34,39 @@
 //                                         writes scoped to helpscout_* columns).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined
+
+// Events that mean "a reply happened" (stamp timestamps) vs events that only
+// trigger drafting.
+const REPLY_EVENT_RE = /reply/i
+const DRAFT_TRIGGER_RE = /^convo\.(created|moved|customer\.reply\.created)$/i
+
+// Fire-and-forget trigger of the ai-draft worker. Failures are logged, never
+// surfaced — drafting is an enhancement, the webhook's stamping contract
+// must not depend on it.
+async function triggerAiDraft(
+  supabaseUrl: string,
+  serviceKey: string,
+  conversationId: number | string,
+  event: string,
+): Promise<void> {
+  try {
+    const resp = await fetch(`${supabaseUrl}/functions/v1/ai-draft`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${serviceKey}`,
+      },
+      body: JSON.stringify({ conversationId, event }),
+    })
+    if (!resp.ok) {
+      console.error('[helpscout-webhook] ai-draft trigger failed:', resp.status, await resp.text())
+    }
+  } catch (err) {
+    console.error('[helpscout-webhook] ai-draft trigger crashed:', (err as Error).message)
+  }
+}
 
 function json(body: unknown, status = 200, extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -130,7 +172,21 @@ async function handle(req: Request): Promise<Response> {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 
-  const direction = replyDirection(req.headers.get('x-helpscout-event'), payload)
+  const eventHeader = req.headers.get('x-helpscout-event') ?? ''
+
+  // AI draft trigger: created / moved / customer-reply conversations go to
+  // the drafting worker, which gates on mailbox + mode + dedupe itself.
+  if (DRAFT_TRIGGER_RE.test(eventHeader)) {
+    const trigger = triggerAiDraft(supabaseUrl, serviceKey, conversationId, eventHeader)
+    if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(trigger)
+  }
+
+  // Stamping below is the reply-activity contract: reply events only.
+  if (!REPLY_EVENT_RE.test(eventHeader)) {
+    return json({ ok: true, stamped: false, event: eventHeader })
+  }
+
+  const direction = replyDirection(eventHeader, payload)
   const column = direction === 'customer'
     ? 'helpscout_last_customer_reply_at'
     : 'helpscout_last_reply_at'

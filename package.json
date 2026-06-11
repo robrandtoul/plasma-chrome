@@ -17,10 +17,9 @@
     "check:price-list": "tsx scripts/check-price-list-golden.ts",
     "test:nudges": "tsx supabase/functions/_shared/nudgeDecision.test.ts",
     "backtest": "tsx scripts/run-backtest.ts",
-    "test:ai-drafts": "tsx src/ai-drafts/guardrails.test.ts"
+    "test:ai-drafts": "tsx supabase/functions/_shared/aiDrafts/guardrails.test.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.104.1",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.49.4",
     "jsqr": "^1.4.0",

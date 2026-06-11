@@ -12,12 +12,13 @@ import {
   parseAmountToken,
   runGuardrails,
   threadUrlSet,
-} from './guardrails'
-import { htmlToText, looksLikeHtml, normaliseBody } from './htmlText'
-import { renderThread } from './prompts'
-import { matchMaterials, type GroundingSlice } from './grounding'
-import { isArtworkFormSubmission } from './pipeline'
-import type { GroundingData, GroundingMaterial, ThreadMessage } from './types'
+} from './guardrails.ts'
+import { htmlToText, looksLikeHtml, normaliseBody } from './htmlText.ts'
+import { renderThread } from './prompts.ts'
+import { matchMaterials, type GroundingSlice } from './grounding.ts'
+import { isArtworkFormSubmission } from './pipeline.ts'
+import { latestCustomerThreadId, mapThreads } from './hsMap.ts'
+import type { GroundingData, GroundingMaterial, ThreadMessage } from './types.ts'
 
 let failures = 0
 let passes = 0
@@ -350,6 +351,23 @@ const laterTurn: ThreadMessage[] = [
   { role: 'customer', createdAt: '3', author: 'Kevin', body: 'Approved! What do I owe you?' },
 ]
 check('later turn in same conversation NOT pre-gated', !isArtworkFormSubmission(laterTurn))
+
+// ── hsMap: Help Scout thread mapping ─────────────────────────────────────────
+
+const hsThreads = [
+  { id: 1, type: 'lineitem', body: '', createdAt: '2026-06-01T09:00:00Z' },
+  { id: 2, type: 'customer', body: '<p>Hello, quote please</p>', createdAt: '2026-06-01T10:00:00Z', createdBy: { type: 'customer', first: 'Sam' } },
+  { id: 3, type: 'note', body: '@rob thoughts?', createdAt: '2026-06-01T10:05:00Z', createdBy: { type: 'user', first: 'Jack' } },
+  { id: 4, type: 'message', body: 'Hi Sam, of course.', createdAt: '2026-06-01T11:00:00Z', createdBy: { type: 'user', first: 'Chris' } },
+  { id: 5, type: 'beaconchat', body: 'One more thing', createdAt: '2026-06-01T12:00:00Z', createdBy: { type: 'customer', first: 'Sam' } },
+  { id: 6, type: 'message', body: '', createdAt: '2026-06-01T12:30:00Z', createdBy: { type: 'user' } },
+]
+const mapped = mapThreads(hsThreads)
+eq('lineitems and empty bodies dropped', mapped.length, 4)
+eq('roles mapped', mapped.map((m) => m.role), ['customer', 'note', 'staff', 'customer'])
+eq('chronological order', mapped.map((m) => m.author), ['Sam', 'Jack', 'Chris', 'Sam'])
+eq('latest customer thread anchors dedupe', latestCustomerThreadId(hsThreads), 5)
+eq('no customer threads → null anchor', latestCustomerThreadId([hsThreads[0], hsThreads[3]]), null)
 
 // ── Result ───────────────────────────────────────────────────────────────────
 

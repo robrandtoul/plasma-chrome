@@ -26,11 +26,11 @@
 // PHRASE GATE. Drafts must never reveal production arrangements: in-house
 // phrasing and supplier names block outright.
 
-import { APPROVED_LINKS } from './briefing/approvedLinks'
-import { HOUSE_RULES } from './briefing/houseRules'
-import type { GroundingSlice } from './grounding'
-import type { Currency, GroundingData, GuardrailVerdict, ThreadMessage } from './types'
-import { normaliseBody } from './htmlText'
+import { APPROVED_LINKS } from './briefing/approvedLinks.ts'
+import { HOUSE_RULES } from './briefing/houseRules.ts'
+import type { GroundingSlice } from './grounding.ts'
+import type { Currency, GroundingData, GuardrailVerdict, ThreadMessage } from './types.ts'
+import { normaliseBody } from './htmlText.ts'
 
 // Production arrangements are confidential (review item 9): in-house
 // phrasing and partner/supplier names must never reach a customer.
