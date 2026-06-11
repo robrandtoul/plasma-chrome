@@ -134,5 +134,10 @@ export interface PipelineResult {
   // Advisory only (never blocks): unreconciled figures/links inside the
   // internal note, so reviewers know the note's workings are unvalidated.
   noteWarnings: string[]
-  usage: { inputTokens: number; outputTokens: number }
+  usage: {
+    inputTokens: number
+    outputTokens: number
+    cacheWriteTokens: number
+    cacheReadTokens: number
+  }
 }

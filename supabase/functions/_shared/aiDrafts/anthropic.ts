@@ -14,20 +14,48 @@ const API_URL = 'https://api.anthropic.com/v1/messages'
 const API_VERSION = '2023-06-01'
 
 const ADAPTIVE_THINKING_MODELS = /^claude-(fable-5|opus-4-[6-9]|sonnet-4-6)/
+// effort is supported on Opus 4.5+, Sonnet 4.6, Fable 5 — NOT Haiku 4.5 or
+// Sonnet 4.5 (they 400 on it). Gated so a cheaper-model override stays valid.
+const EFFORT_MODELS = /^claude-(fable-5|opus-4-([5-9])|sonnet-4-6)/
 
 export function modelId(): string {
   return draftModel() || DEFAULT_MODEL
 }
 
+// A system prompt is one or two text blocks; the first may be cacheable (the
+// stable briefing prefix), so it carries a prompt-cache breakpoint.
+export interface SystemPart {
+  text: string
+  cache?: boolean
+}
+
 export interface CallUsage {
   inputTokens: number
   outputTokens: number
+  cacheWriteTokens: number
+  cacheReadTokens: number
 }
 
 interface ApiMessage {
   content: { type: string; text?: string }[]
   stop_reason: string | null
-  usage: { input_tokens: number; output_tokens: number }
+  usage: {
+    input_tokens: number
+    output_tokens: number
+    cache_creation_input_tokens?: number
+    cache_read_input_tokens?: number
+  }
+}
+
+// Build the API `system` field from parts. A cacheable part gets a
+// cache_control breakpoint so its tokens are written once and re-read at
+// ~0.1x within the 5-minute cache window.
+function buildSystemField(parts: SystemPart[]): { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }[] {
+  return parts.map((p) => ({
+    type: 'text' as const,
+    text: p.text,
+    ...(p.cache ? { cache_control: { type: 'ephemeral' as const } } : {}),
+  }))
 }
 
 // max_tokens includes adaptive-thinking tokens; 16000 gives the structured
@@ -81,7 +109,7 @@ async function postWithRetry(body: Record<string, unknown>): Promise<ApiMessage>
 }
 
 async function structuredCall<T>(
-  system: string,
+  system: SystemPart[],
   user: string,
   schema: Record<string, unknown>,
   effort?: 'low' | 'medium' | 'high',
@@ -90,9 +118,12 @@ async function structuredCall<T>(
   const response = await postWithRetry({
     model,
     max_tokens: MAX_TOKENS,
-    system,
+    system: buildSystemField(system),
     messages: [{ role: 'user', content: user }],
-    output_config: { format: { type: 'json_schema', schema }, ...(effort ? { effort } : {}) },
+    output_config: {
+      format: { type: 'json_schema', schema },
+      ...(effort && EFFORT_MODELS.test(model) ? { effort } : {}),
+    },
     ...(ADAPTIVE_THINKING_MODELS.test(model) ? { thinking: { type: 'adaptive' } } : {}),
   })
   if (response.stop_reason === 'max_tokens') {
@@ -110,11 +141,16 @@ async function structuredCall<T>(
     usage: {
       inputTokens: response.usage.input_tokens,
       outputTokens: response.usage.output_tokens,
+      cacheWriteTokens: response.usage.cache_creation_input_tokens ?? 0,
+      cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
     },
   }
 }
 
-export async function callClassify(system: string, user: string): Promise<{ result: ClassifyResult; usage: CallUsage }> {
+export async function callClassify(
+  system: SystemPart[],
+  user: string,
+): Promise<{ result: ClassifyResult; usage: CallUsage }> {
   // Triage is simple; medium effort keeps thinking spend proportionate.
   return structuredCall<ClassifyResult>(
     system,
@@ -124,6 +160,9 @@ export async function callClassify(system: string, user: string): Promise<{ resu
   )
 }
 
-export async function callDraft(system: string, user: string): Promise<{ result: DraftResult; usage: CallUsage }> {
+export async function callDraft(
+  system: SystemPart[],
+  user: string,
+): Promise<{ result: DraftResult; usage: CallUsage }> {
   return structuredCall<DraftResult>(system, user, DRAFT_SCHEMA as unknown as Record<string, unknown>)
 }

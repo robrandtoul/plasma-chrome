@@ -2,18 +2,52 @@
 // Two callers share this: the backtest harness (Phase 1) and the drafting
 // edge function (Phase 2). See docs/ai-draft-pipeline-spec.md.
 
-import { callClassify, callDraft } from './anthropic.ts'
+import { callClassify, callDraft, type CallUsage } from './anthropic.ts'
 import { buildAllowedFigures, runGuardrails, threadUrlSet } from './guardrails.ts'
 import { sliceGrounding } from './grounding.ts'
 import {
   buildClassifySystem,
   buildClassifyUser,
-  buildDraftSystem,
+  buildDraftSystemStable,
+  buildDraftSystemVariable,
   buildDraftUser,
 } from './prompts.ts'
 import type { ClassifyResult, GroundingData, PipelineResult, ThreadMessage } from './types.ts'
 import { PILOT_CATEGORIES } from './types.ts'
 import { normaliseBody } from './htmlText.ts'
+
+// Deterministic notification pre-filter: unmistakably-automated mail (payment
+// receipts, shipping pings, order alerts) is skipped before any AI call. High
+// precision by design — a real customer never sends from a no-reply address
+// nor writes these exact subjects. Still LOGGED (the edge function records a
+// skipped ledger row) so shadow can prove it never catches a real customer.
+const NOTIFICATION_SENDER_RE =
+  /^(no-?reply|do-?not-?reply|donotreply|notifications?|mailer|bounce|postmaster|automated|support@chargedesk|receipts?)/i
+const NOTIFICATION_DOMAIN_RE =
+  /@(.*\.)?(squarespace|worldpay|stripe|dpd|fedex|mailchimp|chargedesk|zapier|aircall)\.(com|net|co\.uk)$/i
+const NOTIFICATION_SUBJECT_RE =
+  /(payment of .* received|you'?ve paid|transaction confirmation|payment received|new order has arrived|we'?re expecting your parcel|out for delivery|your parcel|worldpay (card )?transaction)/i
+
+export function isAutomatedNotification(
+  subject: string,
+  senderEmail: string | undefined,
+  thread: ThreadMessage[],
+): boolean {
+  // A conversation with any staff reply is a real exchange, never a notification.
+  if (thread.some((m) => m.role === 'staff')) return false
+  const email = (senderEmail ?? '').trim().toLowerCase()
+  const local = email.split('@')[0] ?? ''
+  if (email && (NOTIFICATION_SENDER_RE.test(local) || NOTIFICATION_DOMAIN_RE.test(email))) return true
+  if (NOTIFICATION_SUBJECT_RE.test(subject ?? '')) return true
+  return false
+}
+
+function addUsage(acc: PipelineResult['usage'], u: CallUsage): void {
+  acc.inputTokens += u.inputTokens
+  acc.outputTokens += u.outputTokens
+  acc.cacheWriteTokens += u.cacheWriteTokens
+  acc.cacheReadTokens += u.cacheReadTokens
+}
 
 // The website's artwork-request form has a fixed structure; submissions are
 // Graphics work and the auto-responder already acknowledged them, so they
@@ -37,6 +71,9 @@ export interface PipelineInput {
   conversationId: number | string
   subject: string
   customerFirstName: string
+  // Primary customer email — feeds the deterministic notification pre-filter
+  // (optional; the backtest fixtures don't carry it and don't need it).
+  senderEmail?: string
   // The thread as it stood when a reply was needed (backtest: cut just before
   // the first staff reply; live: the whole thread so far).
   thread: ThreadMessage[]
@@ -46,9 +83,32 @@ export async function runPipeline(
   input: PipelineInput,
   grounding: GroundingData,
 ): Promise<PipelineResult> {
-  const usage = { inputTokens: 0, outputTokens: 0 }
+  const usage = { inputTokens: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0 }
 
-  // 0. Deterministic pre-gate: artwork-form submissions route to Graphics
+  // 0a. Deterministic notification pre-filter: skip before any AI call.
+  if (isAutomatedNotification(input.subject, input.senderEmail, input.thread)) {
+    return {
+      conversationId: input.conversationId,
+      classification: {
+        is_genuine_customer_email: false,
+        category: 'other',
+        confidence: 'high',
+        summary: 'Automated notification (deterministic pre-filter)',
+        mentioned_materials: [],
+        mentioned_quantities: [],
+        currency_hint: 'unknown',
+      },
+      grounded: false,
+      draft: null,
+      guardrails: null,
+      outcome: 'skipped',
+      abstainOrBlockReason: 'automated notification — skipped before AI (deterministic pre-filter)',
+      noteWarnings: [],
+      usage,
+    }
+  }
+
+  // 0b. Deterministic pre-gate: artwork-form submissions route to Graphics
   // without any AI involvement.
   if (isArtworkFormSubmission(input.thread)) {
     const classification: ClassifyResult = {
@@ -76,11 +136,10 @@ export async function runPipeline(
 
   // 1. Classify.
   const classify = await callClassify(
-    buildClassifySystem(),
+    [{ text: buildClassifySystem(), cache: true }],
     buildClassifyUser(input.thread, input.subject),
   )
-  usage.inputTokens += classify.usage.inputTokens
-  usage.outputTokens += classify.usage.outputTokens
+  addUsage(usage, classify.usage)
   const classification = classify.result
 
   if (!classification.is_genuine_customer_email) {
@@ -126,11 +185,13 @@ export async function runPipeline(
     classification.currency_hint,
   )
   const draftCall = await callDraft(
-    buildDraftSystem(classification.category, slice),
+    [
+      { text: buildDraftSystemStable(), cache: true },
+      { text: buildDraftSystemVariable(classification.category, slice) },
+    ],
     buildDraftUser(input.thread, input.subject, classification, input.customerFirstName),
   )
-  usage.inputTokens += draftCall.usage.inputTokens
-  usage.outputTokens += draftCall.usage.outputTokens
+  addUsage(usage, draftCall.usage)
   const draft = draftCall.result
 
   if (!draft.should_draft || !draft.draft_body) {
