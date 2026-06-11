@@ -191,10 +191,8 @@ async function fetchMergeSourceIds(
 // ids that still match a proof, so a redelivered event is a no-op.
 //
 // Source ids come from a fast payload check first (in case Help Scout ever embeds
-// the merge line-items), then authoritatively from the Help Scout API. On the
-// no-op path a single `helpscout.merge_no_repoint` audit row records the shape we
-// saw — edge-function console logs aren't queryable, so this is the diagnostic
-// window. See docs/helpscout-merge-repoint-spec.md.
+// the merge line-items), then authoritatively from the Help Scout API.
+// See docs/helpscout-merge-repoint-spec.md.
 async function handleMerge(
   admin: SupabaseClient,
   targetConversationId: number | string,
@@ -220,27 +218,19 @@ async function handleMerge(
       }
     }
   }
-  const embeddedCount = sourceIds.size
-
   // Authoritative path: fetch the target's threads from the Help Scout API.
-  let apiStatus = 0
-  let apiThreadCount = 0
   if (sourceIds.size === 0) {
     const appId = Deno.env.get('HELPSCOUT_APP_ID')?.trim()
     const appSecret = Deno.env.get('HELPSCOUT_APP_SECRET')?.trim()
     if (!appId || !appSecret) {
       console.error('[helpscout-webhook] merge: HELPSCOUT_APP_ID/SECRET not set; cannot fetch threads')
-      apiStatus = -2
     } else {
       try {
         const token = await getAccessToken(appId, appSecret)
         const fetched = await fetchMergeSourceIds(token, targetId)
-        apiStatus = fetched.status
-        apiThreadCount = fetched.threadCount
         for (const s of fetched.sourceIds) sourceIds.add(s)
       } catch (err) {
         console.error('[helpscout-webhook] merge thread fetch failed', (err as Error).message)
-        apiStatus = -1
       }
     }
   }
@@ -286,23 +276,14 @@ async function handleMerge(
     }
   }
 
-  // Diagnostic on the no-op path only (success stays clean): records exactly what
-  // a merge delivered when nothing re-pointed, since console logs aren't queryable.
-  if (repointed === 0) {
-    await logAudit(admin, {
-      actorLabel: 'Help Scout (merge sync)',
-      action: 'helpscout.merge_no_repoint',
-      targetType: 'helpscout_conversation',
-      targetId,
-      metadata: {
-        embedded_source_ids: embeddedCount,
-        api_status: apiStatus,
-        api_thread_count: apiThreadCount,
-        source_ids: [...sourceIds],
-        payload_top_keys: Object.keys(payload ?? {}),
-      },
-    })
-  }
+  // Most merges involve no linked proof (repointed: 0) — that's a normal no-op,
+  // not an error. A console line keeps it visible in the function runtime log
+  // without writing an audit row per merge.
+  console.log('[helpscout-webhook] merge processed', {
+    targetId,
+    sources: sourceIds.size,
+    repointed,
+  })
 
   return json({ ok: true, merged: true, repointed, source_ids: [...sourceIds] })
 }
@@ -369,20 +350,6 @@ async function handle(req: Request): Promise<Response> {
 
   // Stamping below is the reply-activity contract: reply events only.
   if (!REPLY_EVENT_RE.test(eventHeader)) {
-    // Diagnostic: capture genuinely-unexpected events (not a merge, not a
-    // created/moved draft trigger, not a reply) so a mis-named merge event is
-    // visible via audit_log — console logs aren't queryable here. Bounded:
-    // created/moved/reply are excluded, so normal traffic doesn't write rows.
-    // Remove once merge sync is proven in production.
-    if (!DRAFT_TRIGGER_RE.test(eventHeader)) {
-      await logAudit(admin, {
-        actorLabel: 'Help Scout (webhook)',
-        action: 'helpscout.webhook_unhandled_event',
-        targetType: 'helpscout_conversation',
-        targetId: String(conversationId),
-        metadata: { event_header: eventHeader, payload_top_keys: Object.keys(payload ?? {}) },
-      })
-    }
     return json({ ok: true, stamped: false, event: eventHeader })
   }
 
