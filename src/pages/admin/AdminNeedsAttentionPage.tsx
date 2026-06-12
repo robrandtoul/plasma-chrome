@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
+import AdminReminderPerformanceCard from '../../components/AdminReminderPerformanceCard'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -580,6 +581,11 @@ export default function AdminNeedsAttentionPage() {
             </div>
           </div>
         </div>
+
+        {/* Measurement beside the dials it informs (spec, Analytics):
+            open/response rates per cohort vs the dry-run baseline, the
+            skip-reason mix, and the count of capped proofs. */}
+        <AdminReminderPerformanceCard />
       </div>
 
       <div className="space-y-3">
