@@ -1536,7 +1536,7 @@ export default function ProofDetailPage() {
                         <ResolvePopover
                           proofId={proof.id}
                           ruleCode={bucketRow.rule_code}
-                          days={bucketRow.rule_meta?.days}
+                          meta={bucketRow.rule_meta}
                           helpscoutUrl={proof.helpscout_conversation_url}
                           hasHelpscoutConversation={!!proof.helpscout_conversation_id}
                           versionId={currentVersion?.id ?? null}

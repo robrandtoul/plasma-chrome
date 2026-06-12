@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
+import AdminReminderPerformanceCard from '../../components/AdminReminderPerformanceCard'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -12,6 +13,7 @@ type RuleCode =
   | 'approaching_dormant'
   | 'stuck_in_progress'
   | 'approved_earlier_version'
+  | 'nudges_exhausted'
 
 interface Rule {
   enabled: boolean
@@ -90,7 +92,7 @@ const RULE_SPECS: RuleSpec[] = [
   {
     code: 'helpscout_follow_up_tag',
     label: 'Help Scout "follow up" tag',
-    description: 'Fires when the linked Help Scout conversation carries the "follow up" tag. Will start firing once Phase 2b wires the HS → DB tag sync.',
+    description: 'Fires when the linked Help Scout conversation carries the "follow up" tag. Tags sync live from Help Scout via the webhook (convo.tags event); tagging a conversation also pauses automated reminders for that proof — a human owns the chase.',
     hasThreshold: false,
     hasCalendarToggle: false,
   },
@@ -131,15 +133,21 @@ const RULE_SPECS: RuleSpec[] = [
     hasThreshold: false,
     hasCalendarToggle: false,
   },
+  {
+    code: 'nudges_exhausted',
+    label: 'Reminders exhausted — needs a call',
+    description: 'Fires when the per-version reminder cap (the "Max" dial above, manual and automated reminders alike) is spent and the customer still hasn\'t responded. Email has run its course; the chip says to pick up the phone — with a warning when the customer has never opened or replied to anything (possible wrong address / spam folder). No threshold of its own: the reminder cap is the threshold.',
+    hasThreshold: false,
+    hasCalendarToggle: false,
+  },
 ]
 
 const DEFAULT_RULES: Rules = {
   request_changes_no_version: { enabled: true,  threshold_days: 2,  calendar: false, priority: 1 },
-  // helpscout_follow_up_tag defaults to disabled until Phase 2b ships
-  // the HS-tag sync that populates proofs.helpscout_tags. Re-enable in
-  // the same PR that wires the sync; threshold and priority stay set
-  // so flipping the boolean is the only change needed (PV-2026W21-043).
-  helpscout_follow_up_tag:    { enabled: false,                                         priority: 2 },
+  // Enabled since the Phase 2b tag sync shipped (the helpscout-webhook
+  // convo.tags handler populates proofs.helpscout_tags) — the rule's data
+  // source is live, closing PV-2026W21-043.
+  helpscout_follow_up_tag:    { enabled: true,                                          priority: 2 },
   sent_never_viewed:          { enabled: true,  threshold_days: 3,  calendar: false, priority: 3 },
   viewed_not_actioned:        { enabled: true,  threshold_days: 5,  calendar: false, priority: 4 },
   approaching_dormant:        { enabled: true,  threshold_days: 5,  calendar: true,  priority: 5 },
@@ -149,6 +157,10 @@ const DEFAULT_RULES: Rules = {
   // the disabled helpscout_follow_up_tag rule; the engine's rule_code
   // tiebreak favours this one, which is the precedence we want.
   approved_earlier_version:   { enabled: true,                                       priority: 2 },
+  // No threshold/calendar — the automation block's per-rule max_nudges IS
+  // the threshold (migration 000221). Priority 2 so the "needs a call"
+  // escalation outranks the chase rule it supersedes.
+  nudges_exhausted:           { enabled: true,                                       priority: 2 },
 }
 
 // Days of inactivity before the nightly cron flips an in_progress proof
@@ -530,13 +542,13 @@ export default function AdminNeedsAttentionPage() {
                     </>
                   )}
                 </div>
-                {/* Phase 1 wires only sent_never_viewed into the sender; the
-                    other three rules' dials are stored but consumed by
-                    nothing yet, so don't let the controls imply live
-                    behaviour. Configurable ahead of time on purpose. */}
+                {/* Auto-send is wired for sent_never_viewed only; the other
+                    three rules support Review first (the dashboard Outbox's
+                    Review-and-send queue) but their Auto-send dials are
+                    stored ahead of a future graduation, not consumed. */}
                 {code !== 'sent_never_viewed' && (
                   <p className="w-full text-xs text-ink-mute">
-                    Stored now — takes effect when the Phase 2 review queue ships.
+                    “Review first” queues one-click sends in the dashboard Outbox. Auto-send isn’t wired for this rule yet — the dials are stored for when it graduates.
                   </p>
                 )}
               </div>
@@ -569,6 +581,11 @@ export default function AdminNeedsAttentionPage() {
             </div>
           </div>
         </div>
+
+        {/* Measurement beside the dials it informs (spec, Analytics):
+            open/response rates per cohort vs the dry-run baseline, the
+            skip-reason mix, and the count of capped proofs. */}
+        <AdminReminderPerformanceCard />
       </div>
 
       <div className="space-y-3">

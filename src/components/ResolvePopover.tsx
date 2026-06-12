@@ -4,13 +4,13 @@ import { useNavigate } from 'react-router-dom'
 import { ExternalLink } from 'lucide-react'
 import Modal from './Modal'
 import MessageSendPanel from './MessageSendPanel'
-import { attentionReason, attentionResolution, nudgeTemplateFor } from '../lib/needsAttention'
+import { attentionReason, attentionResolution, attentionShortLabel, nudgeTemplateFor } from '../lib/needsAttention'
 import { supabase } from '../lib/supabase'
 import { logAudit } from '../lib/audit'
 import { snoozeProof } from '../lib/snooze'
 import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
-import type { NeedsAttentionRule } from '../lib/dashboardGrouping'
+import type { NeedsAttentionMeta, NeedsAttentionRule } from '../lib/dashboardGrouping'
 import type { TemplateContext } from '../lib/replyTemplates'
 
 // Click-to-open popover that explains a Needs-attention rule and lets the
@@ -30,8 +30,8 @@ const SNOOZE_HOURS = 72 // 3 days
 interface ResolvePopoverProps {
   proofId: string
   ruleCode: NeedsAttentionRule
-  /** rule_meta.days — the threshold the rule fired against, where it has one. */
-  days: number | undefined
+  /** rule_meta from the rules engine — days/sent/no_contact/others. */
+  meta: NeedsAttentionMeta | null | undefined
   helpscoutUrl: string | null
   hasHelpscoutConversation: boolean
   /** Current version — needed to attribute a sent reminder. */
@@ -52,7 +52,7 @@ const WIDTH = 280
 export function ResolvePopover({
   proofId,
   ruleCode,
-  days,
+  meta,
   helpscoutUrl,
   hasHelpscoutConversation,
   versionId,
@@ -75,6 +75,12 @@ export function ResolvePopover({
   // loaded, so the toggle stays hidden rather than showing a wrong state.
   const [autoNudgeDisabledAt, setAutoNudgeDisabledAt] = useState<string | null | undefined>(undefined)
   const [autoNudgeBusy, setAutoNudgeBusy] = useState(false)
+  // Stale-click re-validation (followup-automation-spec, architecture rule
+  // #1's manual half): the popover renders from dashboard data that may be
+  // minutes old, so "Send a reminder" re-checks the rule still fires before
+  // the send panel opens. A cleared rule shows this notice instead.
+  const [staleNotice, setStaleNotice] = useState<string | null>(null)
+  const [checkingStale, setCheckingStale] = useState(false)
 
   const nudgeTemplate = nudgeTemplateFor(ruleCode)
 
@@ -148,6 +154,29 @@ export function ResolvePopover({
     })
   }
 
+  // Re-validate against the live rules engine, then open the send panel.
+  // public_dashboard_projects sources rule_code from proofs_needing_attention()
+  // at query time, so one single-row read is the freshest answer available.
+  // A fetch error falls through and opens the panel anyway — a human still
+  // reads the body before clicking send, so failing open is safe here.
+  async function openSendPanel() {
+    if (checkingStale) return
+    setCheckingStale(true)
+    setStaleNotice(null)
+    const { data, error } = await supabase
+      .from('public_dashboard_projects')
+      .select('rule_code')
+      .eq('proof_id', proofId)
+      .maybeSingle()
+    setCheckingStale(false)
+    if (!error && data?.rule_code !== ruleCode) {
+      setStaleNotice('No longer needed — this resolved itself since the page loaded. Refresh to see the latest state.')
+      return
+    }
+    setOpen(false)
+    setShowSend(true)
+  }
+
   async function handleSent() {
     if (snoozeAfterSend) {
       try {
@@ -181,13 +210,24 @@ export function ResolvePopover({
         <PopoverCard anchor={triggerRef.current} cardRef={cardRef}>
           <div className="text-[12px] leading-snug">
             <div className="font-semibold text-ink">Needs attention</div>
-            <div className="mt-1 text-ink-soft">{attentionReason(ruleCode, days)}</div>
+            <div className="mt-1 text-ink-soft">{attentionReason(ruleCode, meta)}</div>
             <div className="mt-1.5 text-ink-soft">
               <span className="font-semibold text-ink">To resolve · </span>
               {attentionResolution(ruleCode)}
             </div>
+            {/* Secondary signals (000221) — the other rules that also fired
+                but lost the one-chip collapse. Visibility only; the chip's
+                rule stays the one to act on first. */}
+            {(meta?.others?.length ?? 0) > 0 && (
+              <div className="mt-1.5 text-[11px] text-ink-mute">
+                Also: {meta!.others!.map(attentionShortLabel).join(' · ')}
+              </div>
+            )}
 
             <div className="mt-3 flex flex-col gap-1.5">
+              {staleNotice && (
+                <p className="rounded-md bg-canvas px-2.5 py-1.5 text-[11px] text-ink-soft">{staleNotice}</p>
+              )}
               {/* Primary action — depends on the rule. */}
               {ruleCode === 'request_changes_no_version' ? (
                 <button
@@ -200,10 +240,11 @@ export function ResolvePopover({
               ) : nudgeTemplate && hasHelpscoutConversation && versionId ? (
                 <button
                   type="button"
-                  onClick={() => { setOpen(false); setShowSend(true) }}
-                  className="inline-flex items-center justify-center rounded-[6px] bg-ink px-3 py-1.5 text-[12px] font-semibold text-on-ink hover:opacity-90"
+                  disabled={checkingStale}
+                  onClick={() => void openSendPanel()}
+                  className="inline-flex items-center justify-center rounded-[6px] bg-ink px-3 py-1.5 text-[12px] font-semibold text-on-ink hover:opacity-90 disabled:opacity-60"
                 >
-                  Send a reminder
+                  {checkingStale ? 'Checking…' : 'Send a reminder'}
                 </button>
               ) : nudgeTemplate && !hasHelpscoutConversation ? (
                 <p className="text-[11px] text-ink-mute">No Help Scout conversation linked — reply manually.</p>

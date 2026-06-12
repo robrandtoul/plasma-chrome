@@ -13,6 +13,22 @@ export type NeedsAttentionRule =
   | 'approaching_dormant'
   | 'stuck_in_progress'
   | 'approved_earlier_version'
+  | 'nudges_exhausted'
+
+// rule_meta from proofs_needing_attention(). Threshold rules carry `days`;
+// approved_earlier_version carries `version`; nudges_exhausted (000221)
+// carries the underlying chase rule, the reminder count, and the
+// no-contact-ever deliverability flag. `others` (000221) lists every other
+// rule that also fired and survived the snooze/grace guards — the engine
+// still emits one chip, but secondary signals stay visible in the popover.
+export interface NeedsAttentionMeta {
+  days?: number
+  version?: number
+  rule?: string
+  sent?: number
+  no_contact?: boolean
+  others?: string[]
+}
 
 export interface DashboardProject {
   proof_id: string
@@ -48,7 +64,7 @@ export interface DashboardProject {
   latest_non_view_event_type: 'approve' | 'request_changes' | 'designer_override_approve' | null
   current_version_viewed_at: string | null
   rule_code: NeedsAttentionRule | null
-  rule_meta: { days?: number; version?: number } | null
+  rule_meta: NeedsAttentionMeta | null
   snooze_rule_code: NeedsAttentionRule | null
   snoozed_until: string | null
   snooze_note: string | null
@@ -179,7 +195,7 @@ export interface BucketInput {
   latest_non_view_event_at: string | null
   version_created_at: string | null
   rule_code: NeedsAttentionRule | null
-  rule_meta: { days?: number; version?: number } | null
+  rule_meta: NeedsAttentionMeta | null
   snoozed_until: string | null
   // Help Scout reply activity (000208) — used by the customer_replied
   // bucket to detect a customer who responded by email rather than via

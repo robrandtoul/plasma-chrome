@@ -53,6 +53,12 @@ export interface CandidateFacts {
   lastStaffReplyAt: string | null
   snoozed: boolean
   autoNudgeDisabled: boolean
+  /**
+   * proofs.helpscout_tags carries 'follow up' (Phase 2b tag sync — the
+   * webhook mirrors Help Scout conversation tags). A human flagged the
+   * conversation, so a human owns the chase: automation stands down.
+   */
+  hasFollowUpTag: boolean
 }
 
 export interface LedgerRow {
@@ -88,8 +94,12 @@ export function capRows(rows: LedgerRow[]): LedgerRow[] {
  * rows go back to being structurally invisible to the maths.
  */
 export function simulateDryLedger(rows: LedgerRow[]): LedgerRow[] {
+  // Both would-send shapes count: 'would_send' (reply into the thread) and
+  // 'would_send_new_conversation' (reminder #2's fresh conversation).
   return rows.map((r) =>
-    r.state === 'dry_run' && r.outcome === 'would_send' ? { ...r, state: 'sent' } : r,
+    r.state === 'dry_run' && (r.outcome ?? '').startsWith('would_send')
+      ? { ...r, state: 'sent' }
+      : r,
   )
 }
 
@@ -224,6 +234,11 @@ export function decideForProof(
 
   if (facts.autoNudgeDisabled) return { action: 'skip', outcome: 'skipped_opted_out' }
   if (facts.snoozed) return { action: 'skip', outcome: 'skipped_snoozed' }
+  // Phase 2b interaction rule (spec): a Help Scout "follow up" tag means a
+  // human has claimed the chase, so the bot must NOT also email — decided
+  // here with a logged outcome, never silently by the dashboard's priority
+  // ordering. Clears itself when the human removes the tag.
+  if (facts.hasFollowUpTag) return { action: 'skip', outcome: 'skipped_followup_tag' }
 
   // Hard rule (spec architecture rule #3): a customer reply newer than our
   // last outbound touch means a human owes the next message — regardless of
@@ -286,6 +301,26 @@ export function decideForProof(
   }
 
   return { action: 'send' }
+}
+
+/**
+ * Which reminder this would be for (proof, rule, current version) — counted
+ * rows of ANY source, matching the cap semantics (a manual chase consumed
+ * slot #1, so the bot's first send is reminder #2). The sender opens
+ * reminder #2+ as a NEW Help Scout conversation with a fresh subject (spec
+ * section 6): if the original thread is in the customer's spam folder, a
+ * second reply there measures the spam folder, not the customer.
+ */
+export function nudgeNumberFor(
+  facts: CandidateFacts,
+  ledger: LedgerRow[],
+  ruleCode: string,
+): number {
+  return capRows(ledger).filter(
+    (r) => r.proofId === facts.proofId &&
+      r.versionId === facts.versionId &&
+      r.ruleCode === ruleCode,
+  ).length + 1
 }
 
 // ── Batch-level grouping ─────────────────────────────────────────────────────

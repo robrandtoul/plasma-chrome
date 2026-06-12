@@ -11,6 +11,12 @@
 //   * convo.created                → triggers the AI draft pipeline
 //   * convo.moved                  → triggers the AI draft pipeline (catches
 //                                    Graphics → Customer Support handoffs)
+//   * convo.tags                   → mirrors the conversation's tags into
+//                                    proofs.helpscout_tags (Phase 2b tag sync) so
+//                                    the "follow up" needs-attention rule fires and
+//                                    the nudge sender stands down for human-claimed
+//                                    chases. Requires the convo.tags event to be
+//                                    ticked on the webhook subscription in HS.
 //   * convo.merged                 → re-points any proof linked to the now-deleted
 //                                    source conversation onto the surviving target,
 //                                    so reminders/replies keep working after a merge.
@@ -57,6 +63,12 @@ const DRAFT_TRIGGER_RE = /^convo\.(created|moved|customer\.reply\.created|agent\
 // Matched loosely (any event whose name contains "merge") so a naming variant
 // still routes here — none of the other subscribed events contain "merge".
 const MERGE_EVENT_RE = /merge/i
+// Tag changes (convo.tags) — Phase 2b tag sync. Mirrors the conversation's
+// tag list into proofs.helpscout_tags so the helpscout_follow_up_tag
+// needs-attention rule (000154) finally has data, and so the nudge sender
+// can stand down when a human has tagged the conversation "follow up".
+// Matched loosely on "tags" — no other subscribed event contains it.
+const TAGS_EVENT_RE = /tags/i
 
 // Fire-and-forget trigger of the ai-draft worker. Failures are logged, never
 // surfaced — drafting is an enhancement, the webhook's stamping contract
@@ -342,6 +354,35 @@ async function handle(req: Request): Promise<Response> {
     return await handleMerge(admin, conversationId, payload)
   }
 
+  // Tag sync (convo.tags): replace the linked proofs' helpscout_tags with
+  // the conversation's current tag list. The payload is the conversation
+  // resource; tags arrive as [{ id, color, tag }] (defensively also accepting
+  // bare strings). REPLACE, not merge — a cleared tag must clear the rule.
+  // Not a reply: never stamps the reply timestamps, never triggers drafting.
+  if (TAGS_EVENT_RE.test(eventHeader)) {
+    const rawTags = (payload?.tags as unknown[] | undefined) ?? []
+    const tagNames = rawTags
+      .map((t) =>
+        typeof t === 'string' ? t : ((t as { tag?: unknown } | null)?.tag ?? null))
+      .filter((t): t is string => typeof t === 'string' && t.trim() !== '')
+      .map((t) => t.trim().toLowerCase())
+    const { data, error } = await admin
+      .from('proofs')
+      .update({ helpscout_tags: tagNames })
+      .eq('helpscout_conversation_id', String(conversationId))
+      .select('id')
+    if (error) {
+      console.error('[helpscout-webhook] tag sync failed:', error.message)
+      return json({ error: 'tag sync failed', detail: error.message }, 500)
+    }
+    console.log('[helpscout-webhook] tags synced', {
+      conversationId,
+      tags: tagNames,
+      matched: data?.length ?? 0,
+    })
+    return json({ ok: true, tags: tagNames, matched: data?.length ?? 0 })
+  }
+
   // AI draft worker: created / moved / customer-reply → drafting;
   // agent-reply → sent-vs-draft feedback capture. The worker gates on
   // mailbox + mode + dedupe (drafting) or an unmatched draft (feedback).
@@ -393,9 +434,41 @@ async function handle(req: Request): Promise<Response> {
     return json({ error: 'update failed', detail: error.message }, 500)
   }
 
+  // Fallback for nudge-created conversations: reminder #2 opens a FRESH
+  // conversation (send-nudges, spec section 6) that no proof links to
+  // directly — the proof keeps its original helpscout_conversation_id. The
+  // sent ledger row carries the new conversation's id, so when the direct
+  // match finds nothing, stamp the proofs behind any 'sent' nudge rows for
+  // this conversation. Without this, a customer replying to reminder #2
+  // would never stamp helpscout_last_customer_reply_at and the hard-skip /
+  // grace suppression would go blind to exactly the replies the fresh
+  // conversation exists to win.
+  let matched = data?.length ?? 0
+  if (matched === 0) {
+    const { data: nudgeRows } = await admin
+      .from('proof_nudges')
+      .select('proof_id')
+      .eq('helpscout_conversation_id', String(conversationId))
+      .eq('state', 'sent')
+    const proofIds = [...new Set(((nudgeRows ?? []) as Array<{ proof_id: string }>).map((r) => r.proof_id))]
+    if (proofIds.length > 0) {
+      const { data: viaNudge, error: nudgeErr } = await admin
+        .from('proofs')
+        .update({ [column]: stampIso })
+        .in('id', proofIds)
+        .or(`${column}.is.null,${column}.lt.${stampIso}`)
+        .select('id')
+      if (nudgeErr) {
+        console.error('[helpscout-webhook] nudge-conversation stamp failed:', nudgeErr.message)
+        return json({ error: 'update failed', detail: nudgeErr.message }, 500)
+      }
+      matched = viaNudge?.length ?? 0
+    }
+  }
+
   // 200 whether or not a proof matched (most HS conversations aren't proofs);
   // a matched-but-empty result is a normal no-op, not an error.
-  return json({ ok: true, matched: data?.length ?? 0, direction })
+  return json({ ok: true, matched, direction })
 }
 
 Deno.serve(async (req) => {

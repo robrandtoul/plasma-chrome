@@ -34,6 +34,7 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import {
+  createStaffConversation,
   fetchConversationWithThreads,
   getAccessToken,
   HsError,
@@ -53,6 +54,7 @@ import {
   groupSendables,
   isWithinSendWindow,
   londonDate,
+  nudgeNumberFor,
   simulateDryLedger,
   type AutomationRuleConfig,
   type CandidateFacts,
@@ -62,6 +64,11 @@ import {
 
 const RULE_CODE = 'sent_never_viewed'
 const TEMPLATE_ID = 'nudge_sent_never_viewed'
+// Subject line for reminder #2+, which opens a NEW Help Scout conversation
+// (spec section 6): deliberately fresh wording, no "Re:" — if the original
+// thread is in the customer's spam folder, a reply there measures the spam
+// folder, not the customer.
+const FRESH_CONVERSATION_SUBJECT = 'Your card proof from Plasma Design'
 // An open run row older than this is treated as crashed (gates live sends);
 // younger means a run is genuinely in flight (this invocation aborts).
 const OPEN_RUN_STALE_MS = 10 * 60 * 1000
@@ -144,6 +151,7 @@ interface CandidateRow {
   last_staff_reply_at: string | null
   snoozed: boolean
   auto_nudge_disabled: boolean
+  has_followup_tag: boolean
 }
 
 type Candidate = CandidateFacts & { row: CandidateRow }
@@ -159,6 +167,7 @@ function toFacts(row: CandidateRow): Candidate {
     lastStaffReplyAt: row.last_staff_reply_at,
     snoozed: row.snoozed,
     autoNudgeDisabled: row.auto_nudge_disabled,
+    hasFollowUpTag: row.has_followup_tag === true,
     row,
   }
 }
@@ -527,6 +536,17 @@ async function run(admin: Admin): Promise<Response> {
           }
           const rendered = renderTemplate(templateBody, ctx)
 
+          // Reminder #2+ opens a NEW conversation with a fresh subject
+          // (spec section 6) — the deliverability lever, and the nudge-1
+          // vs nudge-2 response split doubles as the spam signal in the
+          // analytics. In dry-run mode the simulated ledger advances the
+          // number night-over-night, so the Outbox demonstrates the
+          // fresh-conversation path before any live send. Falls back to
+          // the same thread if HS ever returns a conversation without a
+          // mailbox id — better in-thread than not at all.
+          const nudgeNumber = nudgeNumberFor(c, ledger, RULE_CODE)
+          const freshConversation = nudgeNumber >= 2 && typeof conv.mailboxId === 'number'
+
           if (mode === 'dry_run') {
             const id = await insertLedgerRow({
               proof_id: c.proofId,
@@ -535,7 +555,7 @@ async function run(admin: Admin): Promise<Response> {
               template_id: TEMPLATE_ID,
               source: 'auto',
               state: 'dry_run',
-              outcome: 'would_send',
+              outcome: freshConversation ? 'would_send_new_conversation' : 'would_send',
               helpscout_conversation_id: c.conversationId,
               rendered_body: rendered,
             })
@@ -581,20 +601,36 @@ async function run(admin: Admin): Promise<Response> {
             continue
           }
 
-          // Deliberately no status flip: reopening / re-queueing conversations
-          // is a designer-initiated semantic (send-helpscout-reply), not the
-          // bot's.
-          const threadId = await postStaffReply(token, c.conversationId!, {
-            text: rendered,
-            userId: senderId,
-            customerId,
-          })
+          // Reminder #1 replies into the existing thread (deliberately no
+          // status flip: reopening / re-queueing conversations is a
+          // designer-initiated semantic, not the bot's). Reminder #2+
+          // creates a fresh conversation in the same mailbox; the new
+          // conversation id replaces the original on the ledger row so the
+          // webhook can stamp reply activity from it back onto the proof.
+          let threadId = 0
+          let newConversationId: string | null = null
+          if (freshConversation) {
+            newConversationId = await createStaffConversation(token, {
+              mailboxId: conv.mailboxId!,
+              subject: FRESH_CONVERSATION_SUBJECT,
+              customerId,
+              userId: senderId,
+              text: rendered,
+            })
+          } else {
+            threadId = await postStaffReply(token, c.conversationId!, {
+              text: rendered,
+              userId: senderId,
+              customerId,
+            })
+          }
 
           await admin.from('proof_nudges')
             .update({
               state: 'sent',
-              outcome: 'sent',
+              outcome: freshConversation ? 'sent_new_conversation' : 'sent',
               helpscout_thread_id: threadId || null,
+              ...(newConversationId ? { helpscout_conversation_id: newConversationId } : {}),
             })
             .eq('id', claimId)
           sent++
@@ -623,6 +659,8 @@ async function run(admin: Admin): Promise<Response> {
               template_id: TEMPLATE_ID,
               nudge_id: claimId,
               helpscout_thread_id: threadId || null,
+              nudge_number: nudgeNumber,
+              new_conversation_id: newConversationId,
               automated: true,
             },
           })

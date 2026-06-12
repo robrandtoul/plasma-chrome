@@ -410,12 +410,14 @@ Review queue live for the other three rules.
 indicative only (bot-filter noise). Tune thresholds/wording; consider the
 Aircall escalation for exhausted proofs.
 
-**Phase 2b interaction (future).** When the HS tag sync ships, decide
-explicitly whether a "follow up" tag suppresses or boosts automation for a
-proof that also satisfies `sent_never_viewed` — encoded in the job's input
-query with a logged outcome, never decided silently by the 000154 priority
-ordering. Reconcile the `enabled` drift (000154 seeds the tag rule enabled on
-live; `DEFAULT_RULES` has it false).
+**Phase 2b interaction — SHIPPED 2026-06-12.** The tag sync is live in
+`helpscout-webhook` (the `convo.tags` event mirrors conversation tags into
+`proofs.helpscout_tags`; the event must be ticked on the webhook
+subscription in HS). The interaction decision: a "follow up" tag means a
+human owns the chase, so automation SUPPRESSES — `compute_nudge_candidates`
+returns `has_followup_tag` (000223) and the decision module skips with the
+logged outcome `skipped_followup_tag` (Outbox "Holding off"). The
+`DEFAULT_RULES` enabled drift is reconciled (now true, PV-2026W21-043).
 
 ## Analytics — measuring effectiveness
 
@@ -467,24 +469,33 @@ stay out of scope until volume supports them.
 
 ## Deferred to Phase 2 — must build BEFORE the flip
 
-The Phase 1 build deliberately ships without these; each is required before
-(or shortly after) `auto_nudges_enabled` turns on, and this list is the
-marker so none goes silently missing:
+**Status 2026-06-12: ALL FOUR BUILT** (migrations 000221–000223 + the
+send-nudges / helpscout-webhook / Outbox changes in the same branch). The
+flip is now gated only on applying/deploying those and Rob's decision.
 
-- **Exhaustion as a first-class dashboard state** (section 5). Phase 1
-  surfaces exhaustion only as `skipped_capped` Outbox rows; the dashboard
-  tile/chip, `attentionReason` copy variants, and the HS tag/assign are
-  Phase 2 work.
-- **Second nudge as a new Help Scout conversation** (section 6). Needed the
-  first time any live proof reaches nudge 2 — i.e. within `repeat_days` of
-  the flip.
-- **Review queue + automation for the other three chase rules.** The admin
-  dials store `mode` for all four rules now, but only `sent_never_viewed` is
-  consumed; the admin UI says so explicitly.
+- **Exhaustion as a first-class dashboard state** (section 5). ✅ Built —
+  the `nudges_exhausted` needs-attention rule (000221): cap spent + chase
+  rule still firing → "N reminders sent — needs a call" chip, with a
+  `no_contact` deliverability variant when the customer has never viewed or
+  replied to anything. The HS tag/assign half is deliberately NOT built —
+  the dashboard chip covers the surfacing need; revisit only if escalations
+  get missed in practice.
+- **Second nudge as a new Help Scout conversation** (section 6). ✅ Built —
+  `createStaffConversation` in `_shared/helpscout.ts`; `nudgeNumberFor`
+  decides; the sent ledger row carries the fresh conversation id and the
+  webhook stamps reply activity from it back onto the proof via a
+  `proof_nudges` lookup.
+- **Review queue + automation for the other three chase rules.** ✅ Built
+  (review half) — the Outbox "Review and send" section lists live rule hits
+  in `mode: 'review'`, one click re-validates then opens the pre-filled
+  send panel (manual ledger, same caps). Auto-send remains
+  `sent_never_viewed`-only by design; graduating another rule to auto still
+  requires generalising `compute_nudge_candidates` per-rule — that stays
+  deferred until the data says a rule deserves it.
 - **One-proof re-validation when a human clicks send from a stale surface**
-  (rule #1's manual half). ResolvePopover renders from live dashboard data
-  and a human reads the body, so Phase 1 risk is low — but the re-check
-  should land with the review queue.
+  (rule #1's manual half). ✅ Built — both ResolvePopover and the review
+  queue re-check `rule_code` via a single-row `public_dashboard_projects`
+  read at click time; a cleared rule renders "no longer needed".
 
 ## Out of scope (this build)
 
