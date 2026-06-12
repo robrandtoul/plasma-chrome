@@ -2657,7 +2657,7 @@ export default function DashboardPage() {
                 {/* Follow-up automation Outbox (Phase 1). Owns its own small
                     nudge_runs / proof_nudges queries; the projects array is
                     only passed for client-side contact/company labels. */}
-                <NudgeOutboxPanel projects={projects} />
+                <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} />
                 <LeadTimesChart leadTimes={leadTimes} navigate={navigate} />
               </aside>
             </div>

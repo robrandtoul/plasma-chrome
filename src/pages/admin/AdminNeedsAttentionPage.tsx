@@ -541,13 +541,13 @@ export default function AdminNeedsAttentionPage() {
                     </>
                   )}
                 </div>
-                {/* Phase 1 wires only sent_never_viewed into the sender; the
-                    other three rules' dials are stored but consumed by
-                    nothing yet, so don't let the controls imply live
-                    behaviour. Configurable ahead of time on purpose. */}
+                {/* Auto-send is wired for sent_never_viewed only; the other
+                    three rules support Review first (the dashboard Outbox's
+                    Review-and-send queue) but their Auto-send dials are
+                    stored ahead of a future graduation, not consumed. */}
                 {code !== 'sent_never_viewed' && (
                   <p className="w-full text-xs text-ink-mute">
-                    Stored now — takes effect when the Phase 2 review queue ships.
+                    “Review first” queues one-click sends in the dashboard Outbox. Auto-send isn’t wired for this rule yet — the dials are stored for when it graduates.
                   </p>
                 )}
               </div>

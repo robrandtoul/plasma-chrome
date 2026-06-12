@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Send } from 'lucide-react'
+import Modal from './Modal'
+import MessageSendPanel from './MessageSendPanel'
 import { supabase } from '../lib/supabase'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
-import type { DashboardProject } from '../lib/dashboardGrouping'
+import { nudgeTemplateFor } from '../lib/needsAttention'
+import { snoozeProof } from '../lib/snooze'
+import { firstName } from '../lib/firstName'
+import { customerProofPath } from '../lib/customerProofUrl'
+import { isCurrentlySnoozed, type DashboardProject } from '../lib/dashboardGrouping'
+import type { TemplateContext } from '../lib/replyTemplates'
 
 // Dashboard Outbox panel for the follow-up automation feature (Phase 1,
 // docs/followup-automation-spec.md). Sits in the dashboard aside under
@@ -139,7 +146,26 @@ function ruleShort(code: string): string {
   return RULE_SHORT[code] ?? code.replace(/_/g, ' ')
 }
 
-export function NudgeOutboxPanel({ projects }: { projects: DashboardProject[] }) {
+// The chase rules a designer can one-click chase from the review queue.
+const REVIEW_QUEUE_RULES = new Set([
+  'sent_never_viewed',
+  'viewed_not_actioned',
+  'approaching_dormant',
+  'stuck_in_progress',
+])
+
+// How long a review-queue send auto-snoozes the proof (matches
+// ResolvePopover's SNOOZE_HOURS).
+const REVIEW_SNOOZE_HOURS = 72
+
+export function NudgeOutboxPanel({
+  projects,
+  onAfterSend,
+}: {
+  projects: DashboardProject[]
+  /** Called after a review-queue reminder sends, so the dashboard refetches. */
+  onAfterSend?: () => void
+}) {
   const [loadState, setLoadState] = useState<'loading' | 'error' | 'ready'>('loading')
   const [run, setRun] = useState<NudgeRun | null>(null)
   const [openRuns, setOpenRuns] = useState<OpenRun[]>([])
@@ -149,6 +175,12 @@ export function NudgeOutboxPanel({ projects }: { projects: DashboardProject[] })
   // across all proofs — the webhook-freshness signal. Null when no proof
   // carries either stamp yet.
   const [newestStampAt, setNewestStampAt] = useState<string | null>(null)
+  // The automation block from needs_attention_rules — which chase rules are
+  // in 'review' mode and so feed the Review-and-send queue below. Null until
+  // loaded (queue hidden rather than wrong).
+  const [automationConfig, setAutomationConfig] = useState<Record<
+    string, { mode?: string }
+  > | null>(null)
   // Bumped after a successful human action so the panel refetches; the
   // existing content stays on screen during the refetch (no loading flash).
   const [reloadKey, setReloadKey] = useState(0)
@@ -166,7 +198,7 @@ export function NudgeOutboxPanel({ projects }: { projects: DashboardProject[] })
       // view layer exposes no server-side aggregate, and two single-row
       // reads are cheap). The greater of the two stamps is the webhook
       // signal.
-      const [runRes, openRes, stuckRes, staffRes, customerRes] = await Promise.all([
+      const [runRes, openRes, stuckRes, staffRes, customerRes, rulesRes] = await Promise.all([
         supabase
           .from('nudge_runs')
           .select('id, started_at, finished_at, mode, candidates_computed, sent, skipped, errors')
@@ -198,12 +230,23 @@ export function NudgeOutboxPanel({ projects }: { projects: DashboardProject[] })
           .order('helpscout_last_customer_reply_at', { ascending: false })
           .limit(1)
           .maybeSingle(),
+        supabase
+          .from('site_settings')
+          .select('needs_attention_rules')
+          .eq('id', 1)
+          .single(),
       ])
       if (cancelled) return
       if (runRes.error || openRes.error || stuckRes.error || staffRes.error || customerRes.error) {
         setLoadState('error')
         return
       }
+      // The automation dials are read best-effort: a failed read just hides
+      // the review queue rather than failing the whole panel.
+      const rulesDoc = (rulesRes.data?.needs_attention_rules ?? null) as
+        | { automation?: Record<string, { mode?: string }> }
+        | null
+      setAutomationConfig(rulesDoc?.automation ?? null)
 
       const staffAt = (staffRes.data?.helpscout_last_reply_at ?? null) as string | null
       const customerAt = (customerRes.data?.helpscout_last_customer_reply_at ?? null) as string | null
@@ -264,6 +307,25 @@ export function NudgeOutboxPanel({ projects }: { projects: DashboardProject[] })
   function labelFor(proofId: string): string {
     return labelByProof.get(proofId) ?? `Proof ${proofId.slice(0, 8)}…`
   }
+
+  // The review queue (followup-automation-spec §"Review queue"): proofs whose
+  // live needs-attention rule is a chase rule the admin has set to "Review
+  // first". Rendered from the rules engine's output on every dashboard load —
+  // no persisted nightly snapshot — and each send re-validates at click time
+  // inside ReviewQueueItem. Sendable rows only: a Help Scout link and a
+  // current version are what MessageSendPanel needs.
+  const reviewQueue = useMemo(() => {
+    if (!automationConfig) return []
+    return projects.filter((p) =>
+      p.rule_code != null &&
+      REVIEW_QUEUE_RULES.has(p.rule_code) &&
+      automationConfig[p.rule_code]?.mode === 'review' &&
+      !!p.helpscout_conversation_id &&
+      !!p.current_version_id &&
+      p.current_version_number != null &&
+      !isCurrentlySnoozed(p),
+    )
+  }, [projects, automationConfig])
 
   // ── Derived status ──────────────────────────────────────────────────────
   const now = Date.now()
@@ -523,6 +585,37 @@ export function NudgeOutboxPanel({ projects }: { projects: DashboardProject[] })
             </div>
           )}
 
+          {/* Review and send — the live queue of chase rules in "Review
+              first" mode. One click re-validates, then opens the same
+              pre-filled send panel the resolve popover uses; the reminder
+              lands in the manual ledger (send-helpscout-reply), so it
+              consumes the same cap and cooldown the automation respects. */}
+          {reviewQueue.length > 0 && (
+            <div className="border-b border-line-soft px-5 py-3.5">
+              <div className="flex items-center gap-2 pb-1">
+                <span className="eyebrow text-allocated">Review and send</span>
+                <span className="text-[11px] text-ink-mute tabular-nums">
+                  {reviewQueue.length}
+                </span>
+              </div>
+              <p className="text-[11px] text-ink-soft">
+                These rules are set to “Review first” — check each and send the reminder with one click.
+              </p>
+              <ul className="mt-1 divide-y divide-line-soft">
+                {reviewQueue.map((p) => (
+                  <ReviewQueueItem
+                    key={p.proof_id}
+                    project={p}
+                    onSent={() => {
+                      setReloadKey((k) => k + 1)
+                      onAfterSend?.()
+                    }}
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
+
           {run && (
             rows.length === 0 ? (
               <p className="px-5 py-6 text-center text-sm text-ink-mute">
@@ -727,6 +820,124 @@ export function NudgeOutboxPanel({ projects }: { projects: DashboardProject[] })
         </>
       )}
     </div>
+  )
+}
+
+// One review-queue row: proof label + rule + "Send" button. The click
+// re-validates the rule against the live engine (architecture rule #1's
+// manual half — this list renders from dashboard data that may be minutes
+// old), then opens the same MessageSendPanel flow the resolve popover uses.
+// A successful send optionally snoozes the proof for 72 hours, exactly like
+// the popover's reminder path.
+function ReviewQueueItem({
+  project,
+  onSent,
+}: {
+  project: DashboardProject
+  onSent: () => void
+}) {
+  const [checking, setChecking] = useState(false)
+  const [staleNote, setStaleNote] = useState<string | null>(null)
+  const [showSend, setShowSend] = useState(false)
+  const [snoozeAfterSend, setSnoozeAfterSend] = useState(true)
+
+  const templateId = project.rule_code ? nudgeTemplateFor(project.rule_code) : null
+
+  const context: TemplateContext = {
+    first_name: firstName(project.contact_name ?? ''),
+    full_name: project.contact_name ?? '',
+    company: project.company_name,
+    version_number: project.current_version_number ?? '',
+    url: `${window.location.origin}${customerProofPath(project.proof_id)}`,
+    designer_first_name: '',
+  }
+
+  async function openSend() {
+    if (checking) return
+    setChecking(true)
+    setStaleNote(null)
+    // Single-row re-check against the live rules engine; a cleared rule
+    // shows "no longer needed" instead of sending. A fetch error falls
+    // through and opens the panel — a human reads the body before sending.
+    const { data, error } = await supabase
+      .from('public_dashboard_projects')
+      .select('rule_code')
+      .eq('proof_id', project.proof_id)
+      .maybeSingle()
+    setChecking(false)
+    if (!error && data?.rule_code !== project.rule_code) {
+      setStaleNote('No longer needed — this resolved itself.')
+      return
+    }
+    setShowSend(true)
+  }
+
+  async function handleSent() {
+    if (snoozeAfterSend && project.rule_code) {
+      try {
+        await snoozeProof(project.proof_id, project.rule_code, REVIEW_SNOOZE_HOURS, 'Reminder sent')
+      } catch (err) {
+        console.error('[NudgeOutboxPanel] auto-snooze failed:', err)
+      }
+    }
+    setShowSend(false)
+    onSent()
+  }
+
+  return (
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2">
+      <Link
+        to={`/proofs/${project.proof_id}`}
+        className="min-w-0 truncate text-[13px] font-semibold text-ink hover:underline"
+      >
+        {project.company_name || project.contact_name || `Proof ${project.proof_id.slice(0, 8)}…`}
+      </Link>
+      <span className="shrink-0 text-[11px] text-ink-mute">
+        {project.rule_code ? ruleShort(project.rule_code) : ''}
+      </span>
+      {staleNote ? (
+        <span className="ml-auto shrink-0 text-[11px] text-ink-mute">{staleNote}</span>
+      ) : (
+        <button
+          type="button"
+          disabled={checking || !templateId}
+          onClick={() => void openSend()}
+          className="ml-auto inline-flex shrink-0 items-center justify-center rounded-[6px] bg-ink px-2.5 py-1 text-[11px] font-semibold text-on-ink hover:opacity-90 disabled:opacity-50"
+        >
+          {checking ? 'Checking…' : 'Send reminder'}
+        </button>
+      )}
+
+      {showSend && templateId && project.current_version_id && project.current_version_number != null && (
+        <Modal
+          open
+          onClose={() => setShowSend(false)}
+          ariaLabel="Send a reminder"
+          panelClassName="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-y-auto rounded-2xl bg-surface p-6 shadow-xl"
+        >
+          <label className="mb-4 flex items-center gap-2 text-sm text-ink-soft">
+            <input
+              type="checkbox"
+              checked={snoozeAfterSend}
+              onChange={(e) => setSnoozeAfterSend(e.target.checked)}
+              className="h-4 w-4 rounded border-line"
+            />
+            Snooze this proof for 3 days after sending
+          </label>
+          <MessageSendPanel
+            proofId={project.proof_id}
+            versionId={project.current_version_id}
+            versionNumber={project.current_version_number}
+            templateId={templateId}
+            context={context}
+            hasHelpScoutConversation={!!project.helpscout_conversation_id}
+            onSent={handleSent}
+            onSkip={() => setShowSend(false)}
+            skipLabel="Cancel"
+          />
+        </Modal>
+      )}
+    </li>
   )
 }
 
