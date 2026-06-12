@@ -19,6 +19,27 @@ export interface ComposeNoteInput {
 
 const CURRENCY_SYMBOL: Record<string, string> = { GBP: '£', EUR: '€', USD: '$' }
 
+// Plain-English stand-ins so the header reads like a colleague's note, not a
+// row from the database. The raw category/outcome codes are internal jargon.
+const CATEGORY_LABEL: Record<string, string> = {
+  quote_request: 'Quote',
+  lead_time: 'Lead time',
+  capability_question: 'Capability question',
+  sample_request: 'Sample request',
+  order_details_collection: 'Order details',
+  order_status: 'Order status',
+  invoice_copy: 'Invoice copy',
+  artwork: 'Artwork',
+  complaint: 'Complaint',
+  other: 'Other',
+}
+
+const OUTCOME_LABEL: Record<string, string> = {
+  abstained: 'needs you',
+  blocked: 'blocked',
+  skipped: 'skipped',
+}
+
 function figureLine(f: FigureUsed): string {
   const sym = CURRENCY_SYMBOL[f.currency] ?? `${f.currency} `
   return `${sym}${f.amount} — ${f.source}`
@@ -37,9 +58,9 @@ interface Section {
 
 function buildSections(input: ComposeNoteInput): { header: string; status: string | null; statusTone: 'ok' | 'warn' | 'info'; sections: Section[] } {
   const { classification: c, draft, outcome, abstainOrBlockReason, guardrails } = input
-  const bits = [`AI · ${c.category}`, `${c.confidence} confidence`]
+  const bits = [`AI · ${CATEGORY_LABEL[c.category] ?? c.category}`, `${c.confidence} confidence`]
   if (c.currency_hint && c.currency_hint !== 'unknown') bits.push(c.currency_hint)
-  if (outcome !== 'drafted') bits.push(outcome)
+  if (outcome !== 'drafted') bits.push(OUTCOME_LABEL[outcome] ?? outcome)
   const header = bits.join(' · ')
 
   const sections: Section[] = []
@@ -101,23 +122,25 @@ export function composeNote(input: ComposeNoteInput): { text: string; html: stri
   }
   const text = textParts.join('\n').replace(/\n{3,}/g, '\n\n').trim()
 
-  // ── HTML (Help Scout collapses newlines, so structure needs markup) ──
-  const htmlParts: string[] = [`<strong>${escapeHtml(header)}</strong>`]
+  // ── HTML (Help Scout collapses newlines, so each block needs real markup
+  //    and each header needs its own line before the content beneath it) ──
+  const htmlParts: string[] = [`<p><strong>${escapeHtml(header)}</strong></p>`]
   for (const s of sections) {
-    if (s.title) htmlParts.push(`<br><strong>${escapeHtml(s.title)}</strong>`)
     if (s.kind === 'para') {
-      htmlParts.push(s.items.map((i) => escapeHtml(i)).join('<br>'))
+      const titleHtml = s.title ? `<strong>${escapeHtml(s.title)}</strong><br>` : ''
+      htmlParts.push(`<p>${titleHtml}${s.items.map((i) => escapeHtml(i)).join('<br>')}</p>`)
     } else {
       const mark = s.kind === 'checks' ? '☐ ' : ''
-      htmlParts.push(`<ul>${s.items.map((i) => `<li>${mark}${escapeHtml(i)}</li>`).join('')}</ul>`)
+      const titleHtml = s.title ? `<p><strong>${escapeHtml(s.title)}</strong></p>` : ''
+      htmlParts.push(`${titleHtml}<ul>${s.items.map((i) => `<li>${mark}${escapeHtml(i)}</li>`).join('')}</ul>`)
     }
   }
   if (status) {
     const mark = statusTone === 'ok' ? '✓ ' : statusTone === 'warn' ? '⚠ ' : ''
     const colour = statusTone === 'warn' ? '#b91c1c' : statusTone === 'ok' ? '#166534' : '#555'
-    htmlParts.push(`<br><span style="color:${colour}">${mark}${escapeHtml(status)}</span>`)
+    htmlParts.push(`<p style="color:${colour}">${mark}${escapeHtml(status)}</p>`)
   }
-  const html = htmlParts.join('\n')
+  const html = htmlParts.join('')
 
   return { text, html }
 }

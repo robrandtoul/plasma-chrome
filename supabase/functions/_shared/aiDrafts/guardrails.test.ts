@@ -453,11 +453,19 @@ const draftStub: DraftResult = {
   links_used: [],
 }
 const drafted = composeNote({ classification: classifyStub, draft: draftStub, outcome: 'drafted', abstainOrBlockReason: null, guardrails: { ok: true } })
-check('note header carries category + confidence', drafted.text.startsWith('AI · quote_request · high confidence'))
+check('note header uses a plain-English category label', drafted.text.startsWith('AI · Quote · high confidence'))
 check('figures section rendered', drafted.text.includes('FIGURES USED') && drafted.text.includes('£329 — Steel 500µm x100'))
 check('checks become a checklist', drafted.text.includes('☐ Confirm 500 micron'))
 check('drafted status is reconciled', drafted.text.includes('✓ All figures reconciled'))
 check('html uses markup not bare newlines', drafted.html.includes('<strong>') && drafted.html.includes('<ul>'))
+// The header/body run-together bug (PR #276 review): each header must sit in
+// its own block so the content starts on a fresh line beneath it.
+check('html header is its own paragraph', drafted.html.includes('<p><strong>AI · Quote'))
+check('html has no collapsing newline joins', !drafted.html.includes('</p>\n') && !drafted.html.includes('</ul>\n'))
+
+const actionDrafted = composeNote({ classification: classifyStub, draft: { ...draftStub, action: 'Route to Graphics' }, outcome: 'drafted', abstainOrBlockReason: null, guardrails: { ok: true } })
+check('html inline section header is followed by a line break', actionDrafted.html.includes('<strong>Action</strong><br>Route to Graphics'))
+check('html outcome word is plain English', composeNote({ classification: classifyStub, draft: { ...draftStub, draft_body: null, should_draft: false, action: 'Route to Graphics' }, outcome: 'abstained', abstainOrBlockReason: 'needs a human', guardrails: null }).text.includes('· needs you'))
 check('html escapes content', composeNote({ classification: { ...classifyStub, summary: 'a < b & c' }, draft: { ...draftStub, note_summary: 'a < b & c' }, outcome: 'drafted', abstainOrBlockReason: null, guardrails: { ok: true } }).html.includes('a &lt; b &amp; c'))
 
 const blockedNote = composeNote({ classification: classifyStub, draft: { ...draftStub }, outcome: 'blocked', abstainOrBlockReason: 'figure £305 does not reconcile', guardrails: { ok: false, reasons: ['figure £305 does not reconcile'] } })

@@ -92,24 +92,24 @@ export const DRAFT_SCHEMA = {
     note_summary: {
       type: ['string', 'null'],
       description:
-        'One or two sentences for the reviewer: what this enquiry is and how you handled it. For an abstention, why it needs a human.',
+        'ONE short, plain-English sentence for the reviewer: what this is and what you did. No spec dumps or reasoning — those go in the other fields. For an abstention, one line on why it needs a human.',
     },
     assumptions: {
       type: 'array',
       items: { type: 'string' },
       description:
-        'Assumptions you made that the reviewer should know about, one per item (e.g. "read \'polished\' as the natural finish, not mirror", "assumed UK-based"). Empty array if none.',
+        'Assumptions the reviewer should know about, one per item as a short plain phrase (e.g. "assumed UK-based", "read \'polished\' as natural finish, not mirror"). Empty array if none.',
     },
     checks: {
       type: 'array',
       items: { type: 'string' },
       description:
-        'Specific things the reviewer must verify or decide BEFORE sending, one per item, each phrased as an action (e.g. "Confirm gun metal is offered brushed at this price", "Decide whether to apply the 10% discount the customer asked for", "Check the supplied logo is high enough resolution"). Empty array if nothing needs checking.',
+        'Things the reviewer must verify or decide BEFORE sending, one per item, each a short action (e.g. "Confirm gun metal comes brushed at this price", "Decide whether to apply the discount they asked for"). Empty array if nothing needs checking.',
     },
     action: {
       type: ['string', 'null'],
       description:
-        'For an abstention or handoff, the concrete next action for the team (e.g. "Route to Graphics — they will proof and reply", "Ready to invoice — generate and send the order link; qty 50 matte black 500 micron, billing + shipping on file"). Null when a draft is provided and no special action is needed.',
+        'For an abstention or handoff, ONE short next step for the team, specs kept to the bare essentials (e.g. "Route to Graphics", "Ready to invoice — send the order link; qty 50 matte black 500µm"). Null when a draft is provided and no special action is needed.',
     },
     figures_used: {
       type: 'array',

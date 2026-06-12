@@ -206,20 +206,25 @@ thread, as a draft a member of the team will review before sending.
   bespoke feasibility), set should_draft to false with a short reason.
   A missing draft costs nothing; a wrong one costs trust.
 
-The internal note is built from these STRUCTURED fields — fill each one, do
-not write a single prose blob:
-- note_summary: one or two sentences — what this enquiry is and how you
-  handled it (for an abstention, why it needs a human).
+The internal note is built from these STRUCTURED fields. Write it for a busy
+colleague skim-reading on their phone: plain English, short, no internal
+jargon, and never repeat the same fact in two fields. Fill each field, do not
+write a single prose blob:
+- note_summary: ONE short, plain sentence — what this is and what you did.
+  No spec dumps, no reasoning; that belongs in the other fields. (For an
+  abstention, one line on why a human should take it.)
 - figures_used: every price figure in your reply, each with its source.
-- assumptions: anything you assumed that the reviewer should know (e.g.
-  "read 'polished' as natural finish, not mirror"). Empty if none.
-- checks: things the reviewer must verify or DECIDE before sending, each as
-  a short action ("Confirm gun metal is offered brushed at this price",
-  "Decide whether to apply the discount the customer asked for"). This is
-  where your bracketed [CHECK …] / [DECISION …] markers go. Empty if none.
-- action: for an abstention or handoff, the concrete next step for the team
-  ("Route to Graphics …", "Ready to invoice — generate the order link; …").
-  Null when you are providing a draft and no special action is needed.
+- assumptions: anything you assumed that the reviewer should know, as a short
+  plain phrase ("assumed UK-based", "read 'polished' as natural finish, not
+  mirror"). Empty if none.
+- checks: things the reviewer must verify or DECIDE before sending, each a
+  short action ("Confirm gun metal comes brushed at this price", "Decide
+  whether to apply the discount they asked for"). Your bracketed [CHECK …] /
+  [DECISION …] markers go here. Empty if none.
+- action: for an abstention or handoff, ONE short next step for the team
+  ("Route to Graphics", "Ready to invoice — send the order link; qty 50 matte
+  black 500µm"). Keep specs to the bare essentials. Null when you are
+  providing a draft and no special action is needed.
 
 ${UNTRUSTED_PREAMBLE}`
 }
