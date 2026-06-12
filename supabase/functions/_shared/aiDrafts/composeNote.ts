@@ -122,23 +122,28 @@ export function composeNote(input: ComposeNoteInput): { text: string; html: stri
   }
   const text = textParts.join('\n').replace(/\n{3,}/g, '\n\n').trim()
 
-  // ── HTML (Help Scout collapses newlines, so each block needs real markup
-  //    and each header needs its own line before the content beneath it) ──
+  // ── HTML (Help Scout collapses newlines and renders <p> margins tight, so
+  //    each block needs real markup, each header its own line, AND an explicit
+  //    blank line between sections so they don't run together) ──
+  // GAP is a bare <br> spacer prepended to every section after the header —
+  // Help Scout renders <br> reliably but near-zero <p> margins, so this is what
+  // actually puts air between the blocks.
+  const GAP = '<br>'
   const htmlParts: string[] = [`<p><strong>${escapeHtml(header)}</strong></p>`]
   for (const s of sections) {
     if (s.kind === 'para') {
       const titleHtml = s.title ? `<strong>${escapeHtml(s.title)}</strong><br>` : ''
-      htmlParts.push(`<p>${titleHtml}${s.items.map((i) => escapeHtml(i)).join('<br>')}</p>`)
+      htmlParts.push(`${GAP}<p>${titleHtml}${s.items.map((i) => escapeHtml(i)).join('<br>')}</p>`)
     } else {
       const mark = s.kind === 'checks' ? '☐ ' : ''
       const titleHtml = s.title ? `<p><strong>${escapeHtml(s.title)}</strong></p>` : ''
-      htmlParts.push(`${titleHtml}<ul>${s.items.map((i) => `<li>${mark}${escapeHtml(i)}</li>`).join('')}</ul>`)
+      htmlParts.push(`${GAP}${titleHtml}<ul>${s.items.map((i) => `<li>${mark}${escapeHtml(i)}</li>`).join('')}</ul>`)
     }
   }
   if (status) {
     const mark = statusTone === 'ok' ? '✓ ' : statusTone === 'warn' ? '⚠ ' : ''
     const colour = statusTone === 'warn' ? '#b91c1c' : statusTone === 'ok' ? '#166534' : '#555'
-    htmlParts.push(`<p style="color:${colour}">${mark}${escapeHtml(status)}</p>`)
+    htmlParts.push(`${GAP}<p style="color:${colour}">${mark}${escapeHtml(status)}</p>`)
   }
   const html = htmlParts.join('')
 
