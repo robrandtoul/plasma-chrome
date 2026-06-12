@@ -32,10 +32,11 @@ import type { TemplateContext } from '../lib/replyTemplates'
 //      what the run would have sent (dry run) or sent (live), with the
 //      rendered body inspectable verbatim, plus failures and every skip
 //      with its reason. Skips split by whether a human can act: "Needs
-//      you" (link/auth problems and the cap escalations whose labels say
-//      "needs a human") gets a Review affordance; "Holding off" (grace
-//      window, snooze, cooldown, opt-out, sibling-suppression) is
-//      self-resolving and rendered low-emphasis with no action.
+//      you" (link/auth problems, the cap escalations whose labels say
+//      "needs a human", and sibling suppressions — those recur every run
+//      until a human sends one combined email) gets a Review affordance;
+//      "Holding off" (grace window, snooze, cooldown, opt-out, follow-up
+//      tag) is self-resolving and rendered low-emphasis with no action.
 //      recipient_mismatch gets its own amber count chip under Needs you:
 //      it is the Phase 1 acceptance metric, and each hit marks a
 //      proof↔conversation link worth fixing in /admin/customers.
@@ -109,7 +110,7 @@ const OUTCOME_LABELS: Record<string, string> = {
   sent_new_conversation:        'sent — fresh conversation',
   sending:                      'sending…',
   recipient_mismatch:           'email mismatch — review',
-  suppressed_sibling:           'grouped with sibling proof',
+  suppressed_sibling:           'sibling proofs — send one combined email',
   skipped_customer_replied:     'customer replied — needs a human',
   skipped_conversation_missing: 'Help Scout conversation missing',
   skipped_closed_conversation:  'conversation closed',
@@ -370,12 +371,15 @@ export function NudgeOutboxPanel({
   // escalations whose labels literally say "needs a human" — is surfaced as
   // actionable. Unknown outcomes default to actionable so a new skip reason
   // never hides silently.
+  // suppressed_sibling deliberately NOT here (adversarial review 2026-06-12,
+  // finding 6): siblings never self-clear — the automation refuses to email
+  // any of them every single run until a human sends one combined message,
+  // so they belong under "Needs you", not in the ignore pile.
   const HOLDING_OFF_OUTCOMES = new Set([
     'skipped_grace_window',
     'skipped_snoozed',
     'skipped_cooldown',
     'skipped_opted_out',
-    'suppressed_sibling',
     // A human tagged the conversation "follow up" in Help Scout — the bot
     // stands down until the tag is cleared. Self-resolving by definition.
     'skipped_followup_tag',

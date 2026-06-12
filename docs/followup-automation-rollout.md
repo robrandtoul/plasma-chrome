@@ -132,6 +132,52 @@ Admin → Needs-attention → Automated reminders → switch **Automated
 reminders** on. First week against real customers: watch the Outbox daily;
 the kill switches are the same toggle (off = back to dry-run) and the
 existing Customer-replies pause (master gate). Before flipping: confirm
-`HELPSCOUT_DEFAULT_USER_ID` is set (step 2 note), and check the spec's
-"Deferred to Phase 2 — must build BEFORE the flip" list — the
-second-nudge-as-new-conversation piece is needed within days of flipping.
+`HELPSCOUT_DEFAULT_USER_ID` is set (step 2 note). The spec's "Deferred to
+Phase 2 — must build BEFORE the flip" list is fully built as of 2026-06-12
+(PR #283), including the second-nudge-as-new-conversation piece.
+
+## Phase 2a — the allowlisted first week (run BEFORE the flip)
+
+The spec's "first week on an allowlist" has no dedicated mechanism; it is
+done with the per-proof opt-out flag. **Run this immediately before flipping
+the switch**, with the allowlist emails edited to taste — it opts every
+in-progress proof OUT of automation except the contacts you name:
+
+```sql
+update proofs.proofs p
+set auto_nudge_disabled_at = now()
+from proofs.contacts c
+where c.id = p.contact_id
+  and p.status = 'in_progress'
+  and p.auto_nudge_disabled_at is null
+  and lower(c.email) not in (
+    'allowed.customer@example.com',
+    'another.allowed@example.com'
+  );
+```
+
+The Outbox will show the opted-out proofs as "auto-chasing off for this
+proof" — that is the allowlist working. New proofs created during the trial
+week are NOT opted out automatically, so either include them deliberately or
+re-run the block.
+
+When the trial week looks good, lift the opt-outs:
+
+```sql
+update proofs.proofs
+set auto_nudge_disabled_at = null
+where auto_nudge_disabled_at is not null;
+```
+
+⚠ The lift clears EVERY opt-out, including any set deliberately via the
+"Stop auto-chasing this proof" button in the meantime. Check what would be
+cleared first and re-set any deliberate ones afterwards:
+
+```sql
+select co.name, c.full_name, p.auto_nudge_disabled_at
+from proofs.proofs p
+left join proofs.contacts c on c.id = p.contact_id
+left join proofs.companies co on co.id = c.company_id
+where p.auto_nudge_disabled_at is not null
+order by p.auto_nudge_disabled_at;
+```
