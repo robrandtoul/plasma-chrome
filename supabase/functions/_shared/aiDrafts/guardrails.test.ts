@@ -19,7 +19,8 @@ import { matchMaterials, type GroundingSlice } from './grounding.ts'
 import { isArtworkFormSubmission, isAutomatedNotification } from './pipeline.ts'
 import { latestCustomerThreadId, mapThreads } from './hsMap.ts'
 import { classifyEdit, stripSignature } from './feedback.ts'
-import type { GroundingData, GroundingMaterial, ThreadMessage } from './types.ts'
+import { composeNote } from './composeNote.ts'
+import type { ClassifyResult, DraftResult, GroundingData, GroundingMaterial, ThreadMessage } from './types.ts'
 
 let failures = 0
 let passes = 0
@@ -428,6 +429,50 @@ eq('unrelated reply is discarded', classifyEdit(draftEx, sentDiscarded).editClas
 check('similarity bounded 0..1', (() => { const s = classifyEdit(draftEx, sentLightlyEdited).similarity; return s >= 0 && s <= 1 })())
 eq('identical strings similarity 1', classifyEdit('abc', 'abc').similarity, 1)
 eq('HTML signature variant still strips', stripSignature('Body text\n\nMany thanks\nChris').trim(), 'Body text')
+
+// ── Structured note rendering ────────────────────────────────────────────────
+
+const classifyStub: ClassifyResult = {
+  is_genuine_customer_email: true,
+  category: 'quote_request',
+  confidence: 'high',
+  summary: 'Wants 100 steel cards.',
+  mentioned_materials: ['steel'],
+  mentioned_quantities: [100],
+  currency_hint: 'GBP',
+}
+const draftStub: DraftResult = {
+  should_draft: true,
+  abstain_reason: null,
+  draft_body: 'Hi Joe, that is £329 inc VAT.',
+  note_summary: 'Quoted 100 steel cards at the 500 micron price.',
+  assumptions: ['Assumed UK-based'],
+  checks: ['Confirm 500 micron is the thickness they want'],
+  action: null,
+  figures_used: [{ amount: 329, currency: 'GBP', source: 'Steel 500µm x100' }],
+  links_used: [],
+}
+const drafted = composeNote({ classification: classifyStub, draft: draftStub, outcome: 'drafted', abstainOrBlockReason: null, guardrails: { ok: true } })
+check('note header uses a plain-English category label', drafted.text.startsWith('AI · Quote · high confidence'))
+check('figures section rendered', drafted.text.includes('FIGURES USED') && drafted.text.includes('£329 — Steel 500µm x100'))
+check('checks become a checklist', drafted.text.includes('☐ Confirm 500 micron'))
+check('drafted status is reconciled', drafted.text.includes('✓ All figures reconciled'))
+check('html uses markup not bare newlines', drafted.html.includes('<strong>') && drafted.html.includes('<ul>'))
+// The header/body run-together bug (PR #276 review): each header must sit in
+// its own block so the content starts on a fresh line beneath it.
+check('html header is its own paragraph', drafted.html.includes('<p><strong>AI · Quote'))
+check('html has no collapsing newline joins', !drafted.html.includes('</p>\n') && !drafted.html.includes('</ul>\n'))
+
+const actionDrafted = composeNote({ classification: classifyStub, draft: { ...draftStub, action: 'Route to Graphics' }, outcome: 'drafted', abstainOrBlockReason: null, guardrails: { ok: true } })
+check('html inline section header is followed by a line break', actionDrafted.html.includes('<strong>Action</strong><br>Route to Graphics'))
+check('html outcome word is plain English', composeNote({ classification: classifyStub, draft: { ...draftStub, draft_body: null, should_draft: false, action: 'Route to Graphics' }, outcome: 'abstained', abstainOrBlockReason: 'needs a human', guardrails: null }).text.includes('· needs you'))
+check('html escapes content', composeNote({ classification: { ...classifyStub, summary: 'a < b & c' }, draft: { ...draftStub, note_summary: 'a < b & c' }, outcome: 'drafted', abstainOrBlockReason: null, guardrails: { ok: true } }).html.includes('a &lt; b &amp; c'))
+
+const blockedNote = composeNote({ classification: classifyStub, draft: { ...draftStub }, outcome: 'blocked', abstainOrBlockReason: 'figure £305 does not reconcile', guardrails: { ok: false, reasons: ['figure £305 does not reconcile'] } })
+check('blocked status is prominent', blockedNote.text.includes('⚠ BLOCKED') && blockedNote.text.includes('£305'))
+
+const actionNote = composeNote({ classification: { ...classifyStub, category: 'order_details_collection' }, draft: { ...draftStub, draft_body: null, should_draft: false, action: 'Ready to invoice — generate the order link; qty 50 on file', checks: [], assumptions: [], figures_used: [] }, outcome: 'abstained', abstainOrBlockReason: 'ready to invoice', guardrails: null })
+check('abstain action surfaced', actionNote.text.includes('ACTION') && actionNote.text.includes('Ready to invoice'))
 
 // ── Result ───────────────────────────────────────────────────────────────────
 

@@ -61,7 +61,11 @@ export interface DraftResult {
   should_draft: boolean
   abstain_reason: string | null
   draft_body: string | null
-  note_body: string | null
+  // Structured note fields (composeNote renders them for the reviewer).
+  note_summary: string | null
+  assumptions: string[]
+  checks: string[]
+  action: string | null
   figures_used: FigureUsed[]
   links_used: string[]
 }

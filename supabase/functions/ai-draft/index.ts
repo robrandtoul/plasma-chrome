@@ -33,6 +33,7 @@ import { runPipeline } from '../_shared/aiDrafts/pipeline.ts'
 import { latestCustomerThreadId, mapThreads } from '../_shared/aiDrafts/hsMap.ts'
 import { modelId } from '../_shared/aiDrafts/anthropic.ts'
 import { classifyEdit } from '../_shared/aiDrafts/feedback.ts'
+import { composeNote } from '../_shared/aiDrafts/composeNote.ts'
 import { normaliseBody } from '../_shared/aiDrafts/htmlText.ts'
 
 type AdminClient = ReturnType<typeof createClient>
@@ -231,6 +232,22 @@ Deno.serve(async (req) => {
       grounding,
     )
 
+    // Compose the structured internal note once (text for the ledger, HTML
+    // for Help Scout where newlines collapse).
+    const note = composeNote({
+      classification: result.classification,
+      draft: result.draft,
+      outcome: result.outcome,
+      abstainOrBlockReason: result.abstainOrBlockReason,
+      guardrails: result.guardrails,
+    })
+    // Post a note when there's a draft, or an abstention worth flagging
+    // (an action/handoff or a block) — but not silent skips.
+    const postNote =
+      result.outcome === 'drafted' ||
+      result.outcome === 'blocked' ||
+      (result.outcome === 'abstained' && (result.draft?.action != null || result.draft?.note_summary != null))
+
     // Live mode: create the Help Scout artefacts for passed drafts; notes for
     // action-note abstentions too (that triage signal is the point).
     let hsDraftThreadId: string | null = null
@@ -243,9 +260,8 @@ Deno.serve(async (req) => {
           token, conversationId, customerId, userId, result.draft.draft_body,
         )
       }
-      const noteText = result.draft?.note_body
-      if (noteText && userId && (result.outcome === 'drafted' || result.outcome === 'abstained')) {
-        hsNoteThreadId = await createNote(token, conversationId, userId, `AI draft pipeline\n\n${noteText}`)
+      if (postNote && note.html && userId) {
+        hsNoteThreadId = await createNote(token, conversationId, userId, note.html)
       }
       if (result.outcome === 'drafted') {
         const existingTags = (conv.tags ?? []).map((t) => t.tag ?? '').filter(Boolean)
@@ -263,7 +279,7 @@ Deno.serve(async (req) => {
         confidence: result.classification.confidence,
         summary: result.classification.summary,
         draft_body: result.draft?.draft_body ?? null,
-        note_body: result.draft?.note_body ?? null,
+        note_body: postNote ? note.text : null,
         abstain_or_block_reason: result.abstainOrBlockReason,
         note_warnings: result.noteWarnings,
         usage_input: result.usage.inputTokens,

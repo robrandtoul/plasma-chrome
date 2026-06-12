@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { fetchGrounding } from '../supabase/functions/_shared/aiDrafts/grounding.ts'
 import { runPipeline, type PipelineInput } from '../supabase/functions/_shared/aiDrafts/pipeline.ts'
 import { normaliseBody } from '../supabase/functions/_shared/aiDrafts/htmlText.ts'
+import { composeNote } from '../supabase/functions/_shared/aiDrafts/composeNote.ts'
 import type { FixtureConversation, PipelineResult, ThreadMessage } from '../supabase/functions/_shared/aiDrafts/types.ts'
 
 loadEnv()
@@ -307,10 +308,17 @@ function buildHtmlReport(results: CaseResult[], costUsd: number, pricingNote: st
         ? `<div class="col"><h4>AI draft</h4>${pre(p.draft.draft_body)}</div>`
         : `<div class="col"><h4>AI draft</h4><p class="reason">${esc(p.abstainOrBlockReason ?? 'no draft')}</p></div>`
       const noteWarn = p.noteWarnings.length
-        ? `<p class="reason">Unvalidated in note: ${p.noteWarnings.map(esc).join('; ')}</p>`
+        ? `<p class="reason">Unreconciled self-reported figures: ${p.noteWarnings.map(esc).join('; ')}</p>`
         : ''
-      const noteHtml = p.draft?.note_body
-        ? `<h4>Internal note (working — figures/links unvalidated)</h4>${pre(p.draft.note_body)}${noteWarn}`
+      const composed = composeNote({
+        classification: p.classification,
+        draft: p.draft,
+        outcome: p.outcome,
+        abstainOrBlockReason: p.abstainOrBlockReason,
+        guardrails: p.guardrails,
+      })
+      const noteHtml = composed.text
+        ? `<h4>Internal note</h4>${pre(composed.text)}${noteWarn}`
         : ''
       const guardHtml =
         p.guardrails && !p.guardrails.ok
