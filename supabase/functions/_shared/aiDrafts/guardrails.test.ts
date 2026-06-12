@@ -461,6 +461,8 @@ check('html uses markup not bare newlines', drafted.html.includes('<strong>') &&
 // The header/body run-together bug (PR #276 review): each header must sit in
 // its own block so the content starts on a fresh line beneath it.
 check('html header is its own paragraph', drafted.html.includes('<p><strong>AI · Quote'))
+check('html puts a blank line between sections', drafted.html.includes('<br><p><strong>Figures used</strong></p>'))
+check('html spaces the summary off the header', drafted.html.includes('</strong></p><br><p>'))
 check('html has no collapsing newline joins', !drafted.html.includes('</p>\n') && !drafted.html.includes('</ul>\n'))
 
 const actionDrafted = composeNote({ classification: classifyStub, draft: { ...draftStub, action: 'Route to Graphics' }, outcome: 'drafted', abstainOrBlockReason: null, guardrails: { ok: true } })
