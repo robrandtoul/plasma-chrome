@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
 import { Pill, type PillColour, ButtonInk, ButtonGhost } from '../../design'
@@ -30,6 +30,11 @@ interface DraftRow {
   edit_similarity: number | null
   sent_body: string | null
 }
+
+// How often the open panel re-fetches itself (silent background refresh).
+// At a few drafts a day this is plenty live, and only runs while the tab is
+// visible — see the polling effect below.
+const POLL_MS = 25_000
 
 // Opus 4.8 USD per-million rates; cache read 0.1x, cache write 1.25x.
 const RATE_IN = 5
@@ -95,9 +100,20 @@ export default function AdminAiDraftsPage() {
   const [modeWorking, setModeWorking] = useState(false)
   const [modeError, setModeError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
-  async function load() {
-    setLoading(true)
+  // A poll must not overwrite the mode pill while the user is mid mode-change,
+  // or the confirm panel's "current → pending" framing would jump under them.
+  // A ref so the (mount-only) poll loop reads the latest value without the
+  // interval being torn down and recreated on every keystroke of state.
+  const busyRef = useRef(false)
+  useEffect(() => { busyRef.current = pendingMode !== null || modeWorking }, [pendingMode, modeWorking])
+
+  // One fetch of mode + the last 7 days of decisions. Returns the data, or an
+  // error string so callers can decide: the initial load replaces the page
+  // with an error card; a background poll swallows it and keeps the last good
+  // data, so a momentary network blip never blanks the table.
+  async function fetchData(): Promise<{ mode: Mode; rows: DraftRow[] } | { error: string }> {
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
     const [settingsRes, rowsRes] = await Promise.all([
       supabase.from('settings').select('ai_drafts_mode').eq('id', 1).single(),
@@ -110,14 +126,46 @@ export default function AdminAiDraftsPage() {
         .order('created_at', { ascending: false })
         .limit(400),
     ])
-    if (settingsRes.error) { setLoadError(settingsRes.error.message); setLoading(false); return }
-    if (rowsRes.error) { setLoadError(rowsRes.error.message); setLoading(false); return }
-    setMode((settingsRes.data?.ai_drafts_mode ?? 'off') as Mode)
-    setRows((rowsRes.data ?? []) as DraftRow[])
+    if (settingsRes.error) return { error: settingsRes.error.message }
+    if (rowsRes.error) return { error: rowsRes.error.message }
+    return { mode: (settingsRes.data?.ai_drafts_mode ?? 'off') as Mode, rows: (rowsRes.data ?? []) as DraftRow[] }
+  }
+
+  // First open: show the spinner, surface a hard error if it fails.
+  async function initialLoad() {
+    setLoading(true)
+    const res = await fetchData()
+    if ('error' in res) { setLoadError(res.error); setLoading(false); return }
+    setMode(res.mode)
+    setRows(res.rows)
+    setLastUpdated(new Date())
     setLoading(false)
   }
 
-  useEffect(() => { void load() }, [])
+  // Background refresh: swap rows in place, never toggle the page spinner, never
+  // blank on a transient error, and leave the mode display alone while the user
+  // is changing it. The open/expanded row survives because it is keyed by id.
+  async function refresh() {
+    const res = await fetchData()
+    if ('error' in res) return
+    setRows(res.rows)
+    if (!busyRef.current) setMode(res.mode)
+    setLastUpdated(new Date())
+  }
+
+  // Keep the open panel current: poll every POLL_MS, but only while the tab is
+  // visible (a backgrounded tab fetches nothing), and refresh straight away
+  // whenever the tab regains focus.
+  useEffect(() => {
+    void initialLoad()
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh()
+    }, POLL_MS)
+    const onVisible = () => { if (document.visibilityState === 'visible') void refresh() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { window.clearInterval(id); document.removeEventListener('visibilitychange', onVisible) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   async function applyMode(next: Mode) {
     if (next === mode) { setPendingMode(null); return }
@@ -240,8 +288,17 @@ export default function AdminAiDraftsPage() {
 
       {/* Recent decisions */}
       <section className="rounded-lg border border-line bg-surface overflow-hidden">
-        <div className="px-5 py-3 border-b border-line">
+        <div className="px-5 py-3 border-b border-line flex items-center justify-between gap-2">
           <h2 className="text-sm font-medium text-ink">Recent decisions</h2>
+          {lastUpdated && (
+            <span
+              className="flex items-center gap-1.5 text-[11px] text-ink-dim shrink-0"
+              title={`Refreshes itself every ${POLL_MS / 1000}s while this tab is open`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-in-stock animate-pulse" />
+              Live · updated {lastUpdated.toLocaleTimeString('en-GB')}
+            </span>
+          )}
         </div>
         {rows.length === 0 ? (
           <p className="px-5 py-8 text-sm text-ink-mute">No decisions in the last 7 days.</p>
