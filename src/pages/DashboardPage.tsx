@@ -971,7 +971,7 @@ function ProjectRow({
         project.current_version_viewed_at
           ? `Viewed ${relativeTime(project.current_version_viewed_at)}`
           : viewedStateTitle(viewedStateFor(project)),
-        project.rule_code ? attentionReason(project.rule_code, project.rule_meta?.days) : null,
+        project.rule_code ? attentionReason(project.rule_code, project.rule_meta) : null,
         !project.rule_code && isCurrentlySnoozed(project) ? `Snoozed until ${formatSnoozeUntil(project.snoozed_until!)}` : null,
         ts ? `${verb} ${relativeTime(ts)}` : null,
       ].filter(Boolean).join(' · ')}
@@ -1077,7 +1077,7 @@ function ProjectRow({
             <ResolvePopover
               proofId={project.proof_id}
               ruleCode={project.rule_code}
-              days={project.rule_meta?.days}
+              meta={project.rule_meta}
               helpscoutUrl={project.helpscout_conversation_url}
               hasHelpscoutConversation={!!project.helpscout_conversation_id}
               versionId={project.current_version_id}
@@ -1089,7 +1089,7 @@ function ProjectRow({
             >
               <span className="flex min-w-0 items-center gap-1.5 text-xs text-out">
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-out" aria-hidden="true" />
-                <span className="truncate">{attentionReason(project.rule_code, project.rule_meta?.days)}</span>
+                <span className="truncate">{attentionReason(project.rule_code, project.rule_meta)}</span>
               </span>
             </ResolvePopover>
           )}

@@ -12,6 +12,7 @@ type RuleCode =
   | 'approaching_dormant'
   | 'stuck_in_progress'
   | 'approved_earlier_version'
+  | 'nudges_exhausted'
 
 interface Rule {
   enabled: boolean
@@ -131,6 +132,13 @@ const RULE_SPECS: RuleSpec[] = [
     hasThreshold: false,
     hasCalendarToggle: false,
   },
+  {
+    code: 'nudges_exhausted',
+    label: 'Reminders exhausted — needs a call',
+    description: 'Fires when the per-version reminder cap (the "Max" dial above, manual and automated reminders alike) is spent and the customer still hasn\'t responded. Email has run its course; the chip says to pick up the phone — with a warning when the customer has never opened or replied to anything (possible wrong address / spam folder). No threshold of its own: the reminder cap is the threshold.',
+    hasThreshold: false,
+    hasCalendarToggle: false,
+  },
 ]
 
 const DEFAULT_RULES: Rules = {
@@ -149,6 +157,10 @@ const DEFAULT_RULES: Rules = {
   // the disabled helpscout_follow_up_tag rule; the engine's rule_code
   // tiebreak favours this one, which is the precedence we want.
   approved_earlier_version:   { enabled: true,                                       priority: 2 },
+  // No threshold/calendar — the automation block's per-rule max_nudges IS
+  // the threshold (migration 000221). Priority 2 so the "needs a call"
+  // escalation outranks the chase rule it supersedes.
+  nudges_exhausted:           { enabled: true,                                       priority: 2 },
 }
 
 // Days of inactivity before the nightly cron flips an in_progress proof
