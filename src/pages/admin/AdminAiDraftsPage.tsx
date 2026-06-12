@@ -318,12 +318,13 @@ export default function AdminAiDraftsPage() {
                       <Pill colour={OUTCOME_PILL[outcome]}>{outcome}</Pill>
                       {r.category && <Pill colour="neutral">{r.category}</Pill>}
                       {r.edit_class && <Pill colour={EDIT_PILL[r.edit_class]}>{EDIT_LABEL[r.edit_class]}</Pill>}
-                      <span className="text-sm text-ink-soft truncate min-w-0 flex-1">{r.summary}</span>
+                      <span className="text-sm text-ink-soft truncate min-w-0 flex-1" title={r.summary ?? undefined}>{r.summary}</span>
                       <span className="text-xs text-ink-dim tabular-nums shrink-0">${rowCostUsd(r).toFixed(3)}</span>
                     </div>
                   </button>
                   {isOpen && (
                     <div className="px-5 pb-4 space-y-3">
+                      {r.summary && <Block title="Summary">{r.summary}</Block>}
                       {r.draft_body && (
                         <Block title="Draft">{r.draft_body}</Block>
                       )}
