@@ -28,8 +28,9 @@
 //
 // What stays in callers (deliberately not extracted):
 //   * POST /v2/conversations/{id}/customer  — proof-action only.
-//   * POST /v2/conversations (create)       — contact-form-submit only;
-//     no shared createConversation helper exists.
+//   * POST /v2/conversations (customer-thread create) — contact-form-submit
+//     only; its customer-authored thread shape is unlike the staff-outbound
+//     createStaffConversation below, so the two stay separate.
 //   * Mailbox listing (/v2/mailboxes)       — match-helpscout-conversation,
 //     admin-test-helpscout, and contact-form-submit each use it for
 //     different purposes.
@@ -316,6 +317,62 @@ export async function postStaffReply(
   const threadIdRaw = directId ?? locationId
   const threadId = threadIdRaw ? Number(threadIdRaw) : NaN
   return Number.isFinite(threadId) ? threadId : 0
+}
+
+// POST /v2/conversations — create a NEW conversation containing one staff
+// reply, which Help Scout emails to the customer at creation time. Built for
+// the follow-up automation's second reminder (spec section 6): the original
+// proof email and reminder #1 ride one thread, so if that thread is in the
+// customer's spam folder a second reply there measures the spam folder, not
+// the customer. A fresh conversation with a fresh subject is the cheapest
+// deliverability variation available.
+//
+// status 'pending' — the new conversation is waiting on the CUSTOMER, so it
+// belongs in their queue, not the team's Active list (same semantic as
+// send-helpscout-reply's status flip on designer asks).
+//
+// Returns the new conversation id from the Resource-ID header (Help Scout
+// responds 201 with no body), or null when the header is missing — callers
+// treat null as "sent but unverifiable", not failure.
+export async function createStaffConversation(
+  token: string,
+  body: {
+    mailboxId: number
+    subject: string
+    customerId: number
+    userId: number
+    text: string
+  },
+): Promise<string | null> {
+  const resp = await fetch('https://api.helpscout.net/v2/conversations', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      subject: body.subject,
+      type: 'email',
+      status: 'pending',
+      mailboxId: body.mailboxId,
+      customer: { id: body.customerId },
+      threads: [
+        {
+          type: 'reply',
+          customer: { id: body.customerId },
+          user: body.userId,
+          text: body.text,
+        },
+      ],
+    }),
+  })
+  if (!resp.ok) {
+    const upstream = await resp.text().catch(() => '<body read failed>')
+    throw new HsError(resp.status, `Help Scout conversation create (${resp.status}): ${upstream}`)
+  }
+  const resourceId = resp.headers.get('Resource-ID') ?? resp.headers.get('Resource-Id') ?? ''
+  return resourceId.match(/^\d+$/) ? resourceId : null
 }
 
 // PATCH /v2/conversations/{id}/threads/{threadId} — hide ("collapse") a

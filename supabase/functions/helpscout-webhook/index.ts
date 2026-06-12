@@ -434,9 +434,41 @@ async function handle(req: Request): Promise<Response> {
     return json({ error: 'update failed', detail: error.message }, 500)
   }
 
+  // Fallback for nudge-created conversations: reminder #2 opens a FRESH
+  // conversation (send-nudges, spec section 6) that no proof links to
+  // directly — the proof keeps its original helpscout_conversation_id. The
+  // sent ledger row carries the new conversation's id, so when the direct
+  // match finds nothing, stamp the proofs behind any 'sent' nudge rows for
+  // this conversation. Without this, a customer replying to reminder #2
+  // would never stamp helpscout_last_customer_reply_at and the hard-skip /
+  // grace suppression would go blind to exactly the replies the fresh
+  // conversation exists to win.
+  let matched = data?.length ?? 0
+  if (matched === 0) {
+    const { data: nudgeRows } = await admin
+      .from('proof_nudges')
+      .select('proof_id')
+      .eq('helpscout_conversation_id', String(conversationId))
+      .eq('state', 'sent')
+    const proofIds = [...new Set(((nudgeRows ?? []) as Array<{ proof_id: string }>).map((r) => r.proof_id))]
+    if (proofIds.length > 0) {
+      const { data: viaNudge, error: nudgeErr } = await admin
+        .from('proofs')
+        .update({ [column]: stampIso })
+        .in('id', proofIds)
+        .or(`${column}.is.null,${column}.lt.${stampIso}`)
+        .select('id')
+      if (nudgeErr) {
+        console.error('[helpscout-webhook] nudge-conversation stamp failed:', nudgeErr.message)
+        return json({ error: 'update failed', detail: nudgeErr.message }, 500)
+      }
+      matched = viaNudge?.length ?? 0
+    }
+  }
+
   // 200 whether or not a proof matched (most HS conversations aren't proofs);
   // a matched-but-empty result is a normal no-op, not an error.
-  return json({ ok: true, matched: data?.length ?? 0, direction })
+  return json({ ok: true, matched, direction })
 }
 
 Deno.serve(async (req) => {

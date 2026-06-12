@@ -15,6 +15,7 @@ import {
   isWorkingDay,
   londonDate,
   londonHour,
+  nudgeNumberFor,
   simulateDryLedger,
   workingDaysBetween,
   type CandidateFacts,
@@ -363,6 +364,20 @@ eq('below threshold drops', decideForProof(facts({ sendEvidenceAt: '2026-06-08T1
   eq('calendar mode passes at 4 days', decideForProof(facts({ sendEvidenceAt: '2026-06-06T10:00:00Z' }), [], cal4, NOW).action, 'send')
   eq('working mode still below at 3/4 days', decideForProof(facts({ sendEvidenceAt: '2026-06-06T10:00:00Z' }), [], work4, NOW).action, 'drop')
 }
+
+// ── nudgeNumberFor (reminder #2 opens a fresh conversation) ─────────────────
+
+eq('first reminder is #1', nudgeNumberFor(facts(), [], 'sent_never_viewed'), 1)
+// A prior counted send — auto or manual — makes the next one #2.
+eq('prior auto send makes it #2',
+  nudgeNumberFor(facts(), [row({ createdAt: '2026-06-01T08:30:00Z' })], 'sent_never_viewed'), 2)
+eq('prior manual send also counts',
+  nudgeNumberFor(facts(), [row({ source: 'manual' })], 'sent_never_viewed'), 2)
+// Dry-run rows and other versions/rules don't advance the number.
+eq('dry rows do not advance the number',
+  nudgeNumberFor(facts(), [row({ state: 'dry_run', outcome: 'would_send' })], 'sent_never_viewed'), 1)
+eq('other version does not advance the number',
+  nudgeNumberFor(facts(), [row({ versionId: 'v0' })], 'sent_never_viewed'), 1)
 
 // ── Null-versionId ledger rows (FK on delete set null) never crash or match ──
 

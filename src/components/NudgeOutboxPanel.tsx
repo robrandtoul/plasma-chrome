@@ -97,7 +97,9 @@ const WEBHOOK_FRESH_HOURS = 72
 // underscores-to-spaces rendering.
 const OUTCOME_LABELS: Record<string, string> = {
   would_send:                   'would send',
+  would_send_new_conversation:  'would send — fresh conversation',
   sent:                         'sent',
+  sent_new_conversation:        'sent — fresh conversation',
   sending:                      'sending…',
   recipient_mismatch:           'email mismatch — review',
   suppressed_sibling:           'grouped with sibling proof',
@@ -289,7 +291,7 @@ export function NudgeOutboxPanel({ projects }: { projects: DashboardProject[] })
     r.state === 'sending' && now - new Date(r.created_at).getTime() > STALE_MS
   const sendRows = rows.filter(
     (r) =>
-      r.outcome === 'would_send' ||
+      (r.outcome ?? '').startsWith('would_send') ||
       r.state === 'sent' ||
       (r.state === 'sending' && !isStaleSending(r)),
   )
@@ -556,6 +558,14 @@ export function NudgeOutboxPanel({ projects }: { projects: DashboardProject[] })
                               {r.state === 'sending' && (
                                 <span className="shrink-0 text-[11px] font-medium text-allocated">
                                   sending…
+                                </span>
+                              )}
+                              {/* Reminder #2+ goes out as a NEW Help Scout
+                                  conversation (deliverability lever) — flag
+                                  it so the dry-run week shows the path. */}
+                              {(r.outcome ?? '').endsWith('new_conversation') && (
+                                <span className="shrink-0 rounded-md bg-allocated-soft px-1.5 py-0.5 text-[10px] font-semibold text-allocated">
+                                  fresh conversation
                                 </span>
                               )}
                               {/* Disclosure chevron — the flex summary hides the
