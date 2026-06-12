@@ -193,7 +193,12 @@ with these corrections and guards:
   it: `coalesce(proof_versions.last_reply_sent_at,
   proofs.helpscout_last_reply_at) is not null`. No evidence → no auto-nudge
   (fail toward silence); "version uploaded but never announced" is a
-  designer-facing problem, not a customer email.
+  designer-facing problem, not a customer email. **Tightened in 000224**
+  (adversarial review 2026-06-12): the `helpscout_last_reply_at` fallback
+  only counts when it POSTDATES the current version's creation — a reply
+  older than the version cannot be evidence the version was sent, and the
+  unscoped form let an unrelated old reply "announce" a freshly-uploaded,
+  never-sent version.
 - **Views.** No non-bot `proof_version_views` row for the current version (the
   rule's own predicate). Note the bot filter is a UA regex + a 2.5 s JS timer —
   see the Phase 2 entry audit below.

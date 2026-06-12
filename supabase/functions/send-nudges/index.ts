@@ -72,6 +72,10 @@ const FRESH_CONVERSATION_SUBJECT = 'Your card proof from Plasma Design'
 // An open run row older than this is treated as crashed (gates live sends);
 // younger means a run is genuinely in flight (this invocation aborts).
 const OPEN_RUN_STALE_MS = 10 * 60 * 1000
+// Webhook deadman threshold: live sends require a Help Scout reply stamp
+// somewhere in the system newer than this. Matches the Outbox panel's
+// WEBHOOK_FRESH_HOURS so the sender's gate and the amber warning agree.
+const WEBHOOK_DEADMAN_MS = 72 * 3_600_000
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -298,6 +302,46 @@ async function run(admin: Admin): Promise<Response> {
     modeNote =
       `dry run: ${openRuns!.length} crashed run(s) await review (oldest ${openRuns![openRuns!.length - 1].id}) — ` +
       'clear them from the Outbox before live sends resume'
+  }
+
+  // Webhook deadman gate (adversarial review 2026-06-12, finding 1). The
+  // grace window and the staff-reply half of the customer-reply hard-skip
+  // are only as fresh as the helpscout-webhook stamps; if the webhook dies
+  // silently, the sender would chase customers we are actively talking to
+  // in Help Scout. The customer-reply side has a belt-and-braces re-check
+  // against the live thread trail, but staff replies have none — so live
+  // sends require a reply stamp somewhere in the system within the deadman
+  // window. Staleness demotes to dry_run (mirroring the Outbox's amber
+  // webhook warning); dry runs proceed as normal since they send nothing.
+  if (mode === 'live') {
+    const [staffRes, custRes] = await Promise.all([
+      admin.from('proofs')
+        .select('helpscout_last_reply_at')
+        .not('helpscout_last_reply_at', 'is', null)
+        .order('helpscout_last_reply_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      admin.from('proofs')
+        .select('helpscout_last_customer_reply_at')
+        .not('helpscout_last_customer_reply_at', 'is', null)
+        .order('helpscout_last_customer_reply_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ])
+    const newestStamp = Math.max(
+      staffRes.data?.helpscout_last_reply_at
+        ? Date.parse(staffRes.data.helpscout_last_reply_at as string)
+        : -Infinity,
+      custRes.data?.helpscout_last_customer_reply_at
+        ? Date.parse(custRes.data.helpscout_last_customer_reply_at as string)
+        : -Infinity,
+    )
+    if (!(newestStamp > now.getTime() - WEBHOOK_DEADMAN_MS)) {
+      mode = 'dry_run'
+      modeNote = newestStamp > -Infinity
+        ? `dry run: newest Help Scout reply stamp is ${Math.round((now.getTime() - newestStamp) / 3_600_000)}h old — check the webhook before live sends resume`
+        : 'dry run: no Help Scout reply stamps recorded — check the webhook before live sends resume'
+    }
   }
 
   // Send window applies to LIVE only — a dry run at any hour still fills the
