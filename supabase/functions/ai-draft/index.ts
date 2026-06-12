@@ -250,18 +250,22 @@ Deno.serve(async (req) => {
 
     // Live mode: create the Help Scout artefacts for passed drafts; notes for
     // action-note abstentions too (that triage signal is the point).
+    // Order matters: Help Scout sorts threads by creation time (newest last),
+    // so the NOTE is created first and the DRAFT second — that way the draft is
+    // the most recent thing in the thread, sitting right where the reviewer
+    // picks up to read and send.
     let hsDraftThreadId: string | null = null
     let hsNoteThreadId: string | null = null
     if (mode === 'live') {
       const userId = Number(Deno.env.get('HELPSCOUT_DEFAULT_USER_ID') ?? '0')
       const customerId = conv.primaryCustomer?.id
+      if (postNote && note.html && userId) {
+        hsNoteThreadId = await createNote(token, conversationId, userId, note.html)
+      }
       if (result.outcome === 'drafted' && result.draft?.draft_body && userId && customerId) {
         hsDraftThreadId = await createDraftReply(
           token, conversationId, customerId, userId, result.draft.draft_body,
         )
-      }
-      if (postNote && note.html && userId) {
-        hsNoteThreadId = await createNote(token, conversationId, userId, note.html)
       }
       if (result.outcome === 'drafted') {
         const existingTags = (conv.tags ?? []).map((t) => t.tag ?? '').filter(Boolean)
