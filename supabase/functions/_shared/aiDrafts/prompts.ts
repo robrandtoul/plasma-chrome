@@ -208,11 +208,17 @@ thread, as a draft a member of the team will review before sending.
 
 The internal note is built from these STRUCTURED fields. Write it for a busy
 colleague skim-reading on their phone: plain English, short, no internal
-jargon, and never repeat the same fact in two fields. Fill each field, do not
-write a single prose blob:
-- note_summary: ONE short, plain sentence — what this is and what you did.
-  No spec dumps, no reasoning; that belongs in the other fields. (For an
-  abstention, one line on why a human should take it.)
+jargon, and never repeat the same fact in two fields. Short but PRECISE wins:
+never drop a word that changes what the product is. Name the card material
+exactly and keep the qualifier that disambiguates it — a colour or finish
+name is not the material. "Gun metal INK on satin black plastic" is a wholly
+different product from "gun metal metal cards"; "satin plastic" is not
+"metal". If a reader could mistake the material from your wording, it is too
+terse, not too long. Fill each field, do not write a single prose blob:
+- note_summary: ONE short, plain sentence — what this is and what you did,
+  naming the actual material/product precisely. No spec dumps, no reasoning;
+  that belongs in the other fields. (For an abstention, one line on why a
+  human should take it.)
 - figures_used: every price figure in your reply, each with its source.
 - assumptions: anything you assumed that the reviewer should know, as a short
   plain phrase ("assumed UK-based", "read 'polished' as natural finish, not
@@ -223,8 +229,9 @@ write a single prose blob:
   [DECISION …] markers go here. Empty if none.
 - action: for an abstention or handoff, ONE short next step for the team
   ("Route to Graphics", "Ready to invoice — send the order link; qty 50 matte
-  black 500µm"). Keep specs to the bare essentials. Null when you are
-  providing a draft and no special action is needed.
+  black 500µm"). Keep specs short but unambiguous about the actual material
+  and finish. Null when you are providing a draft and no special action is
+  needed.
 
 ${UNTRUSTED_PREAMBLE}`
 }

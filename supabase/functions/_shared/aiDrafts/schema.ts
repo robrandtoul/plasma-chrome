@@ -92,7 +92,7 @@ export const DRAFT_SCHEMA = {
     note_summary: {
       type: ['string', 'null'],
       description:
-        'ONE short, plain-English sentence for the reviewer: what this is and what you did. No spec dumps or reasoning — those go in the other fields. For an abstention, one line on why it needs a human.',
+        'ONE short, plain-English sentence for the reviewer: what this is and what you did, naming the actual material/product precisely (keep qualifiers that change meaning — a colour/finish/ink name is not the card material; "gun metal ink on satin black plastic" is not "gun metal cards"). No spec dumps or reasoning — those go in the other fields. For an abstention, one line on why it needs a human.',
     },
     assumptions: {
       type: 'array',
