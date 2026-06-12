@@ -24,7 +24,12 @@ import type { DashboardProject } from '../lib/dashboardGrouping'
 //      nudges share the table and would otherwise render as bot output) —
 //      what the run would have sent (dry run) or sent (live), with the
 //      rendered body inspectable verbatim, plus failures and every skip
-//      with its reason. recipient_mismatch gets its own amber count chip:
+//      with its reason. Skips split by whether a human can act: "Needs
+//      you" (link/auth problems and the cap escalations whose labels say
+//      "needs a human") gets a Review affordance; "Holding off" (grace
+//      window, snooze, cooldown, opt-out, sibling-suppression) is
+//      self-resolving and rendered low-emphasis with no action.
+//      recipient_mismatch gets its own amber count chip under Needs you:
 //      it is the Phase 1 acceptance metric, and each hit marks a
 //      proof↔conversation link worth fixing in /admin/customers.
 //   4. Needs verification — a standing section, independent of the
@@ -292,6 +297,25 @@ export function NudgeOutboxPanel({ projects }: { projects: DashboardProject[] })
     (r) => !sendRows.includes(r) && r.state !== 'failed' && !isStaleSending(r),
   )
   const mismatchCount = rows.filter((r) => r.outcome === 'recipient_mismatch').length
+
+  // Split the skips by whether a human can actually do anything. The
+  // self-resolving outcomes (grace window, snooze, cooldown, per-proof
+  // opt-out, sibling-suppression) clear on their own and only clutter a
+  // to-do read; everything else — link/auth problems and the hit-the-cap
+  // escalations whose labels literally say "needs a human" — is surfaced as
+  // actionable. Unknown outcomes default to actionable so a new skip reason
+  // never hides silently.
+  const HOLDING_OFF_OUTCOMES = new Set([
+    'skipped_grace_window',
+    'skipped_snoozed',
+    'skipped_cooldown',
+    'skipped_opted_out',
+    'suppressed_sibling',
+  ])
+  const holdingRows = skippedRows.filter(
+    (r) => r.outcome != null && HOLDING_OFF_OUTCOMES.has(r.outcome),
+  )
+  const needsYouRows = skippedRows.filter((r) => !holdingRows.includes(r))
 
   // ── Human actions (the two 000214 SECURITY DEFINER RPCs) ────────────────
   async function clearStaleRuns() {
@@ -597,12 +621,17 @@ export function NudgeOutboxPanel({ projects }: { projects: DashboardProject[] })
                   </div>
                 )}
 
-                {skippedRows.length > 0 && (
-                  <div>
+                {/* Needs you — skips stuck on something only a human can fix
+                    (broken proof↔conversation link, closed conversation, the
+                    cap escalations). Full-row Link to the proof with an
+                    explicit Review affordance so it reads as a to-do, not a
+                    log line. */}
+                {needsYouRows.length > 0 && (
+                  <div className="border-b border-line-soft last:border-b-0">
                     <div className="flex items-center gap-2 px-5 pt-3.5 pb-1.5">
-                      <span className="eyebrow text-ink-mute">Skipped</span>
-                      <span className="text-[11px] text-ink-mute tabular-nums">
-                        {skippedRows.length}
+                      <span className="eyebrow text-low">Needs you</span>
+                      <span className="text-[11px] text-low tabular-nums">
+                        {needsYouRows.length}
                       </span>
                       {/* Phase 1 acceptance metric — every mismatch is a
                           proof↔conversation link worth fixing. */}
@@ -612,8 +641,11 @@ export function NudgeOutboxPanel({ projects }: { projects: DashboardProject[] })
                         </span>
                       )}
                     </div>
+                    <p className="px-5 pb-1.5 text-[11px] text-ink-soft">
+                      Stuck on something only you can fix — open the proof to sort it out.
+                    </p>
                     <ul className="divide-y divide-line-soft">
-                      {skippedRows.map((r) => (
+                      {needsYouRows.map((r) => (
                         <li key={r.id}>
                           <Link
                             to={`/proofs/${r.proof_id}`}
@@ -630,6 +662,43 @@ export function NudgeOutboxPanel({ projects }: { projects: DashboardProject[] })
                                   : 'text-ink-mute',
                               ].join(' ')}
                             >
+                              {humaniseOutcome(r.outcome, r.state)}
+                            </span>
+                            <span className="ml-auto shrink-0 text-[11px] font-medium text-ink-soft">
+                              Review →
+                            </span>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Holding off — self-resolving skips. Low-emphasis, no action:
+                    the correct response is to do nothing, so the section says
+                    so rather than dangling an actionless to-do. */}
+                {holdingRows.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 px-5 pt-3.5 pb-1.5">
+                      <span className="eyebrow text-ink-mute">Holding off</span>
+                      <span className="text-[11px] text-ink-mute tabular-nums">
+                        {holdingRows.length}
+                      </span>
+                    </div>
+                    <p className="px-5 pb-1.5 text-[11px] text-ink-soft">
+                      No action needed — these clear themselves once the wait passes or the customer replies.
+                    </p>
+                    <ul className="divide-y divide-line-soft">
+                      {holdingRows.map((r) => (
+                        <li key={r.id}>
+                          <Link
+                            to={`/proofs/${r.proof_id}`}
+                            className="flex items-baseline gap-2 px-5 py-2 transition-colors hover:bg-canvas"
+                          >
+                            <span className="min-w-0 truncate text-[13px] text-ink-soft">
+                              {labelFor(r.proof_id)}
+                            </span>
+                            <span className="shrink-0 text-[11px] text-ink-mute">
                               {humaniseOutcome(r.outcome, r.state)}
                             </span>
                           </Link>
