@@ -70,6 +70,7 @@ function facts(overrides: Partial<CandidateFacts> = {}): CandidateFacts {
     lastStaffReplyAt: null,
     snoozed: false,
     autoNudgeDisabled: false,
+    hasFollowUpTag: false,
     ...overrides,
   }
 }
@@ -147,6 +148,11 @@ eq('below threshold drops', decideForProof(facts({ sendEvidenceAt: '2026-06-08T1
 {
   const d = decideForProof(facts({ snoozed: true }), [], CFG, NOW)
   check('snooze skips', d.action === 'skip' && d.outcome === 'skipped_snoozed')
+}
+// Phase 2b: a Help Scout "follow up" tag means a human owns the chase.
+{
+  const d = decideForProof(facts({ hasFollowUpTag: true }), [], CFG, NOW)
+  check('follow-up tag skips', d.action === 'skip' && d.outcome === 'skipped_followup_tag')
 }
 
 // Customer replied after our send evidence, nothing outbound since → hard skip,

@@ -53,6 +53,12 @@ export interface CandidateFacts {
   lastStaffReplyAt: string | null
   snoozed: boolean
   autoNudgeDisabled: boolean
+  /**
+   * proofs.helpscout_tags carries 'follow up' (Phase 2b tag sync — the
+   * webhook mirrors Help Scout conversation tags). A human flagged the
+   * conversation, so a human owns the chase: automation stands down.
+   */
+  hasFollowUpTag: boolean
 }
 
 export interface LedgerRow {
@@ -224,6 +230,11 @@ export function decideForProof(
 
   if (facts.autoNudgeDisabled) return { action: 'skip', outcome: 'skipped_opted_out' }
   if (facts.snoozed) return { action: 'skip', outcome: 'skipped_snoozed' }
+  // Phase 2b interaction rule (spec): a Help Scout "follow up" tag means a
+  // human has claimed the chase, so the bot must NOT also email — decided
+  // here with a logged outcome, never silently by the dashboard's priority
+  // ordering. Clears itself when the human removes the tag.
+  if (facts.hasFollowUpTag) return { action: 'skip', outcome: 'skipped_followup_tag' }
 
   // Hard rule (spec architecture rule #3): a customer reply newer than our
   // last outbound touch means a human owes the next message — regardless of

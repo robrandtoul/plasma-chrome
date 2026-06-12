@@ -111,6 +111,7 @@ const OUTCOME_LABELS: Record<string, string> = {
   skipped_capped_lifetime:      'lifetime reminder cap reached',
   skipped_cooldown:             'too soon since the last touch',
   skipped_grace_window:         'recent reply — grace window',
+  skipped_followup_tag:         'tagged "follow up" — a human owns this chase',
 }
 
 function humaniseOutcome(outcome: string | null, state: NudgeRow['state']): string {
@@ -311,6 +312,9 @@ export function NudgeOutboxPanel({ projects }: { projects: DashboardProject[] })
     'skipped_cooldown',
     'skipped_opted_out',
     'suppressed_sibling',
+    // A human tagged the conversation "follow up" in Help Scout — the bot
+    // stands down until the tag is cleared. Self-resolving by definition.
+    'skipped_followup_tag',
   ])
   const holdingRows = skippedRows.filter(
     (r) => r.outcome != null && HOLDING_OFF_OUTCOMES.has(r.outcome),

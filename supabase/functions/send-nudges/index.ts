@@ -144,6 +144,7 @@ interface CandidateRow {
   last_staff_reply_at: string | null
   snoozed: boolean
   auto_nudge_disabled: boolean
+  has_followup_tag: boolean
 }
 
 type Candidate = CandidateFacts & { row: CandidateRow }
@@ -159,6 +160,7 @@ function toFacts(row: CandidateRow): Candidate {
     lastStaffReplyAt: row.last_staff_reply_at,
     snoozed: row.snoozed,
     autoNudgeDisabled: row.auto_nudge_disabled,
+    hasFollowUpTag: row.has_followup_tag === true,
     row,
   }
 }
