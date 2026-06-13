@@ -14,12 +14,15 @@ import {
   threadUrlSet,
 } from './guardrails.ts'
 import { htmlToText, looksLikeHtml, normaliseBody } from './htmlText.ts'
-import { renderThread } from './prompts.ts'
+import { buildDraftSystemStable, renderThread } from './prompts.ts'
 import { matchMaterials, type GroundingSlice } from './grounding.ts'
 import { isArtworkFormSubmission, isAutomatedNotification } from './pipeline.ts'
 import { latestCustomerThreadId, mapThreads } from './hsMap.ts'
 import { classifyEdit, stripSignature } from './feedback.ts'
 import { composeNote } from './composeNote.ts'
+import { fetchBriefing, DEFAULT_BRIEFING } from './briefing.ts'
+import { HOUSE_RULES } from './briefing/houseRules.ts'
+import { EXEMPLARS } from './briefing/exemplars.ts'
 import type { ClassifyResult, DraftResult, GroundingData, GroundingMaterial, ThreadMessage } from './types.ts'
 
 let failures = 0
@@ -490,6 +493,84 @@ check('blocked status is prominent', blockedNote.text.includes('⚠ BLOCKED') &&
 
 const actionNote = composeNote({ classification: { ...classifyStub, category: 'order_details_collection' }, draft: { ...draftStub, draft_body: null, should_draft: false, action: 'Ready to invoice — generate the order link; qty 50 on file', checks: [], assumptions: [], figures_used: [] }, outcome: 'abstained', abstainOrBlockReason: 'ready to invoice', guardrails: null })
 check('abstain action surfaced', actionNote.text.includes('ACTION') && actionNote.text.includes('Ready to invoice'))
+
+// ── Phase 3a: briefing in DB, with code fallback ─────────────────────────────
+
+// The default briefing IS the compiled constants — what the backtest uses and
+// what migration 000225 seeds the DB from.
+eq('default briefing house-rule count', DEFAULT_BRIEFING.houseRules.length, HOUSE_RULES.length)
+eq('default briefing exemplar count', DEFAULT_BRIEFING.exemplars.length, EXEMPLARS.length)
+check('default briefing IS the constants', DEFAULT_BRIEFING.houseRules === HOUSE_RULES && DEFAULT_BRIEFING.exemplars === EXEMPLARS)
+
+// Prompt assembly with the default briefing is unchanged: every rule numbered
+// in order, every exemplar, tone + pages still present.
+const stablePrompt = buildDraftSystemStable(DEFAULT_BRIEFING.houseRules, DEFAULT_BRIEFING.exemplars)
+check('stable prompt has the HOUSE RULES block', stablePrompt.includes('HOUSE RULES'))
+check('stable prompt numbers rule 1 first', stablePrompt.includes(`1. ${HOUSE_RULES[0]}`))
+check('stable prompt numbers the last rule', stablePrompt.includes(`${HOUSE_RULES.length}. ${HOUSE_RULES[HOUSE_RULES.length - 1]}`))
+check('stable prompt renders EXAMPLE 1', stablePrompt.includes('EXAMPLE 1 ['))
+check('stable prompt renders the last exemplar', stablePrompt.includes(`EXAMPLE ${EXEMPLARS.length} [`))
+
+// fetchBriefing: minimal stub Supabase client. .from(table) → awaitable builder.
+function stubClient(byTable: Record<string, { data: unknown; error: unknown }>) {
+  return {
+    from(table: string) {
+      const res = byTable[table] ?? { data: [], error: null }
+      const builder: Record<string, unknown> = {
+        select: () => builder,
+        eq: () => builder,
+        order: () => Promise.resolve(res),
+        insert: () => Promise.resolve({ error: null }),
+      }
+      return builder
+    },
+  } as unknown as Parameters<typeof fetchBriefing>[0]
+}
+
+const liveBriefing = await fetchBriefing(stubClient({
+  ai_draft_house_rules: { data: [{ rule_text: 'R1' }, { rule_text: 'R2' }], error: null },
+  ai_draft_exemplars: { data: [{ category: 'quote_request', customer_text: 'C', reply_text: 'Rep' }], error: null },
+}))
+eq('fetchBriefing maps DB rules in order', liveBriefing.houseRules, ['R1', 'R2'])
+eq('fetchBriefing maps DB exemplars', liveBriefing.exemplars, [{ category: 'quote_request', customer: 'C', reply: 'Rep' }])
+
+const errBriefing = await fetchBriefing(stubClient({
+  ai_draft_house_rules: { data: null, error: { message: 'permission denied' } },
+  ai_draft_exemplars: { data: null, error: { message: 'permission denied' } },
+}))
+check('fetchBriefing falls back to the constants on error', errBriefing === DEFAULT_BRIEFING)
+
+const emptyBriefing = await fetchBriefing(stubClient({
+  ai_draft_house_rules: { data: [], error: null },
+  ai_draft_exemplars: { data: [], error: null },
+}))
+check('fetchBriefing falls back on empty (zero rules is unsafe)', emptyBriefing === DEFAULT_BRIEFING)
+
+// Asymmetry: zero exemplars is a voice matter, not a safety one — keep the DB
+// rules rather than silently revert the admin's rule edits.
+const noExemplars = await fetchBriefing(stubClient({
+  ai_draft_house_rules: { data: [{ rule_text: 'R1' }], error: null },
+  ai_draft_exemplars: { data: [], error: null },
+}))
+check(
+  'fetchBriefing keeps DB rules when exemplars are empty',
+  noExemplars !== DEFAULT_BRIEFING && noExemplars.houseRules.length === 1 && noExemplars.exemplars.length === 0,
+)
+
+// Zero house rules IS unsafe → full fallback even when exemplars are present.
+const noRules = await fetchBriefing(stubClient({
+  ai_draft_house_rules: { data: [], error: null },
+  ai_draft_exemplars: { data: [{ category: 'quote_request', customer_text: 'C', reply_text: 'Rep' }], error: null },
+}))
+check('fetchBriefing falls back when rules are empty (unsafe)', noRules === DEFAULT_BRIEFING)
+
+// Malformed rows (null / blank rule_text) are dropped; if that leaves no rules,
+// it is treated as empty and falls back.
+const malformed = await fetchBriefing(stubClient({
+  ai_draft_house_rules: { data: [{ rule_text: null }, { rule_text: '  ' }], error: null },
+  ai_draft_exemplars: { data: [{ category: 'quote_request', customer_text: 'C', reply_text: 'Rep' }], error: null },
+}))
+check('fetchBriefing drops malformed rules and falls back if none remain', malformed === DEFAULT_BRIEFING)
 
 // ── Result ───────────────────────────────────────────────────────────────────
 

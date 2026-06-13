@@ -5,6 +5,7 @@
 import { callClassify, callDraft, type CallUsage } from './anthropic.ts'
 import { buildAllowedFigures, runGuardrails, threadUrlSet } from './guardrails.ts'
 import { sliceGrounding } from './grounding.ts'
+import { DEFAULT_BRIEFING, type Briefing } from './briefing.ts'
 import {
   buildClassifySystem,
   buildClassifyUser,
@@ -82,6 +83,9 @@ export interface PipelineInput {
 export async function runPipeline(
   input: PipelineInput,
   grounding: GroundingData,
+  // The live worker passes the DB-fetched briefing; the backtest omits it and
+  // gets the compiled constants, keeping the laptop run byte-reproducible.
+  briefing: Briefing = DEFAULT_BRIEFING,
 ): Promise<PipelineResult> {
   const usage = { inputTokens: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0 }
 
@@ -186,7 +190,7 @@ export async function runPipeline(
   )
   const draftCall = await callDraft(
     [
-      { text: buildDraftSystemStable(), cache: true },
+      { text: buildDraftSystemStable(briefing.houseRules, briefing.exemplars), cache: true },
       { text: buildDraftSystemVariable(classification.category, slice) },
     ],
     buildDraftUser(input.thread, input.subject, classification, input.customerFirstName),
@@ -210,7 +214,7 @@ export async function runPipeline(
 
   // 4. Hard gates on the rendered draft text. Echo-only links (proof URLs)
   // must already exist in the inbound thread.
-  const allowed = buildAllowedFigures(grounding, input.thread, slice)
+  const allowed = buildAllowedFigures(grounding, input.thread, slice, briefing.houseRules)
   const threadUrls = threadUrlSet(input.thread)
   const verdict = runGuardrails(draft.draft_body, allowed, threadUrls)
 

@@ -29,6 +29,7 @@ import {
   getAccessToken,
 } from '../_shared/helpscout.ts'
 import { fetchGrounding } from '../_shared/aiDrafts/grounding.ts'
+import { fetchBriefing } from '../_shared/aiDrafts/briefing.ts'
 import { runPipeline } from '../_shared/aiDrafts/pipeline.ts'
 import { latestCustomerThreadId, mapThreads } from '../_shared/aiDrafts/hsMap.ts'
 import { modelId } from '../_shared/aiDrafts/anthropic.ts'
@@ -219,8 +220,12 @@ Deno.serve(async (req) => {
     }
     ledgerId = claimed.id
 
-    // The pipeline proper.
+    // The pipeline proper. Briefing (house rules + exemplars) comes from the
+    // admin-editable DB tables via the service-role client, falling back to the
+    // compiled constants on any error (briefing.ts). Grounding (live pricing)
+    // stays on the anon RPC path.
     const grounding = await fetchGrounding()
+    const briefing = await fetchBriefing(admin)
     const result = await runPipeline(
       {
         conversationId,
@@ -230,6 +235,7 @@ Deno.serve(async (req) => {
         thread,
       },
       grounding,
+      briefing,
     )
 
     // Compose the structured internal note once (text for the ledger, HTML
