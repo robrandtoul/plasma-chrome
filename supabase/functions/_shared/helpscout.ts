@@ -430,7 +430,13 @@ export async function createDraftReply(
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ customer: { id: customerId }, user: userId, text, draft: true }),
+    // status: 'pending' so that when a human SENDS this draft, the conversation
+    // moves to pending (waiting on the customer) — matching a normally-typed
+    // reply. Without it, Help Scout's default for a reply with no status is to
+    // *reactivate* the conversation, so a sent AI draft stayed Active and had
+    // to be moved to pending by hand. Status is deferred like the rest of a
+    // draft: it applies on send, not while the draft sits unsent.
+    body: JSON.stringify({ customer: { id: customerId }, user: userId, text, draft: true, status: 'pending' }),
   })
   if (!resp.ok) {
     const body = await resp.text().catch(() => '<body read failed>')
