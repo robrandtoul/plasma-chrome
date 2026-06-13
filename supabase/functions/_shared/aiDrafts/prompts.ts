@@ -8,9 +8,8 @@
 // The blast radius is additionally capped in code: output can only become a
 // human-reviewed draft, and guardrails reject unapproved URLs / figures.
 
-import { EXEMPLARS } from './briefing/exemplars.ts'
+import type { Exemplar } from './briefing/exemplars.ts'
 import { SITE_PAGES } from './briefing/sitePages.ts'
-import { HOUSE_RULES } from './briefing/houseRules.ts'
 import { TONE_GUIDE } from './briefing/toneGuide.ts'
 import type { GroundingSlice } from './grounding.ts'
 import type { Category, ClassifyResult, ThreadMessage } from './types.ts'
@@ -151,19 +150,21 @@ function catalogueIndexBlock(slice: GroundingSlice): string {
 }
 
 // The stable half of the draft system prompt — tone, rules, pages, and ALL
-// exemplars. Byte-identical on every draft call, so it is sent with a
-// prompt-cache breakpoint and re-read at ~0.1x cost within the cache window.
-// (All exemplars rather than just the category's: stability for caching, and
-// it pushes the prefix over the model's minimum cacheable size.)
-export function buildDraftSystemStable(): string {
-  const exemplars = EXEMPLARS
+// exemplars. Byte-identical on every draft call (within a briefing version), so
+// it is sent with a prompt-cache breakpoint and re-read at ~0.1x cost within the
+// cache window. (All exemplars rather than just the category's: stability for
+// caching, and it pushes the prefix over the model's minimum cacheable size.)
+// houseRules + exemplars are passed in — from the DB briefing on the live path,
+// or the compiled constants in the backtest (see briefing.ts / runPipeline).
+export function buildDraftSystemStable(houseRules: string[], exemplars: Exemplar[]): string {
+  const exemplarBlock = exemplars
     .map((e, i) => `EXAMPLE ${i + 1} [${e.category}]\nCustomer wrote:\n${e.customer}\n\nWe replied:\n${e.reply}`)
     .join('\n\n====\n\n')
 
   return `${TONE_GUIDE}
 
 HOUSE RULES — these are facts and policies you must follow exactly:
-${HOUSE_RULES.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+${houseRules.map((r, i) => `${i + 1}. ${r}`).join('\n')}
 
 PAGES YOU MAY LINK — the only URLs you may ever include in a reply (plus a
 proof URL only when it already appears in the thread). Link the page that
@@ -173,7 +174,7 @@ ${SITE_PAGES.map((l) => `- ${l.url} (${l.purpose})`).join('\n')}
 
 EXAMPLES OF OUR REPLIES (voice and structure — figures in them may be out of
 date; current figures come ONLY from the pricing data given per-enquiry):
-${exemplars}`
+${exemplarBlock}`
 }
 
 // The per-conversation half: live grounding + the task framing. Changes every

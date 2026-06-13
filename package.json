@@ -15,6 +15,7 @@
     "db:clean-fixtures": "tsx scripts/clean-test-fixtures.ts",
     "db:empty-proof-images": "tsx scripts/empty-proof-images-bucket.ts",
     "check:price-list": "tsx scripts/check-price-list-golden.ts",
+    "check:briefing-seed": "tsx scripts/briefing-seed.ts --check",
     "test:nudges": "tsx supabase/functions/_shared/nudgeDecision.test.ts",
     "backtest": "tsx scripts/run-backtest.ts",
     "test:ai-drafts": "tsx supabase/functions/_shared/aiDrafts/guardrails.test.ts"

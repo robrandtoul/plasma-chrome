@@ -359,6 +359,13 @@ export function buildAllowedFigures(
   grounding: GroundingData,
   inputThread: ThreadMessage[],
   slice?: GroundingSlice,
+  // The SAME house rules the prompt was built from (DB briefing on the live
+  // path, constants in the backtest). If the prompt reads a freshly-approved
+  // rule introducing a figure but this allow-set reads the stale constant, the
+  // model quotes the figure and the guardrail then blocks the draft — every
+  // such draft silently fails. The two MUST read the one array. Defaults to the
+  // constants so existing callers/tests are unaffected.
+  houseRules: string[] = HOUSE_RULES,
 ): AllowedFigures {
   const allowed = new AllowedFigures()
   for (const f of grounding.figures) {
@@ -370,7 +377,7 @@ export function buildAllowedFigures(
   }
   // Figures stated in house rules are policy add-ons (one-off £180, shipping
   // £12.90, personalisation £0.20/£50…).
-  for (const rule of HOUSE_RULES) {
+  for (const rule of houseRules) {
     for (const f of extractMoneyFigures(rule)) {
       if (f.pence <= 0) continue
       for (const c of f.currencies) allowed.addHouseAddon(c, f.pence)
