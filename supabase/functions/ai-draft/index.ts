@@ -287,6 +287,10 @@ Deno.serve(async (req) => {
         state: mode === 'shadow' ? 'shadow' : result.outcome,
         category: result.classification.category,
         confidence: result.classification.confidence,
+        // For a skipped (non-customer) email, record WHICH kind it was so the
+        // panel can show proper spam separately from suppliers/notifications.
+        // Null for everything the drafter actually engaged with.
+        skip_kind: result.outcome === 'skipped' ? result.classification.non_customer_kind : null,
         summary: result.classification.summary,
         draft_body: result.draft?.draft_body ?? null,
         note_body: postNote ? note.text : null,

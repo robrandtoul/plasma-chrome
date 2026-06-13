@@ -18,11 +18,25 @@ export const CATEGORY_VALUES = [
 export const CONFIDENCE_VALUES = ['high', 'medium', 'low'] as const
 export const CURRENCY_VALUES = ['GBP', 'EUR', 'USD'] as const
 
+// When an email is NOT a genuine customer enquiry, which kind of non-customer
+// email it is. 'spam' is reserved strictly for unsolicited junk — a supplier
+// or an automated notification is NOT spam, even though neither needs a reply.
+// 'genuine' is the value for a real customer email (is_genuine_customer_email
+// true), so this field is always populated.
+export const NON_CUSTOMER_KIND_VALUES = [
+  'genuine',
+  'spam',
+  'supplier',
+  'automated_notification',
+  'other',
+] as const
+
 export const CLASSIFY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   required: [
     'is_genuine_customer_email',
+    'non_customer_kind',
     'category',
     'confidence',
     'summary',
@@ -35,6 +49,12 @@ export const CLASSIFY_SCHEMA = {
       type: 'boolean',
       description:
         'True only for a real customer (or prospective customer) writing to Plasma Design. False for marketing, spam, automated notifications, supplier emails.',
+    },
+    non_customer_kind: {
+      type: 'string',
+      enum: [...NON_CUSTOMER_KIND_VALUES],
+      description:
+        "When is_genuine_customer_email is TRUE, set 'genuine'. When FALSE, say which kind of non-customer email this is: 'spam' = unsolicited marketing, cold sales pitches, promotions, list-blasts, junk — someone selling TO Plasma or mass-mailing a list; 'supplier' = a genuine business email from a supplier, vendor, courier account or partner (NOT spam, even if no reply is needed); 'automated_notification' = a system-generated message such as a payment receipt, shipping/courier update, platform or order alert; 'other' = any other non-customer email that fits none of those. Reserve 'spam' for genuine unsolicited junk only.",
     },
     category: { type: 'string', enum: [...CATEGORY_VALUES] },
     confidence: { type: 'string', enum: [...CONFIDENCE_VALUES] },

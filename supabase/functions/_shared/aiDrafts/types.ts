@@ -2,13 +2,14 @@
 // The same core runs under two callers: the local backtest harness (Phase 1)
 // and, later, the drafting edge function (Phase 2).
 
-import { CATEGORY_VALUES, CONFIDENCE_VALUES, CURRENCY_VALUES } from './schema.ts'
+import { CATEGORY_VALUES, CONFIDENCE_VALUES, CURRENCY_VALUES, NON_CUSTOMER_KIND_VALUES } from './schema.ts'
 
 // Single source of truth for the wire enums is schema.ts — these types derive
 // from the same tuples the JSON schemas spread, so drift cannot compile.
 export type Currency = (typeof CURRENCY_VALUES)[number]
 export type Category = (typeof CATEGORY_VALUES)[number]
 export type Confidence = (typeof CONFIDENCE_VALUES)[number]
+export type NonCustomerKind = (typeof NON_CUSTOMER_KIND_VALUES)[number]
 
 // Categories the drafter is allowed to write for in Phase 1. Everything else
 // is classified (triage signal) but never drafted — silence is a feature.
@@ -43,6 +44,9 @@ export interface FixtureConversation {
 
 export interface ClassifyResult {
   is_genuine_customer_email: boolean
+  // 'genuine' for a real customer email; otherwise which kind of non-customer
+  // email it is (spam / supplier / automated_notification / other).
+  non_customer_kind: NonCustomerKind
   category: Category
   confidence: Confidence
   summary: string

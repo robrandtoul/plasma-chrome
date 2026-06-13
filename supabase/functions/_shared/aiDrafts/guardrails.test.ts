@@ -452,6 +452,7 @@ eq('trailing "Kind regards, Rob" still stripped', stripSignature('Body line.\n\n
 
 const classifyStub: ClassifyResult = {
   is_genuine_customer_email: true,
+  non_customer_kind: 'genuine',
   category: 'quote_request',
   confidence: 'high',
   summary: 'Wants 100 steel cards.',

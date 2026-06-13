@@ -95,6 +95,7 @@ export async function runPipeline(
       conversationId: input.conversationId,
       classification: {
         is_genuine_customer_email: false,
+        non_customer_kind: 'automated_notification',
         category: 'other',
         confidence: 'high',
         summary: 'Automated notification (deterministic pre-filter)',
@@ -117,6 +118,7 @@ export async function runPipeline(
   if (isArtworkFormSubmission(input.thread)) {
     const classification: ClassifyResult = {
       is_genuine_customer_email: true,
+      non_customer_kind: 'genuine',
       category: 'artwork',
       confidence: 'high',
       summary: 'Artwork-request form submission (deterministic pre-gate)',

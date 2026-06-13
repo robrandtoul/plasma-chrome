@@ -97,6 +97,13 @@ Category guide:
 - complaint: unhappy customer, problem with an order, chasing something overdue.
 - other: anything else genuine.
 
+When an email is NOT a genuine customer enquiry, also record which kind it is in
+non_customer_kind. Keep 'spam' strictly for unsolicited junk — marketing blasts,
+cold sales pitches, promotions, someone selling TO Plasma. A genuine supplier,
+courier or partner email is 'supplier', not spam, even when it needs no reply; a
+system-generated receipt/shipping/order alert is 'automated_notification'. For a
+real customer email, non_customer_kind is 'genuine'.
+
 ${UNTRUSTED_PREAMBLE}`
 }
 

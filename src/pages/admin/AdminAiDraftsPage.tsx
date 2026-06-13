@@ -38,6 +38,25 @@ interface DraftRow {
   edit_class: EditClass | null
   edit_similarity: number | null
   sent_body: string | null
+  skip_kind: SkipKind | null
+}
+
+// Why a non-customer email was skipped. 'spam' is strictly unsolicited junk;
+// 'genuine' never appears on a skipped row but is allowed for safety. null on
+// older rows predating this field (and on anything that wasn't skipped).
+type SkipKind = 'genuine' | 'spam' | 'supplier' | 'automated_notification' | 'other'
+
+// How a skipped row is shown: proper spam stands out (red); everything else is
+// quiet. null/'other'/'genuine' fall back to the plain "skipped" chip.
+const SKIP_KIND_META: Record<SkipKind, { label: string; colour: PillColour }> = {
+  spam: { label: 'spam', colour: 'out' },
+  supplier: { label: 'supplier', colour: 'neutral' },
+  automated_notification: { label: 'notification', colour: 'neutral' },
+  other: { label: 'skipped', colour: 'neutral' },
+  genuine: { label: 'skipped', colour: 'neutral' },
+}
+function skipKindMeta(k: SkipKind | null): { label: string; colour: PillColour } {
+  return k ? SKIP_KIND_META[k] : { label: 'skipped', colour: 'neutral' }
 }
 
 // How often the open panel re-fetches itself (silent background refresh).
@@ -130,7 +149,7 @@ export default function AdminAiDraftsPage() {
       supabase
         .from('ai_drafts')
         .select(
-          'id, created_at, category, confidence, state, draft_body, note_body, abstain_or_block_reason, summary, usage_input, usage_output, usage_cache_read, usage_cache_write, edit_class, edit_similarity, sent_body',
+          'id, created_at, category, confidence, state, draft_body, note_body, abstain_or_block_reason, summary, usage_input, usage_output, usage_cache_read, usage_cache_write, edit_class, edit_similarity, sent_body, skip_kind',
         )
         .gte('created_at', since)
         .order('created_at', { ascending: false })
@@ -205,9 +224,18 @@ export default function AdminAiDraftsPage() {
     const byCat: Record<string, { drafted: number; accepted: number; matched: number }> = {}
     let cost = 0
     let matched = 0
+    // Split the skipped bucket: proper spam (unsolicited junk) vs everything
+    // else non-customer that needs no reply (suppliers, notifications, other,
+    // and older rows that predate skip_kind).
+    let spam = 0
+    let noReply = 0
     for (const r of rows) {
       const o = outcomeOf(r)
       byOutcome[o]++
+      if (o === 'skipped') {
+        if (r.skip_kind === 'spam') spam++
+        else noReply++
+      }
       cost += rowCostUsd(r)
       const cat = r.category ?? 'other'
       byCat[cat] ??= { drafted: 0, accepted: 0, matched: 0 }
@@ -219,7 +247,7 @@ export default function AdminAiDraftsPage() {
         if (r.edit_class === 'sent_as_is' || r.edit_class === 'lightly_edited') byCat[cat].accepted++
       }
     }
-    return { byOutcome, byEdit, byCat, cost, matched, total: rows.length }
+    return { byOutcome, byEdit, byCat, cost, matched, spam, noReply, total: rows.length }
   }, [rows])
 
   if (loading) {
@@ -312,11 +340,12 @@ export default function AdminAiDraftsPage() {
         </div>
       )}
       {/* Stats */}
-      <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <Stat label="Drafted" value={stats.byOutcome.drafted} />
         <Stat label="Abstained" value={stats.byOutcome.abstained} />
         <Stat label="Blocked" value={stats.byOutcome.blocked} tone={stats.byOutcome.blocked > 0 ? 'warn' : undefined} />
-        <Stat label="Spam skipped" value={stats.byOutcome.skipped} />
+        <Stat label="Spam" value={stats.spam} hint="unsolicited junk only" />
+        <Stat label="No reply needed" value={stats.noReply} hint="suppliers, notifications, etc." />
       </section>
       <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label={`Cost (7d, USD)`} value={`$${stats.cost.toFixed(2)}`} />
@@ -367,6 +396,12 @@ export default function AdminAiDraftsPage() {
           <ul>
             {rows.slice(0, 60).map((r) => {
               const outcome = outcomeOf(r)
+              // A skipped row shows WHICH kind it was (spam stands out in red);
+              // every other outcome shows the outcome word as before.
+              const mainPill =
+                outcome === 'skipped'
+                  ? skipKindMeta(r.skip_kind)
+                  : { label: outcome as string, colour: OUTCOME_PILL[outcome] }
               const isOpen = expanded === r.id
               return (
                 <li key={r.id} className="border-b border-line-soft last:border-b-0">
@@ -376,7 +411,7 @@ export default function AdminAiDraftsPage() {
                   >
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs text-ink-mute tabular-nums w-[84px] shrink-0">{fmtTime(r.created_at)}</span>
-                      <Pill colour={OUTCOME_PILL[outcome]}>{outcome}</Pill>
+                      <Pill colour={mainPill.colour}>{mainPill.label}</Pill>
                       {r.category && <Pill colour="neutral">{r.category}</Pill>}
                       {r.edit_class && <Pill colour={EDIT_PILL[r.edit_class]}>{EDIT_LABEL[r.edit_class]}</Pill>}
                       <span className="text-sm text-ink-soft truncate min-w-0 flex-1" title={r.summary ?? undefined}>{r.summary}</span>
