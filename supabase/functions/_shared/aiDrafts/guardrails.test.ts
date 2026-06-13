@@ -430,6 +430,21 @@ check('similarity bounded 0..1', (() => { const s = classifyEdit(draftEx, sentLi
 eq('identical strings similarity 1', classifyEdit('abc', 'abc').similarity, 1)
 eq('HTML signature variant still strips', stripSignature('Body text\n\nMany thanks\nChris').trim(), 'Body text')
 
+// Regression (PV 2026-06-13): a body line that OPENS with "Thanks for…" /
+// "Thank you for…" must NOT be mistaken for a signature. The old stripSignature
+// chopped the whole body at the first sign-off WORD, so identical sent-as-is
+// replies scored ~0.02 and were logged 'discarded'.
+const draftThanksOpener = `Hi Scott,
+
+Thanks for confirming the proof for Steve is all correct.
+
+Could you let me know the quantity and I will send your order link across.`
+eq('opener "Thanks for…" is not stripped', stripSignature(draftThanksOpener), draftThanksOpener)
+eq('identical send with a Thanks-opener is sent_as_is', classifyEdit(draftThanksOpener, draftThanksOpener).editClass, 'sent_as_is')
+check('"Thank you for…" opener keeps its body', stripSignature('Hi David,\n\nThank you for letting us know.\n\nWe will keep it on file.').includes('keep it on file'))
+// A genuine trailing sign-off on its own short line still strips.
+eq('trailing "Kind regards, Rob" still stripped', stripSignature('Body line.\n\nKind regards, Rob').trim(), 'Body line.')
+
 // ── Structured note rendering ────────────────────────────────────────────────
 
 const classifyStub: ClassifyResult = {
