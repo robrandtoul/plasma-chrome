@@ -348,6 +348,27 @@ async function handle(req: Request): Promise<Response> {
 
   const eventHeader = req.headers.get('x-helpscout-event') ?? ''
 
+  // Diagnostic capture (Help Scout exposes no usable webhook delivery log):
+  // record any inbound event we DON'T recognise — not merge/tags/draft-trigger/
+  // reply — into audit_log, with the conversation id. This is how we learn what
+  // Help Scout actually emits for things like a workflow-driven mailbox move,
+  // which silently missed the AI drafter on a Graphics→Customer Support handoff
+  // (conversation 3352336125, 2026-06-13). Low-noise: recognised events skip it.
+  if (
+    !MERGE_EVENT_RE.test(eventHeader) &&
+    !TAGS_EVENT_RE.test(eventHeader) &&
+    !DRAFT_TRIGGER_RE.test(eventHeader) &&
+    !REPLY_EVENT_RE.test(eventHeader)
+  ) {
+    await logAudit(admin, {
+      actorLabel: 'Help Scout (webhook)',
+      action: 'helpscout.webhook_unhandled_event',
+      targetType: 'conversation',
+      targetId: String(conversationId),
+      metadata: { event: eventHeader || '(empty header)' },
+    }).catch(() => {})
+  }
+
   // Merge re-point: stands on its own (not a reply, must not trigger drafting).
   // Heals proofs whose linked conversation was merged away before they 404.
   if (MERGE_EVENT_RE.test(eventHeader)) {
