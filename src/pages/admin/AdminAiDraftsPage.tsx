@@ -67,13 +67,74 @@ const POLL_MS = 25_000
 // Opus 4.8 USD per-million rates; cache read 0.1x, cache write 1.25x.
 const RATE_IN = 5
 const RATE_OUT = 25
-function rowCostUsd(r: DraftRow): number {
+// Token usage → USD. Shared by the per-row cost and the daily spend chart so
+// the rate logic lives in exactly one place.
+interface TokenUsage {
+  usage_input: number | null
+  usage_output: number | null
+  usage_cache_read: number | null
+  usage_cache_write: number | null
+}
+function costFromUsage(u: TokenUsage): number {
   return (
-    ((r.usage_input ?? 0) / 1e6) * RATE_IN +
-    ((r.usage_output ?? 0) / 1e6) * RATE_OUT +
-    ((r.usage_cache_read ?? 0) / 1e6) * RATE_IN * 0.1 +
-    ((r.usage_cache_write ?? 0) / 1e6) * RATE_IN * 1.25
+    ((u.usage_input ?? 0) / 1e6) * RATE_IN +
+    ((u.usage_output ?? 0) / 1e6) * RATE_OUT +
+    ((u.usage_cache_read ?? 0) / 1e6) * RATE_IN * 0.1 +
+    ((u.usage_cache_write ?? 0) / 1e6) * RATE_IN * 1.25
   )
+}
+function rowCostUsd(r: DraftRow): number {
+  return costFromUsage(r)
+}
+
+// One day of the trend charts. Spend sums EVERY processed email that day
+// (classify costs tokens even when the draft is skipped/abstained); matched /
+// accepted only count drafts whose reply has since been sent.
+interface DayPoint {
+  day: string // YYYY-MM-DD, local
+  date: Date
+  spend: number
+  matched: number
+  accepted: number
+}
+
+// Charts look back further than the 7-day decision list so a trend is visible.
+const SERIES_DAYS = 30
+
+// YYYY-MM-DD in the viewer's local time, so day buckets line up with how Rob
+// reads the clock (not UTC).
+function localDayKey(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+// Bucket raw rows into a contiguous run of the last SERIES_DAYS days (empty
+// days included, so the x-axis has no gaps).
+function buildDailySeries(rows: (TokenUsage & { created_at: string; edit_class: EditClass | null })[]): DayPoint[] {
+  const byDay = new Map<string, { spend: number; matched: number; accepted: number }>()
+  for (const r of rows) {
+    const k = localDayKey(new Date(r.created_at))
+    const b = byDay.get(k) ?? { spend: 0, matched: 0, accepted: 0 }
+    b.spend += costFromUsage(r)
+    if (r.edit_class) {
+      b.matched++
+      if (r.edit_class === 'sent_as_is' || r.edit_class === 'lightly_edited') b.accepted++
+    }
+    byDay.set(k, b)
+  }
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const out: DayPoint[] = []
+  for (let i = SERIES_DAYS - 1; i >= 0; i--) {
+    const d = new Date(today)
+    d.setDate(today.getDate() - i)
+    const k = localDayKey(d)
+    const b = byDay.get(k) ?? { spend: 0, matched: 0, accepted: 0 }
+    out.push({ day: k, date: d, ...b })
+  }
+  return out
 }
 
 function outcomeOf(r: DraftRow): Outcome {
@@ -130,6 +191,10 @@ export default function AdminAiDraftsPage() {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [tab, setTab] = useState<Tab>('decisions')
+  // 30-day daily aggregates for the spend + acceptance trend charts. Fetched
+  // separately (minimal columns, wider window) so the heavy 7-day decision
+  // list query stays small. null until first load.
+  const [series, setSeries] = useState<DayPoint[] | null>(null)
 
   // A poll must not overwrite the mode pill while the user is mid mode-change,
   // or the confirm panel's "current → pending" framing would jump under them.
@@ -160,9 +225,28 @@ export default function AdminAiDraftsPage() {
     return { mode: (settingsRes.data?.ai_drafts_mode ?? 'off') as Mode, rows: (rowsRes.data ?? []) as DraftRow[] }
   }
 
-  // First open: show the spinner, surface a hard error if it fails.
+  // The trend-chart data: SERIES_DAYS of just the columns the two charts need.
+  // Best-effort — on error we leave the last good series in place rather than
+  // blanking the charts. At a few dozen rows/day this stays well under the
+  // 1000-row cap; if volume ever outgrows that the oldest days truncate first
+  // (order desc), which only shortens the chart, never corrupts recent days.
+  async function fetchSeries() {
+    const since = new Date(Date.now() - SERIES_DAYS * 24 * 60 * 60 * 1000).toISOString()
+    const { data, error } = await supabase
+      .from('ai_drafts')
+      .select('created_at, usage_input, usage_output, usage_cache_read, usage_cache_write, edit_class')
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(1000)
+    if (error || !data) return
+    setSeries(buildDailySeries(data as (TokenUsage & { created_at: string; edit_class: EditClass | null })[]))
+  }
+
+  // First open: show the spinner, surface a hard error if it fails. The chart
+  // series loads alongside but never blocks the page or counts as a hard error.
   async function initialLoad() {
     setLoading(true)
+    void fetchSeries()
     const res = await fetchData()
     if ('error' in res) { setLoadError(res.error); setLoading(false); return }
     setMode(res.mode)
@@ -175,6 +259,7 @@ export default function AdminAiDraftsPage() {
   // blank on a transient error, and leave the mode display alone while the user
   // is changing it. The open/expanded row survives because it is keyed by id.
   async function refresh() {
+    void fetchSeries()
     const res = await fetchData()
     if ('error' in res) return
     setRows(res.rows)
@@ -249,6 +334,44 @@ export default function AdminAiDraftsPage() {
     }
     return { byOutcome, byEdit, byCat, cost, matched, spam, noReply, total: rows.length }
   }, [rows])
+
+  // Bars for the two trend charts, derived from the daily series.
+  const charts = useMemo(() => {
+    const s = series ?? []
+    const fmtDay = (d: Date) => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+    // Null on a zero-activity day so it renders as a faint "no data" slot, not
+    // a solid $0 bar — keeping a real number (incl. a genuine 0) visible while
+    // an idle day reads as absence. Mirrors the acceptance null/0 distinction.
+    const spendBars = s.map((p) => ({
+      date: p.date,
+      value: p.spend > 0 ? p.spend : null,
+      tip: p.spend > 0 ? `${fmtDay(p.date)} · $${p.spend.toFixed(2)}` : `${fmtDay(p.date)} · no activity`,
+    }))
+    // Acceptance is null on days with no sent replies (a blank slot, not 0%) so
+    // a quiet day never reads as a quality dip.
+    const acceptBars = s.map((p) => ({
+      date: p.date,
+      value: p.matched > 0 ? (p.accepted / p.matched) * 100 : null,
+      tip:
+        p.matched > 0
+          ? `${fmtDay(p.date)} · ${Math.round((p.accepted / p.matched) * 100)}% (${p.accepted}/${p.matched} sent)`
+          : `${fmtDay(p.date)} · no replies sent`,
+    }))
+    const totalSpend = s.reduce((a, p) => a + p.spend, 0)
+    const totalMatched = s.reduce((a, p) => a + p.matched, 0)
+    const totalAccepted = s.reduce((a, p) => a + p.accepted, 0)
+    const spendMax = Math.max(0, ...spendBars.map((b) => b.value ?? 0))
+    return {
+      spendBars,
+      acceptBars,
+      totalSpend,
+      totalMatched,
+      totalAccepted,
+      spendMax,
+      hasSpend: totalSpend > 0,
+      hasAccept: totalMatched > 0,
+    }
+  }, [series])
 
   if (loading) {
     return <p className="text-ink-mute text-sm">Loading…</p>
@@ -358,6 +481,36 @@ export default function AdminAiDraftsPage() {
         <Stat label="Sent as-is" value={stats.matched === 0 ? '—' : stats.byEdit.sent_as_is} />
       </section>
 
+      {/* Trends (last 30 days) */}
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <TrendChart
+          title="Daily spend"
+          hint={`$${charts.totalSpend.toFixed(2)} over 30 days · $${(charts.totalSpend / SERIES_DAYS).toFixed(2)}/day avg`}
+          bars={charts.spendBars}
+          max={charts.spendMax}
+          topLabel={`$${charts.spendMax.toFixed(2)}`}
+          colour="var(--c-brand)"
+          loading={series === null}
+          hasData={charts.hasSpend}
+          emptyMsg="No spend in the last 30 days."
+        />
+        <TrendChart
+          title="Acceptance rate"
+          hint={
+            charts.totalMatched === 0
+              ? 'awaiting sent replies'
+              : `${Math.round((charts.totalAccepted / charts.totalMatched) * 100)}% over ${charts.totalMatched} sent · 30 days`
+          }
+          bars={charts.acceptBars}
+          max={100}
+          topLabel="100%"
+          colour="var(--c-in-stock)"
+          loading={series === null}
+          hasData={charts.hasAccept}
+          emptyMsg="No replies sent in the last 30 days yet."
+        />
+      </section>
+
       {/* By category */}
       {Object.keys(stats.byCat).length > 0 && (
         <section className="rounded-lg border border-line bg-surface overflow-hidden">
@@ -465,6 +618,95 @@ function Block({ title, children }: { title: string; children: React.ReactNode }
     <div>
       <div className="eyebrow text-ink-mute mb-1">{title}</div>
       <pre className="whitespace-pre-wrap font-sans text-sm text-ink bg-canvas border border-line-soft rounded-[8px] p-3 leading-relaxed">{children}</pre>
+    </div>
+  )
+}
+
+// A compact hand-rolled SVG bar chart for the two daily trends — no chart
+// library, matching the repo's other inline SVGs. One bar per day scaled to
+// `max`, each with a tooltip. A null value (e.g. a day with no sent replies)
+// renders as a faint slot so a quiet day reads as "no data", never as 0%.
+function TrendChart({
+  title,
+  hint,
+  bars,
+  max,
+  topLabel,
+  colour,
+  loading,
+  hasData,
+  emptyMsg,
+}: {
+  title: string
+  hint?: string
+  bars: { date: Date; value: number | null; tip: string }[]
+  max: number
+  topLabel: string
+  colour: string
+  loading: boolean
+  hasData: boolean
+  emptyMsg: string
+}) {
+  const W = 720
+  const H = 150
+  const plotTop = 12
+  const plotBottom = 120
+  const plotH = plotBottom - plotTop
+  const n = Math.max(bars.length, 1)
+  const slot = W / n
+  const barW = Math.min(slot * 0.62, 22)
+  const safeMax = max > 0 ? max : 1
+  const fmtDay = (d: Date) => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+  const labelIdx = [0, Math.floor((bars.length - 1) / 2), bars.length - 1]
+
+  return (
+    <div className="rounded-lg border border-line bg-surface p-5">
+      <div className="flex items-baseline justify-between gap-3 mb-3">
+        <h2 className="text-sm font-medium text-ink">{title}</h2>
+        {hint && <span className="text-[11px] text-ink-mute tabular-nums text-right">{hint}</span>}
+      </div>
+      {loading ? (
+        <p className="text-sm text-ink-mute py-10 text-center">Loading…</p>
+      ) : !hasData ? (
+        <p className="text-sm text-ink-mute py-10 text-center">{emptyMsg}</p>
+      ) : (
+        <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`${title} — last ${bars.length} days`}>
+          <line x1={0} y1={plotTop} x2={W} y2={plotTop} stroke="var(--c-line-soft)" strokeWidth={1} strokeDasharray="3 3" />
+          <line x1={0} y1={plotBottom} x2={W} y2={plotBottom} stroke="var(--c-line)" strokeWidth={1} />
+          <text x={2} y={plotTop - 3} fontSize={11} fill="var(--c-ink-dim)">{topLabel}</text>
+          {bars.map((b, i) => {
+            const cx = i * slot + slot / 2
+            if (b.value == null) {
+              return (
+                <g key={i}>
+                  <title>{b.tip}</title>
+                  <rect x={cx - barW / 2} y={plotBottom - 2} width={barW} height={2} fill="var(--c-line)" opacity={0.5} />
+                </g>
+              )
+            }
+            // Any real value (incl. a genuine 0, e.g. a 0%-acceptance day) gets
+            // a visible, hoverable baseline mark; only nulls (handled above) are
+            // the faint "no data" slot.
+            const drawH = Math.max((b.value / safeMax) * plotH, 1.5)
+            return (
+              <g key={i}>
+                <title>{b.tip}</title>
+                <rect x={cx - barW / 2} y={plotBottom - drawH} width={barW} height={drawH} rx={1} fill={colour} />
+              </g>
+            )
+          })}
+          {labelIdx.map((idx, k) => {
+            if (idx < 0 || idx >= bars.length) return null
+            const anchor = k === 0 ? 'start' : k === labelIdx.length - 1 ? 'end' : 'middle'
+            const x = k === 0 ? 2 : k === labelIdx.length - 1 ? W - 2 : idx * slot + slot / 2
+            return (
+              <text key={k} x={x} y={H - 4} fontSize={11} fill="var(--c-ink-dim)" textAnchor={anchor}>
+                {fmtDay(bars[idx].date)}
+              </text>
+            )
+          })}
+        </svg>
+      )}
     </div>
   )
 }
