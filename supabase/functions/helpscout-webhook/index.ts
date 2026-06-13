@@ -330,6 +330,10 @@ async function handle(req: Request): Promise<Response> {
   const conversationId =
     (payload?.id as number | string | undefined) ??
     ((payload?.conversation as { id?: number | string } | undefined)?.id)
+  if (conversationId == null) {
+    // Nothing to map; ack so Help Scout doesn't retry.
+    return json({ ok: true, ignored: 'no conversation id' })
+  }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
@@ -344,35 +348,6 @@ async function handle(req: Request): Promise<Response> {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 
-  // Diagnostic capture (Help Scout exposes no usable webhook delivery log).
-  // Placed BEFORE the no-id early-return below: a workflow-driven mailbox move
-  // (Graphics→Customer Support) fired a webhook that produced no draft AND no
-  // earlier capture — which means it bailed at the id check, so the move event
-  // isn't carrying its id where we read it. Record the event name + the payload
-  // shape (top-level keys, where an id was found) for every non-reply inbound,
-  // so the next push reveals exactly what a move emits and where its id lives.
-  // Replies excluded (high volume, already understood). Temporary — remove once
-  // the move event is known. See conversation 3352336125, 2026-06-13.
-  if (!REPLY_EVENT_RE.test(eventHeader)) {
-    await logAudit(admin, {
-      actorLabel: 'Help Scout (webhook)',
-      action: 'helpscout.webhook_seen',
-      targetType: 'conversation',
-      targetId: conversationId != null ? String(conversationId) : null,
-      metadata: {
-        event: eventHeader || '(empty header)',
-        payloadKeys: Object.keys(payload ?? {}).slice(0, 50),
-        hasTopId: payload?.id != null,
-        hasConversationId: (payload?.conversation as { id?: unknown } | undefined)?.id != null,
-      },
-    }).catch(() => {})
-  }
-
-  if (conversationId == null) {
-    // Nothing to map; ack so Help Scout doesn't retry.
-    return json({ ok: true, ignored: 'no conversation id' })
-  }
-
   // Merge re-point: stands on its own (not a reply, must not trigger drafting).
   // Heals proofs whose linked conversation was merged away before they 404.
   if (MERGE_EVENT_RE.test(eventHeader)) {
@@ -383,7 +358,13 @@ async function handle(req: Request): Promise<Response> {
   // the conversation's current tag list. The payload is the conversation
   // resource; tags arrive as [{ id, color, tag }] (defensively also accepting
   // bare strings). REPLACE, not merge — a cleared tag must clear the rule.
-  // Not a reply: never stamps the reply timestamps, never triggers drafting.
+  // Not a reply: never stamps the reply timestamps.
+  //
+  // ALSO triggers the AI drafter. The Graphics→Customer Support handoff is run
+  // by a Help Scout workflow that signals via convo.tags, NOT convo.moved
+  // (verified 2026-06-13: conv 3352336125 emitted convo.tags on every push-back,
+  // never convo.moved — only manual drag-moves fire convo.moved). Without this,
+  // workflow handoffs — the drafter's prime use case — silently never draft.
   if (TAGS_EVENT_RE.test(eventHeader)) {
     const rawTags = (payload?.tags as unknown[] | undefined) ?? []
     const tagNames = rawTags
@@ -405,6 +386,13 @@ async function handle(req: Request): Promise<Response> {
       tags: tagNames,
       matched: data?.length ?? 0,
     })
+    // Kick the drafter on the tag change too — this is how a workflow handoff
+    // into Customer Support reaches the pipeline. Fire-and-forget; the worker
+    // gates on mailbox = Customer Support + mode + a waiting customer message +
+    // dedupe (one attempt per newest customer thread), so a tag change outside
+    // CS, with no customer message, or already-drafted is a cheap no-op.
+    const trigger = triggerAiDraft(supabaseUrl, serviceKey, conversationId, eventHeader)
+    if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(trigger)
     return json({ ok: true, tags: tagNames, matched: data?.length ?? 0 })
   }
 
