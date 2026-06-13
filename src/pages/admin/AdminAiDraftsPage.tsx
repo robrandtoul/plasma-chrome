@@ -2,11 +2,20 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
 import { Pill, type PillColour, ButtonInk, ButtonGhost } from '../../design'
+import AdminAiDraftsBriefing from './AdminAiDraftsBriefing'
+import AdminAiDraftsProposals from './AdminAiDraftsProposals'
 
-// /admin/ai-drafts — Drafts panel v0 (Phase 3). Read-only ledger of recent
-// AI-draft decisions + cost, plus the off/shadow/live mode control and kill
-// switch. The whole /admin area is RequireAdmin-gated, so this is admin-only.
-// Heavier analytics + briefing editors come once there's volume to chart.
+type Tab = 'decisions' | 'briefing' | 'proposals'
+
+// /admin/ai-drafts — the Drafts panel. The off/shadow/live mode control sits at
+// the top; below it three tabs:
+//   · Decisions — the ledger of recent AI-draft outcomes, cost, per-category
+//     acceptance, and the self-refreshing recent-decisions list.
+//   · Briefing  — edit the house rules + example replies (DB-backed since
+//     migration 000225); takes effect on the next email, no redeploy.
+//   · Proposals — the human-in-the-loop approval queue for suggested briefing
+//     changes (migration 000226).
+// The whole /admin area is RequireAdmin-gated, so this is admin-only.
 
 type Mode = 'off' | 'shadow' | 'live'
 type Outcome = 'drafted' | 'abstained' | 'blocked' | 'skipped'
@@ -101,6 +110,7 @@ export default function AdminAiDraftsPage() {
   const [modeError, setModeError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [tab, setTab] = useState<Tab>('decisions')
 
   // A poll must not overwrite the mode pill while the user is mid mode-change,
   // or the confirm panel's "current → pending" framing would jump under them.
@@ -192,22 +202,32 @@ export default function AdminAiDraftsPage() {
   const stats = useMemo(() => {
     const byOutcome: Record<Outcome, number> = { drafted: 0, abstained: 0, blocked: 0, skipped: 0 }
     const byEdit: Record<EditClass, number> = { sent_as_is: 0, lightly_edited: 0, rewritten: 0, discarded: 0 }
+    const byCat: Record<string, { drafted: number; accepted: number; matched: number }> = {}
     let cost = 0
     let matched = 0
     for (const r of rows) {
-      byOutcome[outcomeOf(r)]++
+      const o = outcomeOf(r)
+      byOutcome[o]++
       cost += rowCostUsd(r)
-      if (r.edit_class) { byEdit[r.edit_class]++; matched++ }
+      const cat = r.category ?? 'other'
+      byCat[cat] ??= { drafted: 0, accepted: 0, matched: 0 }
+      if (o === 'drafted') byCat[cat].drafted++
+      if (r.edit_class) {
+        byEdit[r.edit_class]++
+        matched++
+        byCat[cat].matched++
+        if (r.edit_class === 'sent_as_is' || r.edit_class === 'lightly_edited') byCat[cat].accepted++
+      }
     }
-    return { byOutcome, byEdit, cost, matched, total: rows.length }
+    return { byOutcome, byEdit, byCat, cost, matched, total: rows.length }
   }, [rows])
 
   if (loading) {
     return <p className="text-ink-mute text-sm">Loading…</p>
   }
-  if (loadError) {
-    return <div className="rounded-lg border border-line bg-surface p-6 text-sm text-ink"><span className="text-[var(--c-out)]">Couldn’t load:</span> {loadError}</div>
-  }
+  // Note: a decisions/settings load error is shown INLINE on the Decisions tab
+  // (below), not as a page-level block — so the Briefing and Proposals tabs,
+  // which load their own data, stay reachable even if this query fails.
 
   return (
     <div className="space-y-6">
@@ -268,6 +288,29 @@ export default function AdminAiDraftsPage() {
         )}
       </section>
 
+      {/* Tabs */}
+      <div className="flex gap-1 border-b border-line">
+        {(['decisions', 'briefing', 'proposals'] as Tab[]).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={[
+              'px-3 py-2 text-sm border-b-2 -mb-px transition-colors capitalize',
+              tab === t ? 'border-[var(--c-brand)] text-ink font-medium' : 'border-transparent text-ink-mute hover:text-ink',
+            ].join(' ')}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'decisions' && (
+        <>
+      {loadError && (
+        <div className="rounded-lg border border-line bg-surface p-4 text-sm text-ink">
+          <span className="text-[var(--c-out)]">Couldn’t load decisions:</span> {loadError}
+        </div>
+      )}
       {/* Stats */}
       <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Drafted" value={stats.byOutcome.drafted} />
@@ -285,6 +328,24 @@ export default function AdminAiDraftsPage() {
         />
         <Stat label="Sent as-is" value={stats.matched === 0 ? '—' : stats.byEdit.sent_as_is} />
       </section>
+
+      {/* By category */}
+      {Object.keys(stats.byCat).length > 0 && (
+        <section className="rounded-lg border border-line bg-surface overflow-hidden">
+          <div className="px-5 py-3 border-b border-line"><h2 className="text-sm font-medium text-ink">By category (last 7 days)</h2></div>
+          <div className="divide-y divide-line-soft">
+            {Object.entries(stats.byCat).sort((a, b) => b[1].drafted - a[1].drafted).map(([cat, c]) => (
+              <div key={cat} className="px-5 py-2.5 flex items-center gap-3 text-sm">
+                <span className="text-ink w-44 shrink-0 truncate">{cat}</span>
+                <span className="text-ink-mute text-xs w-24 shrink-0 tabular-nums">{c.drafted} drafted</span>
+                <span className="text-ink-mute text-xs shrink-0 tabular-nums">
+                  {c.matched === 0 ? 'no sends yet' : `${Math.round((c.accepted / c.matched) * 100)}% accepted (${c.matched})`}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Recent decisions */}
       <section className="rounded-lg border border-line bg-surface overflow-hidden">
@@ -345,6 +406,11 @@ export default function AdminAiDraftsPage() {
           </ul>
         )}
       </section>
+        </>
+      )}
+
+      {tab === 'briefing' && <AdminAiDraftsBriefing />}
+      {tab === 'proposals' && <AdminAiDraftsProposals />}
     </div>
   )
 }
