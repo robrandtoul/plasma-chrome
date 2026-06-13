@@ -324,14 +324,12 @@ async function handle(req: Request): Promise<Response> {
     return json({ error: 'invalid JSON' }, 400)
   }
 
+  const eventHeader = req.headers.get('x-helpscout-event') ?? ''
+
   // Conversation id — the webhook body is the conversation resource.
   const conversationId =
     (payload?.id as number | string | undefined) ??
     ((payload?.conversation as { id?: number | string } | undefined)?.id)
-  if (conversationId == null) {
-    // Nothing to map; ack so Help Scout doesn't retry.
-    return json({ ok: true, ignored: 'no conversation id' })
-  }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
@@ -346,27 +344,33 @@ async function handle(req: Request): Promise<Response> {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 
-  const eventHeader = req.headers.get('x-helpscout-event') ?? ''
-
-  // Diagnostic capture (Help Scout exposes no usable webhook delivery log):
-  // record any inbound event we DON'T recognise — not merge/tags/draft-trigger/
-  // reply — into audit_log, with the conversation id. This is how we learn what
-  // Help Scout actually emits for things like a workflow-driven mailbox move,
-  // which silently missed the AI drafter on a Graphics→Customer Support handoff
-  // (conversation 3352336125, 2026-06-13). Low-noise: recognised events skip it.
-  if (
-    !MERGE_EVENT_RE.test(eventHeader) &&
-    !TAGS_EVENT_RE.test(eventHeader) &&
-    !DRAFT_TRIGGER_RE.test(eventHeader) &&
-    !REPLY_EVENT_RE.test(eventHeader)
-  ) {
+  // Diagnostic capture (Help Scout exposes no usable webhook delivery log).
+  // Placed BEFORE the no-id early-return below: a workflow-driven mailbox move
+  // (Graphics→Customer Support) fired a webhook that produced no draft AND no
+  // earlier capture — which means it bailed at the id check, so the move event
+  // isn't carrying its id where we read it. Record the event name + the payload
+  // shape (top-level keys, where an id was found) for every non-reply inbound,
+  // so the next push reveals exactly what a move emits and where its id lives.
+  // Replies excluded (high volume, already understood). Temporary — remove once
+  // the move event is known. See conversation 3352336125, 2026-06-13.
+  if (!REPLY_EVENT_RE.test(eventHeader)) {
     await logAudit(admin, {
       actorLabel: 'Help Scout (webhook)',
-      action: 'helpscout.webhook_unhandled_event',
+      action: 'helpscout.webhook_seen',
       targetType: 'conversation',
-      targetId: String(conversationId),
-      metadata: { event: eventHeader || '(empty header)' },
+      targetId: conversationId != null ? String(conversationId) : null,
+      metadata: {
+        event: eventHeader || '(empty header)',
+        payloadKeys: Object.keys(payload ?? {}).slice(0, 50),
+        hasTopId: payload?.id != null,
+        hasConversationId: (payload?.conversation as { id?: unknown } | undefined)?.id != null,
+      },
     }).catch(() => {})
+  }
+
+  if (conversationId == null) {
+    // Nothing to map; ack so Help Scout doesn't retry.
+    return json({ ok: true, ignored: 'no conversation id' })
   }
 
   // Merge re-point: stands on its own (not a reply, must not trigger drafting).
