@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import JSZip from 'jszip'
@@ -25,7 +25,7 @@ import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, openDesignerPreview } from '../lib/customerProofUrl'
 // QuoteLink now lives inside DesignerChrome (PR 31).
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
-import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle } from 'lucide-react'
+import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, MessageSquare, Clock, Activity, Package } from 'lucide-react'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -33,6 +33,18 @@ import {
   type ViewedState,
 } from '../lib/viewedState'
 import { proofBucket, type BucketInput } from '../lib/dashboardGrouping'
+import {
+  sentEvidenceAt,
+  buildFunnel,
+  ageDays,
+  totalNonBotViews,
+  quantityRangeLabel,
+  summaryLine,
+  roundOutcome,
+  type FunnelStep,
+  type RespondedKind,
+  type RoundOutcome,
+} from '../lib/proofSnapshot'
 import { ResolvePopover } from '../components/ResolvePopover'
 import ProofTimeline from '../components/ProofTimeline'
 import type { TimelineEventRow } from '../lib/proofTimeline'
@@ -64,6 +76,16 @@ interface Proof {
 
 function formatLongDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+}
+
+// Colour + label per round outcome for the engagement panel's rounds
+// strip; the RoundOutcome union + the precedence live in proofSnapshot.
+// Colours mirror the dashboard status palette.
+const ROUND_OUTCOME: Record<RoundOutcome, { color: string; bg: string; label: string }> = {
+  approved: { color: 'var(--c-in-stock)',  bg: 'var(--c-in-stock-soft)',  label: 'approved' },
+  changes:  { color: 'var(--c-low)',       bg: 'var(--c-low-soft)',       label: 'changes' },
+  awaiting: { color: 'var(--c-allocated)', bg: 'var(--c-allocated-soft)', label: 'awaiting' },
+  none:     { color: 'var(--c-ink-mute)',  bg: 'var(--c-line-soft)',      label: 'no reply' },
 }
 
 // One row in the Approved artwork table. Assembled from the cross-
@@ -121,6 +143,16 @@ export default function ProofDetailPage() {
   // (same proofBucket logic). Null until loaded / if the row can't be read —
   // the pill falls back to the raw status in that case.
   const [bucketRow, setBucketRow] = useState<BucketInput | null>(null)
+  // Canonical last-activity timestamp from public_dashboard_projects —
+  // the same value the dashboard buckets on. Fetched alongside bucketRow
+  // (one column on the same row) to power the "Last activity" stat card
+  // in the snapshot band. Null until loaded / unreadable.
+  const [lastActivityAt, setLastActivityAt] = useState<string | null>(null)
+  // Current version's front/back artwork (signed URLs) for the hero
+  // preview at the top of the main column. One representative front +
+  // one back is enough — the version modal and customer view hold the
+  // full gallery. Reloaded by loadProof whenever the proof changes.
+  const [heroImages, setHeroImages] = useState<{ url: string; side: 'front' | 'back' | null }[]>([])
   const [versions, setVersions] = useState<ModalVersion[]>([])
   // proof_version_id → signed thumbnail URL. Populated alongside
   // versions inside loadProof by batch-signing the first front image
@@ -379,11 +411,13 @@ export default function ProofDetailPage() {
     // status fallback rather than breaking the page load.
     void supabase
       .from('public_dashboard_projects')
-      .select('status, current_version_id, current_version_viewed_at, latest_non_view_event_type, latest_non_view_event_at, version_created_at, rule_code, rule_meta, snoozed_until, helpscout_last_reply_at, helpscout_last_customer_reply_at')
+      .select('status, current_version_id, current_version_viewed_at, latest_non_view_event_type, latest_non_view_event_at, version_created_at, rule_code, rule_meta, snoozed_until, helpscout_last_reply_at, helpscout_last_customer_reply_at, last_activity_at')
       .eq('proof_id', proofId)
       .maybeSingle()
       .then(({ data }) => {
-        if (!isStale() && data) setBucketRow(data as unknown as BucketInput)
+        if (isStale() || !data) return
+        setBucketRow(data as unknown as BucketInput)
+        setLastActivityAt((data as { last_activity_at: string | null }).last_activity_at ?? null)
       })
 
     // Per-version thumbnails. Same pattern as the dashboard
@@ -397,6 +431,50 @@ export default function ProofDetailPage() {
       if (isStale()) return
       setVersionThumbs(m)
     })
+
+    // Hero images — the current version's first front + first back,
+    // signed. Same storage path + createSignedUrls pattern as the
+    // thumbnails, but scoped to the current version and keeping the
+    // back side so the hero can show both faces. Best-effort: any
+    // failure leaves the hero on its "no artwork yet" placeholder.
+    const currentForHero = loadedVersions.find((v) => v.is_current)
+    if (currentForHero) {
+      void (async () => {
+        const { data: imgRows } = await supabase
+          .from('proof_version_images')
+          .select('image_path, side, sort_order')
+          .eq('proof_version_id', currentForHero.id)
+          .eq('is_qr_code', false)
+          .order('sort_order', { ascending: true })
+        if (isStale()) return
+        const rows = (imgRows ?? []) as Array<{ image_path: string; side: 'front' | 'back' | null }>
+        const front = rows.find((r) => r.side !== 'back')
+        const back = rows.find((r) => r.side === 'back')
+        const picked = [front, back].filter(
+          (r): r is { image_path: string; side: 'front' | 'back' | null } => !!r,
+        )
+        if (picked.length === 0) {
+          setHeroImages([])
+          return
+        }
+        const { data: signed } = await supabase.storage
+          .from('proof-images')
+          .createSignedUrls(
+            picked.map((r) => r.image_path),
+            3600,
+          )
+        if (isStale() || !signed) return
+        const urlByPath = new Map<string, string>()
+        for (const s of signed) if (s.path && s.signedUrl) urlByPath.set(s.path, s.signedUrl)
+        setHeroImages(
+          picked
+            .map((r) => ({ url: urlByPath.get(r.image_path) ?? '', side: r.side }))
+            .filter((x) => x.url),
+        )
+      })()
+    } else {
+      setHeroImages([])
+    }
 
     // Resolve designer names for the timeline's attribution lines.
     // One small .in() lookup on profiles covering both created_by and
@@ -1369,16 +1447,479 @@ export default function ProofDetailPage() {
     }
   })()
 
+  // ── Snapshot band (engagement funnel + at-a-glance stats + header
+  //    summary line). Derived entirely from data already loaded — views,
+  //    approvals, versions, the dashboard-bucket row — so there's no new
+  //    fetch. Pure logic lives in src/lib/proofSnapshot.ts; this just
+  //    assembles the inputs from the current version's slice of state.
+  const currentViews = currentVersion ? (viewsByVersion.get(currentVersion.id) ?? []) : []
+  const sentAt = currentVersion
+    ? sentEvidenceAt({
+        versionReplyAt: currentVersion.last_reply_sent_at,
+        versionCreatedAt: currentVersion.created_at,
+        helpscoutLastReplyAt: bucketRow?.helpscout_last_reply_at ?? null,
+      })
+    : null
+
+  // Latest customer response on the CURRENT version, from the already-
+  // loaded approvals (one row per recipient per version). Variant-round
+  // selections land as a changes_requested __shared__ row, so badge those
+  // as "option chosen" rather than "changes requested".
+  const currentResponse: { kind: RespondedKind; at: string } | null = (() => {
+    if (!currentVersion) return null
+    const rows = approvals.filter(
+      (a) =>
+        a.proof_version_id === currentVersion.id &&
+        (a.state === 'approved' || a.state === 'changes_requested'),
+    )
+    if (rows.length === 0) return null
+    const latest = rows.reduce((best, a) =>
+      new Date(a.updated_at).getTime() > new Date(best.updated_at).getTime() ? a : best,
+    )
+    const kind: RespondedKind =
+      latest.state === 'approved'
+        ? 'approved'
+        : currentVersion.is_variant_round
+          ? 'selection'
+          : 'changes'
+    return { kind, at: latest.updated_at }
+  })()
+
+  // Per-version rounds for the engagement panel's strip — each version
+  // is one send/respond lap of the back-and-forth. A superseded version
+  // that drew a change request reads 'changes'; one the customer
+  // approved reads 'approved'; one we revised with no response reads
+  // 'none'. The current version reads its live state and the funnel
+  // below details its sub-state. See ROUND_OUTCOME for the palette.
+  const rounds = [...versions]
+    .sort((a, b) => a.version_number - b.version_number)
+    .map((v) => {
+      const rows = approvals.filter((a) => a.proof_version_id === v.id)
+      const outcome = roundOutcome({
+        isCurrent: v.is_current,
+        proofApproved: isApproved,
+        hasChanges: rows.some((r) => r.state === 'changes_requested'),
+        hasApproved: rows.some((r) => r.state === 'approved'),
+      })
+      return { id: v.id, versionNumber: v.version_number, isCurrent: v.is_current, outcome }
+    })
+
+  const funnelSteps: FunnelStep[] = currentVersion
+    ? buildFunnel({
+        sentAt,
+        viewCount: currentViews.length,
+        lastViewedAt: currentViews[0]?.viewed_at ?? null,
+        responded: currentResponse,
+      })
+    : []
+
+  const headerSummary = statusBucket
+    ? summaryLine({
+        bucket: statusBucket.bucket,
+        ruleCode: bucketRow?.rule_code ?? null,
+        sentAt,
+        lastViewedAt: currentViews[0]?.viewed_at ?? null,
+        respondedAt: currentResponse?.at ?? null,
+        customerRepliedAt: bucketRow?.helpscout_last_customer_reply_at ?? null,
+        lastActivityAt,
+      })
+    : null
+
+  // Latest customer change-request comment on the current version, for
+  // the action-needed strip. The timeline events already carry the
+  // comment text, so no extra fetch — null when none has a comment.
+  const latestChangeRequest = currentVersion
+    ? (timelineEvents
+        .filter(
+          (e) =>
+            e.proof_version_id === currentVersion.id &&
+            e.event_type === 'request_changes',
+        )
+        .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))[0] ?? null)
+    : null
+
+  const quantityRange = currentVersion
+    ? quantityRangeLabel({
+        customQuote: currentVersion.custom_quote,
+        perDirectionPricing: currentVersion.is_per_direction_pricing,
+        quantities: currentVersion.materials?.display_quantities ?? null,
+      })
+    : null
+
+  const totalViews = totalNonBotViews(viewsByVersion)
+  const showActionStrip = statusBucket?.bucket === 'changes_requested'
+
   // Joins a list of names British-style: "A", "A and B", "A, B and C".
   const joinNames = (names: string[]): string =>
     names.length <= 1
       ? names[0] ?? ''
       : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 
+  // ── Panels for the two-column layout ────────────────────────────────
+  // Built as element consts so the skeleton in the return below can
+  // place them across the main column and the meta rail without
+  // threading the (often large) JSX through the layout. Each bakes in
+  // its own visibility gate and returns null when empty, so the column
+  // just renders {panel}.
+
+  const heroPanel = currentVersion ? (
+    <section className="overflow-hidden rounded-[14px] border border-line bg-surface">
+      <div className="flex items-center justify-between gap-3 border-b border-line-soft px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="eyebrow text-ink-mute">Current proof</span>
+          <span className="font-mono text-[13px] font-semibold text-ink">v{currentVersion.version_number}</span>
+        </div>
+        <span className="truncate text-[12px] text-ink-mute" title={currentVersion.material_display}>
+          {currentVersion.material_display}
+        </span>
+      </div>
+      {heroImages.length > 0 ? (
+        <button
+          type="button"
+          onClick={() => setSelectedVersion(currentVersion)}
+          title="Open version detail"
+          aria-label={`Open version ${currentVersion.version_number} detail`}
+          className="block w-full text-left focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]"
+        >
+          <div className={['grid gap-2 p-3', heroImages.length > 1 ? 'grid-cols-2' : 'grid-cols-1'].join(' ')}>
+            {heroImages.map((img, i) => (
+              <div
+                key={i}
+                className="relative overflow-hidden rounded-[8px] bg-ink"
+                style={{ aspectRatio: '1.6' }}
+              >
+                <img
+                  src={img.url}
+                  alt={img.side === 'back' ? 'Back of the card' : 'Front of the card'}
+                  loading="lazy"
+                  className="h-full w-full object-cover"
+                />
+                {heroImages.length > 1 && (
+                  <span
+                    className="absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider"
+                    style={{ backgroundColor: 'rgba(22,19,17,0.72)', color: '#fff' }}
+                  >
+                    {img.side === 'back' ? 'Back' : 'Front'}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </button>
+      ) : (
+        <div className="p-8 text-center">
+          <p className="text-[13px] text-ink-mute">No artwork uploaded to v{currentVersion.version_number} yet.</p>
+        </div>
+      )}
+    </section>
+  ) : null
+
+  const funnelPanel = currentVersion ? (
+    <section className="rounded-[14px] border border-line bg-surface p-4">
+      {/* Rounds strip — one chip per version, so the back-and-forth is
+          visible instead of implied. Shown only from the second round;
+          a first-round proof is just the funnel below. Each chip opens
+          that version's detail. */}
+      {rounds.length >= 2 && (
+        <div className="mb-4">
+          <div className="eyebrow mb-2 text-ink-mute">{rounds.length} rounds</div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {rounds.map((r, i) => {
+              const pal = ROUND_OUTCOME[r.outcome]
+              return (
+                <Fragment key={r.id}>
+                  {i > 0 && <ChevronRight size={14} className="shrink-0 text-ink-dim" aria-hidden="true" />}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const v = versions.find((x) => x.id === r.id)
+                      if (v) setSelectedVersion(v)
+                    }}
+                    title={`Open v${r.versionNumber} detail`}
+                    aria-label={`Version ${r.versionNumber}, ${pal.label}`}
+                    className="flex flex-col items-center gap-0.5 rounded-[8px] px-3 py-1.5 transition-opacity hover:opacity-80 focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--c-brand)]"
+                    style={{
+                      backgroundColor: pal.bg,
+                      ...(r.isCurrent ? { boxShadow: `inset 0 0 0 2px ${pal.color}` } : {}),
+                    }}
+                  >
+                    <span className="font-mono text-[12px] font-semibold" style={{ color: pal.color }}>
+                      v{r.versionNumber}
+                    </span>
+                    <span className="text-[10px] leading-none" style={{ color: pal.color }}>{pal.label}</span>
+                  </button>
+                </Fragment>
+              )
+            })}
+          </div>
+        </div>
+      )}
+      {rounds.length >= 2 && (
+        <div className="eyebrow mb-2 text-ink-mute">v{currentVersion.version_number} · this round</div>
+      )}
+      <div className="flex items-stretch gap-1.5">
+        {funnelSteps.map((step, i) => {
+          const palette =
+            step.state === 'done'
+              ? { color: 'var(--c-in-stock)', bg: 'var(--c-in-stock-soft)' }
+              : step.state === 'active'
+                ? { color: 'var(--c-allocated)', bg: 'var(--c-allocated-soft)' }
+                : { color: 'var(--c-ink-dim)', bg: 'var(--c-line-soft)' }
+          const Icon = step.key === 'sent' ? Send : step.key === 'viewed' ? Eye : MessageSquare
+          const sub = step.at ? relativeTime(step.at) : step.note
+          return (
+            <Fragment key={step.key}>
+              {i > 0 && (
+                <div className="flex items-center text-ink-dim" aria-hidden="true">
+                  <ChevronRight size={16} />
+                </div>
+              )}
+              <div className="flex-1 rounded-[10px] px-3 py-2.5 text-center" style={{ backgroundColor: palette.bg }}>
+                <Icon size={16} aria-hidden="true" className="mx-auto" style={{ color: palette.color }} />
+                <div className="mt-1 text-[12px] font-semibold" style={{ color: palette.color }}>{step.label}</div>
+                {sub && <div className="mt-0.5 text-[11px] text-ink-mute">{sub}</div>}
+              </div>
+            </Fragment>
+          )
+        })}
+      </div>
+    </section>
+  ) : null
+
+  const statsPanel = currentVersion ? (
+    <section className="rounded-[14px] border border-line bg-surface p-4">
+      <div className="grid grid-cols-2 gap-2">
+        {[
+          { icon: Clock, label: 'Age', value: `${ageDays(proof.created_at, Date.now())}d` },
+          { icon: Activity, label: 'Last activity', value: lastActivityAt ? relativeTime(lastActivityAt) : '—' },
+          { icon: Eye, label: 'Total views', value: String(totalViews) },
+          { icon: Package, label: 'Quantity', value: quantityRange ?? '—' },
+        ].map(({ icon: Icon, label, value }) => (
+          <div key={label} className="rounded-[10px] bg-canvas px-3 py-2.5">
+            <div className="flex items-center gap-1.5 text-ink-mute">
+              <Icon size={12} aria-hidden="true" />
+              <span className="eyebrow">{label}</span>
+            </div>
+            <div className="mt-1 text-[17px] font-semibold leading-tight text-ink">{value}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  ) : null
+
+  const factsPanel = (
+    <section className="rounded-[14px] border border-line bg-surface p-4">
+      <dl className="space-y-3">
+        <div className="min-w-0">
+          <dt className="eyebrow text-ink-mute">Public URL</dt>
+          <dd className="mt-1 flex items-center gap-2">
+            <span className="truncate font-mono text-[12px] text-ink-soft">
+              proofs.plasmadesign.co.uk{customerProofPath(proof.id)}
+            </span>
+            <button
+              type="button"
+              onClick={copyCustomerUrl}
+              title="Copy customer URL"
+              aria-label="Copy customer URL"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+            >
+              {copied ? <CheckIcon size={13} style={{ color: 'var(--c-in-stock)' }} /> : <Copy size={13} />}
+            </button>
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="eyebrow text-ink-mute">Help Scout</dt>
+          <dd className="mt-1 flex items-center gap-2 text-[13px]">
+            {proof.helpscout_conversation_url ? (
+              <a href={proof.helpscout_conversation_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-ink-soft hover:text-ink">
+                Open conversation <ExternalLink size={11} aria-hidden="true" />
+              </a>
+            ) : proof.helpscout_thread_url ? (
+              <a href={proof.helpscout_thread_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-ink-soft hover:text-ink">
+                Open thread <ExternalLink size={11} aria-hidden="true" />
+              </a>
+            ) : proof.helpscout_override_reason ? (
+              <span className="italic text-ink-mute" title={`Override reason: ${proof.helpscout_override_reason}`}>
+                Override: {proof.helpscout_override_reason}
+              </span>
+            ) : (
+              <span className="italic text-ink-mute">Not linked</span>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowHelpscoutEdit(true)}
+              title="Change Help Scout conversation"
+              aria-label="Change Help Scout conversation"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+            >
+              <Pencil size={12} />
+            </button>
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="eyebrow text-ink-mute">Created</dt>
+          <dd className="mt-1 text-[13px] text-ink-soft">{formatLongDate(proof.created_at)}</dd>
+        </div>
+      </dl>
+    </section>
+  )
+
+  const internalNotesPanel = (
+    <section className="rounded-[14px] border border-line bg-surface px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <FileText size={13} className="shrink-0 text-ink-mute" aria-hidden="true" />
+            <span className="eyebrow text-ink-mute">Internal notes</span>
+          </div>
+          <p className="mt-1 text-[11px] text-ink-mute">Not visible to the customer</p>
+        </div>
+        {!notesEditing && (
+          <button
+            type="button"
+            onClick={() => {
+              setNotesDraft(proof.internal_notes ?? '')
+              setNotesEditing(true)
+            }}
+            title={proof.internal_notes ? 'Edit notes' : 'Add notes'}
+            aria-label={proof.internal_notes ? 'Edit internal notes' : 'Add internal notes'}
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+          >
+            <Pencil size={12} />
+          </button>
+        )}
+      </div>
+      {notesEditing ? (
+        <div className="mt-2">
+          <textarea
+            value={notesDraft}
+            onChange={(e) => setNotesDraft(e.target.value)}
+            rows={4}
+            placeholder="Notes about this project — only visible to designers."
+            className="w-full resize-none rounded-md border border-line bg-surface px-3 py-2 text-[13px] leading-[1.55] text-ink-soft placeholder:text-ink-dim focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
+          />
+          <div className="mt-2 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setNotesEditing(false)
+                setNotesDraft('')
+              }}
+              disabled={notesSaving}
+              className="text-[12px] text-ink-mute hover:text-ink-soft disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveInternalNotes()}
+              disabled={notesSaving}
+              className="rounded bg-ink px-3 py-1.5 text-[12px] font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
+            >
+              {notesSaving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      ) : proof.internal_notes ? (
+        <p className="mt-1.5 whitespace-pre-wrap text-[13px] leading-[1.55] text-ink-soft">{proof.internal_notes}</p>
+      ) : (
+        <p className="mt-1.5 text-[13px] italic text-ink-mute">No internal notes yet. Click the pencil to add some.</p>
+      )}
+    </section>
+  )
+
+  const customerReplyPanel = (() => {
+    if (!currentVersion) return null
+    if (isLocked) return null
+    const hasHs = !!proof.helpscout_conversation_id
+    const lastSentIso = currentVersion.last_reply_sent_at
+    const repliesPaused = repliesEnabled === false
+    const pausedNote =
+      role === 'admin'
+        ? 'Replies are currently paused. Enable in Settings.'
+        : 'Replies are currently paused.'
+    return (
+      <section className="rounded-[14px] border border-line bg-surface p-4">
+        <p className="eyebrow text-ink-mute">Customer reply</p>
+        {!hasHs ? (
+          <div className="mt-2">
+            <p className="text-[13px] text-ink-mute">
+              No Help Scout conversation linked. Add one from the Help Scout row to enable replies.
+            </p>
+            <button
+              type="button"
+              disabled
+              className="mt-2 cursor-not-allowed rounded bg-line px-4 py-2 text-sm font-semibold text-ink-dim"
+            >
+              Send reply
+            </button>
+          </div>
+        ) : lastSentIso ? (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[13px] text-ink-soft">
+              Reply sent{' '}
+              <span title={formatAbsoluteDateTime(lastSentIso)} className="font-medium text-ink">
+                {relativeTime(lastSentIso)}
+              </span>{' '}
+              for v{currentVersion.version_number}.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowResendConfirm(true)}
+              disabled={repliesPaused}
+              title={repliesPaused ? pausedNote : undefined}
+              className={[
+                'shrink-0 rounded px-4 py-2 text-sm font-medium ring-1',
+                repliesPaused
+                  ? 'cursor-not-allowed bg-canvas text-ink-dim ring-line-soft'
+                  : 'text-ink-soft ring-line hover:bg-canvas',
+              ].join(' ')}
+            >
+              Send again
+            </button>
+          </div>
+        ) : (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[13px] text-ink-mute">No reply sent yet for v{currentVersion.version_number}.</p>
+            <button
+              type="button"
+              onClick={() => setShowReplyModal(true)}
+              disabled={repliesPaused}
+              title={repliesPaused ? pausedNote : undefined}
+              className={[
+                'shrink-0 rounded px-4 py-2 text-sm font-semibold',
+                repliesPaused ? 'cursor-not-allowed bg-line text-ink-dim' : 'bg-ink text-on-ink hover:opacity-90',
+              ].join(' ')}
+            >
+              Send reply
+            </button>
+          </div>
+        )}
+        {repliesPaused && hasHs && <p className="mt-2 text-xs text-low">{pausedNote}</p>}
+      </section>
+    )
+  })()
+
+  const timelinePanel = (
+    <ProofTimeline
+      proof={{
+        created_at: proof.created_at,
+        approved_at: proof.approved_at,
+        abandoned_at: proof.abandoned_at,
+        disclaimer_acknowledged_at: proof.disclaimer_acknowledged_at,
+        contactName: proof.contacts.full_name,
+      }}
+      versions={versions}
+      events={timelineEvents}
+      viewsByVersion={viewsByVersion}
+      designerNamesById={designerNames}
+    />
+  )
+
   return (
     <DesignerChrome active="proofs">
     <div className="min-h-dvh bg-canvas">
-      <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
 
         {/* Breadcrumb — Proofs › <Customer name>. Replaces the old
             "← Back to projects" link; the chrome handles QuoteLink
@@ -1430,6 +1971,23 @@ export default function ProofDetailPage() {
                   </>
                 )
               })()}
+              {/* State summary — one plain-English line turning the
+                  status pill's category into "what's happening + since
+                  when". summaryLine() returns null for terminal states
+                  (approved / abandoned / dormant / snoozed), so this
+                  only shows for the active workflow states where the
+                  pill alone doesn't say how long it's been waiting. */}
+              {headerSummary && (
+                <p className="mt-2 text-[13px] text-ink-soft">
+                  {headerSummary.lead}
+                  {headerSummary.at && (
+                    <span className="text-ink-mute" title={formatAbsoluteDateTime(headerSummary.at)}>
+                      {' '}· {relativeTime(headerSummary.at)}
+                    </span>
+                  )}
+                </p>
+              )}
+
               {/* Helper notes — dormant warning, disclaimer
                   acknowledgement. */}
               {isDormant && (
@@ -1448,83 +2006,6 @@ export default function ProofDetailPage() {
                 </p>
               )}
 
-              {/* KV row — 18-spaced columns. Each item: eyebrow label
-                  on top, value below. Public URL has a copy icon next
-                  to the path; Help Scout links out to the conversation
-                  when one's set, otherwise renders a quiet placeholder. */}
-              <dl className="mt-5 flex flex-wrap gap-x-7 gap-y-3">
-                <div className="min-w-0">
-                  <dt className="eyebrow text-ink-mute">Public URL</dt>
-                  <dd className="mt-1 flex items-center gap-2">
-                    <span className="font-mono text-[12px] text-ink-soft truncate">
-                      proofs.plasmadesign.co.uk{customerProofPath(proof.id)}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={copyCustomerUrl}
-                      title="Copy customer URL"
-                      aria-label="Copy customer URL"
-                      className="inline-flex items-center justify-center w-6 h-6 rounded text-ink-mute hover:text-ink hover:bg-canvas transition-colors"
-                    >
-                      {copied ? (
-                        <CheckIcon size={13} style={{ color: 'var(--c-in-stock)' }} />
-                      ) : (
-                        <Copy size={13} />
-                      )}
-                    </button>
-                  </dd>
-                </div>
-                <div className="min-w-0">
-                  <dt className="eyebrow text-ink-mute">Help Scout</dt>
-                  <dd className="mt-1 flex items-center gap-2 text-[13px]">
-                    {proof.helpscout_conversation_url ? (
-                      <a
-                        href={proof.helpscout_conversation_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-ink-soft hover:text-ink"
-                      >
-                        Open conversation
-                        <ExternalLink size={11} aria-hidden="true" />
-                      </a>
-                    ) : proof.helpscout_thread_url ? (
-                      <a
-                        href={proof.helpscout_thread_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-ink-soft hover:text-ink"
-                      >
-                        Open thread
-                        <ExternalLink size={11} aria-hidden="true" />
-                      </a>
-                    ) : proof.helpscout_override_reason ? (
-                      <span
-                        className="italic text-ink-mute"
-                        title={`Override reason: ${proof.helpscout_override_reason}`}
-                      >
-                        Override: {proof.helpscout_override_reason}
-                      </span>
-                    ) : (
-                      <span className="italic text-ink-mute">Not linked</span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setShowHelpscoutEdit(true)}
-                      title="Change Help Scout conversation"
-                      aria-label="Change Help Scout conversation"
-                      className="inline-flex items-center justify-center w-6 h-6 rounded text-ink-mute hover:text-ink hover:bg-canvas transition-colors"
-                    >
-                      <Pencil size={12} />
-                    </button>
-                  </dd>
-                </div>
-                <div className="min-w-0">
-                  <dt className="eyebrow text-ink-mute">Created</dt>
-                  <dd className="mt-1 text-[13px] text-ink-soft">
-                    {formatLongDate(proof.created_at)}
-                  </dd>
-                </div>
-              </dl>
             </div>
 
             {/* Right: status pill + primary actions + destructive row. */}
@@ -1606,82 +2087,6 @@ export default function ProofDetailPage() {
             </div>
           </div>
 
-          {/* Internal notes — tinted panel inside the header card per
-              the mockup. FileText icon + eyebrow up top, edit pencil
-              on the right. Display mode shows the saved notes (or a
-              "Add notes" placeholder when null); edit mode swaps to
-              a textarea + Save / Cancel buttons. NOT visible to the
-              customer — the panel exists purely so the designer can
-              jot reminders against a project without scattering them
-              across Help Scout threads. */}
-          <div className="mx-7 mb-6 rounded-[10px] bg-canvas border border-line-soft px-4 py-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                <FileText size={13} className="text-ink-mute shrink-0" aria-hidden="true" />
-                <span
-                  className="eyebrow text-ink-mute truncate"
-                  style={{ letterSpacing: '0.16em' }}
-                >
-                  Internal notes — not visible to the customer
-                </span>
-              </div>
-              {!notesEditing && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setNotesDraft(proof.internal_notes ?? '')
-                    setNotesEditing(true)
-                  }}
-                  title={proof.internal_notes ? 'Edit notes' : 'Add notes'}
-                  aria-label={proof.internal_notes ? 'Edit internal notes' : 'Add internal notes'}
-                  className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded text-ink-mute hover:text-ink hover:bg-surface transition-colors"
-                >
-                  <Pencil size={12} />
-                </button>
-              )}
-            </div>
-            {notesEditing ? (
-              <div className="mt-2">
-                <textarea
-                  value={notesDraft}
-                  onChange={(e) => setNotesDraft(e.target.value)}
-                  rows={4}
-                  placeholder="Notes about this project — only visible to designers."
-                  className="w-full resize-none rounded-md border border-line bg-surface px-3 py-2 text-[13px] text-ink-soft leading-[1.55] placeholder:text-ink-dim focus:border-[var(--c-brand)] focus:outline focus:outline-2 focus:outline-offset-[-1px] focus:outline-[var(--c-brand)]"
-                />
-                <div className="mt-2 flex items-center justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNotesEditing(false)
-                      setNotesDraft('')
-                    }}
-                    disabled={notesSaving}
-                    className="text-[12px] text-ink-mute hover:text-ink-soft disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void saveInternalNotes()}
-                    disabled={notesSaving}
-                    className="rounded bg-ink px-3 py-1.5 text-[12px] font-medium text-on-ink hover:opacity-90 disabled:opacity-50"
-                  >
-                    {notesSaving ? 'Saving…' : 'Save'}
-                  </button>
-                </div>
-              </div>
-            ) : proof.internal_notes ? (
-              <p className="mt-1.5 whitespace-pre-wrap text-[13px] text-ink-soft leading-[1.55]">
-                {proof.internal_notes}
-              </p>
-            ) : (
-              <p className="mt-1.5 text-[13px] italic text-ink-mute">
-                No internal notes yet. Click the pencil to add some.
-              </p>
-            )}
-          </div>
-
           {/* Hidden input for clipboard fallback. */}
           <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
         </section>
@@ -1720,104 +2125,74 @@ export default function ProofDetailPage() {
           </section>
         )}
 
-        {/* Amber Internal metadata panel retired in PR 33. Help Scout
-            link + Change affordance now live in the header card's
-            KV row; internal notes have their own inline-edit panel
-            inside the card. */}
-
-        {/* Customer reply (Ship 3 of intervention 3). Re-send
-            affordance scoped to the current version. Shows whether a
-            reply has gone out (denormalised proof_versions
-            .last_reply_sent_at), and lets the designer trigger or
-            re-trigger the editor without leaving the page. Hidden on
-            locked projects (approved/abandoned) and projects with no
-            versions; renders muted disabled-button copy when the
-            proof has no Help Scout conversation linked yet. */}
-        {(() => {
-          const currentVersion = versions.find((v) => v.is_current)
-          if (!currentVersion) return null
-          if (isLocked) return null
-          const hasHs = !!proof.helpscout_conversation_id
-          const lastSentIso = currentVersion.last_reply_sent_at
-          // Replies-paused state takes precedence over the
-          // "Send/Send again" labelling: even when a previous send
-          // exists, the button stays disabled while the global
-          // flag is off so a designer doesn't trigger the confirm
-          // dialog only to fail on send.
-          const repliesPaused = repliesEnabled === false
-          const pausedNote =
-            role === 'admin'
-              ? 'Replies are currently paused. Enable in Settings.'
-              : 'Replies are currently paused.'
-          return (
-            <section className="mb-8 rounded-2xl bg-surface p-5 shadow-sm ring-1 ring-line">
-              <div className="flex items-center gap-2">
-                <p className="text-xs font-semibold uppercase tracking-wider text-ink-dim">Customer reply</p>
+        {/* Action-needed strip — pulls the customer's outstanding change
+            request up to the top of the page (it otherwise lives buried
+            in the Names rollup). Only renders when the proof is in the
+            changes_requested bucket and isn't locked, so a proof we've
+            already answered with a fresh version (awaiting_customer)
+            doesn't show a false alarm. The comment text comes from the
+            already-loaded timeline events — no extra fetch. */}
+        {showActionStrip && !isLocked && currentVersion && (
+          <section className="mb-8 rounded-2xl border border-low bg-low-soft p-5">
+            <div className="flex items-start gap-3">
+              <MessageSquare aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-low" />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-baseline gap-x-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-low">
+                    Customer requested changes
+                  </p>
+                  {latestChangeRequest && (
+                    <span className="text-[12px] text-ink-mute">
+                      {latestChangeRequest.name && latestChangeRequest.name !== SHARED_APPROVAL_KEY
+                        ? `${latestChangeRequest.name} · `
+                        : ''}
+                      v{currentVersion.version_number} · {relativeTime(latestChangeRequest.created_at)}
+                    </span>
+                  )}
+                </div>
+                {latestChangeRequest?.comment ? (
+                  <p className="mt-2 text-[14px] leading-[1.55] text-ink-soft">
+                    “{latestChangeRequest.comment}”
+                  </p>
+                ) : (
+                  <p className="mt-2 text-[13px] text-ink-mute">
+                    The customer asked for changes on v{currentVersion.version_number}. See the
+                    Names section below for the detail.
+                  </p>
+                )}
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <ButtonCoral
+                    icon={Plus}
+                    size="sm"
+                    onClick={() => navigate(`/proofs/${proof.id}/versions/new`)}
+                  >
+                    Add a new version
+                  </ButtonCoral>
+                  {proof.helpscout_conversation_url && (
+                    <a
+                      href={proof.helpscout_conversation_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[13px] text-ink-soft hover:text-ink"
+                    >
+                      Reply in Help Scout <ExternalLink size={12} aria-hidden="true" />
+                    </a>
+                  )}
+                </div>
               </div>
-              {!hasHs ? (
-                <div className="mt-2 flex items-start justify-between gap-4">
-                  <p className="text-sm text-ink-mute">
-                    No Help Scout conversation linked. Add one in the Internal panel above to enable replies.
-                  </p>
-                  <button
-                    type="button"
-                    disabled
-                    className="shrink-0 rounded bg-line px-4 py-2 text-sm font-semibold text-ink-dim cursor-not-allowed"
-                  >
-                    Send reply
-                  </button>
-                </div>
-              ) : lastSentIso ? (
-                <div className="mt-2 flex items-center justify-between gap-4">
-                  <p className="text-sm text-ink-soft">
-                    Reply sent{' '}
-                    <span title={formatAbsoluteDateTime(lastSentIso)} className="font-medium text-ink">
-                      {relativeTime(lastSentIso)}
-                    </span>{' '}
-                    for v{currentVersion.version_number}.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setShowResendConfirm(true)}
-                    disabled={repliesPaused}
-                    title={repliesPaused ? pausedNote : undefined}
-                    className={[
-                      'shrink-0 rounded px-4 py-2 text-sm font-medium ring-1',
-                      repliesPaused
-                        ? 'bg-canvas text-ink-dim ring-line-soft cursor-not-allowed'
-                        : 'text-ink-soft ring-line hover:bg-canvas',
-                    ].join(' ')}
-                  >
-                    Send again
-                  </button>
-                </div>
-              ) : (
-                <div className="mt-2 flex items-center justify-between gap-4">
-                  <p className="text-sm text-ink-mute">
-                    No reply sent yet for v{currentVersion.version_number}.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setShowReplyModal(true)}
-                    disabled={repliesPaused}
-                    title={repliesPaused ? pausedNote : undefined}
-                    className={[
-                      'shrink-0 rounded px-4 py-2 text-sm font-semibold',
-                      repliesPaused
-                        ? 'bg-line text-ink-dim cursor-not-allowed'
-                        : 'bg-ink text-on-ink hover:opacity-90',
-                    ].join(' ')}
-                  >
-                    Send reply
-                  </button>
-                </div>
-              )}
-              {repliesPaused && hasHs && (
-                <p className="mt-2 text-xs text-low">{pausedNote}</p>
-              )}
-            </section>
-          )
-        })()}
+            </div>
+          </section>
+        )}
+
+        {/* Two-column layout — the main column carries the artwork +
+            progress + the version/approval detail; the meta rail on the
+            right carries the at-a-glance stats, facts, internal notes,
+            reply status and history. Stacks to one column below lg. */}
+        <div className="lg:grid lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] lg:gap-8 lg:items-start">
+          {/* ── Main column ───────────────────────────────────────── */}
+          <div className="min-w-0 space-y-8">
+            {heroPanel}
+            {funnelPanel}
 
         {/* Hosted-vCard snapshot, current version only.
             The edge function (migration 000194) writes qr_snapshot
@@ -1862,7 +2237,7 @@ export default function ProofDetailPage() {
           const sharedHeading =
             currentVersion.card_type === 'membership' ? 'Membership card' : 'Shared'
           return (
-            <section className="mb-8">
+            <section>
               <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-ink-dim">
                 Approved vCard contents
               </h2>
@@ -1985,7 +2360,7 @@ export default function ProofDetailPage() {
           }
 
           return (
-            <section className="mb-8">
+            <section>
               <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">Names</h2>
               <div className="overflow-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
                 {rollupEntries.map((entry, i) => {
@@ -2471,7 +2846,7 @@ export default function ProofDetailPage() {
             return a.imageId < b.imageId ? -1 : 1
           })
           return (
-            <section className="mt-12">
+            <section>
               <h2 className="mb-2 text-sm font-semibold uppercase tracking-widest text-ink-dim">Approved artwork</h2>
               <p className="mb-4 text-xs text-ink-mute">
                 These filenames match the source Illustrator files — do not rename.
@@ -2545,27 +2920,20 @@ export default function ProofDetailPage() {
           )
         })()}
 
-        {/* Activity timeline — per-project history assembled client-side
-            from data this page already loads (proof_events, non-bot
-            views, version rows, status timestamps). The dashboard's
-            Latest-activity card answers "what happened across all
-            projects"; this panel answers "what happened on this one".
-            No extra fetches — see buildTimelineEntries in
-            src/lib/proofTimeline.ts for the merge + view dedupe rules. */}
-        <div className="mt-12">
-          <ProofTimeline
-            proof={{
-              created_at: proof.created_at,
-              approved_at: proof.approved_at,
-              abandoned_at: proof.abandoned_at,
-              disclaimer_acknowledged_at: proof.disclaimer_acknowledged_at,
-              contactName: proof.contacts.full_name,
-            }}
-            versions={versions}
-            events={timelineEvents}
-            viewsByVersion={viewsByVersion}
-            designerNamesById={designerNames}
-          />
+          </div>
+
+          {/* ── Meta rail — at-a-glance stats, key facts, internal
+              notes, reply status, and the per-project history. Sticky
+              alongside the main column on lg+; stacks underneath below
+              that. The timeline is assembled client-side from data the
+              page already loads (see buildTimelineEntries). */}
+          <aside className="mt-8 space-y-6 lg:mt-0 lg:sticky lg:top-8">
+            {statsPanel}
+            {customerReplyPanel}
+            {factsPanel}
+            {internalNotesPanel}
+            {timelinePanel}
+          </aside>
         </div>
 
         {/* Danger zone — permanent delete, kept subtle to avoid accidental
