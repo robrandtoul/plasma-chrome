@@ -93,6 +93,7 @@ function rowCostUsd(r: DraftRow): number {
 interface DayPoint {
   day: string // YYYY-MM-DD, local
   date: Date
+  count: number // total emails processed that day (for the hover summary)
   spend: number
   matched: number
   accepted: number
@@ -112,11 +113,15 @@ function localDayKey(d: Date): string {
 
 // Bucket raw rows into a contiguous run of the last SERIES_DAYS days (empty
 // days included, so the x-axis has no gaps).
+type DayAgg = { count: number; spend: number; matched: number; accepted: number }
+const emptyAgg = (): DayAgg => ({ count: 0, spend: 0, matched: 0, accepted: 0 })
+
 function buildDailySeries(rows: (TokenUsage & { created_at: string; edit_class: EditClass | null })[]): DayPoint[] {
-  const byDay = new Map<string, { spend: number; matched: number; accepted: number }>()
+  const byDay = new Map<string, DayAgg>()
   for (const r of rows) {
     const k = localDayKey(new Date(r.created_at))
-    const b = byDay.get(k) ?? { spend: 0, matched: 0, accepted: 0 }
+    const b = byDay.get(k) ?? emptyAgg()
+    b.count++
     b.spend += costFromUsage(r)
     if (r.edit_class) {
       b.matched++
@@ -131,10 +136,25 @@ function buildDailySeries(rows: (TokenUsage & { created_at: string; edit_class: 
     const d = new Date(today)
     d.setDate(today.getDate() - i)
     const k = localDayKey(d)
-    const b = byDay.get(k) ?? { spend: 0, matched: 0, accepted: 0 }
+    const b = byDay.get(k) ?? emptyAgg()
     out.push({ day: k, date: d, ...b })
   }
   return out
+}
+
+// Least-squares fit over (x, y) points → slope + intercept, or null when there
+// aren't at least two points (no trend to draw). x is the day index.
+function linearFit(pts: { x: number; y: number }[]): { slope: number; intercept: number } | null {
+  const n = pts.length
+  if (n < 2) return null
+  let sx = 0, sy = 0, sxx = 0, sxy = 0
+  for (const p of pts) {
+    sx += p.x; sy += p.y; sxx += p.x * p.x; sxy += p.x * p.y
+  }
+  const denom = n * sxx - sx * sx
+  if (denom === 0) return null
+  const slope = (n * sxy - sx * sy) / denom
+  return { slope, intercept: (sy - slope * sx) / n }
 }
 
 function outcomeOf(r: DraftRow): Outcome {
@@ -338,36 +358,57 @@ export default function AdminAiDraftsPage() {
   // Bars for the two trend charts, derived from the daily series.
   const charts = useMemo(() => {
     const s = series ?? []
-    const fmtDay = (d: Date) => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
     // Null on a zero-activity day so it renders as a faint "no data" slot, not
     // a solid $0 bar — keeping a real number (incl. a genuine 0) visible while
     // an idle day reads as absence. Mirrors the acceptance null/0 distinction.
-    const spendBars = s.map((p) => ({
-      date: p.date,
-      value: p.spend > 0 ? p.spend : null,
-      tip: p.spend > 0 ? `${fmtDay(p.date)} · $${p.spend.toFixed(2)}` : `${fmtDay(p.date)} · no activity`,
-    }))
+    const spendBars = s.map((p) => ({ date: p.date, value: p.spend > 0 ? p.spend : null }))
     // Acceptance is null on days with no sent replies (a blank slot, not 0%) so
     // a quiet day never reads as a quality dip.
-    const acceptBars = s.map((p) => ({
-      date: p.date,
-      value: p.matched > 0 ? (p.accepted / p.matched) * 100 : null,
-      tip:
-        p.matched > 0
-          ? `${fmtDay(p.date)} · ${Math.round((p.accepted / p.matched) * 100)}% (${p.accepted}/${p.matched} sent)`
-          : `${fmtDay(p.date)} · no replies sent`,
-    }))
+    const acceptBars = s.map((p) => ({ date: p.date, value: p.matched > 0 ? (p.accepted / p.matched) * 100 : null }))
+
     const totalSpend = s.reduce((a, p) => a + p.spend, 0)
     const totalMatched = s.reduce((a, p) => a + p.matched, 0)
     const totalAccepted = s.reduce((a, p) => a + p.accepted, 0)
-    const spendMax = Math.max(0, ...spendBars.map((b) => b.value ?? 0))
+    const spendMax = Math.max(0, ...s.map((p) => p.spend))
+    const avgPerDay = s.length ? totalSpend / s.length : 0
+
+    // Trends (least-squares over the day index). Spend treats an idle day as a
+    // real 0 (cost genuinely was 0); acceptance fits only days that had sent
+    // replies (a no-reply day is missing data, not a 0% score).
+    const spendTrend = linearFit(s.map((p, i) => ({ x: i, y: p.spend })))
+    const acceptTrend = linearFit(
+      s.flatMap((p, i) => (p.matched > 0 ? [{ x: i, y: (p.accepted / p.matched) * 100 }] : [])),
+    )
+    // Direction with a small dead-zone so noise near zero reads as "flat".
+    const spendDir = !spendTrend ? null : spendTrend.slope > spendMax * 0.005 ? 'up' : spendTrend.slope < -spendMax * 0.005 ? 'down' : 'flat'
+    const acceptDir = !acceptTrend ? null : acceptTrend.slope > 0.2 ? 'up' : acceptTrend.slope < -0.2 ? 'down' : 'flat'
+    const spendTrendLabel = spendDir == null ? null : spendDir === 'up' ? 'trend ↗ rising' : spendDir === 'down' ? 'trend ↘ easing' : 'trend → flat'
+    const acceptTrendLabel = acceptDir == null ? null : acceptDir === 'up' ? 'trend ↗ improving' : acceptDir === 'down' ? 'trend ↘ slipping' : 'trend → flat'
+
+    // One shared per-day summary for the hover panel (identical on both charts).
+    const summaries = s.map((p) => ({
+      date: p.date,
+      rows: [
+        { label: 'Decisions', value: String(p.count) },
+        { label: 'Spend', value: `$${p.spend.toFixed(2)}` },
+        { label: 'Replies sent', value: String(p.matched) },
+        { label: 'Accepted', value: p.matched > 0 ? `${p.accepted}/${p.matched} · ${Math.round((p.accepted / p.matched) * 100)}%` : '—' },
+      ],
+    }))
+
     return {
       spendBars,
       acceptBars,
+      summaries,
       totalSpend,
       totalMatched,
       totalAccepted,
       spendMax,
+      avgPerDay,
+      spendTrend,
+      acceptTrend,
+      spendTrendLabel,
+      acceptTrendLabel,
       hasSpend: totalSpend > 0,
       hasAccept: totalMatched > 0,
     }
@@ -485,7 +526,7 @@ export default function AdminAiDraftsPage() {
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <TrendChart
           title="Daily spend"
-          hint={`$${charts.totalSpend.toFixed(2)} over 30 days · $${(charts.totalSpend / SERIES_DAYS).toFixed(2)}/day avg`}
+          hint={`$${charts.totalSpend.toFixed(2)} over 30 days · $${charts.avgPerDay.toFixed(2)}/day avg`}
           bars={charts.spendBars}
           max={charts.spendMax}
           topLabel={`$${charts.spendMax.toFixed(2)}`}
@@ -493,6 +534,10 @@ export default function AdminAiDraftsPage() {
           loading={series === null}
           hasData={charts.hasSpend}
           emptyMsg="No spend in the last 30 days."
+          avgLine={{ value: charts.avgPerDay, label: `avg $${charts.avgPerDay.toFixed(2)}/day` }}
+          trend={charts.spendTrend}
+          trendLabel={charts.spendTrendLabel}
+          summaries={charts.summaries}
         />
         <TrendChart
           title="Acceptance rate"
@@ -508,6 +553,9 @@ export default function AdminAiDraftsPage() {
           loading={series === null}
           hasData={charts.hasAccept}
           emptyMsg="No replies sent in the last 30 days yet."
+          trend={charts.acceptTrend}
+          trendLabel={charts.acceptTrendLabel}
+          summaries={charts.summaries}
         />
       </section>
 
@@ -624,8 +672,9 @@ function Block({ title, children }: { title: string; children: React.ReactNode }
 
 // A compact hand-rolled SVG bar chart for the two daily trends — no chart
 // library, matching the repo's other inline SVGs. One bar per day scaled to
-// `max`, each with a tooltip. A null value (e.g. a day with no sent replies)
-// renders as a faint slot so a quiet day reads as "no data", never as 0%.
+// `max`. A null value (e.g. a day with no sent replies) renders as a faint slot
+// so a quiet day reads as "no data", never as 0%. Adds an optional average
+// reference line, a least-squares trend line, and a hover-a-day summary panel.
 function TrendChart({
   title,
   hint,
@@ -636,17 +685,26 @@ function TrendChart({
   loading,
   hasData,
   emptyMsg,
+  avgLine,
+  trend,
+  trendLabel,
+  summaries,
 }: {
   title: string
   hint?: string
-  bars: { date: Date; value: number | null; tip: string }[]
+  bars: { date: Date; value: number | null }[]
   max: number
   topLabel: string
   colour: string
   loading: boolean
   hasData: boolean
   emptyMsg: string
+  avgLine?: { value: number; label: string }
+  trend?: { slope: number; intercept: number } | null
+  trendLabel?: string | null
+  summaries?: { date: Date; rows: { label: string; value: string }[] }[]
 }) {
+  const [hover, setHover] = useState<number | null>(null)
   const W = 720
   const H = 150
   const plotTop = 12
@@ -657,55 +715,108 @@ function TrendChart({
   const barW = Math.min(slot * 0.62, 22)
   const safeMax = max > 0 ? max : 1
   const fmtDay = (d: Date) => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+  const fmtFullDay = (d: Date) => d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' })
   const labelIdx = [0, Math.floor((bars.length - 1) / 2), bars.length - 1]
+  // value → y, clamped into the plot so an out-of-range trend endpoint rests on
+  // the boundary rather than drawing off-chart.
+  const yAt = (v: number) => plotBottom - (Math.max(0, Math.min(v, safeMax)) / safeMax) * plotH
+
+  const hoverSummary = hover != null ? summaries?.[hover] : undefined
+  const hoverFrac = hover != null ? (hover * slot + slot / 2) / W : 0
+  // Anchor the tooltip's nearest edge to the hovered column near the chart ends
+  // so the fixed-width panel never spills past the (narrow) card; centre it in
+  // the middle. Robust at any card width — no fixed percent clamp.
+  const hoverAnchor = hoverFrac < 0.15 ? 'translateX(0)' : hoverFrac > 0.85 ? 'translateX(-100%)' : 'translateX(-50%)'
 
   return (
     <div className="rounded-lg border border-line bg-surface p-5">
       <div className="flex items-baseline justify-between gap-3 mb-3">
         <h2 className="text-sm font-medium text-ink">{title}</h2>
-        {hint && <span className="text-[11px] text-ink-mute tabular-nums text-right">{hint}</span>}
+        <div className="flex items-baseline gap-2 text-right">
+          {trendLabel && <span className="text-[11px] text-ink-soft tabular-nums">{trendLabel}</span>}
+          {hint && <span className="text-[11px] text-ink-mute tabular-nums">{hint}</span>}
+        </div>
       </div>
       {loading ? (
         <p className="text-sm text-ink-mute py-10 text-center">Loading…</p>
       ) : !hasData ? (
         <p className="text-sm text-ink-mute py-10 text-center">{emptyMsg}</p>
       ) : (
-        <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`${title} — last ${bars.length} days`}>
-          <line x1={0} y1={plotTop} x2={W} y2={plotTop} stroke="var(--c-line-soft)" strokeWidth={1} strokeDasharray="3 3" />
-          <line x1={0} y1={plotBottom} x2={W} y2={plotBottom} stroke="var(--c-line)" strokeWidth={1} />
-          <text x={2} y={plotTop - 3} fontSize={11} fill="var(--c-ink-dim)">{topLabel}</text>
-          {bars.map((b, i) => {
-            const cx = i * slot + slot / 2
-            if (b.value == null) {
+        <div className="relative" onMouseLeave={() => setHover(null)}>
+          <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`${title} — last ${bars.length} days`}>
+            <line x1={0} y1={plotTop} x2={W} y2={plotTop} stroke="var(--c-line-soft)" strokeWidth={1} strokeDasharray="3 3" />
+            <line x1={0} y1={plotBottom} x2={W} y2={plotBottom} stroke="var(--c-line)" strokeWidth={1} />
+            <text x={2} y={plotTop - 3} fontSize={11} fill="var(--c-ink-dim)">{topLabel}</text>
+
+            {/* hovered-day vertical guide (under the bars) */}
+            {hover != null && (
+              <line x1={hover * slot + slot / 2} y1={plotTop} x2={hover * slot + slot / 2} y2={plotBottom} stroke="var(--c-ink-dim)" strokeWidth={1} opacity={0.35} />
+            )}
+
+            {bars.map((b, i) => {
+              const cx = i * slot + slot / 2
+              if (b.value == null) {
+                return <rect key={i} x={cx - barW / 2} y={plotBottom - 2} width={barW} height={2} fill="var(--c-line)" opacity={0.5} />
+              }
+              // Any real value (incl. a genuine 0, e.g. a 0%-acceptance day) gets
+              // a visible baseline mark; only nulls (above) are the faint slot.
+              const drawH = Math.max((b.value / safeMax) * plotH, 1.5)
+              return <rect key={i} x={cx - barW / 2} y={plotBottom - drawH} width={barW} height={drawH} rx={1} fill={colour} opacity={hover == null || hover === i ? 1 : 0.55} />
+            })}
+
+            {/* average reference line (dashed) */}
+            {avgLine && avgLine.value > 0 && (
+              <>
+                <line x1={0} y1={yAt(avgLine.value)} x2={W} y2={yAt(avgLine.value)} stroke="var(--c-ink-mute)" strokeWidth={1} strokeDasharray="4 3" />
+                <text x={W - 2} y={Math.max(plotTop + 9, yAt(avgLine.value) - 3)} fontSize={10} fill="var(--c-ink-dim)" textAnchor="end">{avgLine.label}</text>
+              </>
+            )}
+
+            {/* trend line (solid) */}
+            {trend && (
+              <line
+                x1={slot / 2}
+                y1={yAt(trend.intercept)}
+                x2={(n - 1) * slot + slot / 2}
+                y2={yAt(trend.intercept + trend.slope * (n - 1))}
+                stroke="var(--c-ink-soft)"
+                strokeWidth={2}
+                strokeLinecap="round"
+              />
+            )}
+
+            {labelIdx.map((idx, k) => {
+              if (idx < 0 || idx >= bars.length) return null
+              const anchor = k === 0 ? 'start' : k === labelIdx.length - 1 ? 'end' : 'middle'
+              const x = k === 0 ? 2 : k === labelIdx.length - 1 ? W - 2 : idx * slot + slot / 2
               return (
-                <g key={i}>
-                  <title>{b.tip}</title>
-                  <rect x={cx - barW / 2} y={plotBottom - 2} width={barW} height={2} fill="var(--c-line)" opacity={0.5} />
-                </g>
+                <text key={k} x={x} y={H - 4} fontSize={11} fill="var(--c-ink-dim)" textAnchor={anchor}>
+                  {fmtDay(bars[idx].date)}
+                </text>
               )
-            }
-            // Any real value (incl. a genuine 0, e.g. a 0%-acceptance day) gets
-            // a visible, hoverable baseline mark; only nulls (handled above) are
-            // the faint "no data" slot.
-            const drawH = Math.max((b.value / safeMax) * plotH, 1.5)
-            return (
-              <g key={i}>
-                <title>{b.tip}</title>
-                <rect x={cx - barW / 2} y={plotBottom - drawH} width={barW} height={drawH} rx={1} fill={colour} />
-              </g>
-            )
-          })}
-          {labelIdx.map((idx, k) => {
-            if (idx < 0 || idx >= bars.length) return null
-            const anchor = k === 0 ? 'start' : k === labelIdx.length - 1 ? 'end' : 'middle'
-            const x = k === 0 ? 2 : k === labelIdx.length - 1 ? W - 2 : idx * slot + slot / 2
-            return (
-              <text key={k} x={x} y={H - 4} fontSize={11} fill="var(--c-ink-dim)" textAnchor={anchor}>
-                {fmtDay(bars[idx].date)}
-              </text>
-            )
-          })}
-        </svg>
+            })}
+
+            {/* full-height transparent hover targets (on top, catch the mouse) */}
+            {bars.map((_, i) => (
+              <rect key={`h${i}`} x={i * slot} y={plotTop} width={slot} height={plotH} fill="transparent" onMouseEnter={() => setHover(i)} />
+            ))}
+          </svg>
+
+          {hoverSummary && (
+            <div
+              className="absolute z-10 pointer-events-none rounded-[8px] border border-line bg-surface shadow-sm px-3 py-2 text-xs"
+              style={{ left: `${hoverFrac * 100}%`, top: 0, transform: hoverAnchor, minWidth: 150 }}
+            >
+              <div className="font-medium text-ink mb-1">{fmtFullDay(hoverSummary.date)}</div>
+              {hoverSummary.rows.map((r) => (
+                <div key={r.label} className="flex justify-between gap-4 text-ink-soft leading-relaxed">
+                  <span className="text-ink-mute">{r.label}</span>
+                  <span className="tabular-nums text-ink">{r.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
