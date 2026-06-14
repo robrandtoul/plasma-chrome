@@ -25,7 +25,7 @@ import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, openDesignerPreview } from '../lib/customerProofUrl'
 // QuoteLink now lives inside DesignerChrome (PR 31).
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
-import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, MessageSquare, Clock, Activity, Package } from 'lucide-react'
+import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, MessageSquare, Clock, Activity, Package, HelpCircle } from 'lucide-react'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -207,6 +207,10 @@ export default function ProofDetailPage() {
   // Tracks which Names rollup row is expanded into the audit panel.
   // Single-string key ensures only one panel is open at a time.
   const [expandedAuditKey, setExpandedAuditKey] = useState<string | null>(null)
+  // Toggles the "what does this show?" explainer inside the engagement
+  // panel — collapsed by default so it stays clean once a designer knows
+  // the panel, expandable for anyone seeing it for the first time.
+  const [funnelHelpOpen, setFunnelHelpOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | 'abandon' | 'delete' | null>(null)
@@ -1616,13 +1620,53 @@ export default function ProofDetailPage() {
 
   const funnelPanel = currentVersion ? (
     <section className="rounded-[14px] border border-line bg-surface p-4">
+      {/* Header row — round count (or "Progress" for a one-round proof)
+          plus a "?" toggle that reveals a short explainer, so a designer
+          seeing the panel for the first time knows what they're reading
+          without it cluttering the view once they do. */}
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <span className="eyebrow text-ink-mute">
+          {rounds.length >= 2 ? `${rounds.length} rounds` : 'Progress'}
+        </span>
+        <button
+          type="button"
+          onClick={() => setFunnelHelpOpen((o) => !o)}
+          aria-expanded={funnelHelpOpen}
+          aria-label="What does this show?"
+          title="What does this show?"
+          className="inline-flex h-5 w-5 items-center justify-center rounded text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+        >
+          <HelpCircle size={15} aria-hidden="true" />
+        </button>
+      </div>
+
+      {funnelHelpOpen && (
+        <div className="mb-4 rounded-[10px] bg-canvas px-3 py-2.5 text-[12px] leading-[1.6] text-ink-soft">
+          {rounds.length >= 2 && (
+            <p>
+              <span className="font-semibold text-ink">Rounds</span> — each version is one round of
+              feedback. <span style={{ color: 'var(--c-low)' }}>Amber</span> = changes requested,{' '}
+              <span style={{ color: 'var(--c-in-stock)' }}>green</span> = approved,{' '}
+              <span style={{ color: 'var(--c-allocated)' }}>blue</span> = the current version. Click a
+              version to open it.
+            </p>
+          )}
+          <p className={rounds.length >= 2 ? 'mt-1.5' : ''}>
+            <span className="font-semibold text-ink">This round</span> — how far the current version
+            has got: <span className="font-medium text-ink">Sent</span> to the customer →{' '}
+            <span className="font-medium text-ink">Viewed</span> (counts page loads, the customer
+            only) → <span className="font-medium text-ink">Responded</span>. Green steps are done;
+            blue is what we're waiting on the customer for.
+          </p>
+        </div>
+      )}
+
       {/* Rounds strip — one chip per version, so the back-and-forth is
           visible instead of implied. Shown only from the second round;
           a first-round proof is just the funnel below. Each chip opens
           that version's detail. */}
       {rounds.length >= 2 && (
         <div className="mb-4">
-          <div className="eyebrow mb-2 text-ink-mute">{rounds.length} rounds</div>
           <div className="flex flex-wrap items-center gap-1.5">
             {rounds.map((r, i) => {
               const pal = ROUND_OUTCOME[r.outcome]
