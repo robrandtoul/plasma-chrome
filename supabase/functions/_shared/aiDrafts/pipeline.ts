@@ -218,7 +218,10 @@ export async function runPipeline(
   // must already exist in the inbound thread.
   const allowed = buildAllowedFigures(grounding, input.thread, slice, briefing.houseRules)
   const threadUrls = threadUrlSet(input.thread)
-  const verdict = runGuardrails(draft.draft_body, allowed, threadUrls)
+  // Only the customer's OWN messages may seed the off-list URL echo exception —
+  // never staff replies or internal notes (which hold supplier / internal links).
+  const customerUrls = threadUrlSet(input.thread.filter((m) => m.role === 'customer'))
+  const verdict = runGuardrails(draft.draft_body, allowed, threadUrls, customerUrls)
 
   // Advisory: any self-reported figure that does not reconcile against the
   // allowed set — surfaced to the reviewer, never blocking (the hard gate

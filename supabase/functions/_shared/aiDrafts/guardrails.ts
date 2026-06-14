@@ -419,11 +419,18 @@ export function buildAllowedFigures(
   return allowed
 }
 
+// Normalise a URL to the form stored in the thread-URL set — lowercase, no
+// trailing slash. threadUrlSet() and the echo checks in runGuardrails() MUST
+// use this same key, or an echoed URL won't match.
+function threadKey(url: string): string {
+  return url.toLowerCase().replace(/\/$/, '')
+}
+
 export function threadUrlSet(inputThread: ThreadMessage[]): Set<string> {
   const urls = new Set<string>()
   for (const message of inputThread) {
     for (const url of extractUrls(normaliseBody(message.body))) {
-      urls.add(url.toLowerCase().replace(/\/$/, ''))
+      urls.add(threadKey(url))
     }
   }
   return urls
@@ -435,6 +442,7 @@ export function runGuardrails(
   draftBody: string,
   allowed: AllowedFigures,
   threadUrls: Set<string> = new Set(),
+  customerUrls: Set<string> = new Set(),
 ): GuardrailVerdict {
   const reasons: string[] = []
 
@@ -458,10 +466,22 @@ export function runGuardrails(
 
   for (const url of extractUrls(draftBody)) {
     if (!isApprovedUrl(url)) {
+      // Echo exception: an http(s) URL the CUSTOMER themselves put in the
+      // thread is their own content (e.g. a website to print on their cards),
+      // echoed back — not an AI-invented or un-vetted link, so it is safe.
+      // Two deliberate scopes:
+      //   • customerUrls only — URLs from the customer's OWN messages, never
+      //     staff replies or internal notes (which hold supplier / internal /
+      //     tracking links the FORBIDDEN_PHRASES gate exists to keep hidden).
+      //   • http(s) only — never echo a mailto:/tel:/data:/javascript: URI even
+      //     if present in the thread (a prompt-injected scheme must not slip
+      //     through). Bare domains and www. are already normalised to https://.
+      // An invented / off-list URL not in the customer's own message still blocks.
+      if (/^https?:\/\//i.test(url) && customerUrls.has(threadKey(url))) continue
       reasons.push(`URL not on the approved list: ${url}`)
       continue
     }
-    if (matchesEchoOnlyPrefix(url) && !threadUrls.has(url.toLowerCase().replace(/\/$/, ''))) {
+    if (matchesEchoOnlyPrefix(url) && !threadUrls.has(threadKey(url))) {
       reasons.push(`proof URL not present in the thread (cannot be fabricated): ${url}`)
     }
   }

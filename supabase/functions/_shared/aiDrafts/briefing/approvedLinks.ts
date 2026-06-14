@@ -1,9 +1,12 @@
 // URL allow-list: a draft may only contain URLs that match one of these.
-// The guardrail blocks anything else — the AI cannot send a customer to an
-// unapproved (or invented) address. Built from the curated SITE_PAGES list
-// plus a handful of statics; there is deliberately NO domain-wide prefix, so
-// a plausible-but-invented page slug blocks instead of 404ing on a customer
-// (review item 11/13). Rob owns this list via sitePages.ts.
+// The guardrail blocks anything else — UNLESS the exact URL already appears in
+// the customer's own message (echoed content, e.g. a website to print on their
+// cards), which is allowed as their own data. The point is the AI cannot send a
+// customer to an unapproved (or invented) address it introduced itself. Built
+// from the curated SITE_PAGES list plus a handful of statics; there is
+// deliberately NO domain-wide prefix, so a plausible-but-invented page slug
+// blocks instead of 404ing on a customer (review item 11/13). Rob owns this
+// list via sitePages.ts.
 
 import { SITE_PAGES } from './sitePages.ts'
 

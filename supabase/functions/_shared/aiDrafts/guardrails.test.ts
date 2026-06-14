@@ -216,6 +216,55 @@ check(
   !runGuardrails('Your proof is at https://proofs.plasmadesign.co.uk/p/invented-id', built, threadUrls).ok,
 )
 
+// Echo exception: a customer's OWN URL, present verbatim in THEIR message, is
+// their content (e.g. a site to print on the cards) — allowed even though it
+// is not on the approved list. runGuardrails takes the customer-only set as its
+// 4th arg; the off-list URL echo checks THAT, never the all-roles threadUrls.
+const customerUrlThread: ThreadMessage[] = [
+  {
+    role: 'customer',
+    createdAt: '2026-06-01T00:00:00Z',
+    author: 'Gianpaolo',
+    body: '<p>Please add https://thesop.io/ to my matte black metal cards.</p>',
+  },
+]
+const customerUrls = threadUrlSet(customerUrlThread)
+check(
+  'customer-supplied URL echoed from customer message allowed',
+  runGuardrails('Routing to Graphics to add https://thesop.io/ to the proofs.', built, customerUrls, customerUrls).ok,
+)
+check(
+  'off-list URL not in the customer set still blocks',
+  !runGuardrails('Routing to Graphics to add https://thesop.io/ to the proofs.', built, threadUrls, new Set<string>()).ok,
+)
+// A URL that appears ONLY in an internal note / staff message is NOT echoable —
+// notes hold supplier portals / internal tracking links the FORBIDDEN_PHRASES
+// gate exists to keep from customers. It seeds the all-roles set but NOT the
+// customer-only set, so the off-list echo exception must reject it.
+const noteUrlThread: ThreadMessage[] = [
+  { role: 'note', createdAt: '2026-06-01T00:00:00Z', author: 'Chris', body: 'Ordering blanks from https://supplier-portal.example.com/job/88421' },
+  { role: 'customer', createdAt: '2026-06-02T00:00:00Z', author: 'Gianpaolo', body: 'Any update?' },
+]
+check(
+  'URL present only in an internal note is NOT echoable',
+  !runGuardrails(
+    'Track it at https://supplier-portal.example.com/job/88421',
+    built,
+    threadUrlSet(noteUrlThread),
+    threadUrlSet(noteUrlThread.filter((m) => m.role === 'customer')),
+  ).ok,
+)
+// The echo exception is http(s)-only: a dangerous-scheme URI must never slip
+// through even when the CUSTOMER wrote it verbatim (injection defence).
+const jsUriThread: ThreadMessage[] = [
+  { role: 'customer', createdAt: '2026-06-01T00:00:00Z', author: 'X', body: 'javascript:alert(1)' },
+]
+const jsCustomerUrls = threadUrlSet(jsUriThread)
+check(
+  'javascript: URI from a customer message still blocked (echo is http(s)-only)',
+  !runGuardrails('Try javascript:alert(1) here.', built, jsCustomerUrls, jsCustomerUrls).ok,
+)
+
 const multiBad = runGuardrails('£123.45 — see https://evil.example.com', built, threadUrls)
 check(
   'multiple reasons reported',
