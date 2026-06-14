@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Send } from 'lucide-react'
+import CollapsibleSidebarPanel from './CollapsibleSidebarPanel'
 import Modal from './Modal'
 import MessageSendPanel from './MessageSendPanel'
 import { supabase } from '../lib/supabase'
@@ -84,10 +85,37 @@ interface StuckNudge {
   created_at: string
 }
 
-// The job runs each weekday morning, so >25 hours without a run means the
-// scheduler is dead or stuck. Weekends will show amber by Sunday — accepted
-// Phase 1 noise; better than missing a dead cron for days.
-const RUN_STALE_HOURS = 25
+// The sender's cron runs weekday mornings only (`0 9 * * 1-5`, 09:00 UTC), so
+// "no run since yesterday" is normal across a weekend and must NOT raise the
+// scheduler-down alarm. Rather than a flat hours threshold (which lit up amber
+// every Sunday and Monday morning), compute the most recent run that *should*
+// already have completed — the latest weekday 09:00 UTC at least
+// RUN_GRACE_HOURS in the past — and treat the scheduler as down only if the
+// newest run predates it (a genuinely missed run). The grace window absorbs
+// cron jitter + the gap between scheduled time and the run recording itself.
+const RUN_HOUR_UTC = 9
+const RUN_GRACE_HOURS = 3
+
+function mostRecentExpectedRun(now: number): number | null {
+  for (let back = 0; back < 7; back++) {
+    const d = new Date(now)
+    const candidate = Date.UTC(
+      d.getUTCFullYear(),
+      d.getUTCMonth(),
+      d.getUTCDate() - back,
+      RUN_HOUR_UTC,
+      0,
+      0,
+      0,
+    )
+    const dow = new Date(candidate).getUTCDay() // 0 = Sun … 6 = Sat
+    const isWeekday = dow >= 1 && dow <= 5
+    if (isWeekday && now - candidate >= RUN_GRACE_HOURS * 3_600_000) {
+      return candidate
+    }
+  }
+  return null
+}
 
 // Open run rows / 'sending' claims older than this are treated as crashed.
 // Matches resolve_stuck_nudge's own guard (the RPC refuses rows younger
@@ -182,6 +210,12 @@ export function NudgeOutboxPanel({
   const [automationConfig, setAutomationConfig] = useState<Record<
     string, { mode?: string }
   > | null>(null)
+  // settings.auto_nudges_enabled — the automation master switch (000214).
+  // This is the CURRENT operating mode and drives the live/dry-run pill, so
+  // the panel reads as live the moment the switch is flipped rather than
+  // waiting for the next scheduled run to record a 'live' row. null = not yet
+  // read (or read failed) → fall back to the latest run's own mode.
+  const [autoEnabled, setAutoEnabled] = useState<boolean | null>(null)
   // Bumped after a successful human action so the panel refetches; the
   // existing content stays on screen during the refetch (no loading flash).
   const [reloadKey, setReloadKey] = useState(0)
@@ -199,7 +233,7 @@ export function NudgeOutboxPanel({
       // view layer exposes no server-side aggregate, and two single-row
       // reads are cheap). The greater of the two stamps is the webhook
       // signal.
-      const [runRes, openRes, stuckRes, staffRes, customerRes, rulesRes] = await Promise.all([
+      const [runRes, openRes, stuckRes, staffRes, customerRes, rulesRes, settingsRes] = await Promise.all([
         supabase
           .from('nudge_runs')
           .select('id, started_at, finished_at, mode, candidates_computed, sent, skipped, errors')
@@ -236,6 +270,11 @@ export function NudgeOutboxPanel({
           .select('needs_attention_rules')
           .eq('id', 1)
           .single(),
+        supabase
+          .from('settings')
+          .select('auto_nudges_enabled')
+          .eq('id', 1)
+          .single(),
       ])
       if (cancelled) return
       if (runRes.error || openRes.error || stuckRes.error || staffRes.error || customerRes.error) {
@@ -248,6 +287,14 @@ export function NudgeOutboxPanel({
         | { automation?: Record<string, { mode?: string }> }
         | null
       setAutomationConfig(rulesDoc?.automation ?? null)
+
+      // Master switch, also best-effort: a failed read leaves autoEnabled null
+      // so the pill falls back to the latest run's mode rather than mislabelling.
+      setAutoEnabled(
+        settingsRes.error || !settingsRes.data
+          ? null
+          : settingsRes.data.auto_nudges_enabled === true,
+      )
 
       const staffAt = (staffRes.data?.helpscout_last_reply_at ?? null) as string | null
       const customerAt = (customerRes.data?.helpscout_last_customer_reply_at ?? null) as string | null
@@ -336,9 +383,24 @@ export function NudgeOutboxPanel({
   const freshOpenRun = openRuns.some(
     (r) => now - new Date(r.started_at).getTime() <= STALE_MS,
   )
+  // Scheduler-down only if a genuinely-due weekday run was missed (see
+  // mostRecentExpectedRun) — not merely because it's the weekend or early
+  // Monday before the morning run window.
+  const expectedRunAt = mostRecentExpectedRun(now)
   const runStale =
     run != null &&
-    now - new Date(run.started_at).getTime() > RUN_STALE_HOURS * 3_600_000
+    expectedRunAt != null &&
+    new Date(run.started_at).getTime() < expectedRunAt
+
+  // The pill reflects the CURRENT operating mode (the master switch), not the
+  // historical mode of the last run: right after the switch is flipped the
+  // newest run may still be a pre-flip dry run, and a designer reads the pill
+  // as "is the automation live?". Fall back to the run's own mode when the
+  // setting couldn't be read.
+  const liveMode = autoEnabled ?? run?.mode === 'live'
+  // The latest recorded run was a dry run, but automatic sending is now on —
+  // explain why the rows below still say "Would send".
+  const liveButLastRunWasDry = autoEnabled === true && run?.mode === 'dry_run'
 
   const webhookFresh =
     newestStampAt != null &&
@@ -422,28 +484,13 @@ export function NudgeOutboxPanel({
   }
 
   return (
-    <div className="rounded-[14px] bg-surface border border-line overflow-hidden">
-      {/* Header — same chrome as LatestActivityPanel: 32px tinted icon
-          square + eyebrow + display heading over a soft hairline. */}
-      <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-line-soft">
-        <span
-          aria-hidden="true"
-          className="inline-flex items-center justify-center w-8 h-8 rounded-md shrink-0"
-          style={{
-            backgroundColor: 'color-mix(in srgb, var(--c-allocated) 14%, transparent)',
-            color: 'var(--c-allocated)',
-          }}
-        >
-          <Send size={16} />
-        </span>
-        <div className="min-w-0">
-          <div className="eyebrow text-ink-mute">Outbox</div>
-          <h2 className="font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0 text-[20px]">
-            Automated reminders
-          </h2>
-        </div>
-      </div>
-
+    <CollapsibleSidebarPanel
+      icon={Send}
+      iconTint="var(--c-allocated)"
+      eyebrow="Outbox"
+      title="Automated reminders"
+      storageKey="pv.sidebar.collapsed.outbox"
+    >
       {loadState === 'loading' ? (
         <p className="px-5 py-8 text-center text-sm text-ink-mute">Loading…</p>
       ) : loadState === 'error' ? (
@@ -468,14 +515,21 @@ export function NudgeOutboxPanel({
                 <span
                   className={[
                     'inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold',
-                    run.mode === 'live'
+                    liveMode
                       ? 'bg-in-stock-soft text-in-stock'
                       : 'bg-allocated-soft text-allocated',
                   ].join(' ')}
                 >
-                  {run.mode === 'live' ? 'live' : 'dry run'}
+                  {liveMode ? 'live' : 'dry run'}
                 </span>
               </div>
+              {liveButLastRunWasDry && (
+                <p className="text-[12px] text-ink-soft">
+                  Automatic sending is on. The run below was a dry run from
+                  before it was switched on, so the next scheduled run will send
+                  for real.
+                </p>
+              )}
               {freshOpenRun && (
                 <p className="text-[12px] text-ink-soft">A run is in progress…</p>
               )}
@@ -498,7 +552,7 @@ export function NudgeOutboxPanel({
               )}
               {runStale && (
                 <p className="rounded-md bg-low-soft px-2.5 py-1.5 text-[11px] font-medium text-low">
-                  No run for over 25 hours — the scheduler may be down.
+                  A scheduled run hasn’t arrived — the scheduler may be down.
                 </p>
               )}
               {Array.isArray(run.errors) && run.errors.length > 0 && (
@@ -823,7 +877,7 @@ export function NudgeOutboxPanel({
           )}
         </>
       )}
-    </div>
+    </CollapsibleSidebarPanel>
   )
 }
 

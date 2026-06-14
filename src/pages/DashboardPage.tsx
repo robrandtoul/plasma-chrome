@@ -23,6 +23,7 @@ import { logAudit } from '../lib/audit'
 import { attentionReason } from '../lib/needsAttention'
 import { ResolvePopover } from '../components/ResolvePopover'
 import { NudgeOutboxPanel } from '../components/NudgeOutboxPanel'
+import CollapsibleSidebarPanel from '../components/CollapsibleSidebarPanel'
 // QuoteLink imported + rendered inside DesignerChrome (PR 31) so
 // every designer page surfaces the same new-tab "phone rings"
 // affordance without re-importing.
@@ -1523,29 +1524,13 @@ function LatestActivityPanel({
   navigate: (to: string) => void
 }) {
   return (
-    <div className="rounded-[14px] bg-surface border border-line overflow-hidden">
-      {/* Header: bell icon in a coral-tinted square + Recent eyebrow
-          + Latest activity h-display. The bell ties the panel to the
-          per-event icon-square idiom below — same 14% tint + solid
-          icon treatment, same 32px box. */}
-      <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-line-soft">
-        <span
-          aria-hidden="true"
-          className="inline-flex items-center justify-center w-8 h-8 rounded-md shrink-0"
-          style={{
-            backgroundColor: 'color-mix(in srgb, var(--c-brand) 14%, transparent)',
-            color: 'var(--c-brand)',
-          }}
-        >
-          <Bell size={16} />
-        </span>
-        <div className="min-w-0">
-          <div className="eyebrow text-ink-mute">Recent</div>
-          <h2 className="font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0 text-[20px]">
-            Latest activity
-          </h2>
-        </div>
-      </div>
+    <CollapsibleSidebarPanel
+      icon={Bell}
+      iconTint="var(--c-brand)"
+      eyebrow="Recent"
+      title="Latest activity"
+      storageKey="pv.sidebar.collapsed.activity"
+    >
       {events.length === 0 ? (
         <p className="px-5 py-8 text-center text-sm text-ink-mute">
           No customer activity yet.
@@ -1640,7 +1625,7 @@ function LatestActivityPanel({
           })}
         </ul>
       )}
-    </div>
+    </CollapsibleSidebarPanel>
   )
 }
 
@@ -1693,29 +1678,13 @@ function LeadTimesChart({
   )
 
   return (
-    <div className="rounded-[14px] bg-surface border border-line overflow-hidden">
-      {/* Header mirrors the Latest activity card: tinted icon square +
-          eyebrow + display heading, so the two sidebar cards read as a
-          set. Clock icon for "time to make". */}
-      <div className="flex items-center gap-3 px-5 pt-5 pb-4 border-b border-line-soft">
-        <span
-          aria-hidden="true"
-          className="inline-flex items-center justify-center w-8 h-8 rounded-md shrink-0"
-          style={{
-            backgroundColor: 'color-mix(in srgb, var(--c-brand) 14%, transparent)',
-            color: 'var(--c-brand)',
-          }}
-        >
-          <Clock size={16} />
-        </span>
-        <div className="min-w-0">
-          <div className="eyebrow text-ink-mute">Production</div>
-          <h2 className="font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0 text-[20px]">
-            Lead times
-          </h2>
-        </div>
-      </div>
-
+    <CollapsibleSidebarPanel
+      icon={Clock}
+      iconTint="var(--c-brand)"
+      eyebrow="Production"
+      title="Lead times"
+      storageKey="pv.sidebar.collapsed.lead-times"
+    >
       {sorted.length === 0 ? (
         <p className="px-5 py-8 text-center text-sm text-ink-mute">
           No lead times set yet.{' '}
@@ -1794,7 +1763,7 @@ function LeadTimesChart({
           </div>
         </>
       )}
-    </div>
+    </CollapsibleSidebarPanel>
   )
 }
 
