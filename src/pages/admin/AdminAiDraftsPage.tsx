@@ -722,11 +722,6 @@ function TrendChart({
   const yAt = (v: number) => plotBottom - (Math.max(0, Math.min(v, safeMax)) / safeMax) * plotH
 
   const hoverSummary = hover != null ? summaries?.[hover] : undefined
-  const hoverFrac = hover != null ? (hover * slot + slot / 2) / W : 0
-  // Anchor the tooltip's nearest edge to the hovered column near the chart ends
-  // so the fixed-width panel never spills past the (narrow) card; centre it in
-  // the middle. Robust at any card width — no fixed percent clamp.
-  const hoverAnchor = hoverFrac < 0.15 ? 'translateX(0)' : hoverFrac > 0.85 ? 'translateX(-100%)' : 'translateX(-50%)'
 
   return (
     <div className="rounded-lg border border-line bg-surface p-5">
@@ -802,20 +797,22 @@ function TrendChart({
             ))}
           </svg>
 
-          {hoverSummary && (
-            <div
-              className="absolute z-10 pointer-events-none rounded-[8px] border border-line bg-surface shadow-sm px-3 py-2 text-xs"
-              style={{ left: `${hoverFrac * 100}%`, top: 0, transform: hoverAnchor, minWidth: 150 }}
-            >
-              <div className="font-medium text-ink mb-1">{fmtFullDay(hoverSummary.date)}</div>
-              {hoverSummary.rows.map((r) => (
-                <div key={r.label} className="flex justify-between gap-4 text-ink-soft leading-relaxed">
-                  <span className="text-ink-mute">{r.label}</span>
-                  <span className="tabular-nums text-ink">{r.value}</span>
-                </div>
-              ))}
-            </div>
-          )}
+          {/* Day readout sits BELOW the plot so it never obscures the bars; the
+              vertical guide + highlighted bar show which column it refers to. */}
+          <div className="mt-2 min-h-[20px] flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px]">
+            {hoverSummary ? (
+              <>
+                <span className="font-medium text-ink">{fmtFullDay(hoverSummary.date)}</span>
+                {hoverSummary.rows.map((r) => (
+                  <span key={r.label} className="text-ink-mute">
+                    {r.label} <span className="tabular-nums text-ink">{r.value}</span>
+                  </span>
+                ))}
+              </>
+            ) : (
+              <span className="text-ink-dim">Hover a day for its breakdown</span>
+            )}
+          </div>
         </div>
       )}
     </div>
