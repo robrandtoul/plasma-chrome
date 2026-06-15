@@ -666,6 +666,10 @@ async function run(admin: Admin): Promise<Response> {
               text: rendered,
               userId: senderId,
               customerId,
+              // A chase asks the customer to act, so the conversation belongs in
+              // their queue, not the team's Active list — same pending semantic
+              // as send-helpscout-reply and the reminder #2+ fresh conversation.
+              status: 'pending',
             })
           }
 
