@@ -73,13 +73,14 @@ select vault.create_secret(
 );
 ```
 
-Then the schedule — 09:00 UTC weekdays (09:00 GMT / 10:00 BST, inside the
-send window year-round; the function also checks the window itself):
+Then the schedule — twice daily on weekdays at 09:00 and 15:00 UTC (09:00 GMT
+/ 10:00 BST and 15:00 GMT / 16:00 BST, both inside the send window year-round;
+the function also checks the window itself):
 
 ```sql
 select cron.schedule(
   'proofs-send-nudges',
-  '0 9 * * 1-5',
+  '0 9,15 * * 1-5',
   $$
   select net.http_post(
     url := 'https://bjvinrzbdrwebylkmbwy.supabase.co/functions/v1/send-nudges',
@@ -92,6 +93,11 @@ select cron.schedule(
   $$
 );
 ```
+
+> **Amended 2026-06-16:** added a second weekday run at 15:00 UTC (16:00 BST /
+> 15:00 GMT — the last in-window hour), so the schedule went from `0 9 * * 1-5`
+> to `0 9,15 * * 1-5`. Re-running the `cron.schedule(...)` block above updates
+> job `proofs-send-nudges` (jobid 8) in place; it does not create a second job.
 
 ## 4. Trigger the first dry run now (optional but recommended)
 

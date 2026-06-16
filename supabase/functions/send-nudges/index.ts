@@ -1,7 +1,8 @@
 // Automated follow-up (nudge) sender. Spec: docs/followup-automation-spec.md.
 //
 // Invoked by pg_cron on the merged stock project (job 'proofs-send-nudges',
-// 0 9 * * 1-5 UTC — 09:00 GMT / 10:00 BST, in-hours year-round) via
+// 0 9,15 * * 1-5 UTC — a morning run at 09:00 GMT / 10:00 BST and an
+// afternoon run at 15:00 GMT / 16:00 BST, both in-hours year-round) via
 // net.http_post with the service-role key as Bearer, same pattern as the
 // existing outsourced-tracking-refresh / notify-scan-cron jobs. The platform
 // JWT check (verify_jwt = true, the default) runs first; the handler then
