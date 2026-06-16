@@ -49,6 +49,40 @@ const SHIPPING_LABEL: Record<OrderPayload['shipping_treatment'], string> = {
   manual: 'Shipping',
 }
 
+// Load Stripe.js from Stripe's CDN (required — Stripe.js must not be bundled,
+// for PCI). Resolves the global Stripe factory, loading the script once and
+// reusing it on subsequent calls. Returns null if the script can't load.
+const STRIPE_JS_SRC = 'https://js.stripe.com/v3/'
+function loadStripeJs(): Promise<((key: string) => StripeLike) | null> {
+  const w = window as unknown as { Stripe?: (key: string) => StripeLike }
+  if (w.Stripe) return Promise.resolve(w.Stripe)
+  return new Promise((resolve) => {
+    const existing = document.querySelector(`script[src="${STRIPE_JS_SRC}"]`) as HTMLScriptElement | null
+    if (existing) {
+      existing.addEventListener('load', () => resolve(w.Stripe ?? null))
+      existing.addEventListener('error', () => resolve(null))
+      if (w.Stripe) resolve(w.Stripe)
+      return
+    }
+    const s = document.createElement('script')
+    s.src = STRIPE_JS_SRC
+    s.async = true
+    s.onload = () => resolve(w.Stripe ?? null)
+    s.onerror = () => resolve(null)
+    document.head.appendChild(s)
+  })
+}
+
+// Minimal shapes of the bits of Stripe.js embedded checkout we use — avoids a
+// bundled @stripe/stripe-js dependency (Stripe.js is loaded from their CDN).
+interface EmbeddedCheckoutInstance {
+  mount: (selector: string) => void
+  destroy: () => void
+}
+interface StripeLike {
+  initEmbeddedCheckout: (opts: { clientSecret: string }) => Promise<EmbeddedCheckoutInstance>
+}
+
 export default function OrderPayPage() {
   const { id } = useParams<{ id: string }>()
   const [params] = useSearchParams()
@@ -100,6 +134,9 @@ export default function OrderPayPage() {
   const [notFound, setNotFound] = useState(false)
   const [paying, setPaying] = useState(false)
   const [payError, setPayError] = useState<string | null>(null)
+  // Embedded checkout: once the session is created, this holds the client
+  // secret + publishable key; an effect mounts Stripe's form into the page.
+  const [checkout, setCheckout] = useState<{ clientSecret: string; pk: string } | null>(null)
   // Set by Stripe's success_url redirect. Optimistic until the Step 5
   // webhook flips order.status to 'paid'; a later reload shows the real
   // paid state from the DB.
@@ -120,7 +157,7 @@ export default function OrderPayPage() {
             .filter((p) => Number.isFinite(p.quantity) && p.quantity > 0)
         : []
     try {
-      const { data, error } = await supabase.functions.invoke<{ url?: string; error?: string; message?: string }>(
+      const { data, error } = await supabase.functions.invoke<{ client_secret?: string; publishable_key?: string; error?: string; message?: string }>(
         'create-checkout-session',
         {
           body: {
@@ -134,7 +171,7 @@ export default function OrderPayPage() {
           },
         },
       )
-      if (error || !data || data.error || !data.url) {
+      if (error || !data || data.error || !data.client_secret || !data.publishable_key) {
         // On a non-2xx, supabase-js sets `error` (FunctionsHttpError) and
         // leaves `data` null — the friendly message we returned lives on the
         // error's Response body, so dig it out before falling back.
@@ -152,13 +189,48 @@ export default function OrderPayPage() {
         setPaying(false)
         return
       }
-      // Hand off to Stripe's hosted page.
-      window.location.href = data.url
+      // Reveal the embedded checkout form in-page (the mount effect below
+      // picks this up). Keep `paying` true so the button stays disabled while
+      // the form loads in its place.
+      setCheckout({ clientSecret: data.client_secret, pk: data.publishable_key })
     } catch {
       setPayError('We couldn’t start checkout. Please reply to the email you received and we’ll help.')
       setPaying(false)
     }
   }
+
+  // Mount Stripe's embedded checkout once we have a client secret. Loads
+  // Stripe.js from the CDN, inits the embedded instance, and mounts it into the
+  // page. Tears down on unmount / re-create so we never leak an iframe.
+  useEffect(() => {
+    if (!checkout) return
+    let instance: EmbeddedCheckoutInstance | null = null
+    let cancelled = false
+    void (async () => {
+      const StripeFactory = await loadStripeJs()
+      if (cancelled) return
+      if (!StripeFactory) {
+        setPayError('We couldn’t load the secure payment form. Please reply to the email you received and we’ll help.')
+        setCheckout(null)
+        setPaying(false)
+        return
+      }
+      try {
+        const stripe = StripeFactory(checkout.pk)
+        instance = await stripe.initEmbeddedCheckout({ clientSecret: checkout.clientSecret })
+        if (cancelled) { instance.destroy(); return }
+        instance.mount('#embedded-checkout-mount')
+      } catch {
+        setPayError('We couldn’t load the secure payment form. Please reply to the email you received and we’ll help.')
+        setCheckout(null)
+        setPaying(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+      if (instance) { try { instance.destroy() } catch { /* already gone */ } }
+    }
+  }, [checkout])
 
   // Customer-accent brand ramp while this page is mounted (same trick
   // as CustomerProofPage), cleared on unmount.
@@ -669,7 +741,7 @@ export default function OrderPayPage() {
 
         {/* Delivery destination — full_cost / goodwill orders rate the carriage
             against this. We ask here because we rarely know the postcode upfront. */}
-        {canCheckout && shippingComputedAtCheckout && (
+        {canCheckout && shippingComputedAtCheckout && !checkout && (
           <div className="mt-5 space-y-2.5 border-t border-line pt-4 text-sm">
             <p className="font-medium text-ink">Where should we ship these?</p>
             <p className="text-[13px] text-ink-soft">
@@ -698,7 +770,13 @@ export default function OrderPayPage() {
           </div>
         )}
 
-        {canCheckout ? (
+        {canCheckout && checkout ? (
+          // ── Embedded Stripe checkout — mounted in-page by the effect above,
+          //    so the customer never leaves this Plasma-branded page. ──────
+          <div className="mt-6 border-t border-line pt-5">
+            <div id="embedded-checkout-mount" />
+          </div>
+        ) : canCheckout ? (
           // ── Pay / continue to checkout ─────────────────────────────
           <div className="mt-6">
             {payTotal != null && (
@@ -722,14 +800,14 @@ export default function OrderPayPage() {
               className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-on-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {paying
-                ? 'Starting secure checkout…'
+                ? 'Loading secure payment…'
                 : awaitingQuantity
                   ? 'Choose a quantity to continue'
                   : !destinationComplete
                     ? 'Enter delivery country & postcode'
                     : payTotal != null
-                      ? `Pay ${formatPrice(payTotal, order.currency)} securely`
-                      : 'Continue to secure payment'}
+                      ? `Continue to payment — ${formatPrice(payTotal, order.currency)}`
+                      : 'Continue to payment'}
             </button>
             <p className="mt-2 text-center text-[12px] text-ink-mute">
               {awaitingQuantity
@@ -737,8 +815,8 @@ export default function OrderPayPage() {
                 : !destinationComplete
                   ? 'Enter where we’re shipping to so we can calculate shipping.'
                   : payTotal == null
-                    ? 'You’ll be taken to our secure payment provider to enter your card and delivery details, where you’ll see the full price including VAT.'
-                    : 'You’ll be taken to our secure payment provider to enter your card and delivery details.'}
+                    ? 'A secure card form will open below to enter your card and delivery details, where you’ll see the full price including VAT.'
+                    : 'A secure card form will open below to enter your card and delivery details.'}
             </p>
           </div>
         ) : (

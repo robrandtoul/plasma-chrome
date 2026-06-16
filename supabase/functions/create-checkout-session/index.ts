@@ -173,6 +173,15 @@ Deno.serve(async (req) => {
   if (!stripeKey) {
     return json({ error: `Payments are not configured for ${paymentMode} mode yet.` }, 503)
   }
+  // Publishable key for the embedded checkout (loaded client-side). Not secret,
+  // safe to return to the browser; chosen by the same mode so the embedded form
+  // matches the session. Mode-specific, with the legacy single var as fallback.
+  const publishableKey = paymentMode === 'live'
+    ? (Deno.env.get('STRIPE_PUBLISHABLE_KEY_LIVE') ?? Deno.env.get('STRIPE_PUBLISHABLE_KEY'))
+    : (Deno.env.get('STRIPE_PUBLISHABLE_KEY_TEST') ?? Deno.env.get('STRIPE_PUBLISHABLE_KEY'))
+  if (!publishableKey) {
+    return json({ error: `Payments are not fully configured for ${paymentMode} mode (missing publishable key).` }, 503)
+  }
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
@@ -560,11 +569,15 @@ Deno.serve(async (req) => {
   if (shipping > 0) pieces.push({ name: 'Shipping', amount: shipping })
 
   // ── Build the Stripe Checkout session (form-encoded) ─────────────
+  // Embedded ui_mode: the checkout form mounts inside our own pay-page rather
+  // than redirecting to Stripe's hosted page, so the customer stays on a
+  // Plasma-branded page. On completion Stripe redirects the top window to
+  // return_url (?paid=1 → our optimistic thank-you screen).
   const params = new URLSearchParams()
   params.set('mode', 'payment')
+  params.set('ui_mode', 'embedded')
   params.set('submit_type', 'pay')
-  params.set('success_url', `${origin}/order/${order.id}?token=${encodeURIComponent(token)}&paid=1`)
-  params.set('cancel_url', `${origin}/order/${order.id}?token=${encodeURIComponent(token)}`)
+  params.set('return_url', `${origin}/order/${order.id}?token=${encodeURIComponent(token)}&paid=1`)
   // A short note above the pay button (branding + reassurance).
   params.set('custom_text[submit][message]', 'Thank you — we’ll begin production as soon as your payment is confirmed.')
   // client_reference_id + metadata carry the shared reference so the
@@ -605,12 +618,13 @@ Deno.serve(async (req) => {
   }
 
   const session = await stripeRes.json().catch(() => null)
-  if (!stripeRes.ok || !session?.url) {
+  if (!stripeRes.ok || !session?.client_secret) {
     // Full Stripe error stays in the function logs for diagnosis; the customer
     // sees only a friendly message (never raw Stripe text).
     console.error('[create-checkout-session] stripe error:', JSON.stringify(session))
     return json({ error: 'Could not start checkout. Please try again, or reply to your email.' }, 502)
   }
 
-  return json({ url: session.url as string })
+  // The browser mounts the embedded checkout with these two values.
+  return json({ client_secret: session.client_secret as string, publishable_key: publishableKey })
 })
