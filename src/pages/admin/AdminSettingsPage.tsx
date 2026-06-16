@@ -31,6 +31,9 @@ interface Settings {
   /** Unpaid-order reminder automation switch (migration 000238). Off keeps
    *  the send-order-reminders job in dry-run (logs only, sends nothing). */
   auto_order_reminders_enabled: boolean
+  /** Stripe payment mode (migration 000241): 'test' (sandbox) or 'live'. The
+   *  checkout functions read this to pick which Stripe key set to use. */
+  payment_mode: 'test' | 'live'
   /** Shipping (migration 000178). */
   fedex_box_weight_grams: number
   fedex_intl_adjust_percent: number
@@ -53,6 +56,27 @@ type HelpScoutFailReason =
   | 'api_unreachable'
   | 'unexpected_error'
 
+// Shape returned by the payments-status edge function (go-live readiness).
+interface PaymentsStatus {
+  stripe: {
+    mode: 'test' | 'live'
+    selectedKeyKind: 'test' | 'live' | 'unknown' | 'absent'
+    testKeyPresent: boolean
+    liveKeyPresent: boolean
+    webhookTestSecretPresent: boolean
+    webhookLiveSecretPresent: boolean
+    consistent: boolean
+  }
+  xero: {
+    connected: boolean
+    orgName: string | null
+    isDemoCompany: boolean | null
+    baseCurrency: string | null
+    error: string | null
+  }
+  verdict: 'test' | 'ready' | 'danger' | 'incomplete'
+}
+
 /** Stable audit action string per field. */
 const AUDIT_ACTION: Record<keyof Settings, string> = {
   default_pricing_display:           'setting.default_pricing_display_updated',
@@ -62,6 +86,7 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   request_changes_confirmation_copy: 'setting.request_changes_confirmation_copy_updated',
   ordering_enabled:                  'setting.ordering_enabled_updated',
   auto_order_reminders_enabled:      'setting.auto_order_reminders_enabled_updated',
+  payment_mode:                      'setting.payment_mode_updated',
   fedex_box_weight_grams:            'setting.fedex_box_weight_grams_updated',
   fedex_intl_adjust_percent:         'setting.fedex_intl_adjust_percent_updated',
   domestic_uk_mainland_rate_gbp:     'setting.domestic_uk_mainland_rate_gbp_updated',
@@ -107,12 +132,53 @@ export default function AdminSettingsPage() {
     setXeroMsg(`Opened Xero in a new tab — authorise there. If it errors, copy this exact URL and send it over:\n\n${data.url}`)
   }
 
-  useEffect(() => { load() }, [])
+  // Payments & accounting status (go-live readiness). Read once on mount and
+  // on demand — shows which Stripe mode + Xero org the pipeline is pointed at,
+  // and flags a money/books mismatch.
+  const [payStatus, setPayStatus] = useState<PaymentsStatus | null>(null)
+  const [payStatusLoading, setPayStatusLoading] = useState(false)
+
+  async function loadPaymentsStatus() {
+    setPayStatusLoading(true)
+    const { data, error } = await supabase.functions.invoke<PaymentsStatus>('payments-status', { body: {} })
+    setPayStatusLoading(false)
+    if (!error && data) setPayStatus(data)
+  }
+
+  // Switch Stripe mode. Going LIVE charges real cards, so it gets a hard
+  // confirm; going back to test is unguarded. Refreshes the status panel after.
+  async function changePaymentMode(next: 'test' | 'live') {
+    if (!settings || next === settings.payment_mode) return
+    if (next === 'live') {
+      const ok = window.confirm(
+        'Switch Stripe to LIVE mode?\n\nReal customer cards will be charged real money. Before continuing, make sure:\n• the live Stripe key (sk_live_…) is set in the environment, and\n• Xero is connected to your REAL organisation, not the Demo Company.\n\nThe status panel below will flag a mismatch if not.',
+      )
+      if (!ok) return
+    }
+    await saveField('payment_mode', next)
+    void loadPaymentsStatus()
+  }
+
+  // Enabling ordering while Stripe is still in test mode means a real customer
+  // who opens a pay-link gets a sandbox checkout they can't actually pay —
+  // fine for internal testing, worth a heads-up before it's on.
+  async function changeOrderingEnabled(v: boolean) {
+    if (!settings) return
+    if (v && settings.payment_mode === 'test') {
+      const ok = window.confirm(
+        'Enable ordering while Stripe is in TEST mode?\n\nA real customer who opens a pay-link will get a sandbox checkout and cannot actually pay. This is fine for internal testing, but switch Stripe to LIVE before sending real customers a payment link.',
+      )
+      if (!ok) return
+    }
+    await saveField('ordering_enabled', v)
+  }
+
+  useEffect(() => { load(); void loadPaymentsStatus() }, [])
 
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp')
+      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, payment_mode, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -376,7 +442,7 @@ export default function AdminSettingsPage() {
           >
             <Toggle
               value={settings.ordering_enabled}
-              onChange={(v) => void saveField('ordering_enabled', v)}
+              onChange={(v) => void changeOrderingEnabled(v)}
               disabled={!!working.ordering_enabled}
               label="Ordering & checkout enabled"
             />
@@ -397,12 +463,116 @@ export default function AdminSettingsPage() {
             />
           </FieldRow>
 
+          {/* Stripe payment mode (migration 000241). Test = sandbox (fake
+              money); Live = real cards charged. Going live charges real money,
+              so the switch confirms first. The status panel below shows whether
+              the keys behind each mode are actually present + consistent. */}
+          <FieldRow
+            label="Stripe payment mode"
+            help="Test uses the Stripe sandbox — no real money moves. Live charges real customer cards. Switching to Live needs the live Stripe key set in the environment and Xero connected to your real organisation. Use the status panel below to confirm before and after switching."
+            saved={recentlySaved('payment_mode')}
+            working={working.payment_mode}
+            error={errors.payment_mode}
+          >
+            <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-line">
+              {(['test', 'live'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => void changePaymentMode(m)}
+                  disabled={!!working.payment_mode}
+                  className={[
+                    'px-4 py-2 text-sm font-medium capitalize transition-colors disabled:opacity-50',
+                    settings.payment_mode === m
+                      ? (m === 'live' ? 'bg-out text-on-ink' : 'bg-ink text-on-ink')
+                      : 'bg-surface text-ink-soft hover:bg-canvas',
+                  ].join(' ')}
+                >
+                  {m === 'live' ? 'Live (real money)' : 'Test (sandbox)'}
+                </button>
+              ))}
+            </div>
+          </FieldRow>
+
+          {/* Payments & accounting status — the go-live readiness panel. Shows
+              which Stripe mode + Xero org the pipeline is actually pointed at,
+              and flags a money/books mismatch (the dangerous state). */}
+          <div className="border-t border-line-soft pt-5">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-medium text-ink">Payments &amp; accounting status</p>
+              <button
+                type="button"
+                onClick={() => void loadPaymentsStatus()}
+                disabled={payStatusLoading}
+                className="rounded px-2.5 py-1 text-[13px] font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-50"
+              >
+                {payStatusLoading ? 'Checking…' : 'Refresh'}
+              </button>
+            </div>
+            {payStatus ? (
+              <div className="mt-3 space-y-2">
+                {(() => {
+                  const v = payStatus.verdict
+                  const banner = v === 'ready'
+                    ? { cls: 'bg-in-stock-soft text-in-stock ring-in-stock', text: 'Live & consistent — real payments will invoice into your live Xero org.' }
+                    : v === 'test'
+                      ? { cls: 'bg-low-soft text-low ring-low', text: 'Sandbox — everything is in test mode. No real money moves. Safe to test.' }
+                      : v === 'danger'
+                        ? { cls: 'bg-out-soft text-out ring-out', text: 'Mismatch — one side is live and the other is not. Fix before taking real orders.' }
+                        : { cls: 'bg-out-soft text-out ring-out', text: 'Incomplete — a key or connection needed for this mode is missing.' }
+                  return (
+                    <div className={`rounded-lg px-3 py-2 text-[13px] font-medium ring-1 ${banner.cls}`}>{banner.text}</div>
+                  )
+                })()}
+                <dl className="grid grid-cols-1 gap-1.5 text-[13px] sm:grid-cols-2">
+                  <div className="flex items-center justify-between gap-2 rounded-lg bg-canvas px-3 py-2">
+                    <dt className="text-ink-mute">Stripe mode</dt>
+                    <dd className="font-medium text-ink">
+                      {payStatus.stripe.mode === 'live' ? 'Live' : 'Test'}
+                      {!payStatus.stripe.consistent && (
+                        <span className="ml-1 text-out">· key is {payStatus.stripe.selectedKeyKind}</span>
+                      )}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 rounded-lg bg-canvas px-3 py-2">
+                    <dt className="text-ink-mute">Xero organisation</dt>
+                    <dd className="font-medium text-ink">
+                      {!payStatus.xero.connected
+                        ? 'Not connected'
+                        : payStatus.xero.orgName ?? 'Connected'}
+                      {payStatus.xero.isDemoCompany === true && (
+                        <span className="ml-1 rounded-full bg-out-soft px-1.5 py-0.5 text-[11px] font-medium text-out">DEMO</span>
+                      )}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 rounded-lg bg-canvas px-3 py-2">
+                    <dt className="text-ink-mute">Stripe keys present</dt>
+                    <dd className="font-medium text-ink">
+                      test {payStatus.stripe.testKeyPresent ? '✓' : '—'} · live {payStatus.stripe.liveKeyPresent ? '✓' : '—'}
+                    </dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 rounded-lg bg-canvas px-3 py-2">
+                    <dt className="text-ink-mute">Webhook secrets</dt>
+                    <dd className="font-medium text-ink">
+                      test {payStatus.stripe.webhookTestSecretPresent ? '✓' : '—'} · live {payStatus.stripe.webhookLiveSecretPresent ? '✓' : '—'}
+                    </dd>
+                  </div>
+                </dl>
+                {payStatus.xero.error && (
+                  <p className="text-[12px] text-ink-mute">Xero: {payStatus.xero.error}</p>
+                )}
+              </div>
+            ) : (
+              <p className="mt-2 text-[13px] text-ink-mute">{payStatusLoading ? 'Checking…' : 'Status unavailable — press Refresh.'}</p>
+            )}
+          </div>
+
           {/* Xero connection (Step 5b): paid orders create an invoice in
               the connected Xero org. One-time OAuth authorise. */}
           <div className="border-t border-line-soft pt-5">
             <p className="text-sm font-medium text-ink">Xero connection</p>
             <p className="mt-1 text-[13px] text-ink-mute">
-              Connect your Xero organisation so a paid order creates an invoice automatically. Connect to your Demo Company first to test.
+              Connect your Xero organisation so a paid order creates an invoice automatically. Connect to your Demo Company to test; reconnect to your real organisation to go live. After reconnecting, press Refresh on the status panel above to confirm which org is live.
             </p>
             <button
               type="button"
@@ -738,6 +908,7 @@ function humanFieldLabel(field: keyof Settings): string {
     request_changes_confirmation_copy: 'Request changes confirmation copy',
     ordering_enabled: 'Ordering & checkout enabled',
     auto_order_reminders_enabled: 'Send unpaid-order reminders automatically',
+    payment_mode: 'Stripe payment mode',
     fedex_box_weight_grams: 'FedEx box weight (grams)',
     fedex_intl_adjust_percent: 'International shipping adjustment (%)',
     domestic_uk_mainland_rate_gbp: 'UK mainland shipping rate (£, inc VAT)',

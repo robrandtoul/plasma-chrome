@@ -89,8 +89,17 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
-  const stripeKey = Deno.env.get('STRIPE_SECRET_KEY')
-  if (!stripeKey) return json({ error: 'Payments are not configured yet.' }, 503)
+  // Fast fail if Stripe isn't configured at all. The ACTUAL key is chosen
+  // below by settings.payment_mode (test → _TEST key, live → _LIVE key), with
+  // the legacy single STRIPE_SECRET_KEY as a fallback so an env that hasn't
+  // been split yet keeps working.
+  if (
+    !Deno.env.get('STRIPE_SECRET_KEY')
+    && !Deno.env.get('STRIPE_SECRET_KEY_TEST')
+    && !Deno.env.get('STRIPE_SECRET_KEY_LIVE')
+  ) {
+    return json({ error: 'Payments are not configured yet.' }, 503)
+  }
 
   let body: Record<string, unknown>
   try {
@@ -150,6 +159,20 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     { db: { schema: 'proofs' }, auth: { persistSession: false, autoRefreshToken: false } },
   )
+
+  // Choose the Stripe key by the admin-set payment mode (000241). test → the
+  // sandbox key, live → the live key; both held in the env so flipping the
+  // mode needs no redeploy. Legacy single STRIPE_SECRET_KEY is the fallback
+  // for an env that predates the split. The customer is only ever charged real
+  // money when the mode is 'live' AND a live (sk_live_…) key is present.
+  const { data: modeRow } = await admin.from('settings').select('payment_mode').eq('id', 1).single()
+  const paymentMode = modeRow?.payment_mode === 'live' ? 'live' : 'test'
+  const stripeKey = paymentMode === 'live'
+    ? (Deno.env.get('STRIPE_SECRET_KEY_LIVE') ?? Deno.env.get('STRIPE_SECRET_KEY'))
+    : (Deno.env.get('STRIPE_SECRET_KEY_TEST') ?? Deno.env.get('STRIPE_SECRET_KEY'))
+  if (!stripeKey) {
+    return json({ error: `Payments are not configured for ${paymentMode} mode yet.` }, 503)
+  }
 
   const { data: order, error: orderErr } = await admin
     .from('orders')

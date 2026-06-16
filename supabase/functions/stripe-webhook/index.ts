@@ -98,14 +98,29 @@ async function verifyStripeSignature(rawBody: string, sigHeader: string, secret:
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 })
 
-  const secret = Deno.env.get('STRIPE_WEBHOOK_SECRET')
-  if (!secret) return new Response('Webhook not configured', { status: 503 })
+  // Verify against BOTH mode signing secrets (plus the legacy single one),
+  // since Stripe signs an event with the secret for whichever mode it came
+  // from — and one endpoint serves both test and live. The webhook trusts the
+  // signature, not the DB payment_mode, so a test event is still accepted when
+  // we're in live mode and vice versa (each books to the connected Xero org).
+  const secrets = [
+    Deno.env.get('STRIPE_WEBHOOK_SECRET_LIVE'),
+    Deno.env.get('STRIPE_WEBHOOK_SECRET_TEST'),
+    Deno.env.get('STRIPE_WEBHOOK_SECRET'),
+  ].filter((s): s is string => !!s)
+  if (secrets.length === 0) return new Response('Webhook not configured', { status: 503 })
 
   const sig = req.headers.get('Stripe-Signature')
   // Must read the RAW body for signature verification — re-serialising
   // parsed JSON would change bytes and break the HMAC.
   const rawBody = await req.text()
-  if (!sig || !(await verifyStripeSignature(rawBody, sig, secret))) {
+  let verified = false
+  if (sig) {
+    for (const secret of secrets) {
+      if (await verifyStripeSignature(rawBody, sig, secret)) { verified = true; break }
+    }
+  }
+  if (!verified) {
     return new Response('Invalid signature', { status: 400 })
   }
 
