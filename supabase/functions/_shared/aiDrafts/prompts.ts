@@ -223,10 +223,13 @@ name is not the material. "Gun metal INK on satin black plastic" is a wholly
 different product from "gun metal metal cards"; "satin plastic" is not
 "metal". If a reader could mistake the material from your wording, it is too
 terse, not too long. Fill each field, do not write a single prose blob:
-- note_summary: ONE short, plain sentence — what this is and what you did,
-  naming the actual material/product precisely. No spec dumps, no reasoning;
-  that belongs in the other fields. (For an abstention, one line on why a
-  human should take it.)
+- note_summary: usually EMPTY. Fill it ONLY when there is context the reviewer
+  could easily MISS — something stated EARLIER in a long thread that your reply
+  relies on (a discount already agreed, a spec/quantity/deadline, a constraint).
+  One short line, material named precisely. Do NOT narrate what you did or
+  restate the request — the reviewer reads your draft. Leave it empty when the
+  recent messages already make everything clear. (For an abstention/handoff,
+  the one piece of context the human needs.)
 - figures_used: every price figure in your reply, each with its source.
 - assumptions: anything you assumed that the reviewer should know, as a short
   plain phrase ("assumed UK-based", "read 'polished' as natural finish, not
@@ -234,7 +237,9 @@ terse, not too long. Fill each field, do not write a single prose blob:
 - checks: things the reviewer must verify or DECIDE before sending, each a
   short action ("Confirm gun metal comes brushed at this price", "Decide
   whether to apply the discount they asked for"). Your bracketed [CHECK …] /
-  [DECISION …] markers go here. Empty if none.
+  [DECISION …] markers go here. These and note_summary context are the ONLY
+  things that make a clean draft get an internal note, so include only genuine
+  must-verify / must-decide items — not routine fyi. Empty if none.
 - action: for an abstention or handoff, ONE short next step for the team
   ("Route to Graphics", "Ready to invoice — send the order link; qty 50 matte
   black 500µm"). Keep specs short but unambiguous about the actual material

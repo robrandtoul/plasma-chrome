@@ -19,7 +19,7 @@ import { matchMaterials, type GroundingSlice } from './grounding.ts'
 import { isArtworkFormSubmission, isAutomatedNotification } from './pipeline.ts'
 import { latestCustomerThreadId, mapThreads } from './hsMap.ts'
 import { classifyEdit, stripSignature } from './feedback.ts'
-import { composeNote } from './composeNote.ts'
+import { composeNote, shouldPostNote, type ComposeNoteInput } from './composeNote.ts'
 import { fetchBriefing, DEFAULT_BRIEFING } from './briefing.ts'
 import { HOUSE_RULES } from './briefing/houseRules.ts'
 import { EXEMPLARS } from './briefing/exemplars.ts'
@@ -525,24 +525,50 @@ check('note header uses a plain-English category label', drafted.text.startsWith
 check('figures section rendered', drafted.text.includes('FIGURES USED') && drafted.text.includes('£329 — Steel 500µm x100'))
 check('checks become a checklist', drafted.text.includes('☐ Confirm 500 micron'))
 check('drafted status is reconciled', drafted.text.includes('✓ All figures reconciled'))
-check('html uses markup not bare newlines', drafted.html.includes('<strong>') && drafted.html.includes('<ul>'))
-// The header/body run-together bug (PR #276 review): each header must sit in
-// its own block so the content starts on a fresh line beneath it.
-check('html header is its own paragraph', drafted.html.includes('<p><strong>AI · Quote'))
-check('html puts a blank line between sections', drafted.html.includes('<br><p><strong>Figures used</strong></p>'))
-check('html spaces the summary off the header', drafted.html.includes('</strong></p><br><p>'))
+// The Help Scout HTML is the TERSE form: a before-you-send check + the context
+// line, but no telemetry header, no figures dump, and no ✓-pass line — those
+// stay in the ledger text (the panel) only.
+check('html shows the before-you-send check', drafted.html.includes('<strong>Before you send:</strong>') && drafted.html.includes('Confirm 500 micron'))
+check('html shows the surfaced context', drafted.html.includes('Quoted 100 steel cards'))
+check('html drops the telemetry header', !drafted.html.includes('AI · Quote'))
+check('html drops the figures dump', !drafted.html.includes('Figures used') && !drafted.html.includes('£329'))
+check('html drops the self-congratulatory pass line', !drafted.html.includes('✓'))
+check('html spaces blocks with a <br>', drafted.html.includes('<br>'))
 check('html has no collapsing newline joins', !drafted.html.includes('</p>\n') && !drafted.html.includes('</ul>\n'))
 
 const actionDrafted = composeNote({ classification: classifyStub, draft: { ...draftStub, action: 'Route to Graphics' }, outcome: 'drafted', abstainOrBlockReason: null, guardrails: { ok: true } })
-check('html inline section header is followed by a line break', actionDrafted.html.includes('<strong>Action</strong><br>Route to Graphics'))
+check('html renders a handoff action as a plain line (no "Action" label)', actionDrafted.html.includes('<p>Route to Graphics</p>') && !actionDrafted.html.includes('Action</strong>'))
 check('html outcome word is plain English', composeNote({ classification: classifyStub, draft: { ...draftStub, draft_body: null, should_draft: false, action: 'Route to Graphics' }, outcome: 'abstained', abstainOrBlockReason: 'needs a human', guardrails: null }).text.includes('· needs you'))
 check('html escapes content', composeNote({ classification: { ...classifyStub, summary: 'a < b & c' }, draft: { ...draftStub, note_summary: 'a < b & c' }, outcome: 'drafted', abstainOrBlockReason: null, guardrails: { ok: true } }).html.includes('a &lt; b &amp; c'))
 
 const blockedNote = composeNote({ classification: classifyStub, draft: { ...draftStub }, outcome: 'blocked', abstainOrBlockReason: 'figure £305 does not reconcile', guardrails: { ok: false, reasons: ['figure £305 does not reconcile'] } })
-check('blocked status is prominent', blockedNote.text.includes('⚠ BLOCKED') && blockedNote.text.includes('£305'))
+check('blocked status is prominent (text)', blockedNote.text.includes('⚠ BLOCKED') && blockedNote.text.includes('£305'))
+check('blocked html is human, no header', blockedNote.html.includes('couldn') && blockedNote.html.includes('£305') && !blockedNote.html.includes('AI · Quote'))
 
 const actionNote = composeNote({ classification: { ...classifyStub, category: 'order_details_collection' }, draft: { ...draftStub, draft_body: null, should_draft: false, action: 'Ready to invoice — generate the order link; qty 50 on file', checks: [], assumptions: [], figures_used: [] }, outcome: 'abstained', abstainOrBlockReason: 'ready to invoice', guardrails: null })
 check('abstain action surfaced', actionNote.text.includes('ACTION') && actionNote.text.includes('Ready to invoice'))
+
+// ── shouldPostNote: a clean draft gets NO Help Scout note ─────────────────────
+const bareDraft: DraftResult = { ...draftStub, note_summary: '', assumptions: [], checks: [], figures_used: [] }
+const noteInputFor = (
+  outcome: ComposeNoteInput['outcome'],
+  draft: DraftResult | null,
+  abstainOrBlockReason: string | null = null,
+): ComposeNoteInput => ({ classification: classifyStub, draft, outcome, abstainOrBlockReason, guardrails: null })
+
+check('clean draft → no note', shouldPostNote(noteInputFor('drafted', bareDraft)) === false)
+check('draft with a check → note', shouldPostNote(noteInputFor('drafted', { ...bareDraft, checks: ['Confirm finish'] })) === true)
+check('draft with surfaced context → note', shouldPostNote(noteInputFor('drafted', { ...bareDraft, note_summary: '10% loyalty discount agreed earlier in the thread' })) === true)
+check('draft with only an fyi assumption → no note', shouldPostNote(noteInputFor('drafted', { ...bareDraft, assumptions: ['assumed UK-based'] })) === false)
+check('blocked → always a note', shouldPostNote(noteInputFor('blocked', bareDraft)) === true)
+check('abstention handoff (action) → note', shouldPostNote(noteInputFor('abstained', { ...bareDraft, action: 'Route to Graphics' })) === true)
+// Model-considered abstention (draft present) with only a reason — e.g. a
+// complaint/feasibility handoff — MUST still post: it is the only HS footprint.
+check('judgement abstention (reason only) → note', shouldPostNote(noteInputFor('abstained', { ...bareDraft, draft_body: null, should_draft: false, action: null }, 'needs craft judgment we have not given you')) === true)
+// Pre-gate abstention (category/confidence/artwork-form) has draft === null and
+// stays silent even though it carries a reason — silence is a feature there.
+check('pre-gate abstention (draft null + reason) → no note', shouldPostNote(noteInputFor('abstained', null, 'category outside pilot')) === false)
+check('skipped → no note', shouldPostNote(noteInputFor('skipped', null)) === false)
 
 // ── Phase 3a: briefing in DB, with code fallback ─────────────────────────────
 

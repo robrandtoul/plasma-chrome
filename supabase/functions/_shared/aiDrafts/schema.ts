@@ -112,7 +112,7 @@ export const DRAFT_SCHEMA = {
     note_summary: {
       type: ['string', 'null'],
       description:
-        'ONE short, plain-English sentence for the reviewer: what this is and what you did, naming the actual material/product precisely (keep qualifiers that change meaning — a colour/finish/ink name is not the card material; "gun metal ink on satin black plastic" is not "gun metal cards"). No spec dumps or reasoning — those go in the other fields. For an abstention, one line on why it needs a human.',
+        'Usually EMPTY (null or ""). Fill it ONLY when there is a piece of context the reviewer could easily MISS — typically something stated EARLIER in a long thread that your reply relies on (a discount already agreed, a spec/quantity/deadline given, a constraint). One short plain line, naming any material/product precisely (keep qualifiers that change meaning — a colour/finish/ink name is not the card material). Do NOT narrate what you did or restate the request — the reviewer reads your draft. Leave it empty when the recent messages already make everything clear. For an abstention/handoff, you may use it for the one piece of context the human needs to act.',
     },
     assumptions: {
       type: 'array',

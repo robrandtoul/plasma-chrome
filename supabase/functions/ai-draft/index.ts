@@ -34,7 +34,7 @@ import { runPipeline } from '../_shared/aiDrafts/pipeline.ts'
 import { latestCustomerThreadId, mapThreads } from '../_shared/aiDrafts/hsMap.ts'
 import { modelId } from '../_shared/aiDrafts/anthropic.ts'
 import { classifyEdit } from '../_shared/aiDrafts/feedback.ts'
-import { composeNote } from '../_shared/aiDrafts/composeNote.ts'
+import { composeNote, shouldPostNote } from '../_shared/aiDrafts/composeNote.ts'
 import { normaliseBody } from '../_shared/aiDrafts/htmlText.ts'
 
 type AdminClient = ReturnType<typeof createClient>
@@ -240,19 +240,20 @@ Deno.serve(async (req) => {
 
     // Compose the structured internal note once (text for the ledger, HTML
     // for Help Scout where newlines collapse).
-    const note = composeNote({
+    const noteInput = {
       classification: result.classification,
       draft: result.draft,
       outcome: result.outcome,
       abstainOrBlockReason: result.abstainOrBlockReason,
       guardrails: result.guardrails,
-    })
-    // Post a note when there's a draft, or an abstention worth flagging
-    // (an action/handoff or a block) — but not silent skips.
-    const postNote =
-      result.outcome === 'drafted' ||
-      result.outcome === 'blocked' ||
-      (result.outcome === 'abstained' && (result.draft?.action != null || result.draft?.note_summary != null))
+    }
+    const note = composeNote(noteInput)
+    // Only post a Help Scout note when it earns its place — a clean draft (no
+    // before-you-send check, no easily-missed context) gets none; the draft and
+    // the ai-draft tag are the signal. Blocks always note; abstentions only with
+    // a handoff action or context. (The full working still lands in the ledger
+    // text below for the admin panel, whether or not a note is posted.)
+    const postNote = shouldPostNote(noteInput)
 
     // Live mode: create the Help Scout artefacts for passed drafts; notes for
     // action-note abstentions too (that triage signal is the point).
@@ -293,7 +294,9 @@ Deno.serve(async (req) => {
         skip_kind: result.outcome === 'skipped' ? result.classification.non_customer_kind : null,
         summary: result.classification.summary,
         draft_body: result.draft?.draft_body ?? null,
-        note_body: postNote ? note.text : null,
+        // Keep the full working in the ledger for the admin panel even when no
+        // Help Scout note was posted (clean drafts) — only genuine skips have none.
+        note_body: result.outcome === 'skipped' ? null : note.text,
         abstain_or_block_reason: result.abstainOrBlockReason,
         note_warnings: result.noteWarnings,
         usage_input: result.usage.inputTokens,
