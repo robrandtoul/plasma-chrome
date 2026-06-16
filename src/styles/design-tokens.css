@@ -75,6 +75,13 @@
   --c-allocated:      #2b6df5;
   --c-allocated-soft: #d5e3fd;
 
+  /* Dashboard "customer responded" hue (teal). One name shared by the
+     Customer-responded tile, the changes-requested / replied-by-email
+     row pills, and the change-request event in the activity feed, so
+     the teal can never drift between them. Designer dashboard only —
+     it doesn't appear on the customer page, so there's no override. */
+  --c-responded: #0d9488;
+
   /* Critical: deeper than out, for shortfalls incoming
      supplier deliveries cannot cover. */
   --c-critical:      #7a0d24;

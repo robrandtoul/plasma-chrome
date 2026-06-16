@@ -281,15 +281,15 @@ interface StatTileProps {
 }
 
 // Tone → CSS colour mapping. Design-system tokens where they map
-// cleanly to the seven dashboard tones; explicit hues for the two
-// (turquoise, violet) where the token palette doesn't reach. The
-// neutral tone uses the ink-mute token rather than a saturated
-// colour so Dormant reads as a backwater rather than an alert.
+// cleanly to the dashboard tones; an explicit hue for the one
+// (violet) where the token palette doesn't reach. The neutral tone
+// uses the ink-mute token rather than a saturated colour so Dormant
+// reads as a backwater rather than an alert.
 const TILE_COLOUR: Record<StatTileProps['tone'], string> = {
   rose:      'var(--c-out)',
   amber:     'var(--c-low)',
   sky:       'var(--c-allocated)',
-  turquoise: '#0d9488',
+  turquoise: 'var(--c-responded)',
   green:     'var(--c-in-stock)',
   violet:    '#7c3aed',
   neutral:   'var(--c-ink-mute)',
@@ -1511,7 +1511,7 @@ const ACTIVITY_VISUAL: Record<DashboardLatestEvent['event_type'], ActivityVisual
   },
   request_changes: {
     icon: MessageSquare,
-    tint: 'var(--c-low)',
+    tint: 'var(--c-responded)',
     verbCopy: (v) => `requested changes on v${v}`,
   },
 }

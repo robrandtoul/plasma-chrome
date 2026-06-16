@@ -216,8 +216,8 @@ export interface BucketInput {
 // reply; go read the thread) — which is the distinction the designer acts on.
 const BUCKET_META: Record<ProofBucket, { label: string; colour: string }> = {
   needs_attention:   { label: 'Needs attention',   colour: 'var(--c-out)' },
-  changes_requested: { label: 'Changes requested', colour: '#0d9488' },
-  customer_replied:  { label: 'Replied by email',  colour: '#0d9488' },
+  changes_requested: { label: 'Changes requested', colour: 'var(--c-responded)' },
+  customer_replied:  { label: 'Replied by email',  colour: 'var(--c-responded)' },
   awaiting_customer: { label: 'Awaiting customer', colour: 'var(--c-allocated)' },
   not_viewed:        { label: 'Not viewed',        colour: 'var(--c-low)' },
   snoozed:           { label: 'Snoozed',           colour: '#7c3aed' },
