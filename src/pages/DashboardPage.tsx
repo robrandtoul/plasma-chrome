@@ -1094,17 +1094,32 @@ function ProjectRow({
               </span>
             </ResolvePopover>
           )}
-          {/* Help Scout activity chip (000208) — shows recent Help Scout
-              activity (our last contact, or a customer reply) that's keeping a
-              proof off Needs attention, so the suppression isn't silent. Note
-              the staff timestamp is stamped on any outbound reply including the
-              initial proof-send, so the label stays neutral ("Last contact"),
-              never claiming a follow-up happened. */}
+          {/* Activity time — the proof activity the Activity sort orders by
+              (activityVerb's ts is latest_event_at for active proofs) and the
+              "Latest activity" card mirrors: "Viewed / Sent / Approved X ago".
+              Surfacing it on the row keeps the visible time, the list order,
+              and the card in agreement. Previously this lived only in the row's
+              hover tooltip, leaving the Help Scout "Last contact" line below as
+              the only visible "X ago" — a different (email) clock, which made
+              the activity sort look scrambled. */}
+          {ts && (
+            <div className="mt-1 truncate text-xs text-ink-soft" title={formatAbsoluteDateTime(ts)}>
+              {verb} {relativeTime(ts)}
+            </div>
+          )}
+          {/* Help Scout activity chip (000208) — recent Help Scout activity
+              (our last contact, or a customer reply) that's keeping a proof off
+              Needs attention, so the suppression isn't silent. Kept visually
+              secondary to the activity line above because it's a separate clock
+              (an email time, not proof activity). The staff timestamp is
+              stamped on any outbound reply including the initial proof-send, so
+              the label stays neutral ("Last contact"), never claiming a
+              follow-up happened. */}
           {(() => {
             const hs = recentHelpscoutActivity(project)
             if (!hs) return null
             return (
-              <div className="mt-1 truncate text-xs text-ink-mute">
+              <div className="mt-0.5 truncate text-[11px] text-ink-dim" title={formatAbsoluteDateTime(hs.at)}>
                 {hs.kind === 'customer' ? 'Customer replied' : 'Last contact'} {relativeTime(hs.at)}
               </div>
             )
