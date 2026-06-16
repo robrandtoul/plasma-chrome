@@ -75,6 +75,9 @@ interface NudgeRow {
   source: 'auto' | 'manual'
   state: 'sending' | 'sent' | 'failed' | 'skipped' | 'dry_run'
   outcome: string | null
+  // One-line plain-English explanation the sender records for outcomes a human
+  // must resolve (migration 000228). Null for self-resolving/old rows.
+  detail: string | null
   rendered_body: string | null
   created_at: string
 }
@@ -320,7 +323,7 @@ export function NudgeOutboxPanel({
         // bot output.
         const rowsRes = await supabase
           .from('proof_nudges')
-          .select('id, proof_id, rule_code, source, state, outcome, rendered_body, created_at')
+          .select('id, proof_id, rule_code, source, state, outcome, detail, rendered_body, created_at')
           .eq('source', 'auto')
           .gte('created_at', latestRun.started_at)
           .order('created_at', { ascending: false })
@@ -771,14 +774,22 @@ export function NudgeOutboxPanel({
                         <li key={r.id}>
                           <Link
                             to={`/proofs/${r.proof_id}`}
-                            className="flex items-baseline gap-2 px-5 py-2.5 transition-colors hover:bg-canvas"
+                            className="flex flex-col gap-1 px-5 py-2.5 transition-colors hover:bg-canvas"
                           >
-                            <span className="min-w-0 truncate text-[13px] font-medium text-ink">
-                              {labelFor(r.proof_id)}
+                            <span className="flex items-baseline gap-2">
+                              <span className="min-w-0 truncate text-[13px] font-medium text-ink">
+                                {labelFor(r.proof_id)}
+                              </span>
+                              <span className="shrink-0 text-[11px] font-medium text-low">
+                                {humaniseOutcome(r.outcome, r.state)}
+                              </span>
                             </span>
-                            <span className="shrink-0 text-[11px] font-medium text-low">
-                              {humaniseOutcome(r.outcome, r.state)}
-                            </span>
+                            {/* Why it failed, in plain English (migration 000228). */}
+                            {r.detail && (
+                              <span className="text-[11px] leading-snug text-ink-soft">
+                                {r.detail}
+                              </span>
+                            )}
                           </Link>
                         </li>
                       ))}
@@ -814,24 +825,33 @@ export function NudgeOutboxPanel({
                         <li key={r.id}>
                           <Link
                             to={`/proofs/${r.proof_id}`}
-                            className="flex items-baseline gap-2 px-5 py-2.5 transition-colors hover:bg-canvas"
+                            className="flex flex-col gap-1 px-5 py-2.5 transition-colors hover:bg-canvas"
                           >
-                            <span className="min-w-0 truncate text-[13px] font-medium text-ink">
-                              {labelFor(r.proof_id)}
+                            <span className="flex items-baseline gap-2">
+                              <span className="min-w-0 truncate text-[13px] font-medium text-ink">
+                                {labelFor(r.proof_id)}
+                              </span>
+                              <span
+                                className={[
+                                  'shrink-0 text-[11px]',
+                                  r.outcome === 'recipient_mismatch'
+                                    ? 'font-medium text-low'
+                                    : 'text-ink-mute',
+                                ].join(' ')}
+                              >
+                                {humaniseOutcome(r.outcome, r.state)}
+                              </span>
+                              <span className="ml-auto shrink-0 text-[11px] font-medium text-ink-soft">
+                                Review →
+                              </span>
                             </span>
-                            <span
-                              className={[
-                                'shrink-0 text-[11px]',
-                                r.outcome === 'recipient_mismatch'
-                                  ? 'font-medium text-low'
-                                  : 'text-ink-mute',
-                              ].join(' ')}
-                            >
-                              {humaniseOutcome(r.outcome, r.state)}
-                            </span>
-                            <span className="ml-auto shrink-0 text-[11px] font-medium text-ink-soft">
-                              Review →
-                            </span>
+                            {/* The specific, actionable explanation the sender
+                                recorded at decision time (migration 000228). */}
+                            {r.detail && (
+                              <span className="text-[11px] leading-snug text-ink-soft">
+                                {r.detail}
+                              </span>
+                            )}
                           </Link>
                         </li>
                       ))}

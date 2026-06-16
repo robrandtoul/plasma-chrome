@@ -184,6 +184,9 @@ interface LedgerInsert {
   source: 'auto'
   state: 'sending' | 'sent' | 'failed' | 'skipped' | 'dry_run'
   outcome: string
+  // One-line human-readable explanation for outcomes a human must resolve
+  // (migration 000228). Rendered under the Outbox "Needs you"/"Failed" rows.
+  detail?: string | null
   helpscout_conversation_id: string | null
   rendered_body?: string | null
 }
@@ -510,7 +513,7 @@ async function run(admin: Admin): Promise<Response> {
             }
           }
 
-          const logSkip = async (outcome: string) => {
+          const logSkip = async (outcome: string, detail?: string) => {
             const id = await insertLedgerRow({
               proof_id: c.proofId,
               proof_version_id: c.versionId,
@@ -519,18 +522,25 @@ async function run(admin: Admin): Promise<Response> {
               source: 'auto',
               state: logState,
               outcome,
+              detail: detail ?? null,
               helpscout_conversation_id: c.conversationId,
             })
             if (id) skipped++
           }
 
           if (!conv) {
-            await logSkip('skipped_conversation_missing')
+            await logSkip(
+              'skipped_conversation_missing',
+              `The linked Help Scout conversation (id ${c.conversationId}) couldn't be found — it may have been deleted or merged. Re-link this proof to the correct conversation.`,
+            )
             continue
           }
           const status = (conv.status ?? '').toLowerCase()
           if (status === 'closed' || status === 'spam') {
-            await logSkip('skipped_closed_conversation')
+            await logSkip(
+              'skipped_closed_conversation',
+              `The linked Help Scout conversation is ${status === 'spam' ? 'marked as spam' : 'closed'}, so no reminder was sent. Reopen it in Help Scout if the customer still needs chasing.`,
+            )
             continue
           }
 
@@ -539,7 +549,19 @@ async function run(admin: Admin): Promise<Response> {
           const hsEmail = (conv.primaryCustomer?.email ?? '').trim().toLowerCase()
           const contactEmail = (c.contactEmail ?? '').trim().toLowerCase()
           if (!hsEmail || !contactEmail || hsEmail !== contactEmail) {
-            await logSkip('recipient_mismatch')
+            // Spell out the specific clash so the panel can show what to fix —
+            // the Help Scout side is only known here, live, and isn't stored.
+            let mismatchDetail: string
+            if (!hsEmail && !contactEmail) {
+              mismatchDetail = `Neither the Help Scout conversation nor this proof's contact has an email address, so there's no way to tell who a reminder would reach. Add the customer's email in both places.`
+            } else if (!hsEmail) {
+              mismatchDetail = `The linked Help Scout conversation has no customer email, so we can't confirm who a reminder would reach. This proof's contact is ${contactEmail}. Check the conversation in Help Scout.`
+            } else if (!contactEmail) {
+              mismatchDetail = `This proof's contact has no email address to match against Help Scout (which would email ${hsEmail}). Add the contact's email in Admin → Customers.`
+            } else {
+              mismatchDetail = `Help Scout will email ${hsEmail}, but this proof's contact is ${contactEmail}. Update the contact's email in Admin → Customers so the two match.`
+            }
+            await logSkip('recipient_mismatch', mismatchDetail)
             continue
           }
 
@@ -556,7 +578,10 @@ async function run(admin: Admin): Promise<Response> {
             .map((t) => Date.parse(t.createdAt!))
             .reduce((a, b) => Math.max(a, b), -Infinity)
           if (newestCustomerThread > lastOutbound) {
-            await logSkip('skipped_customer_replied')
+            await logSkip(
+              'skipped_customer_replied',
+              `The customer replied on the Help Scout thread after our last message, so the reminder was held back. Open the conversation and reply to them directly.`,
+            )
             continue
           }
 
@@ -575,7 +600,10 @@ async function run(admin: Admin): Promise<Response> {
           // unknown tokens silently, so a post-render check can never fire.
           const problem = templateProblem(templateBody, ctx)
           if (problem) {
-            await logSkip(`render_failed: ${problem}`)
+            await logSkip(
+              `render_failed: ${problem}`,
+              `The reminder couldn't be filled in (${problem}). Check the reminder template in Admin → Templates.`,
+            )
             continue
           }
           const rendered = renderTemplate(templateBody, ctx)
@@ -630,7 +658,11 @@ async function run(admin: Admin): Promise<Response> {
             (Number.isInteger(defaultUserId) && defaultUserId > 0 ? defaultUserId : null)
           if (!senderId) {
             await admin.from('proof_nudges')
-              .update({ state: 'failed', outcome: 'failed: no sender identity (set HELPSCOUT_DEFAULT_USER_ID)' })
+              .update({
+                state: 'failed',
+                outcome: 'failed: no sender identity (set HELPSCOUT_DEFAULT_USER_ID)',
+                detail: `No Help Scout sender could be determined for this reminder (no version designer, no conversation assignee, and no default sender configured). Assign the conversation in Help Scout, or set a default sender.`,
+              })
               .eq('id', claimId)
             errors.push({ proof_id: c.proofId, error: 'no sender identity' })
             continue
@@ -639,7 +671,11 @@ async function run(admin: Admin): Promise<Response> {
           const customerId = conv.primaryCustomer?.id
           if (!customerId) {
             await admin.from('proof_nudges')
-              .update({ state: 'failed', outcome: 'failed: conversation has no primary customer' })
+              .update({
+                state: 'failed',
+                outcome: 'failed: conversation has no primary customer',
+                detail: `The linked Help Scout conversation has no customer attached, so there was no one to email. Add the customer to the conversation in Help Scout.`,
+              })
               .eq('id', claimId)
             errors.push({ proof_id: c.proofId, error: 'no primary customer' })
             continue
@@ -719,7 +755,11 @@ async function run(admin: Admin): Promise<Response> {
           // pointless human verification).
           if (claimId && err instanceof HsError) {
             await admin.from('proof_nudges')
-              .update({ state: 'failed', outcome: `failed: hs_${err.status}` })
+              .update({
+                state: 'failed',
+                outcome: `failed: hs_${err.status}`,
+                detail: `Help Scout rejected the reminder (error ${err.status}), so nothing was sent. Open the conversation in Help Scout to check it.`,
+              })
               .eq('id', claimId)
               .eq('state', 'sending')
           }
