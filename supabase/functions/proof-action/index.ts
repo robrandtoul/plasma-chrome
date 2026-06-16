@@ -252,13 +252,22 @@ function buildCustomerThreadText(
   // through to the standard approve / request_changes branches with
   // byte-identical output to the pre-variant-rounds shape.
   variantDisplayName: string | null,
+  // True when the version offers 2+ material options (a real finish /
+  // species switcher). On the approve branch this suppresses both the
+  // active-tab finish suffix and the all-options file manifest — the
+  // toggle position isn't a real finish choice (finish is settled over
+  // email for metal), so the confirmation must not assert one.
+  hasMultipleOptions: boolean,
 ): string {
   // SHARED_APPROVAL_KEY suppresses the "for {name}" suffix — the
   // shared section IS the whole proof (all-shared / membership /
   // single-design case). Named recipients get the suffix.
   const recipientSuffix =
     recipientName === SHARED_APPROVAL_KEY ? '' : ` for ${recipientName}`
-  // Option suffix reads e.g. " for the Brushed finish" / " for the
+  // Option suffix — consumed by the request_changes branch only; the
+  // approve branch intentionally omits it (the active tab isn't a
+  // finish choice, so an approval must not claim one). Reads e.g.
+  // " for the Brushed finish" / " for the
   // Black Walnut species" / " for the Optional CNC cutting"
   // (dedup case — the display_name already ends with the dimension
   // noun, so we drop the redundant trailing word). Suppressed when
@@ -307,10 +316,17 @@ function buildCustomerThreadText(
 
   if (eventType === 'approve') {
     const commentBlock = comment ? `"${comment}"\n\n` : ''
+    // Multi-option versions: drop the finish suffix AND the file
+    // manifest. The suffix is just whichever preview tab was open at
+    // click time, and the manifest lists every option's files (all of
+    // Natural + Brushed + Mirror, front + back) — together they imply
+    // a finish was chosen here when it wasn't. Single-/no-option
+    // versions keep the manifest, which is unambiguous.
+    const fileBlock = hasMultipleOptions ? '' : `Approved version: ${fileLine}\n`
     return (
-      `Approved by ${actorName}${recipientSuffix}${optionSuffix}.\n\n` +
+      `Approved by ${actorName}${recipientSuffix}.\n\n` +
       commentBlock +
-      `Approved version: ${fileLine}\n` +
+      fileBlock +
       urlLine +
       `— Posted via the proof viewer`
     )
@@ -1351,6 +1367,11 @@ Deno.serve(async (req) => {
       (matResult.data as { option_label: string | null } | null)?.option_label ?? null
   }
 
+  // 2+ options = a real finish/species switcher on this version; the
+  // approve-branch copy drops the finish suffix + file manifest in
+  // that case (see buildCustomerThreadText).
+  const hasMultipleOptions = (v.material_options?.length ?? 0) >= 2
+
   const text = buildCustomerThreadText(
     eventType,
     actorName,
@@ -1361,6 +1382,7 @@ Deno.serve(async (req) => {
     optionDisplayLabel,
     optionDimensionLabel,
     variantDisplayName,
+    hasMultipleOptions,
   )
 
   // Token + ownership ids carry forward into the confirmation-reply

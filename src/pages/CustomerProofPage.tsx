@@ -2408,26 +2408,20 @@ export default function CustomerProofPage() {
                 V2 (was a full-width top banner in V1) so it sits
                 next to the customer card it qualifies. */}
             {heroApprovalStrip && (() => {
-              const total = versionImages[activeVersion.id]?.length ?? 0
               const isApprovedKind = heroApprovalStrip.kind === 'approved'
               const pillColour: PillColour = isApprovedKind ? 'in-stock' : 'allocated'
               const label = isApprovedKind ? 'Approved' : 'Partially approved'
-              const detailVisible = isApprovedKind
-                ? [
-                    heroApprovalStrip.dateLabel ? `Signed off ${heroApprovalStrip.dateLabel}` : 'Signed off',
-                    total > 0 ? `${total} / ${total} proof${total === 1 ? '' : 's'}` : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')
+              // Approved → just the sign-off date. The old "N / N
+              // proofs" suffix counted image files (sides × finish
+              // previews), so one card offered in three finishes read
+              // as "6 / 6 proofs" — misleading: the finishes are
+              // previews of a single card, not separate sign-offs, and
+              // the actual finish is settled over email, not here.
+              const detail = isApprovedKind
+                ? (heroApprovalStrip.dateLabel ? `Signed off ${heroApprovalStrip.dateLabel}` : 'Signed off')
                 : 'Some proofs already signed off, others awaiting review'
-              const detailAria = isApprovedKind
-                ? [
-                    heroApprovalStrip.dateLabel ? `Signed off ${heroApprovalStrip.dateLabel}` : 'Signed off',
-                    total > 0 ? `${total} of ${total} proof${total === 1 ? '' : 's'}` : null,
-                  ]
-                    .filter(Boolean)
-                    .join(', ')
-                : 'Some proofs already signed off, others awaiting review'
+              const detailVisible = detail
+              const detailAria = detail
               // Approved → loud "signed off" card: filled in-stock
               // register, a check medallion, and the status promoted
               // from an 11px pill to a heading. Partially-approved keeps
