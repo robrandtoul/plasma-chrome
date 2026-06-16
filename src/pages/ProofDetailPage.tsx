@@ -32,7 +32,7 @@ import {
   viewedStateTitle,
   type ViewedState,
 } from '../lib/viewedState'
-import { proofBucket, type BucketInput } from '../lib/dashboardGrouping'
+import { proofBucket, isCustomerReplied, type BucketInput } from '../lib/dashboardGrouping'
 import {
   sentEvidenceAt,
   buildFunnel,
@@ -1514,6 +1514,15 @@ export default function ProofDetailPage() {
         viewCount: currentViews.length,
         lastViewedAt: currentViews[0]?.viewed_at ?? null,
         responded: currentResponse,
+        // Mirror the header's "Replied by email" pill: when the customer
+        // replied on the Help Scout conversation (and we haven't responded
+        // since), the funnel's Responded step reads that reply instead of
+        // "awaiting reply". Same isCustomerReplied predicate proofBucket uses,
+        // so the two can't disagree.
+        emailRepliedAt:
+          bucketRow && isCustomerReplied(bucketRow)
+            ? bucketRow.helpscout_last_customer_reply_at
+            : null,
       })
     : []
 

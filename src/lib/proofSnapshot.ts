@@ -52,6 +52,12 @@ export interface FunnelInput {
   viewCount: number
   lastViewedAt: string | null
   responded: { kind: RespondedKind; at: string } | null
+  /** Help Scout customer email-reply timestamp scoped to this round (the
+   *  same signal the dashboard's "Replied by email" pill uses). Counts as a
+   *  response when there's no in-app approve/change-request, so the funnel
+   *  doesn't read "awaiting reply" while the header says the customer
+   *  replied. Null/omitted when there's no qualifying email reply. */
+  emailRepliedAt?: string | null
 }
 
 const RESPONDED_NOTE: Record<RespondedKind, string> = {
@@ -63,7 +69,13 @@ const RESPONDED_NOTE: Record<RespondedKind, string> = {
 export function buildFunnel(i: FunnelInput): FunnelStep[] {
   const sentState: FunnelState = i.sentAt ? 'done' : 'pending'
   const viewedState: FunnelState = i.viewCount > 0 ? 'done' : i.sentAt ? 'active' : 'pending'
-  const respondedState: FunnelState = i.responded ? 'done' : i.viewCount > 0 ? 'active' : 'pending'
+  // An in-app approve/change-request is the strongest "responded" signal;
+  // failing that, a Help Scout email reply (emailRepliedAt) also counts as a
+  // response, so the funnel agrees with the header's "Replied by email" pill
+  // instead of being stuck on "awaiting reply". In-app wins when both exist —
+  // it's the more specific outcome (approved vs changes).
+  const respondedState: FunnelState =
+    i.responded || i.emailRepliedAt ? 'done' : i.viewCount > 0 ? 'active' : 'pending'
 
   return [
     {
@@ -85,7 +97,13 @@ export function buildFunnel(i: FunnelInput): FunnelStep[] {
       label: 'Responded',
       state: respondedState,
       at: i.responded?.at ?? null,
-      note: i.responded ? RESPONDED_NOTE[i.responded.kind] : i.viewCount > 0 ? 'awaiting reply' : null,
+      note: i.responded
+        ? RESPONDED_NOTE[i.responded.kind]
+        : i.emailRepliedAt
+          ? 'replied by email'
+          : i.viewCount > 0
+            ? 'awaiting reply'
+            : null,
     },
   ]
 }

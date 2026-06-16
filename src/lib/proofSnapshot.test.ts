@@ -107,6 +107,42 @@ test('funnel: changes requested → responded done with a label', () => {
   assertEqual(steps[2].at, '2026-06-13T09:00:00Z')
 })
 
+test('funnel: customer replied by email, no in-app response → responded done + "replied by email"', () => {
+  const steps = buildFunnel({
+    sentAt: '2026-06-11T10:00:00Z',
+    viewCount: 2,
+    lastViewedAt: '2026-06-12T14:00:00Z',
+    responded: null,
+    emailRepliedAt: '2026-06-13T09:00:00Z',
+  })
+  assertEqual(steps.map((s) => s.state), ['done', 'done', 'done'])
+  assertEqual(steps[2].note, 'replied by email')
+})
+
+test('funnel: an email reply marks responded done even before a view lands', () => {
+  const steps = buildFunnel({
+    sentAt: '2026-06-11T10:00:00Z',
+    viewCount: 0,
+    lastViewedAt: null,
+    responded: null,
+    emailRepliedAt: '2026-06-13T09:00:00Z',
+  })
+  assertEqual(steps[2].state, 'done')
+  assertEqual(steps[2].note, 'replied by email')
+})
+
+test('funnel: in-app response wins over an email reply (more specific outcome)', () => {
+  const steps = buildFunnel({
+    sentAt: '2026-06-11T10:00:00Z',
+    viewCount: 2,
+    lastViewedAt: '2026-06-12T14:00:00Z',
+    responded: { kind: 'approved', at: '2026-06-13T09:00:00Z' },
+    emailRepliedAt: '2026-06-13T12:00:00Z',
+  })
+  assertEqual(steps[2].note, 'approved')
+  assertEqual(steps[2].at, '2026-06-13T09:00:00Z')
+})
+
 // ── stat cards ──────────────────────────────────────────────────────────────────
 
 test('ageDays floors to whole days and never goes negative', () => {
