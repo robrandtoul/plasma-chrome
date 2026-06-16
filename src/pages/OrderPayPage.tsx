@@ -73,14 +73,26 @@ function loadStripeJs(): Promise<((key: string) => StripeLike) | null> {
   })
 }
 
-// Minimal shapes of the bits of Stripe.js embedded checkout we use — avoids a
-// bundled @stripe/stripe-js dependency (Stripe.js is loaded from their CDN).
-interface EmbeddedCheckoutInstance {
+// Minimal shapes of the bits of Stripe.js Elements we use — avoids a bundled
+// @stripe/stripe-js dependency (Stripe.js is loaded from their CDN). We build
+// our own checkout layout and mount Stripe's Payment / Address / Link elements
+// into it, then confirm the PaymentIntent.
+interface StripeElementLike {
   mount: (selector: string) => void
-  destroy: () => void
+  unmount?: () => void
+}
+interface StripeElementsLike {
+  create: (type: string, options?: Record<string, unknown>) => StripeElementLike
+}
+interface StripeConfirmResult {
+  error?: { message?: string }
 }
 interface StripeLike {
-  initEmbeddedCheckout: (opts: { clientSecret: string }) => Promise<EmbeddedCheckoutInstance>
+  elements: (options: { clientSecret: string; appearance?: Record<string, unknown> }) => StripeElementsLike
+  confirmPayment: (options: {
+    elements: StripeElementsLike
+    confirmParams: { return_url: string }
+  }) => Promise<StripeConfirmResult>
 }
 
 export default function OrderPayPage() {
@@ -134,13 +146,20 @@ export default function OrderPayPage() {
   const [notFound, setNotFound] = useState(false)
   const [paying, setPaying] = useState(false)
   const [payError, setPayError] = useState<string | null>(null)
-  // Embedded checkout: once the session is created, this holds the client
-  // secret + publishable key; an effect mounts Stripe's form into the page.
-  const [checkout, setCheckout] = useState<{ clientSecret: string; pk: string } | null>(null)
-  // True once Stripe's iframe is mounted, so we can show a loading state in the
-  // reserved space until then (avoids a collapse-then-grow jump).
+  // Custom checkout (Stripe Elements): once the PaymentIntent is created, this
+  // holds the client secret, publishable key, and the authoritative total; an
+  // effect mounts the Payment / Address / Link elements into our own layout.
+  const [checkout, setCheckout] = useState<{ clientSecret: string; pk: string; amount: number; currency: Currency } | null>(null)
+  // True once the elements are mounted (drives the loading state).
   const [formMounted, setFormMounted] = useState(false)
+  // True while confirmPayment is in flight, + any inline confirm error.
+  const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
   const mountWrapRef = useRef<HTMLDivElement | null>(null)
+  // Held so the Pay button's handler can call confirmPayment on the same
+  // Stripe + Elements instances the mount effect created.
+  const stripeRef = useRef<StripeLike | null>(null)
+  const elementsRef = useRef<StripeElementsLike | null>(null)
   // Set by Stripe's success_url redirect. Optimistic until the Step 5
   // webhook flips order.status to 'paid'; a later reload shows the real
   // paid state from the DB.
@@ -161,7 +180,7 @@ export default function OrderPayPage() {
             .filter((p) => Number.isFinite(p.quantity) && p.quantity > 0)
         : []
     try {
-      const { data, error } = await supabase.functions.invoke<{ client_secret?: string; publishable_key?: string; error?: string; message?: string }>(
+      const { data, error } = await supabase.functions.invoke<{ client_secret?: string; publishable_key?: string; amount?: number; currency?: Currency; error?: string; message?: string }>(
         'create-checkout-session',
         {
           body: {
@@ -175,7 +194,7 @@ export default function OrderPayPage() {
           },
         },
       )
-      if (error || !data || data.error || !data.client_secret || !data.publishable_key) {
+      if (error || !data || data.error || !data.client_secret || !data.publishable_key || data.amount == null || !data.currency) {
         // On a non-2xx, supabase-js sets `error` (FunctionsHttpError) and
         // leaves `data` null — the friendly message we returned lives on the
         // error's Response body, so dig it out before falling back.
@@ -193,22 +212,23 @@ export default function OrderPayPage() {
         setPaying(false)
         return
       }
-      // Reveal the embedded checkout form in-page (the mount effect below
-      // picks this up). Keep `paying` true so the button stays disabled while
-      // the form loads in its place.
-      setCheckout({ clientSecret: data.client_secret, pk: data.publishable_key })
+      // Switch to the in-page checkout (the mount effect below renders the
+      // Elements). Keep `paying` true so the button stays disabled in the
+      // moment before the layout swaps.
+      setCheckout({ clientSecret: data.client_secret, pk: data.publishable_key, amount: data.amount, currency: data.currency })
     } catch {
       setPayError('We couldn’t start checkout. Please reply to the email you received and we’ll help.')
       setPaying(false)
     }
   }
 
-  // Mount Stripe's embedded checkout once we have a client secret. Loads
-  // Stripe.js from the CDN, inits the embedded instance, and mounts it into the
-  // page. Tears down on unmount / re-create so we never leak an iframe.
+  // Mount Stripe Elements once we have a PaymentIntent client secret. Loads
+  // Stripe.js from the CDN, creates the Elements group, and mounts the Link
+  // (email), Address (shipping) and Payment elements into our own layout. The
+  // Address + Link elements ride the confirmPayment call automatically, so the
+  // webhook gets the delivery address + email on payment_intent.succeeded.
   useEffect(() => {
     if (!checkout) return
-    let instance: EmbeddedCheckoutInstance | null = null
     let cancelled = false
     void (async () => {
       const StripeFactory = await loadStripeJs()
@@ -221,12 +241,14 @@ export default function OrderPayPage() {
       }
       try {
         const stripe = StripeFactory(checkout.pk)
-        instance = await stripe.initEmbeddedCheckout({ clientSecret: checkout.clientSecret })
-        if (cancelled) { instance.destroy(); return }
-        instance.mount('#embedded-checkout-mount')
+        const elements = stripe.elements({ clientSecret: checkout.clientSecret, appearance: { theme: 'stripe' } })
+        stripeRef.current = stripe
+        elementsRef.current = elements
+        elements.create('linkAuthentication').mount('#link-auth')
+        elements.create('address', { mode: 'shipping' }).mount('#address-element')
+        elements.create('payment').mount('#payment-element')
+        if (cancelled) return
         setFormMounted(true)
-        // Bring the form into view (it mounts below the recap) so the customer
-        // sees it immediately rather than appearing to have nothing happen.
         requestAnimationFrame(() => {
           mountWrapRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
         })
@@ -239,9 +261,29 @@ export default function OrderPayPage() {
     return () => {
       cancelled = true
       setFormMounted(false)
-      if (instance) { try { instance.destroy() } catch { /* already gone */ } }
+      stripeRef.current = null
+      elementsRef.current = null
     }
   }, [checkout])
+
+  // Confirm the payment. On success Stripe redirects to return_url (?paid=1);
+  // only an immediate validation/card error returns here, which we surface
+  // inline so the customer can fix it without losing the page.
+  async function confirmPay() {
+    if (!stripeRef.current || !elementsRef.current || !id || !token) return
+    setSubmitting(true)
+    setFormError(null)
+    const { error } = await stripeRef.current.confirmPayment({
+      elements: elementsRef.current,
+      confirmParams: {
+        return_url: `${window.location.origin}/order/${id}?token=${encodeURIComponent(token)}&paid=1`,
+      },
+    })
+    if (error) {
+      setFormError(error.message ?? 'Your payment couldn’t be completed. Please check your details and try again.')
+      setSubmitting(false)
+    }
+  }
 
   // Customer-accent brand ramp while this page is mounted (same trick
   // as CustomerProofPage), cleared on unmount.
@@ -603,28 +645,75 @@ export default function OrderPayPage() {
         ? payTotalForQty(displayQty)
         : null
 
-  // ── Embedded checkout (wide) ──────────────────────────────────────
-  // Once the customer has clicked through to payment, give Stripe's embedded
-  // checkout a WIDE container so it renders its two-column layout (order
-  // summary expanded on the left, payment on the right) instead of the cramped
-  // single column + "View details" collapse it falls back to in a narrow box.
+  // ── Custom checkout (Stripe Elements, two-column) ─────────────────
+  // Once the customer clicks through to payment, we render our own checkout:
+  // the order summary + approved artwork on the left, Stripe's Payment / Address
+  // / Link elements on the right. The customer never leaves this page.
   if (canCheckout && checkout) {
     return (
       <div className="flex min-h-screen justify-center bg-canvas px-4 py-8">
-        <div className="w-full max-w-4xl">
+        <div className="w-full max-w-5xl">
           <p className="eyebrow">Complete your order</p>
           <h1 className="mt-1 text-xl font-semibold text-ink">
             {company ? company : 'Your order'}
           </h1>
           <p className="mt-1 text-sm text-ink-soft">Reference {order.payment_reference}</p>
-          <div ref={mountWrapRef} className="relative mt-6 min-h-[520px]">
-            {!formMounted && (
-              <div className="absolute inset-x-0 top-20 flex flex-col items-center gap-2 text-ink-mute">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-ink" />
-                <span className="text-sm">Loading secure payment…</span>
+
+          <div ref={mountWrapRef} className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
+            {/* Left — order summary + approved artwork */}
+            <PanelShell className="self-start">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Order summary</p>
+              {thumbs.length > 0 && (
+                <div className={`mt-3 grid gap-3 ${thumbs.length > 1 ? 'sm:grid-cols-2' : ''}`}>
+                  {thumbs.map((img) => (
+                    <img key={img.id} src={img.signed_url} alt="Approved proof artwork" className="w-full rounded-lg bg-surface ring-1 ring-line" />
+                  ))}
+                </div>
+              )}
+              {spec && (
+                <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+                  <dt className="text-ink-mute">Material</dt>
+                  <dd className="text-ink">{spec.material}</dd>
+                  {spec.variant && (<><dt className="text-ink-mute">Option</dt><dd className="text-ink">{spec.variant}</dd></>)}
+                  {spec.finish && (<><dt className="text-ink-mute">Finish</dt><dd className="text-ink">{spec.finish}</dd></>)}
+                  {spec.inks.length > 0 && (<><dt className="text-ink-mute">Ink</dt><dd className="text-ink">{spec.inks.join(', ')}</dd></>)}
+                </dl>
+              )}
+              <div className="mt-4 flex items-center justify-between border-t border-line pt-4 text-base">
+                <span className="font-semibold text-ink">Total</span>
+                <span className="font-semibold text-ink">{formatPrice(checkout.amount, checkout.currency)}</span>
               </div>
-            )}
-            <div id="embedded-checkout-mount" />
+              {checkout.currency === 'GBP' && <p className="mt-1 text-[12px] text-ink-mute">Includes VAT.</p>}
+            </PanelShell>
+
+            {/* Right — payment form (Stripe Elements mount points) */}
+            <PanelShell className="relative min-h-[440px]">
+              {!formMounted && (
+                <div className="absolute inset-x-0 top-24 flex flex-col items-center gap-2 text-ink-mute">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-ink" />
+                  <span className="text-sm">Loading secure payment…</span>
+                </div>
+              )}
+              <div className="space-y-4">
+                <div id="link-auth" />
+                <div id="address-element" />
+                <div id="payment-element" />
+              </div>
+              {formError && (
+                <div className="mt-3 rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{formError}</div>
+              )}
+              <button
+                type="button"
+                onClick={() => void confirmPay()}
+                disabled={submitting || !formMounted}
+                className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-on-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {submitting ? 'Processing…' : `Pay ${formatPrice(checkout.amount, checkout.currency)}`}
+              </button>
+              <p className="mt-2 text-center text-[12px] text-ink-mute">
+                Secured by Stripe.{checkout.currency === 'GBP' ? ' Includes VAT.' : ''}
+              </p>
+            </PanelShell>
           </div>
         </div>
       </div>

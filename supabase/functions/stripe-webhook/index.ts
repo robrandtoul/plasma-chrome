@@ -131,15 +131,57 @@ Deno.serve(async (req) => {
     return new Response('Invalid JSON', { status: 400 })
   }
 
-  // We only care about a completed, paid checkout for now.
-  if (event.type !== 'checkout.session.completed') {
-    return new Response('ok', { status: 200 })
-  }
-  const session = event.data?.object ?? {}
-  const orderId = (session.metadata as Record<string, unknown> | undefined)?.order_id as string | undefined
-  const paymentStatus = session.payment_status as string | undefined
-  if (!orderId || paymentStatus !== 'paid') {
-    // Acknowledge so Stripe doesn't retry; nothing for us to do.
+  // Two event types fulfil an order, normalised into one shape below:
+  //   * payment_intent.succeeded   — the current Stripe Elements pay-page.
+  //   * checkout.session.completed — the older hosted/embedded Checkout, kept
+  //     so any in-flight session still fulfils.
+  // We capture: order id, delivery name/email/address (StripeAddr shape:
+  // state + postal_code), the charged total (major units), currency, and the
+  // shared payment reference.
+  let orderId: string | undefined
+  let reference: string | undefined
+  let currencyUpper = 'GBP'
+  let amountMajor: number | undefined
+  let shipName: string | null = null
+  let shipEmail: string | null = null
+  let shipAddr: StripeAddr | null = null
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data?.object ?? {}
+    orderId = (session.metadata as Record<string, unknown> | undefined)?.order_id as string | undefined
+    const paymentStatus = session.payment_status as string | undefined
+    if (!orderId || paymentStatus !== 'paid') return new Response('ok', { status: 200 })
+    const ship = extractShipping(session)
+    shipName = ship.name
+    shipEmail = ship.email
+    shipAddr = ship.address
+      ? {
+          line1: ship.address.line1,
+          line2: ship.address.line2,
+          city: ship.address.city,
+          state: ship.address.region,
+          postal_code: ship.address.postal_code,
+          country: ship.address.country,
+        }
+      : null
+    reference = (session.metadata as { payment_reference?: string } | undefined)?.payment_reference ?? orderId
+    currencyUpper = String(session.currency ?? 'gbp').toUpperCase()
+    const amt = session.amount_total as number | undefined
+    amountMajor = typeof amt === 'number' ? amt / 100 : undefined
+  } else if (event.type === 'payment_intent.succeeded') {
+    const pi = event.data?.object ?? {}
+    orderId = (pi.metadata as Record<string, unknown> | undefined)?.order_id as string | undefined
+    if (!orderId) return new Response('ok', { status: 200 })
+    const shipping = pi.shipping as { name?: string; address?: StripeAddr } | undefined
+    shipName = shipping?.name ?? null
+    shipEmail = (pi.receipt_email as string | undefined) ?? null
+    shipAddr = shipping?.address ?? null
+    reference = (pi.metadata as { payment_reference?: string } | undefined)?.payment_reference ?? orderId
+    currencyUpper = String(pi.currency ?? 'gbp').toUpperCase()
+    const amt = pi.amount as number | undefined
+    amountMajor = typeof amt === 'number' ? amt / 100 : undefined
+  } else {
+    // Not an event we fulfil on — acknowledge so Stripe doesn't retry.
     return new Response('ok', { status: 200 })
   }
 
@@ -149,9 +191,18 @@ Deno.serve(async (req) => {
     { db: { schema: 'proofs' }, auth: { persistSession: false, autoRefreshToken: false } },
   )
 
-  // Delivery details for the team's fulfilment surface (Step 6),
-  // persisted atomically with the sent → paid flip below.
-  const ship = extractShipping(session)
+  // Delivery details for the team's fulfilment surface (Step 6), stored in our
+  // jsonb shape (region + postal_code), persisted with the sent → paid flip.
+  const storedAddress = shipAddr
+    ? {
+        line1: shipAddr.line1 ?? null,
+        line2: shipAddr.line2 ?? null,
+        city: shipAddr.city ?? null,
+        region: shipAddr.state ?? null,
+        postal_code: shipAddr.postal_code ?? null,
+        country: shipAddr.country ?? null,
+      }
+    : null
 
   // Idempotent: only flip from 'sent' → 'paid'. A Stripe retry (or a
   // duplicate event) finds the row already paid and updates nothing.
@@ -160,9 +211,9 @@ Deno.serve(async (req) => {
     .update({
       status: 'paid',
       paid_at: new Date().toISOString(),
-      ship_to_name: ship.name,
-      ship_to_email: ship.email,
-      ship_to_address: ship.address,
+      ship_to_name: shipName,
+      ship_to_email: shipEmail,
+      ship_to_address: storedAddress,
       updated_at: new Date().toISOString(),
     })
     .eq('id', orderId)
@@ -180,13 +231,10 @@ Deno.serve(async (req) => {
   // order is already paid, and Stripe must get its 200).
   try {
     const ctx = await getAccessContext(admin)
-    const amountTotal = session.amount_total as number | undefined
-    if (ctx && typeof amountTotal === 'number') {
-      const cust = (session.customer_details ?? {}) as { name?: string; email?: string }
-      const meta = (session.metadata ?? {}) as { payment_reference?: string }
-      const reference = meta.payment_reference ?? orderId
-      const currency = String(session.currency ?? 'gbp').toUpperCase()
-      const expectedTotal = amountTotal / 100
+    if (ctx && typeof amountMajor === 'number') {
+      const referenceSafe = reference ?? orderId
+      const currency = currencyUpper
+      const expectedTotal = amountMajor
 
       // Pull the order's price breakdown (stamped at checkout) so the
       // invoice mirrors Xero's usual line split: product (with its
@@ -197,25 +245,18 @@ Deno.serve(async (req) => {
         .eq('id', orderId)
         .single()
 
-      // Address for the Xero contact (delivery → billing fallback) + the
-      // delivery country that drives domestic vs international shipping. Stripe
-      // exposes the collected shipping address under shipping_details (older
-      // API) or collected_information.shipping_details (newer); fall back to the
-      // billing address, then (inside the line builder) to the order currency.
-      const shipDetails =
-        (session.shipping_details as { address?: StripeAddr } | undefined) ??
-        ((session.collected_information as { shipping_details?: { address?: StripeAddr } } | undefined)?.shipping_details)
-      const billingAddr = (session.customer_details as { address?: StripeAddr } | undefined)?.address ?? null
-      const addr = (shipDetails?.address ?? null) ?? billingAddr
-      const country = addr?.country ?? null
-      const invoiceAddress = addr
+      // Address for the Xero contact + the delivery country that drives
+      // domestic vs international shipping. Normalised from whichever event
+      // fulfilled this order (Elements Address element, or Checkout's address).
+      const country = shipAddr?.country ?? null
+      const invoiceAddress = shipAddr
         ? {
-            line1: addr.line1 ?? null,
-            line2: addr.line2 ?? null,
-            city: addr.city ?? null,
-            region: addr.state ?? null,
-            postalCode: addr.postal_code ?? null,
-            country: addr.country ?? null,
+            line1: shipAddr.line1 ?? null,
+            line2: shipAddr.line2 ?? null,
+            city: shipAddr.city ?? null,
+            region: shipAddr.state ?? null,
+            postalCode: shipAddr.postal_code ?? null,
+            country: shipAddr.country ?? null,
           }
         : null
 
@@ -236,16 +277,16 @@ Deno.serve(async (req) => {
           amount_personalisation: null,
           amount_shipping: null,
         },
-        { reference, currency, expectedTotal, country },
+        { reference: referenceSafe, currency, expectedTotal, country },
       )
 
-      const contactName = cust.name || cust.email || 'Customer'
-      const contactEmail = cust.email ?? null
+      const contactName = shipName || shipEmail || 'Customer'
+      const contactEmail = shipEmail
       const created = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
         contactName,
         contactEmail,
         currency,
-        reference,
+        reference: referenceSafe,
         lines,
         address: invoiceAddress,
       })
@@ -269,8 +310,8 @@ Deno.serve(async (req) => {
           contactName,
           contactEmail,
           currency,
-          reference,
-          lines: [{ description: `Order ${reference}`, amount: expectedTotal, itemCode: null }],
+          reference: referenceSafe,
+          lines: [{ description: `Order ${referenceSafe}`, amount: expectedTotal, itemCode: null }],
           address: invoiceAddress,
         })
         invoiceId = retry.invoiceId

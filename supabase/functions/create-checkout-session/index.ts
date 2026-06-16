@@ -506,111 +506,27 @@ Deno.serve(async (req) => {
   const currency = String(order.currency).toLowerCase()
   const ref = order.payment_reference ?? order.id
 
-  // Artwork thumbnail for the Stripe summary's left column — the proof's
-  // current version's first non-QR image, signed long enough to outlive the
-  // checkout session (48h > the 24h session). Best-effort: any failure just
-  // means the summary renders without a picture.
-  let artworkUrl: string | null = null
-  if (order.proof_id) {
-    try {
-      const { data: cv } = await admin
-        .from('proof_versions')
-        .select('id')
-        .eq('proof_id', order.proof_id)
-        .eq('is_current', true)
-        .maybeSingle()
-      if (cv?.id) {
-        const { data: img } = await admin
-          .from('proof_version_images')
-          .select('image_path')
-          .eq('proof_version_id', cv.id)
-          .eq('is_qr_code', false)
-          .order('sort_order')
-          .limit(1)
-          .maybeSingle()
-        if (img?.image_path) {
-          const { data: signed } = await admin.storage
-            .from('proof-images')
-            .createSignedUrl(img.image_path as string, 60 * 60 * 48)
-          artworkUrl = signed?.signedUrl ?? null
-        }
-      }
-    } catch (e) {
-      console.error('[create-checkout-session] artwork sign failed:', (e as Error).message)
-    }
-  }
-
-  // Build the order summary lines. Itemised (product / tooling / personalisation
-  // / shipping) with descriptive names + the artwork image, so Stripe's left-hand
-  // summary reads as a real order rather than one opaque line. The goods pieces
-  // MUST sum to `goods` (the authoritative total) or we collapse to a single
-  // line so the charge can never drift from what was priced.
-  type Piece = { name: string; amount: number; image?: string | null; description?: string }
-  const pieces: Piece[] = []
-  if (order.custom_quote_total != null) {
-    pieces.push({ name: productLabel, amount: goods, image: artworkUrl, description: `Order ${ref}` })
-  } else {
-    pieces.push({ name: productLabel || 'Plasma cards', amount: amountCards ?? goods, image: artworkUrl, description: `Order ${ref}` })
-    if ((amountTooling ?? 0) > 0) {
-      const n = order.names_count ?? 1
-      pieces.push({ name: n > 1 ? `Extra tooling (split between ${n} names)` : 'Extra tooling', amount: amountTooling as number })
-    }
-    if ((amountPersonalisation ?? 0) > 0) {
-      pieces.push({ name: 'Personalisation', amount: amountPersonalisation as number })
-    }
-  }
-  const piecesSum = Math.round(pieces.reduce((a, p) => a + p.amount, 0) * 100) / 100
-  if (Math.abs(piecesSum - goods) > 0.01) {
-    // Shouldn't happen (pieces are built from the same figures as `goods`), but
-    // never charge a drifted total — fall back to one clean line.
-    pieces.length = 0
-    pieces.push({ name: productLabel || `Order ${ref}`, amount: goods, image: artworkUrl, description: `Order ${ref}` })
-  }
-  if (shipping > 0) pieces.push({ name: 'Shipping', amount: shipping })
-
-  // ── Build the Stripe Checkout session (form-encoded) ─────────────
-  // Embedded ui_mode: the checkout form mounts inside our own pay-page rather
-  // than redirecting to Stripe's hosted page, so the customer stays on a
-  // Plasma-branded page. On completion Stripe redirects the top window to
-  // return_url (?paid=1 → our optimistic thank-you screen).
+  // ── Create the Stripe PaymentIntent ──────────────────────────────
+  // We use a PaymentIntent (not a Checkout Session) because the pay-page mounts
+  // Stripe Elements in our own two-column layout rather than Stripe's prebuilt
+  // checkout. The amount is the authoritative server-computed total (goods +
+  // shipping) in the order's currency; currency is locked here, so there's no
+  // adaptive-pricing currency swap. The shipping address + email are collected
+  // by the Address/Link Elements on the page and ride the confirmPayment call,
+  // surfacing on payment_intent.succeeded for the webhook's fulfilment + Xero.
+  const total = Math.round((goods + shipping) * 100) / 100
   const params = new URLSearchParams()
-  params.set('mode', 'payment')
-  params.set('ui_mode', 'embedded')
-  params.set('submit_type', 'pay')
-  params.set('return_url', `${origin}/order/${order.id}?token=${encodeURIComponent(token)}&paid=1`)
-  // Lock the checkout to the order's currency. Without this, Stripe's
-  // account-level Adaptive Pricing offers the customer their local currency
-  // with a conversion fee — wrong for an order we've deliberately priced and
-  // locked in one currency (e.g. a GBP order showing USD + a 3.75% fee).
-  params.set('adaptive_pricing[enabled]', 'false')
-  // A short note above the pay button (branding + reassurance).
-  params.set('custom_text[submit][message]', 'Thank you — we’ll begin production as soon as your payment is confirmed.')
-  // client_reference_id + metadata carry the shared reference so the
-  // Step 5 webhook (and the Stripe→Xero reconcile) can match the
-  // payment back to this order.
-  params.set('client_reference_id', ref)
+  params.set('amount', String(minorUnits(total)))
+  params.set('currency', currency)
+  params.set('automatic_payment_methods[enabled]', 'true')
+  params.set('description', productLabel || `Order ${ref}`)
   params.set('metadata[order_id]', order.id)
   params.set('metadata[payment_reference]', ref)
   if (resolvedQuantity != null) params.set('metadata[quantity]', String(resolvedQuantity))
-  // Collect the delivery address on Stripe's page (fulfilment needs it).
-  for (const [i, c] of SHIP_COUNTRY_CODES.entries()) {
-    params.set(`shipping_address_collection[allowed_countries][${i}]`, c)
-  }
-  // Emit the summary lines. Each is quantity 1 with the full line total as the
-  // unit amount (the real card count rides in the product NAME, not Stripe's
-  // qty column, so Stripe can't re-round it away from the charged figure).
-  pieces.forEach((p, i) => {
-    params.set(`line_items[${i}][quantity]`, '1')
-    params.set(`line_items[${i}][price_data][currency]`, currency)
-    params.set(`line_items[${i}][price_data][unit_amount]`, String(minorUnits(p.amount)))
-    params.set(`line_items[${i}][price_data][product_data][name]`, p.name || 'Plasma cards')
-    if (p.description) params.set(`line_items[${i}][price_data][product_data][description]`, p.description)
-    if (p.image) params.set(`line_items[${i}][price_data][product_data][images][0]`, p.image)
-  })
 
   let stripeRes: Response
   try {
-    stripeRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+    stripeRes = await fetch('https://api.stripe.com/v1/payment_intents', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${stripeKey}`,
@@ -622,14 +538,21 @@ Deno.serve(async (req) => {
     return json({ error: 'Could not reach the payment provider. Please try again.' }, 502)
   }
 
-  const session = await stripeRes.json().catch(() => null)
-  if (!stripeRes.ok || !session?.client_secret) {
+  const intent = await stripeRes.json().catch(() => null)
+  if (!stripeRes.ok || !intent?.client_secret) {
     // Full Stripe error stays in the function logs for diagnosis; the customer
     // sees only a friendly message (never raw Stripe text).
-    console.error('[create-checkout-session] stripe error:', JSON.stringify(session))
+    console.error('[create-checkout-session] stripe error:', JSON.stringify(intent))
     return json({ error: 'Could not start checkout. Please try again, or reply to your email.' }, 502)
   }
 
-  // The browser mounts the embedded checkout with these two values.
-  return json({ client_secret: session.client_secret as string, publishable_key: publishableKey })
+  // The browser mounts Stripe Elements with the client secret + publishable
+  // key; amount + currency let the pay-page summary show the exact charged
+  // total (including server-rated shipping the client couldn't know upfront).
+  return json({
+    client_secret: intent.client_secret as string,
+    publishable_key: publishableKey,
+    amount: total,
+    currency: order.currency,
+  })
 })
