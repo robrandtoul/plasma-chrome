@@ -306,6 +306,14 @@ Deno.serve(async (req) => {
         usage_output: result.usage.outputTokens,
         usage_cache_write: result.usage.cacheWriteTokens,
         usage_cache_read: result.usage.cacheReadTokens,
+        // Per-call cost split: the triage call's own usage + the model it ran on
+        // (the setting, or null = same as the draft model). Lets the panel price
+        // triage at its own rate so a cheaper triage model shows the real saving.
+        usage_triage_input: result.triageUsage?.inputTokens ?? null,
+        usage_triage_output: result.triageUsage?.outputTokens ?? null,
+        usage_triage_cache_write: result.triageUsage?.cacheWriteTokens ?? null,
+        usage_triage_cache_read: result.triageUsage?.cacheReadTokens ?? null,
+        triage_model: triageModel ?? null,
         hs_draft_thread_id: hsDraftThreadId,
         hs_note_thread_id: hsNoteThreadId,
         completed_at: new Date().toISOString(),

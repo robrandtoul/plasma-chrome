@@ -150,6 +150,8 @@ export async function runPipeline(
     triageModel,
   )
   addUsage(usage, classify.usage)
+  // The triage call's own usage — priced at the (possibly cheaper) triage model.
+  const triageUsage = classify.usage
   const classification = classify.result
 
   if (!classification.is_genuine_customer_email) {
@@ -163,6 +165,7 @@ export async function runPipeline(
       abstainOrBlockReason: 'not a genuine customer email',
       noteWarnings: [],
       usage,
+      triageUsage,
     }
   }
 
@@ -185,6 +188,7 @@ export async function runPipeline(
         : `category outside pilot scope (${classification.category})`,
       noteWarnings: [],
       usage,
+      triageUsage,
     }
   }
 
@@ -215,6 +219,7 @@ export async function runPipeline(
       abstainOrBlockReason: draft.abstain_reason ?? 'model abstained without a reason',
       noteWarnings: [],
       usage,
+      triageUsage,
     }
   }
 
@@ -244,5 +249,6 @@ export async function runPipeline(
     abstainOrBlockReason: verdict.ok ? null : verdict.reasons.join('; '),
     noteWarnings,
     usage,
+    triageUsage,
   }
 }

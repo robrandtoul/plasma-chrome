@@ -35,6 +35,12 @@ interface DraftRow {
   usage_output: number | null
   usage_cache_read: number | null
   usage_cache_write: number | null
+  usage_triage_input: number | null
+  usage_triage_output: number | null
+  usage_triage_cache_read: number | null
+  usage_triage_cache_write: number | null
+  model: string | null
+  triage_model: string | null
   edit_class: EditClass | null
   edit_similarity: number | null
   sent_body: string | null
@@ -64,23 +70,60 @@ function skipKindMeta(k: SkipKind | null): { label: string; colour: PillColour }
 // visible — see the polling effect below.
 const POLL_MS = 25_000
 
-// Opus 4.8 USD per-million rates; cache read 0.1x, cache write 1.25x.
-const RATE_IN = 5
-const RATE_OUT = 25
-// Token usage → USD. Shared by the per-row cost and the daily spend chart so
-// the rate logic lives in exactly one place.
+// Per-model USD rates per million tokens (from the Claude API pricing
+// reference). Cache read is 0.1x input, cache write 1.25x input (5-minute TTL —
+// the worker's default). Unknown / older model strings fall back to Opus.
+const MODEL_RATES: Record<string, { in: number; out: number }> = {
+  'claude-opus-4-8': { in: 5, out: 25 },
+  'claude-sonnet-4-6': { in: 3, out: 15 },
+  'claude-haiku-4-5-20251001': { in: 1, out: 5 },
+  'claude-haiku-4-5': { in: 1, out: 5 },
+}
+const DEFAULT_RATE = MODEL_RATES['claude-opus-4-8']
+const rateFor = (model: string | null | undefined) => (model && MODEL_RATES[model]) || DEFAULT_RATE
+
+function callCostUsd(input: number, output: number, cacheRead: number, cacheWrite: number, rate: { in: number; out: number }): number {
+  return (
+    (input / 1e6) * rate.in +
+    (output / 1e6) * rate.out +
+    (cacheRead / 1e6) * rate.in * 0.1 +
+    (cacheWrite / 1e6) * rate.in * 1.25
+  )
+}
+
+// A ledger row's token usage. The usage_* columns are the COMBINED triage+draft
+// total; usage_triage_* is the triage call's slice. We price triage at its own
+// model's rate and the remainder (combined - triage) at the draft model's, so a
+// cheaper triage model shows the real saving. Old rows have null triage columns
+// → zero triage tokens → everything priced at the draft model (the old, correct
+// behaviour, since triage then ran on the draft model too).
 interface TokenUsage {
   usage_input: number | null
   usage_output: number | null
   usage_cache_read: number | null
   usage_cache_write: number | null
+  usage_triage_input: number | null
+  usage_triage_output: number | null
+  usage_triage_cache_read: number | null
+  usage_triage_cache_write: number | null
+  model: string | null // the draft model for this row
+  triage_model: string | null // null = triage ran on the draft model
 }
 function costFromUsage(u: TokenUsage): number {
+  const ti = u.usage_triage_input ?? 0
+  const to = u.usage_triage_output ?? 0
+  const tcr = u.usage_triage_cache_read ?? 0
+  const tcw = u.usage_triage_cache_write ?? 0
+  const draftModel = u.model
+  const triageModel = u.triage_model ?? draftModel
+  // Draft = combined minus triage; clamp at 0 against any data oddity.
+  const di = Math.max((u.usage_input ?? 0) - ti, 0)
+  const dout = Math.max((u.usage_output ?? 0) - to, 0)
+  const dcr = Math.max((u.usage_cache_read ?? 0) - tcr, 0)
+  const dcw = Math.max((u.usage_cache_write ?? 0) - tcw, 0)
   return (
-    ((u.usage_input ?? 0) / 1e6) * RATE_IN +
-    ((u.usage_output ?? 0) / 1e6) * RATE_OUT +
-    ((u.usage_cache_read ?? 0) / 1e6) * RATE_IN * 0.1 +
-    ((u.usage_cache_write ?? 0) / 1e6) * RATE_IN * 1.25
+    callCostUsd(ti, to, tcr, tcw, rateFor(triageModel)) +
+    callCostUsd(di, dout, dcr, dcw, rateFor(draftModel))
   )
 }
 function rowCostUsd(r: DraftRow): number {
@@ -250,7 +293,7 @@ export default function AdminAiDraftsPage() {
       supabase
         .from('ai_drafts')
         .select(
-          'id, created_at, category, confidence, state, draft_body, note_body, abstain_or_block_reason, summary, usage_input, usage_output, usage_cache_read, usage_cache_write, edit_class, edit_similarity, sent_body, skip_kind',
+          'id, created_at, category, confidence, state, draft_body, note_body, abstain_or_block_reason, summary, usage_input, usage_output, usage_cache_read, usage_cache_write, usage_triage_input, usage_triage_output, usage_triage_cache_read, usage_triage_cache_write, model, triage_model, edit_class, edit_similarity, sent_body, skip_kind',
         )
         .gte('created_at', since)
         .order('created_at', { ascending: false })
@@ -274,7 +317,7 @@ export default function AdminAiDraftsPage() {
     const since = new Date(Date.now() - SERIES_DAYS * 24 * 60 * 60 * 1000).toISOString()
     const { data, error } = await supabase
       .from('ai_drafts')
-      .select('created_at, usage_input, usage_output, usage_cache_read, usage_cache_write, edit_class')
+      .select('created_at, usage_input, usage_output, usage_cache_read, usage_cache_write, usage_triage_input, usage_triage_output, usage_triage_cache_read, usage_triage_cache_write, model, triage_model, edit_class')
       .gte('created_at', since)
       .order('created_at', { ascending: false })
       .limit(1000)
@@ -587,11 +630,7 @@ export default function AdminAiDraftsPage() {
         <Stat label="No reply needed" value={stats.noReply} hint="suppliers, notifications, etc." />
       </section>
       <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Stat
-          label={`Cost (7d, USD)`}
-          value={`$${stats.cost.toFixed(2)}`}
-          hint={triageModel && triageModel !== 'claude-opus-4-8' ? 'priced at the draft model — real spend is lower' : undefined}
-        />
+        <Stat label={`Cost (7d, USD)`} value={`$${stats.cost.toFixed(2)}`} />
         <Stat label="Decisions" value={stats.total} />
         <Stat
           label="Acceptance"

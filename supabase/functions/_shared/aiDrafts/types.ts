@@ -148,4 +148,13 @@ export interface PipelineResult {
     cacheWriteTokens: number
     cacheReadTokens: number
   }
+  // The triage (classify) call's usage on its own, so the panel can price it at
+  // the triage model's rate (which may be cheaper than the draft model). Absent
+  // when no classify call ran (deterministic pre-filter / artwork-form pre-gate).
+  triageUsage?: {
+    inputTokens: number
+    outputTokens: number
+    cacheWriteTokens: number
+    cacheReadTokens: number
+  }
 }
