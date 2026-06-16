@@ -149,7 +149,13 @@ export default function OrderPayPage() {
   // Custom checkout (Stripe Elements): once the PaymentIntent is created, this
   // holds the client secret, publishable key, and the authoritative total; an
   // effect mounts the Payment / Address / Link elements into our own layout.
-  const [checkout, setCheckout] = useState<{ clientSecret: string; pk: string; amount: number; currency: Currency } | null>(null)
+  const [checkout, setCheckout] = useState<{
+    clientSecret: string
+    pk: string
+    amount: number
+    currency: Currency
+    breakdown: { cards: number; tooling: number; personalisation: number; shipping: number }
+  } | null>(null)
   // True once the elements are mounted (drives the loading state).
   const [formMounted, setFormMounted] = useState(false)
   // True while confirmPayment is in flight, + any inline confirm error.
@@ -180,7 +186,7 @@ export default function OrderPayPage() {
             .filter((p) => Number.isFinite(p.quantity) && p.quantity > 0)
         : []
     try {
-      const { data, error } = await supabase.functions.invoke<{ client_secret?: string; publishable_key?: string; amount?: number; currency?: Currency; error?: string; message?: string }>(
+      const { data, error } = await supabase.functions.invoke<{ client_secret?: string; publishable_key?: string; amount?: number; currency?: Currency; breakdown?: { cards: number; tooling: number; personalisation: number; shipping: number }; error?: string; message?: string }>(
         'create-checkout-session',
         {
           body: {
@@ -215,7 +221,13 @@ export default function OrderPayPage() {
       // Switch to the in-page checkout (the mount effect below renders the
       // Elements). Keep `paying` true so the button stays disabled in the
       // moment before the layout swaps.
-      setCheckout({ clientSecret: data.client_secret, pk: data.publishable_key, amount: data.amount, currency: data.currency })
+      setCheckout({
+        clientSecret: data.client_secret,
+        pk: data.publishable_key,
+        amount: data.amount,
+        currency: data.currency,
+        breakdown: data.breakdown ?? { cards: data.amount, tooling: 0, personalisation: 0, shipping: 0 },
+      })
     } catch {
       setPayError('We couldn’t start checkout. Please reply to the email you received and we’ll help.')
       setPaying(false)
@@ -679,7 +691,23 @@ export default function OrderPayPage() {
                   {spec.inks.length > 0 && (<><dt className="text-ink-mute">Ink</dt><dd className="text-ink">{spec.inks.join(', ')}</dd></>)}
                 </dl>
               )}
-              <div className="mt-4 flex items-center justify-between border-t border-line pt-4 text-base">
+              <div className="mt-4 space-y-1.5 border-t border-line pt-4 text-sm">
+                <Row
+                  label={order.custom_quote_total != null ? 'Agreed price' : 'Cards'}
+                  value={formatPrice(checkout.breakdown.cards, checkout.currency)}
+                />
+                {checkout.breakdown.tooling > 0 && (
+                  <Row label="Tooling" value={formatPrice(checkout.breakdown.tooling, checkout.currency)} />
+                )}
+                {checkout.breakdown.personalisation > 0 && (
+                  <Row label="Personalisation" value={formatPrice(checkout.breakdown.personalisation, checkout.currency)} />
+                )}
+                <Row
+                  label="Shipping"
+                  value={checkout.breakdown.shipping > 0 ? formatPrice(checkout.breakdown.shipping, checkout.currency) : 'Free'}
+                />
+              </div>
+              <div className="mt-3 flex items-center justify-between border-t border-line pt-3 text-base">
                 <span className="font-semibold text-ink">Total</span>
                 <span className="font-semibold text-ink">{formatPrice(checkout.amount, checkout.currency)}</span>
               </div>

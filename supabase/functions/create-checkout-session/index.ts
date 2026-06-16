@@ -547,12 +547,19 @@ Deno.serve(async (req) => {
   }
 
   // The browser mounts Stripe Elements with the client secret + publishable
-  // key; amount + currency let the pay-page summary show the exact charged
-  // total (including server-rated shipping the client couldn't know upfront).
+  // key; amount + currency + breakdown let the pay-page summary show the exact
+  // charged total and its components (cards incl. finish, tooling, personalisation,
+  // shipping) rather than one rolled-up figure.
   return json({
     client_secret: intent.client_secret as string,
     publishable_key: publishableKey,
     amount: total,
     currency: order.currency,
+    breakdown: {
+      cards: order.custom_quote_total != null ? Number(order.custom_quote_total) : (amountCards ?? 0),
+      tooling: amountTooling ?? 0,
+      personalisation: amountPersonalisation ?? 0,
+      shipping,
+    },
   })
 })
