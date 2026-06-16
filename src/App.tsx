@@ -5,6 +5,7 @@ import { useQuoteShortcut } from './lib/useQuoteShortcut'
 import RequireAuth from './components/RequireAuth'
 import RequireAdmin from './components/RequireAdmin'
 import CustomerProofPage from './pages/CustomerProofPage'
+import OrderPayPage from './pages/OrderPayPage'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import NewProofPage from './pages/NewProofPage'
@@ -14,6 +15,7 @@ import EditVersionPage from './pages/EditVersionPage'
 import CustomersPage from './pages/CustomersPage'
 import CustomerDetailPage from './pages/CustomerDetailPage'
 import QuotePage from './pages/QuotePage'
+import OrdersPage from './pages/OrdersPage'
 import AdminLayout from './pages/admin/AdminLayout'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
 import AdminPricingPage from './pages/admin/AdminPricingPage'
@@ -30,6 +32,9 @@ import AdminCoreColoursPage from './pages/admin/AdminCoreColoursPage'
 import AdminNeedsAttentionPage from './pages/admin/AdminNeedsAttentionPage'
 import AdminLeadTimesPage from './pages/admin/AdminLeadTimesPage'
 import AdminCardWeightsPage from './pages/admin/AdminCardWeightsPage'
+import AdminXeroItemCodesPage from './pages/admin/AdminXeroItemCodesPage'
+import AdminMaterialOptionsPage from './pages/admin/AdminMaterialOptionsPage'
+import AdminXeroSelfTestPage from './pages/admin/AdminXeroSelfTestPage'
 import DesignDemo from './design/_demo'
 
 // Inner shell so the Cmd-K / Ctrl-K shortcut can mount inside the
@@ -47,6 +52,7 @@ function AppShell() {
     <Routes>
       {/* Public */}
       <Route path="/p/:id" element={<CustomerProofPage />} />
+      <Route path="/order/:id" element={<OrderPayPage />} />
       <Route path="/login" element={<LoginPage />} />
 
       {/* Reskin design-system demo (PR 2). Public so reviewers can
@@ -59,6 +65,7 @@ function AppShell() {
       {/* Authenticated */}
       <Route path="/" element={<RequireAuth><DashboardPage /></RequireAuth>} />
       <Route path="/quote" element={<RequireAuth><QuotePage /></RequireAuth>} />
+      <Route path="/orders" element={<RequireAuth><OrdersPage /></RequireAuth>} />
       <Route path="/proofs/new" element={<RequireAuth><NewProofPage /></RequireAuth>} />
       <Route path="/proofs/:id" element={<RequireAuth><ProofDetailPage /></RequireAuth>} />
       <Route path="/proofs/:id/versions/new" element={<RequireAuth><NewVersionPage /></RequireAuth>} />
@@ -77,9 +84,12 @@ function AppShell() {
         <Route path="customers" element={<CustomersPage />} />
         <Route path="customers/:companyId" element={<CustomerDetailPage />} />
         <Route path="materials" element={<AdminMaterialsPage />} />
+        <Route path="material-options" element={<AdminMaterialOptionsPage />} />
         <Route path="pricing" element={<AdminPricingPage />} />
         <Route path="lead-times" element={<AdminLeadTimesPage />} />
         <Route path="card-weights" element={<AdminCardWeightsPage />} />
+        <Route path="xero-item-codes" element={<AdminXeroItemCodesPage />} />
+        <Route path="xero-self-test" element={<AdminXeroSelfTestPage />} />
         <Route path="materials/new" element={<AdminCreateMaterialPage />} />
         <Route path="pricing/materials/:code" element={<AdminMaterialEditor />} />
         <Route path="pricing/add-ons/:code" element={<AdminAddOnEditor />} />

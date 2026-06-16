@@ -8,6 +8,7 @@ import {
 import { Link } from 'react-router-dom'
 import { Search } from 'lucide-react'
 import { PlasmaWordmark } from './PlasmaWordmark'
+import { getOrderingEnabled } from '../lib/orderingEnabled'
 
 // Shared chrome for every designer-facing page. Sticky top bar with
 // the wordmark on the left, a pill nav strip beside it, an optional
@@ -20,7 +21,7 @@ import { PlasmaWordmark } from './PlasmaWordmark'
 // field as a controlled input so the parent can both read the value
 // (to drive filtering) and clear it from elsewhere if needed.
 
-export type DesignerNavId = 'proofs' | 'quote' | 'admin'
+export type DesignerNavId = 'proofs' | 'quote' | 'orders' | 'admin'
 export type DesignerHeaderColour = 'blue' | 'teal' | 'coral' | 'purple'
 
 interface NavItem {
@@ -36,6 +37,9 @@ interface NavItem {
 const NAV: NavItem[] = [
   { id: 'proofs', label: 'Proofs', to: '/' },
   { id: 'quote',  label: 'Quote',  to: '/quote' },
+  // Orders is shown only when the ordering feature is switched on
+  // (settings.ordering_enabled) — see the gate in DesignerHeader.
+  { id: 'orders', label: 'Orders', to: '/orders' },
   { id: 'admin',  label: 'Admin',  to: '/admin/users' },
 ]
 
@@ -89,7 +93,20 @@ export function DesignerHeader({
   onEditProfile,
   onSignOut,
 }: DesignerHeaderProps) {
-  const visibleNav = NAV.filter((n) => n.id !== 'admin' || role === 'admin')
+  // Ordering is OFF by default; the Orders nav pill stays hidden until an
+  // admin turns the feature on. Fail-safe false (getOrderingEnabled) so a
+  // settings outage never reveals the unfinished feature.
+  const [orderingEnabled, setOrderingEnabled] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    void getOrderingEnabled().then((on) => { if (!cancelled) setOrderingEnabled(on) })
+    return () => { cancelled = true }
+  }, [])
+  const visibleNav = NAV.filter((n) => {
+    if (n.id === 'admin') return role === 'admin'
+    if (n.id === 'orders') return orderingEnabled
+    return true
+  })
   return (
     <header className="sticky top-0 z-[5] bg-surface border-b border-line">
       <div className="mx-auto max-w-[1280px] flex items-center gap-4 px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 sm:gap-5 sm:px-7">

@@ -393,6 +393,31 @@ verify_jwt = false
 [functions.create-user]
 verify_jwt = false
 
+# Ordering & checkout — designer-gated inside the function body
+# (requireDesigner), so the platform JWT gate is off like the others.
+[functions.create-order]
+verify_jwt = false
+
+# Customer pay-page checkout — anonymous, validates the order token
+# itself, so the platform JWT gate stays off.
+[functions.create-checkout-session]
+verify_jwt = false
+
+# Stripe webhook — Stripe calls this server-to-server and authenticates
+# via the Stripe-Signature header (verified in the body), so the platform
+# JWT gate stays off.
+[functions.stripe-webhook]
+verify_jwt = false
+
+# Xero OAuth — start is admin-gated inside the body (requireAdmin); the
+# callback is a public browser redirect from Xero, CSRF-protected by the
+# state param. Both keep the platform JWT gate off.
+[functions.xero-oauth-start]
+verify_jwt = false
+
+[functions.xero-oauth-callback]
+verify_jwt = false
+
 [functions.deactivate-user]
 verify_jwt = false
 
@@ -454,6 +479,12 @@ verify_jwt = false
 # check runs first, then the handler requires the Bearer to BE the
 # service-role key (timing-safe), so designer/anon JWTs cannot trigger runs.
 [functions.send-nudges]
+verify_jwt = true
+
+# send-order-reminders: same cron + service-role-Bearer pattern as send-nudges.
+# Nudges the customer about an unpaid order link that was sent but not paid.
+# verify_jwt ON; the handler additionally requires the service-role claim.
+[functions.send-order-reminders]
 verify_jwt = true
 
 [analytics]

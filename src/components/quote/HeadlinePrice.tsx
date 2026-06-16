@@ -58,6 +58,9 @@ export function HeadlinePrice({
   currency,
   loading,
   vatRate,
+  interpolated = false,
+  interpolationLowerQty = null,
+  interpolationUpperQty = null,
 }: {
   total: number | null
   baseTotal: number | null
@@ -109,6 +112,16 @@ export function HeadlinePrice({
   // first paint rather than flashing a stale 20% figure.
   // Ignored entirely for EUR/USD — those prices are VAT-free.
   vatRate: number | null
+  // Non-standard-quantity interpolation (migration-free, frontend
+  // only). When the typed quantity sits between two listed tiers the
+  // total is interpolated, not read from a tier — surface that as an
+  // "Estimated" badge plus a "between X and Y" note so the designer
+  // never mistakes an estimate for a published price. The two anchor
+  // quantities drive the note copy. See
+  // docs/ordering-checkout-spec.md "Non-standard quantities".
+  interpolated?: boolean
+  interpolationLowerQty?: number | null
+  interpolationUpperQty?: number | null
 }) {
   // Empty / waiting states. We render the chrome so the layout
   // doesn't jump when a price arrives — just dim the price slot
@@ -160,6 +173,11 @@ export function HeadlinePrice({
             (includes {formatVatPercent(vatRate!)} VAT)
           </span>
         )}
+        {showPrice && interpolated && (
+          <span className="rounded-full bg-on-ink/15 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-on-ink/80">
+            Estimated
+          </span>
+        )}
       </div>
       {showPrice && unitPrice != null && quantity != null && (
         <p className="mt-3 text-sm text-on-ink/75">
@@ -169,6 +187,12 @@ export function HeadlinePrice({
       {showPrice && exVatTotal != null && exPerCard != null && (
         <p className="mt-0.5 text-xs text-on-ink/55 tabular-nums">
           {formatPrice(exVatTotal, 'GBP', 2)} ex VAT · {formatPrice(exPerCard, 'GBP', 2)} per card ex
+        </p>
+      )}
+      {showPrice && interpolated && interpolationLowerQty != null && interpolationUpperQty != null && (
+        <p className="mt-2 text-xs text-on-ink/70">
+          Estimated for a non-standard quantity — between the{' '}
+          {interpolationLowerQty.toLocaleString()} and {interpolationUpperQty.toLocaleString()} tiers.
         </p>
       )}
       {/* Stacked breakdown — base + each surcharge on its own

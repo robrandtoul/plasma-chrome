@@ -10,6 +10,8 @@ import Modal from '../components/Modal'
 import MessageSendPanel from '../components/MessageSendPanel'
 import { firstName } from '../lib/firstName'
 import { getRepliesEnabled } from '../lib/repliesEnabled'
+import { getOrderingEnabled } from '../lib/orderingEnabled'
+import OrderBuilderModal from '../components/OrderBuilderModal'
 import { logAudit } from '../lib/audit'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import type {
@@ -243,6 +245,11 @@ export default function ProofDetailPage() {
   // and adds an explanatory subtitle. The edge function rejects
   // independently so this is the courtesy layer.
   const [repliesEnabled, setRepliesEnabled] = useState<boolean | null>(null)
+  // Ordering & checkout master switch (migration 000228). Gates the
+  // "Create order" button on approved proofs; defaults closed until
+  // the cached fetch resolves so the button never flashes when off.
+  const [orderingEnabled, setOrderingEnabled] = useState<boolean | null>(null)
+  const [showOrderBuilder, setShowOrderBuilder] = useState(false)
   // Approved artwork table data. Null = not loaded yet (project may
   // not be approved, or the fetch hasn't run); [] = approved but no
   // matching images (approval row with every slot's images deleted
@@ -275,6 +282,16 @@ export default function ProofDetailPage() {
     let cancelled = false
     void getRepliesEnabled().then((v) => {
       if (!cancelled) setRepliesEnabled(v)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  // Mount-time fetch of the ordering master switch. Same cached,
+  // fail-safe-false pattern as repliesEnabled above.
+  useEffect(() => {
+    let cancelled = false
+    void getOrderingEnabled().then((v) => {
+      if (!cancelled) setOrderingEnabled(v)
     })
     return () => { cancelled = true }
   }, [])
@@ -2113,6 +2130,19 @@ export default function ProofDetailPage() {
                     Add a new version
                   </ButtonCoral>
                 )}
+                {/* Create order — only on approved proofs, and only when
+                    the ordering master switch is on (settings.ordering_enabled,
+                    migration 000228). For an approved proof this is the
+                    primary action; the whole surface is inert until an admin
+                    flips the toggle. */}
+                {isApproved && orderingEnabled === true && (
+                  <ButtonCoral
+                    icon={Package}
+                    onClick={() => setShowOrderBuilder(true)}
+                  >
+                    Create order
+                  </ButtonCoral>
+                )}
                 <ButtonGhost
                   icon={ExternalLink}
                   disabled={versions.length === 0}
@@ -3108,6 +3138,31 @@ export default function ProofDetailPage() {
               setShowReplyModal(true)
             }}
             onCancel={() => setShowResendConfirm(false)}
+          />
+        )
+      })()}
+
+      {/* Order builder (Ordering & checkout, Step 3). Prefilled from the
+          current version; gated by isApproved + orderingEnabled at the
+          button, so this only ever renders when ordering is on. */}
+      {showOrderBuilder && (() => {
+        const currentVersion = versions.find((v) => v.is_current)
+        if (!currentVersion) return null
+        return (
+          <OrderBuilderModal
+            proofId={proof.id}
+            currentVersionId={currentVersion.id}
+            materialId={currentVersion.material_id ?? null}
+            displayedVariantIds={(currentVersion.displayed_variant_ids as string[] | null) ?? []}
+            materialOptionCodes={(currentVersion.material_options as string[] | null) ?? []}
+            customerLabel={proof.contacts.companies?.name ?? proof.contacts.full_name ?? null}
+            materialDisplay={currentVersion.material_display ?? null}
+            currency={(currentVersion.currency as 'GBP' | 'EUR' | 'USD' | null) ?? null}
+            namesCount={currentVersion.names?.length ?? 0}
+            hasPersonalisation={!!currentVersion.has_personalisation}
+            isCustomQuote={!!currentVersion.custom_quote}
+            hasHelpScoutConversation={!!proof.helpscout_conversation_id}
+            onClose={() => setShowOrderBuilder(false)}
           />
         )
       })()}

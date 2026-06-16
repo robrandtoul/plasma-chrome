@@ -1,4 +1,9 @@
 import type { Currency } from '../types'
+import {
+  interpolateValue,
+  DEFAULT_INTERPOLATION_CONFIG,
+  type InterpolationConfig,
+} from './interpolation'
 
 // One row from price_tiers, normalised into the shape calculate
 // needs. The hook in src/lib/quote/usePricing.ts is responsible
@@ -103,6 +108,14 @@ export interface QuoteResult {
   // component to decide between "show the price" vs "show the
   // 'pick a valid quantity' placeholder".
   validTier: boolean
+  // True iff the total was derived by interpolating between two
+  // bracketing tiers (a non-standard, in-between quantity) rather
+  // than read from an exact tier. Distinct from validTier: an
+  // interpolated result has validTier=false but a non-null total.
+  // The UI uses this to label the figure as an estimate. Always
+  // false on exact matches and on the no-price (null total) paths.
+  // See docs/ordering-checkout-spec.md "Non-standard quantities".
+  interpolated: boolean
   // Currency carried through so the price components don't have
   // to re-thread it.
   currency: Currency | null
@@ -136,6 +149,7 @@ export function splitNameSurchargeFor(
 export function calculate(
   selection: QuoteSelection,
   variantTiers: readonly PriceTier[],
+  config: InterpolationConfig = DEFAULT_INTERPOLATION_CONFIG,
 ): QuoteResult {
   const { quantity, currency, names, perExtraNameSurcharge } = selection
   const discountPercent = clampDiscountPercent(selection.discountPercent)
@@ -152,6 +166,7 @@ export function calculate(
       discountAmount: null,
       unitPrice: null,
       validTier: false,
+      interpolated: false,
       currency,
       snap: EMPTY_SNAP,
     }
@@ -177,6 +192,7 @@ export function calculate(
       discountAmount,
       unitPrice: total / quantity,
       validTier: true,
+      interpolated: false,
       currency,
       snap: EMPTY_SNAP,
     }
@@ -195,6 +211,49 @@ export function calculate(
       break
     }
   }
+
+  // In-between quantity: interpolate. Fires ONLY when both neighbours
+  // exist, i.e. the quantity sits strictly inside the tier range.
+  // Below the lowest tier (no lower) and above the highest (no upper)
+  // deliberately fall through to the null-total + snap-hint path
+  // below — the ordering flow enforces a minimum order quantity and
+  // the compiler bails to a custom quote above the top tier; neither
+  // extrapolates. Surcharges are passed in already resolved at this
+  // quantity (the caller interpolates the finish schedule the same
+  // way); only the base price is interpolated here. See
+  // docs/ordering-checkout-spec.md "Non-standard quantities".
+  if (lower && upper) {
+    const interpolatedBase = interpolateValue(
+      lower.quantity,
+      lower.totalPrice,
+      upper.quantity,
+      upper.totalPrice,
+      quantity,
+      config,
+    )
+    const splitName = splitNameSurchargeFor(names, perExtraNameSurcharge)
+    const finishSurcharge = selection.finishSurcharge
+    const personalisationSurcharge = selection.personalisationSurcharge
+    const subtotal = interpolatedBase + splitName + finishSurcharge + personalisationSurcharge
+    const discountAmount = subtotal * (discountPercent / 100)
+    const total = subtotal - discountAmount
+    return {
+      total,
+      baseTotal: interpolatedBase,
+      splitNameSurcharge: splitName,
+      finishSurcharge,
+      personalisationSurcharge,
+      subtotal,
+      discountPercent,
+      discountAmount,
+      unitPrice: total / quantity,
+      validTier: false,
+      interpolated: true,
+      currency,
+      snap: { lower, upper },
+    }
+  }
+
   return {
     total: null,
     baseTotal: null,
@@ -206,6 +265,7 @@ export function calculate(
     discountAmount: null,
     unitPrice: null,
     validTier: false,
+    interpolated: false,
     currency,
     snap: { lower, upper },
   }

@@ -114,7 +114,7 @@ export function substituteVariables(text: string, ctx: TemplateContext): string 
 // Designer-picked templates (first_proof, revision) use unprefixed
 // IDs and render in the "Pre-send messages" sub-section.
 
-export type TemplateVariableScope = 'designer_picked' | 'proof_viewer'
+export type TemplateVariableScope = 'designer_picked' | 'proof_viewer' | 'order' | 'order_reminder'
 
 export interface TemplateVariableMeta {
   // Variable name as it appears between braces in templates. Plain
@@ -143,6 +143,15 @@ export const TEMPLATE_VARIABLES: TemplateVariableMeta[] = [
   { name: 'chosen_variant',      scope: 'proof_viewer',    description: 'Variant the customer picked (variant round only; empty otherwise)',               conditional: true  },
   { name: 'actor_name',          scope: 'proof_viewer',    description: 'Name the customer typed when confirming their action',                            conditional: false },
   { name: 'recipient_name',      scope: 'proof_viewer',    description: "Per-recipient slot on multi-recipient proofs; empty on shared/all-shared proofs — wrap in {? recipient_name}…{/?} when used.", conditional: true },
+  // Order messages (order_payment_link) — composed by the designer in the order
+  // builder before sending the pay-link to the customer.
+  { name: 'order_url',           scope: 'order',           description: "Customer order pay-page link",                                                    conditional: false },
+  // Order reminders (order_reminder_1 / _2) — sent by the automated sender,
+  // which has the full order → proof → contact context.
+  { name: 'first_name',          scope: 'order_reminder',  description: "Customer's first name",                                                           conditional: false },
+  { name: 'company',             scope: 'order_reminder',  description: 'Company name (when set)',                                                         conditional: true  },
+  { name: 'order_url',           scope: 'order_reminder',  description: 'Customer order pay-page link',                                                    conditional: false },
+  { name: 'order_expiry',        scope: 'order_reminder',  description: 'Date the order link expires',                                                     conditional: false },
 ]
 
 // ── Default bodies ───────────────────────────────────────────────────────────
@@ -189,4 +198,12 @@ export const DEFAULT_BODIES: Record<string, string> = {
     `Hi {first_name},\n\nJust a quick nudge on your card proof{? company} for {company}{/?} before it slips off our active list. Let us know if you'd like any changes — here's the link:\n\n{url}`,
   nudge_stuck_in_progress:
     `Hi {first_name},\n\nChecking in on your card proof{? company} for {company}{/?} — we haven't heard back in a little while. Happy to help with any tweaks; here's the link again:\n\n{url}`,
+  // Order messages — sent from the order builder with the pay-link.
+  order_payment_link:
+    `Hi,\n\nYour cards are approved and ready to order. You can choose your quantity, confirm delivery, and pay securely here:\n\n{order_url}\n\nIf you have any questions, just reply to this email.`,
+  // Order reminders — automated follow-ups for an unpaid order (000238).
+  order_reminder_1:
+    `Hi {first_name},\n\nJust a gentle reminder that your cards{? company} for {company}{/?} are approved and ready to order whenever you're set. You can choose your quantity and pay securely here:\n\n{order_url}`,
+  order_reminder_2:
+    `Hi {first_name},\n\nA quick reminder that your order link{? company} for {company}{/?} expires on {order_expiry}. If you'd still like to go ahead, you can complete it here:\n\n{order_url}\n\nIf the link has lapsed by the time you read this, just reply and we'll send a fresh one.`,
 }

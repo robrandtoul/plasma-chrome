@@ -36,6 +36,7 @@ export function QuantityInput({
   previewTotal,
   previewUnitPrice,
   previewValidTier,
+  previewInterpolated = false,
 }: {
   value: number | null
   onChange: (next: number | null) => void
@@ -50,6 +51,12 @@ export function QuantityInput({
   previewTotal?: number | null
   previewUnitPrice?: number | null
   previewValidTier?: boolean
+  // True when the total was interpolated for a non-standard,
+  // in-between quantity (validTier is false but a total exists).
+  // The preview still shows in this case, tagged "estimated", and
+  // the "Not a valid tier" hint is suppressed. See
+  // docs/ordering-checkout-spec.md "Non-standard quantities".
+  previewInterpolated?: boolean
 }) {
   // Mirror state for the text representation. Lets the designer
   // clear the field without the parent's typed-integer state
@@ -114,11 +121,20 @@ export function QuantityInput({
     value != null &&
     !disabled &&
     currency != null &&
-    previewValidTier &&
+    (previewValidTier || previewInterpolated) &&
     previewTotal != null &&
     previewUnitPrice != null
 
-  const showInvalidHint = value != null && !disabled && currency != null && previewValidTier === false
+  // Only a quantity that resolves to NO price (below the lowest tier,
+  // or above the highest) gets the "Not a valid tier" hint. An
+  // interpolated in-between quantity has a real (estimated) total, so
+  // it shows the preview instead.
+  const showInvalidHint =
+    value != null &&
+    !disabled &&
+    currency != null &&
+    !previewValidTier &&
+    !previewInterpolated
 
   return (
     <fieldset>
@@ -210,6 +226,9 @@ export function QuantityInput({
           <span className="ml-2 text-ink-dim">
             ({formatPrice(previewUnitPrice!, currency!, 2)} per card)
           </span>
+          {previewInterpolated && (
+            <span className="ml-2 font-medium text-brand">estimated</span>
+          )}
         </p>
       )}
 

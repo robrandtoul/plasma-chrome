@@ -1,0 +1,506 @@
+// create-checkout-session — anonymous, token-scoped. Builds a Stripe
+// Checkout session for one order and returns the hosted payment URL.
+// Step 4 of the Ordering & checkout build (docs/ordering-checkout-spec.md).
+//
+// The amount is ALWAYS computed SERVER-SIDE (never trust the client):
+//   * custom-quote orders → the agreed total,
+//   * grid-priced orders → price tiers (+ interpolation for non-standard
+//     quantities) + split-name tooling + personalisation, via the shared
+//     orderPricing helper (the single source of truth, kept in lockstep
+//     with the Quote-compiler engine).
+// Shipping is added on top, computed server-side too:
+//   * free     → 0,
+//   * manual   → the designer's fixed figure,
+//   * full_cost / goodwill → the live carriage for the order's rating
+//     destination — UK flat DPD rate, or a FedEx account rate for
+//     international — converted to the order currency, with goodwill
+//     taking the designer's per-order discount % off (Rob, 2026-06-15).
+// If a rate can't be obtained (e.g. FedEx won't quote the lane, or an
+// international order with no priced variant to weigh), we fall back to a
+// clear "we'll confirm shipping" message rather than charging a guess.
+//
+// Auth: none — the pay-page is anonymous. The order id + secret token
+// are validated against proofs.orders (service-role read) exactly like
+// public_get_order. Stripe charges only fake money while STRIPE_SECRET_KEY
+// is a test key (sk_test_…).
+
+import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { cardTotalForQuantity, computeOrderTotal, type Tier } from '../_shared/orderPricing.ts'
+import {
+  applyIntlAdjustment,
+  fetchGbpRates,
+  gbpToCurrency,
+  resolveDomesticGbp,
+  splitIntoBoxes,
+  type Currency,
+} from '../_shared/shipping.ts'
+import { getFedExToken, requestRate, parseRateResponse, FedExError } from '../_shared/fedex.ts'
+
+function splitNameForCurrency(
+  m: { split_name_surcharge_gbp: number | null; split_name_surcharge_eur: number | null; split_name_surcharge_usd: number | null } | null,
+  currency: string,
+): number | null {
+  if (!m) return null
+  const v = currency === 'GBP' ? m.split_name_surcharge_gbp : currency === 'EUR' ? m.split_name_surcharge_eur : m.split_name_surcharge_usd
+  return v == null ? null : Number(v)
+}
+
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
+}
+
+// Stripe wants the smallest currency unit (pence/cents). All three of
+// our currencies are 2-decimal, so ×100 rounded is correct.
+function minorUnits(amountMajor: number): number {
+  return Math.round(amountMajor * 100)
+}
+
+// Destination countries offered for shipping — Stripe's address allow-list.
+// Mirror of SHIP_COUNTRY_CODES in src/lib/shipCountries.ts (Deno can't import
+// the src module); keep the two in step. Embargoed/non-serviceable
+// destinations are omitted.
+const SHIP_COUNTRY_CODES = [
+  'AD', 'AE', 'AG', 'AI', 'AL', 'AM', 'AO', 'AR', 'AT', 'AU', 'AW', 'AZ',
+  'BA', 'BB', 'BD', 'BE', 'BF', 'BH', 'BI', 'BJ', 'BM', 'BN', 'BO', 'BR',
+  'BS', 'BT', 'BW', 'BZ', 'CA', 'CD', 'CG', 'CH', 'CI', 'CK', 'CL', 'CM',
+  'CN', 'CO', 'CR', 'CV', 'CW', 'CY', 'CZ', 'DE', 'DJ', 'DK', 'DM', 'DO',
+  'DZ', 'EC', 'EE', 'EG', 'ER', 'ES', 'ET', 'FI', 'FJ', 'FK', 'FO',
+  'FR', 'GA', 'GB', 'GD', 'GE', 'GF', 'GG', 'GH', 'GI', 'GL', 'GM', 'GN',
+  'GP', 'GQ', 'GR', 'GT', 'GU', 'GW', 'GY', 'HK', 'HN', 'HR', 'HT', 'HU',
+  'ID', 'IE', 'IL', 'IM', 'IN', 'IS', 'IT', 'JE', 'JM', 'JO', 'JP', 'KE',
+  'KG', 'KH', 'KN', 'KR', 'KW', 'KY', 'KZ', 'LA', 'LB', 'LC', 'LI', 'LK',
+  'LR', 'LS', 'LT', 'LU', 'LV', 'MA', 'MC', 'MD', 'ME', 'MG', 'MK', 'ML',
+  'MM', 'MN', 'MO', 'MQ', 'MR', 'MS', 'MT', 'MU', 'MV', 'MW', 'MX', 'MY',
+  'MZ', 'NA', 'NC', 'NE', 'NG', 'NI', 'NL', 'NO', 'NP', 'NZ', 'OM', 'PA',
+  'PE', 'PF', 'PG', 'PH', 'PK', 'PL', 'PR', 'PT', 'PY', 'QA', 'RE',
+  'RO', 'RS', 'RW', 'SA', 'SB', 'SC', 'SE', 'SG', 'SI', 'SK', 'SL', 'SM',
+  'SN', 'SR', 'ST', 'SV', 'SZ', 'TC', 'TD', 'TG', 'TH', 'TJ', 'TL', 'TN',
+  'TO', 'TR', 'TT', 'TW', 'TZ', 'UA', 'UG', 'US', 'UY', 'UZ', 'VC', 'VE',
+  'VG', 'VN', 'VU', 'WS', 'YE', 'ZA', 'ZM', 'ZW',
+]
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
+  if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
+
+  const stripeKey = Deno.env.get('STRIPE_SECRET_KEY')
+  if (!stripeKey) return json({ error: 'Payments are not configured yet.' }, 503)
+
+  let body: Record<string, unknown>
+  try {
+    body = await req.json()
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400)
+  }
+
+  const orderId = typeof body.order_id === 'string' ? body.order_id : null
+  const token = typeof body.token === 'string' ? body.token : null
+  // The page passes its own origin so the success/cancel redirects come
+  // back to the right host (prod vs a Netlify preview). Must be an
+  // https?:// URL we echo only into Stripe's redirect — reject anything
+  // that isn't a plain origin to avoid open-redirect surprises.
+  const origin = typeof body.origin === 'string' ? body.origin : null
+  // Customer-chosen quantity for an open-quantity order. Only trusted to
+  // the extent that it must be a positive integer AND (below) match one of
+  // the variant's listed price tiers — never an arbitrary value the client
+  // could use to bend the price.
+  const bodyQuantity =
+    typeof body.quantity === 'number' && Number.isInteger(body.quantity) && body.quantity > 0
+      ? body.quantity
+      : null
+  // Per-person split (combined-total pricing). Each entry's quantity must be a
+  // positive integer; the combined sum drives the tier price (interpolated if
+  // it isn't an exact tier). The breakdown is persisted for production.
+  const personQuantities = Array.isArray(body.person_quantities)
+    ? (body.person_quantities as unknown[])
+        .map((p) =>
+          p && typeof p === 'object'
+            ? {
+                name: String((p as Record<string, unknown>).name ?? ''),
+                quantity: Number((p as Record<string, unknown>).quantity),
+              }
+            : null,
+        )
+        .filter(
+          (p): p is { name: string; quantity: number } =>
+            p != null && p.name !== '' && Number.isInteger(p.quantity) && p.quantity > 0,
+        )
+    : []
+  if (!orderId || !token) return json({ error: 'Missing order_id or token' }, 400)
+  if (!origin || !/^https?:\/\/[^/]+$/.test(origin)) return json({ error: 'Missing or invalid origin' }, 400)
+
+  // Customer-entered rating destination for full_cost / goodwill orders. The
+  // pay-page collects country + postcode (support rarely knows the postcode
+  // upfront); we rate against these. Country is normalised to a 2-letter
+  // upper-case code; anything else is treated as absent.
+  const reqDestCountryRaw = typeof body.ship_dest_country === 'string' ? body.ship_dest_country.trim().toUpperCase() : ''
+  const reqDestCountry = /^[A-Z]{2}$/.test(reqDestCountryRaw) ? reqDestCountryRaw : null
+  const reqDestPostcode = typeof body.ship_dest_postcode === 'string' && body.ship_dest_postcode.trim()
+    ? body.ship_dest_postcode.trim()
+    : null
+
+  const admin = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+    { db: { schema: 'proofs' }, auth: { persistSession: false, autoRefreshToken: false } },
+  )
+
+  const { data: order, error: orderErr } = await admin
+    .from('orders')
+    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, ship_dest_country, ship_dest_postcode, payment_reference, expires_at, material_variant_id, material_option_id, quantity, names_count, has_personalisation')
+    .eq('id', orderId)
+    .eq('token', token)
+    .single()
+  if (orderErr || !order) return json({ error: 'Order not found' }, 404)
+
+  if (order.status === 'paid' || order.status === 'fulfilled') {
+    return json({ error: 'This order has already been paid.' }, 409)
+  }
+  if (order.status !== 'sent') return json({ error: 'This order is not payable.' }, 409)
+  if (order.expires_at && new Date(order.expires_at).getTime() < Date.now()) {
+    return json({ error: 'This order link has expired.' }, 409)
+  }
+
+  // ── Goods total (server-authoritative) ───────────────────────────
+  // custom-quote → the agreed figure; grid → priced from tiers + tooling
+  // + personalisation via the shared helper. The per-component split is
+  // captured so the webhook can rebuild the itemised Xero invoice without
+  // re-pricing (null components → a single summary line at invoice time).
+  let goods: number
+  let amountCards: number | null = null
+  let amountTooling: number | null = null
+  let amountPersonalisation: number | null = null
+  // The quantity we actually charge + persist (so the Stripe→Xero webhook's
+  // invoice Qty column is right). For a locked order it's order.quantity;
+  // for an open order it's the customer's choice, validated below.
+  let resolvedQuantity: number | null = null
+  // Per-card weight of the chosen variant, needed to weigh an
+  // international parcel for the FedEx rate. Null for custom-quote orders
+  // (no variant) → international shipping can't be rated for those.
+  let variantWeightGrams: number | null = null
+  if (order.custom_quote_total != null) {
+    goods = Number(order.custom_quote_total)
+  } else {
+    if (!order.material_variant_id) {
+      return json({
+        error: 'pricing_not_supported',
+        message: 'Online checkout for this order isn’t available yet — please reply to the email you received and we’ll take it from there.',
+      }, 422)
+    }
+    const { data: tierRows } = await admin
+      .from('price_tiers')
+      .select('quantity, total_price')
+      .eq('material_variant_id', order.material_variant_id)
+      .eq('currency', order.currency)
+    const tiers: Tier[] = (tierRows ?? []).map((t) => ({
+      quantity: t.quantity as number,
+      total_price: Number(t.total_price),
+    }))
+
+    // Resolve the quantity. Locked order → use it as-is (may be an
+    // interpolated in-between). Open order → per-person split (sum drives the
+    // price, interpolated if the sum isn't an exact tier), or a single chosen
+    // quantity bound to a listed tier so the price can't be bent client-side.
+    if (order.quantity != null) {
+      resolvedQuantity = order.quantity
+    } else if (personQuantities.length > 0) {
+      resolvedQuantity = personQuantities.reduce((acc, p) => acc + p.quantity, 0)
+    } else if (bodyQuantity != null) {
+      // The customer can enter any quantity; the price interpolates between the
+      // listed tiers (same as the per-person split + the Quote compiler).
+      // computeOrderTotal returns no_card_price below the lowest / above the
+      // highest tier, which we surface as pricing_not_supported below — so the
+      // only guard here is the positive-integer check already applied to
+      // bodyQuantity. No exact-tier requirement.
+      resolvedQuantity = bodyQuantity
+    } else {
+      return json({
+        error: 'quantity_required',
+        message: 'Please choose a quantity before paying.',
+      }, 422)
+    }
+
+    // Split-name surcharge: variant → material → per-currency column.
+    // weight_grams comes back on the same read for the FedEx parcel weight.
+    const { data: variant } = await admin
+      .from('material_variants')
+      .select('material_id, weight_grams')
+      .eq('id', order.material_variant_id)
+      .single()
+    if (variant?.weight_grams != null) variantWeightGrams = Number(variant.weight_grams)
+    let perExtraName: number | null = null
+    if (variant?.material_id) {
+      const { data: material } = await admin
+        .from('materials')
+        .select('split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd')
+        .eq('id', variant.material_id)
+        .single()
+      perExtraName = splitNameForCurrency(material, order.currency)
+    }
+
+    // Personalisation rates for the currency, when the order has it.
+    let personalisation: { perCardRate: number; minCharge: number } | null = null
+    if (order.has_personalisation) {
+      const { data: p } = await admin
+        .from('personalisation_pricing')
+        .select('per_card_rate, min_charge')
+        .eq('currency', order.currency)
+        .single()
+      if (p) personalisation = { perCardRate: Number(p.per_card_rate), minCharge: Number(p.min_charge) }
+    }
+
+    // Material-option (finish) surcharge: when the order pinned a non-base
+    // option (metal Brushed/Mirror), price its surcharge for the quantity from
+    // material_option_surcharges, interpolated the SAME way base cards are so
+    // the figure equals what the pay-page mirror shows. Base option / no
+    // finish → no surcharge rows → 0.
+    let optionSurcharge = 0
+    if (order.material_option_id) {
+      const { data: surRows } = await admin
+        .from('material_option_surcharges')
+        .select('quantity, surcharge')
+        .eq('material_option_id', order.material_option_id)
+        .eq('currency', order.currency)
+      const surTiers: Tier[] = (surRows ?? []).map((s) => ({
+        quantity: s.quantity as number,
+        total_price: Number(s.surcharge),
+      }))
+      if (surTiers.length > 0) optionSurcharge = cardTotalForQuantity(surTiers, resolvedQuantity) ?? 0
+    }
+
+    const priced = computeOrderTotal({
+      tiers,
+      quantity: resolvedQuantity,
+      perExtraNameSurcharge: perExtraName,
+      namesCount: order.names_count ?? 1,
+      personalisation,
+      optionSurcharge,
+      shipping: 0, // shipping is computed + added separately below
+    })
+    if (!priced.ok) {
+      return json({
+        error: 'pricing_not_supported',
+        message: 'We couldn’t price this quantity online — please reply to the email you received and we’ll confirm the price and send a payment link.',
+      }, 422)
+    }
+    goods = priced.goods
+    // Fold the finish surcharge into the cards component: the Stripe→Xero
+    // webhook itemises amount_cards + tooling + personalisation + shipping and
+    // checks the sum equals the charge, so finish has to ride one of those
+    // lines rather than add an un-summed column. Cards is the natural home.
+    amountCards = Math.round((priced.cards + priced.finish) * 100) / 100
+    amountTooling = priced.splitName
+    amountPersonalisation = priced.personalisation
+  }
+
+  // ── Shipping (server-authoritative) ──────────────────────────────
+  // free → 0; manual → the designer's fixed figure; full_cost / goodwill →
+  // the live carriage for the rating destination (UK flat DPD, or a FedEx
+  // account rate for international), converted to the order currency, with
+  // goodwill taking the per-order discount % off. A rate we can't obtain
+  // (FedEx won't quote the lane, or an international order with no variant to
+  // weigh) falls back to the same "we'll confirm shipping" message rather
+  // than charging a guess.
+  const round2 = (n: number) => Math.round(n * 100) / 100
+  let shipping = 0
+  // The destination we actually rated against — persisted onto the order
+  // below so fulfilment + records carry the customer's entered country/postcode.
+  let resolvedDestCountry: string | null = null
+  let resolvedDestPostcode: string | null = null
+  if (order.shipping_treatment === 'free') {
+    shipping = 0
+  } else if (order.shipping_treatment === 'manual') {
+    shipping = round2(Number(order.shipping_charged ?? 0))
+  } else {
+    // full_cost / goodwill — compute the carriage from the destination. The
+    // customer-entered country + postcode (pay-page) win; the order's stored
+    // values are a fallback (e.g. a designer-set country hint).
+    const destCountry = (reqDestCountry ?? order.ship_dest_country ?? '').trim().toUpperCase()
+    const destPostcode = (reqDestPostcode ?? order.ship_dest_postcode ?? '').trim()
+    if (!destCountry || !destPostcode) {
+      return json({
+        error: 'shipping_destination_required',
+        message: 'Please enter the delivery country and postcode so we can calculate shipping.',
+      }, 422)
+    }
+    resolvedDestCountry = destCountry
+    resolvedDestPostcode = destPostcode
+
+    // Shipping settings: DPD flat rates + FedEx box tare + intl adjustment %.
+    const { data: settings } = await admin
+      .from('settings')
+      .select('fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp')
+      .eq('id', 1)
+      .single()
+    const boxTareGrams = Number(settings?.fedex_box_weight_grams ?? 250)
+    const intlAdjustPercent = Number(settings?.fedex_intl_adjust_percent ?? 0)
+    const mainlandGbp = Number(settings?.domestic_uk_mainland_rate_gbp ?? 12.90)
+    const niGbp = Number(settings?.domestic_uk_ni_rate_gbp ?? 18.90)
+
+    let baseGbp: number | null = null
+    let shipReason = ''
+    let shipDetail: string | null = null
+    if (destCountry === 'GB') {
+      // Domestic UK — flat DPD rate (mainland vs Northern Ireland). No
+      // weight needed, so this works for custom-quote and open orders too.
+      baseGbp = resolveDomesticGbp(destPostcode, mainlandGbp, niGbp)
+      shipReason = 'domestic_uk'
+    } else {
+      // International — FedEx account rate. Needs a weighable parcel.
+      const boxes = splitIntoBoxes(variantWeightGrams, resolvedQuantity, boxTareGrams)
+      const apiKey = Deno.env.get('FEDEX_API_KEY')
+      const apiSecret = Deno.env.get('FEDEX_API_SECRET')
+      const accountNumber = Deno.env.get('FEDEX_ACCOUNT_NUMBER')
+      if (!boxes) {
+        shipReason = 'no_parcel_weight'
+      } else if (!apiKey || !apiSecret || !accountNumber) {
+        shipReason = 'fedex_creds_missing'
+      } else {
+        try {
+          const fxToken = await getFedExToken(apiKey, apiSecret)
+          // Request in GBP — FedEx invoices Plasma's account in GBP and we
+          // convert to the order currency ourselves, matching the Quote
+          // compiler's render path exactly.
+          const raw = await requestRate(fxToken, {
+            destCountry,
+            destPostcode: destPostcode.toUpperCase(),
+            boxWeightsKg: boxes.map((g) => g / 1000),
+            currency: 'GBP',
+            accountNumber,
+          })
+          const parsed = parseRateResponse(raw, 'GBP')
+          if (parsed.available && parsed.netCharge != null) {
+            baseGbp = applyIntlAdjustment(parsed.netCharge, intlAdjustPercent)
+            shipReason = 'fedex_ok'
+          } else {
+            shipReason = 'fedex_unavailable'
+          }
+        } catch (err) {
+          // FedEx error or transient failure — leave baseGbp null so we fall
+          // through to the "confirm shipping" message below.
+          shipReason = 'fedex_error'
+          shipDetail = err instanceof FedExError ? `${err.status} ${err.message}` : String(err)
+          console.error('[create-checkout-session] fedex rate failed:', shipDetail)
+        }
+      }
+    }
+
+    console.log('[create-checkout-session] shipping', JSON.stringify({
+      order_id: order.id,
+      treatment: order.shipping_treatment,
+      destCountry,
+      destPostcode,
+      resolvedQuantity,
+      variantWeightGrams,
+      baseGbp,
+      reason: shipReason,
+    }))
+
+    if (baseGbp == null) {
+      // reason is kept in the body (a short internal enum, useful for support);
+      // the verbatim FedEx detail stays server-side in the log above and is not
+      // leaked to the anonymous customer response.
+      return json({
+        error: 'shipping_not_supported',
+        reason: shipReason,
+        message: 'We couldn’t confirm shipping for this destination online — please reply to the email you received and we’ll send a payment link with shipping included.',
+      }, 422)
+    }
+
+    // Convert GBP → order currency, then apply the goodwill discount %.
+    const rates = await fetchGbpRates()
+    const baseInCurrency = baseGbp * gbpToCurrency(order.currency as Currency, rates)
+    const discountPercent =
+      order.shipping_treatment === 'goodwill'
+        ? Math.max(0, Math.min(100, Number(order.shipping_discount_percent ?? 0)))
+        : 0
+    shipping = round2(baseInCurrency * (1 - discountPercent / 100))
+  }
+
+  // Stamp the resolved breakdown so the Stripe→Xero webhook can itemise the
+  // invoice. Best-effort: a failure here must not block checkout (the webhook
+  // falls back to a single summary line if the breakdown is absent).
+  await admin
+    .from('orders')
+    .update({
+      // Persist the charged quantity for open orders so the Stripe→Xero
+      // webhook itemises the invoice at the quantity actually paid.
+      ...(resolvedQuantity != null ? { quantity: resolvedQuantity } : {}),
+      // Persist the per-person split (production instruction) for open orders.
+      ...(order.quantity == null && personQuantities.length > 0
+        ? { person_quantities: personQuantities }
+        : {}),
+      // Persist the customer-entered rating destination for fulfilment/records.
+      ...(resolvedDestCountry ? { ship_dest_country: resolvedDestCountry } : {}),
+      ...(resolvedDestPostcode ? { ship_dest_postcode: resolvedDestPostcode } : {}),
+      amount_cards: amountCards,
+      amount_tooling: amountTooling,
+      amount_personalisation: amountPersonalisation,
+      amount_shipping: shipping,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', order.id)
+
+  const currency = String(order.currency).toLowerCase()
+  const ref = order.payment_reference ?? order.id
+
+  // ── Build the Stripe Checkout session (form-encoded) ─────────────
+  const params = new URLSearchParams()
+  params.set('mode', 'payment')
+  params.set('success_url', `${origin}/order/${order.id}?token=${encodeURIComponent(token)}&paid=1`)
+  params.set('cancel_url', `${origin}/order/${order.id}?token=${encodeURIComponent(token)}`)
+  // client_reference_id + metadata carry the shared reference so the
+  // Step 5 webhook (and the Stripe→Xero reconcile) can match the
+  // payment back to this order.
+  params.set('client_reference_id', ref)
+  params.set('metadata[order_id]', order.id)
+  params.set('metadata[payment_reference]', ref)
+  if (resolvedQuantity != null) params.set('metadata[quantity]', String(resolvedQuantity))
+  // Collect the delivery address on Stripe's page (fulfilment needs it).
+  for (const [i, c] of SHIP_COUNTRY_CODES.entries()) {
+    params.set(`shipping_address_collection[allowed_countries][${i}]`, c)
+  }
+  // Goods line item (cards + tooling + personalisation, as one line so
+  // per-component rounding can't drift from the authoritative total).
+  params.set('line_items[0][quantity]', '1')
+  params.set('line_items[0][price_data][currency]', currency)
+  params.set('line_items[0][price_data][unit_amount]', String(minorUnits(goods)))
+  params.set('line_items[0][price_data][product_data][name]', `Order ${ref}`)
+  // Shipping line item (only when > 0).
+  if (shipping > 0) {
+    params.set('line_items[1][quantity]', '1')
+    params.set('line_items[1][price_data][currency]', currency)
+    params.set('line_items[1][price_data][unit_amount]', String(minorUnits(shipping)))
+    params.set('line_items[1][price_data][product_data][name]', 'Shipping')
+  }
+
+  let stripeRes: Response
+  try {
+    stripeRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${stripeKey}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params.toString(),
+    })
+  } catch {
+    return json({ error: 'Could not reach the payment provider. Please try again.' }, 502)
+  }
+
+  const session = await stripeRes.json().catch(() => null)
+  if (!stripeRes.ok || !session?.url) {
+    // Full Stripe error stays in the function logs for diagnosis; the customer
+    // sees only a friendly message (never raw Stripe text).
+    console.error('[create-checkout-session] stripe error:', JSON.stringify(session))
+    return json({ error: 'Could not start checkout. Please try again, or reply to your email.' }, 502)
+  }
+
+  return json({ url: session.url as string })
+})

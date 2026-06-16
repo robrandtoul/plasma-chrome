@@ -12,6 +12,7 @@ import { Plus, X, Maximize2, Bell, MessageSquare, Eye, Check, Clock } from 'luci
 import { Virtuoso } from 'react-virtuoso'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
+import { getOrderingEnabled } from '../lib/orderingEnabled'
 import type { ProofStatus } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import {
@@ -277,7 +278,7 @@ interface StatTileProps {
   label: string
   count: number
   active: boolean
-  tone: 'rose' | 'amber' | 'sky' | 'neutral' | 'violet' | 'green' | 'turquoise'
+  tone: 'rose' | 'amber' | 'sky' | 'neutral' | 'violet' | 'green' | 'turquoise' | 'gold' | 'blue'
   onClick: () => void
   help?: string
 }
@@ -295,6 +296,8 @@ const TILE_COLOUR: Record<StatTileProps['tone'], string> = {
   green:     'var(--c-in-stock)',
   violet:    '#7c3aed',
   neutral:   'var(--c-ink-mute)',
+  gold:      '#ca8a04',
+  blue:      '#2563eb',
 }
 
 function StatTile({ label, count, active, tone, onClick, help }: StatTileProps) {
@@ -315,8 +318,11 @@ function StatTile({ label, count, active, tone, onClick, help }: StatTileProps) 
     >
       {/* Dot + label row. Dot picks up the tile's tone; label uses the
           eyebrow class (inline whitespace-normal so long labels wrap —
-          see PR 17c for why the override has to be inline). */}
-      <div className="flex items-center gap-2 min-h-[24px]">
+          see PR 17c for why the override has to be inline). Fixed two-line
+          height + slightly tighter tracking so every tile's number sits on
+          the same baseline and three-word labels ("Approved this week") fit
+          two lines rather than spilling to three in the narrow cells. */}
+      <div className="flex items-center gap-2 h-[26px]">
         <span
           aria-hidden="true"
           className="inline-block w-4 h-4 rounded shrink-0"
@@ -325,7 +331,7 @@ function StatTile({ label, count, active, tone, onClick, help }: StatTileProps) 
         <HelpTip body={help} affordance="none" focusable={false}>
           <span
             className="eyebrow text-ink-mute"
-            style={{ whiteSpace: 'normal', lineHeight: 1.2 }}
+            style={{ whiteSpace: 'normal', lineHeight: 1.2, letterSpacing: '0.02em' }}
           >
             {label}
           </span>
@@ -1813,6 +1819,12 @@ export default function DashboardPage() {
   // numbers stay correct no matter how many proofs exist. Null until the
   // RPC resolves.
   const [tileCounts, setTileCounts]       = useState<TileCounts | null>(null)
+  // Order-stage tiles (Awaiting payment / Ordered), shown only when ordering
+  // is enabled. Counted across all orders (not the loaded proof subset); they
+  // navigate to the Orders page rather than filtering the proof list, since
+  // orders aren't part of the dashboard list.
+  const [orderingOn, setOrderingOn]       = useState(false)
+  const [orderCounts, setOrderCounts]     = useState<{ awaitingPayment: number; ordered: number } | null>(null)
   // current_version_id → signed thumbnail URL. Populated in
   // loadDashboard after the projects fetch by batch-signing the
   // first front image of each version. Empty entries (no version
@@ -1949,6 +1961,26 @@ export default function DashboardPage() {
     }
     return urlByVersion
   }
+
+  // Ordering tiles: read the ordering master switch + order counts once on
+  // mount. Independent of the proof load so it never blocks the list. Counts
+  // are head-only (no rows transferred). Hidden entirely when ordering is off.
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const on = await getOrderingEnabled()
+      if (cancelled) return
+      setOrderingOn(on)
+      if (!on) return
+      const [a, o] = await Promise.all([
+        supabase.from('orders').select('id', { count: 'exact', head: true }).eq('status', 'sent'),
+        supabase.from('orders').select('id', { count: 'exact', head: true }).in('status', ['paid', 'fulfilled']),
+      ])
+      if (cancelled) return
+      setOrderCounts({ awaitingPayment: a.count ?? 0, ordered: o.count ?? 0 })
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   async function loadDashboard() {
     // Note: the four queries below depend on migration 000152
@@ -2378,7 +2410,7 @@ export default function DashboardPage() {
                   (rose for Needs attention,
                   amber→sky→turquoise→green for workflow,
                   violet/neutral for on-hold). */}
-              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 xl:divide-x xl:divide-line">
+              <div className={`grid grid-cols-2 md:grid-cols-3 ${orderingOn ? 'xl:grid-cols-9' : 'xl:grid-cols-7'} xl:divide-x xl:divide-line`}>
                   <StatTile
                     label="Needs attention"
                     help={tagHelp('tile', 'needs_attention')}
@@ -2419,6 +2451,27 @@ export default function DashboardPage() {
                     tone="green"
                     onClick={() => toggleTile('approved_this_week')}
                   />
+                  {/* Order-stage tiles — only when ordering is enabled. These
+                      navigate to the Orders page (orders aren't in the proof
+                      list), so they never set tileFilter / show as active. */}
+                  {orderingOn && (
+                    <>
+                      <StatTile
+                        label="Awaiting payment"
+                        count={orderCounts?.awaitingPayment ?? 0}
+                        active={false}
+                        tone="gold"
+                        onClick={() => navigate('/orders')}
+                      />
+                      <StatTile
+                        label="Ordered"
+                        count={orderCounts?.ordered ?? 0}
+                        active={false}
+                        tone="blue"
+                        onClick={() => navigate('/orders')}
+                      />
+                    </>
+                  )}
                   <StatTile
                     label="Snoozed"
                     help={tagHelp('tile', 'snoozed')}

@@ -1,0 +1,566 @@
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
+import { DesignerChrome, PanelShell, Pill, ButtonInk, ButtonGhost } from '../design'
+import { formatPrice } from '../lib/currency'
+import { customerOrderUrl } from '../lib/customerOrderUrl'
+import { logAudit } from '../lib/audit'
+import type { GridImage } from '../components/ImageGrid'
+import type { Currency } from '../lib/types'
+
+// Orders / fulfilment surface (Ordering & checkout, Step 6).
+//
+// The "go print this" signal for the team: every PAID order awaiting
+// dispatch, with the approved artwork, the spec, the quantity, the
+// delivery address, the payment reference and the Xero invoice link.
+// A designer marks an order fulfilled once it ships, moving it to the
+// quieter "Recently fulfilled" list below.
+//
+// Reads orders directly (authenticated designers have RLS select on
+// proofs.orders, 000229) joined to the proof's contact/company and the
+// chosen variant. Gated behind the ordering toggle at the nav level;
+// the page also shows a calm "ordering is off" state if reached directly
+// while the feature is disabled.
+
+const round2 = (n: number) => Math.round(n * 100) / 100
+// Reactivating an expired link extends it by the same window create-order uses.
+const ORDER_EXPIRY_DAYS = 14
+
+interface OrderRow {
+  id: string
+  status: string
+  token: string
+  expires_at: string | null
+  sent_at: string | null
+  currency: Currency
+  quantity: number | null
+  names_count: number
+  has_personalisation: boolean
+  custom_quote_total: number | null
+  amount_cards: number | null
+  amount_tooling: number | null
+  amount_personalisation: number | null
+  amount_shipping: number | null
+  payment_reference: string | null
+  xero_invoice_id: string | null
+  xero_invoice_error: string | null
+  paid_at: string | null
+  fulfilled_at: string | null
+  person_quantities: { name: string; quantity: number }[] | null
+  ship_to_name: string | null
+  ship_to_email: string | null
+  ship_to_address: {
+    line1?: string | null
+    line2?: string | null
+    city?: string | null
+    region?: string | null
+    postal_code?: string | null
+    country?: string | null
+  } | null
+  proof_id: string
+  material_variants: { display_name: string | null; materials: { display_name: string | null } | null } | null
+  proofs: { contacts: { full_name: string | null; companies: { name: string | null } | null } | null } | null
+}
+
+const SELECT = `
+  id, status, token, expires_at, sent_at, currency, quantity, names_count, has_personalisation,
+  custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping,
+  payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, person_quantities,
+  ship_to_name, ship_to_email, ship_to_address, proof_id,
+  material_variants(display_name, materials(display_name)),
+  proofs(contacts(full_name, companies(name)))
+`
+
+// A 'sent' order whose window has passed. Status stays 'sent' in the DB (the
+// pay-page + this list derive expiry from the timestamp); reactivation just
+// pushes expires_at forward.
+function isExpired(o: OrderRow): boolean {
+  return o.status === 'sent' && o.expires_at != null && new Date(o.expires_at).getTime() < Date.now()
+}
+
+function customerLabel(o: OrderRow): string {
+  return (
+    o.proofs?.contacts?.companies?.name?.trim() ||
+    o.proofs?.contacts?.full_name?.trim() ||
+    '—'
+  )
+}
+
+function specLabel(o: OrderRow): string {
+  const material = o.material_variants?.materials?.display_name?.trim() ?? ''
+  const variant = o.material_variants?.display_name?.trim() ?? ''
+  if (o.custom_quote_total != null && !material) return 'Custom quote'
+  if (variant && variant !== material) return `${material} · ${variant}`.replace(/^ · /, '')
+  return material || 'Custom quote'
+}
+
+function orderTotal(o: OrderRow): number | null {
+  if (o.custom_quote_total != null) return Number(o.custom_quote_total)
+  const parts = [o.amount_cards, o.amount_tooling, o.amount_personalisation, o.amount_shipping]
+  if (parts.every((p) => p == null)) return null
+  return round2(parts.reduce((acc: number, p) => acc + Number(p ?? 0), 0))
+}
+
+// Turn the stored Xero rejection into one human-readable line. The raw value
+// is usually "<status> <JSON body>" from Xero's API; the useful part is the
+// validation message(s) buried in Elements[].ValidationErrors[].Message (e.g.
+// "Organisation is not subscribed to currency USD") and any line-item ones.
+// Falls back to Xero's top-level Message, then to a trimmed raw string for our
+// own plain-text errors (e.g. "Xero is not connected…").
+function friendlyInvoiceError(raw: string | null): string | null {
+  if (!raw) return null
+  const braceIdx = raw.indexOf('{')
+  if (braceIdx !== -1) {
+    try {
+      const parsed = JSON.parse(raw.slice(braceIdx))
+      const msgs: string[] = []
+      const elements = Array.isArray(parsed?.Elements) ? parsed.Elements : []
+      for (const el of elements) {
+        for (const v of (Array.isArray(el?.ValidationErrors) ? el.ValidationErrors : [])) {
+          if (v?.Message) msgs.push(String(v.Message))
+        }
+        for (const li of (Array.isArray(el?.LineItems) ? el.LineItems : [])) {
+          for (const v of (Array.isArray(li?.ValidationErrors) ? li.ValidationErrors : [])) {
+            if (v?.Message) msgs.push(String(v.Message))
+          }
+        }
+      }
+      if (msgs.length > 0) return Array.from(new Set(msgs)).join('; ')
+      if (parsed?.Message) return String(parsed.Message)
+    } catch {
+      // not JSON — fall through to the trimmed raw string
+    }
+  }
+  return raw.length > 200 ? `${raw.slice(0, 200)}…` : raw
+}
+
+function formatDate(iso: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+export default function OrdersPage() {
+  const [loading, setLoading] = useState(true)
+  const [orders, setOrders] = useState<OrderRow[]>([])
+  const [thumbs, setThumbs] = useState<Record<string, GridImage | null>>({})
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  // Sent reminders per order (the automated unpaid-order nudges, 000238).
+  const [reminders, setReminders] = useState<Record<string, { count: number; lastAt: string }>>({})
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase
+        .from('orders')
+        .select(SELECT)
+        .in('status', ['sent', 'paid', 'fulfilled'])
+        .order('sent_at', { ascending: false })
+        .limit(300)
+      if (cancelled) return
+      const rows = (data ?? []) as unknown as OrderRow[]
+      setOrders(rows)
+      setLoading(false)
+
+      // Reminder activity for the awaiting-payment cards: only real sends
+      // (state 'sent') count — dry-run rows are deliberately not surfaced here.
+      const sentIds = rows.filter((r) => r.status === 'sent').map((r) => r.id)
+      if (sentIds.length > 0) {
+        const { data: nudgeData } = await supabase
+          .from('order_nudges')
+          .select('order_id, created_at')
+          .in('order_id', sentIds)
+          .eq('state', 'sent')
+        if (!cancelled && nudgeData) {
+          const map: Record<string, { count: number; lastAt: string }> = {}
+          for (const n of nudgeData as { order_id: string; created_at: string }[]) {
+            const cur = map[n.order_id]
+            if (!cur) map[n.order_id] = { count: 1, lastAt: n.created_at }
+            else {
+              cur.count += 1
+              if (n.created_at > cur.lastAt) cur.lastAt = n.created_at
+            }
+          }
+          setReminders(map)
+        }
+      }
+
+      // Representative thumbnail per proof — one call each, first non-QR
+      // image. The card links to the proof for the authoritative
+      // approved artwork; this is a recognition aid, not the record.
+      const proofIds = Array.from(new Set(rows.filter((r) => r.status === 'paid').map((r) => r.proof_id)))
+      await Promise.all(
+        proofIds.map(async (proofId) => {
+          try {
+            const { data: imgData } = await supabase.functions.invoke<{ images: GridImage[] }>(
+              'customer-proof-images',
+              { body: { proofId } },
+            )
+            const first = (imgData?.images ?? []).find((img) => img.is_qr_code !== true) ?? null
+            if (!cancelled) setThumbs((prev) => ({ ...prev, [proofId]: first }))
+          } catch {
+            // ignore — card renders without a thumbnail
+          }
+        }),
+      )
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  async function markFulfilled(orderId: string) {
+    setBusyId(orderId)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const uid = session?.user.id ?? null
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          status: 'fulfilled',
+          fulfilled_at: new Date().toISOString(),
+          fulfilled_by: uid,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', orderId)
+        .eq('status', 'paid')
+      if (!error) {
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.id === orderId ? { ...o, status: 'fulfilled', fulfilled_at: new Date().toISOString() } : o,
+          ),
+        )
+      }
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function retryInvoice(o: OrderRow) {
+    setBusyId(o.id)
+    try {
+      const { data, error } = await supabase.functions.invoke<{ ok: boolean; invoiceId?: string; error?: string }>(
+        'retry-order-invoice',
+        { body: { order_id: o.id } },
+      )
+      if (error || !data?.ok) {
+        // Reflect the freshly-stamped reason on the row; the card renders it as
+        // a friendly one-line message (and the pill tooltip) via friendlyInvoiceError.
+        const msg = data?.error ?? error?.message ?? 'Could not create the invoice. Please try again.'
+        setOrders((prev) => prev.map((r) => (r.id === o.id ? { ...r, xero_invoice_error: msg } : r)))
+        return
+      }
+      const invoiceId = data.invoiceId ?? null
+      setOrders((prev) =>
+        prev.map((r) => (r.id === o.id ? { ...r, xero_invoice_id: invoiceId, xero_invoice_error: null } : r)),
+      )
+      void logAudit({
+        action: 'order.invoice_retried',
+        targetType: 'order',
+        targetId: o.id,
+        targetLabel: `Order ${o.payment_reference ?? o.id}`,
+        afterValue: { xero_invoice_id: invoiceId },
+      })
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function copyLink(o: OrderRow) {
+    try {
+      await navigator.clipboard.writeText(customerOrderUrl(o.id, o.token))
+      setCopiedId(o.id)
+      window.setTimeout(() => setCopiedId((c) => (c === o.id ? null : c)), 2000)
+    } catch {
+      // Clipboard blocked (rare on https) — designer can retry; no hard failure.
+    }
+  }
+
+  async function reactivate(o: OrderRow) {
+    setBusyId(o.id)
+    try {
+      const nextExpiry = new Date(Date.now() + ORDER_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString()
+      const { error } = await supabase
+        .from('orders')
+        .update({ expires_at: nextExpiry, updated_at: new Date().toISOString() })
+        .eq('id', o.id)
+        .eq('status', 'sent')
+      if (!error) {
+        setOrders((prev) => prev.map((r) => (r.id === o.id ? { ...r, expires_at: nextExpiry } : r)))
+        void logAudit({
+          action: 'order.link_reactivated',
+          targetType: 'order',
+          targetId: o.id,
+          targetLabel: `Order ${o.payment_reference ?? o.id}`,
+          beforeValue: { expires_at: o.expires_at },
+          afterValue: { expires_at: nextExpiry },
+        })
+      }
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const awaitingPayment = orders.filter((o) => o.status === 'sent')
+  const awaiting = orders.filter((o) => o.status === 'paid')
+  const fulfilled = orders.filter((o) => o.status === 'fulfilled').slice(0, 30)
+
+  return (
+    <DesignerChrome active="orders">
+      <main className="mx-auto max-w-[1100px] px-4 py-8 sm:px-7">
+        <h1 className="text-xl font-semibold text-ink">Orders</h1>
+        <p className="mt-1 text-sm text-ink-soft">
+          From payment link to dispatch — links awaiting payment, paid orders to print, and recently shipped.
+        </p>
+
+        {loading ? (
+          <p className="mt-8 text-sm text-ink-mute">Loading orders…</p>
+        ) : (
+          <>
+            {awaitingPayment.length > 0 && (
+              <section className="mt-6">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Awaiting payment</h2>
+                <p className="mt-1 text-[13px] text-ink-mute">
+                  Payment links that have been sent but not paid yet. Copy a link to re-send it, or reactivate an expired one (extends it {ORDER_EXPIRY_DAYS} days).
+                </p>
+                <div className="mt-3 space-y-3">
+                  {awaitingPayment.map((o) => (
+                    <AwaitingPaymentCard
+                      key={o.id}
+                      order={o}
+                      expired={isExpired(o)}
+                      busy={busyId === o.id}
+                      copied={copiedId === o.id}
+                      reminder={reminders[o.id] ?? null}
+                      onCopy={() => void copyLink(o)}
+                      onReactivate={() => void reactivate(o)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            <section className="mt-10">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">To fulfil</h2>
+              <div className="mt-3">
+                {awaiting.length === 0 ? (
+                  <PanelShell className="text-center">
+                    <p className="text-sm text-ink-soft">Nothing waiting to be fulfilled right now.</p>
+                  </PanelShell>
+                ) : (
+                  <div className="space-y-4">
+                    {awaiting.map((o) => (
+                      <OrderCard
+                        key={o.id}
+                        order={o}
+                        thumb={thumbs[o.proof_id] ?? null}
+                        busy={busyId === o.id}
+                        onFulfil={() => void markFulfilled(o.id)}
+                        onRetryInvoice={() => void retryInvoice(o)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {fulfilled.length > 0 && (
+              <section className="mt-10">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Recently fulfilled</h2>
+                <div className="mt-3 divide-y divide-line-soft rounded-xl border border-line bg-surface">
+                  {fulfilled.map((o) => (
+                    <div key={o.id} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
+                      <div className="min-w-0">
+                        <Link to={`/proofs/${o.proof_id}`} className="font-medium text-ink hover:underline">
+                          {customerLabel(o)}
+                        </Link>
+                        <span className="ml-2 text-ink-mute">{o.payment_reference}</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-ink-soft">
+                        <span>{o.quantity != null ? `${o.quantity.toLocaleString()} cards` : 'Custom'}</span>
+                        <span className="text-ink-mute">Fulfilled {formatDate(o.fulfilled_at)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </>
+        )}
+      </main>
+    </DesignerChrome>
+  )
+}
+
+function OrderCard({
+  order,
+  thumb,
+  busy,
+  onFulfil,
+  onRetryInvoice,
+}: {
+  order: OrderRow
+  thumb: GridImage | null
+  busy: boolean
+  onFulfil: () => void
+  onRetryInvoice: () => void
+}) {
+  const total = orderTotal(order)
+  const invoiceError = !order.xero_invoice_id ? friendlyInvoiceError(order.xero_invoice_error) : null
+  const addr = order.ship_to_address
+  const addrLines = addr
+    ? [order.ship_to_name, addr.line1, addr.line2, [addr.city, addr.postal_code].filter(Boolean).join(' '), addr.country]
+        .map((s) => (s ?? '').trim())
+        .filter(Boolean)
+    : []
+
+  return (
+    <PanelShell>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+        {thumb && (
+          <img
+            src={thumb.signed_url}
+            alt="Proof artwork"
+            className="h-20 w-20 shrink-0 rounded-lg object-cover ring-1 ring-line"
+          />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to={`/proofs/${order.proof_id}`} className="text-base font-semibold text-ink hover:underline">
+              {customerLabel(order)}
+            </Link>
+            <Pill colour="in-stock">Paid</Pill>
+            {order.xero_invoice_id && (
+              <a
+                href={`https://go.xero.com/app/invoicing/view/${order.xero_invoice_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open this invoice in Xero to check product codes and tax rates"
+                className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+              >
+                <Pill colour="allocated">Invoiced ↗</Pill>
+              </a>
+            )}
+            {!order.xero_invoice_id && order.xero_invoice_error && (
+              <Pill colour="critical" title={invoiceError ?? undefined}>Invoice failed</Pill>
+            )}
+          </div>
+          <p className="mt-0.5 text-sm text-ink-soft">
+            {specLabel(order)}
+            {' · '}
+            {order.quantity != null ? `${order.quantity.toLocaleString()} cards` : 'Quantity TBC'}
+            {order.names_count > 1 ? ` · ${order.names_count} people` : ''}
+            {order.has_personalisation ? ' · personalisation' : ''}
+          </p>
+
+          {order.person_quantities && order.person_quantities.length > 0 && (
+            <div className="mt-2 rounded-lg border border-line bg-canvas px-3 py-2 text-[13px] text-ink-soft">
+              <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Make</span>
+              {order.person_quantities.map((p, i) => (
+                <span key={i} className="mr-3 inline-block">
+                  <span className="text-ink">{p.quantity.toLocaleString()}</span> {p.name}
+                </span>
+              ))}
+            </div>
+          )}
+          <p className="mt-0.5 text-[13px] text-ink-mute">
+            Ref {order.payment_reference}
+            {order.paid_at ? ` · paid ${formatDate(order.paid_at)}` : ''}
+            {total != null ? ` · ${formatPrice(total, order.currency)}` : ''}
+          </p>
+
+          {invoiceError && (
+            <p className="mt-1.5 rounded-lg bg-out-soft px-3 py-2 text-[13px] text-out ring-1 ring-out">
+              <span className="font-medium">Invoice not created.</span> {invoiceError}
+            </p>
+          )}
+
+          {addrLines.length > 0 ? (
+            <div className="mt-3 rounded-lg border border-line bg-canvas px-3 py-2 text-[13px] text-ink-soft">
+              <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Deliver to</span>
+              {addrLines.map((line, i) => (
+                <span key={i} className="block">{line}</span>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 text-[13px] text-ink-mute">Delivery address on the Stripe payment / Xero invoice.</p>
+          )}
+        </div>
+
+        <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+          <ButtonInk onClick={onFulfil} disabled={busy}>
+            {busy ? 'Marking…' : 'Mark as fulfilled'}
+          </ButtonInk>
+          <Link to={`/proofs/${order.proof_id}`}>
+            <ButtonGhost size="sm">View proof &amp; artwork</ButtonGhost>
+          </Link>
+          {!order.xero_invoice_id && (
+            <ButtonGhost size="sm" onClick={onRetryInvoice} disabled={busy}>
+              {busy ? 'Retrying…' : 'Retry invoice'}
+            </ButtonGhost>
+          )}
+        </div>
+      </div>
+    </PanelShell>
+  )
+}
+
+function AwaitingPaymentCard({
+  order,
+  expired,
+  busy,
+  copied,
+  reminder,
+  onCopy,
+  onReactivate,
+}: {
+  order: OrderRow
+  expired: boolean
+  busy: boolean
+  copied: boolean
+  reminder: { count: number; lastAt: string } | null
+  onCopy: () => void
+  onReactivate: () => void
+}) {
+  const total = orderTotal(order)
+  return (
+    <PanelShell>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to={`/proofs/${order.proof_id}`} className="text-base font-semibold text-ink hover:underline">
+              {customerLabel(order)}
+            </Link>
+            {expired ? <Pill colour="out">Expired</Pill> : <Pill colour="low">Awaiting payment</Pill>}
+          </div>
+          <p className="mt-0.5 text-sm text-ink-soft">
+            {specLabel(order)}
+            {' · '}
+            {order.quantity != null ? `${order.quantity.toLocaleString()} cards` : 'Customer picks quantity'}
+            {total != null ? ` · ${formatPrice(total, order.currency)}` : ''}
+          </p>
+          <p className="mt-0.5 text-[13px] text-ink-mute">
+            Ref {order.payment_reference}
+            {order.sent_at ? ` · sent ${formatDate(order.sent_at)}` : ''}
+            {order.expires_at ? ` · ${expired ? 'expired' : 'expires'} ${formatDate(order.expires_at)}` : ''}
+          </p>
+          {reminder && (
+            <p className="mt-1 text-[13px] text-ink-soft">
+              {reminder.count === 1
+                ? `Reminder sent ${formatDate(reminder.lastAt)}`
+                : `${reminder.count} reminders sent · last ${formatDate(reminder.lastAt)}`}
+            </p>
+          )}
+        </div>
+        <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+          <ButtonGhost size="sm" onClick={onCopy}>{copied ? 'Copied' : 'Copy link'}</ButtonGhost>
+          {expired && (
+            <ButtonInk onClick={onReactivate} disabled={busy}>
+              {busy ? 'Reactivating…' : 'Reactivate link'}
+            </ButtonInk>
+          )}
+        </div>
+      </div>
+    </PanelShell>
+  )
+}

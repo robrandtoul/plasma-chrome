@@ -4,6 +4,7 @@ import { logAudit } from '../../lib/audit'
 import { invalidatePublicSettings } from '../../lib/publicSettings'
 import { invalidateApprovalSettings } from '../../lib/approvalSettings'
 import { invalidateShippingSettings } from '../../lib/shippingSettings'
+import { invalidateOrderingEnabled } from '../../lib/orderingEnabled'
 import { FieldRow, inputClass } from './settingsControls'
 
 // /admin/settings — the operational cards only: Customer approvals,
@@ -24,6 +25,12 @@ interface Settings {
   approvals_enabled: boolean
   approve_confirmation_copy: string
   request_changes_confirmation_copy: string
+  /** Ordering & checkout master switch (migration 000228). Off keeps the
+   *  whole ordering feature inert — no "Create order" button, no pay-page. */
+  ordering_enabled: boolean
+  /** Unpaid-order reminder automation switch (migration 000238). Off keeps
+   *  the send-order-reminders job in dry-run (logs only, sends nothing). */
+  auto_order_reminders_enabled: boolean
   /** Shipping (migration 000178). */
   fedex_box_weight_grams: number
   fedex_intl_adjust_percent: number
@@ -53,6 +60,8 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   approvals_enabled:                 'setting.approvals_enabled_updated',
   approve_confirmation_copy:         'setting.approve_confirmation_copy_updated',
   request_changes_confirmation_copy: 'setting.request_changes_confirmation_copy_updated',
+  ordering_enabled:                  'setting.ordering_enabled_updated',
+  auto_order_reminders_enabled:      'setting.auto_order_reminders_enabled_updated',
   fedex_box_weight_grams:            'setting.fedex_box_weight_grams_updated',
   fedex_intl_adjust_percent:         'setting.fedex_intl_adjust_percent_updated',
   domestic_uk_mainland_rate_gbp:     'setting.domestic_uk_mainland_rate_gbp_updated',
@@ -78,12 +87,32 @@ export default function AdminSettingsPage() {
   const [hsTestState, setHsTestState] = useState<HelpScoutTestState>({ kind: 'untested' })
   const [hsTesting, setHsTesting] = useState(false)
 
+  // Xero connect (Ordering & checkout, Step 5b). Kicks off the one-time
+  // OAuth authorisation; the returned consent URL opens in a new tab and
+  // Xero redirects to the callback function, which stores the tokens.
+  const [xeroBusy, setXeroBusy] = useState(false)
+  const [xeroMsg, setXeroMsg] = useState<string | null>(null)
+
+  async function connectXero() {
+    if (xeroBusy) return
+    setXeroBusy(true)
+    setXeroMsg(null)
+    const { data, error } = await supabase.functions.invoke<{ url?: string; error?: string }>('xero-oauth-start')
+    setXeroBusy(false)
+    if (error || !data || data.error || !data.url) {
+      setXeroMsg(data?.error ?? 'Could not start the Xero connection. Check the Xero credentials are set.')
+      return
+    }
+    window.open(data.url, '_blank', 'noopener')
+    setXeroMsg(`Opened Xero in a new tab — authorise there. If it errors, copy this exact URL and send it over:\n\n${data.url}`)
+  }
+
   useEffect(() => { load() }, [])
 
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp')
+      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -149,6 +178,9 @@ export default function AdminSettingsPage() {
       field === 'request_changes_confirmation_copy'
     ) {
       invalidateApprovalSettings()
+    }
+    if (field === 'ordering_enabled') {
+      invalidateOrderingEnabled()
     }
     if (
       field === 'fedex_box_weight_grams'
@@ -322,6 +354,66 @@ export default function AdminSettingsPage() {
               className={inputClass}
             />
           </FieldRow>
+        </div>
+      </section>
+
+      {/* ── Ordering & checkout (migration 000228) ────────────────────
+          Master switch for the Ordering & checkout feature. Off (the
+          default) keeps the whole feature inert — no "Create order"
+          button on approved proofs, no customer pay-page. Built behind
+          this gate so the existing approve → manual-Xero-invoice flow is
+          unaffected until Rob turns ordering on. See
+          docs/ordering-checkout-spec.md. */}
+      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+        <h3 className="mb-4 text-sm font-semibold text-ink">Ordering &amp; checkout</h3>
+        <div className="space-y-5">
+          <FieldRow
+            label="Ordering &amp; checkout enabled"
+            help="When off, nothing changes — designers carry on sending invoices the existing way. Turn on to reveal the Create order builder on approved proofs and activate the customer pay-page. Leave off until the ordering feature is ready to go live."
+            saved={recentlySaved('ordering_enabled')}
+            working={working.ordering_enabled}
+            error={errors.ordering_enabled}
+          >
+            <Toggle
+              value={settings.ordering_enabled}
+              onChange={(v) => void saveField('ordering_enabled', v)}
+              disabled={!!working.ordering_enabled}
+              label="Ordering & checkout enabled"
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Send unpaid-order reminders automatically"
+            help="When on, a customer who's been sent an order link but hasn't paid gets up to two gentle email reminders on their Help Scout thread — a first nudge about a week after the link is sent, and a second just before the link expires. The moment they pay (or the link expires) the reminders stop. When off (the default), the daily job still runs but only logs what it would have sent — nothing is emailed. Edit the wording under Templates → Order messages. Saves immediately."
+            saved={recentlySaved('auto_order_reminders_enabled')}
+            working={working.auto_order_reminders_enabled}
+            error={errors.auto_order_reminders_enabled}
+          >
+            <Toggle
+              value={settings.auto_order_reminders_enabled}
+              onChange={(v) => void saveField('auto_order_reminders_enabled', v)}
+              disabled={!!working.auto_order_reminders_enabled}
+              label="Send unpaid-order reminders automatically"
+            />
+          </FieldRow>
+
+          {/* Xero connection (Step 5b): paid orders create an invoice in
+              the connected Xero org. One-time OAuth authorise. */}
+          <div className="border-t border-line-soft pt-5">
+            <p className="text-sm font-medium text-ink">Xero connection</p>
+            <p className="mt-1 text-[13px] text-ink-mute">
+              Connect your Xero organisation so a paid order creates an invoice automatically. Connect to your Demo Company first to test.
+            </p>
+            <button
+              type="button"
+              onClick={() => void connectXero()}
+              disabled={xeroBusy}
+              className="mt-3 rounded px-3 py-2 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-canvas disabled:opacity-50"
+            >
+              {xeroBusy ? 'Starting…' : 'Connect Xero'}
+            </button>
+            {xeroMsg && <p className="mt-2 whitespace-pre-wrap break-all text-[13px] text-ink-soft">{xeroMsg}</p>}
+          </div>
         </div>
       </section>
 
@@ -644,6 +736,8 @@ function humanFieldLabel(field: keyof Settings): string {
     approvals_enabled: 'Customer-facing approval flow enabled',
     approve_confirmation_copy: 'Approve confirmation copy',
     request_changes_confirmation_copy: 'Request changes confirmation copy',
+    ordering_enabled: 'Ordering & checkout enabled',
+    auto_order_reminders_enabled: 'Send unpaid-order reminders automatically',
     fedex_box_weight_grams: 'FedEx box weight (grams)',
     fedex_intl_adjust_percent: 'International shipping adjustment (%)',
     domestic_uk_mainland_rate_gbp: 'UK mainland shipping rate (£, inc VAT)',

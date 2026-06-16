@@ -16,6 +16,8 @@
     "db:empty-proof-images": "tsx scripts/empty-proof-images-bucket.ts",
     "check:price-list": "tsx scripts/check-price-list-golden.ts",
     "check:briefing-seed": "tsx scripts/briefing-seed.ts --check",
+    "test:quote": "tsx src/lib/quote/interpolation.test.ts && tsx src/lib/quote/calculate.test.ts",
+    "test:order-pricing": "tsx supabase/functions/_shared/orderPricing.test.ts",
     "test:nudges": "tsx supabase/functions/_shared/nudgeDecision.test.ts",
     "backtest": "tsx scripts/run-backtest.ts",
     "test:ai-drafts": "tsx supabase/functions/_shared/aiDrafts/guardrails.test.ts"

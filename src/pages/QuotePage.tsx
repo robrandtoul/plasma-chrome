@@ -5,6 +5,7 @@ import { formatPrice } from '../lib/currency'
 import type { Currency } from '../lib/types'
 import type { QuoteMaterial, QuoteVariant } from '../lib/quote/types'
 import { calculate, splitNameSurchargeFor } from '../lib/quote/calculate'
+import { interpolateScheduleAt } from '../lib/quote/interpolation'
 import { usePricing } from '../lib/quote/usePricing'
 import { usePersonalisationPricing } from '../lib/quote/usePersonalisationPricing'
 import { personalisationSurchargeForQty, personalisationBreakeven } from '../lib/personalisation'
@@ -389,7 +390,11 @@ export default function QuotePage() {
   function extraTotalAt(qty: number): number {
     const splitName = splitNameSurchargeFor(names, perExtraNameSurcharge)
     const finishMap = activeOption ? pricing.surchargesByOptionId.get(activeOption.id) : null
-    const finish = finishMap ? (finishMap[qty] ?? 0) : 0
+    // interpolateScheduleAt (not finishMap[qty]) so a non-standard,
+    // in-between quantity resolves the finish surcharge by bracketing
+    // its own schedule rather than silently dropping to 0 while the
+    // base price interpolates. Exact tier qtys still hit the exact row.
+    const finish = interpolateScheduleAt(finishMap, qty)
     const personalisation =
       personalisationActive && personalisationPricing
         ? personalisationSurchargeForQty(qty, personalisationPricing)
@@ -399,7 +404,7 @@ export default function QuotePage() {
   const finishLabel = activeOption && !activeOption.is_base ? activeOption.display_name : null
   const finishSurchargeAtCurrent =
     activeOption && quantity != null
-      ? (pricing.surchargesByOptionId.get(activeOption.id)?.[quantity] ?? 0)
+      ? interpolateScheduleAt(pricing.surchargesByOptionId.get(activeOption.id), quantity)
       : 0
 
   // Variant-scoped tier list, fed to QuantityInput + calculate.
@@ -703,6 +708,7 @@ export default function QuotePage() {
         discountAmount: null,
         unitPrice: null,
         validTier: false,
+        interpolated: false,
         currency,
         snap: { lower: null, upper: null },
       }
@@ -850,6 +856,7 @@ export default function QuotePage() {
                   previewTotal={result.total}
                   previewUnitPrice={result.unitPrice}
                   previewValidTier={result.validTier}
+                  previewInterpolated={result.interpolated}
                 />
               )}
 
@@ -1105,6 +1112,9 @@ export default function QuotePage() {
                     currency={currency}
                     loading={pricing.loading && !tiersFresh}
                     vatRate={vatRate}
+                    interpolated={result.interpolated}
+                    interpolationLowerQty={result.snap.lower?.quantity ?? null}
+                    interpolationUpperQty={result.snap.upper?.quantity ?? null}
                   />
                 ) : null}
 

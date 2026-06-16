@@ -81,6 +81,9 @@ function buildSampleContext(company: CompanyMode, version: VersionMode): Templat
     chosen_variant: 'Charcoal',
     actor_name: 'Kevin',
     recipient_name: '',
+    // Sample values for the order messages (order_payment_link / reminders).
+    order_url: 'https://proofs.plasmadesign.co.uk/order/example',
+    order_expiry: '30 Jun 2026',
   }
 }
 
@@ -89,20 +92,26 @@ function buildSampleContext(company: CompanyMode, version: VersionMode): Templat
 // `nudge_*` templates are the needs-attention reminders (000207), and
 // everything else is a designer-composed pre-send message. See the
 // convention comment in src/lib/replyTemplates.ts for the rule.
-type TemplateGroupKey = 'pre_send' | 'post_action' | 'nudge'
+type TemplateGroupKey = 'pre_send' | 'post_action' | 'nudge' | 'order'
 
 function templateGroup(id: string): TemplateGroupKey {
   if (id.startsWith('proof_')) return 'post_action'
   if (id.startsWith('nudge_')) return 'nudge'
+  if (id.startsWith('order_')) return 'order'
   return 'pre_send'
 }
 
 // Variable-chip scope per template. The nudge bodies resolve through
 // the same compose context as the pre-send messages, so they share
 // the 'designer_picked' variable set (first_name, full_name, company,
-// version_number, url) rather than the post-action one.
+// version_number, url) rather than the post-action one. Order messages
+// have their own scope (just order_url) — proof/version variables don't
+// apply to an order pay-link.
 function templateScope(id: string): TemplateVariableScope {
-  return id.startsWith('proof_') ? 'proof_viewer' : 'designer_picked'
+  if (id.startsWith('proof_')) return 'proof_viewer'
+  if (id.startsWith('order_reminder')) return 'order_reminder'
+  if (id.startsWith('order_')) return 'order'
+  return 'designer_picked'
 }
 
 // Render order for the reminder group — one card per chase rule, in
@@ -272,6 +281,12 @@ export default function AdminTemplatesSection() {
             templates={templates
               .filter((t) => templateGroup(t.id) === 'nudge')
               .sort((a, b) => nudgeRank(a.id) - nudgeRank(b.id))}
+            onSaved={handleSaved}
+          />
+          <TemplateGroup
+            heading="Order messages"
+            blurb="The message offered in the order builder when sending a customer their payment link. The designer can still tweak it per-order before sending; this sets the starting text."
+            templates={templates.filter((t) => templateGroup(t.id) === 'order')}
             onSaved={handleSaved}
           />
           <VariableHelpPanel />
@@ -512,22 +527,29 @@ function TemplateCard({
         <div>
           <div className="mb-1 flex flex-wrap items-center gap-3">
             <label className="text-xs font-medium text-ink-mute">Preview</label>
-            <PreviewToggle<CompanyMode>
-              value={companyMode}
-              onChange={setCompanyMode}
-              options={[
-                { value: 'with',    label: 'with company' },
-                { value: 'without', label: 'without company' },
-              ]}
-            />
-            <PreviewToggle<VersionMode>
-              value={versionMode}
-              onChange={setVersionMode}
-              options={[
-                { value: 'v1', label: 'v1' },
-                { value: 'v2', label: 'v2+' },
-              ]}
-            />
+            {/* The sample-variation toggles only matter for templates that use
+                {company} / {version_number}; an order message uses neither, so
+                hide them on the order card. */}
+            {cardScope !== 'order' && (
+              <>
+                <PreviewToggle<CompanyMode>
+                  value={companyMode}
+                  onChange={setCompanyMode}
+                  options={[
+                    { value: 'with',    label: 'with company' },
+                    { value: 'without', label: 'without company' },
+                  ]}
+                />
+                <PreviewToggle<VersionMode>
+                  value={versionMode}
+                  onChange={setVersionMode}
+                  options={[
+                    { value: 'v1', label: 'v1' },
+                    { value: 'v2', label: 'v2+' },
+                  ]}
+                />
+              </>
+            )}
           </div>
           <div className="min-h-[14rem] whitespace-pre-wrap rounded-lg border border-line bg-surface px-3 py-2 text-xs leading-relaxed text-ink-soft">
             {previewText}
@@ -555,6 +577,8 @@ function VariableHelpPanel() {
   // sub-section split above. Each scope renders the same dl shape.
   const designerPicked = TEMPLATE_VARIABLES.filter((v) => v.scope === 'designer_picked')
   const proofViewer = TEMPLATE_VARIABLES.filter((v) => v.scope === 'proof_viewer')
+  const order = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order')
+  const orderReminder = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order_reminder')
 
   return (
     <div className="mt-6 rounded-xl border border-line bg-canvas p-4">
@@ -575,6 +599,30 @@ function VariableHelpPanel() {
       </h4>
       <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
         {proofViewer.map((v) => (
+          <div key={v.name} className="contents">
+            <dt className="font-mono text-ink-soft">{`{${v.name}}`}</dt>
+            <dd className="text-ink-mute">{v.description}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <h4 className="mt-4 text-xs font-semibold uppercase tracking-wider text-ink-dim">
+        Order variables
+      </h4>
+      <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
+        {order.map((v) => (
+          <div key={v.name} className="contents">
+            <dt className="font-mono text-ink-soft">{`{${v.name}}`}</dt>
+            <dd className="text-ink-mute">{v.description}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <h4 className="mt-4 text-xs font-semibold uppercase tracking-wider text-ink-dim">
+        Order reminder variables
+      </h4>
+      <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
+        {orderReminder.map((v) => (
           <div key={v.name} className="contents">
             <dt className="font-mono text-ink-soft">{`{${v.name}}`}</dt>
             <dd className="text-ink-mute">{v.description}</dd>

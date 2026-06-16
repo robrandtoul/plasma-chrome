@@ -67,7 +67,14 @@ export function substituteVariables(text: string, ctx: TemplateContext): string 
 // inspecting the rendered output for leftovers can never fire — a typo'd
 // {ur1} would silently produce an email with no link. Returns a
 // human-readable problem string, or null when safe to send.
-export function templateProblem(template: string, ctx: TemplateContext): string | null {
+// `requiredUrlKey` names the ctx field that must render non-empty (the link the
+// message exists to deliver). Defaults to 'url' (the proof-nudge link); the
+// order-reminder sender passes 'order_url'.
+export function templateProblem(
+  template: string,
+  ctx: TemplateContext,
+  requiredUrlKey: 'url' | 'order_url' = 'url',
+): string | null {
   // Strip conditional openers/closers, then collect every bare {token} the
   // renderer will try to substitute — each must exist as a ctx key (empty
   // values are caught by the value checks below for the fields that matter).
@@ -83,8 +90,8 @@ export function templateProblem(template: string, ctx: TemplateContext): string 
   const closers = (template.match(/\{\/\?\}/g) ?? []).length
   if (openers !== closers) return `unbalanced conditional blocks (${openers} openers, ${closers} closers)`
   // The two fields a nudge cannot be sent without.
-  const url = typeof ctx.url === 'string' ? ctx.url.trim() : ''
-  if (!url) return 'proof URL rendered empty'
+  const url = typeof ctx[requiredUrlKey] === 'string' ? (ctx[requiredUrlKey] as string).trim() : ''
+  if (!url) return `${requiredUrlKey} rendered empty`
   const firstName = typeof ctx.first_name === 'string' ? ctx.first_name.trim() : ''
   if (!firstName) return 'customer first name rendered empty'
   return null
@@ -103,4 +110,14 @@ export const NUDGE_DEFAULT_BODIES: Record<string, string> = {
     `Hi {first_name},\n\nJust a quick nudge on your card proof{? company} for {company}{/?} before it slips off our active list. Let us know if you'd like any changes — here's the link:\n\n{url}`,
   nudge_stuck_in_progress:
     `Hi {first_name},\n\nChecking in on your card proof{? company} for {company}{/?} — we haven't heard back in a little while. Happy to help with any tweaks; here's the link again:\n\n{url}`,
+}
+
+// Default bodies for the two order-reminder templates (migration 000238), the
+// fallback when the reply_templates row is missing. Must stay in sync with the
+// seed migration and src/lib/replyTemplates.ts DEFAULT_BODIES. No sign-off.
+export const ORDER_REMINDER_DEFAULT_BODIES: Record<string, string> = {
+  order_reminder_1:
+    `Hi {first_name},\n\nJust a gentle reminder that your cards{? company} for {company}{/?} are approved and ready to order whenever you're set. You can choose your quantity and pay securely here:\n\n{order_url}`,
+  order_reminder_2:
+    `Hi {first_name},\n\nA quick reminder that your order link{? company} for {company}{/?} expires on {order_expiry}. If you'd still like to go ahead, you can complete it here:\n\n{order_url}\n\nIf the link has lapsed by the time you read this, just reply and we'll send a fresh one.`,
 }
