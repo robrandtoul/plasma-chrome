@@ -196,6 +196,18 @@ const MODE_HELP: Record<Mode, string> = {
   live: 'Drafts, notes and the ai-draft tag appear in Help Scout for the team to review and send.',
 }
 
+// Triage-model options. '' = use the default (draft) model. Triage runs on
+// EVERY inbound (incl. spam), so a cheaper model here is the main cost lever;
+// effort + adaptive thinking auto-drop for models that don't support them. The
+// draft step always stays on the default model.
+const TRIAGE_MODELS: { value: string; label: string }[] = [
+  { value: '', label: 'Default (same as draft model)' },
+  { value: 'claude-opus-4-8', label: 'Opus 4.8 — most capable' },
+  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6 — mid' },
+  { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 — cheapest' },
+]
+const TRIAGE_LABEL = (v: string) => TRIAGE_MODELS.find((m) => m.value === v)?.label ?? v
+
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
@@ -211,6 +223,10 @@ export default function AdminAiDraftsPage() {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [tab, setTab] = useState<Tab>('decisions')
+  // Admin triage-model override ('' = default). Saved on select.
+  const [triageModel, setTriageModel] = useState<string>('')
+  const [triageSaving, setTriageSaving] = useState(false)
+  const [triageError, setTriageError] = useState<string | null>(null)
   // 30-day daily aggregates for the spend + acceptance trend charts. Fetched
   // separately (minimal columns, wider window) so the heavy 7-day decision
   // list query stays small. null until first load.
@@ -221,16 +237,16 @@ export default function AdminAiDraftsPage() {
   // A ref so the (mount-only) poll loop reads the latest value without the
   // interval being torn down and recreated on every keystroke of state.
   const busyRef = useRef(false)
-  useEffect(() => { busyRef.current = pendingMode !== null || modeWorking }, [pendingMode, modeWorking])
+  useEffect(() => { busyRef.current = pendingMode !== null || modeWorking || triageSaving }, [pendingMode, modeWorking, triageSaving])
 
   // One fetch of mode + the last 7 days of decisions. Returns the data, or an
   // error string so callers can decide: the initial load replaces the page
   // with an error card; a background poll swallows it and keeps the last good
   // data, so a momentary network blip never blanks the table.
-  async function fetchData(): Promise<{ mode: Mode; rows: DraftRow[] } | { error: string }> {
+  async function fetchData(): Promise<{ mode: Mode; triageModel: string; rows: DraftRow[] } | { error: string }> {
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
     const [settingsRes, rowsRes] = await Promise.all([
-      supabase.from('settings').select('ai_drafts_mode').eq('id', 1).single(),
+      supabase.from('settings').select('ai_drafts_mode, ai_drafts_triage_model').eq('id', 1).single(),
       supabase
         .from('ai_drafts')
         .select(
@@ -242,7 +258,11 @@ export default function AdminAiDraftsPage() {
     ])
     if (settingsRes.error) return { error: settingsRes.error.message }
     if (rowsRes.error) return { error: rowsRes.error.message }
-    return { mode: (settingsRes.data?.ai_drafts_mode ?? 'off') as Mode, rows: (rowsRes.data ?? []) as DraftRow[] }
+    return {
+      mode: (settingsRes.data?.ai_drafts_mode ?? 'off') as Mode,
+      triageModel: (settingsRes.data?.ai_drafts_triage_model ?? '') as string,
+      rows: (rowsRes.data ?? []) as DraftRow[],
+    }
   }
 
   // The trend-chart data: SERIES_DAYS of just the columns the two charts need.
@@ -270,6 +290,7 @@ export default function AdminAiDraftsPage() {
     const res = await fetchData()
     if ('error' in res) { setLoadError(res.error); setLoading(false); return }
     setMode(res.mode)
+    setTriageModel(res.triageModel)
     setRows(res.rows)
     setLastUpdated(new Date())
     setLoading(false)
@@ -283,7 +304,7 @@ export default function AdminAiDraftsPage() {
     const res = await fetchData()
     if ('error' in res) return
     setRows(res.rows)
-    if (!busyRef.current) setMode(res.mode)
+    if (!busyRef.current) { setMode(res.mode); setTriageModel(res.triageModel) }
     setLastUpdated(new Date())
   }
 
@@ -320,6 +341,31 @@ export default function AdminAiDraftsPage() {
       targetId: '1',
       beforeValue: { ai_drafts_mode: prev },
       afterValue: { ai_drafts_mode: next },
+    })
+  }
+
+  async function applyTriageModel(next: string) {
+    if (next === triageModel) return
+    const prev = triageModel
+    // Optimistic: the <select> is controlled by triageModel, so set it now or it
+    // would visually snap back to the old option for the whole save round-trip.
+    // busyRef guards the poll while saving; roll back on error.
+    setTriageModel(next)
+    setTriageSaving(true)
+    setTriageError(null)
+    // Store '' as null so the edge function's coalesce falls back to the default.
+    const { error } = await supabase
+      .from('settings')
+      .update({ ai_drafts_triage_model: next || null, updated_at: new Date().toISOString() })
+      .eq('id', 1)
+    setTriageSaving(false)
+    if (error) { setTriageError(error.message); setTriageModel(prev); return }
+    void logAudit({
+      action: 'setting.ai_drafts_triage_model_updated',
+      targetType: 'setting',
+      targetId: '1',
+      beforeValue: { ai_drafts_triage_model: prev || null },
+      afterValue: { ai_drafts_triage_model: next || null },
     })
   }
 
@@ -478,6 +524,35 @@ export default function AdminAiDraftsPage() {
             </div>
           </div>
         )}
+
+        {/* Triage model — the cost lever (runs on every inbound; drafting always
+            uses the default model). Saved on select. */}
+        <div className="mt-4 pt-4 border-t border-line-soft flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <div className="eyebrow text-ink-mute mb-1">Triage model</div>
+            <p className="text-sm text-ink-mute max-w-md">
+              Classifies every inbound email. Drafting always uses the default model; a cheaper triage model is the main cost lever, since triage runs on spam too.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <select
+              value={triageModel}
+              onChange={(e) => void applyTriageModel(e.target.value)}
+              disabled={triageSaving}
+              aria-label="Triage model"
+              className="rounded-[8px] border border-line bg-surface px-3 py-1.5 text-[13px] text-ink disabled:opacity-60"
+            >
+              {TRIAGE_MODELS.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+            {triageSaving && <span className="text-[11px] text-ink-dim">Saving…</span>}
+          </div>
+        </div>
+        {triageError && <p className="text-sm text-[var(--c-out)] mt-2">{triageError}</p>}
+        {!triageError && triageModel !== '' && (
+          <p className="text-[11px] text-ink-dim mt-2">Triage on {TRIAGE_LABEL(triageModel)}; drafting stays on the default model.</p>
+        )}
       </section>
 
       {/* Tabs */}
@@ -512,7 +587,11 @@ export default function AdminAiDraftsPage() {
         <Stat label="No reply needed" value={stats.noReply} hint="suppliers, notifications, etc." />
       </section>
       <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Stat label={`Cost (7d, USD)`} value={`$${stats.cost.toFixed(2)}`} />
+        <Stat
+          label={`Cost (7d, USD)`}
+          value={`$${stats.cost.toFixed(2)}`}
+          hint={triageModel && triageModel !== 'claude-opus-4-8' ? 'priced at the draft model — real spend is lower' : undefined}
+        />
         <Stat label="Decisions" value={stats.total} />
         <Stat
           label="Acceptance"

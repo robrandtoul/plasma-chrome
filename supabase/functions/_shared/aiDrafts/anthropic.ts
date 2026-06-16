@@ -113,8 +113,12 @@ async function structuredCall<T>(
   user: string,
   schema: Record<string, unknown>,
   effort?: 'low' | 'medium' | 'high',
+  modelOverride?: string,
 ): Promise<{ result: T; usage: CallUsage }> {
-  const model = modelId()
+  // A blank/whitespace override falls back to the default model. Effort and
+  // adaptive-thinking are gated by the resolved model below, so a cheaper
+  // override (e.g. Haiku, which 400s on effort) just drops those params.
+  const model = (modelOverride ?? '').trim() || modelId()
   const response = await postWithRetry({
     model,
     max_tokens: MAX_TOKENS,
@@ -150,13 +154,17 @@ async function structuredCall<T>(
 export async function callClassify(
   system: SystemPart[],
   user: string,
+  modelOverride?: string,
 ): Promise<{ result: ClassifyResult; usage: CallUsage }> {
-  // Triage is simple; medium effort keeps thinking spend proportionate.
+  // Triage is simple; medium effort keeps thinking spend proportionate. The
+  // model is admin-overridable (settings.ai_drafts_triage_model) — triage runs
+  // on every inbound incl. spam, so a cheaper model here is the main cost lever.
   return structuredCall<ClassifyResult>(
     system,
     user,
     CLASSIFY_SCHEMA as unknown as Record<string, unknown>,
     'medium',
+    modelOverride,
   )
 }
 

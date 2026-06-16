@@ -161,12 +161,14 @@ Deno.serve(async (req) => {
     // Mode gate first — 'off' must cost nothing.
     const { data: settings, error: settingsError } = await admin
       .from('settings')
-      .select('ai_drafts_mode')
+      .select('ai_drafts_mode, ai_drafts_triage_model')
       .limit(1)
       .single()
     if (settingsError) return json({ error: `settings read failed: ${settingsError.message}` }, 500)
     const mode = (settings?.ai_drafts_mode ?? 'off') as 'off' | 'shadow' | 'live'
     if (mode === 'off') return json({ ok: true, skipped: 'ai_drafts_mode off' })
+    // Admin-set triage model (cost lever); empty/null → the default model.
+    const triageModel = (settings?.ai_drafts_triage_model as string | null) ?? undefined
 
     // Fetch the conversation (needed for the dedupe anchor and everything else).
     const hsAppId = Deno.env.get('HELPSCOUT_APP_ID') ?? ''
@@ -236,6 +238,7 @@ Deno.serve(async (req) => {
       },
       grounding,
       briefing,
+      triageModel,
     )
 
     // Compose the structured internal note once (text for the ledger, HTML
