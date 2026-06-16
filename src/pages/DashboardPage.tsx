@@ -995,7 +995,7 @@ function ProjectRow({
           reads as a clean six-column table; at narrower widths some
           columns drop (Material, Versions, Updated) so Customer +
           Status stay legible. */}
-      <div className="grid items-center gap-3 grid-cols-[56px_minmax(0,1fr)_auto_auto] sm:grid-cols-[56px_minmax(0,1fr)_140px_auto] md:grid-cols-[56px_minmax(0,1fr)_140px_60px_70px_24px_160px]">
+      <div className="grid items-center gap-3 grid-cols-[72px_minmax(0,1fr)_auto_auto] sm:grid-cols-[72px_minmax(0,1fr)_140px_auto] md:grid-cols-[72px_minmax(0,1fr)_140px_60px_70px_24px_160px]">
         {/* Thumbnail — real signed-URL image when loadThumbnails has
             produced one for this version. Falls through to a dark
             plate with the project's initials when no URL is available
@@ -1012,7 +1012,7 @@ function ProjectRow({
           onMouseEnter={handleThumbMouseEnter}
           onMouseLeave={handleThumbMouseLeave}
           className={[
-            'relative flex items-center justify-center w-[56px] h-[36px] rounded-[4px] bg-ink text-on-ink font-mono font-medium text-[10px] tracking-wider overflow-hidden',
+            'relative flex items-center justify-center w-[72px] h-[52px] rounded-[4px] bg-ink text-on-ink font-mono font-medium text-[10px] tracking-wider overflow-hidden',
             thumbnailUrl ? 'cursor-zoom-in' : '',
           ].join(' ')}
         >
@@ -1022,7 +1022,7 @@ function ProjectRow({
                 src={thumbnailUrl}
                 alt=""
                 loading="lazy"
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain"
               />
               {/* Hover affordance — a Maximize glyph in a dark scrim
                   appears on thumb hover so designers know the thumb
