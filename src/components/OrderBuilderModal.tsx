@@ -107,6 +107,11 @@ export default function OrderBuilderModal({
 }: OrderBuilderModalProps) {
   const [quantityMode, setQuantityMode] = useState<'open' | 'locked'>('open')
   const [quantity, setQuantity] = useState('')
+  // Recipient names for a split-name proof, so a LOCKED order can capture a
+  // per-person quantity split (the production instruction) rather than only a
+  // total. Open orders collect this from the customer on the pay-page instead.
+  const [personNames, setPersonNames] = useState<string[]>([])
+  const [personQty, setPersonQty] = useState<Record<string, string>>({})
   const [shippingTreatment, setShippingTreatment] = useState<ShippingTreatment>('full_cost')
   const [shippingCharged, setShippingCharged] = useState('')
   // Optional destination-country pre-fill for full_cost / goodwill. The
@@ -245,6 +250,25 @@ export default function OrderBuilderModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCustomQuote, materialId])
 
+  // Recipient names for the per-person locked-quantity split. Only needed when
+  // the proof has multiple names; read from the current version (designer-side,
+  // RLS-allowed). Empty → the locked path falls back to a single total input.
+  useEffect(() => {
+    if (namesCount <= 1 || !currentVersionId) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase
+        .from('proof_versions')
+        .select('names')
+        .eq('id', currentVersionId)
+        .maybeSingle()
+      if (cancelled) return
+      const names = Array.isArray(data?.names) ? (data!.names as string[]).filter(Boolean) : []
+      setPersonNames(names)
+    })()
+    return () => { cancelled = true }
+  }, [namesCount, currentVersionId])
+
   // Shipping settings (box tare, intl adjustment %, domestic flat rates) +
   // live GBP→EUR/USD rates, for the indicative estimate. Both have their own
   // module caches + fail-safe defaults, so this never blocks the builder.
@@ -263,10 +287,19 @@ export default function OrderBuilderModal({
   // with a chosen, weighable variant.
   const selectedVariant = variants.find((v) => v.id === variantId) ?? null
   const estimateWeightGrams = selectedVariant?.weight_grams ?? null
+  // Per-person split: whether to use it (locked + multiple names) and its sum.
+  const usePerPersonSplit = personNames.length > 1
+  const lockedSplitSum = personNames.reduce((acc, n) => {
+    const v = parseInt(personQty[n] ?? '', 10)
+    return acc + (Number.isFinite(v) && v > 0 ? v : 0)
+  }, 0)
+  // The locked order's total quantity: the per-person sum when splitting, else
+  // the single quantity field.
+  const lockedQty = usePerPersonSplit ? lockedSplitSum : (Number(quantity) || 0)
   // The quantity the estimate is based on: a locked order's quantity (so the
   // estimate tracks the real order size), else the editable estimate field.
   // One source per mode — no second input competing with the order quantity.
-  const estimateBasisQty = quantityMode === 'locked' ? quantity : estimateQty
+  const estimateBasisQty = quantityMode === 'locked' ? (lockedQty > 0 ? String(lockedQty) : '') : estimateQty
   useEffect(() => {
     const needsEstimate = shippingTreatment === 'full_cost' || shippingTreatment === 'goodwill'
     const qty = parseInt(estimateBasisQty, 10)
@@ -428,13 +461,24 @@ export default function OrderBuilderModal({
       return
     }
     let quantityValue: number | null = null
+    let personQuantitiesPayload: { name: string; quantity: number }[] | null = null
     if (quantityMode === 'locked') {
-      const q = Number(quantity)
-      if (!Number.isInteger(q) || q <= 0) {
-        setError('Enter a whole quantity greater than zero, or let the customer choose.')
-        return
+      if (usePerPersonSplit) {
+        const entries = personNames.map((n) => ({ name: n, quantity: parseInt(personQty[n] ?? '', 10) }))
+        if (entries.some((e) => !Number.isInteger(e.quantity) || e.quantity <= 0)) {
+          setError('Enter a quantity greater than zero for each person, or let the customer choose.')
+          return
+        }
+        personQuantitiesPayload = entries
+        quantityValue = entries.reduce((acc, e) => acc + e.quantity, 0)
+      } else {
+        const q = Number(quantity)
+        if (!Number.isInteger(q) || q <= 0) {
+          setError('Enter a whole quantity greater than zero, or let the customer choose.')
+          return
+        }
+        quantityValue = q
       }
-      quantityValue = q
     }
     let shippingChargedValue: number | null = null
     if (shippingTreatment === 'manual') {
@@ -482,6 +526,7 @@ export default function OrderBuilderModal({
           proof_id: proofId,
           currency,
           quantity: quantityValue,
+          person_quantities: personQuantitiesPayload,
           names_count: namesCount,
           has_personalisation: hasPersonalisation,
           shipping_treatment: shippingTreatment,
@@ -693,16 +738,42 @@ export default function OrderBuilderModal({
                 ))}
               </div>
               {quantityMode === 'locked' && (
-                <Input
-                  type="number"
-                  min={1}
-                  step={1}
-                  inputMode="numeric"
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
-                  placeholder="e.g. 250"
-                  className="mt-2 max-w-[200px]"
-                />
+                usePerPersonSplit ? (
+                  <div className="mt-2 space-y-2">
+                    <p className="text-[13px] text-ink-soft">Quantity for each person</p>
+                    {personNames.map((name) => (
+                      <div key={name} className="flex max-w-[320px] items-center justify-between gap-4">
+                        <label htmlFor={`bq-${name}`} className="truncate text-sm text-ink">{name}</label>
+                        <Input
+                          id={`bq-${name}`}
+                          type="number"
+                          min={1}
+                          step={1}
+                          inputMode="numeric"
+                          value={personQty[name] ?? ''}
+                          onChange={(e) => setPersonQty((p) => ({ ...p, [name]: e.target.value }))}
+                          placeholder="0"
+                          className="w-24 text-right"
+                        />
+                      </div>
+                    ))}
+                    <div className="flex max-w-[320px] items-center justify-between gap-4 border-t border-line-soft pt-2 text-sm">
+                      <span className="text-ink-soft">Total</span>
+                      <span className="font-medium text-ink">{lockedSplitSum > 0 ? `${lockedSplitSum.toLocaleString()} cards` : '—'}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <Input
+                    type="number"
+                    min={1}
+                    step={1}
+                    inputMode="numeric"
+                    value={quantity}
+                    onChange={(e) => setQuantity(e.target.value)}
+                    placeholder="e.g. 250"
+                    className="mt-2 max-w-[200px]"
+                  />
+                )
               )}
             </Field>
 
@@ -782,7 +853,7 @@ export default function OrderBuilderModal({
                         cards
                       </label>
                     ) : (
-                      quantity && <span className="text-ink-soft">for {Number(quantity).toLocaleString()} cards</span>
+                      lockedQty > 0 && <span className="text-ink-soft">for {lockedQty.toLocaleString()} cards</span>
                     )}
                   </div>
                   <div className="mt-2">

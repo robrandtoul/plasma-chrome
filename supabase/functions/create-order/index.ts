@@ -80,6 +80,22 @@ Deno.serve(async (req) => {
     return Number.isInteger(n) && n >= 1 ? n : 1
   })()
 
+  // Per-person quantity split (production instruction) for a locked split-name
+  // order. Each entry's quantity must be a positive integer; the designer enters
+  // these in the order builder and we persist them so production knows how many
+  // each named person gets. Open orders capture this from the customer instead.
+  let personQuantities: { name: string; quantity: number }[] | null = null
+  if (Array.isArray(body.person_quantities)) {
+    const pq = (body.person_quantities as unknown[])
+      .map((p) =>
+        p && typeof p === 'object'
+          ? { name: String((p as Record<string, unknown>).name ?? ''), quantity: Number((p as Record<string, unknown>).quantity) }
+          : null,
+      )
+      .filter((p): p is { name: string; quantity: number } => p != null && p.name !== '' && Number.isInteger(p.quantity) && p.quantity > 0)
+    if (pq.length > 0) personQuantities = pq
+  }
+
   const hasPersonalisation = body.has_personalisation === true
 
   // material_variant_id is optional in v1 — the pay-page (Step 4)
@@ -169,6 +185,7 @@ Deno.serve(async (req) => {
       material_option_id: materialOptionId,
       quantity,
       names_count: namesCount,
+      person_quantities: personQuantities,
       has_personalisation: hasPersonalisation,
       custom_quote_total: customQuoteTotal,
       shipping_treatment: shippingTreatment,
