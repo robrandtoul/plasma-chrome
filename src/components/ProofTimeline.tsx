@@ -3,6 +3,8 @@ import {
   Archive,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Eye,
   FileCheck2,
   FilePlus2,
@@ -20,6 +22,11 @@ import {
   type TimelineEntryType,
   type TimelineSources,
 } from '../lib/proofTimeline'
+import {
+  fetchConversationContext,
+  type ConversationContext,
+  type ConversationThread,
+} from '../lib/conversationContext'
 
 // Per-entry-type visual register. Customer-action types reuse the
 // dashboard Latest-activity mapping (Eye/allocated, Check/in-stock,
@@ -43,7 +50,57 @@ const ENTRY_VISUAL: Record<TimelineEntryType, { icon: LucideIcon; tint: string }
 // back-and-forth histories collapse rather than dominating the page.
 const COLLAPSED_COUNT = 10
 
-function TimelineRow({ entry, isLast }: { entry: TimelineEntry; isLast: boolean }) {
+// State + matched message handed to a reply_sent row so it can render
+// the inline "Show message" reveal. Absent on every other entry type.
+interface Reveal {
+  expanded: boolean
+  onToggle: () => void
+  /** Conversation fetch lifecycle, shared across all reply rows. */
+  state: 'idle' | 'loading' | 'loaded' | 'error'
+  /** Staff reply matched to this row's send time; null until loaded / if unmatched. */
+  thread: ConversationThread | null
+  helpscoutUrl: string | null
+}
+
+// Pick the staff reply that this "Reply sent" entry refers to. The
+// timeline entry carries only the send timestamp (last_reply_sent_at),
+// and Help Scout holds the conversation as a flat thread, so we match
+// on time: the entry's timestamp is stamped the instant we post the
+// reply, so the closest staff-authored, non-note, non-empty thread is
+// the one. Notes (internal) and system rows (empty body) are skipped.
+function matchStaffReply(
+  context: ConversationContext | null,
+  atIso: string,
+): ConversationThread | null {
+  if (!context) return null
+  const at = new Date(atIso).getTime()
+  if (Number.isNaN(at)) return null
+  let best: ConversationThread | null = null
+  let bestDelta = Infinity
+  for (const t of context.threads) {
+    if (t.authorType !== 'user') continue
+    if (t.type === 'note') continue
+    if (t.bodyText.trim() === '') continue
+    const ts = new Date(t.createdAt).getTime()
+    if (Number.isNaN(ts)) continue
+    const delta = Math.abs(ts - at)
+    if (delta < bestDelta) {
+      bestDelta = delta
+      best = t
+    }
+  }
+  return best
+}
+
+function TimelineRow({
+  entry,
+  isLast,
+  reveal,
+}: {
+  entry: TimelineEntry
+  isLast: boolean
+  reveal?: Reveal
+}) {
   const visual = ENTRY_VISUAL[entry.type]
   const Icon = visual.icon
   return (
@@ -108,19 +165,125 @@ function TimelineRow({ entry, isLast }: { entry: TimelineEntry; isLast: boolean 
             {entry.comment}
           </p>
         )}
+        {reveal && (
+          <div className="mt-1.5">
+            <button
+              type="button"
+              onClick={reveal.onToggle}
+              aria-expanded={reveal.expanded}
+              className="inline-flex items-center gap-1 text-[12px] font-medium text-ink-mute transition-colors hover:text-ink"
+            >
+              {reveal.expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              {reveal.expanded ? 'Hide message' : 'Show message'}
+            </button>
+            {reveal.expanded && (
+              <div className="mt-2">
+                {(reveal.state === 'idle' || reveal.state === 'loading') && (
+                  <p className="text-[12px] text-ink-dim">Loading message…</p>
+                )}
+                {reveal.state === 'error' && (
+                  <p className="text-[12px] text-ink-mute">
+                    Couldn't load this message.{' '}
+                    {reveal.helpscoutUrl && (
+                      <a
+                        href={reveal.helpscoutUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline underline-offset-2 hover:text-ink"
+                      >
+                        Open in Help Scout
+                      </a>
+                    )}
+                  </p>
+                )}
+                {reveal.state === 'loaded' && reveal.thread && (
+                  <div
+                    className="rounded-md border border-line-soft border-l-2 bg-canvas px-3 py-2"
+                    style={{ borderLeftColor: visual.tint }}
+                  >
+                    <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-ink-mute">
+                      <span className="font-medium text-ink-soft">{reveal.thread.authorName}</span>
+                      <span aria-hidden="true">·</span>
+                      <span title={formatAbsoluteDateTime(reveal.thread.createdAt)}>
+                        {relativeTime(reveal.thread.createdAt)}
+                      </span>
+                    </div>
+                    <p className="text-[13px] leading-[1.55] text-ink-soft whitespace-pre-wrap">
+                      {reveal.thread.bodyText}
+                    </p>
+                  </div>
+                )}
+                {reveal.state === 'loaded' && !reveal.thread && (
+                  <p className="text-[12px] text-ink-mute">
+                    This reply isn't showing in the linked Help Scout thread.{' '}
+                    {reveal.helpscoutUrl && (
+                      <a
+                        href={reveal.helpscoutUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline underline-offset-2 hover:text-ink"
+                      >
+                        Open in Help Scout
+                      </a>
+                    )}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </li>
   )
 }
 
-export default function ProofTimeline(sources: TimelineSources) {
+export interface ProofTimelineProps extends TimelineSources {
+  /** Proof id, for the lazy Help Scout conversation fetch behind "Show message". */
+  proofId?: string
+  /** Whether the proof has a linked Help Scout conversation — gates the reveal. */
+  hasHelpScout?: boolean
+}
+
+export default function ProofTimeline(props: ProofTimelineProps) {
+  const { proofId, hasHelpScout } = props
   const entries = useMemo(
-    () => buildTimelineEntries(sources),
+    () => buildTimelineEntries(props),
     // The page replaces these references wholesale on every loadProof,
     // so reference identity is the right memo key.
-    [sources.proof, sources.versions, sources.events, sources.viewsByVersion, sources.designerNamesById],
+    [props.proof, props.versions, props.events, props.viewsByVersion, props.designerNamesById],
   )
   const [expanded, setExpanded] = useState(false)
+
+  // Inline "Show message" reveal on reply_sent rows. The conversation
+  // is fetched once, lazily, on the first reveal and shared across every
+  // reply row (one conversation per proof); the page itself never pays
+  // the Help Scout round-trip unless a designer actually opens a message.
+  const [openMessageIds, setOpenMessageIds] = useState<ReadonlySet<string>>(() => new Set())
+  const [context, setContext] = useState<ConversationContext | null>(null)
+  const [contextState, setContextState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle')
+
+  function ensureContextLoaded() {
+    if (contextState !== 'idle' || !proofId) return
+    setContextState('loading')
+    fetchConversationContext(proofId)
+      .then((ctx) => {
+        setContext(ctx)
+        setContextState('loaded')
+      })
+      .catch(() => setContextState('error'))
+  }
+
+  function toggleMessage(id: string) {
+    setOpenMessageIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+    ensureContextLoaded()
+  }
+
+  const canReveal = !!hasHelpScout && !!proofId
 
   const visible = expanded ? entries : entries.slice(0, COLLAPSED_COUNT)
   const hiddenCount = entries.length - visible.length
@@ -136,7 +299,22 @@ export default function ProofTimeline(sources: TimelineSources) {
     >
       <ol className="px-5 pt-5 pb-4">
         {visible.map((entry, i) => (
-          <TimelineRow key={entry.id} entry={entry} isLast={i === visible.length - 1} />
+          <TimelineRow
+            key={entry.id}
+            entry={entry}
+            isLast={i === visible.length - 1}
+            reveal={
+              canReveal && entry.type === 'reply_sent'
+                ? {
+                    expanded: openMessageIds.has(entry.id),
+                    onToggle: () => toggleMessage(entry.id),
+                    state: contextState,
+                    thread: contextState === 'loaded' ? matchStaffReply(context, entry.at) : null,
+                    helpscoutUrl: context?.url ?? null,
+                  }
+                : undefined
+            }
+          />
         ))}
       </ol>
       {(hiddenCount > 0 || expanded) && (

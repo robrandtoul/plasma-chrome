@@ -1965,6 +1965,8 @@ export default function ProofDetailPage() {
       events={timelineEvents}
       viewsByVersion={viewsByVersion}
       designerNamesById={designerNames}
+      proofId={proof.id}
+      hasHelpScout={!!proof.helpscout_conversation_id}
     />
   )
 
