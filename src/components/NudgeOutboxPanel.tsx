@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Send } from 'lucide-react'
+import { HelpTip } from '../design'
 import CollapsibleSidebarPanel from './CollapsibleSidebarPanel'
 import Modal from './Modal'
 import MessageSendPanel from './MessageSendPanel'
@@ -11,6 +12,7 @@ import { snoozeProof } from '../lib/snooze'
 import { firstName } from '../lib/firstName'
 import { customerProofPath } from '../lib/customerProofUrl'
 import { isCurrentlySnoozed, type DashboardProject } from '../lib/dashboardGrouping'
+import { tagHelp } from '../lib/tagHelp'
 import type { TemplateContext } from '../lib/replyTemplates'
 
 // Dashboard Outbox panel for the follow-up automation feature (Phase 1,
@@ -515,16 +517,21 @@ export function NudgeOutboxPanel({
                     {relativeTime(run.started_at)}
                   </span>
                 </span>
-                <span
-                  className={[
-                    'inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold',
-                    liveMode
-                      ? 'bg-in-stock-soft text-in-stock'
-                      : 'bg-allocated-soft text-allocated',
-                  ].join(' ')}
+                <HelpTip
+                  body={tagHelp('system', liveMode ? 'live' : 'dry_run')}
+                  affordance="ring"
                 >
-                  {liveMode ? 'live' : 'dry run'}
-                </span>
+                  <span
+                    className={[
+                      'inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold',
+                      liveMode
+                        ? 'bg-in-stock-soft text-in-stock'
+                        : 'bg-allocated-soft text-allocated',
+                    ].join(' ')}
+                  >
+                    {liveMode ? 'live' : 'dry run'}
+                  </span>
+                </HelpTip>
               </div>
               {liveButLastRunWasDry && (
                 <p className="text-[12px] text-ink-soft">
@@ -573,13 +580,21 @@ export function NudgeOutboxPanel({
               )}
               {webhookFresh ? (
                 <p className="text-[12px] text-ink-soft">
-                  Webhook: <span className="font-medium text-in-stock">fresh ✓</span>
+                  Webhook:{' '}
+                  <HelpTip body={tagHelp('system', 'webhook_fresh')}>
+                    <span className="font-medium text-in-stock">fresh ✓</span>
+                  </HelpTip>
                 </p>
               ) : (
                 <p className="text-[12px] font-medium text-low">
-                  {newestStampAt
-                    ? `Webhook: quiet — newest stamp ${webhookQuietDays}d ago`
-                    : 'Webhook: no reply stamps recorded yet'}
+                  Webhook:{' '}
+                  <HelpTip body={tagHelp('system', 'webhook_quiet')}>
+                    <span>
+                      {newestStampAt
+                        ? `quiet — newest stamp ${webhookQuietDays}d ago`
+                        : 'no reply stamps recorded yet'}
+                    </span>
+                  </HelpTip>
                 </p>
               )}
             </div>
@@ -706,9 +721,12 @@ export function NudgeOutboxPanel({
                               <span className="min-w-0 truncate text-[13px] font-semibold text-ink">
                                 {labelFor(r.proof_id)}
                               </span>
-                              <span className="shrink-0 text-[11px] text-ink-mute">
+                              <HelpTip
+                                body={tagHelp('needs', r.rule_code)}
+                                className="shrink-0 text-[11px] text-ink-mute"
+                              >
                                 {ruleShort(r.rule_code)}
-                              </span>
+                              </HelpTip>
                               {r.state === 'sending' && (
                                 <span className="shrink-0 text-[11px] font-medium text-allocated">
                                   sending…
@@ -718,9 +736,15 @@ export function NudgeOutboxPanel({
                                   conversation (deliverability lever) — flag
                                   it so the dry-run week shows the path. */}
                               {(r.outcome ?? '').endsWith('new_conversation') && (
-                                <span className="shrink-0 rounded-md bg-allocated-soft px-1.5 py-0.5 text-[10px] font-semibold text-allocated">
-                                  fresh conversation
-                                </span>
+                                <HelpTip
+                                  body={tagHelp('outbox', 'fresh_conversation')}
+                                  affordance="ring"
+                                  className="shrink-0"
+                                >
+                                  <span className="rounded-md bg-allocated-soft px-1.5 py-0.5 text-[10px] font-semibold text-allocated">
+                                    fresh conversation
+                                  </span>
+                                </HelpTip>
                               )}
                               {/* Disclosure chevron — the flex summary hides the
                                   native marker, so restate the affordance. */}
@@ -831,7 +855,8 @@ export function NudgeOutboxPanel({
                               <span className="min-w-0 truncate text-[13px] font-medium text-ink">
                                 {labelFor(r.proof_id)}
                               </span>
-                              <span
+                              <HelpTip
+                                body={tagHelp('outbox', r.outcome)}
                                 className={[
                                   'shrink-0 text-[11px]',
                                   r.outcome === 'recipient_mismatch'
@@ -840,7 +865,7 @@ export function NudgeOutboxPanel({
                                 ].join(' ')}
                               >
                                 {humaniseOutcome(r.outcome, r.state)}
-                              </span>
+                              </HelpTip>
                               <span className="ml-auto shrink-0 text-[11px] font-medium text-ink-soft">
                                 Review →
                               </span>
@@ -883,9 +908,12 @@ export function NudgeOutboxPanel({
                             <span className="min-w-0 truncate text-[13px] text-ink-soft">
                               {labelFor(r.proof_id)}
                             </span>
-                            <span className="shrink-0 text-[11px] text-ink-mute">
+                            <HelpTip
+                              body={tagHelp('outbox', r.outcome)}
+                              className="shrink-0 text-[11px] text-ink-mute"
+                            >
                               {humaniseOutcome(r.outcome, r.state)}
-                            </span>
+                            </HelpTip>
                           </Link>
                         </li>
                       ))}
@@ -970,9 +998,12 @@ function ReviewQueueItem({
       >
         {project.company_name || project.contact_name || `Proof ${project.proof_id.slice(0, 8)}…`}
       </Link>
-      <span className="shrink-0 text-[11px] text-ink-mute">
+      <HelpTip
+        body={tagHelp('needs', project.rule_code)}
+        className="shrink-0 text-[11px] text-ink-mute"
+      >
         {project.rule_code ? ruleShort(project.rule_code) : ''}
-      </span>
+      </HelpTip>
       {staleNote ? (
         <span className="ml-auto shrink-0 text-[11px] text-ink-mute">{staleNote}</span>
       ) : (

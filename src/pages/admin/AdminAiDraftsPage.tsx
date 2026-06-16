@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
-import { Pill, type PillColour, ButtonInk, ButtonGhost } from '../../design'
+import { Pill, type PillColour, ButtonInk, ButtonGhost, HelpTip } from '../../design'
+import { tagHelp } from '../../lib/tagHelp'
 import AdminAiDraftsBriefing from './AdminAiDraftsBriefing'
 import AdminAiDraftsProposals from './AdminAiDraftsProposals'
 
@@ -730,9 +731,19 @@ export default function AdminAiDraftsPage() {
                   >
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs text-ink-mute tabular-nums w-[84px] shrink-0">{fmtTime(r.created_at)}</span>
-                      <Pill colour={mainPill.colour}>{mainPill.label}</Pill>
+                      <HelpTip
+                        body={tagHelp('aidraft', outcome === 'skipped' ? (r.skip_kind ?? 'skipped') : outcome)}
+                        affordance="none"
+                        focusable={false}
+                      >
+                        <Pill colour={mainPill.colour}>{mainPill.label}</Pill>
+                      </HelpTip>
                       {r.category && <Pill colour="neutral">{r.category}</Pill>}
-                      {r.edit_class && <Pill colour={EDIT_PILL[r.edit_class]}>{EDIT_LABEL[r.edit_class]}</Pill>}
+                      {r.edit_class && (
+                        <HelpTip body={tagHelp('aidraft', r.edit_class)} affordance="none" focusable={false}>
+                          <Pill colour={EDIT_PILL[r.edit_class]}>{EDIT_LABEL[r.edit_class]}</Pill>
+                        </HelpTip>
+                      )}
                       <span className="text-sm text-ink-soft truncate min-w-0 flex-1" title={r.summary ?? undefined}>{r.summary}</span>
                       <span className="text-xs text-ink-dim tabular-nums shrink-0">${rowCostUsd(r).toFixed(3)}</span>
                     </div>

@@ -8,6 +8,7 @@ import {
   CurrencyAmount,
   Eyebrow,
   Field,
+  HelpTip,
   InkSwatch,
   Input,
   LetterpressMotif,
@@ -22,6 +23,7 @@ import {
   useEscape,
   type ProofStatus,
 } from './index'
+import { tagHelp } from '../lib/tagHelp'
 
 // Showcase page for the reskin shared primitives (PR 2). Lives behind
 // the /__design route, which is mounted in App.tsx only when the dev
@@ -87,6 +89,38 @@ export default function DesignDemo() {
             <Pill colour="in-stock">Approved</Pill>
             <Pill colour="critical">Cannot supply</Pill>
             <Pill colour="mute">Snoozed</Pill>
+          </div>
+        </PanelShell>
+
+        <PanelShell eyebrow="02b" title="Help tooltips" icon={Layers} accent={tokens.allocated}>
+          <p className="body-soft mb-4 max-w-prose">
+            Hover or tab to a tagged label to see its plain-English meaning,
+            pulled from <span className="code">tagHelp</span>. Three affordances:
+            a dotted underline for text labels, a faint ring for filled chips,
+            or none.
+          </p>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-3 text-[13px] text-ink-soft">
+            <span>
+              Status:{' '}
+              <HelpTip body={tagHelp('needs', 'sent_never_viewed')}>never opened</HelpTip>
+            </span>
+            <span>
+              Outbox:{' '}
+              <HelpTip body={tagHelp('outbox', 'skipped_cooldown')}>too soon since the last touch</HelpTip>
+            </span>
+            <HelpTip body={tagHelp('outbox', 'fresh_conversation')} affordance="ring">
+              <span className="inline-flex items-center rounded-md bg-allocated-soft px-1.5 py-0.5 text-[10px] font-semibold text-allocated">
+                fresh conversation
+              </span>
+            </HelpTip>
+            <HelpTip body={tagHelp('system', 'live')} affordance="ring">
+              <span className="inline-flex items-center rounded-md bg-in-stock-soft px-2 py-0.5 text-[10px] font-semibold text-in-stock">
+                live
+              </span>
+            </HelpTip>
+            <HelpTip body={tagHelp('bucket', 'snoozed')} affordance="none">
+              <Pill colour="mute">Snoozed</Pill>
+            </HelpTip>
           </div>
         </PanelShell>
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
-import { DesignerChrome, useDesignerProfile, ButtonCoral, ButtonInk, ProofStatusPill } from '../design'
+import { DesignerChrome, useDesignerProfile, ButtonCoral, ButtonInk, ProofStatusPill, HelpTip } from '../design'
 import { Plus, X, Maximize2, Bell, MessageSquare, Eye, Check, Clock } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
@@ -21,6 +21,7 @@ import {
 import { openDesignerPreview } from '../lib/customerProofUrl'
 import { logAudit } from '../lib/audit'
 import { attentionReason } from '../lib/needsAttention'
+import { tagHelp } from '../lib/tagHelp'
 import { ResolvePopover } from '../components/ResolvePopover'
 import { NudgeOutboxPanel } from '../components/NudgeOutboxPanel'
 import CollapsibleSidebarPanel from '../components/CollapsibleSidebarPanel'
@@ -278,6 +279,7 @@ interface StatTileProps {
   active: boolean
   tone: 'rose' | 'amber' | 'sky' | 'neutral' | 'violet' | 'green' | 'turquoise'
   onClick: () => void
+  help?: string
 }
 
 // Tone → CSS colour mapping. Design-system tokens where they map
@@ -295,7 +297,7 @@ const TILE_COLOUR: Record<StatTileProps['tone'], string> = {
   neutral:   'var(--c-ink-mute)',
 }
 
-function StatTile({ label, count, active, tone, onClick }: StatTileProps) {
+function StatTile({ label, count, active, tone, onClick, help }: StatTileProps) {
   const tint = TILE_COLOUR[tone]
   return (
     <button
@@ -320,12 +322,14 @@ function StatTile({ label, count, active, tone, onClick }: StatTileProps) {
           className="inline-block w-4 h-4 rounded shrink-0"
           style={{ backgroundColor: tint }}
         />
-        <span
-          className="eyebrow text-ink-mute"
-          style={{ whiteSpace: 'normal', lineHeight: 1.2 }}
-        >
-          {label}
-        </span>
+        <HelpTip body={help} affordance="none" focusable={false}>
+          <span
+            className="eyebrow text-ink-mute"
+            style={{ whiteSpace: 'normal', lineHeight: 1.2 }}
+          >
+            {label}
+          </span>
+        </HelpTip>
       </div>
       <span
         className="text-[32px] leading-none font-medium tabular-nums font-mono text-ink"
@@ -2377,6 +2381,7 @@ export default function DashboardPage() {
               <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 xl:divide-x xl:divide-line">
                   <StatTile
                     label="Needs attention"
+                    help={tagHelp('tile', 'needs_attention')}
                     count={needsAttentionCount}
                     active={tileFilter === 'needs_attention'}
                     tone="rose"
@@ -2384,6 +2389,7 @@ export default function DashboardPage() {
                   />
                   <StatTile
                     label="Not viewed"
+                    help={tagHelp('tile', 'not_viewed')}
                     count={notViewedCount}
                     active={tileFilter === 'not_viewed'}
                     tone="amber"
@@ -2391,6 +2397,7 @@ export default function DashboardPage() {
                   />
                   <StatTile
                     label="Awaiting customer"
+                    help={tagHelp('tile', 'awaiting_customer')}
                     count={awaitingCustomerCount}
                     active={tileFilter === 'awaiting_customer'}
                     tone="sky"
@@ -2398,6 +2405,7 @@ export default function DashboardPage() {
                   />
                   <StatTile
                     label="Customer responded"
+                    help={tagHelp('tile', 'customer_responded')}
                     count={customerRespondedCount}
                     active={tileFilter === 'customer_responded'}
                     tone="turquoise"
@@ -2405,6 +2413,7 @@ export default function DashboardPage() {
                   />
                   <StatTile
                     label="Approved this week"
+                    help={tagHelp('tile', 'approved_this_week')}
                     count={approvedThisWeekCount}
                     active={tileFilter === 'approved_this_week'}
                     tone="green"
@@ -2412,6 +2421,7 @@ export default function DashboardPage() {
                   />
                   <StatTile
                     label="Snoozed"
+                    help={tagHelp('tile', 'snoozed')}
                     count={snoozedSections[0]?.projects.length ?? 0}
                     active={showSnoozed}
                     tone="violet"
@@ -2427,6 +2437,7 @@ export default function DashboardPage() {
                   />
                   <StatTile
                     label="Dormant"
+                    help={tagHelp('tile', 'dormant')}
                     count={dormantCount}
                     active={tileFilter === 'dormant'}
                     tone="neutral"
