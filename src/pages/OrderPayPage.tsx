@@ -603,6 +603,34 @@ export default function OrderPayPage() {
         ? payTotalForQty(displayQty)
         : null
 
+  // ── Embedded checkout (wide) ──────────────────────────────────────
+  // Once the customer has clicked through to payment, give Stripe's embedded
+  // checkout a WIDE container so it renders its two-column layout (order
+  // summary expanded on the left, payment on the right) instead of the cramped
+  // single column + "View details" collapse it falls back to in a narrow box.
+  if (canCheckout && checkout) {
+    return (
+      <div className="flex min-h-screen justify-center bg-canvas px-4 py-8">
+        <div className="w-full max-w-4xl">
+          <p className="eyebrow">Complete your order</p>
+          <h1 className="mt-1 text-xl font-semibold text-ink">
+            {company ? company : 'Your order'}
+          </h1>
+          <p className="mt-1 text-sm text-ink-soft">Reference {order.payment_reference}</p>
+          <div ref={mountWrapRef} className="relative mt-6 min-h-[520px]">
+            {!formMounted && (
+              <div className="absolute inset-x-0 top-20 flex flex-col items-center gap-2 text-ink-mute">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-ink" />
+                <span className="text-sm">Loading secure payment…</span>
+              </div>
+            )}
+            <div id="embedded-checkout-mount" />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // ── Payable (status 'sent') ───────────────────────────────────────
   return (
     <Screen>
@@ -781,21 +809,7 @@ export default function OrderPayPage() {
           </div>
         )}
 
-        {canCheckout && checkout ? (
-          // ── Embedded Stripe checkout — mounted in-page by the effect above,
-          //    so the customer never leaves this Plasma-branded page. The
-          //    reserved min-height + loading state avoid a collapse-then-grow
-          //    jump while Stripe's iframe loads. ───────────────────────────
-          <div ref={mountWrapRef} className="relative mt-6 min-h-[460px] border-t border-line pt-5">
-            {!formMounted && (
-              <div className="absolute inset-x-0 top-16 flex flex-col items-center gap-2 text-ink-mute">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-ink" />
-                <span className="text-sm">Loading secure payment…</span>
-              </div>
-            )}
-            <div id="embedded-checkout-mount" />
-          </div>
-        ) : canCheckout ? (
+        {canCheckout ? (
           // ── Pay / continue to checkout ─────────────────────────────
           <div className="mt-6">
             {payTotal != null && (
