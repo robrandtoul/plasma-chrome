@@ -1599,13 +1599,12 @@ export default function ProofDetailPage() {
               <div
                 key={i}
                 className="relative overflow-hidden rounded-[8px] bg-ink"
-                style={{ aspectRatio: '1.6' }}
               >
                 <img
                   src={img.url}
                   alt={img.side === 'back' ? 'Back of the card' : 'Front of the card'}
                   loading="lazy"
-                  className="h-full w-full object-cover"
+                  className="block w-full"
                 />
                 {heroImages.length > 1 && (
                   <span
