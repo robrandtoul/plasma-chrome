@@ -176,7 +176,7 @@ Deno.serve(async (req) => {
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, ship_dest_country, ship_dest_postcode, payment_reference, expires_at, material_variant_id, material_option_id, quantity, names_count, has_personalisation')
+    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, ship_dest_country, ship_dest_postcode, payment_reference, expires_at, material_variant_id, material_option_id, quantity, names_count, has_personalisation, proof_id')
     .eq('id', orderId)
     .eq('token', token)
     .single()
@@ -207,8 +207,13 @@ Deno.serve(async (req) => {
   // international parcel for the FedEx rate. Null for custom-quote orders
   // (no variant) → international shipping can't be rated for those.
   let variantWeightGrams: number | null = null
+  // Human label for the Stripe summary's product line (e.g. "500 × Stainless
+  // Steel 500µm — Mirror"). Built in the grid branch from the variant/option;
+  // a generic fallback for custom quotes.
+  let productLabel = ''
   if (order.custom_quote_total != null) {
     goods = Number(order.custom_quote_total)
+    productLabel = 'Plasma cards (bespoke quote)'
   } else {
     if (!order.material_variant_id) {
       return json({
@@ -253,7 +258,7 @@ Deno.serve(async (req) => {
     // weight_grams comes back on the same read for the FedEx parcel weight.
     const { data: variant } = await admin
       .from('material_variants')
-      .select('material_id, weight_grams')
+      .select('material_id, weight_grams, display_name, materials(display_name)')
       .eq('id', order.material_variant_id)
       .single()
     if (variant?.weight_grams != null) variantWeightGrams = Number(variant.weight_grams)
@@ -320,6 +325,25 @@ Deno.serve(async (req) => {
     amountCards = Math.round((priced.cards + priced.finish) * 100) / 100
     amountTooling = priced.splitName
     amountPersonalisation = priced.personalisation
+
+    // Build the human product label for the Stripe summary: "500 × Stainless
+    // Steel 500µm — Mirror". Mirrors the webhook's invoice-line naming so the
+    // pay-page and the Xero line read the same.
+    let optionName = ''
+    if (order.material_option_id) {
+      const { data: mo } = await admin
+        .from('material_options')
+        .select('display_name')
+        .eq('id', order.material_option_id)
+        .maybeSingle()
+      optionName = (mo?.display_name as string | null) ?? ''
+    }
+    const variantName = (variant?.display_name as string | null) ?? ''
+    const materialName = ((variant?.materials as { display_name?: string } | null)?.display_name) ?? ''
+    const qtyPrefix = resolvedQuantity != null ? `${resolvedQuantity.toLocaleString()} × ` : ''
+    const variantSuffix = variantName && variantName !== materialName ? ` ${variantName}` : ''
+    const optionSuffix = optionName ? ` — ${optionName}` : ''
+    productLabel = `${qtyPrefix}${materialName || 'Cards'}${variantSuffix}${optionSuffix}`.trim()
   }
 
   // ── Shipping (server-authoritative) ──────────────────────────────
@@ -473,11 +497,76 @@ Deno.serve(async (req) => {
   const currency = String(order.currency).toLowerCase()
   const ref = order.payment_reference ?? order.id
 
+  // Artwork thumbnail for the Stripe summary's left column — the proof's
+  // current version's first non-QR image, signed long enough to outlive the
+  // checkout session (48h > the 24h session). Best-effort: any failure just
+  // means the summary renders without a picture.
+  let artworkUrl: string | null = null
+  if (order.proof_id) {
+    try {
+      const { data: cv } = await admin
+        .from('proof_versions')
+        .select('id')
+        .eq('proof_id', order.proof_id)
+        .eq('is_current', true)
+        .maybeSingle()
+      if (cv?.id) {
+        const { data: img } = await admin
+          .from('proof_version_images')
+          .select('image_path')
+          .eq('proof_version_id', cv.id)
+          .eq('is_qr_code', false)
+          .order('sort_order')
+          .limit(1)
+          .maybeSingle()
+        if (img?.image_path) {
+          const { data: signed } = await admin.storage
+            .from('proof-images')
+            .createSignedUrl(img.image_path as string, 60 * 60 * 48)
+          artworkUrl = signed?.signedUrl ?? null
+        }
+      }
+    } catch (e) {
+      console.error('[create-checkout-session] artwork sign failed:', (e as Error).message)
+    }
+  }
+
+  // Build the order summary lines. Itemised (product / tooling / personalisation
+  // / shipping) with descriptive names + the artwork image, so Stripe's left-hand
+  // summary reads as a real order rather than one opaque line. The goods pieces
+  // MUST sum to `goods` (the authoritative total) or we collapse to a single
+  // line so the charge can never drift from what was priced.
+  type Piece = { name: string; amount: number; image?: string | null; description?: string }
+  const pieces: Piece[] = []
+  if (order.custom_quote_total != null) {
+    pieces.push({ name: productLabel, amount: goods, image: artworkUrl, description: `Order ${ref}` })
+  } else {
+    pieces.push({ name: productLabel || 'Plasma cards', amount: amountCards ?? goods, image: artworkUrl, description: `Order ${ref}` })
+    if ((amountTooling ?? 0) > 0) {
+      const n = order.names_count ?? 1
+      pieces.push({ name: n > 1 ? `Extra tooling (split between ${n} names)` : 'Extra tooling', amount: amountTooling as number })
+    }
+    if ((amountPersonalisation ?? 0) > 0) {
+      pieces.push({ name: 'Personalisation', amount: amountPersonalisation as number })
+    }
+  }
+  const piecesSum = Math.round(pieces.reduce((a, p) => a + p.amount, 0) * 100) / 100
+  if (Math.abs(piecesSum - goods) > 0.01) {
+    // Shouldn't happen (pieces are built from the same figures as `goods`), but
+    // never charge a drifted total — fall back to one clean line.
+    pieces.length = 0
+    pieces.push({ name: productLabel || `Order ${ref}`, amount: goods, image: artworkUrl, description: `Order ${ref}` })
+  }
+  if (shipping > 0) pieces.push({ name: 'Shipping', amount: shipping })
+
   // ── Build the Stripe Checkout session (form-encoded) ─────────────
   const params = new URLSearchParams()
   params.set('mode', 'payment')
+  params.set('submit_type', 'pay')
   params.set('success_url', `${origin}/order/${order.id}?token=${encodeURIComponent(token)}&paid=1`)
   params.set('cancel_url', `${origin}/order/${order.id}?token=${encodeURIComponent(token)}`)
+  // A short note above the pay button (branding + reassurance).
+  params.set('custom_text[submit][message]', 'Thank you — we’ll begin production as soon as your payment is confirmed.')
   // client_reference_id + metadata carry the shared reference so the
   // Step 5 webhook (and the Stripe→Xero reconcile) can match the
   // payment back to this order.
@@ -489,19 +578,17 @@ Deno.serve(async (req) => {
   for (const [i, c] of SHIP_COUNTRY_CODES.entries()) {
     params.set(`shipping_address_collection[allowed_countries][${i}]`, c)
   }
-  // Goods line item (cards + tooling + personalisation, as one line so
-  // per-component rounding can't drift from the authoritative total).
-  params.set('line_items[0][quantity]', '1')
-  params.set('line_items[0][price_data][currency]', currency)
-  params.set('line_items[0][price_data][unit_amount]', String(minorUnits(goods)))
-  params.set('line_items[0][price_data][product_data][name]', `Order ${ref}`)
-  // Shipping line item (only when > 0).
-  if (shipping > 0) {
-    params.set('line_items[1][quantity]', '1')
-    params.set('line_items[1][price_data][currency]', currency)
-    params.set('line_items[1][price_data][unit_amount]', String(minorUnits(shipping)))
-    params.set('line_items[1][price_data][product_data][name]', 'Shipping')
-  }
+  // Emit the summary lines. Each is quantity 1 with the full line total as the
+  // unit amount (the real card count rides in the product NAME, not Stripe's
+  // qty column, so Stripe can't re-round it away from the charged figure).
+  pieces.forEach((p, i) => {
+    params.set(`line_items[${i}][quantity]`, '1')
+    params.set(`line_items[${i}][price_data][currency]`, currency)
+    params.set(`line_items[${i}][price_data][unit_amount]`, String(minorUnits(p.amount)))
+    params.set(`line_items[${i}][price_data][product_data][name]`, p.name || 'Plasma cards')
+    if (p.description) params.set(`line_items[${i}][price_data][product_data][description]`, p.description)
+    if (p.image) params.set(`line_items[${i}][price_data][product_data][images][0]`, p.image)
+  })
 
   let stripeRes: Response
   try {
