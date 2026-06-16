@@ -429,6 +429,21 @@ export default function OrderPayPage() {
     return () => { cancelled = true }
   }, [id, token])
 
+  // Auto-advance to the payment form for orders that need no customer input —
+  // a locked/custom quantity AND non-rated shipping (free/manual). The customer
+  // lands straight on the full checkout (recap + breakdown + card form) with no
+  // intermediate click. Orders that still need a quantity or a shipping
+  // destination keep the inline inputs + a Continue button. Fires once on load
+  // (deps: order); checkout/paying are read via closure to avoid re-firing.
+  useEffect(() => {
+    if (!order || checkout || paying) return
+    const needsQty = order.custom_quote_total == null && order.material_variant_id != null && order.quantity == null
+    const needsDest = order.shipping_treatment === 'full_cost' || order.shipping_treatment === 'goodwill'
+    const canPay = order.custom_quote_total != null || (order.material_variant_id != null && order.quantity != null)
+    if (canPay && !needsQty && !needsDest) void startCheckout()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order])
+
   if (loading) return <Screen><LoadingProofAnimation /></Screen>
 
   if (notFound || !order) {
@@ -657,24 +672,29 @@ export default function OrderPayPage() {
         ? payTotalForQty(displayQty)
         : null
 
-  // ── Custom checkout (Stripe Elements, two-column) ─────────────────
-  // Once the customer clicks through to payment, we render our own checkout:
-  // the order summary + approved artwork on the left, Stripe's Payment / Address
-  // / Link elements on the right. The customer never leaves this page.
-  if (canCheckout && checkout) {
+  // ── Single-screen checkout ────────────────────────────────────────
+  // One page: order recap + cost summary on the left; on the right either the
+  // inputs we still need (quantity / shipping destination) or — once those are
+  // set and the PaymentIntent is created — the Stripe payment form. No-input
+  // orders auto-advance (see the effect above), so the customer lands straight
+  // on the full checkout with the form already showing.
+  if (canCheckout) {
     return (
       <div className="flex min-h-screen justify-center bg-canvas px-4 py-8">
         <div className="w-full max-w-5xl">
           <p className="eyebrow">Complete your order</p>
-          <h1 className="mt-1 text-xl font-semibold text-ink">
-            {company ? company : 'Your order'}
-          </h1>
+          <h1 className="mt-1 text-xl font-semibold text-ink">{company ? company : 'Your order'}</h1>
           <p className="mt-1 text-sm text-ink-soft">Reference {order.payment_reference}</p>
 
           <div ref={mountWrapRef} className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
-            {/* Left — order summary + approved artwork */}
+            {/* LEFT — recap + cost summary */}
             <PanelShell className="self-start">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Order summary</p>
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Order summary</p>
+                {spec?.approvedAt && (
+                  <p className="text-[12px] text-ink-mute">Approved {formatApprovedDate(spec.approvedAt)}</p>
+                )}
+              </div>
               {thumbs.length > 0 && (
                 <div className={`mt-3 grid gap-3 ${thumbs.length > 1 ? 'sm:grid-cols-2' : ''}`}>
                   {thumbs.map((img) => (
@@ -691,298 +711,182 @@ export default function OrderPayPage() {
                   {spec.inks.length > 0 && (<><dt className="text-ink-mute">Ink</dt><dd className="text-ink">{spec.inks.join(', ')}</dd></>)}
                 </dl>
               )}
+
               <div className="mt-4 space-y-1.5 border-t border-line pt-4 text-sm">
-                <Row
-                  label={order.custom_quote_total != null ? 'Agreed price' : 'Cards'}
-                  value={formatPrice(checkout.breakdown.cards, checkout.currency)}
-                />
-                {checkout.breakdown.tooling > 0 && (
-                  <Row label="Tooling" value={formatPrice(checkout.breakdown.tooling, checkout.currency)} />
+                {displayQty != null && (
+                  <Row label="Quantity" value={order.names_count > 1 ? `${displayQty.toLocaleString()} cards in total` : displayQty.toLocaleString()} />
                 )}
-                {checkout.breakdown.personalisation > 0 && (
-                  <Row label="Personalisation" value={formatPrice(checkout.breakdown.personalisation, checkout.currency)} />
+                {order.names_count > 1 && <Row label="People" value={String(order.names_count)} />}
+                {order.has_personalisation && <Row label="Personalisation" value="Included" />}
+                {checkout ? (
+                  <>
+                    <Row label={order.custom_quote_total != null ? 'Agreed price' : 'Cards'} value={formatPrice(checkout.breakdown.cards, checkout.currency)} />
+                    {checkout.breakdown.tooling > 0 && <Row label="Tooling" value={formatPrice(checkout.breakdown.tooling, checkout.currency)} />}
+                    {checkout.breakdown.personalisation > 0 && <Row label="Personalisation" value={formatPrice(checkout.breakdown.personalisation, checkout.currency)} />}
+                    <Row label="Shipping" value={checkout.breakdown.shipping > 0 ? formatPrice(checkout.breakdown.shipping, checkout.currency) : 'Free'} />
+                  </>
+                ) : (
+                  <>
+                    {order.custom_quote_total == null && cardsSubtotal != null && (
+                      <Row label="Cards" value={formatPrice(cardsSubtotal, order.currency)} />
+                    )}
+                    <Row label={SHIPPING_LABEL[order.shipping_treatment]} value={
+                      order.shipping_treatment === 'free' ? 'Free'
+                        : order.shipping_charged != null ? formatPrice(order.shipping_charged, order.currency)
+                          : 'Calculated at payment'
+                    } />
+                  </>
                 )}
-                <Row
-                  label="Shipping"
-                  value={checkout.breakdown.shipping > 0 ? formatPrice(checkout.breakdown.shipping, checkout.currency) : 'Free'}
-                />
               </div>
-              <div className="mt-3 flex items-center justify-between border-t border-line pt-3 text-base">
-                <span className="font-semibold text-ink">Total</span>
-                <span className="font-semibold text-ink">{formatPrice(checkout.amount, checkout.currency)}</span>
-              </div>
-              {checkout.currency === 'GBP' && <p className="mt-1 text-[12px] text-ink-mute">Includes VAT.</p>}
+
+              {(checkout || payTotal != null) && (
+                <>
+                  <div className="mt-3 flex items-center justify-between border-t border-line pt-3 text-base">
+                    <span className="font-semibold text-ink">Total</span>
+                    <span className="font-semibold text-ink">{formatPrice(checkout ? checkout.amount : (payTotal as number), order.currency)}</span>
+                  </div>
+                  {order.currency === 'GBP' && <p className="mt-1 text-[12px] text-ink-mute">Includes VAT.</p>}
+                </>
+              )}
             </PanelShell>
 
-            {/* Right — payment form (Stripe Elements mount points) */}
-            <PanelShell className="relative min-h-[440px]">
-              {!formMounted && (
-                <div className="absolute inset-x-0 top-24 flex flex-col items-center gap-2 text-ink-mute">
-                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-ink" />
-                  <span className="text-sm">Loading secure payment…</span>
+            {/* RIGHT — inputs (until the intent exists), then the payment form */}
+            <PanelShell className="relative min-h-[300px]">
+              {!checkout ? (
+                <div className="space-y-4 text-sm">
+                  {isSplitOpen ? (
+                    <div className="space-y-2.5">
+                      <p className="text-ink-soft">Quantity for each person</p>
+                      {personNames.map((name) => (
+                        <div key={name} className="flex items-center justify-between gap-4">
+                          <label htmlFor={`q-${name}`} className="truncate text-ink">{name}</label>
+                          <input id={`q-${name}`} type="number" min={1} step={1} inputMode="numeric"
+                            value={personQty[name] ?? ''}
+                            onChange={(e) => setPersonQty((prev) => ({ ...prev, [name]: e.target.value }))}
+                            placeholder="0"
+                            className="h-[38px] w-24 rounded-lg border border-line bg-surface px-3 text-right text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
+                        </div>
+                      ))}
+                      <div className="flex items-center justify-between gap-4 border-t border-line-soft pt-2.5">
+                        <span className="text-ink-soft">Total</span>
+                        <span className="font-medium text-ink">{splitSum > 0 ? `${splitSum.toLocaleString()} cards` : '—'}</span>
+                      </div>
+                      {splitRangeHint && <p className="text-[13px] text-low">{splitRangeHint}</p>}
+                    </div>
+                  ) : isSingleOpen ? (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-4">
+                        <label htmlFor="order-quantity" className="text-ink-soft">Quantity</label>
+                        <input id="order-quantity" type="number" min={singleMin ?? 1} max={singleMax ?? undefined} step={1} inputMode="numeric"
+                          value={chosenQuantity ?? ''}
+                          onChange={(e) => { const n = parseInt(e.target.value, 10); setChosenQuantity(Number.isFinite(n) && n > 0 ? n : null) }}
+                          placeholder={singleMin != null ? `${singleMin.toLocaleString()}+` : 'e.g. 250'}
+                          className="h-[38px] w-28 rounded-lg border border-line bg-surface px-3 text-right text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
+                      </div>
+                      {singleMin != null && singleMax != null && (
+                        <p className="text-right text-[12px] text-ink-mute">Any quantity from {singleMin.toLocaleString()} to {singleMax.toLocaleString()}.</p>
+                      )}
+                      {singleRangeHint && <p className="text-[13px] text-low">{singleRangeHint}</p>}
+                    </div>
+                  ) : null}
+
+                  {shippingComputedAtCheckout && (
+                    <div className="space-y-2.5">
+                      <p className="font-medium text-ink">Where should we ship these?</p>
+                      <p className="text-[13px] text-ink-soft">So we can calculate shipping. You’ll confirm your full delivery address below.</p>
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <select aria-label="Delivery country" value={destCountry} onChange={(e) => setDestCountry(e.target.value)}
+                          className="h-[38px] flex-1 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]">
+                          <option value="">Select country…</option>
+                          {SHIP_COUNTRIES.map((c) => (<option key={c.code} value={c.code}>{c.name}</option>))}
+                        </select>
+                        <input aria-label="Delivery postcode" value={destPostcode} onChange={(e) => setDestPostcode(e.target.value)}
+                          placeholder="Postcode / ZIP"
+                          className="h-[38px] flex-1 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
+                      </div>
+                    </div>
+                  )}
+
+                  {payError && (
+                    <div className="rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{payError}</div>
+                  )}
+
+                  <button type="button" onClick={() => void startCheckout()} disabled={paying || awaitingQuantity || !destinationComplete}
+                    className="inline-flex w-full items-center justify-center rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-on-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
+                    {paying ? 'Loading secure payment…'
+                      : awaitingQuantity ? 'Choose a quantity to continue'
+                        : !destinationComplete ? 'Enter delivery country & postcode'
+                          : payTotal != null ? `Continue to payment — ${formatPrice(payTotal, order.currency)}`
+                            : 'Continue to payment'}
+                  </button>
+                  <p className="text-center text-[12px] text-ink-mute">
+                    {awaitingQuantity ? 'Select a quantity to see your total.'
+                      : !destinationComplete ? 'Enter where we’re shipping to so we can calculate shipping.'
+                        : 'Secured by Stripe.'}
+                  </p>
                 </div>
+              ) : (
+                <>
+                  {!formMounted && (
+                    <div className="absolute inset-x-0 top-24 flex flex-col items-center gap-2 text-ink-mute">
+                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-ink" />
+                      <span className="text-sm">Loading secure payment…</span>
+                    </div>
+                  )}
+                  <div className="space-y-4">
+                    <div id="link-auth" />
+                    <div id="address-element" />
+                    <div id="payment-element" />
+                  </div>
+                  {formError && (
+                    <div className="mt-3 rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{formError}</div>
+                  )}
+                  <button type="button" onClick={() => void confirmPay()} disabled={submitting || !formMounted}
+                    className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-on-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
+                    {submitting ? 'Processing…' : `Pay ${formatPrice(checkout.amount, checkout.currency)}`}
+                  </button>
+                  <p className="mt-2 text-center text-[12px] text-ink-mute">
+                    Secured by Stripe.{checkout.currency === 'GBP' ? ' Includes VAT.' : ''}
+                  </p>
+                  {(isOpenGrid || shippingComputedAtCheckout) && (
+                    <button type="button" onClick={() => { setCheckout(null); setFormError(null) }}
+                      className="mt-3 block w-full text-center text-[12px] text-ink-mute underline hover:text-ink">
+                      Edit order details
+                    </button>
+                  )}
+                </>
               )}
-              <div className="space-y-4">
-                <div id="link-auth" />
-                <div id="address-element" />
-                <div id="payment-element" />
-              </div>
-              {formError && (
-                <div className="mt-3 rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{formError}</div>
-              )}
-              <button
-                type="button"
-                onClick={() => void confirmPay()}
-                disabled={submitting || !formMounted}
-                className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-on-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {submitting ? 'Processing…' : `Pay ${formatPrice(checkout.amount, checkout.currency)}`}
-              </button>
-              <p className="mt-2 text-center text-[12px] text-ink-mute">
-                Secured by Stripe.{checkout.currency === 'GBP' ? ' Includes VAT.' : ''}
-              </p>
             </PanelShell>
           </div>
+
+          {order.expires_at && (
+            <p className="mt-4 text-center text-[12px] text-ink-mute">
+              This payment link is valid until {formatApprovedDate(order.expires_at)}. After that, just reply to your email and we&rsquo;ll send a fresh one.
+            </p>
+          )}
         </div>
       </div>
     )
   }
 
-  // ── Payable (status 'sent') ───────────────────────────────────────
+  // ── Not payable online ────────────────────────────────────────────
+  // Reached only when the order can't be priced online (no custom quote and no
+  // locked/open grid config). The payable path is the unified screen above.
   return (
     <Screen>
-      <PanelShell className="w-full max-w-lg">
+      <PanelShell className="w-full max-w-lg text-center">
         <p className="eyebrow">Complete your order</p>
-        <h1 className="mt-1 text-xl font-semibold text-ink">
-          {company ? company : 'Your order'}
-        </h1>
-        <p className="mt-1 text-sm text-ink-soft">
-          Reference {order.payment_reference}
-        </p>
-
-        {/* Recap — large previews of the approved artwork + spec + the
-            date it was approved, as a trust anchor before the customer
-            commits to pay. Images keep their natural aspect ratio (no
-            cropping). Hidden entirely if neither images nor spec loaded. */}
-        {(thumbs.length > 0 || spec) && (
-          <div className="mt-5 rounded-xl border border-line bg-canvas p-4">
-            <div className="flex items-baseline justify-between gap-3">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Approved artwork</p>
-              {spec?.approvedAt && (
-                <p className="text-[12px] text-ink-mute">Approved {formatApprovedDate(spec.approvedAt)}</p>
-              )}
-            </div>
-            {thumbs.length > 0 && (
-              <div className={`mt-3 grid gap-3 ${thumbs.length > 1 ? 'sm:grid-cols-2' : ''}`}>
-                {thumbs.map((img) => (
-                  <img
-                    key={img.id}
-                    src={img.signed_url}
-                    alt="Approved proof artwork"
-                    className="w-full rounded-lg bg-surface ring-1 ring-line"
-                  />
-                ))}
-              </div>
-            )}
-            {spec && (
-              <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-                <dt className="text-ink-mute">Material</dt>
-                <dd className="text-ink">{spec.material}</dd>
-                {spec.variant && (
-                  <>
-                    <dt className="text-ink-mute">Option</dt>
-                    <dd className="text-ink">{spec.variant}</dd>
-                  </>
-                )}
-                {spec.finish && (
-                  <>
-                    <dt className="text-ink-mute">Finish</dt>
-                    <dd className="text-ink">{spec.finish}</dd>
-                  </>
-                )}
-                {spec.inks.length > 0 && (
-                  <>
-                    <dt className="text-ink-mute">Ink</dt>
-                    <dd className="text-ink">{spec.inks.join(', ')}</dd>
-                  </>
-                )}
-              </dl>
-            )}
-          </div>
-        )}
-
-        <div className="mt-5 space-y-3 border-t border-line pt-5 text-sm">
-          {isSplitOpen ? (
-            <div className="space-y-2.5">
-              <p className="text-ink-soft">Quantity for each person</p>
-              {personNames.map((name) => (
-                <div key={name} className="flex items-center justify-between gap-4">
-                  <label htmlFor={`q-${name}`} className="truncate text-ink">{name}</label>
-                  <input
-                    id={`q-${name}`}
-                    type="number"
-                    min={1}
-                    step={1}
-                    inputMode="numeric"
-                    value={personQty[name] ?? ''}
-                    onChange={(e) => setPersonQty((prev) => ({ ...prev, [name]: e.target.value }))}
-                    placeholder="0"
-                    className="h-[38px] w-24 rounded-lg border border-line bg-surface px-3 text-right text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
-                  />
-                </div>
-              ))}
-              <div className="flex items-center justify-between gap-4 border-t border-line-soft pt-2.5">
-                <span className="text-ink-soft">Total</span>
-                <span className="font-medium text-ink">{splitSum > 0 ? `${splitSum.toLocaleString()} cards` : '—'}</span>
-              </div>
-              {splitRangeHint && <p className="text-[13px] text-low">{splitRangeHint}</p>}
-            </div>
-          ) : isSingleOpen ? (
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-4">
-                <label htmlFor="order-quantity" className="text-ink-soft">Quantity</label>
-                <input
-                  id="order-quantity"
-                  type="number"
-                  min={singleMin ?? 1}
-                  max={singleMax ?? undefined}
-                  step={1}
-                  inputMode="numeric"
-                  value={chosenQuantity ?? ''}
-                  onChange={(e) => {
-                    const n = parseInt(e.target.value, 10)
-                    setChosenQuantity(Number.isFinite(n) && n > 0 ? n : null)
-                  }}
-                  placeholder={singleMin != null ? `${singleMin.toLocaleString()}+` : 'e.g. 250'}
-                  className="h-[38px] w-28 rounded-lg border border-line bg-surface px-3 text-right text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
-                />
-              </div>
-              {singleMin != null && singleMax != null && (
-                <p className="text-right text-[12px] text-ink-mute">
-                  Any quantity from {singleMin.toLocaleString()} to {singleMax.toLocaleString()}.
-                </p>
-              )}
-              {singleRangeHint && <p className="text-[13px] text-low">{singleRangeHint}</p>}
-            </div>
-          ) : (
-            <Row
-              label="Quantity"
-              value={
-                order.quantity != null
-                  ? order.names_count > 1
-                    ? `${order.quantity.toLocaleString()} cards in total`
-                    : order.quantity.toLocaleString()
-                  : 'You choose below'
-              }
-            />
-          )}
-          {order.names_count > 1 && !isSplitOpen && <Row label="People" value={String(order.names_count)} />}
-          {order.has_personalisation && <Row label="Personalisation" value="Included" />}
-          {/* Card subtotal — shown when the all-in total is deferred to Stripe
-              (shipping-rated orders) so the card price is still visible. */}
-          {shippingComputedAtCheckout && order.custom_quote_total == null && cardsSubtotal != null && (
-            <Row label="Cards" value={formatPrice(cardsSubtotal, order.currency)} />
-          )}
-          <Row label={SHIPPING_LABEL[order.shipping_treatment]} value={
-            order.shipping_treatment === 'free'
-              ? 'Free'
-              : order.shipping_charged != null
-                ? formatPrice(order.shipping_charged, order.currency)
-                : 'Calculated at checkout'
-          } />
-          {order.custom_quote_total != null && (
-            <Row label="Agreed total" value={formatPrice(order.custom_quote_total, order.currency)} bold />
-          )}
+        <h1 className="mt-1 text-xl font-semibold text-ink">{company ? company : 'Your order'}</h1>
+        <p className="mt-1 text-sm text-ink-soft">Reference {order.payment_reference}</p>
+        <div className="mt-6 rounded-xl border border-dashed border-line bg-canvas p-4">
+          <p className="text-sm font-medium text-ink">Online payment for this order is being set up</p>
+          <p className="mt-1 text-[13px] text-ink-soft">
+            Please reply to the email you received and we&rsquo;ll confirm the price and send you a secure payment link.
+          </p>
         </div>
-
-        {/* Delivery destination — full_cost / goodwill orders rate the carriage
-            against this. We ask here because we rarely know the postcode upfront. */}
-        {canCheckout && shippingComputedAtCheckout && !checkout && (
-          <div className="mt-5 space-y-2.5 border-t border-line pt-4 text-sm">
-            <p className="font-medium text-ink">Where should we ship these?</p>
-            <p className="text-[13px] text-ink-soft">
-              So we can calculate shipping. You’ll confirm your full delivery address at the payment step.
-            </p>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <select
-                aria-label="Delivery country"
-                value={destCountry}
-                onChange={(e) => setDestCountry(e.target.value)}
-                className="h-[38px] flex-1 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
-              >
-                <option value="">Select country…</option>
-                {SHIP_COUNTRIES.map((c) => (
-                  <option key={c.code} value={c.code}>{c.name}</option>
-                ))}
-              </select>
-              <input
-                aria-label="Delivery postcode"
-                value={destPostcode}
-                onChange={(e) => setDestPostcode(e.target.value)}
-                placeholder="Postcode / ZIP"
-                className="h-[38px] flex-1 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
-              />
-            </div>
-          </div>
-        )}
-
-        {canCheckout ? (
-          // ── Pay / continue to checkout ─────────────────────────────
-          <div className="mt-6">
-            {payTotal != null && (
-              <>
-                <div className="flex items-center justify-between border-t border-line pt-4 text-base">
-                  <span className="font-semibold text-ink">Total to pay</span>
-                  <span className="font-semibold text-ink">{formatPrice(payTotal, order.currency)}</span>
-                </div>
-                {order.currency === 'GBP' && (
-                  <p className="mt-1 text-[12px] text-ink-mute">Includes VAT.</p>
-                )}
-              </>
-            )}
-            {payError && (
-              <div className="mt-3 rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{payError}</div>
-            )}
-            <button
-              type="button"
-              onClick={() => void startCheckout()}
-              disabled={paying || awaitingQuantity || !destinationComplete}
-              className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-on-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {paying
-                ? 'Loading secure payment…'
-                : awaitingQuantity
-                  ? 'Choose a quantity to continue'
-                  : !destinationComplete
-                    ? 'Enter delivery country & postcode'
-                    : payTotal != null
-                      ? `Continue to payment — ${formatPrice(payTotal, order.currency)}`
-                      : 'Continue to payment'}
-            </button>
-            <p className="mt-2 text-center text-[12px] text-ink-mute">
-              {awaitingQuantity
-                ? 'Select a quantity above to see your total.'
-                : !destinationComplete
-                  ? 'Enter where we’re shipping to so we can calculate shipping.'
-                  : payTotal == null
-                    ? 'A secure card form will open below to enter your card and delivery details, where you’ll see the full price including VAT.'
-                    : 'A secure card form will open below to enter your card and delivery details.'}
-            </p>
-          </div>
-        ) : (
-          // Grid-priced / engine-shipping orders — the next increment.
-          <div className="mt-6 rounded-xl border border-dashed border-line bg-canvas p-4 text-center">
-            <p className="text-sm font-medium text-ink">Online payment for this order is being set up</p>
-            <p className="mt-1 text-[13px] text-ink-soft">
-              Please reply to the email you received and we&rsquo;ll confirm the price and send you a secure payment link.
-            </p>
-          </div>
-        )}
-
-        {/* Link validity — let the customer know it isn't open-ended. */}
         {order.expires_at && (
-          <p className="mt-4 text-center text-[12px] text-ink-mute">
-            This payment link is valid until {formatApprovedDate(order.expires_at)}. After that, just reply to your email and we&rsquo;ll send a fresh one.
+          <p className="mt-4 text-[12px] text-ink-mute">
+            This payment link is valid until {formatApprovedDate(order.expires_at)}.
           </p>
         )}
       </PanelShell>
