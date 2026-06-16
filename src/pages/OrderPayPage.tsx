@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { formatPrice } from '../lib/currency'
@@ -137,6 +137,10 @@ export default function OrderPayPage() {
   // Embedded checkout: once the session is created, this holds the client
   // secret + publishable key; an effect mounts Stripe's form into the page.
   const [checkout, setCheckout] = useState<{ clientSecret: string; pk: string } | null>(null)
+  // True once Stripe's iframe is mounted, so we can show a loading state in the
+  // reserved space until then (avoids a collapse-then-grow jump).
+  const [formMounted, setFormMounted] = useState(false)
+  const mountWrapRef = useRef<HTMLDivElement | null>(null)
   // Set by Stripe's success_url redirect. Optimistic until the Step 5
   // webhook flips order.status to 'paid'; a later reload shows the real
   // paid state from the DB.
@@ -220,6 +224,12 @@ export default function OrderPayPage() {
         instance = await stripe.initEmbeddedCheckout({ clientSecret: checkout.clientSecret })
         if (cancelled) { instance.destroy(); return }
         instance.mount('#embedded-checkout-mount')
+        setFormMounted(true)
+        // Bring the form into view (it mounts below the recap) so the customer
+        // sees it immediately rather than appearing to have nothing happen.
+        requestAnimationFrame(() => {
+          mountWrapRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        })
       } catch {
         setPayError('We couldn’t load the secure payment form. Please reply to the email you received and we’ll help.')
         setCheckout(null)
@@ -228,6 +238,7 @@ export default function OrderPayPage() {
     })()
     return () => {
       cancelled = true
+      setFormMounted(false)
       if (instance) { try { instance.destroy() } catch { /* already gone */ } }
     }
   }, [checkout])
@@ -772,8 +783,16 @@ export default function OrderPayPage() {
 
         {canCheckout && checkout ? (
           // ── Embedded Stripe checkout — mounted in-page by the effect above,
-          //    so the customer never leaves this Plasma-branded page. ──────
-          <div className="mt-6 border-t border-line pt-5">
+          //    so the customer never leaves this Plasma-branded page. The
+          //    reserved min-height + loading state avoid a collapse-then-grow
+          //    jump while Stripe's iframe loads. ───────────────────────────
+          <div ref={mountWrapRef} className="relative mt-6 min-h-[460px] border-t border-line pt-5">
+            {!formMounted && (
+              <div className="absolute inset-x-0 top-16 flex flex-col items-center gap-2 text-ink-mute">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-ink" />
+                <span className="text-sm">Loading secure payment…</span>
+              </div>
+            )}
             <div id="embedded-checkout-mount" />
           </div>
         ) : canCheckout ? (

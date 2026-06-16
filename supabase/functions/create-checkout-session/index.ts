@@ -578,6 +578,11 @@ Deno.serve(async (req) => {
   params.set('ui_mode', 'embedded')
   params.set('submit_type', 'pay')
   params.set('return_url', `${origin}/order/${order.id}?token=${encodeURIComponent(token)}&paid=1`)
+  // Lock the checkout to the order's currency. Without this, Stripe's
+  // account-level Adaptive Pricing offers the customer their local currency
+  // with a conversion fee — wrong for an order we've deliberately priced and
+  // locked in one currency (e.g. a GBP order showing USD + a 3.75% fee).
+  params.set('adaptive_pricing[enabled]', 'false')
   // A short note above the pay button (branding + reassurance).
   params.set('custom_text[submit][message]', 'Thank you — we’ll begin production as soon as your payment is confirmed.')
   // client_reference_id + metadata carry the shared reference so the
