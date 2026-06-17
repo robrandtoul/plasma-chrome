@@ -161,6 +161,10 @@ export default function OrderPayPage() {
   // True while confirmPayment is in flight, + any inline confirm error.
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  // VAT invoice (self-serve): once the order is paid, we check Xero for the
+  // shareable online-invoice URL — but only surface it once the invoice has
+  // reconciled to PAID (Stripe's receipt covers the immediate proof-of-payment).
+  const [vat, setVat] = useState<{ state: 'loading' | 'ready' | 'pending' | 'unavailable'; url?: string } | null>(null)
   const mountWrapRef = useRef<HTMLDivElement | null>(null)
   // Held so the Pay button's handler can call confirmPayment on the same
   // Stripe + Elements instances the mount effect created.
@@ -444,6 +448,56 @@ export default function OrderPayPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order])
 
+  // Once the order is paid, ask for the VAT invoice. Returns the Xero
+  // online-invoice URL only when the invoice has reconciled to PAID; otherwise
+  // 'pending' (available shortly) or 'unavailable' (no invoice was created).
+  useEffect(() => {
+    if (!order || !id || !token) return
+    const isPaid = order.status === 'paid' || order.status === 'fulfilled' || justPaid
+    if (!isPaid) return
+    let cancelled = false
+    setVat({ state: 'loading' })
+    void supabase.functions
+      .invoke<{ ready?: boolean; url?: string; reason?: string }>('order-vat-invoice', { body: { order_id: id, token } })
+      .then(({ data, error }) => {
+        if (cancelled) return
+        if (error || !data) { setVat({ state: 'pending' }); return }
+        if (data.ready && data.url) { setVat({ state: 'ready', url: data.url }); return }
+        setVat({ state: data.reason === 'no_invoice' ? 'unavailable' : 'pending' })
+      })
+    return () => { cancelled = true }
+  }, [order, id, token, justPaid])
+
+  // Shared VAT-invoice note for the paid / just-paid screens.
+  function renderVatInvoice() {
+    if (!vat || vat.state === 'loading') return null
+    if (vat.state === 'ready' && vat.url) {
+      return (
+        <a
+          href={vat.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-4 inline-block text-sm font-medium text-[var(--c-brand)] underline hover:opacity-80"
+        >
+          Download your VAT invoice
+        </a>
+      )
+    }
+    if (vat.state === 'pending') {
+      return (
+        <p className="mt-4 text-[13px] text-ink-mute">
+          Your VAT invoice will be available here once your payment clears (usually within one working day) — just revisit this link.
+        </p>
+      )
+    }
+    // unavailable
+    return (
+      <p className="mt-4 text-[13px] text-ink-mute">
+        Need a VAT invoice? Reply to your order email and we&rsquo;ll send one over.
+      </p>
+    )
+  }
+
   if (loading) return <Screen><LoadingProofAnimation /></Screen>
 
   if (notFound || !order) {
@@ -473,6 +527,7 @@ export default function OrderPayPage() {
           <p className="mt-2 text-sm text-ink-soft">
             Your order {order.payment_reference ? `(${order.payment_reference})` : ''} has been paid and is now in production. We&rsquo;ll be in touch with dispatch details.
           </p>
+          {renderVatInvoice()}
         </PanelShell>
       </Screen>
     )
@@ -502,6 +557,10 @@ export default function OrderPayPage() {
           <p className="mt-2 text-sm text-ink-soft">
             We&rsquo;re confirming your payment{order.payment_reference ? ` (${order.payment_reference})` : ''} and will be in touch with the next steps. You can close this page.
           </p>
+          <p className="mt-3 text-[13px] text-ink-mute">
+            A receipt is on its way to your email. Your VAT invoice will be available on this page once your payment clears.
+          </p>
+          {renderVatInvoice()}
         </PanelShell>
       </Screen>
     )
