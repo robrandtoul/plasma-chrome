@@ -101,40 +101,39 @@ function buildSections(input: ComposeNoteInput): { header: string; status: strin
   return { header, status, statusTone, sections }
 }
 
-// Whether this outcome warrants a Help Scout note at all. A clean draft — one
-// with nothing to verify and no easily-missed context — gets NO note; the draft
-// itself (plus the ai-draft tag) is the signal. A block always notes (the note
-// is the only signal there). An abstention notes only with a handoff action or
-// surfaced context, so silence stays a feature for the category/confidence gate.
+// Whether this outcome warrants a Help Scout note at all. A clean draft —
+// nothing to verify and no handoff — gets NO note; the draft itself (plus the
+// ai-draft tag) is the signal. The trigger is deliberately NOT note_summary:
+// the model fills that one-line summary on nearly every draft despite the
+// "usually empty" instruction, which silently re-floods the thread. So a note
+// posts only for something actionable — a before-you-send check, a handoff
+// action, a block, or a model-considered abstention's reason.
 export function shouldPostNote(input: ComposeNoteInput): boolean {
   const { outcome, draft, abstainOrBlockReason } = input
-  const context = (draft?.note_summary ?? '').trim()
   if (outcome === 'blocked') return true
   if (outcome === 'abstained') {
-    // A model-CONSIDERED abstention (draft present — e.g. a complaint or a
-    // feasibility question it handed off) carries its reason in
-    // abstainOrBlockReason; that handoff signal is the note's whole point, and
-    // it's the only Help Scout footprint (no draft, no tag), so post it. The
-    // pre-gate abstentions (category/confidence/artwork-form) have draft === null
-    // and stay silent — silence is a feature there. Keep this in lockstep with
-    // buildHtmlTerse's abstention branch, or the gate and renderer disagree.
-    return draft?.action != null || context !== '' || (draft != null && (abstainOrBlockReason ?? '').trim() !== '')
+    // Handoff action, or a model-considered abstention (draft present — e.g. a
+    // complaint or feasibility hand-off) with a reason; that is the only Help
+    // Scout footprint for those. Pre-gate abstentions (draft === null, no
+    // action) stay silent. Keep in lockstep with buildHtmlTerse's branches.
+    return draft?.action != null || (draft != null && (abstainOrBlockReason ?? '').trim() !== '')
   }
-  if (outcome === 'drafted') return (draft?.checks?.length ?? 0) > 0 || context !== ''
+  if (outcome === 'drafted') {
+    // A before-you-send check or a handoff action (e.g. artwork → Graphics).
+    return (draft?.checks?.length ?? 0) > 0 || draft?.action != null
+  }
   return false // skipped
 }
 
 // The Help Scout note: terse and human. No telemetry header, no figures dump,
-// no self-congratulatory pass status — just what the reviewer needs to act on:
-// context they might miss, a handoff action, assumptions, before-you-send
-// checks, and (for a block/abstention) why there's no draft. Help Scout
-// collapses newlines and renders <p> margins near-zero, so blocks are spaced
-// with a <br>. The full working stays in the ledger text (the admin panel).
+// no self-congratulatory pass status, and no note_summary narration — just what
+// the reviewer must act on: a handoff action, assumptions, before-you-send
+// checks, and (for a block/abstention) why there's no draft. The model-written
+// summary stays in the ledger text (admin panel) only. Help Scout collapses
+// newlines and renders <p> margins near-zero, so blocks are spaced with a <br>.
 function buildHtmlTerse(input: ComposeNoteInput): string {
   const { draft, outcome, abstainOrBlockReason } = input
   const blocks: string[] = []
-  const context = (draft?.note_summary ?? '').trim()
-  if (context) blocks.push(`<p>${escapeHtml(context)}</p>`)
   if (draft?.action) blocks.push(`<p>${escapeHtml(draft.action)}</p>`)
   if (draft?.assumptions?.length) {
     blocks.push(`<p>Assumed: ${draft.assumptions.map(escapeHtml).join('; ')}</p>`)

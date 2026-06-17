@@ -525,11 +525,11 @@ check('note header uses a plain-English category label', drafted.text.startsWith
 check('figures section rendered', drafted.text.includes('FIGURES USED') && drafted.text.includes('£329 — Steel 500µm x100'))
 check('checks become a checklist', drafted.text.includes('☐ Confirm 500 micron'))
 check('drafted status is reconciled', drafted.text.includes('✓ All figures reconciled'))
-// The Help Scout HTML is the TERSE form: a before-you-send check + the context
-// line, but no telemetry header, no figures dump, and no ✓-pass line — those
-// stay in the ledger text (the panel) only.
+// The Help Scout HTML is the TERSE form: a before-you-send check, but no
+// telemetry header, no figures dump, no ✓-pass line, and no note_summary
+// narration — those stay in the ledger text (the panel) only.
 check('html shows the before-you-send check', drafted.html.includes('<strong>Before you send:</strong>') && drafted.html.includes('Confirm 500 micron'))
-check('html shows the surfaced context', drafted.html.includes('Quoted 100 steel cards'))
+check('html drops the note_summary narration', !drafted.html.includes('Quoted 100 steel cards'))
 check('html drops the telemetry header', !drafted.html.includes('AI · Quote'))
 check('html drops the figures dump', !drafted.html.includes('Figures used') && !drafted.html.includes('£329'))
 check('html drops the self-congratulatory pass line', !drafted.html.includes('✓'))
@@ -539,7 +539,7 @@ check('html has no collapsing newline joins', !drafted.html.includes('</p>\n') &
 const actionDrafted = composeNote({ classification: classifyStub, draft: { ...draftStub, action: 'Route to Graphics' }, outcome: 'drafted', abstainOrBlockReason: null, guardrails: { ok: true } })
 check('html renders a handoff action as a plain line (no "Action" label)', actionDrafted.html.includes('<p>Route to Graphics</p>') && !actionDrafted.html.includes('Action</strong>'))
 check('html outcome word is plain English', composeNote({ classification: classifyStub, draft: { ...draftStub, draft_body: null, should_draft: false, action: 'Route to Graphics' }, outcome: 'abstained', abstainOrBlockReason: 'needs a human', guardrails: null }).text.includes('· needs you'))
-check('html escapes content', composeNote({ classification: { ...classifyStub, summary: 'a < b & c' }, draft: { ...draftStub, note_summary: 'a < b & c' }, outcome: 'drafted', abstainOrBlockReason: null, guardrails: { ok: true } }).html.includes('a &lt; b &amp; c'))
+check('html escapes content', composeNote({ classification: classifyStub, draft: { ...draftStub, checks: ['a < b & c'] }, outcome: 'drafted', abstainOrBlockReason: null, guardrails: { ok: true } }).html.includes('a &lt; b &amp; c'))
 
 const blockedNote = composeNote({ classification: classifyStub, draft: { ...draftStub }, outcome: 'blocked', abstainOrBlockReason: 'figure £305 does not reconcile', guardrails: { ok: false, reasons: ['figure £305 does not reconcile'] } })
 check('blocked status is prominent (text)', blockedNote.text.includes('⚠ BLOCKED') && blockedNote.text.includes('£305'))
@@ -558,7 +558,10 @@ const noteInputFor = (
 
 check('clean draft → no note', shouldPostNote(noteInputFor('drafted', bareDraft)) === false)
 check('draft with a check → note', shouldPostNote(noteInputFor('drafted', { ...bareDraft, checks: ['Confirm finish'] })) === true)
-check('draft with surfaced context → note', shouldPostNote(noteInputFor('drafted', { ...bareDraft, note_summary: '10% loyalty discount agreed earlier in the thread' })) === true)
+check('drafted handoff action → note', shouldPostNote(noteInputFor('drafted', { ...bareDraft, action: 'Route to Graphics' })) === true)
+// note_summary no longer triggers a note — the model fills it on nearly every
+// draft, which re-floods the thread. Only checks / action / blocks / abstentions do.
+check('draft with only a note_summary → NO note', shouldPostNote(noteInputFor('drafted', { ...bareDraft, note_summary: '10% loyalty discount agreed earlier in the thread' })) === false)
 check('draft with only an fyi assumption → no note', shouldPostNote(noteInputFor('drafted', { ...bareDraft, assumptions: ['assumed UK-based'] })) === false)
 check('blocked → always a note', shouldPostNote(noteInputFor('blocked', bareDraft)) === true)
 check('abstention handoff (action) → note', shouldPostNote(noteInputFor('abstained', { ...bareDraft, action: 'Route to Graphics' })) === true)
