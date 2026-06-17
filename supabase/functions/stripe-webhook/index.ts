@@ -12,7 +12,7 @@
 // against STRIPE_WEBHOOK_SECRET below. Do not add a Supabase JWT gate.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { getAccessContext, createSalesInvoice } from '../_shared/xero.ts'
+import { getAccessContext, createSalesInvoice, recordInvoicePayment } from '../_shared/xero.ts'
 import { buildOrderInvoiceLines } from '../_shared/invoiceBuild.ts'
 
 const encoder = new TextEncoder()
@@ -321,6 +321,23 @@ Deno.serve(async (req) => {
         // Success — store the id and clear any prior error so a row that has
         // since invoiced never keeps a stale "failed" flag.
         await admin.from('orders').update({ xero_invoice_id: invoiceId, xero_invoice_error: null }).eq('id', orderId)
+
+        // If a Stripe clearing account is configured (000242), record the
+        // payment into it so the invoice is marked PAID immediately, matching
+        // Xero's own Pay-now flow. The Stripe account feed later reconciles
+        // against this payment rather than double-counting. Best-effort: a
+        // failure here leaves the invoice created-but-unpaid for the feed to
+        // settle, and never fails the webhook.
+        const { data: payCfg } = await admin.from('settings').select('xero_stripe_account_code').eq('id', 1).single()
+        const stripeAcctCode = payCfg?.xero_stripe_account_code as string | null | undefined
+        if (stripeAcctCode) {
+          const pay = await recordInvoicePayment(ctx.accessToken, ctx.tenantId, {
+            invoiceId,
+            accountCode: stripeAcctCode,
+            amount: expectedTotal,
+          })
+          if (!pay.ok) console.error(`[stripe-webhook] xero payment record failed for order ${orderId}:`, pay.error)
+        }
       } else {
         console.error(`[stripe-webhook] xero invoice not created for order ${orderId}:`, lastError)
         await admin.from('orders').update({ xero_invoice_error: lastError ?? 'Xero did not return an invoice' }).eq('id', orderId)

@@ -313,3 +313,53 @@ export async function createSalesInvoice(
     invoice,
   }
 }
+
+// Apply a payment to an invoice, paying it into the given account (the Stripe
+// clearing/bank account). Marks the invoice PAID immediately. Best-effort:
+// returns ok=false + the Xero error text on failure so the caller can log it
+// without failing the webhook. Must target the Stripe CLEARING account so the
+// later Stripe feed reconciles against this payment instead of double-counting.
+export async function recordInvoicePayment(
+  accessToken: string,
+  tenantId: string,
+  p: { invoiceId: string; accountCode: string; amount: number; date?: string },
+): Promise<{ ok: boolean; error: string | null }> {
+  const body = {
+    Invoice: { InvoiceID: p.invoiceId },
+    Account: { Code: p.accountCode },
+    Amount: p.amount,
+    Date: p.date ?? new Date().toISOString().slice(0, 10),
+  }
+  const res = await fetch('https://api.xero.com/api.xro/2.0/Payments', {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Xero-tenant-id': tenantId,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '<body read failed>')
+    return { ok: false, error: `${res.status} ${text}` }
+  }
+  return { ok: true, error: null }
+}
+
+// List the org's BANK accounts (name + code), for the admin Stripe-clearing-
+// account picker. Returns [] on any failure (the picker just shows empty).
+export async function listBankAccounts(
+  accessToken: string,
+  tenantId: string,
+): Promise<{ name: string; code: string }[]> {
+  const res = await fetch(
+    `https://api.xero.com/api.xro/2.0/Accounts?where=${encodeURIComponent('Type=="BANK"')}`,
+    { headers: { Authorization: `Bearer ${accessToken}`, 'Xero-tenant-id': tenantId, Accept: 'application/json' } },
+  )
+  if (!res.ok) return []
+  const data = await res.json().catch(() => null)
+  return ((data?.Accounts as Array<{ Name?: string; Code?: string }> | undefined) ?? [])
+    .map((a) => ({ name: a.Name ?? '', code: a.Code ?? '' }))
+    .filter((a) => a.code)
+}

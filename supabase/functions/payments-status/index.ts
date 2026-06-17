@@ -12,7 +12,7 @@
 // call via the existing connection when Xero is connected.
 
 import { requireAdmin, json, CORS_HEADERS } from '../_shared/admin.ts'
-import { getAccessContext } from '../_shared/xero.ts'
+import { getAccessContext, listBankAccounts } from '../_shared/xero.ts'
 
 // Classify a Stripe key by prefix without revealing it. Stripe keys are
 // sk_test_… / sk_live_… (and rk_… restricted keys mirror the same infix).
@@ -32,8 +32,9 @@ Deno.serve(async (req) => {
   const { admin } = ctxOrResp
 
   // ── Stripe ───────────────────────────────────────────────────────
-  const { data: modeRow } = await admin.from('settings').select('payment_mode').eq('id', 1).single()
+  const { data: modeRow } = await admin.from('settings').select('payment_mode, xero_stripe_account_code').eq('id', 1).single()
   const mode = modeRow?.payment_mode === 'live' ? 'live' : 'test'
+  const stripeAccountCode = (modeRow?.xero_stripe_account_code as string | null | undefined) ?? null
 
   const legacyKey = Deno.env.get('STRIPE_SECRET_KEY')
   const testKey = Deno.env.get('STRIPE_SECRET_KEY_TEST') ?? legacyKey
@@ -67,12 +68,15 @@ Deno.serve(async (req) => {
     baseCurrency: string | null
     error: string | null
   } = { connected: false, orgName: null, isDemoCompany: null, baseCurrency: null, error: null }
+  // BANK accounts for the Stripe-clearing-account picker (admin only).
+  let bankAccounts: { name: string; code: string }[] = []
 
   try {
     const acc = await getAccessContext(admin)
     if (!acc) {
       xero = { ...xero, connected: false, error: 'Not connected' }
     } else {
+      bankAccounts = await listBankAccounts(acc.accessToken, acc.tenantId)
       const res = await fetch('https://api.xero.com/api.xro/2.0/Organisation', {
         headers: {
           Authorization: `Bearer ${acc.accessToken}`,
@@ -116,5 +120,5 @@ Deno.serve(async (req) => {
     verdict = 'incomplete'
   }
 
-  return json({ stripe, xero, verdict })
+  return json({ stripe, xero, verdict, bankAccounts, stripeAccountCode })
 })

@@ -34,6 +34,9 @@ interface Settings {
   /** Stripe payment mode (migration 000241): 'test' (sandbox) or 'live'. The
    *  checkout functions read this to pick which Stripe key set to use. */
   payment_mode: 'test' | 'live'
+  /** Xero account code of the Stripe clearing account (migration 000242). When
+   *  set, paid orders are marked paid in Xero instantly. Null = create-only. */
+  xero_stripe_account_code: string | null
   /** Shipping (migration 000178). */
   fedex_box_weight_grams: number
   fedex_intl_adjust_percent: number
@@ -75,6 +78,8 @@ interface PaymentsStatus {
     error: string | null
   }
   verdict: 'test' | 'ready' | 'danger' | 'incomplete'
+  bankAccounts?: { name: string; code: string }[]
+  stripeAccountCode?: string | null
 }
 
 /** Stable audit action string per field. */
@@ -87,6 +92,7 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   ordering_enabled:                  'setting.ordering_enabled_updated',
   auto_order_reminders_enabled:      'setting.auto_order_reminders_enabled_updated',
   payment_mode:                      'setting.payment_mode_updated',
+  xero_stripe_account_code:          'setting.xero_stripe_account_code_updated',
   fedex_box_weight_grams:            'setting.fedex_box_weight_grams_updated',
   fedex_intl_adjust_percent:         'setting.fedex_intl_adjust_percent_updated',
   domestic_uk_mainland_rate_gbp:     'setting.domestic_uk_mainland_rate_gbp_updated',
@@ -178,7 +184,7 @@ export default function AdminSettingsPage() {
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, payment_mode, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp')
+      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, payment_mode, xero_stripe_account_code, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -584,6 +590,40 @@ export default function AdminSettingsPage() {
             </button>
             {xeroMsg && <p className="mt-2 whitespace-pre-wrap break-all text-[13px] text-ink-soft">{xeroMsg}</p>}
           </div>
+
+          {/* Stripe clearing account (migration 000242). When set, paid orders
+              are marked PAID in Xero instantly (payment recorded into this
+              account; the Stripe feed reconciles against it). Options come from
+              the connected org's bank accounts via payments-status. */}
+          <div className="border-t border-line-soft pt-5">
+            <FieldRow
+              label="Mark invoices paid in Xero"
+              help="Choose your Stripe clearing account (the Xero bank account that receives Stripe funds). When set, a paid order's Xero invoice is marked paid immediately, matching Xero's own Pay-now flow; the Stripe feed later reconciles against it. Leave as 'Don't record' to only create the invoice and let the bank feed settle it (~a day)."
+              saved={recentlySaved('xero_stripe_account_code')}
+              working={working.xero_stripe_account_code}
+              error={errors.xero_stripe_account_code}
+            >
+              {payStatus?.bankAccounts && payStatus.bankAccounts.length > 0 ? (
+                <select
+                  value={settings.xero_stripe_account_code ?? ''}
+                  onChange={(e) => void saveField('xero_stripe_account_code', e.target.value || null)}
+                  disabled={!!working.xero_stripe_account_code}
+                  className="h-[38px] w-full max-w-sm rounded-[8px] border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                >
+                  <option value="">Don&rsquo;t record payment (create invoice only)</option>
+                  {payStatus.bankAccounts.map((a) => (
+                    <option key={a.code} value={a.code}>{a.name} ({a.code})</option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-[13px] text-ink-mute">
+                  {payStatus?.xero.connected
+                    ? 'No bank accounts found on the connected Xero org. Press Refresh on the status panel, or add a Stripe clearing account in Xero.'
+                    : 'Connect Xero (above) to choose the Stripe clearing account.'}
+                </p>
+              )}
+            </FieldRow>
+          </div>
         </div>
       </section>
 
@@ -909,6 +949,7 @@ function humanFieldLabel(field: keyof Settings): string {
     ordering_enabled: 'Ordering & checkout enabled',
     auto_order_reminders_enabled: 'Send unpaid-order reminders automatically',
     payment_mode: 'Stripe payment mode',
+    xero_stripe_account_code: 'Xero Stripe clearing account',
     fedex_box_weight_grams: 'FedEx box weight (grams)',
     fedex_intl_adjust_percent: 'International shipping adjustment (%)',
     domestic_uk_mainland_rate_gbp: 'UK mainland shipping rate (£, inc VAT)',
