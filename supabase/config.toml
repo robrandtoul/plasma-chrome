@@ -466,6 +466,12 @@ verify_jwt = false
 [functions.proof-action]
 verify_jwt = false
 
+# order-vat-invoice: anon-callable from the customer pay-page (order id + secret
+# token are the access token, same posture as create-checkout-session). Returns
+# only the Xero online-invoice URL for a paid + reconciled order.
+[functions.order-vat-invoice]
+verify_jwt = false
+
 # contact-form-submit: anon-callable because the form lives on the
 # public Squarespace support page. Defence in depth: CORS pinned to
 # www.plasmadesign.co.uk, a honeypot field, and a server-side
