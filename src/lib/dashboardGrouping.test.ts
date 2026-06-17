@@ -5,7 +5,7 @@
 // determines where a proof appears in the time-bucketed list after a
 // snooze expires.
 
-import { recentlyAwakened, isCurrentlySnoozed, groupByTime, buildSnoozedSection, proofBucket, recentHelpscoutActivity } from './dashboardGrouping'
+import { recentlyAwakened, isCurrentlySnoozed, groupByTime, activityTimestamp, buildSnoozedSection, proofBucket, recentHelpscoutActivity } from './dashboardGrouping'
 import type { DashboardProject } from './dashboardGrouping'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -174,6 +174,34 @@ test('proof with missing last_activity_at lands in Older', () => {
   const sections = groupByTime([p])
   assertEqual(sections.length, 1)
   assertEqual(sections[0].key, 'older')
+})
+
+// ── activityTimestamp() + groupByTime() keyed on the activity clock ───────────
+//
+// Regression guard for the "Willis" case: a proof whose last_activity_at is
+// old but whose latest_event_at is recent (e.g. a customer view today) must
+// bucket and sort by the recent event, not the stale last_activity_at.
+
+console.log('\nactivityTimestamp() — sort/group clock')
+
+test('activityTimestamp prefers latest_event_at over last_activity_at', () => {
+  const recent = hoursAgo(1)
+  const p = makeProject({ last_activity_at: daysAgo(10), latest_event_at: recent })
+  assertEqual(activityTimestamp(p), recent)
+})
+
+test('activityTimestamp falls back to last_activity_at when no event', () => {
+  const p = makeProject({ last_activity_at: daysAgo(3), latest_event_at: null })
+  assertEqual(activityTimestamp(p), p.last_activity_at)
+})
+
+test('proof with recent latest_event_at but old last_activity_at lands in Today', () => {
+  // The Willis case: viewed minutes ago (latest_event_at), but the row's
+  // last_activity_at clock reads days back. Must group by the recent event.
+  const p = makeProject({ last_activity_at: daysAgo(9), latest_event_at: hoursAgo(1) })
+  const sections = groupByTime([p])
+  assertEqual(sections.length, 1)
+  assertEqual(sections[0].key, 'today', 'should be Today via latest_event_at')
 })
 
 // ── groupByTime() — recently awakened snooze overrides bucket ─────────────────

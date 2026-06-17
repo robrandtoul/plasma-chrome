@@ -315,6 +315,22 @@ export function recentHelpscoutActivity(p: DashboardProject, withinDays = 3): He
   return new Date(newest.at).getTime() >= cutoff ? newest : null
 }
 
+// ── Activity clock (single source of truth for sort + grouping) ───────────────
+//
+// The dashboard's "most recent activity" is `latest_event_at` (the latest
+// proof event — including the latest customer view of the day, since migration
+// 000242), falling back to `last_activity_at` only for proofs that have no
+// events at all. The Activity sort and the Today / This week / Older grouping
+// MUST read this same field, or a proof can sort to the top of the list yet be
+// filed under a lower time bucket (the bug that buried Willis). Keeping the key
+// in one helper guarantees the sort order and the section headers never drift.
+
+export function activityTimestamp(
+  p: Pick<DashboardProject, 'latest_event_at' | 'last_activity_at'>,
+): string | null {
+  return p.latest_event_at ?? p.last_activity_at ?? null
+}
+
 // ── Grouping functions ────────────────────────────────────────────────────────
 
 export function groupByTime(projects: DashboardProject[]): ProjectSection[] {
@@ -322,7 +338,7 @@ export function groupByTime(projects: DashboardProject[]): ProjectSection[] {
   const week:  DashboardProject[] = []
   const older: DashboardProject[] = []
   for (const p of projects) {
-    const ts = p.last_activity_at
+    const ts = activityTimestamp(p)
     if (!ts) {
       older.push(p)
       continue

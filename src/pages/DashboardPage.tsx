@@ -35,6 +35,7 @@ import CollapsibleSidebarPanel from '../components/CollapsibleSidebarPanel'
 import {
   groupByTime,
   groupByCompany,
+  activityTimestamp,
   buildSnoozedSection,
   isCurrentlySnoozed,
   isChangesRequested,
@@ -2296,13 +2297,13 @@ export default function DashboardPage() {
     } else if (sort === 'date') {
       arr.sort((a, b) => b.created_at.localeCompare(a.created_at))
     } else {
-      // Activity sort — by latest_event_at if present, falling back to
-      // last_activity_at. Ensures projects with recent customer events
-      // sort above quiet ones even when their last_activity_at hasn't
-      // moved.
+      // Activity sort — by the shared activity clock (latest_event_at,
+      // falling back to last_activity_at). Uses the same helper as
+      // groupByTime so the sort order and the Today / This week / Older
+      // section a row lands in always agree.
       arr.sort((a, b) => {
-        const at = a.latest_event_at ?? a.last_activity_at
-        const bt = b.latest_event_at ?? b.last_activity_at
+        const at = activityTimestamp(a) ?? ''
+        const bt = activityTimestamp(b) ?? ''
         return bt.localeCompare(at)
       })
     }
