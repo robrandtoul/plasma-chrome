@@ -3021,23 +3021,21 @@ export default function ProofDetailPage() {
         </div>
 
         {/* Danger zone — permanent delete, kept subtle to avoid accidental
-            clicks. Admin-only to match the DB gate (migration 000074),
-            which restricts DELETE on proofs to is_admin(). A non-admin
-            clicking here would get an RLS error — hiding the control is
-            the clean frontend mirror of that. */}
-        {role === 'admin' && (
-          <div className="mt-12 flex flex-col gap-3 border-t border-line-soft pt-6 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-xs text-ink-dim">
-              Permanently remove this project and all its proof versions. Different from abandon, this cannot be undone.
-            </p>
-            <button
-              onClick={() => { setDeleteError(null); setStatusDialog('delete') }}
-              className="shrink-0 self-start rounded border border-out px-4 py-2 text-sm font-medium text-out hover:bg-out-soft sm:self-auto"
-            >
-              Delete project
-            </button>
-          </div>
-        )}
+            clicks. Available to any designer (migration 000243 relaxed the
+            proofs DELETE policy from is_admin() back to authenticated), so
+            a designer can bin a mistaken project without waiting for an
+            admin. The confirm dialog below is the accident guard. */}
+        <div className="mt-12 flex flex-col gap-3 border-t border-line-soft pt-6 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-ink-dim">
+            Permanently remove this project and all its proof versions. Different from abandon, this cannot be undone.
+          </p>
+          <button
+            onClick={() => { setDeleteError(null); setStatusDialog('delete') }}
+            className="shrink-0 self-start rounded border border-out px-4 py-2 text-sm font-medium text-out hover:bg-out-soft sm:self-auto"
+          >
+            Delete project
+          </button>
+        </div>
       </div>
 
       {/* Change Help Scout conversation modal */}
