@@ -45,9 +45,30 @@ export interface NudgeConfig {
 export interface CandidateFacts {
   proofId: string
   versionId: string
+  /**
+   * Which chase rule this candidate is for ('sent_never_viewed' |
+   * 'viewed_not_actioned'). Drives the per-(proof, rule, version) cap count
+   * and which template/subject the sender uses. A proof is only ever in one
+   * rule's population per run — it either has a non-bot view or it doesn't.
+   */
+  ruleCode: string
   conversationId: string | null
   contactEmail: string | null
-  /** coalesce(version.last_reply_sent_at, proof.helpscout_last_reply_at). */
+  /**
+   * The clock the threshold counts from, and the "was this ever sent/seen?"
+   * gate. Rule-specific: sent_never_viewed anchors on the send evidence
+   * (coalesce(version.last_reply_sent_at, postdating proof.helpscout_last_reply_at));
+   * viewed_not_actioned anchors on the customer's last non-bot view (itself
+   * proof of receipt, so never null for that population). A null anchor only
+   * happens for sent_never_viewed and means "no record this version was sent".
+   */
+  anchorAt: string | null
+  /**
+   * coalesce(version.last_reply_sent_at, proof.helpscout_last_reply_at) — the
+   * genuine outbound touch, used only for the customer-replied floor. May be
+   * null for a viewed_not_actioned proof whose link reached the customer
+   * outside a tracked Help Scout reply.
+   */
   sendEvidenceAt: string | null
   lastCustomerReplyAt: string | null
   lastStaffReplyAt: string | null
@@ -220,13 +241,16 @@ export function decideForProof(
   const counted = capRows(ledger).filter((r) => r.proofId === facts.proofId)
   const today = londonDate(now)
 
-  // Send-evidence anchor (spec): no positive evidence the customer was ever
-  // sent this version → no auto-nudge, surfaced to the Outbox as a
-  // designer-side problem rather than silently dropped.
-  if (!facts.sendEvidenceAt) return { action: 'skip', outcome: 'skipped_no_send_evidence' }
+  // Threshold anchor (spec): the rule-specific clock start. sent_never_viewed
+  // anchors on the send evidence — no evidence the customer was ever sent this
+  // version → no auto-nudge, surfaced to the Outbox as a designer-side problem
+  // rather than silently dropped. viewed_not_actioned anchors on the last
+  // view, so its anchor is never null. A null anchor therefore only ever
+  // means "no record this version was sent".
+  if (!facts.anchorAt) return { action: 'skip', outcome: 'skipped_no_send_evidence' }
 
-  // Threshold, measured from the send evidence — not version creation.
-  const anchorDate = londonDate(new Date(facts.sendEvidenceAt))
+  // Threshold, measured from the anchor — not version creation.
+  const anchorDate = londonDate(new Date(facts.anchorAt))
   const elapsed = cfg.calendar
     ? calendarDaysBetween(anchorDate, today)
     : workingDaysBetween(anchorDate, today, cfg.bankHolidays)
@@ -247,7 +271,9 @@ export function decideForProof(
   const lastCustomer = facts.lastCustomerReplyAt ? Date.parse(facts.lastCustomerReplyAt) : null
   if (lastCustomer != null) {
     const outboundTimes = [
-      Date.parse(facts.sendEvidenceAt),
+      // sendEvidenceAt can be null for a viewed_not_actioned proof that was
+      // never sent via a tracked reply — treat a missing touch as -Infinity.
+      facts.sendEvidenceAt ? Date.parse(facts.sendEvidenceAt) : -Infinity,
       facts.lastStaffReplyAt ? Date.parse(facts.lastStaffReplyAt) : -Infinity,
       ...counted.map((r) => Date.parse(r.createdAt)),
     ]
@@ -277,7 +303,7 @@ export function decideForProof(
   // of human ones).
   const maxNudges = cfg.automation.max_nudges ?? 2
   const versionRuleCount = counted.filter(
-    (r) => r.versionId === facts.versionId && r.ruleCode === 'sent_never_viewed',
+    (r) => r.versionId === facts.versionId && r.ruleCode === facts.ruleCode,
   ).length
   if (versionRuleCount >= maxNudges) return { action: 'skip', outcome: 'skipped_capped' }
   const autoRows = counted.filter((r) => r.source === 'auto')

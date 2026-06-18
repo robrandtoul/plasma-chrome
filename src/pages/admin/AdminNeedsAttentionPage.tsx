@@ -46,6 +46,13 @@ const CHASE_RULE_CODES: ChaseRuleCode[] = [
   'stuck_in_progress',
 ]
 
+// Chase rules whose Auto-send mode is actually consumed by the send-nudges
+// job (migration 000244 graduated viewed_not_actioned). The other
+// CHASE_RULE_CODES support Review first — the dashboard Outbox's one-click
+// queue — but their Auto-send dials are stored ahead of a future graduation,
+// not consumed; the per-rule note below says so.
+const AUTO_SEND_RULES = new Set<ChaseRuleCode>(['sent_never_viewed', 'viewed_not_actioned'])
+
 type AutomationMode = 'auto' | 'review' | 'off'
 
 interface RuleAutomation {
@@ -542,11 +549,12 @@ export default function AdminNeedsAttentionPage() {
                     </>
                   )}
                 </div>
-                {/* Auto-send is wired for sent_never_viewed only; the other
-                    three rules support Review first (the dashboard Outbox's
-                    Review-and-send queue) but their Auto-send dials are
-                    stored ahead of a future graduation, not consumed. */}
-                {code !== 'sent_never_viewed' && (
+                {/* Auto-send is wired for the AUTO_SEND_RULES (sent_never_viewed
+                    + viewed_not_actioned); the remaining chase rules support
+                    Review first (the dashboard Outbox's Review-and-send queue)
+                    but their Auto-send dials are stored ahead of a future
+                    graduation, not consumed. */}
+                {!AUTO_SEND_RULES.has(code) && (
                   <p className="w-full text-xs text-ink-mute">
                     “Review first” queues one-click sends in the dashboard Outbox. Auto-send isn’t wired for this rule yet — the dials are stored for when it graduates.
                   </p>

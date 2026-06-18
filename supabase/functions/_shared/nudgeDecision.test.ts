@@ -59,11 +59,15 @@ const CFG: NudgeConfig = {
 }
 
 function facts(overrides: Partial<CandidateFacts> = {}): CandidateFacts {
-  return {
+  const base: CandidateFacts = {
     proofId: 'p1',
     versionId: 'v1',
+    ruleCode: 'sent_never_viewed',
     conversationId: 'c1',
     contactEmail: 'jane@example.com',
+    // The threshold anchor. For sent_never_viewed it mirrors the send
+    // evidence (kept in sync below); viewed_not_actioned tests pass their own.
+    anchorAt: '2026-06-03T10:00:00Z',
     // Sent the previous Wednesday — 5 working days before NOW, past the
     // 3-working-day threshold.
     sendEvidenceAt: '2026-06-03T10:00:00Z',
@@ -72,8 +76,16 @@ function facts(overrides: Partial<CandidateFacts> = {}): CandidateFacts {
     snoozed: false,
     autoNudgeDisabled: false,
     hasFollowUpTag: false,
-    ...overrides,
   }
+  const merged = { ...base, ...overrides }
+  // sent_never_viewed anchors on its send evidence, so a test that moves
+  // sendEvidenceAt should move the anchor with it — unless it set anchorAt
+  // itself. This preserves the existing send-evidence test semantics now that
+  // the threshold + no-evidence gate read anchorAt.
+  if (!('anchorAt' in overrides) && merged.ruleCode === 'sent_never_viewed') {
+    merged.anchorAt = merged.sendEvidenceAt
+  }
+  return merged
 }
 
 function row(overrides: Partial<LedgerRow> = {}): LedgerRow {
@@ -189,6 +201,58 @@ eq('below threshold drops', decideForProof(facts({ sendEvidenceAt: '2026-06-08T1
   const d = decideForProof(facts({ lastStaffReplyAt: '2026-06-09T10:00:00Z' }), [], CFG, NOW)
   check('recent staff reply hits grace window', d.action === 'skip' && d.outcome === 'skipped_grace_window')
 }
+
+// ── viewed_not_actioned: the second auto-send rule ───────────────────────────
+//
+// Same guard ladder, different population. The anchor is the customer's last
+// view (not the send evidence), so a viewed proof with no tracked send still
+// sends — and its cap counts only its own rule's ledger rows.
+
+// Last viewed the previous Wednesday (5 working days before NOW), no tracked
+// send at all → still past threshold and sends.
+{
+  const vna = facts({
+    ruleCode: 'viewed_not_actioned',
+    anchorAt: '2026-06-03T10:00:00Z',
+    sendEvidenceAt: null,
+  })
+  eq('viewed_not_actioned past threshold sends', decideForProof(vna, [], CFG, NOW).action, 'send')
+}
+
+// Viewed only on Monday the 8th — 2 working days before Wednesday NOW,
+// threshold 3 → drops. Anchor, not send evidence, drives this.
+{
+  const vna = facts({ ruleCode: 'viewed_not_actioned', anchorAt: '2026-06-08T10:00:00Z', sendEvidenceAt: null })
+  eq('viewed_not_actioned below threshold drops', decideForProof(vna, [], CFG, NOW).action, 'drop')
+}
+
+// A prior sent_never_viewed nudge on the SAME version does NOT consume the
+// viewed_not_actioned cap (caps are per proof+rule+version). Old enough not to
+// trip the cooldown.
+{
+  const ledger = [row({ ruleCode: 'sent_never_viewed', createdAt: '2026-06-01T08:30:00Z' })]
+  const vna = facts({ ruleCode: 'viewed_not_actioned', anchorAt: '2026-06-03T10:00:00Z' })
+  eq('other rule ledger rows do not consume this rule cap', decideForProof(vna, ledger, CFG, NOW).action, 'send')
+}
+
+// …but two viewed_not_actioned sends on this version DO exhaust its own cap.
+{
+  const ledger = [
+    row({ ruleCode: 'viewed_not_actioned', createdAt: '2026-05-26T08:30:00Z' }),
+    row({ ruleCode: 'viewed_not_actioned', createdAt: '2026-06-01T08:30:00Z' }),
+  ]
+  const vna = facts({ ruleCode: 'viewed_not_actioned', anchorAt: '2026-06-03T10:00:00Z' })
+  const d = decideForProof(vna, ledger, CFG, NOW)
+  check('viewed_not_actioned per-version cap exhausts', d.action === 'skip' && d.outcome === 'skipped_capped')
+}
+
+// Reminder numbering counts the candidate's own rule.
+eq('viewed_not_actioned reminder number counts its own rule',
+  nudgeNumberFor(
+    facts({ ruleCode: 'viewed_not_actioned' }),
+    [row({ ruleCode: 'viewed_not_actioned' })],
+    'viewed_not_actioned',
+  ), 2)
 
 // ── Cap semantics ────────────────────────────────────────────────────────────
 

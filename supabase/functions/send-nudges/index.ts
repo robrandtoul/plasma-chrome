@@ -63,13 +63,35 @@ import {
   type NudgeConfig,
 } from '../_shared/nudgeDecision.ts'
 
-const RULE_CODE = 'sent_never_viewed'
-const TEMPLATE_ID = 'nudge_sent_never_viewed'
-// Subject line for reminder #2+, which opens a NEW Help Scout conversation
-// (spec section 6): deliberately fresh wording, no "Re:" — if the original
-// thread is in the customer's spam folder, a reply there measures the spam
-// folder, not the customer.
-const FRESH_CONVERSATION_SUBJECT = 'Your card proof from Plasma Design'
+// The chase rules this sender can auto-send. A rule only actually sends when
+// its automation mode resolves to 'auto' (decideForProof drops everything
+// else); a rule left in 'review'/'off' still has its candidates computed but
+// each is dropped here and handled by the dashboard Outbox's review queue
+// instead. Each proof is in exactly one rule's population per run (it either
+// has a non-bot view or it doesn't), so the two never double-send the same
+// proof — and groupSendables() still dedupes across rules by customer email.
+interface NudgeRuleSpec {
+  code: string
+  templateId: string
+  // Subject for reminder #2+, which opens a NEW Help Scout conversation (spec
+  // section 6): deliberately fresh wording, no "Re:" — if the original thread
+  // is in the customer's spam folder, a reply there measures the spam folder,
+  // not the customer.
+  freshSubject: string
+}
+const NUDGE_RULES: NudgeRuleSpec[] = [
+  {
+    code: 'sent_never_viewed',
+    templateId: 'nudge_sent_never_viewed',
+    freshSubject: 'Your card proof from Plasma Design',
+  },
+  {
+    code: 'viewed_not_actioned',
+    templateId: 'nudge_viewed_not_actioned',
+    freshSubject: 'Your card proof from Plasma Design',
+  },
+]
+const NUDGE_RULE_BY_CODE = new Map(NUDGE_RULES.map((r) => [r.code, r]))
 // An open run row older than this is treated as crashed (gates live sends);
 // younger means a run is genuinely in flight (this invocation aborts).
 const OPEN_RUN_STALE_MS = 10 * 60 * 1000
@@ -144,6 +166,8 @@ interface CandidateRow {
   version_id: string
   version_number: number | null
   version_created_at: string
+  rule_code: string
+  anchor_at: string | null
   helpscout_conversation_id: string | null
   helpscout_conversation_url: string | null
   contact_full_name: string | null
@@ -165,8 +189,15 @@ function toFacts(row: CandidateRow): Candidate {
   return {
     proofId: row.proof_id,
     versionId: row.version_id,
+    // Defensive defaults so a deploy that lands before migration 000244 (the
+    // old candidate function, without rule_code / anchor_at) still processes
+    // the sent_never_viewed population correctly instead of skipping it: a
+    // missing rule_code reads as sent_never_viewed, and its anchor falls back
+    // to the send evidence (exactly the old anchor).
+    ruleCode: row.rule_code ?? 'sent_never_viewed',
     conversationId: row.helpscout_conversation_id,
     contactEmail: row.contact_email,
+    anchorAt: row.anchor_at ?? row.send_evidence_at,
     sendEvidenceAt: row.send_evidence_at,
     lastCustomerReplyAt: row.last_customer_reply_at,
     lastStaffReplyAt: row.last_staff_reply_at,
@@ -251,25 +282,33 @@ async function run(admin: Admin): Promise<Response> {
   if (siteErr) return json({ error: `site_settings: ${siteErr.message}` }, 500)
 
   const rules = (siteSettings?.needs_attention_rules ?? {}) as Record<string, unknown>
-  const snvRule = (rules[RULE_CODE] ?? {}) as Record<string, unknown>
   const automationBlock = (rules['automation'] ?? {}) as Record<string, unknown>
-  const snvAutomation = (automationBlock[RULE_CODE] ?? {}) as AutomationRuleConfig
+  const graceDays = Number((rules['helpscout_reply_grace_days'] as number | undefined) ?? 3)
+  const lifetimeMax = Number((automationBlock['lifetime_max'] as number | undefined) ?? 6)
 
   const bankHolidays = await fetchBankHolidays()
 
-  const cfg: NudgeConfig = {
-    ruleEnabled: snvRule['enabled'] === true,
-    thresholdDays: Number(snvRule['threshold_days'] ?? 3),
-    calendar: snvRule['calendar'] === true,
-    // Fail closed: mode must be the explicit string 'auto'.
-    automation: {
-      mode: snvAutomation.mode === 'auto' ? 'auto' : (snvAutomation.mode === 'review' ? 'review' : 'off'),
-      repeat_days: Number(snvAutomation.repeat_days ?? 3),
-      max_nudges: Number(snvAutomation.max_nudges ?? 2),
-    },
-    lifetimeMax: Number((automationBlock['lifetime_max'] as number | undefined) ?? 6),
-    graceDays: Number((rules['helpscout_reply_grace_days'] as number | undefined) ?? 3),
-    bankHolidays,
+  // One NudgeConfig per chase rule. Each candidate is judged against its own
+  // rule's dials; a rule whose mode isn't 'auto' has all its candidates
+  // dropped by decideForProof (the dashboard review queue covers those).
+  // Fail closed: mode must be the explicit string 'auto'.
+  const cfgByRule = new Map<string, NudgeConfig>()
+  for (const rule of NUDGE_RULES) {
+    const ruleCfg = (rules[rule.code] ?? {}) as Record<string, unknown>
+    const auto = (automationBlock[rule.code] ?? {}) as AutomationRuleConfig
+    cfgByRule.set(rule.code, {
+      ruleEnabled: ruleCfg['enabled'] === true,
+      thresholdDays: Number(ruleCfg['threshold_days'] ?? 3),
+      calendar: ruleCfg['calendar'] === true,
+      automation: {
+        mode: auto.mode === 'auto' ? 'auto' : (auto.mode === 'review' ? 'review' : 'off'),
+        repeat_days: Number(auto.repeat_days ?? 3),
+        max_nudges: Number(auto.max_nudges ?? 2),
+      },
+      lifetimeMax,
+      graceDays,
+      bankHolidays,
+    })
   }
 
   // ── Mode resolution ────────────────────────────────────────────────────────
@@ -414,24 +453,29 @@ async function run(admin: Admin): Promise<Response> {
     const eligible: Candidate[] = []
     const skips: Array<{ c: Candidate; outcome: string }> = []
     for (const c of candidates) {
+      const cfg = cfgByRule.get(c.ruleCode)
+      if (!cfg) continue // a candidate for a rule this sender doesn't handle
       const d = decideForProof(c, ledger, cfg, now)
       if (d.action === 'send') eligible.push(c)
       else if (d.action === 'skip') skips.push({ c, outcome: d.outcome })
-      // drops are silent by design (below threshold / rule off).
+      // drops are silent by design (below threshold / rule off / mode≠auto).
     }
     const grouped = groupSendables(eligible)
 
-    // ── Template body (DB row, falling back to the seeded default) ──────────
-    let templateBody = NUDGE_DEFAULT_BODIES[TEMPLATE_ID]
-    {
+    // ── Template bodies per rule (DB row, falling back to the seeded
+    // default) ───────────────────────────────────────────────────────────────
+    const bodyByRule = new Map<string, string>()
+    for (const rule of NUDGE_RULES) {
+      let body = NUDGE_DEFAULT_BODIES[rule.templateId]
       const { data: tpl } = await admin
         .from('reply_templates')
         .select('body')
-        .eq('id', TEMPLATE_ID)
+        .eq('id', rule.templateId)
         .maybeSingle()
       if (tpl?.body && typeof tpl.body === 'string' && tpl.body.trim() !== '') {
-        templateBody = tpl.body
+        body = tpl.body
       }
+      bodyByRule.set(rule.code, body)
     }
 
     const insertLedgerRow = async (row: LedgerInsert): Promise<string | null> => {
@@ -459,7 +503,7 @@ async function run(admin: Admin): Promise<Response> {
       const id = await insertLedgerRow({
         proof_id: c.proofId,
         proof_version_id: c.versionId,
-        rule_code: RULE_CODE,
+        rule_code: c.ruleCode,
         template_id: null,
         source: 'auto',
         state: logState,
@@ -472,7 +516,7 @@ async function run(admin: Admin): Promise<Response> {
       const id = await insertLedgerRow({
         proof_id: c.proofId,
         proof_version_id: c.versionId,
-        rule_code: RULE_CODE,
+        rule_code: c.ruleCode,
         template_id: null,
         source: 'auto',
         state: logState,
@@ -498,6 +542,8 @@ async function run(admin: Admin): Promise<Response> {
         // HS definitively rejected the POST — nothing was sent). Only
         // ambiguous failures (network throws, where the POST may have
         // landed) leave the claim in 'sending' for human verification.
+        const rule = NUDGE_RULE_BY_CODE.get(c.ruleCode)!
+        const templateBody = bodyByRule.get(c.ruleCode)!
         let claimId: string | null = null
         try {
           // One GET serves four checks: existence, status, recipient, trail.
@@ -518,7 +564,7 @@ async function run(admin: Admin): Promise<Response> {
             const id = await insertLedgerRow({
               proof_id: c.proofId,
               proof_version_id: c.versionId,
-              rule_code: RULE_CODE,
+              rule_code: c.ruleCode,
               template_id: null,
               source: 'auto',
               state: logState,
@@ -617,15 +663,15 @@ async function run(admin: Admin): Promise<Response> {
           // fresh-conversation path before any live send. Falls back to
           // the same thread if HS ever returns a conversation without a
           // mailbox id — better in-thread than not at all.
-          const nudgeNumber = nudgeNumberFor(c, ledger, RULE_CODE)
+          const nudgeNumber = nudgeNumberFor(c, ledger, c.ruleCode)
           const freshConversation = nudgeNumber >= 2 && typeof conv.mailboxId === 'number'
 
           if (mode === 'dry_run') {
             const id = await insertLedgerRow({
               proof_id: c.proofId,
               proof_version_id: c.versionId,
-              rule_code: RULE_CODE,
-              template_id: TEMPLATE_ID,
+              rule_code: c.ruleCode,
+              template_id: rule.templateId,
               source: 'auto',
               state: 'dry_run',
               outcome: freshConversation ? 'would_send_new_conversation' : 'would_send',
@@ -640,8 +686,8 @@ async function run(admin: Admin): Promise<Response> {
           claimId = await insertLedgerRow({
             proof_id: c.proofId,
             proof_version_id: c.versionId,
-            rule_code: RULE_CODE,
-            template_id: TEMPLATE_ID,
+            rule_code: c.ruleCode,
+            template_id: rule.templateId,
             source: 'auto',
             state: 'sending',
             outcome: 'sending',
@@ -693,7 +739,7 @@ async function run(admin: Admin): Promise<Response> {
           if (freshConversation) {
             newConversationId = await createStaffConversation(token, {
               mailboxId: conv.mailboxId!,
-              subject: FRESH_CONVERSATION_SUBJECT,
+              subject: rule.freshSubject,
               customerId,
               userId: senderId,
               text: rendered,
@@ -740,8 +786,8 @@ async function run(admin: Admin): Promise<Response> {
             target_type: 'proof',
             target_id: c.proofId,
             metadata: {
-              rule_code: RULE_CODE,
-              template_id: TEMPLATE_ID,
+              rule_code: c.ruleCode,
+              template_id: rule.templateId,
               nudge_id: claimId,
               helpscout_thread_id: threadId || null,
               nudge_number: nudgeNumber,
