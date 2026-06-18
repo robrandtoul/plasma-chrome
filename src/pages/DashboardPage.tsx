@@ -845,11 +845,17 @@ function ThumbnailLightbox({ imageUrl, projectName, onClose, onOpenProject }: Th
       >
         <X size={16} />
       </button>
+      {/* Drive the height (h-[80vh]) rather than only capping it so a
+          low-resolution source image scales UP to fill the viewport
+          instead of sitting tiny at its natural size — a cap-only
+          (max-h/max-w) image never grows past its own pixels. Width is
+          auto (keeps aspect) and capped at 90vw; object-contain letterboxes
+          the rare ultra-wide image. Large proof photos are unaffected. */}
       <img
         src={imageUrl}
         alt={projectName}
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[80vh] max-w-[90vw] object-contain rounded-[8px] shadow-lg"
+        className="h-[80vh] w-auto max-w-[90vw] object-contain rounded-[8px] shadow-lg"
       />
       <div className="mt-6 flex items-center gap-3" onClick={(e) => e.stopPropagation()}>
         <span className="text-[14px] text-white/70">{projectName}</span>
