@@ -10,6 +10,7 @@ import {
   FilePlus2,
   History,
   Layers,
+  Mail,
   MessageSquare,
   Send,
   type LucideIcon,
@@ -36,6 +37,10 @@ const ENTRY_VISUAL: Record<TimelineEntryType, { icon: LucideIcon; tint: string }
   project_created: { icon: FilePlus2, tint: tokens.brand },
   version_created: { icon: Layers, tint: tokens.ink },
   reply_sent: { icon: Send, tint: tokens.brand },
+  // Customer's inbound email reply — shares the "responded" hue used on the
+  // dashboard for the same signal; Mail glyph distinguishes it from the
+  // outbound Send reply and the in-app request_changes.
+  customer_email_reply: { icon: Mail, tint: 'var(--c-responded)' },
   view: { icon: Eye, tint: tokens.allocated },
   approve: { icon: Check, tint: tokens.inStock },
   request_changes: { icon: MessageSquare, tint: tokens.low },
@@ -62,15 +67,17 @@ interface Reveal {
   helpscoutUrl: string | null
 }
 
-// Pick the staff reply that this "Reply sent" entry refers to. The
-// timeline entry carries only the send timestamp (last_reply_sent_at),
-// and Help Scout holds the conversation as a flat thread, so we match
-// on time: the entry's timestamp is stamped the instant we post the
-// reply, so the closest staff-authored, non-note, non-empty thread is
-// the one. Notes (internal) and system rows (empty body) are skipped.
-function matchStaffReply(
+// Pick the Help Scout thread a reply entry refers to. The timeline entry
+// carries only a timestamp (last_reply_sent_at for our side,
+// helpscout_last_customer_reply_at for theirs), and Help Scout holds the
+// conversation as a flat thread, so we match on time: the closest thread of the
+// requested author type (non-note, non-empty) is the one. `authorType` is
+// 'user' for an outbound staff reply (reply_sent) or 'customer' for an inbound
+// customer email reply (customer_email_reply). Notes and system rows are skipped.
+function matchReplyThread(
   context: ConversationContext | null,
   atIso: string,
+  authorType: 'user' | 'customer',
 ): ConversationThread | null {
   if (!context) return null
   const at = new Date(atIso).getTime()
@@ -78,7 +85,7 @@ function matchStaffReply(
   let best: ConversationThread | null = null
   let bestDelta = Infinity
   for (const t of context.threads) {
-    if (t.authorType !== 'user') continue
+    if (t.authorType !== authorType) continue
     if (t.type === 'note') continue
     if (t.bodyText.trim() === '') continue
     const ts = new Date(t.createdAt).getTime()
@@ -304,12 +311,14 @@ export default function ProofTimeline(props: ProofTimelineProps) {
             entry={entry}
             isLast={i === visible.length - 1}
             reveal={
-              canReveal && entry.type === 'reply_sent'
+              canReveal && (entry.type === 'reply_sent' || entry.type === 'customer_email_reply')
                 ? {
                     expanded: openMessageIds.has(entry.id),
                     onToggle: () => toggleMessage(entry.id),
                     state: contextState,
-                    thread: contextState === 'loaded' ? matchStaffReply(context, entry.at) : null,
+                    thread: contextState === 'loaded'
+                      ? matchReplyThread(context, entry.at, entry.type === 'reply_sent' ? 'user' : 'customer')
+                      : null,
                     helpscoutUrl: context?.url ?? null,
                   }
                 : undefined

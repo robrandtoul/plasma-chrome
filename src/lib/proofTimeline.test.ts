@@ -248,6 +248,48 @@ test('terms acknowledgement is attributed to the contact', () => {
   assert(ack!.actor === 'Sarah Smith', 'terms entry should carry the contact as actor')
 })
 
+test('no customer_email_reply entry when the timestamp is absent', () => {
+  const entries = buildTimelineEntries(baseSources())
+  assert(!entries.some((e) => e.type === 'customer_email_reply'), 'unexpected email-reply entry')
+})
+
+test('a customer email reply produces one entry attributed to the contact', () => {
+  const entries = buildTimelineEntries(
+    baseSources({
+      proof: {
+        created_at: '2026-05-01T09:00:00Z',
+        approved_at: null,
+        abandoned_at: null,
+        disclaimer_acknowledged_at: null,
+        contactName: 'Sarah Smith',
+        customerEmailReplyAt: '2026-05-04T12:00:00Z',
+      },
+    }),
+  )
+  const reply = entries.find((e) => e.type === 'customer_email_reply')
+  assert(!!reply, 'missing customer_email_reply entry')
+  assert(reply!.actor === 'Sarah Smith', 'email reply should carry the contact as actor')
+  assert(reply!.verb === 'replied by email', `unexpected verb: ${reply!.verb}`)
+  assert(reply!.at === '2026-05-04T12:00:00Z', 'entry sorts on the reply timestamp')
+})
+
+test('email reply falls back to "Customer" when no contact name', () => {
+  const entries = buildTimelineEntries(
+    baseSources({
+      proof: {
+        created_at: '2026-05-01T09:00:00Z',
+        approved_at: null,
+        abandoned_at: null,
+        disclaimer_acknowledged_at: null,
+        contactName: null,
+        customerEmailReplyAt: '2026-05-04T12:00:00Z',
+      },
+    }),
+  )
+  const reply = entries.find((e) => e.type === 'customer_email_reply')
+  assert(!!reply && reply.actor === 'Customer', 'should fall back to "Customer"')
+})
+
 // ── Result ────────────────────────────────────────────────────────────────────
 
 console.log(`\n${passed} passed, ${failed} failed`)

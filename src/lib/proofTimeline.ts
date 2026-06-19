@@ -13,6 +13,7 @@ export type TimelineEntryType =
   | 'project_created'
   | 'version_created'
   | 'reply_sent'
+  | 'customer_email_reply'
   | 'view'
   | 'approve'
   | 'request_changes'
@@ -69,6 +70,14 @@ export interface TimelineSources {
     disclaimer_acknowledged_at: string | null
     /** The proof's contact full name — implicit actor for view rows. */
     contactName: string | null
+    /**
+     * Last inbound customer reply on the linked Help Scout conversation
+     * (proofs.helpscout_last_customer_reply_at, 000208). When set, a single
+     * 'customer_email_reply' entry is added — the latest one — mirroring how
+     * reply_sent carries only the latest outbound reply per version. Optional
+     * so callers that don't surface it (the harness, older tests) still type.
+     */
+    customerEmailReplyAt?: string | null
   }
   versions: Array<{
     id: string
@@ -103,6 +112,7 @@ const TIE_RANK: Record<TimelineEntryType, number> = {
   designer_override_approve: 2,
   approve: 3,
   request_changes: 3,
+  customer_email_reply: 3,
   terms_acknowledged: 4,
   view: 5,
   reply_sent: 6,
@@ -146,6 +156,21 @@ export function buildTimelineEntries(sources: TimelineSources): TimelineEntry[] 
         'terms_acknowledged',
         proof.disclaimer_acknowledged_at,
         'acknowledged the terms',
+      ),
+      actor: proof.contactName ?? 'Customer',
+    })
+  }
+  // Customer's latest inbound email reply on the Help Scout conversation. Only
+  // the latest timestamp is stored (like last_reply_sent_at for our side), so
+  // this is one entry; its body is revealed inline on demand by the component,
+  // matching the closest customer-authored thread — the mirror of reply_sent.
+  if (proof.customerEmailReplyAt) {
+    entries.push({
+      ...milestone(
+        `customer_email_reply:${proof.customerEmailReplyAt}`,
+        'customer_email_reply',
+        proof.customerEmailReplyAt,
+        'replied by email',
       ),
       actor: proof.contactName ?? 'Customer',
     })

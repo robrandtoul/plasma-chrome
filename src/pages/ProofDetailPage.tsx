@@ -1977,6 +1977,10 @@ export default function ProofDetailPage() {
         abandoned_at: proof.abandoned_at,
         disclaimer_acknowledged_at: proof.disclaimer_acknowledged_at,
         contactName: proof.contacts.full_name,
+        // Last inbound customer email reply (000208) → a timeline entry whose
+        // body reveals on demand. bucketRow is a best-effort fetch, so this is
+        // null until it lands; the timeline re-renders when it does.
+        customerEmailReplyAt: bucketRow?.helpscout_last_customer_reply_at ?? null,
       }}
       versions={versions}
       events={timelineEvents}
