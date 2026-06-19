@@ -87,6 +87,84 @@ export interface ProjectSection {
   projects: DashboardProject[]
 }
 
+// One row in the dashboard's "Latest activity" feed. The first four event types
+// come straight from the dashboard_latest_events view (customer page-views,
+// approvals, change requests, designer overrides). The two `*_reply` types are
+// synthesised client-side from the proof's Help Scout reply timestamps (see
+// helpscoutReplyEvents) — an email reply is only a timestamp on the proof, never
+// a stored event, so it has to be bridged into the feed shape here.
+export interface DashboardLatestEvent {
+  id: string
+  created_at: string
+  event_type:
+    | 'approve'
+    | 'request_changes'
+    | 'view'
+    | 'designer_override_approve'
+    | 'customer_reply'
+    | 'staff_reply'
+  actor_name: string
+  recipient_name: string | null
+  helpscout_thread_id: string | null
+  proof_id: string
+  version_number: number
+  contact_name: string | null
+  company_name: string | null
+}
+
+// Only surface email replies from the last 30 days in the Latest activity feed.
+// The feed's final sort-by-time + 20-row cap is the real bound; this window just
+// stops a months-old reply (still the proof's latest) sitting near the top when
+// the working set is quiet.
+const HELPSCOUT_REPLY_WINDOW_MS = 30 * 86_400_000
+
+/**
+ * Synthesise Latest-activity feed rows from each proof's Help Scout reply
+ * timestamps (stamped by the helpscout-webhook edge function, 000208). A
+ * customer email reply and a staff reply are timestamps on the proof, not stored
+ * events, so they never appear in dashboard_latest_events — this bridges them
+ * into the same feed shape. The caller merges these with the real events, sorts
+ * by created_at, and caps the list.
+ *
+ * Staff replies are attributed generically ("You") — the webhook records that an
+ * agent reply happened, not which teammate sent it.
+ */
+export function helpscoutReplyEvents(projects: DashboardProject[]): DashboardLatestEvent[] {
+  const cutoff = Date.now() - HELPSCOUT_REPLY_WINDOW_MS
+  const out: DashboardLatestEvent[] = []
+  for (const p of projects) {
+    const base = {
+      recipient_name: null,
+      helpscout_thread_id: null,
+      proof_id: p.proof_id,
+      version_number: p.current_version_number ?? 0,
+      contact_name: p.contact_name,
+      company_name: p.company_name,
+    }
+    const customerAt = p.helpscout_last_customer_reply_at
+    if (customerAt && new Date(customerAt).getTime() >= cutoff) {
+      out.push({
+        ...base,
+        id: `hs-customer-${p.proof_id}`,
+        created_at: customerAt,
+        event_type: 'customer_reply',
+        actor_name: p.contact_name ?? p.company_name ?? 'Customer',
+      })
+    }
+    const staffAt = p.helpscout_last_reply_at
+    if (staffAt && new Date(staffAt).getTime() >= cutoff) {
+      out.push({
+        ...base,
+        id: `hs-staff-${p.proof_id}`,
+        created_at: staffAt,
+        event_type: 'staff_reply',
+        actor_name: 'You',
+      })
+    }
+  }
+  return out
+}
+
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
 export function startOfToday(): Date {

@@ -5,7 +5,7 @@
 // determines where a proof appears in the time-bucketed list after a
 // snooze expires.
 
-import { recentlyAwakened, isCurrentlySnoozed, groupByTime, activityTimestamp, buildSnoozedSection, proofBucket, recentHelpscoutActivity } from './dashboardGrouping'
+import { recentlyAwakened, isCurrentlySnoozed, groupByTime, activityTimestamp, buildSnoozedSection, proofBucket, recentHelpscoutActivity, helpscoutReplyEvents } from './dashboardGrouping'
 import type { DashboardProject } from './dashboardGrouping'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -489,6 +489,86 @@ test('returns the most recent of staff vs customer', () => {
 test('null when the most recent reply is older than the window', () => {
   const p = makeProject({ helpscout_last_reply_at: daysAgo(5) })
   assertEqual(recentHelpscoutActivity(p, 3), null)
+})
+
+// ── helpscoutReplyEvents() ────────────────────────────────────────────────────
+//
+// Synthesises Latest-activity feed rows from each proof's Help Scout reply
+// timestamps so an email reply (a timestamp, not a stored event) surfaces.
+
+console.log('\nhelpscoutReplyEvents()')
+
+test('no reply timestamps → no events', () => {
+  assertEqual(helpscoutReplyEvents([makeProject()]).length, 0)
+})
+
+test('customer reply → one customer_reply row attributed to the contact', () => {
+  const at = hoursAgo(1)
+  const events = helpscoutReplyEvents([
+    makeProject({ proof_id: 'p1', contact_name: 'Dalton Rawson', helpscout_last_customer_reply_at: at }),
+  ])
+  assertEqual(events.length, 1)
+  assertEqual(events[0].event_type, 'customer_reply')
+  assertEqual(events[0].actor_name, 'Dalton Rawson')
+  assertEqual(events[0].created_at, at)
+  assertEqual(events[0].id, 'hs-customer-p1')
+  assertEqual(events[0].proof_id, 'p1')
+})
+
+test('customer reply falls back to company, then to "Customer"', () => {
+  const co = helpscoutReplyEvents([
+    makeProject({ contact_name: null, company_name: 'Brookland Watch Co', helpscout_last_customer_reply_at: hoursAgo(1) }),
+  ])
+  assertEqual(co[0].actor_name, 'Brookland Watch Co')
+  const none = helpscoutReplyEvents([
+    makeProject({ contact_name: null, company_name: null, helpscout_last_customer_reply_at: hoursAgo(1) }),
+  ])
+  assertEqual(none[0].actor_name, 'Customer')
+})
+
+test('staff reply → one staff_reply row attributed to "You"', () => {
+  const events = helpscoutReplyEvents([
+    makeProject({ proof_id: 'p2', helpscout_last_reply_at: hoursAgo(3) }),
+  ])
+  assertEqual(events.length, 1)
+  assertEqual(events[0].event_type, 'staff_reply')
+  assertEqual(events[0].actor_name, 'You')
+  assertEqual(events[0].id, 'hs-staff-p2')
+})
+
+test('both directions → two rows for the same proof', () => {
+  const events = helpscoutReplyEvents([
+    makeProject({
+      proof_id: 'p3',
+      contact_name: 'Sam Shutlar',
+      helpscout_last_customer_reply_at: hoursAgo(1),
+      helpscout_last_reply_at: hoursAgo(2),
+    }),
+  ])
+  assertEqual(events.length, 2)
+  assert(events.some((e) => e.event_type === 'customer_reply'), 'has customer row')
+  assert(events.some((e) => e.event_type === 'staff_reply'), 'has staff row')
+})
+
+test('replies older than the 30-day window are excluded', () => {
+  const events = helpscoutReplyEvents([
+    makeProject({
+      helpscout_last_customer_reply_at: daysAgo(40),
+      helpscout_last_reply_at: daysAgo(31),
+    }),
+  ])
+  assertEqual(events.length, 0)
+})
+
+test('version_number carries the current version (0 when none)', () => {
+  const withVer = helpscoutReplyEvents([
+    makeProject({ current_version_number: 2, helpscout_last_customer_reply_at: hoursAgo(1) }),
+  ])
+  assertEqual(withVer[0].version_number, 2)
+  const noVer = helpscoutReplyEvents([
+    makeProject({ current_version_number: null, helpscout_last_customer_reply_at: hoursAgo(1) }),
+  ])
+  assertEqual(noVer[0].version_number, 0)
 })
 
 // ── Summary ───────────────────────────────────────────────────────────────────

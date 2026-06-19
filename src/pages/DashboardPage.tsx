@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import { DesignerChrome, useDesignerProfile, ButtonCoral, ButtonInk, ProofStatusPill, HelpTip } from '../design'
-import { Plus, X, Maximize2, Bell, MessageSquare, Eye, Check, Clock } from 'lucide-react'
+import { Plus, X, Maximize2, Bell, MessageSquare, Mail, Send, Eye, Check, Clock } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -42,6 +42,8 @@ import {
   isCustomerReplied,
   proofBucket,
   recentHelpscoutActivity,
+  helpscoutReplyEvents,
+  type DashboardLatestEvent,
   type DashboardProject,
   type DesignerColour,
   type NeedsAttentionRule,
@@ -63,22 +65,9 @@ type ChipKey   = 'all' | 'metal' | 'paper' | 'plastic' | 'carbon' | 'wood' | 'ac
 // Reason + resolution text per rule now live in ../lib/needsAttention so the
 // reason chip, the pill tooltip, and the detail page all read one source.
 
-interface DashboardLatestEvent {
-  id: string
-  created_at: string
-  event_type:
-    | 'approve'
-    | 'request_changes'
-    | 'view'
-    | 'designer_override_approve'
-  actor_name: string
-  recipient_name: string | null
-  helpscout_thread_id: string | null
-  proof_id: string
-  version_number: number
-  contact_name: string | null
-  company_name: string | null
-}
+// DashboardLatestEvent now lives in ../lib/dashboardGrouping (alongside the
+// helpscoutReplyEvents helper that synthesises the email-reply rows) so the feed
+// shape and its builder can be unit-tested together.
 
 // One material's production lead time, read straight off the
 // materials table (authenticated SELECT, same source the admin Lead
@@ -1546,6 +1535,20 @@ const ACTIVITY_VISUAL: Record<DashboardLatestEvent['event_type'], ActivityVisual
     tint: 'var(--c-responded)',
     verbCopy: (v) => `requested changes on v${v}`,
   },
+  // Synthetic rows from the proof's Help Scout reply timestamps (000208).
+  // A customer email reply shares the "responded" hue with request_changes
+  // (both are the customer getting back to us); staff replies are muted.
+  // Neither verb uses the version number.
+  customer_reply: {
+    icon: Mail,
+    tint: 'var(--c-responded)',
+    verbCopy: () => 'replied by email',
+  },
+  staff_reply: {
+    icon: Send,
+    tint: 'var(--c-ink-mute)',
+    verbCopy: () => 'replied by email',
+  },
 }
 
 function LatestActivityPanel({
@@ -1584,9 +1587,12 @@ function LatestActivityPanel({
             // Furry".
             const primaryLabel = e.company_name || e.actor_name
             const showActor = Boolean(e.company_name) && e.actor_name !== primaryLabel
+            // "Notification failed" only makes sense for the customer-side
+            // approve / request_changes events that fire a Help Scout post.
+            // Views, overrides, and the synthetic *_reply rows carry no thread
+            // id by design, so they must never show the badge.
             const failed =
-              e.event_type !== 'view' &&
-              e.event_type !== 'designer_override_approve' &&
+              (e.event_type === 'approve' || e.event_type === 'request_changes') &&
               e.helpscout_thread_id == null
             return (
               <li
@@ -2053,7 +2059,15 @@ export default function DashboardPage() {
 
     if (counts) setTileCounts(counts as TileCounts)
 
-    setLatestEvents((events ?? []) as DashboardLatestEvent[])
+    // Merge the real customer-activity events with synthetic rows built from the
+    // proofs' Help Scout reply timestamps (email replies are timestamps on the
+    // proof, not stored events), then sort newest-first and cap at 20 so the feed
+    // stays "the latest 20 things that happened" across both sources.
+    const realEvents = (events ?? []) as DashboardLatestEvent[]
+    const mergedEvents = [...realEvents, ...helpscoutReplyEvents(typedProjects)]
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, 20)
+    setLatestEvents(mergedEvents)
     setLeadTimes((leadTimeRows ?? []) as LeadTime[])
 
     // ── Per-row thumbnails ──────────────────────────────────────
