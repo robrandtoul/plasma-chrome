@@ -35,7 +35,7 @@ const TABS: { to: string; label: string; icon: LucideIcon }[] = [
   { to: '/admin/xero-self-test', label: 'Xero self-test', icon: ListChecks },
   { to: '/admin/core-colours', label: 'Paper colours', icon: Palette },
   { to: '/admin/customers', label: 'Customers', icon: Building2 },
-  { to: '/admin/needs-attention', label: 'Needs attention', icon: AlertCircle },
+  { to: '/admin/needs-attention', label: 'Follow-ups', icon: AlertCircle },
   { to: '/admin/activity', label: 'Activity', icon: ClipboardList },
   { to: '/admin/templates', label: 'Templates', icon: MessageSquareText },
   { to: '/admin/site-copy', label: 'Site copy', icon: PenLine },

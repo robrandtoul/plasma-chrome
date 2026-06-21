@@ -77,6 +77,10 @@ function makeProject(overrides: Partial<DashboardProject> = {}): DashboardProjec
     designer_avatar_url:        null,
     helpscout_last_reply_at:          null,
     helpscout_last_customer_reply_at: null,
+    follow_up_rule_code:        null,
+    follow_up_sent_count:       null,
+    follow_up_max_nudges:       null,
+    follow_up_last_sent_at:     null,
     ...overrides,
   }
 }
@@ -360,6 +364,40 @@ test('change request older than the current version does not fire → awaiting_c
     latest_non_view_event_at: daysAgo(3), // answered by a newer version
   })
   assertEqual(proofBucket(p).bucket, 'awaiting_customer')
+})
+
+test('automation actively chasing a viewed proof → in_follow_up (not awaiting_customer)', () => {
+  const p = makeProject({
+    status: 'in_progress',
+    current_version_id: 'v1',
+    current_version_viewed_at: hoursAgo(2), // would otherwise be awaiting_customer
+    follow_up_rule_code: 'viewed_not_actioned',
+  })
+  assertEqual(proofBucket(p).bucket, 'in_follow_up')
+  assertEqual(proofBucket(p).label, 'In auto follow-up')
+})
+
+test('automation chasing an unopened proof → in_follow_up (not not_viewed)', () => {
+  const p = makeProject({
+    status: 'in_progress',
+    current_version_id: 'v1',
+    current_version_viewed_at: null, // would otherwise be not_viewed
+    follow_up_rule_code: 'sent_never_viewed',
+  })
+  assertEqual(proofBucket(p).bucket, 'in_follow_up')
+})
+
+test('a customer reply beats an active chase → customer_replied wins over in_follow_up', () => {
+  const p = makeProject({
+    status: 'in_progress',
+    current_version_id: 'v1',
+    current_version_viewed_at: null,
+    version_created_at: daysAgo(3),
+    follow_up_rule_code: 'sent_never_viewed', // chase on the clock
+    helpscout_last_reply_at: daysAgo(2),
+    helpscout_last_customer_reply_at: hoursAgo(3), // but the customer wrote back
+  })
+  assertEqual(proofBucket(p).bucket, 'customer_replied')
 })
 
 test('customer replied by email after our last reply and the current version → customer_replied', () => {

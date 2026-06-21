@@ -57,7 +57,7 @@ import {
 
 type SortMode  = 'activity' | 'date' | 'name'
 type GroupMode = 'time' | 'company'
-type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week' | 'not_viewed' | 'customer_responded'
+type TileKey   = 'needs_attention' | 'awaiting_customer' | 'dormant' | 'approved_this_week' | 'not_viewed' | 'customer_responded' | 'in_follow_up'
 // Server-side tile counts (migration 000213) — one number per TileKey.
 type TileCounts = Record<TileKey, number>
 type ChipKey   = 'all' | 'metal' | 'paper' | 'plastic' | 'carbon' | 'wood' | 'acrylic'
@@ -268,7 +268,7 @@ interface StatTileProps {
   label: string
   count: number
   active: boolean
-  tone: 'rose' | 'amber' | 'sky' | 'neutral' | 'violet' | 'green' | 'turquoise' | 'gold' | 'blue'
+  tone: 'rose' | 'amber' | 'sky' | 'neutral' | 'violet' | 'green' | 'turquoise' | 'gold' | 'blue' | 'indigo'
   onClick: () => void
   help?: string
 }
@@ -288,6 +288,9 @@ const TILE_COLOUR: Record<StatTileProps['tone'], string> = {
   neutral:   'var(--c-ink-mute)',
   gold:      '#ca8a04',
   blue:      '#2563eb',
+  // In follow-up — indigo, matching the in_follow_up pill in dashboardGrouping
+  // so the tile and the row pill share one hue.
+  indigo:    '#6366f1',
 }
 
 function StatTile({ label, count, active, tone, onClick, help }: StatTileProps) {
@@ -1130,6 +1133,15 @@ function ProjectRow({
               </div>
             )
           })()}
+          {/* Follow-up progress (000246). When the automation is actively
+              chasing this proof, show how far through the reminder cycle it
+              is so the designer can see it's in hand without opening it. */}
+          {project.follow_up_rule_code != null && project.follow_up_sent_count != null && project.follow_up_max_nudges != null && (
+            <div className="mt-0.5 truncate text-[11px]" style={{ color: '#6366f1' }}>
+              Reminder {project.follow_up_sent_count} of {project.follow_up_max_nudges}
+              {project.follow_up_last_sent_at ? ` · last ${relativeTime(project.follow_up_last_sent_at)}` : ''}
+            </div>
+          )}
         </div>
 
         {/* Material — hidden below sm. Variant sub-line will land in
@@ -2239,6 +2251,7 @@ export default function DashboardPage() {
   const needsAttentionCount   = tileCounts?.needs_attention ?? 0
   const notViewedCount        = tileCounts?.not_viewed ?? 0
   const awaitingCustomerCount = tileCounts?.awaiting_customer ?? 0
+  const inFollowUpCount       = tileCounts?.in_follow_up ?? 0
   const customerRespondedCount = tileCounts?.customer_responded ?? 0
   const dormantCount          = tileCounts?.dormant ?? 0
   const approvedThisWeekCount = tileCounts?.approved_this_week ?? 0
@@ -2272,12 +2285,22 @@ export default function DashboardPage() {
       if (tileFilter === 'needs_attention'    && p.rule_code == null) return false
       if (tileFilter === 'awaiting_customer') {
         // Viewed the current version but hasn't responded yet. Mirrors
-        // awaiting_customer in dashboard_tile_counts (000245): exclude
+        // awaiting_customer in dashboard_tile_counts (000245/000246): exclude
         // proofs the customer has already responded to (change request or
-        // email reply) — those belong to the Customer responded tile, and
-        // the row pill already labels them that way (proofBucket precedence).
+        // email reply) and proofs the automation is actively chasing
+        // (follow_up_rule_code) — those belong to the Customer responded /
+        // In follow-up tiles, and the row pill labels them accordingly.
         const viewed = p.rule_code == null && p.status === 'in_progress' && p.current_version_id !== null && p.current_version_viewed_at !== null
-        if (!viewed || isChangesRequested(p) || isCustomerReplied(p)) return false
+        if (!viewed || p.follow_up_rule_code != null || isChangesRequested(p) || isCustomerReplied(p)) return false
+      }
+      if (tileFilter === 'in_follow_up') {
+        // Proofs the automation is actively chasing (a reminder sent, cap not
+        // spent, rule in auto mode — follow_up_rule_code on the view, 000246).
+        // Mirror of the in_follow_up tile count: in_progress, not responded
+        // (a reply needs a human → Customer responded wins).
+        if (p.follow_up_rule_code == null) return false
+        if (p.status !== 'in_progress') return false
+        if (isChangesRequested(p) || isCustomerReplied(p)) return false
       }
       if (tileFilter === 'dormant'            && p.status !== 'dormant') return false
       if (tileFilter === 'approved_this_week') {
@@ -2288,7 +2311,7 @@ export default function DashboardPage() {
         // Active proofs with a current version the customer hasn't opened yet.
         // Needs-attention projects are excluded — they belong to the rose tile only.
         const isActive = p.status === 'in_progress' || p.status === 'dormant'
-        if (p.rule_code != null || !isActive || !p.current_version_id || p.current_version_viewed_at !== null) return false
+        if (p.rule_code != null || p.follow_up_rule_code != null || !isActive || !p.current_version_id || p.current_version_viewed_at !== null) return false
       }
       if (tileFilter === 'customer_responded') {
         // Mirror of customerRespondedCount (dashboard_tile_counts, 000213): the
@@ -2439,7 +2462,7 @@ export default function DashboardPage() {
                   (rose for Needs attention,
                   amber→sky→turquoise→green for workflow,
                   violet/neutral for on-hold). */}
-              <div className={`grid grid-cols-2 md:grid-cols-3 ${orderingOn ? 'xl:grid-cols-9' : 'xl:grid-cols-7'} xl:divide-x xl:divide-line`}>
+              <div className={`grid grid-cols-2 md:grid-cols-3 ${orderingOn ? 'xl:grid-cols-10' : 'xl:grid-cols-8'} xl:divide-x xl:divide-line`}>
                   <StatTile
                     label="Needs attention"
                     help={tagHelp('tile', 'needs_attention')}
@@ -2463,6 +2486,14 @@ export default function DashboardPage() {
                     active={tileFilter === 'awaiting_customer'}
                     tone="sky"
                     onClick={() => toggleTile('awaiting_customer')}
+                  />
+                  <StatTile
+                    label="In auto follow-up"
+                    help={tagHelp('tile', 'in_follow_up')}
+                    count={inFollowUpCount}
+                    active={tileFilter === 'in_follow_up'}
+                    tone="indigo"
+                    onClick={() => toggleTile('in_follow_up')}
                   />
                   <StatTile
                     label="Customer responded"

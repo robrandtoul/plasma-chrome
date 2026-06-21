@@ -87,6 +87,8 @@ const TAG_HELP: Record<TagHelpFamily, Record<string, string>> = {
       'The customer asked for changes inside the proof viewer. You owe them a new version.',
     customer_replied:
       'The customer replied on the Help Scout email thread. Open it and read what they said.',
+    in_follow_up:
+      'The automatic reminder system is chasing this customer. No action needed from you unless it runs out of reminders.',
     awaiting_customer:
       'The proof has been sent and we are waiting for the customer to act.',
     not_viewed: "The proof has been sent but the customer has not opened it yet.",
@@ -108,6 +110,8 @@ const TAG_HELP: Record<TagHelpFamily, Record<string, string>> = {
     not_viewed: "Proofs that have been sent but the customer hasn't opened yet.",
     awaiting_customer:
       'Proofs sent and waiting on the customer, with nothing flagged as wrong.',
+    in_follow_up:
+      "Proofs the automatic reminder system is actively chasing (a reminder has gone out and more are due). They leave this tile and land in Needs attention if the reminders run out with no reply.",
     customer_responded:
       "Proofs where the customer either asked for changes in the viewer or replied on the email thread, and we haven't responded since.",
     approved_this_week: 'Proofs the customer has approved in the last 7 days.',

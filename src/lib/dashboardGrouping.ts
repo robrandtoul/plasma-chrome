@@ -76,6 +76,14 @@ export interface DashboardProject {
   // dashboard surfaces it as a "Last contact / Customer replied Nd ago" chip.
   helpscout_last_reply_at: string | null
   helpscout_last_customer_reply_at: string | null
+  // Automated follow-up state (000246). Non-null follow_up_rule_code means the
+  // automation is actively chasing this proof (a reminder is sent, the cap
+  // isn't spent, the rule is in auto mode). The count fields drive the
+  // "Reminder N of M" row label.
+  follow_up_rule_code: 'sent_never_viewed' | 'viewed_not_actioned' | null
+  follow_up_sent_count: number | null
+  follow_up_max_nudges: number | null
+  follow_up_last_sent_at: string | null
 }
 
 export type SectionKind = 'pinned' | 'team' | 'snoozed' | 'time' | 'company'
@@ -251,6 +259,7 @@ export type ProofBucket =
   | 'abandoned'
   | 'changes_requested'
   | 'customer_replied'
+  | 'in_follow_up'
   | 'awaiting_customer'
   | 'not_viewed'
   | 'snoozed'
@@ -280,6 +289,8 @@ export interface BucketInput {
   // the in-app sidebar.
   helpscout_last_reply_at: string | null
   helpscout_last_customer_reply_at: string | null
+  // 000246: non-null when the automation is actively chasing this proof.
+  follow_up_rule_code: 'sent_never_viewed' | 'viewed_not_actioned' | null
 }
 
 // Label + colour per bucket. Colours are the same tokens/hexes the headline
@@ -296,6 +307,7 @@ const BUCKET_META: Record<ProofBucket, { label: string; colour: string }> = {
   needs_attention:   { label: 'Needs attention',   colour: 'var(--c-out)' },
   changes_requested: { label: 'Changes requested', colour: 'var(--c-responded)' },
   customer_replied:  { label: 'Replied by email',  colour: 'var(--c-responded)' },
+  in_follow_up:      { label: 'In auto follow-up', colour: '#6366f1' },
   awaiting_customer: { label: 'Awaiting customer', colour: 'var(--c-allocated)' },
   not_viewed:        { label: 'Not viewed',        colour: 'var(--c-low)' },
   snoozed:           { label: 'Snoozed',           colour: '#7c3aed' },
@@ -361,6 +373,12 @@ export function proofBucket(p: BucketInput): BucketDisplay {
     // Below changes_requested: a structured sidebar request is the more
     // specific signal, so it wins when both apply (avoids double labelling).
     bucket = 'customer_replied'
+  } else if (p.follow_up_rule_code != null) {
+    // 000246: the automation is actively chasing this proof. Below the
+    // customer-response buckets (a reply needs a human) but above the passive
+    // awaiting/not-viewed states, so a chased proof reads as "we're on it"
+    // rather than sitting silently in Awaiting customer / Not viewed.
+    bucket = 'in_follow_up'
   } else if (p.current_version_id && p.current_version_viewed_at) {
     bucket = 'awaiting_customer'
   } else {

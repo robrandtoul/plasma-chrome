@@ -411,9 +411,9 @@ export default function AdminNeedsAttentionPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-ink">Needs-attention rules</h2>
+          <h2 className="text-xl font-bold text-ink">Follow-ups</h2>
           <p className="mt-1 text-sm text-ink-mute">
-            Configure which projects show up in the Needs-attention tile on the designer dashboard. Drag to reorder priority — the highest-priority rule that fires on a project is the one whose chip the dashboard shows.
+            How proofs are chased automatically, and when they escalate to you. These rules decide which projects the automatic reminder system follows up, and which land in the Needs attention tile for a person to handle. Drag to reorder priority — the highest-priority rule that fires on a project is the one whose chip the dashboard shows. Proofs the reminder system is actively chasing show in the dashboard's "In auto follow-up" tile, not Needs attention, until the reminders run out.
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-3">
