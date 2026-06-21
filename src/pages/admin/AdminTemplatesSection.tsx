@@ -81,9 +81,11 @@ function buildSampleContext(company: CompanyMode, version: VersionMode): Templat
     chosen_variant: 'Charcoal',
     actor_name: 'Kevin',
     recipient_name: '',
-    // Sample values for the order messages (order_payment_link / reminders).
+    // Sample values for the order messages (order_payment_link / reminders /
+    // the paid confirmation).
     order_url: 'https://proofs.plasmadesign.co.uk/order/example',
     order_expiry: '30 Jun 2026',
+    payment_reference: 'ORD-1A2B3C4D5E',
   }
 }
 
@@ -110,6 +112,7 @@ function templateGroup(id: string): TemplateGroupKey {
 function templateScope(id: string): TemplateVariableScope {
   if (id.startsWith('proof_')) return 'proof_viewer'
   if (id.startsWith('order_reminder')) return 'order_reminder'
+  if (id === 'order_paid_confirmation') return 'order_confirmation'
   if (id.startsWith('order_')) return 'order'
   return 'designer_picked'
 }
@@ -579,6 +582,7 @@ function VariableHelpPanel() {
   const proofViewer = TEMPLATE_VARIABLES.filter((v) => v.scope === 'proof_viewer')
   const order = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order')
   const orderReminder = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order_reminder')
+  const orderConfirmation = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order_confirmation')
 
   return (
     <div className="mt-6 rounded-xl border border-line bg-canvas p-4">
@@ -623,6 +627,18 @@ function VariableHelpPanel() {
       </h4>
       <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
         {orderReminder.map((v) => (
+          <div key={v.name} className="contents">
+            <dt className="font-mono text-ink-soft">{`{${v.name}}`}</dt>
+            <dd className="text-ink-mute">{v.description}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <h4 className="mt-4 text-xs font-semibold uppercase tracking-wider text-ink-dim">
+        Order confirmation variables
+      </h4>
+      <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
+        {orderConfirmation.map((v) => (
           <div key={v.name} className="contents">
             <dt className="font-mono text-ink-soft">{`{${v.name}}`}</dt>
             <dd className="text-ink-mute">{v.description}</dd>

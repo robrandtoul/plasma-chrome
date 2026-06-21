@@ -4,8 +4,10 @@
 //
 // Per Architecture rule #2, the app does NOT record the payment into the
 // books — the existing near-real-time Stripe→Xero bank feed settles it.
-// This function's job is just: verify the event is genuinely from Stripe,
-// then flip our order's status to 'paid' (idempotently).
+// On a verified event this function: flips the order to 'paid' (idempotently),
+// creates the Xero invoice (and, if a clearing account is set, marks it paid),
+// and posts a branded order-paid confirmation to the customer on the proof's
+// Help Scout thread (one-shot on confirmation_sent_at, best-effort).
 //
 // Auth: none / verify_jwt = false — Stripe calls this server-to-server
 // and authenticates via the Stripe-Signature header, which we verify
@@ -14,6 +16,8 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { getAccessContext, createSalesInvoice, recordInvoicePayment } from '../_shared/xero.ts'
 import { buildOrderInvoiceLines } from '../_shared/invoiceBuild.ts'
+import { getAccessToken, fetchConversation, postStaffReply, hideThread, HsError } from '../_shared/helpscout.ts'
+import { renderTemplate, ORDER_CONFIRMATION_DEFAULT_BODY } from '../_shared/replyTemplates.ts'
 
 const encoder = new TextEncoder()
 
@@ -348,6 +352,114 @@ Deno.serve(async (req) => {
     // Stamp the caught error too, so an exception path is just as visible as a
     // Xero rejection. Best-effort: this update must not throw out of the catch.
     await admin.from('orders').update({ xero_invoice_error: (e as Error).message }).eq('id', orderId).then(undefined, () => {})
+  }
+
+  // Branded order-paid confirmation, emailed to the customer via Help Scout
+  // (the same channel the pay-link went out on). Mirrors proof-action's
+  // confirmation-reply path: post a staff reply on the linked conversation —
+  // Help Scout emails it to the customer at creation time — then hide it so the
+  // team's view stays tidy. One-shot on confirmation_sent_at; skipped silently
+  // when the proof has no linked conversation; never fails the webhook. (The
+  // VAT invoice itself reaches the customer via the pay-page's self-serve link
+  // + Stripe's receipt, so this message deliberately doesn't carry the invoice.)
+  try {
+    const { data: ord } = await admin
+      .from('orders')
+      .select('proof_id, created_by, payment_reference, confirmation_sent_at')
+      .eq('id', orderId)
+      .single()
+    if (ord && !ord.confirmation_sent_at) {
+      const { data: proofCtx } = await admin
+        .from('proofs')
+        .select('helpscout_conversation_id, contacts:contact_id ( full_name, companies:company_id ( name ) )')
+        .eq('id', ord.proof_id)
+        .single()
+      const conversationId = (proofCtx?.helpscout_conversation_id as string | null) ?? null
+      const appId = Deno.env.get('HELPSCOUT_APP_ID')
+      const appSecret = Deno.env.get('HELPSCOUT_APP_SECRET')
+      if (!conversationId) {
+        // No linked thread — the pay-link was sent manually; nothing to reply to.
+        console.log('[stripe-webhook] confirmation skipped: proof has no linked conversation', { orderId })
+      } else if (!appId || !appSecret) {
+        console.warn('[stripe-webhook] confirmation skipped: Help Scout not configured')
+      } else {
+        const token = await getAccessToken(appId, appSecret)
+        const conv = await fetchConversation(token, conversationId)
+        const primaryCustomerId = conv?.primaryCustomer?.id ?? null
+        if (!conv || primaryCustomerId == null) {
+          console.warn('[stripe-webhook] confirmation skipped: conversation/customer missing', { conversationId })
+        } else {
+          // Sender resolution, mirroring proof-action (PV-2026W20-007):
+          //   1. order.created_by → profiles.helpscout_user_id
+          //   2. conversation assignee
+          //   3. HELPSCOUT_DEFAULT_USER_ID env
+          //   4. skip + warn (courtesy gap only — the on-screen confirmation
+          //      and the self-serve invoice link already covered the customer).
+          let senderId: number | null = null
+          const createdBy = (ord.created_by as string | null) ?? null
+          if (createdBy) {
+            const { data: profileRow } = await admin.from('profiles').select('helpscout_user_id').eq('id', createdBy).maybeSingle()
+            const value = (profileRow as { helpscout_user_id: number | null } | null)?.helpscout_user_id ?? null
+            if (typeof value === 'number' && Number.isInteger(value) && value > 0) senderId = value
+          }
+          if (senderId == null && conv.assignee?.id != null) senderId = conv.assignee.id
+          if (senderId == null) {
+            const raw = Deno.env.get('HELPSCOUT_DEFAULT_USER_ID')?.trim()
+            if (raw) {
+              const parsed = Number(raw)
+              if (Number.isInteger(parsed) && parsed > 0) senderId = parsed
+              else console.warn('[stripe-webhook] HELPSCOUT_DEFAULT_USER_ID not a positive integer', { raw })
+            }
+          }
+          if (senderId == null) {
+            console.warn('[stripe-webhook] confirmation skipped: no sender resolvable', { orderId, createdBy })
+          } else {
+            // first_name: contact full_name's first token, else the HS primary
+            // customer's first name, else a friendly fallback so the greeting is
+            // never "Hi ,". company: the contact's company (conditional in copy).
+            const contact = (proofCtx?.contacts ?? null) as
+              | { full_name?: string | null; companies?: { name?: string | null } | null }
+              | null
+            const fullName = contact?.full_name ?? null
+            const firstName = (fullName?.trim().split(/\s+/)[0]) || (conv.primaryCustomer?.first ?? '') || 'there'
+            const company = contact?.companies?.name ?? ''
+            const { data: tplRow } = await admin
+              .from('reply_templates')
+              .select('body')
+              .eq('id', 'order_paid_confirmation')
+              .maybeSingle()
+            const body = renderTemplate(
+              ((tplRow as { body: string } | null)?.body) ?? ORDER_CONFIRMATION_DEFAULT_BODY,
+              {
+                first_name: firstName,
+                company,
+                payment_reference: (ord.payment_reference as string | null) ?? reference ?? orderId,
+              },
+            )
+            const replyThreadId = await postStaffReply(token, conversationId, {
+              text: body,
+              userId: senderId,
+              customerId: primaryCustomerId,
+              // No status flip — a confirmation, not a designer asking for input.
+            })
+            // Stamp before the (cosmetic) hide so a hide failure can't cause a
+            // resend on a Stripe retry.
+            await admin.from('orders').update({ confirmation_sent_at: new Date().toISOString() }).eq('id', orderId)
+            console.log('[stripe-webhook] confirmation reply sent', { orderId, senderId, replyThreadId })
+            if (replyThreadId > 0) {
+              try {
+                await hideThread(token, conversationId, replyThreadId)
+              } catch (hideErr) {
+                console.warn('[stripe-webhook] confirmation hide failed', hideErr)
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    const msg = e instanceof HsError ? `${e.status} ${e.message}` : (e as Error).message
+    console.warn('[stripe-webhook] confirmation reply failed:', msg)
   }
 
   return new Response('ok', { status: 200 })

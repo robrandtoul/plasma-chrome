@@ -112,6 +112,14 @@ export const NUDGE_DEFAULT_BODIES: Record<string, string> = {
     `Hi {first_name},\n\nChecking in on your card proof{? company} for {company}{/?} — we haven't heard back in a little while. Happy to help with any tweaks; here's the link again:\n\n{url}`,
 }
 
+// Default body for the order-paid confirmation, posted by stripe-webhook when
+// a customer's payment lands (Help Scout emails it out). Fallback when the
+// reply_templates row is missing. Must stay in sync with the seed migration
+// and src/lib/replyTemplates.ts DEFAULT_BODIES. No sign-off — Help Scout
+// auto-appends the configured signature.
+export const ORDER_CONFIRMATION_DEFAULT_BODY =
+  `Hi {first_name},\n\nThank you — we've received your payment and your cards{? company} for {company}{/?} are now in production. Your order reference is {payment_reference}.\n\nWe'll be in touch with dispatch details as soon as your cards are on their way.\n\nIf you have any questions, just reply to this email.`
+
 // Default bodies for the two order-reminder templates (migration 000238), the
 // fallback when the reply_templates row is missing. Must stay in sync with the
 // seed migration and src/lib/replyTemplates.ts DEFAULT_BODIES. No sign-off.

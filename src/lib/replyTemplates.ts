@@ -114,7 +114,7 @@ export function substituteVariables(text: string, ctx: TemplateContext): string 
 // Designer-picked templates (first_proof, revision) use unprefixed
 // IDs and render in the "Pre-send messages" sub-section.
 
-export type TemplateVariableScope = 'designer_picked' | 'proof_viewer' | 'order' | 'order_reminder'
+export type TemplateVariableScope = 'designer_picked' | 'proof_viewer' | 'order' | 'order_reminder' | 'order_confirmation'
 
 export interface TemplateVariableMeta {
   // Variable name as it appears between braces in templates. Plain
@@ -152,6 +152,11 @@ export const TEMPLATE_VARIABLES: TemplateVariableMeta[] = [
   { name: 'company',             scope: 'order_reminder',  description: 'Company name (when set)',                                                         conditional: true  },
   { name: 'order_url',           scope: 'order_reminder',  description: 'Customer order pay-page link',                                                    conditional: false },
   { name: 'order_expiry',        scope: 'order_reminder',  description: 'Date the order link expires',                                                     conditional: false },
+  // Order-paid confirmation (order_paid_confirmation) — posted automatically by
+  // the Stripe webhook when a payment lands; Help Scout emails it to the customer.
+  { name: 'first_name',          scope: 'order_confirmation', description: "Customer's first name (falls back to a friendly greeting if unknown)",          conditional: false },
+  { name: 'company',             scope: 'order_confirmation', description: 'Company name (when set)',                                                       conditional: true  },
+  { name: 'payment_reference',   scope: 'order_confirmation', description: 'The order reference (ORD-…) shown to the customer',                             conditional: false },
 ]
 
 // ── Default bodies ───────────────────────────────────────────────────────────
@@ -206,4 +211,8 @@ export const DEFAULT_BODIES: Record<string, string> = {
     `Hi {first_name},\n\nJust a gentle reminder that your cards{? company} for {company}{/?} are approved and ready to order whenever you're set. You can choose your quantity and pay securely here:\n\n{order_url}`,
   order_reminder_2:
     `Hi {first_name},\n\nA quick reminder that your order link{? company} for {company}{/?} expires on {order_expiry}. If you'd still like to go ahead, you can complete it here:\n\n{order_url}\n\nIf the link has lapsed by the time you read this, just reply and we'll send a fresh one.`,
+  // Order-paid confirmation — posted automatically by the Stripe webhook when a
+  // payment lands; Help Scout emails it to the customer (migration 000248).
+  order_paid_confirmation:
+    `Hi {first_name},\n\nThank you — we've received your payment and your cards{? company} for {company}{/?} are now in production. Your order reference is {payment_reference}.\n\nWe'll be in touch with dispatch details as soon as your cards are on their way.\n\nIf you have any questions, just reply to this email.`,
 }

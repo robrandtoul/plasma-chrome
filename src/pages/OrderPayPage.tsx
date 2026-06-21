@@ -40,6 +40,33 @@ interface OrderPayload {
   expires_at: string | null
   payment_reference: string | null
   paid_at: string | null
+  // Price breakdown stamped at checkout (create-checkout-session), so present
+  // on the post-payment confirmation. Null on legacy rows → the summary falls
+  // back to the figures it can compute.
+  amount_cards: number | null
+  amount_tooling: number | null
+  amount_personalisation: number | null
+  amount_shipping: number | null
+  // Delivery details Stripe collected, persisted by the webhook on the
+  // sent → paid flip — so only present once the payment is confirmed.
+  ship_to_name: string | null
+  ship_to_address: {
+    line1: string | null
+    line2: string | null
+    city: string | null
+    region: string | null
+    postal_code: string | null
+    country: string | null
+  } | null
+}
+
+// One-line spec shown in the artwork recap on the post-payment confirmation.
+type RecapSpec = {
+  material: string
+  variant: string | null
+  finish: string | null
+  approvedAt: string | null
+  inks: string[]
 }
 
 const SHIPPING_LABEL: Record<OrderPayload['shipping_treatment'], string> = {
@@ -498,6 +525,112 @@ export default function OrderPayPage() {
     )
   }
 
+  // Rich post-payment confirmation, shared by the confirmed and optimistic
+  // (?paid=1, pre-webhook) states. Shows the approved-artwork recap, an itemised
+  // paid summary (from the breakdown stamped at checkout), the delivery address
+  // (confirmed only), what-happens-next, and the self-serve VAT-invoice link
+  // (renderVatInvoice). `confirmed` distinguishes the two moments.
+  function renderConfirmation(confirmed: boolean, o: OrderPayload) {
+    const round2 = (n: number) => Math.round(n * 100) / 100
+    const amt = (n: number | null) => (n == null ? 0 : Number(n))
+    const cards = o.custom_quote_total != null ? Number(o.custom_quote_total) : amt(o.amount_cards)
+    const tooling = amt(o.amount_tooling)
+    const personalisation = amt(o.amount_personalisation)
+    const shipping = amt(o.amount_shipping)
+    const total = round2(cards + tooling + personalisation + shipping)
+    const haveSummary = total > 0
+    const addr = o.ship_to_address
+    const haveAddress = confirmed && !!addr && !!(addr.line1 || addr.postal_code)
+    const addressLine = addr
+      ? [addr.line1, addr.line2, addr.city, addr.region, addr.postal_code, addr.country].filter(Boolean).join(', ')
+      : ''
+    return (
+      <Screen>
+        <PanelShell className="w-full max-w-lg">
+          <Pill colour="in-stock">{confirmed ? 'Paid' : 'Payment received'}</Pill>
+          <h1 className="mt-3 text-xl font-semibold text-ink">
+            {confirmed ? 'Order confirmed' : 'Thank you — payment received'}
+          </h1>
+          {company && <p className="mt-1 text-sm text-ink-soft">{company}</p>}
+          {o.payment_reference && (
+            <p className="mt-0.5 text-sm text-ink-soft">Reference {o.payment_reference}</p>
+          )}
+
+          <Recap thumbs={thumbs} spec={spec} />
+
+          {/* What was ordered + paid — from the breakdown stamped at checkout. */}
+          {haveSummary && (
+            <div className="mt-5 space-y-2 border-t border-line pt-5 text-sm">
+              {o.quantity != null && (
+                <Row
+                  label="Quantity"
+                  value={o.names_count > 1 ? `${o.quantity.toLocaleString()} cards in total` : o.quantity.toLocaleString()}
+                />
+              )}
+              <Row label="Cards" value={formatPrice(cards, o.currency)} />
+              {tooling > 0 && (
+                <Row
+                  label={o.names_count > 1 ? `Extra tooling (${o.names_count} names)` : 'Extra tooling'}
+                  value={formatPrice(tooling, o.currency)}
+                />
+              )}
+              {personalisation > 0 && <Row label="Personalisation" value={formatPrice(personalisation, o.currency)} />}
+              <Row
+                label={SHIPPING_LABEL[o.shipping_treatment]}
+                value={shipping > 0 ? formatPrice(shipping, o.currency) : 'Free'}
+              />
+              <div className="flex items-center justify-between gap-4 border-t border-line pt-2.5 text-base">
+                <span className="font-semibold text-ink">{confirmed ? 'Total paid' : 'Total'}</span>
+                <span className="font-semibold text-ink">{formatPrice(total, o.currency)}</span>
+              </div>
+              {o.currency === 'GBP' && <p className="text-[12px] text-ink-mute">Includes VAT.</p>}
+            </div>
+          )}
+
+          {/* Delivery address — only once the webhook has stored what Stripe collected. */}
+          {haveAddress && (
+            <div className="mt-5 border-t border-line pt-4 text-sm">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Shipping to</p>
+              <p className="mt-1 text-ink">
+                {o.ship_to_name && (
+                  <>
+                    {o.ship_to_name}
+                    <br />
+                  </>
+                )}
+                {addressLine}
+              </p>
+            </div>
+          )}
+
+          {/* What happens next. */}
+          <div className="mt-5 rounded-xl border border-line bg-canvas p-4 text-sm text-ink-soft">
+            <p className="font-medium text-ink">What happens next</p>
+            {confirmed ? (
+              <ul className="mt-2 list-disc space-y-1.5 pl-5">
+                <li>Your cards are now in production.</li>
+                <li>We&rsquo;ll email you dispatch details as soon as they&rsquo;re on their way.</li>
+              </ul>
+            ) : (
+              <ul className="mt-2 list-disc space-y-1.5 pl-5">
+                <li>We&rsquo;re just confirming your payment — this only takes a moment.</li>
+                <li>A receipt is on its way to your email.</li>
+                <li>You can safely close this page.</li>
+              </ul>
+            )}
+          </div>
+
+          {/* Self-serve VAT invoice (Xero online-invoice link, once it reconciles). */}
+          {renderVatInvoice()}
+
+          <p className="mt-4 text-center text-[12px] text-ink-mute">
+            Questions about your order? Just reply to your order email and we&rsquo;ll help.
+          </p>
+        </PanelShell>
+      </Screen>
+    )
+  }
+
   if (loading) return <Screen><LoadingProofAnimation /></Screen>
 
   if (notFound || !order) {
@@ -519,18 +652,7 @@ export default function OrderPayPage() {
     (order.status === 'sent' && order.expires_at != null && new Date(order.expires_at).getTime() < Date.now())
 
   if (order.status === 'paid' || order.status === 'fulfilled') {
-    return (
-      <Screen>
-        <PanelShell className="max-w-md text-center">
-          <Pill colour="in-stock">Paid</Pill>
-          <h1 className="mt-3 text-lg font-semibold text-ink">Thank you — this order is paid</h1>
-          <p className="mt-2 text-sm text-ink-soft">
-            Your order {order.payment_reference ? `(${order.payment_reference})` : ''} has been paid and is now in production. We&rsquo;ll be in touch with dispatch details.
-          </p>
-          {renderVatInvoice()}
-        </PanelShell>
-      </Screen>
-    )
+    return renderConfirmation(true, order)
   }
 
   if (isExpired) {
@@ -547,23 +669,9 @@ export default function OrderPayPage() {
   }
 
   // Optimistic thank-you straight after Stripe's redirect, before the
-  // Step 5 webhook flips status to 'paid' in our DB.
+  // webhook flips status to 'paid' in our DB.
   if (justPaid) {
-    return (
-      <Screen>
-        <PanelShell className="max-w-md text-center">
-          <Pill colour="in-stock">Payment received</Pill>
-          <h1 className="mt-3 text-lg font-semibold text-ink">Thank you — payment received</h1>
-          <p className="mt-2 text-sm text-ink-soft">
-            We&rsquo;re confirming your payment{order.payment_reference ? ` (${order.payment_reference})` : ''} and will be in touch with the next steps. You can close this page.
-          </p>
-          <p className="mt-3 text-[13px] text-ink-mute">
-            A receipt is on its way to your email. Your VAT invoice will be available on this page once your payment clears.
-          </p>
-          {renderVatInvoice()}
-        </PanelShell>
-      </Screen>
-    )
+    return renderConfirmation(false, order)
   }
 
   // Checkout is available whenever the order is priceable server-side: a
@@ -957,6 +1065,58 @@ function formatApprovedDate(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+// Approved-artwork recap (thumbnails + one-line spec + approved date), shown on
+// the post-payment confirmation. Renders nothing when neither resolved.
+function Recap({ thumbs, spec }: { thumbs: GridImage[]; spec: RecapSpec | null }) {
+  if (thumbs.length === 0 && !spec) return null
+  return (
+    <div className="mt-5 rounded-xl border border-line bg-canvas p-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Approved artwork</p>
+        {spec?.approvedAt && (
+          <p className="text-[12px] text-ink-mute">Approved {formatApprovedDate(spec.approvedAt)}</p>
+        )}
+      </div>
+      {thumbs.length > 0 && (
+        <div className={`mt-3 grid gap-3 ${thumbs.length > 1 ? 'sm:grid-cols-2' : ''}`}>
+          {thumbs.map((img) => (
+            <img
+              key={img.id}
+              src={img.signed_url}
+              alt="Approved proof artwork"
+              className="w-full rounded-lg bg-surface ring-1 ring-line"
+            />
+          ))}
+        </div>
+      )}
+      {spec && (
+        <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+          <dt className="text-ink-mute">Material</dt>
+          <dd className="text-ink">{spec.material}</dd>
+          {spec.variant && (
+            <>
+              <dt className="text-ink-mute">Option</dt>
+              <dd className="text-ink">{spec.variant}</dd>
+            </>
+          )}
+          {spec.finish && (
+            <>
+              <dt className="text-ink-mute">Finish</dt>
+              <dd className="text-ink">{spec.finish}</dd>
+            </>
+          )}
+          {spec.inks.length > 0 && (
+            <>
+              <dt className="text-ink-mute">Ink</dt>
+              <dd className="text-ink">{spec.inks.join(', ')}</dd>
+            </>
+          )}
+        </dl>
+      )}
+    </div>
+  )
 }
 
 function Row({ label, value, bold = false }: { label: string; value: string; bold?: boolean }) {
