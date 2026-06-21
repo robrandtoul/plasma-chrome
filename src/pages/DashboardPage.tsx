@@ -2270,7 +2270,15 @@ export default function DashboardPage() {
       // bucketed normally by the tile predicates below.
       if (tileFilter && isCurrentlySnoozed(p)) return false
       if (tileFilter === 'needs_attention'    && p.rule_code == null) return false
-      if (tileFilter === 'awaiting_customer'  && !(p.rule_code == null && p.status === 'in_progress' && p.current_version_id !== null && p.current_version_viewed_at !== null)) return false
+      if (tileFilter === 'awaiting_customer') {
+        // Viewed the current version but hasn't responded yet. Mirrors
+        // awaiting_customer in dashboard_tile_counts (000245): exclude
+        // proofs the customer has already responded to (change request or
+        // email reply) — those belong to the Customer responded tile, and
+        // the row pill already labels them that way (proofBucket precedence).
+        const viewed = p.rule_code == null && p.status === 'in_progress' && p.current_version_id !== null && p.current_version_viewed_at !== null
+        if (!viewed || isChangesRequested(p) || isCustomerReplied(p)) return false
+      }
       if (tileFilter === 'dormant'            && p.status !== 'dormant') return false
       if (tileFilter === 'approved_this_week') {
         const cutoff = Date.now() - 7 * 86_400_000
