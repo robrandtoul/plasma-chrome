@@ -49,6 +49,14 @@ export interface PublicSettings {
   login_stats: LoginStat[]
   login_form_heading: string
   login_form_subcopy: string
+  // US tariff & customs handling (migration 000248). Per-currency fee + the
+  // pay-page copy. Fees default to 39 each; copy falls back to the shipped
+  // defaults below if the RPC returns null/empty so the panel never blanks.
+  us_tariff_fee_gbp: number
+  us_tariff_fee_eur: number
+  us_tariff_fee_usd: number
+  us_tariff_intro_copy: string
+  us_tariff_optout_warning: string
 }
 
 const TTL_MS = 60_000
@@ -70,6 +78,13 @@ export const QR_PANEL_INTRO_COPY_DEFAULT =
   "Please double-check the contents of each QR code. Scan with your phone or read the decoded text alongside each one. The on-screen QR is the exact image we'll print."
 export const QR_PANEL_VCARD_COPY_DEFAULT =
   'For Plasma vCards, scanning the QR saves the contact details to a phone. The look of the page it opens — the photo, colours, and layout — is yours to personalise after your cards arrive.'
+// Mirrors the migration 000248 seeds for the US tariff & customs handling copy
+// shown on the customer pay-page. The fee amount is rendered on its own line in
+// the order currency, so it is deliberately NOT in the intro copy.
+export const US_TARIFF_INTRO_COPY_DEFAULT =
+  'Since the United States ended the $800 "de minimis" import exemption on 29 August 2025, shipments to the US can attract import tariffs and customs clearance charges. This service covers those tariffs and clearance for your order and we handle them on your behalf — so there are no hold-ups at customs and no surprise bills when your cards arrive.'
+export const US_TARIFF_OPTOUT_WARNING_DEFAULT =
+  "If you remove this, you'll deal with US Customs directly and be responsible for any import tariffs and customs clearance charges they levy. That can hold your cards at the border and lead to an unexpected bill before they're released."
 
 const DEFAULTS: PublicSettings = {
   disclaimer_text: '',
@@ -86,6 +101,11 @@ const DEFAULTS: PublicSettings = {
   login_stats: LOGIN_STATS_DEFAULT,
   login_form_heading: LOGIN_FORM_HEADING_DEFAULT,
   login_form_subcopy: LOGIN_FORM_SUBCOPY_DEFAULT,
+  us_tariff_fee_gbp: 39,
+  us_tariff_fee_eur: 39,
+  us_tariff_fee_usd: 39,
+  us_tariff_intro_copy: US_TARIFF_INTRO_COPY_DEFAULT,
+  us_tariff_optout_warning: US_TARIFF_OPTOUT_WARNING_DEFAULT,
 }
 
 // Trim-guarded string pick: returns the RPC value when it's a non-empty
@@ -93,6 +113,14 @@ const DEFAULTS: PublicSettings = {
 // editable-copy fields.
 function pickStr(v: unknown, fallback: string): string {
   return typeof v === 'string' && v.trim().length > 0 ? v : fallback
+}
+
+// Trim-guarded number pick: the RPC returns a JSON number, but Postgres numeric
+// can surface as a string in some clients — coerce, accept only finite >= 0,
+// else the default. Used for the per-currency US tariff fees.
+function pickNum(v: unknown, fallback: number): number {
+  const n = typeof v === 'string' ? Number(v) : typeof v === 'number' ? v : NaN
+  return Number.isFinite(n) && n >= 0 ? n : fallback
 }
 
 export async function getPublicSettings(): Promise<PublicSettings> {
@@ -134,6 +162,11 @@ export async function getPublicSettings(): Promise<PublicSettings> {
         login_stats:        normaliseLoginStats(data?.login_stats),
         login_form_heading: pickStr(data?.login_form_heading, DEFAULTS.login_form_heading),
         login_form_subcopy: pickStr(data?.login_form_subcopy, DEFAULTS.login_form_subcopy),
+        us_tariff_fee_gbp: pickNum(data?.us_tariff_fee_gbp, DEFAULTS.us_tariff_fee_gbp),
+        us_tariff_fee_eur: pickNum(data?.us_tariff_fee_eur, DEFAULTS.us_tariff_fee_eur),
+        us_tariff_fee_usd: pickNum(data?.us_tariff_fee_usd, DEFAULTS.us_tariff_fee_usd),
+        us_tariff_intro_copy: pickStr(data?.us_tariff_intro_copy, DEFAULTS.us_tariff_intro_copy),
+        us_tariff_optout_warning: pickStr(data?.us_tariff_optout_warning, DEFAULTS.us_tariff_optout_warning),
       }
       cache = { value, fetchedAt: Date.now() }
       return value

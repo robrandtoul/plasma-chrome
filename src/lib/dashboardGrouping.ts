@@ -14,6 +14,7 @@ export type NeedsAttentionRule =
   | 'stuck_in_progress'
   | 'approved_earlier_version'
   | 'nudges_exhausted'
+  | 'approved_no_order'
 
 // rule_meta from proofs_needing_attention(). Threshold rules carry `days`;
 // approved_earlier_version carries `version`; nudges_exhausted (000221)

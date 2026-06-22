@@ -14,6 +14,7 @@ type RuleCode =
   | 'stuck_in_progress'
   | 'approved_earlier_version'
   | 'nudges_exhausted'
+  | 'approved_no_order'
 
 interface Rule {
   enabled: boolean
@@ -147,6 +148,13 @@ const RULE_SPECS: RuleSpec[] = [
     hasThreshold: false,
     hasCalendarToggle: false,
   },
+  {
+    code: 'approved_no_order',
+    label: 'Approved — no order link sent',
+    description: 'Fires when a proof is approved but no order (pay) link has been sent to the customer within the threshold, so it can\'t silently fall off the dashboard unbilled. Clears the moment a link is sent (or the proof leaves Approved). Off by default — turn it on once online ordering is the norm, since otherwise it flags approved proofs that were invoiced offline (snooze those).',
+    hasThreshold: true,
+    hasCalendarToggle: true,
+  },
 ]
 
 const DEFAULT_RULES: Rules = {
@@ -168,6 +176,10 @@ const DEFAULT_RULES: Rules = {
   // the threshold (migration 000221). Priority 2 so the "needs a call"
   // escalation outranks the chase rule it supersedes.
   nudges_exhausted:           { enabled: true,                                       priority: 2 },
+  // Off by default (migration 000250) — see the rule description. Operates on
+  // approved proofs, the only rule that does, so it never collides with the
+  // others on one proof and its priority is moot for ranking.
+  approved_no_order:          { enabled: false, threshold_days: 2,  calendar: false, priority: 9 },
 }
 
 // Days of inactivity before the nightly cron flips an in_progress proof
@@ -214,7 +226,12 @@ export default function AdminNeedsAttentionPage() {
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'site_settings row missing'); return }
-    const rules = (data.needs_attention_rules ?? DEFAULT_RULES) as RulesDoc
+    // Merge defaults UNDER the saved document so a rule not yet present in the
+    // stored JSONB (e.g. a newly-added rule before its seed migration runs)
+    // renders with its default instead of crashing the card. Saved values win;
+    // the non-rule top-level keys (automation, helpscout_reply_grace_days) ride
+    // through from the saved side untouched.
+    const rules = { ...DEFAULT_RULES, ...(data.needs_attention_rules ?? {}) } as RulesDoc
     const cutoff = (data.dormancy_threshold_days ?? DEFAULT_DORMANCY_CUTOFF) as number
     setSavedRules(rules)
     setDraft(rules)

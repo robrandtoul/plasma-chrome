@@ -8,6 +8,7 @@ import {
   cardTotalForQuantity,
   computeOrderTotal,
   interpolateValue,
+  resolveUsTariff,
   type Tier,
   type PricingConfig,
 } from './orderPricing.ts'
@@ -134,6 +135,30 @@ test('computeOrderTotal: quantity out of range cannot be priced', () => {
     shipping: 0,
   })
   assertEqual(r.ok, false)
+})
+
+// ── resolveUsTariff ─────────────────────────────────────────────────
+
+test('resolveUsTariff: US destination, not opted out → the fee', () => {
+  assertEqual(resolveUsTariff('US', 39, false), 39)
+})
+
+test('resolveUsTariff: case/whitespace-insensitive on the country', () => {
+  assertEqual(resolveUsTariff(' us ', 39, false), 39)
+})
+
+test('resolveUsTariff: opted out → 0 even for a US order', () => {
+  assertEqual(resolveUsTariff('US', 39, true), 0)
+})
+
+test('resolveUsTariff: non-US destination → 0', () => {
+  assertEqual(resolveUsTariff('GB', 39, false), 0)
+})
+
+test('resolveUsTariff: null/zero/negative fee → 0 (disables the service)', () => {
+  assertEqual(resolveUsTariff('US', null, false), 0)
+  assertEqual(resolveUsTariff('US', 0, false), 0)
+  assertEqual(resolveUsTariff('US', -5, false), 0)
 })
 
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`)

@@ -4,16 +4,22 @@
 //
 // Per Architecture rule #2, the app does NOT record the payment into the
 // books — the existing near-real-time Stripe→Xero bank feed settles it.
-// This function's job is just: verify the event is genuinely from Stripe,
-// then flip our order's status to 'paid' (idempotently).
+// On a verified event this function: flips the order to 'paid' (idempotently),
+// creates the Xero invoice (once — gated on xero_invoice_id) and, if a clearing
+// account is set, marks it paid; emails that invoice to the customer as their
+// VAT receipt (once — gated on invoice_emailed_at); and posts a branded
+// order-paid confirmation to the customer on the proof's Help Scout thread
+// (once — gated on confirmation_sent_at). Steps after the flip are best-effort.
 //
 // Auth: none / verify_jwt = false — Stripe calls this server-to-server
 // and authenticates via the Stripe-Signature header, which we verify
 // against STRIPE_WEBHOOK_SECRET below. Do not add a Supabase JWT gate.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { getAccessContext, createSalesInvoice } from '../_shared/xero.ts'
+import { getAccessContext, createSalesInvoice, recordInvoicePayment, emailSalesInvoice } from '../_shared/xero.ts'
 import { buildOrderInvoiceLines } from '../_shared/invoiceBuild.ts'
+import { getAccessToken, fetchConversation, postStaffReply, hideThread, HsError } from '../_shared/helpscout.ts'
+import { renderTemplate, ORDER_CONFIRMATION_DEFAULT_BODY } from '../_shared/replyTemplates.ts'
 
 const encoder = new TextEncoder()
 
@@ -131,15 +137,57 @@ Deno.serve(async (req) => {
     return new Response('Invalid JSON', { status: 400 })
   }
 
-  // We only care about a completed, paid checkout for now.
-  if (event.type !== 'checkout.session.completed') {
-    return new Response('ok', { status: 200 })
-  }
-  const session = event.data?.object ?? {}
-  const orderId = (session.metadata as Record<string, unknown> | undefined)?.order_id as string | undefined
-  const paymentStatus = session.payment_status as string | undefined
-  if (!orderId || paymentStatus !== 'paid') {
-    // Acknowledge so Stripe doesn't retry; nothing for us to do.
+  // Two event types fulfil an order, normalised into one shape below:
+  //   * payment_intent.succeeded   — the current Stripe Elements pay-page.
+  //   * checkout.session.completed — the older hosted/embedded Checkout, kept
+  //     so any in-flight session still fulfils.
+  // We capture: order id, delivery name/email/address (StripeAddr shape:
+  // state + postal_code), the charged total (major units), currency, and the
+  // shared payment reference.
+  let orderId: string | undefined
+  let reference: string | undefined
+  let currencyUpper = 'GBP'
+  let amountMajor: number | undefined
+  let shipName: string | null = null
+  let shipEmail: string | null = null
+  let shipAddr: StripeAddr | null = null
+
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data?.object ?? {}
+    orderId = (session.metadata as Record<string, unknown> | undefined)?.order_id as string | undefined
+    const paymentStatus = session.payment_status as string | undefined
+    if (!orderId || paymentStatus !== 'paid') return new Response('ok', { status: 200 })
+    const ship = extractShipping(session)
+    shipName = ship.name
+    shipEmail = ship.email
+    shipAddr = ship.address
+      ? {
+          line1: ship.address.line1,
+          line2: ship.address.line2,
+          city: ship.address.city,
+          state: ship.address.region,
+          postal_code: ship.address.postal_code,
+          country: ship.address.country,
+        }
+      : null
+    reference = (session.metadata as { payment_reference?: string } | undefined)?.payment_reference ?? orderId
+    currencyUpper = String(session.currency ?? 'gbp').toUpperCase()
+    const amt = session.amount_total as number | undefined
+    amountMajor = typeof amt === 'number' ? amt / 100 : undefined
+  } else if (event.type === 'payment_intent.succeeded') {
+    const pi = event.data?.object ?? {}
+    orderId = (pi.metadata as Record<string, unknown> | undefined)?.order_id as string | undefined
+    if (!orderId) return new Response('ok', { status: 200 })
+    const shipping = pi.shipping as { name?: string; address?: StripeAddr } | undefined
+    shipName = shipping?.name ?? null
+    shipEmail = (pi.receipt_email as string | undefined) ?? null
+    shipAddr = shipping?.address ?? null
+    reference = (pi.metadata as { payment_reference?: string } | undefined)?.payment_reference ?? orderId
+    currencyUpper = String(pi.currency ?? 'gbp').toUpperCase()
+    const amt = pi.amount as number | undefined
+    amountMajor = typeof amt === 'number' ? amt / 100 : undefined
+  } else {
+    // Not an event we fulfil on — acknowledge so Stripe doesn't retry.
     return new Response('ok', { status: 200 })
   }
 
@@ -149,9 +197,18 @@ Deno.serve(async (req) => {
     { db: { schema: 'proofs' }, auth: { persistSession: false, autoRefreshToken: false } },
   )
 
-  // Delivery details for the team's fulfilment surface (Step 6),
-  // persisted atomically with the sent → paid flip below.
-  const ship = extractShipping(session)
+  // Delivery details for the team's fulfilment surface (Step 6), stored in our
+  // jsonb shape (region + postal_code), persisted with the sent → paid flip.
+  const storedAddress = shipAddr
+    ? {
+        line1: shipAddr.line1 ?? null,
+        line2: shipAddr.line2 ?? null,
+        city: shipAddr.city ?? null,
+        region: shipAddr.state ?? null,
+        postal_code: shipAddr.postal_code ?? null,
+        country: shipAddr.country ?? null,
+      }
+    : null
 
   // Idempotent: only flip from 'sent' → 'paid'. A Stripe retry (or a
   // duplicate event) finds the row already paid and updates nothing.
@@ -160,9 +217,9 @@ Deno.serve(async (req) => {
     .update({
       status: 'paid',
       paid_at: new Date().toISOString(),
-      ship_to_name: ship.name,
-      ship_to_email: ship.email,
-      ship_to_address: ship.address,
+      ship_to_name: shipName,
+      ship_to_email: shipEmail,
+      ship_to_address: storedAddress,
       updated_at: new Date().toISOString(),
     })
     .eq('id', orderId)
@@ -180,109 +237,155 @@ Deno.serve(async (req) => {
   // order is already paid, and Stripe must get its 200).
   try {
     const ctx = await getAccessContext(admin)
-    const amountTotal = session.amount_total as number | undefined
-    if (ctx && typeof amountTotal === 'number') {
-      const cust = (session.customer_details ?? {}) as { name?: string; email?: string }
-      const meta = (session.metadata ?? {}) as { payment_reference?: string }
-      const reference = meta.payment_reference ?? orderId
-      const currency = String(session.currency ?? 'gbp').toUpperCase()
-      const expectedTotal = amountTotal / 100
+    if (ctx && typeof amountMajor === 'number') {
+      const referenceSafe = reference ?? orderId
+      const currency = currencyUpper
+      const expectedTotal = amountMajor
 
-      // Pull the order's price breakdown (stamped at checkout) so the
-      // invoice mirrors Xero's usual line split: product (with its
-      // inventory item) + tooling (020) + shipping (050/052).
+      // Pull the order's price breakdown (stamped at checkout) + the two
+      // idempotency guards: xero_invoice_id (so a duplicate Stripe event mints
+      // no second invoice / clearing-account payment) and invoice_emailed_at
+      // (so the VAT invoice is emailed exactly once).
       const { data: order } = await admin
         .from('orders')
-        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping')
+        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, ship_dest_country, xero_invoice_id, invoice_emailed_at')
         .eq('id', orderId)
         .single()
+      let invoiceId: string | null = (order?.xero_invoice_id as string | null) ?? null
 
-      // Address for the Xero contact (delivery → billing fallback) + the
-      // delivery country that drives domestic vs international shipping. Stripe
-      // exposes the collected shipping address under shipping_details (older
-      // API) or collected_information.shipping_details (newer); fall back to the
-      // billing address, then (inside the line builder) to the order currency.
-      const shipDetails =
-        (session.shipping_details as { address?: StripeAddr } | undefined) ??
-        ((session.collected_information as { shipping_details?: { address?: StripeAddr } } | undefined)?.shipping_details)
-      const billingAddr = (session.customer_details as { address?: StripeAddr } | undefined)?.address ?? null
-      const addr = (shipDetails?.address ?? null) ?? billingAddr
-      const country = addr?.country ?? null
-      const invoiceAddress = addr
+      // Delivery country that drives the domestic-vs-international shipping line.
+      // Use the destination the order was RATED against (ship_dest_country, set
+      // by create-checkout from the customer's pay-page choice) so the invoice's
+      // shipping code matches the shipping charge + US tariff computed from it.
+      // The Stripe-collected address country can differ (the buyer may type a
+      // different country into the card form than the destination they picked),
+      // so it's only the fallback when the order has no rated destination
+      // (e.g. a free/manual order with no hint).
+      const country = (order?.ship_dest_country as string | null) ?? shipAddr?.country ?? null
+      const invoiceAddress = shipAddr
         ? {
-            line1: addr.line1 ?? null,
-            line2: addr.line2 ?? null,
-            city: addr.city ?? null,
-            region: addr.state ?? null,
-            postalCode: addr.postal_code ?? null,
-            country: addr.country ?? null,
+            line1: shipAddr.line1 ?? null,
+            line2: shipAddr.line2 ?? null,
+            city: shipAddr.city ?? null,
+            region: shipAddr.state ?? null,
+            postalCode: shipAddr.postal_code ?? null,
+            country: shipAddr.country ?? null,
           }
         : null
 
-      // Resolve the invoice lines (product item code + tooling + shipping) via
-      // the shared builder — the SAME resolution the Xero self-test exercises,
-      // so a green self-test means the live path books to the same codes.
-      const { lines } = await buildOrderInvoiceLines(
-        admin,
-        order ?? {
-          proof_id: null,
-          material_variant_id: null,
-          material_option_id: null,
-          quantity: null,
-          names_count: null,
-          custom_quote_total: null,
-          amount_cards: null,
-          amount_tooling: null,
-          amount_personalisation: null,
-          amount_shipping: null,
-        },
-        { reference, currency, expectedTotal, country },
-      )
+      const contactName = shipName || shipEmail || 'Customer'
+      const contactEmail = shipEmail
 
-      const contactName = cust.name || cust.email || 'Customer'
-      const contactEmail = cust.email ?? null
-      const created = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
-        contactName,
-        contactEmail,
-        currency,
-        reference,
-        lines,
-        address: invoiceAddress,
-      })
-      let invoiceId = created.invoiceId
-      // Xero's rejection text, kept so we can stamp it on the order when both
-      // attempts fail — that's what the Orders page surfaces as "Invoice
-      // failed" and what makes a silent miss visible (000240).
-      let lastError = created.error
+      // Create the invoice only if we haven't already (a duplicate event must
+      // never mint a second invoice or record a second clearing payment).
+      if (!invoiceId) {
+        // Resolve the invoice lines (product item code + tooling + shipping) via
+        // the shared builder — the SAME resolution the Xero self-test exercises,
+        // so a green self-test means the live path books to the same codes.
+        const { lines } = await buildOrderInvoiceLines(
+          admin,
+          order ?? {
+            proof_id: null,
+            material_variant_id: null,
+            material_option_id: null,
+            quantity: null,
+            names_count: null,
+            custom_quote_total: null,
+            amount_cards: null,
+            amount_tooling: null,
+            amount_personalisation: null,
+            amount_shipping: null,
+            amount_us_tariff: null,
+          },
+          { reference: referenceSafe, currency, expectedTotal, country },
+        )
 
-      // On-error fallback: if the itemised lines were rejected by Xero
-      // (e.g. an item code that doesn't exist in this org — the classic
-      // case being a Demo org without the live item codes, or codes that
-      // lost their leading zero on import), retry once as a single summary
-      // line so an invoice is still created. The sum-mismatch fallback
-      // above runs *before* the call; this one catches a post-call
-      // rejection. Both degrade gracefully rather than leaving no invoice.
-      const wasItemised = lines.some((l) => l.itemCode)
-      if (!invoiceId && wasItemised) {
-        console.warn(`[stripe-webhook] itemised invoice rejected for order ${orderId}; retrying as a single summary line`)
-        const retry = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
+        const created = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
           contactName,
           contactEmail,
           currency,
-          reference,
-          lines: [{ description: `Order ${reference}`, amount: expectedTotal, itemCode: null }],
+          reference: referenceSafe,
+          lines,
           address: invoiceAddress,
         })
-        invoiceId = retry.invoiceId
-        if (retry.error) lastError = retry.error
+        invoiceId = created.invoiceId
+        // Xero's rejection text, kept so we can stamp it on the order when both
+        // attempts fail — that's what the Orders page surfaces as "Invoice
+        // failed" and what makes a silent miss visible (000240).
+        let lastError = created.error
+
+        // On-error fallback: if the itemised lines were rejected by Xero
+        // (e.g. an item code that doesn't exist in this org — the classic
+        // case being a Demo org without the live item codes, or codes that
+        // lost their leading zero on import), retry once as a single summary
+        // line so an invoice is still created. The sum-mismatch fallback
+        // above runs *before* the call; this one catches a post-call
+        // rejection. Both degrade gracefully rather than leaving no invoice.
+        const wasItemised = lines.some((l) => l.itemCode)
+        if (!invoiceId && wasItemised) {
+          console.warn(`[stripe-webhook] itemised invoice rejected for order ${orderId}; retrying as a single summary line`)
+          const retry = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
+            contactName,
+            contactEmail,
+            currency,
+            reference: referenceSafe,
+            lines: [{ description: `Order ${referenceSafe}`, amount: expectedTotal, itemCode: null }],
+            address: invoiceAddress,
+          })
+          invoiceId = retry.invoiceId
+          if (retry.error) lastError = retry.error
+        }
+        if (invoiceId) {
+          // Success — store the id and clear any prior error so a row that has
+          // since invoiced never keeps a stale "failed" flag.
+          await admin.from('orders').update({ xero_invoice_id: invoiceId, xero_invoice_error: null }).eq('id', orderId)
+
+          // If a Stripe clearing account is configured (000242), record the
+          // payment into it so the invoice is marked PAID immediately, matching
+          // Xero's own Pay-now flow. The Stripe account feed later reconciles
+          // against this payment rather than double-counting. Best-effort: a
+          // failure here leaves the invoice created-but-unpaid for the feed to
+          // settle, and never fails the webhook.
+          const { data: payCfg } = await admin.from('settings').select('xero_stripe_account_code').eq('id', 1).single()
+          const stripeAcctCode = payCfg?.xero_stripe_account_code as string | null | undefined
+          if (stripeAcctCode) {
+            const pay = await recordInvoicePayment(ctx.accessToken, ctx.tenantId, {
+              invoiceId,
+              accountCode: stripeAcctCode,
+              amount: expectedTotal,
+            })
+            if (!pay.ok) console.error(`[stripe-webhook] xero payment record failed for order ${orderId}:`, pay.error)
+          }
+        } else {
+          console.error(`[stripe-webhook] xero invoice not created for order ${orderId}:`, lastError)
+          await admin.from('orders').update({ xero_invoice_error: lastError ?? 'Xero did not return an invoice' }).eq('id', orderId)
+        }
       }
-      if (invoiceId) {
-        // Success — store the id and clear any prior error so a row that has
-        // since invoiced never keeps a stale "failed" flag.
-        await admin.from('orders').update({ xero_invoice_id: invoiceId, xero_invoice_error: null }).eq('id', orderId)
-      } else {
-        console.error(`[stripe-webhook] xero invoice not created for order ${orderId}:`, lastError)
-        await admin.from('orders').update({ xero_invoice_error: lastError ?? 'Xero did not return an invoice' }).eq('id', orderId)
+
+      // Email the invoice to the customer as their VAT receipt — once
+      // (idempotent on invoice_emailed_at). Runs after the clearing-account
+      // payment above, so the emailed invoice reads as PAID. Best-effort: a
+      // miss is cosmetic (the invoice exists in Xero + the pay-page shows a
+      // download link), logged not stamped as a hard error.
+      if (invoiceId && !order?.invoice_emailed_at) {
+        if (!contactEmail) {
+          // No buyer email on the order — the Xero contact has no address to
+          // send to, so emailing would just fail. (The pay-page now passes
+          // receipt_email, so this should be rare; an older pay-page or a
+          // payment method without an email lands here.) The invoice still
+          // exists in Xero and the pay-page download link covers the customer;
+          // a human can backfill the email and resend. Not stamped as an
+          // invoice error — the invoice itself is fine.
+          console.warn('[stripe-webhook] invoice email skipped: no buyer email on order', { orderId, invoiceId })
+        } else {
+          const emailed = await emailSalesInvoice(ctx.accessToken, ctx.tenantId, invoiceId)
+          if (emailed.ok) {
+            await admin.from('orders').update({ invoice_emailed_at: new Date().toISOString() }).eq('id', orderId)
+            console.log('[stripe-webhook] invoice emailed', { orderId, invoiceId })
+          } else {
+            console.warn('[stripe-webhook] invoice email failed', { orderId, error: emailed.error })
+          }
+        }
       }
     }
   } catch (e) {
@@ -290,6 +393,114 @@ Deno.serve(async (req) => {
     // Stamp the caught error too, so an exception path is just as visible as a
     // Xero rejection. Best-effort: this update must not throw out of the catch.
     await admin.from('orders').update({ xero_invoice_error: (e as Error).message }).eq('id', orderId).then(undefined, () => {})
+  }
+
+  // Branded order-paid confirmation, emailed to the customer via Help Scout
+  // (the same channel the pay-link went out on). Mirrors proof-action's
+  // confirmation-reply path: post a staff reply on the linked conversation —
+  // Help Scout emails it to the customer at creation time — then hide it so the
+  // team's view stays tidy. One-shot on confirmation_sent_at; skipped silently
+  // when the proof has no linked conversation; never fails the webhook. (The
+  // VAT invoice goes to the customer as its own email — the Xero invoice email
+  // above — plus a pay-page download link, so this warm note doesn't carry it.)
+  try {
+    const { data: ord } = await admin
+      .from('orders')
+      .select('proof_id, created_by, payment_reference, confirmation_sent_at')
+      .eq('id', orderId)
+      .single()
+    if (ord && !ord.confirmation_sent_at) {
+      const { data: proofCtx } = await admin
+        .from('proofs')
+        .select('helpscout_conversation_id, contacts:contact_id ( full_name, companies:company_id ( name ) )')
+        .eq('id', ord.proof_id)
+        .single()
+      const conversationId = (proofCtx?.helpscout_conversation_id as string | null) ?? null
+      const appId = Deno.env.get('HELPSCOUT_APP_ID')
+      const appSecret = Deno.env.get('HELPSCOUT_APP_SECRET')
+      if (!conversationId) {
+        // No linked thread — the pay-link was sent manually; nothing to reply to.
+        console.log('[stripe-webhook] confirmation skipped: proof has no linked conversation', { orderId })
+      } else if (!appId || !appSecret) {
+        console.warn('[stripe-webhook] confirmation skipped: Help Scout not configured')
+      } else {
+        const token = await getAccessToken(appId, appSecret)
+        const conv = await fetchConversation(token, conversationId)
+        const primaryCustomerId = conv?.primaryCustomer?.id ?? null
+        if (!conv || primaryCustomerId == null) {
+          console.warn('[stripe-webhook] confirmation skipped: conversation/customer missing', { conversationId })
+        } else {
+          // Sender resolution, mirroring proof-action (PV-2026W20-007):
+          //   1. order.created_by → profiles.helpscout_user_id
+          //   2. conversation assignee
+          //   3. HELPSCOUT_DEFAULT_USER_ID env
+          //   4. skip + warn (courtesy gap only — the on-screen confirmation
+          //      and the self-serve invoice link already covered the customer).
+          let senderId: number | null = null
+          const createdBy = (ord.created_by as string | null) ?? null
+          if (createdBy) {
+            const { data: profileRow } = await admin.from('profiles').select('helpscout_user_id').eq('id', createdBy).maybeSingle()
+            const value = (profileRow as { helpscout_user_id: number | null } | null)?.helpscout_user_id ?? null
+            if (typeof value === 'number' && Number.isInteger(value) && value > 0) senderId = value
+          }
+          if (senderId == null && conv.assignee?.id != null) senderId = conv.assignee.id
+          if (senderId == null) {
+            const raw = Deno.env.get('HELPSCOUT_DEFAULT_USER_ID')?.trim()
+            if (raw) {
+              const parsed = Number(raw)
+              if (Number.isInteger(parsed) && parsed > 0) senderId = parsed
+              else console.warn('[stripe-webhook] HELPSCOUT_DEFAULT_USER_ID not a positive integer', { raw })
+            }
+          }
+          if (senderId == null) {
+            console.warn('[stripe-webhook] confirmation skipped: no sender resolvable', { orderId, createdBy })
+          } else {
+            // first_name: contact full_name's first token, else the HS primary
+            // customer's first name, else a friendly fallback so the greeting is
+            // never "Hi ,". company: the contact's company (conditional in copy).
+            const contact = (proofCtx?.contacts ?? null) as
+              | { full_name?: string | null; companies?: { name?: string | null } | null }
+              | null
+            const fullName = contact?.full_name ?? null
+            const firstName = (fullName?.trim().split(/\s+/)[0]) || (conv.primaryCustomer?.first ?? '') || 'there'
+            const company = contact?.companies?.name ?? ''
+            const { data: tplRow } = await admin
+              .from('reply_templates')
+              .select('body')
+              .eq('id', 'order_paid_confirmation')
+              .maybeSingle()
+            const body = renderTemplate(
+              ((tplRow as { body: string } | null)?.body) ?? ORDER_CONFIRMATION_DEFAULT_BODY,
+              {
+                first_name: firstName,
+                company,
+                payment_reference: (ord.payment_reference as string | null) ?? reference ?? orderId,
+              },
+            )
+            const replyThreadId = await postStaffReply(token, conversationId, {
+              text: body,
+              userId: senderId,
+              customerId: primaryCustomerId,
+              // No status flip — a confirmation, not a designer asking for input.
+            })
+            // Stamp before the (cosmetic) hide so a hide failure can't cause a
+            // resend on a Stripe retry.
+            await admin.from('orders').update({ confirmation_sent_at: new Date().toISOString() }).eq('id', orderId)
+            console.log('[stripe-webhook] confirmation reply sent', { orderId, senderId, replyThreadId })
+            if (replyThreadId > 0) {
+              try {
+                await hideThread(token, conversationId, replyThreadId)
+              } catch (hideErr) {
+                console.warn('[stripe-webhook] confirmation hide failed', hideErr)
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    const msg = e instanceof HsError ? `${e.status} ${e.message}` : (e as Error).message
+    console.warn('[stripe-webhook] confirmation reply failed:', msg)
   }
 
   return new Response('ok', { status: 200 })
