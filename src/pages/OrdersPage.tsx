@@ -8,19 +8,21 @@ import { logAudit } from '../lib/audit'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency } from '../lib/types'
 
-// Orders / fulfilment surface (Ordering & checkout, Step 6).
+// Orders / "to order" surface (Ordering & checkout, Step 6 — overhauled).
 //
-// The "go print this" signal for the team: every PAID order awaiting
-// dispatch, with the approved artwork, the spec, the quantity, the
-// delivery address, the payment reference and the Xero invoice link.
-// A designer marks an order fulfilled once it ships, moving it to the
-// quieter "Recently fulfilled" list below.
+// The hand-off queue between "customer paid" and Stock Control. Fulfilment
+// (production + shipping) is Stock Control's job, not this app's; here a paid
+// order is compiled and PLACED — into production (in-house) or with a supplier
+// — and then drops off. Phase 1 wires the in-house route: posting the
+// structured production note onto the Help Scout thread (the
+// helpscout-inhouse-order webhook ingests it) lands once Dropbox is connected;
+// for now the page captures the two things that gate placing an order — the
+// date required and the Dropbox order folder (the prepped source artwork +
+// the order number/project) — and marks the order placed.
 //
 // Reads orders directly (authenticated designers have RLS select on
-// proofs.orders, 000229) joined to the proof's contact/company and the
-// chosen variant. Gated behind the ordering toggle at the nav level;
-// the page also shows a calm "ordering is off" state if reached directly
-// while the feature is disabled.
+// proofs.orders, 000229) joined to the proof's contact/company, the chosen
+// variant, and the material's production route + lead time.
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 // Reactivating an expired link extends it by the same window create-order uses.
@@ -46,6 +48,9 @@ interface OrderRow {
   xero_invoice_error: string | null
   paid_at: string | null
   fulfilled_at: string | null
+  // Order-placement fields (000252).
+  date_required: string | null
+  dropbox_folder_url: string | null
   person_quantities: { name: string; quantity: number }[] | null
   ship_to_name: string | null
   ship_to_email: string | null
@@ -58,16 +63,20 @@ interface OrderRow {
     country?: string | null
   } | null
   proof_id: string
-  material_variants: { display_name: string | null; materials: { display_name: string | null } | null } | null
+  material_variants: {
+    display_name: string | null
+    materials: { display_name: string | null; production_route: string | null; lead_time_max_days: number | null } | null
+  } | null
   proofs: { contacts: { full_name: string | null; companies: { name: string | null } | null } | null } | null
 }
 
 const SELECT = `
   id, status, token, expires_at, sent_at, currency, quantity, names_count, has_personalisation,
   custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping,
-  payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, person_quantities,
+  payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at,
+  date_required, dropbox_folder_url, person_quantities,
   ship_to_name, ship_to_email, ship_to_address, proof_id,
-  material_variants(display_name, materials(display_name)),
+  material_variants(display_name, materials(display_name, production_route, lead_time_max_days)),
   proofs(contacts(full_name, companies(name)))
 `
 
@@ -76,6 +85,14 @@ const SELECT = `
 // pushes expires_at forward.
 function isExpired(o: OrderRow): boolean {
   return o.status === 'sent' && o.expires_at != null && new Date(o.expires_at).getTime() < Date.now()
+}
+
+// Production route from the order's material. 'supplier' is the outsourced
+// route (phase 2 — the supplier-email hand-off); 'in_house' posts the
+// production note. Null when the material is unknown (custom quote).
+function routeOf(o: OrderRow): 'in_house' | 'supplier' | null {
+  const r = o.material_variants?.materials?.production_route
+  return r === 'supplier' ? 'supplier' : r === 'in_house' ? 'in_house' : null
 }
 
 function customerLabel(o: OrderRow): string {
@@ -101,12 +118,43 @@ function orderTotal(o: OrderRow): number | null {
   return round2(parts.reduce((acc: number, p) => acc + Number(p ?? 0), 0))
 }
 
+// Add N working days to a date (skips Sat/Sun). Used to suggest the date
+// required from the material's lead time (a business-day figure); the designer
+// confirms or overrides it on the card.
+function addBusinessDays(from: Date, n: number): Date {
+  const d = new Date(from)
+  let added = 0
+  while (added < n) {
+    d.setDate(d.getDate() + 1)
+    const day = d.getDay()
+    if (day !== 0 && day !== 6) added++
+  }
+  return d
+}
+
+function toISODate(d: Date): string {
+  return d.toISOString().slice(0, 10)
+}
+
+// Suggested date required: today + the material's max lead time (working days).
+// Null when there's no lead time to base it on.
+function suggestedDate(o: OrderRow): string | null {
+  const lead = o.material_variants?.materials?.lead_time_max_days
+  if (typeof lead !== 'number' || lead <= 0) return null
+  return toISODate(addBusinessDays(new Date(), lead))
+}
+
+// Whole days since an ISO timestamp (for the "paid N days ago" ageing cue).
+function daysSince(iso: string | null): number | null {
+  if (!iso) return null
+  const ms = Date.now() - new Date(iso).getTime()
+  if (!Number.isFinite(ms)) return null
+  return Math.floor(ms / (24 * 60 * 60 * 1000))
+}
+
 // Turn the stored Xero rejection into one human-readable line. The raw value
 // is usually "<status> <JSON body>" from Xero's API; the useful part is the
-// validation message(s) buried in Elements[].ValidationErrors[].Message (e.g.
-// "Organisation is not subscribed to currency USD") and any line-item ones.
-// Falls back to Xero's top-level Message, then to a trimmed raw string for our
-// own plain-text errors (e.g. "Xero is not connected…").
+// validation message(s) buried in Elements[].ValidationErrors[].Message.
 function friendlyInvoiceError(raw: string | null): string | null {
   if (!raw) return null
   const braceIdx = raw.indexOf('{')
@@ -164,8 +212,6 @@ export default function OrdersPage() {
       setOrders(rows)
       setLoading(false)
 
-      // Reminder activity for the awaiting-payment cards: only real sends
-      // (state 'sent') count — dry-run rows are deliberately not surfaced here.
       const sentIds = rows.filter((r) => r.status === 'sent').map((r) => r.id)
       if (sentIds.length > 0) {
         const { data: nudgeData } = await supabase
@@ -187,9 +233,8 @@ export default function OrdersPage() {
         }
       }
 
-      // Representative thumbnail per proof — one call each, first non-QR
-      // image. The card links to the proof for the authoritative
-      // approved artwork; this is a recognition aid, not the record.
+      // Representative thumbnail per proof — a recognition aid; the card links
+      // to the proof for the authoritative approved artwork.
       const proofIds = Array.from(new Set(rows.filter((r) => r.status === 'paid').map((r) => r.proof_id)))
       await Promise.all(
         proofIds.map(async (proofId) => {
@@ -209,7 +254,21 @@ export default function OrdersPage() {
     return () => { cancelled = true }
   }, [])
 
-  async function markFulfilled(orderId: string) {
+  // Persist a single order field (the date / Dropbox folder edits), merging
+  // into local state so the gate + UI reflect it immediately.
+  async function saveOrderField(orderId: string, patch: Partial<OrderRow>) {
+    setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, ...patch } : o)))
+    await supabase
+      .from('orders')
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq('id', orderId)
+  }
+
+  // Place the order: record the placement (status → fulfilled, the "ordered"
+  // terminal state on this page) plus the captured date + folder. The Help
+  // Scout subject + production-note hand-off to Stock Control lands once Dropbox
+  // is connected — wired into this same action then.
+  async function markOrdered(orderId: string, fields: { date_required: string | null; dropbox_folder_url: string | null }) {
     setBusyId(orderId)
     try {
       const { data: { session } } = await supabase.auth.getSession()
@@ -220,6 +279,8 @@ export default function OrdersPage() {
           status: 'fulfilled',
           fulfilled_at: new Date().toISOString(),
           fulfilled_by: uid,
+          date_required: fields.date_required,
+          dropbox_folder_url: fields.dropbox_folder_url,
           updated_at: new Date().toISOString(),
         })
         .eq('id', orderId)
@@ -227,9 +288,16 @@ export default function OrdersPage() {
       if (!error) {
         setOrders((prev) =>
           prev.map((o) =>
-            o.id === orderId ? { ...o, status: 'fulfilled', fulfilled_at: new Date().toISOString() } : o,
+            o.id === orderId ? { ...o, status: 'fulfilled', fulfilled_at: new Date().toISOString(), ...fields } : o,
           ),
         )
+        void logAudit({
+          action: 'order.placed',
+          targetType: 'order',
+          targetId: orderId,
+          targetLabel: `Order ${orderId}`,
+          afterValue: { date_required: fields.date_required, dropbox_folder_url: fields.dropbox_folder_url },
+        })
       }
     } finally {
       setBusyId(null)
@@ -244,8 +312,6 @@ export default function OrdersPage() {
         { body: { order_id: o.id } },
       )
       if (error || !data?.ok) {
-        // Reflect the freshly-stamped reason on the row; the card renders it as
-        // a friendly one-line message (and the pill tooltip) via friendlyInvoiceError.
         const msg = data?.error ?? error?.message ?? 'Could not create the invoice. Please try again.'
         setOrders((prev) => prev.map((r) => (r.id === o.id ? { ...r, xero_invoice_error: msg } : r)))
         return
@@ -302,15 +368,25 @@ export default function OrdersPage() {
   }
 
   const awaitingPayment = orders.filter((o) => o.status === 'sent')
-  const awaiting = orders.filter((o) => o.status === 'paid')
-  const fulfilled = orders.filter((o) => o.status === 'fulfilled').slice(0, 30)
+  // To order: paid, not yet placed. A blocking problem (failed invoice) floats
+  // to the top; otherwise oldest-paid-first so nothing sits in the queue.
+  const hasInvoiceProblem = (o: OrderRow) => !o.xero_invoice_id && !!o.xero_invoice_error
+  const toOrder = orders
+    .filter((o) => o.status === 'paid')
+    .sort((a, b) => {
+      const ap = hasInvoiceProblem(a) ? 0 : 1
+      const bp = hasInvoiceProblem(b) ? 0 : 1
+      if (ap !== bp) return ap - bp
+      return new Date(a.paid_at ?? a.sent_at ?? 0).getTime() - new Date(b.paid_at ?? b.sent_at ?? 0).getTime()
+    })
+  const recentlyOrdered = orders.filter((o) => o.status === 'fulfilled').slice(0, 30)
 
   return (
     <DesignerChrome active="orders">
       <main className="mx-auto max-w-[1100px] px-4 py-8 sm:px-7">
         <h1 className="text-xl font-semibold text-ink">Orders</h1>
         <p className="mt-1 text-sm text-ink-soft">
-          From payment link to dispatch — links awaiting payment, paid orders to print, and recently shipped.
+          From payment link to production. Paid orders waiting to be compiled and placed — into production or with a supplier — then handed to Stock Control.
         </p>
 
         {loading ? (
@@ -319,7 +395,7 @@ export default function OrdersPage() {
           <>
             {awaitingPayment.length > 0 && (
               <section className="mt-6">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Awaiting payment</h2>
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Awaiting payment · {awaitingPayment.length}</h2>
                 <p className="mt-1 text-[13px] text-ink-mute">
                   Payment links that have been sent but not paid yet. Copy a link to re-send it, or reactivate an expired one (extends it {ORDER_EXPIRY_DAYS} days).
                 </p>
@@ -341,21 +417,27 @@ export default function OrdersPage() {
             )}
 
             <section className="mt-10">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">To fulfil</h2>
+              <div className="flex items-baseline justify-between gap-3">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">To order · {toOrder.length}</h2>
+                {toOrder.length > 0 && <span className="text-[12px] text-ink-mute">Oldest paid first</span>}
+              </div>
               <div className="mt-3">
-                {awaiting.length === 0 ? (
+                {toOrder.length === 0 ? (
                   <PanelShell className="text-center">
-                    <p className="text-sm text-ink-soft">Nothing waiting to be fulfilled right now.</p>
+                    <p className="text-sm text-ink-soft">Nothing waiting to be ordered right now.</p>
                   </PanelShell>
                 ) : (
                   <div className="space-y-4">
-                    {awaiting.map((o) => (
+                    {toOrder.map((o) => (
                       <OrderCard
                         key={o.id}
                         order={o}
                         thumb={thumbs[o.proof_id] ?? null}
+                        route={routeOf(o)}
+                        suggested={suggestedDate(o)}
                         busy={busyId === o.id}
-                        onFulfil={() => void markFulfilled(o.id)}
+                        onOrder={(fields) => void markOrdered(o.id, fields)}
+                        onSaveField={(patch) => void saveOrderField(o.id, patch)}
                         onRetryInvoice={() => void retryInvoice(o)}
                       />
                     ))}
@@ -364,11 +446,11 @@ export default function OrdersPage() {
               </div>
             </section>
 
-            {fulfilled.length > 0 && (
+            {recentlyOrdered.length > 0 && (
               <section className="mt-10">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Recently fulfilled</h2>
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Recently ordered</h2>
                 <div className="mt-3 divide-y divide-line-soft rounded-xl border border-line bg-surface">
-                  {fulfilled.map((o) => (
+                  {recentlyOrdered.map((o) => (
                     <div key={o.id} className="flex items-center justify-between gap-4 px-4 py-3 text-sm">
                       <div className="min-w-0">
                         <Link to={`/proofs/${o.proof_id}`} className="font-medium text-ink hover:underline">
@@ -378,7 +460,7 @@ export default function OrdersPage() {
                       </div>
                       <div className="flex items-center gap-3 text-ink-soft">
                         <span>{o.quantity != null ? `${o.quantity.toLocaleString()} cards` : 'Custom'}</span>
-                        <span className="text-ink-mute">Fulfilled {formatDate(o.fulfilled_at)}</span>
+                        <span className="text-ink-mute">Ordered {formatDate(o.fulfilled_at)}</span>
                       </div>
                     </div>
                   ))}
@@ -395,14 +477,20 @@ export default function OrdersPage() {
 function OrderCard({
   order,
   thumb,
+  route,
+  suggested,
   busy,
-  onFulfil,
+  onOrder,
+  onSaveField,
   onRetryInvoice,
 }: {
   order: OrderRow
   thumb: GridImage | null
+  route: 'in_house' | 'supplier' | null
+  suggested: string | null
   busy: boolean
-  onFulfil: () => void
+  onOrder: (fields: { date_required: string | null; dropbox_folder_url: string | null }) => void
+  onSaveField: (patch: Partial<OrderRow>) => void
   onRetryInvoice: () => void
 }) {
   const total = orderTotal(order)
@@ -413,6 +501,17 @@ function OrderCard({
         .map((s) => (s ?? '').trim())
         .filter(Boolean)
     : []
+  const paidDays = daysSince(order.paid_at)
+
+  // Local drafts for the two placement fields. Date seeds from the saved value,
+  // else the lead-time suggestion (the designer still has to engage with it to
+  // place — the gate checks the value is set). Folder saves on blur.
+  const [dateValue, setDateValue] = useState<string>(order.date_required ?? suggested ?? '')
+  const [folderDraft, setFolderDraft] = useState<string>(order.dropbox_folder_url ?? '')
+
+  const folderSet = folderDraft.trim().length > 0
+  const isSupplier = route === 'supplier'
+  const canOrder = !isSupplier && folderSet && dateValue.length > 0
 
   return (
     <PanelShell>
@@ -444,6 +543,11 @@ function OrderCard({
             {!order.xero_invoice_id && order.xero_invoice_error && (
               <Pill colour="critical" title={invoiceError ?? undefined}>Invoice failed</Pill>
             )}
+            {route && (
+              <span className="rounded-full border border-line px-2 py-0.5 text-[11px] text-ink-soft">
+                {route === 'in_house' ? 'In-house' : 'Supplier'}
+              </span>
+            )}
           </div>
           <p className="mt-0.5 text-sm text-ink-soft">
             {specLabel(order)}
@@ -465,7 +569,7 @@ function OrderCard({
           )}
           <p className="mt-0.5 text-[13px] text-ink-mute">
             Ref {order.payment_reference}
-            {order.paid_at ? ` · paid ${formatDate(order.paid_at)}` : ''}
+            {order.paid_at ? ` · paid ${paidDays === 0 ? 'today' : paidDays === 1 ? 'yesterday' : `${paidDays} days ago`}` : ''}
             {total != null ? ` · ${formatPrice(total, order.currency)}` : ''}
           </p>
 
@@ -474,6 +578,36 @@ function OrderCard({
               <span className="font-medium">Invoice not created.</span> {invoiceError}
             </p>
           )}
+
+          {/* Placement fields: date required + the Dropbox order folder (the gate). */}
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Date required</span>
+              <input
+                type="date"
+                value={dateValue}
+                onChange={(e) => { setDateValue(e.target.value); onSaveField({ date_required: e.target.value || null }) }}
+                className="mt-1 h-[38px] w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+              />
+              {suggested && !order.date_required && (
+                <span className="mt-1 block text-[11px] text-ink-mute">Suggested from lead time — confirm or change</span>
+              )}
+            </label>
+            <label className="block">
+              <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Order folder (Dropbox)</span>
+              <input
+                type="url"
+                value={folderDraft}
+                onChange={(e) => setFolderDraft(e.target.value)}
+                onBlur={() => { if (folderDraft.trim() !== (order.dropbox_folder_url ?? '')) onSaveField({ dropbox_folder_url: folderDraft.trim() || null }) }}
+                placeholder="Paste the order folder link…"
+                className="mt-1 h-[38px] w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+              />
+              <span className={`mt-1 block text-[11px] ${folderSet ? 'text-in-stock' : 'text-low'}`}>
+                {folderSet ? 'Artwork folder linked' : 'Prep the artwork, then paste the folder link'}
+              </span>
+            </label>
+          </div>
 
           {addrLines.length > 0 ? (
             <div className="mt-3 rounded-lg border border-line bg-canvas px-3 py-2 text-[13px] text-ink-soft">
@@ -488,9 +622,23 @@ function OrderCard({
         </div>
 
         <div className="flex shrink-0 flex-col gap-2 sm:items-end">
-          <ButtonInk onClick={onFulfil} disabled={busy}>
-            {busy ? 'Marking…' : 'Mark as fulfilled'}
-          </ButtonInk>
+          {isSupplier ? (
+            <span className="rounded-lg border border-line bg-canvas px-3 py-2 text-center text-[12px] text-ink-mute">
+              Supplier order — hand-off coming in phase 2
+            </span>
+          ) : (
+            <ButtonInk
+              onClick={() => onOrder({ date_required: dateValue || null, dropbox_folder_url: folderDraft.trim() || null })}
+              disabled={busy || !canOrder}
+            >
+              {busy ? 'Placing…' : 'Mark as ordered'}
+            </ButtonInk>
+          )}
+          {!isSupplier && !canOrder && (
+            <span className="text-right text-[11px] text-ink-mute">
+              {!folderSet ? 'Add the order folder to enable' : 'Set a date required to enable'}
+            </span>
+          )}
           <Link to={`/proofs/${order.proof_id}`}>
             <ButtonGhost size="sm">View proof &amp; artwork</ButtonGhost>
           </Link>
