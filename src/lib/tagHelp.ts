@@ -77,6 +77,8 @@ const TAG_HELP: Record<TagHelpFamily, Record<string, string>> = {
       "The customer approved an older version, not the current one, so the sign-off does not count until the current version is approved.",
     nudges_exhausted:
       'We have sent the maximum number of reminders with no reply. This one needs a human nudge, such as a phone call.',
+    approved_no_order:
+      'The proof is approved but no order (pay) link has been sent to the customer yet.',
   },
 
   // ── Dashboard status buckets. Keyed by ProofBucket (dashboardGrouping).

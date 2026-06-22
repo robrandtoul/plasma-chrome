@@ -42,6 +42,8 @@ export function attentionReason(
       return meta?.no_contact
         ? `${meta?.sent ?? 2} reminders sent, never opened or replied — may not be reaching them`
         : `${meta?.sent ?? 2} reminders sent — still no response`
+    case 'approved_no_order':
+      return `Approved ${days ?? '—'} days ago — no order link sent yet`
   }
 }
 
@@ -68,6 +70,8 @@ export function attentionResolution(code: NeedsAttentionRule): string {
       return 'The customer approved a version that isn’t the current one. Check with them, then get them to approve the current version — or open the approved version and “Set as current” if that’s the one they want.'
     case 'nudges_exhausted':
       return 'Email reminders have run their course — time for a phone call. If they’ve never opened anything, double-check the email address first (the proof may be landing in spam).'
+    case 'approved_no_order':
+      return 'The proof is approved but no pay link has gone out. Use “Create order” on the proof to send one — or snooze if this order is being invoiced another way.'
   }
 }
 
@@ -85,6 +89,7 @@ export function attentionShortLabel(code: string): string {
     case 'stuck_in_progress':          return 'stuck in progress'
     case 'approved_earlier_version':   return 'earlier version approved'
     case 'nudges_exhausted':           return 'reminders exhausted'
+    case 'approved_no_order':          return 'no order sent'
     default:                           return code.replace(/_/g, ' ')
   }
 }
@@ -121,6 +126,10 @@ export function nudgeTemplateFor(code: NeedsAttentionRule): NudgeTemplateId | nu
     // the resolution copy.
     case 'approved_earlier_version':
     case 'nudges_exhausted':
+    // approved_no_order → the fix is sending a pay link ("Create order"), a
+    // designer action, not a customer reminder. Resolve popover falls through
+    // to snooze + the resolution copy.
+    case 'approved_no_order':
       return null
   }
 }

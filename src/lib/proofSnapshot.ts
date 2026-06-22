@@ -207,6 +207,7 @@ const RULE_LEAD: Record<string, string> = {
   stuck_in_progress: 'No movement for a while',
   approved_earlier_version: 'Customer approved an earlier version',
   nudges_exhausted: 'Reminders sent, still no response',
+  approved_no_order: 'Approved — no order link sent',
 }
 
 export function summaryLine(i: SummaryInput): SummaryLine | null {
