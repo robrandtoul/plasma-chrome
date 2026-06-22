@@ -248,15 +248,20 @@ Deno.serve(async (req) => {
       // (so the VAT invoice is emailed exactly once).
       const { data: order } = await admin
         .from('orders')
-        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, xero_invoice_id, invoice_emailed_at')
+        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, ship_dest_country, xero_invoice_id, invoice_emailed_at')
         .eq('id', orderId)
         .single()
       let invoiceId: string | null = (order?.xero_invoice_id as string | null) ?? null
 
-      // Address for the Xero contact + the delivery country that drives
-      // domestic vs international shipping. Normalised from whichever event
-      // fulfilled this order (Elements Address element, or Checkout's address).
-      const country = shipAddr?.country ?? null
+      // Delivery country that drives the domestic-vs-international shipping line.
+      // Use the destination the order was RATED against (ship_dest_country, set
+      // by create-checkout from the customer's pay-page choice) so the invoice's
+      // shipping code matches the shipping charge + US tariff computed from it.
+      // The Stripe-collected address country can differ (the buyer may type a
+      // different country into the card form than the destination they picked),
+      // so it's only the fallback when the order has no rated destination
+      // (e.g. a free/manual order with no hint).
+      const country = (order?.ship_dest_country as string | null) ?? shipAddr?.country ?? null
       const invoiceAddress = shipAddr
         ? {
             line1: shipAddr.line1 ?? null,
