@@ -1559,7 +1559,10 @@ const ACTIVITY_VISUAL: Record<DashboardLatestEvent['event_type'], ActivityVisual
   staff_reply: {
     icon: Send,
     tint: 'var(--c-ink-mute)',
-    verbCopy: () => 'replied by email',
+    // Outbound: the company is the recipient, not the sender, so this must
+    // read differently from customer_reply's "replied by email" — otherwise
+    // a reply we send looks like the customer replying to us.
+    verbCopy: () => 'was sent a reply',
   },
 }
 
