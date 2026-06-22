@@ -347,6 +347,37 @@ export async function recordInvoicePayment(
   return { ok: true, error: null }
 }
 
+// Email an already-created invoice to its contact, using the organisation's
+// default branding-theme invoice email (Xero composes + sends it — we don't
+// supply a body). This is what delivers the customer's VAT receipt to their
+// inbox. Xero requires the invoice to be ACCREC and SUBMITTED/AUTHORISED
+// (createSalesInvoice defaults to AUTHORISED) and the contact to carry an
+// email address (set from the Stripe payer at create). Because the webhook
+// records the clearing-account payment before this call, the emailed invoice
+// reads as PAID. POST /Invoices/{id}/Email takes an empty body and responds
+// 204 No Content on success. Best-effort: the caller logs the error and never
+// fails the webhook over it. Returns ok=false with Xero's text on any non-2xx.
+export async function emailSalesInvoice(
+  accessToken: string,
+  tenantId: string,
+  invoiceId: string,
+): Promise<{ ok: boolean; error: string | null }> {
+  const res = await fetch(`https://api.xero.com/api.xro/2.0/Invoices/${invoiceId}/Email`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Xero-tenant-id': tenantId,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: '{}',
+  })
+  if (res.ok) return { ok: true, error: null } // 204 No Content on success
+  const text = await res.text().catch(() => '<body read failed>')
+  console.error('[xero] invoice email failed:', res.status, text)
+  return { ok: false, error: `${res.status} ${text}` }
+}
+
 // List the org's BANK accounts (name + code), for the admin Stripe-clearing-
 // account picker. Returns [] on any failure (the picker just shows empty).
 export async function listBankAccounts(

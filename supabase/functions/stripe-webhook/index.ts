@@ -5,16 +5,18 @@
 // Per Architecture rule #2, the app does NOT record the payment into the
 // books — the existing near-real-time Stripe→Xero bank feed settles it.
 // On a verified event this function: flips the order to 'paid' (idempotently),
-// creates the Xero invoice (and, if a clearing account is set, marks it paid),
-// and posts a branded order-paid confirmation to the customer on the proof's
-// Help Scout thread (one-shot on confirmation_sent_at, best-effort).
+// creates the Xero invoice (once — gated on xero_invoice_id) and, if a clearing
+// account is set, marks it paid; emails that invoice to the customer as their
+// VAT receipt (once — gated on invoice_emailed_at); and posts a branded
+// order-paid confirmation to the customer on the proof's Help Scout thread
+// (once — gated on confirmation_sent_at). Steps after the flip are best-effort.
 //
 // Auth: none / verify_jwt = false — Stripe calls this server-to-server
 // and authenticates via the Stripe-Signature header, which we verify
 // against STRIPE_WEBHOOK_SECRET below. Do not add a Supabase JWT gate.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { getAccessContext, createSalesInvoice, recordInvoicePayment } from '../_shared/xero.ts'
+import { getAccessContext, createSalesInvoice, recordInvoicePayment, emailSalesInvoice } from '../_shared/xero.ts'
 import { buildOrderInvoiceLines } from '../_shared/invoiceBuild.ts'
 import { getAccessToken, fetchConversation, postStaffReply, hideThread, HsError } from '../_shared/helpscout.ts'
 import { renderTemplate, ORDER_CONFIRMATION_DEFAULT_BODY } from '../_shared/replyTemplates.ts'
@@ -240,14 +242,16 @@ Deno.serve(async (req) => {
       const currency = currencyUpper
       const expectedTotal = amountMajor
 
-      // Pull the order's price breakdown (stamped at checkout) so the
-      // invoice mirrors Xero's usual line split: product (with its
-      // inventory item) + tooling (020) + shipping (050/052).
+      // Pull the order's price breakdown (stamped at checkout) + the two
+      // idempotency guards: xero_invoice_id (so a duplicate Stripe event mints
+      // no second invoice / clearing-account payment) and invoice_emailed_at
+      // (so the VAT invoice is emailed exactly once).
       const { data: order } = await admin
         .from('orders')
-        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping')
+        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, xero_invoice_id, invoice_emailed_at')
         .eq('id', orderId)
         .single()
+      let invoiceId: string | null = (order?.xero_invoice_id as string | null) ?? null
 
       // Address for the Xero contact + the delivery country that drives
       // domestic vs international shipping. Normalised from whichever event
@@ -264,87 +268,107 @@ Deno.serve(async (req) => {
           }
         : null
 
-      // Resolve the invoice lines (product item code + tooling + shipping) via
-      // the shared builder — the SAME resolution the Xero self-test exercises,
-      // so a green self-test means the live path books to the same codes.
-      const { lines } = await buildOrderInvoiceLines(
-        admin,
-        order ?? {
-          proof_id: null,
-          material_variant_id: null,
-          material_option_id: null,
-          quantity: null,
-          names_count: null,
-          custom_quote_total: null,
-          amount_cards: null,
-          amount_tooling: null,
-          amount_personalisation: null,
-          amount_shipping: null,
-        },
-        { reference: referenceSafe, currency, expectedTotal, country },
-      )
-
       const contactName = shipName || shipEmail || 'Customer'
       const contactEmail = shipEmail
-      const created = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
-        contactName,
-        contactEmail,
-        currency,
-        reference: referenceSafe,
-        lines,
-        address: invoiceAddress,
-      })
-      let invoiceId = created.invoiceId
-      // Xero's rejection text, kept so we can stamp it on the order when both
-      // attempts fail — that's what the Orders page surfaces as "Invoice
-      // failed" and what makes a silent miss visible (000240).
-      let lastError = created.error
 
-      // On-error fallback: if the itemised lines were rejected by Xero
-      // (e.g. an item code that doesn't exist in this org — the classic
-      // case being a Demo org without the live item codes, or codes that
-      // lost their leading zero on import), retry once as a single summary
-      // line so an invoice is still created. The sum-mismatch fallback
-      // above runs *before* the call; this one catches a post-call
-      // rejection. Both degrade gracefully rather than leaving no invoice.
-      const wasItemised = lines.some((l) => l.itemCode)
-      if (!invoiceId && wasItemised) {
-        console.warn(`[stripe-webhook] itemised invoice rejected for order ${orderId}; retrying as a single summary line`)
-        const retry = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
+      // Create the invoice only if we haven't already (a duplicate event must
+      // never mint a second invoice or record a second clearing payment).
+      if (!invoiceId) {
+        // Resolve the invoice lines (product item code + tooling + shipping) via
+        // the shared builder — the SAME resolution the Xero self-test exercises,
+        // so a green self-test means the live path books to the same codes.
+        const { lines } = await buildOrderInvoiceLines(
+          admin,
+          order ?? {
+            proof_id: null,
+            material_variant_id: null,
+            material_option_id: null,
+            quantity: null,
+            names_count: null,
+            custom_quote_total: null,
+            amount_cards: null,
+            amount_tooling: null,
+            amount_personalisation: null,
+            amount_shipping: null,
+          },
+          { reference: referenceSafe, currency, expectedTotal, country },
+        )
+
+        const created = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
           contactName,
           contactEmail,
           currency,
           reference: referenceSafe,
-          lines: [{ description: `Order ${referenceSafe}`, amount: expectedTotal, itemCode: null }],
+          lines,
           address: invoiceAddress,
         })
-        invoiceId = retry.invoiceId
-        if (retry.error) lastError = retry.error
-      }
-      if (invoiceId) {
-        // Success — store the id and clear any prior error so a row that has
-        // since invoiced never keeps a stale "failed" flag.
-        await admin.from('orders').update({ xero_invoice_id: invoiceId, xero_invoice_error: null }).eq('id', orderId)
+        invoiceId = created.invoiceId
+        // Xero's rejection text, kept so we can stamp it on the order when both
+        // attempts fail — that's what the Orders page surfaces as "Invoice
+        // failed" and what makes a silent miss visible (000240).
+        let lastError = created.error
 
-        // If a Stripe clearing account is configured (000242), record the
-        // payment into it so the invoice is marked PAID immediately, matching
-        // Xero's own Pay-now flow. The Stripe account feed later reconciles
-        // against this payment rather than double-counting. Best-effort: a
-        // failure here leaves the invoice created-but-unpaid for the feed to
-        // settle, and never fails the webhook.
-        const { data: payCfg } = await admin.from('settings').select('xero_stripe_account_code').eq('id', 1).single()
-        const stripeAcctCode = payCfg?.xero_stripe_account_code as string | null | undefined
-        if (stripeAcctCode) {
-          const pay = await recordInvoicePayment(ctx.accessToken, ctx.tenantId, {
-            invoiceId,
-            accountCode: stripeAcctCode,
-            amount: expectedTotal,
+        // On-error fallback: if the itemised lines were rejected by Xero
+        // (e.g. an item code that doesn't exist in this org — the classic
+        // case being a Demo org without the live item codes, or codes that
+        // lost their leading zero on import), retry once as a single summary
+        // line so an invoice is still created. The sum-mismatch fallback
+        // above runs *before* the call; this one catches a post-call
+        // rejection. Both degrade gracefully rather than leaving no invoice.
+        const wasItemised = lines.some((l) => l.itemCode)
+        if (!invoiceId && wasItemised) {
+          console.warn(`[stripe-webhook] itemised invoice rejected for order ${orderId}; retrying as a single summary line`)
+          const retry = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
+            contactName,
+            contactEmail,
+            currency,
+            reference: referenceSafe,
+            lines: [{ description: `Order ${referenceSafe}`, amount: expectedTotal, itemCode: null }],
+            address: invoiceAddress,
           })
-          if (!pay.ok) console.error(`[stripe-webhook] xero payment record failed for order ${orderId}:`, pay.error)
+          invoiceId = retry.invoiceId
+          if (retry.error) lastError = retry.error
         }
-      } else {
-        console.error(`[stripe-webhook] xero invoice not created for order ${orderId}:`, lastError)
-        await admin.from('orders').update({ xero_invoice_error: lastError ?? 'Xero did not return an invoice' }).eq('id', orderId)
+        if (invoiceId) {
+          // Success — store the id and clear any prior error so a row that has
+          // since invoiced never keeps a stale "failed" flag.
+          await admin.from('orders').update({ xero_invoice_id: invoiceId, xero_invoice_error: null }).eq('id', orderId)
+
+          // If a Stripe clearing account is configured (000242), record the
+          // payment into it so the invoice is marked PAID immediately, matching
+          // Xero's own Pay-now flow. The Stripe account feed later reconciles
+          // against this payment rather than double-counting. Best-effort: a
+          // failure here leaves the invoice created-but-unpaid for the feed to
+          // settle, and never fails the webhook.
+          const { data: payCfg } = await admin.from('settings').select('xero_stripe_account_code').eq('id', 1).single()
+          const stripeAcctCode = payCfg?.xero_stripe_account_code as string | null | undefined
+          if (stripeAcctCode) {
+            const pay = await recordInvoicePayment(ctx.accessToken, ctx.tenantId, {
+              invoiceId,
+              accountCode: stripeAcctCode,
+              amount: expectedTotal,
+            })
+            if (!pay.ok) console.error(`[stripe-webhook] xero payment record failed for order ${orderId}:`, pay.error)
+          }
+        } else {
+          console.error(`[stripe-webhook] xero invoice not created for order ${orderId}:`, lastError)
+          await admin.from('orders').update({ xero_invoice_error: lastError ?? 'Xero did not return an invoice' }).eq('id', orderId)
+        }
+      }
+
+      // Email the invoice to the customer as their VAT receipt — once
+      // (idempotent on invoice_emailed_at). Runs after the clearing-account
+      // payment above, so the emailed invoice reads as PAID. Best-effort: a
+      // miss is cosmetic (the invoice exists in Xero + the pay-page shows a
+      // download link), logged not stamped as a hard error.
+      if (invoiceId && !order?.invoice_emailed_at) {
+        const emailed = await emailSalesInvoice(ctx.accessToken, ctx.tenantId, invoiceId)
+        if (emailed.ok) {
+          await admin.from('orders').update({ invoice_emailed_at: new Date().toISOString() }).eq('id', orderId)
+          console.log('[stripe-webhook] invoice emailed', { orderId, invoiceId })
+        } else {
+          console.warn('[stripe-webhook] invoice email failed', { orderId, error: emailed.error })
+        }
       }
     }
   } catch (e) {
@@ -360,8 +384,8 @@ Deno.serve(async (req) => {
   // Help Scout emails it to the customer at creation time — then hide it so the
   // team's view stays tidy. One-shot on confirmation_sent_at; skipped silently
   // when the proof has no linked conversation; never fails the webhook. (The
-  // VAT invoice itself reaches the customer via the pay-page's self-serve link
-  // + Stripe's receipt, so this message deliberately doesn't carry the invoice.)
+  // VAT invoice goes to the customer as its own email — the Xero invoice email
+  // above — plus a pay-page download link, so this warm note doesn't carry it.)
   try {
     const { data: ord } = await admin
       .from('orders')

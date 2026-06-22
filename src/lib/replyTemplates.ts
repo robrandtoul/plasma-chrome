@@ -214,5 +214,5 @@ export const DEFAULT_BODIES: Record<string, string> = {
   // Order-paid confirmation — posted automatically by the Stripe webhook when a
   // payment lands; Help Scout emails it to the customer (migration 000248).
   order_paid_confirmation:
-    `Hi {first_name},\n\nThank you — we've received your payment and your cards{? company} for {company}{/?} are now in production. Your order reference is {payment_reference}.\n\nWe'll be in touch with dispatch details as soon as your cards are on their way.\n\nIf you have any questions, just reply to this email.`,
+    `Hi {first_name},\n\nThank you — we've received your payment and your cards{? company} for {company}{/?} are now in production. Your order reference is {payment_reference}.\n\nWe'll email you dispatch details as soon as your cards are on their way, and your VAT invoice will arrive in a separate email shortly.\n\nIf you have any questions, just reply to this email.`,
 }
