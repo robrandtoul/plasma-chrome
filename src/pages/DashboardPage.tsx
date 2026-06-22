@@ -1608,8 +1608,20 @@ function LatestActivityPanel({
             // proof has no company, and in that case skip the secondary
             // actor line so it doesn't read as "Clayton Furry / Clayton
             // Furry".
-            const primaryLabel = e.company_name || e.actor_name
-            const showActor = Boolean(e.company_name) && e.actor_name !== primaryLabel
+            //
+            // Staff replies are the exception: their actor is "You" (us, the
+            // sender), not the customer — so it must never become the bold
+            // primary label, which produces "You was sent a reply" on a
+            // proof with no company. Lead with the customer (company, then
+            // contact) and keep "You" on the actor subline, matching the
+            // with-company rendering.
+            const isStaffReply = e.event_type === 'staff_reply'
+            const primaryLabel = isStaffReply
+              ? e.company_name || e.contact_name || 'Customer'
+              : e.company_name || e.actor_name
+            const showActor = isStaffReply
+              ? e.actor_name !== primaryLabel
+              : Boolean(e.company_name) && e.actor_name !== primaryLabel
             // "Notification failed" only makes sense for the customer-side
             // approve / request_changes events that fire a Help Scout post.
             // Views, overrides, and the synthetic *_reply rows carry no thread
