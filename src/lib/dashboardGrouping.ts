@@ -413,18 +413,34 @@ export function recentHelpscoutActivity(p: DashboardProject, withinDays = 3): He
 
 // ── Activity clock (single source of truth for sort + grouping) ───────────────
 //
-// The dashboard's "most recent activity" is `latest_event_at` (the latest
-// proof event — including the latest customer view of the day, since migration
-// 000242), falling back to `last_activity_at` only for proofs that have no
-// events at all. The Activity sort and the Today / This week / Older grouping
-// MUST read this same field, or a proof can sort to the top of the list yet be
-// filed under a lower time bucket (the bug that buried Willis). Keeping the key
-// in one helper guarantees the sort order and the section headers never drift.
+// The dashboard's "most recent activity" is the later of two things: the last
+// customer event (`latest_event_at` — page views, approvals, change requests;
+// includes the latest customer view of the day since migration 000242) and the
+// last version we sent (`version_created_at`). Sending a new version is the
+// single most significant designer action, but it never writes a
+// `dashboard_latest_events` row, so reading `latest_event_at` alone left a
+// just-sent proof filed under its last *customer* event — dropping it out of
+// Today until the customer happened to reopen it. That's what hid the freshly
+// sent Yanko v4: sent today, but the last customer event was three days back, so
+// it sat in "This week". Taking the max of the two surfaces a freshly-sent proof
+// in Today straight away. Falls back to `last_activity_at` only when a proof has
+// neither (a brand-new proof with no current version).
+//
+// The Activity sort and the Today / This week / Older grouping MUST read this
+// same field, or a proof can sort to the top of the list yet be filed under a
+// lower time bucket (the bug that buried Willis). Keeping the key in one helper
+// guarantees the sort order and the section headers never drift.
 
 export function activityTimestamp(
-  p: Pick<DashboardProject, 'latest_event_at' | 'last_activity_at'>,
+  p: Pick<DashboardProject, 'latest_event_at' | 'version_created_at' | 'last_activity_at'>,
 ): string | null {
-  return p.latest_event_at ?? p.last_activity_at ?? null
+  // Both fields are PostgREST timestamptz strings in the same (+00) offset, so
+  // localeCompare orders them correctly — the same string comparison the
+  // Activity sort already uses. Pick the later of the customer-event clock and
+  // the send; fall back to last_activity_at only when neither is present.
+  const candidates = [p.latest_event_at, p.version_created_at].filter(Boolean) as string[]
+  if (candidates.length === 0) return p.last_activity_at ?? null
+  return candidates.reduce((a, b) => (a.localeCompare(b) >= 0 ? a : b))
 }
 
 // ── Grouping functions ────────────────────────────────────────────────────────

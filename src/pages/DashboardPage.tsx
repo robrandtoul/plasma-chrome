@@ -149,10 +149,12 @@ function readChip(): ChipKey {
 }
 
 
-// Derive the relative verb shown on each row from the latest event +
-// the current view state. "Sent today" / "Sent yesterday" / "Sent
-// 3d ago" are the designer-side fallback when no customer event has
-// landed yet.
+// Derive the relative verb + timestamp shown on each row. This is the visible
+// face of the same activity clock activityTimestamp() sorts and groups by, so
+// the two must agree on which moment is "latest": when we've sent a version more
+// recently than the customer's last event, show "Sent …" (not a stale "Viewed
+// 3d ago"), matching the Today section the proof now files under. Once the
+// customer acts on the new version, their event becomes the latest and wins.
 function activityVerb(p: DashboardProject): { verb: string; ts: string | null } {
   if (p.status === 'approved' && p.approved_at) {
     return { verb: 'Approved', ts: p.approved_at }
@@ -160,7 +162,13 @@ function activityVerb(p: DashboardProject): { verb: string; ts: string | null } 
   if (p.status === 'abandoned' && p.abandoned_at) {
     return { verb: 'Abandoned', ts: p.abandoned_at }
   }
-  if (p.latest_event_type && p.latest_event_at) {
+  // The send is the freshest activity when it postdates the last customer event
+  // (or there's no customer event yet) — fall through to the "Sent" branch below
+  // rather than reporting an older view/change.
+  const sentIsNewest =
+    p.version_created_at != null &&
+    (p.latest_event_at == null || p.version_created_at.localeCompare(p.latest_event_at) > 0)
+  if (!sentIsNewest && p.latest_event_type && p.latest_event_at) {
     if (p.latest_event_type === 'view')              return { verb: 'Viewed', ts: p.latest_event_at }
     if (p.latest_event_type === 'approve')           return { verb: 'Approved', ts: p.latest_event_at }
     if (p.latest_event_type === 'request_changes')   return { verb: 'Changes requested', ts: p.latest_event_at }

@@ -208,6 +208,38 @@ test('proof with recent latest_event_at but old last_activity_at lands in Today'
   assertEqual(sections[0].key, 'today', 'should be Today via latest_event_at')
 })
 
+test('activityTimestamp uses version_created_at when it postdates the last customer event', () => {
+  // The Yanko case: a new version sent an hour ago, but the customer's last
+  // event (a change request) was three days back. The send is the freshest
+  // activity, so the clock must read the send — not the stale customer event.
+  const sent = hoursAgo(1)
+  const p = makeProject({ last_activity_at: hoursAgo(1), latest_event_at: daysAgo(3), version_created_at: sent })
+  assertEqual(activityTimestamp(p), sent)
+})
+
+test('activityTimestamp keeps latest_event_at once the customer acts after the send', () => {
+  // Once the customer views / responds to the new version, their event is newest
+  // again and wins back the clock.
+  const viewed = hoursAgo(1)
+  const p = makeProject({ latest_event_at: viewed, version_created_at: daysAgo(1) })
+  assertEqual(activityTimestamp(p), viewed)
+})
+
+test('activityTimestamp uses version_created_at when there is no customer event', () => {
+  const sent = hoursAgo(2)
+  const p = makeProject({ last_activity_at: daysAgo(5), latest_event_at: null, version_created_at: sent })
+  assertEqual(activityTimestamp(p), sent)
+})
+
+test('just-sent proof with an old last customer event lands in Today', () => {
+  // Regression guard for the freshly-sent-but-not-yet-viewed proof dropping out
+  // of Today (Yanko v4): groupByTime keys on the send, not the stale event.
+  const p = makeProject({ last_activity_at: hoursAgo(1), latest_event_at: daysAgo(3), version_created_at: hoursAgo(1) })
+  const sections = groupByTime([p])
+  assertEqual(sections.length, 1)
+  assertEqual(sections[0].key, 'today', 'should be Today via version_created_at')
+})
+
 // ── groupByTime() — recently awakened snooze overrides bucket ─────────────────
 
 console.log('\ngroupByTime() — snooze awakening')
