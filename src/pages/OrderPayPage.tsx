@@ -112,6 +112,9 @@ function loadStripeJs(): Promise<((key: string) => StripeLike) | null> {
 interface StripeElementLike {
   mount: (selector: string) => void
   unmount?: () => void
+  // Link / address elements emit a 'change' event carrying the entered value.
+  // We listen on the Link element to capture the buyer's email (see below).
+  on?: (event: string, handler: (e: { value?: { email?: string } }) => void) => void
 }
 interface StripeElementsLike {
   create: (type: string, options?: Record<string, unknown>) => StripeElementLike
@@ -123,7 +126,10 @@ interface StripeLike {
   elements: (options: { clientSecret: string; appearance?: Record<string, unknown> }) => StripeElementsLike
   confirmPayment: (options: {
     elements: StripeElementsLike
-    confirmParams: { return_url: string }
+    // receipt_email must be passed explicitly — Stripe does NOT auto-promote the
+    // Link element's email onto the PaymentIntent. Without it the webhook gets a
+    // null email and the Xero VAT invoice can't be sent.
+    confirmParams: { return_url: string; receipt_email?: string }
   }) => Promise<StripeConfirmResult>
 }
 
@@ -211,6 +217,10 @@ export default function OrderPayPage() {
   // Stripe + Elements instances the mount effect created.
   const stripeRef = useRef<StripeLike | null>(null)
   const elementsRef = useRef<StripeElementsLike | null>(null)
+  // Buyer email captured from the Link element's change event, so we can pass it
+  // as confirmParams.receipt_email at confirm time (Stripe doesn't do this for
+  // us). This is what lands on the PaymentIntent and flows to the Xero invoice.
+  const emailRef = useRef<string>('')
   // Set by Stripe's success_url redirect. Optimistic until the Step 5
   // webhook flips order.status to 'paid'; a later reload shows the real
   // paid state from the DB.
@@ -283,8 +293,9 @@ export default function OrderPayPage() {
   // Mount Stripe Elements once we have a PaymentIntent client secret. Loads
   // Stripe.js from the CDN, creates the Elements group, and mounts the Link
   // (email), Address (shipping) and Payment elements into our own layout. The
-  // Address + Link elements ride the confirmPayment call automatically, so the
-  // webhook gets the delivery address + email on payment_intent.succeeded.
+  // Address element rides confirmPayment automatically (→ payment_intent.shipping),
+  // but the Link element's email does NOT — we capture it via its change event
+  // and pass it as confirmParams.receipt_email at confirm time (see confirmPay).
   useEffect(() => {
     if (!checkout) return
     let cancelled = false
@@ -302,7 +313,10 @@ export default function OrderPayPage() {
         const elements = stripe.elements({ clientSecret: checkout.clientSecret, appearance: { theme: 'stripe' } })
         stripeRef.current = stripe
         elementsRef.current = elements
-        elements.create('linkAuthentication').mount('#link-auth')
+        const linkAuth = elements.create('linkAuthentication')
+        // Capture the email so confirmPay can stamp it onto the PaymentIntent.
+        linkAuth.on?.('change', (e) => { emailRef.current = e?.value?.email ?? '' })
+        linkAuth.mount('#link-auth')
         elements.create('address', { mode: 'shipping' }).mount('#address-element')
         elements.create('payment').mount('#payment-element')
         if (cancelled) return
@@ -335,6 +349,9 @@ export default function OrderPayPage() {
       elements: elementsRef.current,
       confirmParams: {
         return_url: `${window.location.origin}/order/${id}?token=${encodeURIComponent(token)}&paid=1`,
+        // The buyer's email, so it lands on the PaymentIntent → the webhook →
+        // the Xero contact, which is what lets the VAT invoice be emailed.
+        ...(emailRef.current ? { receipt_email: emailRef.current } : {}),
       },
     })
     if (error) {
@@ -513,22 +530,37 @@ export default function OrderPayPage() {
   }, [order])
 
   // Once the order is paid, ask for the VAT invoice. Returns the Xero
-  // online-invoice URL only when the invoice has reconciled to PAID; otherwise
-  // 'pending' (available shortly) or 'unavailable' (no invoice was created).
+  // online-invoice URL only when the invoice has reconciled to PAID. The webhook
+  // creates the invoice a beat AFTER Stripe's success redirect, so the first
+  // check often races ahead of it — we therefore poll a few times so the link
+  // appears as soon as it's ready, and only treat a genuine creation failure
+  // (reason 'invoice_failed') as "unavailable". Everything else is "pending"
+  // (available shortly), never the chase-us copy.
   useEffect(() => {
     if (!order || !id || !token) return
     const isPaid = order.status === 'paid' || order.status === 'fulfilled' || justPaid
     if (!isPaid) return
     let cancelled = false
+    let attempts = 0
+    const MAX_ATTEMPTS = 6 // ~30s of polling at 5s spacing — covers the webhook lag
     setVat({ state: 'loading' })
-    void supabase.functions
-      .invoke<{ ready?: boolean; url?: string; reason?: string }>('order-vat-invoice', { body: { order_id: id, token } })
-      .then(({ data, error }) => {
-        if (cancelled) return
-        if (error || !data) { setVat({ state: 'pending' }); return }
-        if (data.ready && data.url) { setVat({ state: 'ready', url: data.url }); return }
-        setVat({ state: data.reason === 'no_invoice' ? 'unavailable' : 'pending' })
-      })
+    const poll = () => {
+      void supabase.functions
+        .invoke<{ ready?: boolean; url?: string; reason?: string }>('order-vat-invoice', { body: { order_id: id, token } })
+        .then(({ data }) => {
+          if (cancelled) return
+          attempts++
+          if (data?.ready && data.url) { setVat({ state: 'ready', url: data.url }); return }
+          // Only a genuine creation failure hints at contacting us. The race
+          // (invoice not created yet) and reconciliation lag are both "pending".
+          if (data?.reason === 'invoice_failed') { setVat({ state: 'unavailable' }); return }
+          setVat({ state: 'pending' })
+          if (attempts < MAX_ATTEMPTS) {
+            window.setTimeout(() => { if (!cancelled) poll() }, 5000)
+          }
+        })
+    }
+    poll()
     return () => { cancelled = true }
   }, [order, id, token, justPaid])
 
@@ -554,10 +586,12 @@ export default function OrderPayPage() {
         </p>
       )
     }
-    // unavailable
+    // unavailable — genuine creation failure (rare). The team sees this flagged
+    // on the Orders page and will follow up; the copy reassures without implying
+    // the customer must chase us for a routine invoice.
     return (
       <p className="mt-4 text-[13px] text-ink-mute">
-        Need a VAT invoice? Reply to your order email and we&rsquo;ll send one over.
+        We&rsquo;ll email your VAT invoice shortly. If it hasn&rsquo;t arrived, just reply to your order email and we&rsquo;ll send it straight over.
       </p>
     )
   }

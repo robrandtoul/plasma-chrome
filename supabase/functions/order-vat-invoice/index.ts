@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, token, status, xero_invoice_id')
+    .select('id, token, status, xero_invoice_id, xero_invoice_error')
     .eq('id', orderId)
     .eq('token', token)
     .single()
@@ -63,8 +63,15 @@ Deno.serve(async (req) => {
     return json({ ready: false, reason: 'not_paid' })
   }
   if (!order.xero_invoice_id) {
-    // Invoice not created (e.g. a foreign-currency reject) — nothing to link.
-    return json({ ready: false, reason: 'no_invoice' })
+    // No invoice id yet — two cases the customer page MUST NOT conflate:
+    //   * a genuine creation failure (the webhook stamped xero_invoice_error,
+    //     e.g. a foreign-currency reject) → 'invoice_failed', the only state
+    //     that should ever hint at contacting us.
+    //   * the invoice simply not created yet — the webhook runs a beat after
+    //     Stripe's success redirect, so an immediate check races ahead of it →
+    //     'invoice_pending', i.e. "available shortly", never a failure.
+    if (order.xero_invoice_error) return json({ ready: false, reason: 'invoice_failed' })
+    return json({ ready: false, reason: 'invoice_pending' })
   }
 
   const ctx = await getAccessContext(admin)

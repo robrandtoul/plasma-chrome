@@ -363,12 +363,23 @@ Deno.serve(async (req) => {
       // miss is cosmetic (the invoice exists in Xero + the pay-page shows a
       // download link), logged not stamped as a hard error.
       if (invoiceId && !order?.invoice_emailed_at) {
-        const emailed = await emailSalesInvoice(ctx.accessToken, ctx.tenantId, invoiceId)
-        if (emailed.ok) {
-          await admin.from('orders').update({ invoice_emailed_at: new Date().toISOString() }).eq('id', orderId)
-          console.log('[stripe-webhook] invoice emailed', { orderId, invoiceId })
+        if (!contactEmail) {
+          // No buyer email on the order — the Xero contact has no address to
+          // send to, so emailing would just fail. (The pay-page now passes
+          // receipt_email, so this should be rare; an older pay-page or a
+          // payment method without an email lands here.) The invoice still
+          // exists in Xero and the pay-page download link covers the customer;
+          // a human can backfill the email and resend. Not stamped as an
+          // invoice error — the invoice itself is fine.
+          console.warn('[stripe-webhook] invoice email skipped: no buyer email on order', { orderId, invoiceId })
         } else {
-          console.warn('[stripe-webhook] invoice email failed', { orderId, error: emailed.error })
+          const emailed = await emailSalesInvoice(ctx.accessToken, ctx.tenantId, invoiceId)
+          if (emailed.ok) {
+            await admin.from('orders').update({ invoice_emailed_at: new Date().toISOString() }).eq('id', orderId)
+            console.log('[stripe-webhook] invoice emailed', { orderId, invoiceId })
+          } else {
+            console.warn('[stripe-webhook] invoice email failed', { orderId, error: emailed.error })
+          }
         }
       }
     }
