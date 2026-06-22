@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Send, Check, Layers, PoundSterling, DollarSign, Euro, BookOpen, Info, Eye, History, type LucideIcon } from 'lucide-react'
 import { supabase } from '../lib/supabase'
-import { Pill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, StatusRule, tokens, type PillColour } from '../design'
+import { Pill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, StatusRule, Field, Input, Textarea, tokens, type PillColour } from '../design'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
 import { compilePersonalisationSurcharges, personalisationBreakeven } from '../lib/personalisation'
@@ -875,7 +875,7 @@ export default function CustomerProofPage() {
 
   if (loading) return <LoadingScreen />
   if (notFound || !proof) return <NotFoundScreen />
-  if (proof.status === 'abandoned') return <AbandonedScreen proof={proof} />
+  if (proof.status === 'abandoned') return <AbandonedScreen proof={proof} proofId={id ?? ''} />
 
   const isApproved = proof.status === 'approved'
   const viewingApprovedVersion = isApproved && activeVersion?.is_current === true
@@ -4913,7 +4913,13 @@ function NotFoundScreen() {
   )
 }
 
-function AbandonedScreen({ proof }: { proof: PublicProof }) {
+// Support inbox the closed-proof form lands in (via the
+// proof-contact-submit edge function → Help Scout "Customer Support"
+// mailbox). Also offered as a plain mailto fallback so the screen is
+// never a dead end even if the form's network call fails.
+const SUPPORT_EMAIL = 'support@plasmadesign.co.uk'
+
+function AbandonedScreen({ proof, proofId }: { proof: PublicProof; proofId: string }) {
   // Same masthead rule as the live page: company prominent when
   // present (with the contact name as a muted sub-line), contact
   // name prominent when no company. Keeps the customer's brand
@@ -4937,16 +4943,163 @@ function AbandonedScreen({ proof }: { proof: PublicProof }) {
             </p>
           )}
         </header>
-        <div className="rounded-[14px] p-10 text-center bg-surface border border-line">
+        <div className="rounded-[14px] p-8 sm:p-10 bg-surface border border-line">
           <span className="eyebrow" style={{ letterSpacing: '0.32em' }}>
             Closed
           </span>
           <h2 className="h2 mt-3">This proof is closed</h2>
-          <p className="body-soft mx-auto mt-3 max-w-md" style={{ fontSize: 16 }}>
-            If you'd like to revisit your business cards, please get in touch.
+          <p className="body-soft mt-3 max-w-md" style={{ fontSize: 16 }}>
+            If you'd like to revisit your business cards or have any questions, send us a
+            message below and we'll be back in touch.
           </p>
+          <div className="mt-8 border-t border-line pt-8">
+            <ClosedProofContactForm proof={proof} proofId={proofId} />
+          </div>
         </div>
       </div>
     </div>
+  )
+}
+
+// "Get in touch" form on the closed-proof screen. Posts to the
+// proof-contact-submit edge function, which creates a Help Scout
+// conversation in the Customer Support mailbox with the proof
+// reference attached. The customer's email isn't exposed to this
+// page (the anon RPC withholds it), so we ask for it here; the name
+// is pre-filled from the proof's contact but stays editable in case
+// a colleague is the one reaching out.
+function ClosedProofContactForm({ proof, proofId }: { proof: PublicProof; proofId: string }) {
+  const [name, setName] = useState(proof.customer_name?.trim() ?? '')
+  const [email, setEmail] = useState('')
+  const [message, setMessage] = useState('')
+  // Honeypot: hidden from people, tempting to dumb bots. A filled
+  // value makes the server silently drop the submission.
+  const [website, setWebsite] = useState('')
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  const [submitAttempted, setSubmitAttempted] = useState(false)
+
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+  const messageValid = message.trim().length > 0
+  const emailError = submitAttempted && !emailValid
+    ? email.trim()
+      ? "That email address doesn't look right."
+      : 'Please enter your email so we can reply.'
+    : undefined
+  const messageError = submitAttempted && !messageValid ? 'Please enter a short message.' : undefined
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setSubmitAttempted(true)
+    if (!emailValid || !messageValid) return
+    setStatus('sending')
+    try {
+      const { data, error } = await supabase.functions.invoke<{ ok?: boolean }>(
+        'proof-contact-submit',
+        {
+          body: {
+            proofId,
+            name: name.trim(),
+            email: email.trim(),
+            message: message.trim(),
+            website,
+          },
+        },
+      )
+      if (error || !data?.ok) {
+        setStatus('error')
+        return
+      }
+      setStatus('sent')
+    } catch {
+      setStatus('error')
+    }
+  }
+
+  if (status === 'sent') {
+    return (
+      <div role="status">
+        <span className="eyebrow" style={{ letterSpacing: '0.32em' }}>
+          Message sent
+        </span>
+        <h3 className="h3 mt-2">Thanks — we've got your message</h3>
+        <p className="body-soft mt-2 max-w-md" style={{ fontSize: 15 }}>
+          One of the team will be in touch at {email.trim()} shortly.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <form onSubmit={handleSubmit} noValidate>
+      <span className="eyebrow" style={{ letterSpacing: '0.32em' }}>
+        Get in touch
+      </span>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <Field label="Your name">
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Name"
+            autoComplete="name"
+          />
+        </Field>
+        <Field label="Email" error={emailError}>
+          <Input
+            type="email"
+            inputMode="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.com"
+            autoComplete="email"
+            invalid={Boolean(emailError)}
+          />
+        </Field>
+      </div>
+      <Field label="Message" error={messageError} className="mt-4">
+        <Textarea
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          rows={4}
+          placeholder="Let us know how we can help…"
+          invalid={Boolean(messageError)}
+        />
+      </Field>
+
+      {/* Honeypot — visually hidden, off the tab order. Real people
+          never fill it; bots that auto-complete every input do. */}
+      <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, overflow: 'hidden' }}>
+        <label>
+          Website
+          <input
+            tabIndex={-1}
+            autoComplete="off"
+            value={website}
+            onChange={(e) => setWebsite(e.target.value)}
+          />
+        </label>
+      </div>
+
+      {status === 'error' && (
+        <p className="mt-4 text-[13px] text-out" role="alert">
+          Sorry — we couldn't send that just now. Please email us directly at{' '}
+          <a className="underline" href={`mailto:${SUPPORT_EMAIL}`}>
+            {SUPPORT_EMAIL}
+          </a>{' '}
+          and we'll pick it up.
+        </p>
+      )}
+
+      <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <ButtonInk type="submit" busy={status === 'sending'}>
+          Send message
+        </ButtonInk>
+        <span className="text-[13px] text-ink-mute">
+          Prefer email?{' '}
+          <a className="underline" href={`mailto:${SUPPORT_EMAIL}`}>
+            {SUPPORT_EMAIL}
+          </a>
+        </span>
+      </div>
+    </form>
   )
 }

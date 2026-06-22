@@ -479,6 +479,15 @@ verify_jwt = false
 [functions.contact-form-submit]
 verify_jwt = false
 
+# proof-contact-submit: anon-callable from the customer-facing
+# closed-proof screen ("get in touch" form). Defence in depth: the
+# unguessable proof UUID is validated against the DB before any Help
+# Scout conversation is created, plus a honeypot field. No Turnstile —
+# unlike contact-form-submit, this form sits behind a proof URL, not on
+# a public indexed page.
+[functions.proof-contact-submit]
+verify_jwt = false
+
 # send-nudges: triggered by pg_cron on the merged project via net.http_post
 # with the service-role key as Bearer (same pattern as the stock app's
 # outsourced-tracking-refresh job). verify_jwt stays ON — the platform JWT
