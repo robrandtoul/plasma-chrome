@@ -132,3 +132,26 @@ export function computeOrderTotal(inp: OrderPriceInputs): OrderPriceResult {
   const total = round2(goods + shipping)
   return { ok: true, cards, splitName, personalisation, finish, shipping, goods, total }
 }
+
+// US tariff & customs handling — a flat per-order service added by default to
+// US-bound orders (the US ended the $800 de-minimis import exemption on
+// 2025-08-29). It rides ON TOP of goods + shipping as its own line (like
+// shipping), NOT folded into the goods sum. The customer can opt out, after
+// which they deal with US Customs directly and the charge is zero.
+//
+// destCountry is the resolved delivery country (customer-entered ?? the order's
+// stored hint); feeForCurrency is settings.us_tariff_fee_<currency> for the
+// order currency. A fee of 0 (or non-US, or opted out) yields 0 — the caller
+// only emits a line when this is > 0, so a zero fee cleanly disables the
+// service. Pure so the pay-page mirror and the server charge can't drift.
+export function resolveUsTariff(
+  destCountry: string | null | undefined,
+  feeForCurrency: number | null | undefined,
+  optedOut: boolean,
+): number {
+  if (optedOut) return 0
+  if ((destCountry ?? '').trim().toUpperCase() !== 'US') return 0
+  const fee = Number(feeForCurrency ?? 0)
+  if (!Number.isFinite(fee) || fee <= 0) return 0
+  return Math.round(fee * 100) / 100
+}

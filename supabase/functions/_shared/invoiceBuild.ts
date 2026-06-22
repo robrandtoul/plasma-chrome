@@ -32,6 +32,7 @@ export interface OrderForInvoice {
   amount_tooling: number | null
   amount_personalisation: number | null
   amount_shipping: number | null
+  amount_us_tariff: number | null
 }
 
 export interface InvoiceBuildContext {
@@ -137,6 +138,7 @@ export async function buildOrderInvoiceLines(
   const tooling = Number(order.amount_tooling ?? 0)
   const personalisation = Number(order.amount_personalisation ?? 0)
   const shipping = Number(order.amount_shipping ?? 0)
+  const usTariff = Number(order.amount_us_tariff ?? 0)
   // The code that lands on the product line, before any summary-fallback below.
   let productItemCode: string | null = null
 
@@ -174,6 +176,20 @@ export async function buildOrderInvoiceLines(
       amount: shipping,
       itemCode: shippingItem,
     })
+  }
+  // US tariff & customs handling — its own line. The item code is admin-editable
+  // in settings (Rob's choice), unlike the env-based tooling/shipping codes;
+  // read only when there's a tariff to book, and fall back to the known live
+  // item '910' if the column is unset. Xero derives the (export, no-VAT) tax
+  // rate from that item.
+  if (usTariff > 0) {
+    const { data: tariffSettings } = await admin
+      .from('settings')
+      .select('xero_us_tariff_item_code')
+      .eq('id', 1)
+      .maybeSingle()
+    const usTariffItem = (tariffSettings?.xero_us_tariff_item_code as string | null)?.trim() || '910'
+    lines.push({ description: 'US tariff & customs handling', amount: usTariff, itemCode: usTariffItem })
   }
 
   // Safety net: the itemised lines MUST sum to the amount Stripe charged, or

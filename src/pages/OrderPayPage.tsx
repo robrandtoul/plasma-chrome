@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { formatPrice } from '../lib/currency'
+import { getPublicSettings } from '../lib/publicSettings'
 import { Pill, PanelShell } from '../design'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 import { interpolateValue } from '../lib/quote/interpolation'
@@ -47,6 +48,10 @@ interface OrderPayload {
   amount_tooling: number | null
   amount_personalisation: number | null
   amount_shipping: number | null
+  // US tariff & customs handling (migration 000249): the charged fee + the
+  // customer's opt-out choice, stamped at checkout. Null/false on legacy rows.
+  amount_us_tariff: number | null
+  us_tariff_opted_out: boolean
   // Delivery details Stripe collected, persisted by the webhook on the
   // sent → paid flip — so only present once the payment is confirmed.
   ship_to_name: string | null
@@ -170,6 +175,15 @@ export default function OrderPayPage() {
   // from the designer's optional hint on the order.
   const [destCountry, setDestCountry] = useState('')
   const [destPostcode, setDestPostcode] = useState('')
+  // US tariff & customs handling: per-currency fee + copy (from public_settings),
+  // the customer's opt-out, and the inline opt-out confirmation. Included by
+  // default; opting out requires confirming the consequence (they then deal with
+  // US Customs themselves). The opt-out feeds the create-checkout call, so the
+  // PaymentIntent total reflects it; toggling it after the intent re-prices via
+  // "Edit order details".
+  const [tariff, setTariff] = useState<{ intro: string; warning: string; fees: Record<Currency, number> } | null>(null)
+  const [tariffOptedOut, setTariffOptedOut] = useState(false)
+  const [tariffConfirmingOptOut, setTariffConfirmingOptOut] = useState(false)
   const [notFound, setNotFound] = useState(false)
   const [paying, setPaying] = useState(false)
   const [payError, setPayError] = useState<string | null>(null)
@@ -181,7 +195,7 @@ export default function OrderPayPage() {
     pk: string
     amount: number
     currency: Currency
-    breakdown: { cards: number; tooling: number; personalisation: number; shipping: number }
+    breakdown: { cards: number; tooling: number; personalisation: number; shipping: number; us_tariff: number }
   } | null>(null)
   // True once the elements are mounted (drives the loading state).
   const [formMounted, setFormMounted] = useState(false)
@@ -217,7 +231,7 @@ export default function OrderPayPage() {
             .filter((p) => Number.isFinite(p.quantity) && p.quantity > 0)
         : []
     try {
-      const { data, error } = await supabase.functions.invoke<{ client_secret?: string; publishable_key?: string; amount?: number; currency?: Currency; breakdown?: { cards: number; tooling: number; personalisation: number; shipping: number }; error?: string; message?: string }>(
+      const { data, error } = await supabase.functions.invoke<{ client_secret?: string; publishable_key?: string; amount?: number; currency?: Currency; breakdown?: { cards: number; tooling: number; personalisation: number; shipping: number; us_tariff: number }; error?: string; message?: string }>(
         'create-checkout-session',
         {
           body: {
@@ -228,6 +242,7 @@ export default function OrderPayPage() {
             person_quantities: personPayload.length > 0 ? personPayload : undefined,
             ship_dest_country: destCountry || undefined,
             ship_dest_postcode: destPostcode.trim() || undefined,
+            us_tariff_opted_out: tariffOptedOut,
           },
         },
       )
@@ -257,7 +272,7 @@ export default function OrderPayPage() {
         pk: data.publishable_key,
         amount: data.amount,
         currency: data.currency,
-        breakdown: data.breakdown ?? { cards: data.amount, tooling: 0, personalisation: 0, shipping: 0 },
+        breakdown: data.breakdown ?? { cards: data.amount, tooling: 0, personalisation: 0, shipping: 0, us_tariff: 0 },
       })
     } catch {
       setPayError('We couldn’t start checkout. Please reply to the email you received and we’ll help.')
@@ -335,6 +350,21 @@ export default function OrderPayPage() {
     return () => document.documentElement.classList.remove('customer-accent')
   }, [])
 
+  // US tariff fee + copy (anon public_settings, cached). Loaded independently of
+  // the order so the panel is ready by the time the order resolves.
+  useEffect(() => {
+    let cancelled = false
+    void getPublicSettings().then((s) => {
+      if (cancelled) return
+      setTariff({
+        intro: s.us_tariff_intro_copy,
+        warning: s.us_tariff_optout_warning,
+        fees: { GBP: s.us_tariff_fee_gbp, EUR: s.us_tariff_fee_eur, USD: s.us_tariff_fee_usd },
+      })
+    })
+    return () => { cancelled = true }
+  }, [])
+
   useEffect(() => {
     if (!id || !token) { setNotFound(true); setLoading(false); return }
     let cancelled = false
@@ -354,6 +384,8 @@ export default function OrderPayPage() {
       // Pre-fill the destination country from the designer's optional hint so
       // the customer usually just adds their postcode.
       if (o.ship_dest_country) setDestCountry(o.ship_dest_country)
+      // Reflect a previously-persisted opt-out (a returning customer); default included.
+      if (o.us_tariff_opted_out) setTariffOptedOut(true)
       // Best-effort recap: pull the company/customer name, the spec, and
       // the approved artwork from the proof graph (anon RPC) + the images
       // edge function. Failure just leaves the recap thinner — never
@@ -470,8 +502,13 @@ export default function OrderPayPage() {
     if (!order || checkout || paying) return
     const needsQty = order.custom_quote_total == null && order.material_variant_id != null && order.quantity == null
     const needsDest = order.shipping_treatment === 'full_cost' || order.shipping_treatment === 'goodwill'
+    // A US destination always shows the inputs panel (don't auto-advance), so the
+    // customer sees the US tariff & customs handling line and its opt-out before
+    // the PaymentIntent is created. For full_cost/goodwill needsDest already does
+    // this; this covers free/manual US orders with a designer-set US destination.
+    const isUsDest = (order.ship_dest_country ?? '').toUpperCase() === 'US'
     const canPay = order.custom_quote_total != null || (order.material_variant_id != null && order.quantity != null)
-    if (canPay && !needsQty && !needsDest) void startCheckout()
+    if (canPay && !needsQty && !needsDest && !isUsDest) void startCheckout()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order])
 
@@ -537,7 +574,8 @@ export default function OrderPayPage() {
     const tooling = amt(o.amount_tooling)
     const personalisation = amt(o.amount_personalisation)
     const shipping = amt(o.amount_shipping)
-    const total = round2(cards + tooling + personalisation + shipping)
+    const usTariff = amt(o.amount_us_tariff)
+    const total = round2(cards + tooling + personalisation + shipping + usTariff)
     const haveSummary = total > 0
     const addr = o.ship_to_address
     const haveAddress = confirmed && !!addr && !!(addr.line1 || addr.postal_code)
@@ -579,6 +617,7 @@ export default function OrderPayPage() {
                 label={SHIPPING_LABEL[o.shipping_treatment]}
                 value={shipping > 0 ? formatPrice(shipping, o.currency) : 'Free'}
               />
+              {usTariff > 0 && <Row label="US tariff & customs handling" value={formatPrice(usTariff, o.currency)} />}
               <div className="flex items-center justify-between gap-4 border-t border-line pt-2.5 text-base">
                 <span className="font-semibold text-ink">{confirmed ? 'Total paid' : 'Total'}</span>
                 <span className="font-semibold text-ink">{formatPrice(total, o.currency)}</span>
@@ -689,6 +728,14 @@ export default function OrderPayPage() {
   const shippingAmount =
     order.shipping_treatment === 'manual' ? Number(order.shipping_charged ?? 0) : 0
   const round2 = (n: number) => Math.round(n * 100) / 100
+  // US tariff & customs handling. Destination is the customer's pay-page
+  // selection (full_cost/goodwill) or the order's stored hint (free/manual) —
+  // mirrors the server's resolution. Fee is from public_settings for the order
+  // currency; a 0 fee disables it. Included by default; drops to 0 on opt-out.
+  const effectiveDestCountry = (shippingComputedAtCheckout ? destCountry : order.ship_dest_country ?? '').toUpperCase()
+  const tariffFee = tariff ? tariff.fees[order.currency] ?? 0 : 0
+  const tariffApplies = effectiveDestCountry === 'US' && tariffFee > 0
+  const tariffAmount = tariffApplies && !tariffOptedOut ? tariffFee : 0
   // Open-quantity grid order: the designer left quantity for the customer
   // and the variant has listed tiers. Split = a quantity per person; single
   // = one tier selector.
@@ -750,7 +797,7 @@ export default function OrderPayPage() {
     const splitName = perExtraName && order.names_count > 1 ? (order.names_count - 1) * perExtraName : 0
     const pers = personalisation ? Math.max(personalisation.minCharge, qty * personalisation.perCardRate) : 0
     const finish = finishSurchargeForQty(qty)
-    return round2(round2(cards + splitName + pers + finish) + shippingAmount)
+    return round2(round2(cards + splitName + pers + finish) + shippingAmount + tariffAmount)
   }
 
   // Per-person entries → combined sum. Complete only when every person has a
@@ -817,7 +864,7 @@ export default function OrderPayPage() {
   const payTotal = shippingComputedAtCheckout
     ? null
     : order.custom_quote_total != null
-      ? order.custom_quote_total + shippingAmount
+      ? order.custom_quote_total + shippingAmount + tariffAmount
       : isSplitOpen
         ? splitTotal
         : isSingleOpen
@@ -891,6 +938,7 @@ export default function OrderPayPage() {
                     {checkout.breakdown.tooling > 0 && <Row label="Tooling" value={formatPrice(checkout.breakdown.tooling, checkout.currency)} />}
                     {checkout.breakdown.personalisation > 0 && <Row label="Personalisation" value={formatPrice(checkout.breakdown.personalisation, checkout.currency)} />}
                     <Row label="Shipping" value={checkout.breakdown.shipping > 0 ? formatPrice(checkout.breakdown.shipping, checkout.currency) : 'Free'} />
+                    {checkout.breakdown.us_tariff > 0 && <Row label="US tariff & customs handling" value={formatPrice(checkout.breakdown.us_tariff, checkout.currency)} />}
                   </>
                 ) : (
                   <>
@@ -902,6 +950,7 @@ export default function OrderPayPage() {
                         : order.shipping_charged != null ? formatPrice(order.shipping_charged, order.currency)
                           : 'Calculated at payment'
                     } />
+                    {tariffApplies && <Row label="US tariff & customs handling" value={tariffOptedOut ? 'Removed' : formatPrice(tariffFee, order.currency)} />}
                   </>
                 )}
               </div>
@@ -974,6 +1023,50 @@ export default function OrderPayPage() {
                     </div>
                   )}
 
+                  {/* US tariff & customs handling — shown for US-bound orders. Included
+                      by default; opting out requires confirming the consequence (the
+                      customer then deals with US Customs and any tariffs). The choice
+                      is made here, before the PaymentIntent, so the charged total reflects it. */}
+                  {tariffApplies && (
+                    <div className="rounded-xl border border-line bg-canvas p-4">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <p className="font-medium text-ink">US tariff &amp; customs handling</p>
+                        <p className={tariffOptedOut ? 'text-ink-mute line-through' : 'font-medium text-ink'}>{formatPrice(tariffFee, order.currency)}</p>
+                      </div>
+                      {tariff?.intro && <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">{tariff.intro}</p>}
+                      {!tariffOptedOut ? (
+                        tariffConfirmingOptOut ? (
+                          <div className="mt-3 rounded-lg border border-low bg-low-soft p-3">
+                            <p className="text-[13px] leading-relaxed text-ink">{tariff?.warning}</p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button type="button" onClick={() => { setTariffOptedOut(true); setTariffConfirmingOptOut(false) }}
+                                className="rounded-lg bg-ink px-3 py-1.5 text-[13px] font-semibold text-on-ink transition-opacity hover:opacity-90">
+                                Yes, remove it — I&rsquo;ll handle US customs
+                              </button>
+                              <button type="button" onClick={() => setTariffConfirmingOptOut(false)}
+                                className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-ink-soft ring-1 ring-line transition-colors hover:bg-surface">
+                                Keep it
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => setTariffConfirmingOptOut(true)}
+                            className="mt-3 text-[13px] font-medium text-ink-soft underline underline-offset-2 hover:text-ink">
+                            Remove this charge
+                          </button>
+                        )
+                      ) : (
+                        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-line bg-surface px-3 py-2">
+                          <p className="text-[13px] text-ink-soft">Removed — you&rsquo;ll deal with US Customs and any tariffs directly.</p>
+                          <button type="button" onClick={() => setTariffOptedOut(false)}
+                            className="shrink-0 text-[13px] font-medium text-ink-soft underline underline-offset-2 hover:text-ink">
+                            Add it back
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {payError && (
                     <div className="rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{payError}</div>
                   )}
@@ -1015,7 +1108,7 @@ export default function OrderPayPage() {
                   <p className="mt-2 text-center text-[12px] text-ink-mute">
                     Secured by Stripe.{checkout.currency === 'GBP' ? ' Includes VAT.' : ''}
                   </p>
-                  {(isOpenGrid || shippingComputedAtCheckout) && (
+                  {(isOpenGrid || shippingComputedAtCheckout || tariffApplies) && (
                     <button type="button" onClick={() => { setCheckout(null); setFormError(null) }}
                       className="mt-3 block w-full text-center text-[12px] text-ink-mute underline hover:text-ink">
                       Edit order details

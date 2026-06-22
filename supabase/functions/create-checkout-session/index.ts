@@ -25,7 +25,7 @@
 // is a test key (sk_test_…).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { cardTotalForQuantity, computeOrderTotal, type Tier } from '../_shared/orderPricing.ts'
+import { cardTotalForQuantity, computeOrderTotal, resolveUsTariff, type Tier } from '../_shared/orderPricing.ts'
 import {
   applyIntlAdjustment,
   fetchGbpRates,
@@ -153,6 +153,9 @@ Deno.serve(async (req) => {
   const reqDestPostcode = typeof body.ship_dest_postcode === 'string' && body.ship_dest_postcode.trim()
     ? body.ship_dest_postcode.trim()
     : null
+  // The customer's choice on the US tariff & customs handling service (default
+  // included; true = they opted out and will deal with US Customs themselves).
+  const optedOutOfUsTariff = body.us_tariff_opted_out === true
 
   const admin = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
@@ -165,7 +168,11 @@ Deno.serve(async (req) => {
   // mode needs no redeploy. Legacy single STRIPE_SECRET_KEY is the fallback
   // for an env that predates the split. The customer is only ever charged real
   // money when the mode is 'live' AND a live (sk_live_…) key is present.
-  const { data: modeRow } = await admin.from('settings').select('payment_mode').eq('id', 1).single()
+  const { data: modeRow } = await admin
+    .from('settings')
+    .select('payment_mode, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd')
+    .eq('id', 1)
+    .single()
   const paymentMode = modeRow?.payment_mode === 'live' ? 'live' : 'test'
   const stripeKey = paymentMode === 'live'
     ? (Deno.env.get('STRIPE_SECRET_KEY_LIVE') ?? Deno.env.get('STRIPE_SECRET_KEY'))
@@ -479,6 +486,20 @@ Deno.serve(async (req) => {
     shipping = round2(baseInCurrency * (1 - discountPercent / 100))
   }
 
+  // ── US tariff & customs handling (server-authoritative) ──────────
+  // Added by default to US-bound orders (the US ended the $800 de-minimis
+  // import exemption on 2025-08-29); the customer can opt out on the pay-page
+  // and is then responsible for US Customs. Destination is the customer-entered
+  // country (full_cost/goodwill) or the order's stored hint (free/manual + the
+  // designer's pre-fill) — the same resolution shipping uses. Rides on top as
+  // its own line; opt-out / non-US / a 0 fee → 0.
+  const effectiveDestCountry = (reqDestCountry ?? order.ship_dest_country ?? '').trim().toUpperCase()
+  const usTariffFee =
+    order.currency === 'GBP' ? Number(modeRow?.us_tariff_fee_gbp ?? 0)
+    : order.currency === 'EUR' ? Number(modeRow?.us_tariff_fee_eur ?? 0)
+    : Number(modeRow?.us_tariff_fee_usd ?? 0)
+  const usTariff = resolveUsTariff(effectiveDestCountry, usTariffFee, optedOutOfUsTariff)
+
   // Stamp the resolved breakdown so the Stripe→Xero webhook can itemise the
   // invoice. Best-effort: a failure here must not block checkout (the webhook
   // falls back to a single summary line if the breakdown is absent).
@@ -499,6 +520,8 @@ Deno.serve(async (req) => {
       amount_tooling: amountTooling,
       amount_personalisation: amountPersonalisation,
       amount_shipping: shipping,
+      amount_us_tariff: usTariff,
+      us_tariff_opted_out: optedOutOfUsTariff,
       updated_at: new Date().toISOString(),
     })
     .eq('id', order.id)
@@ -514,7 +537,7 @@ Deno.serve(async (req) => {
   // adaptive-pricing currency swap. The shipping address + email are collected
   // by the Address/Link Elements on the page and ride the confirmPayment call,
   // surfacing on payment_intent.succeeded for the webhook's fulfilment + Xero.
-  const total = Math.round((goods + shipping) * 100) / 100
+  const total = Math.round((goods + shipping + usTariff) * 100) / 100
   const params = new URLSearchParams()
   params.set('amount', String(minorUnits(total)))
   params.set('currency', currency)
@@ -560,6 +583,7 @@ Deno.serve(async (req) => {
       tooling: amountTooling ?? 0,
       personalisation: amountPersonalisation ?? 0,
       shipping,
+      us_tariff: usTariff,
     },
   })
 })

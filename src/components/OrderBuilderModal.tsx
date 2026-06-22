@@ -490,13 +490,11 @@ export default function OrderBuilderModal({
       shippingChargedValue = s
     }
 
-    // full_cost / goodwill: an optional destination-country hint (the customer
-    // confirms country + enters postcode on the pay-page). goodwill also needs
-    // the discount %. free / manual send neither.
-    const shipDestCountryValue: string | null =
-      (shippingTreatment === 'full_cost' || shippingTreatment === 'goodwill') && shipDestCountry
-        ? shipDestCountry
-        : null
+    // Destination-country hint, persisted for every treatment: full_cost /
+    // goodwill use it to pre-fill the pay-page rating, and any treatment uses
+    // it to flag a US order for tariff & customs handling (added by default,
+    // opt-out at checkout). goodwill also needs the discount %.
+    const shipDestCountryValue: string | null = shipDestCountry || null
     let shippingDiscountPercentValue: number | null = null
     if (shippingTreatment === 'goodwill') {
       const d = Number(shippingDiscountPercent)
@@ -790,23 +788,32 @@ export default function OrderBuilderModal({
                 ))}
               </select>
 
-              {/* Optional destination-country pre-fill — full_cost / goodwill.
-                  The customer confirms it and enters their postcode at checkout. */}
-              {(shippingTreatment === 'full_cost' || shippingTreatment === 'goodwill') && (
-                <div className="mt-2">
-                  <select
-                    aria-label="Destination country (optional)"
-                    value={shipDestCountry}
-                    onChange={(e) => setShipDestCountry(e.target.value)}
-                    className={selectClass}
-                  >
-                    <option value="">Destination country (optional — customer confirms at checkout)</option>
-                    {SHIP_COUNTRIES.map((c) => (
-                      <option key={c.code} value={c.code}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
+              {/* Destination country. For full_cost / goodwill it pre-fills the
+                  pay-page (the customer confirms it + adds their postcode, and
+                  the carriage is rated there). For every treatment it also sets
+                  whether US tariff & customs handling applies. */}
+              <div className="mt-2">
+                <select
+                  aria-label="Destination country"
+                  value={shipDestCountry}
+                  onChange={(e) => setShipDestCountry(e.target.value)}
+                  className={selectClass}
+                >
+                  <option value="">
+                    {shippingTreatment === 'full_cost' || shippingTreatment === 'goodwill'
+                      ? 'Destination country (optional — customer confirms at checkout)'
+                      : 'Destination country (optional — sets US tariff handling)'}
+                  </option>
+                  {SHIP_COUNTRIES.map((c) => (
+                    <option key={c.code} value={c.code}>{c.name}</option>
+                  ))}
+                </select>
+                {shipDestCountry === 'US' && (
+                  <p className="mt-2 rounded-lg border border-low bg-low-soft px-3 py-2 text-[13px] text-ink">
+                    US destination — US tariff &amp; customs handling will be added to this order by default. The customer can opt out at checkout (and then deals with US Customs themselves).
+                  </p>
+                )}
+              </div>
 
               {/* Goodwill discount %. */}
               {shippingTreatment === 'goodwill' && (

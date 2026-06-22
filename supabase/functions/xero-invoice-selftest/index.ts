@@ -40,6 +40,7 @@ const EMPTY_ORDER: OrderForInvoice = {
   amount_tooling: null,
   amount_personalisation: null,
   amount_shipping: null,
+  amount_us_tariff: null,
 }
 
 // Which line in the built invoice a spec is asserting, and the code it should
@@ -48,7 +49,7 @@ const EMPTY_ORDER: OrderForInvoice = {
 interface Spec {
   label: string
   group: string
-  target: 'product' | 'tooling' | 'shipping'
+  target: 'product' | 'tooling' | 'shipping' | 'tariff'
   expectedCode: string | null
   order: OrderForInvoice
   currency: string
@@ -144,6 +145,11 @@ Deno.serve(async (req) => {
   const toolingCode = Deno.env.get('XERO_TOOLING_ITEM_CODE') ?? '020'
   const shippingDomCode = Deno.env.get('XERO_SHIPPING_DOMESTIC_ITEM_CODE') ?? '052'
   const shippingIntlCode = Deno.env.get('XERO_SHIPPING_INTL_ITEM_CODE') ?? '050'
+  // US tariff item code lives in settings (admin-editable), not env — read the
+  // same value invoiceBuild will use so the assertion matches the live path.
+  const { data: tariffSettingRow } = await admin
+    .from('settings').select('xero_us_tariff_item_code').eq('id', 1).maybeSingle()
+  const usTariffCode = (tariffSettingRow?.xero_us_tariff_item_code as string | null)?.trim() || '910'
 
   // Active variants on active/published/non-archived materials.
   const { data: vData, error: vErr } = await admin
@@ -238,6 +244,16 @@ Deno.serve(async (req) => {
     order: { ...EMPTY_ORDER, material_variant_id: anchor.id, quantity: 100, names_count: 1, amount_cards: 100, amount_shipping: 30 },
     currency: 'GBP',
     expectedTotal: 130,
+    country: 'US',
+  })
+  specs.push({
+    label: 'US tariff & customs handling',
+    group: 'Add-ons',
+    target: 'tariff',
+    expectedCode: usTariffCode,
+    order: { ...EMPTY_ORDER, material_variant_id: anchor.id, quantity: 100, names_count: 1, amount_cards: 100, amount_us_tariff: 39 },
+    currency: 'USD',
+    expectedTotal: 139,
     country: 'US',
   })
 

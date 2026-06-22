@@ -43,6 +43,15 @@ interface Settings {
   /** Domestic UK flat rates (migration 000179), GBP VAT-inclusive. */
   domestic_uk_mainland_rate_gbp: number
   domestic_uk_ni_rate_gbp: number
+  /** US tariff & customs handling (migration 000249). Per-currency fee added
+   *  by default to US-bound orders, the Xero item code its invoice line books
+   *  to, and the customer-facing pay-page copy. A 0 fee disables the service. */
+  us_tariff_fee_gbp: number
+  us_tariff_fee_eur: number
+  us_tariff_fee_usd: number
+  xero_us_tariff_item_code: string
+  us_tariff_intro_copy: string
+  us_tariff_optout_warning: string
 }
 
 // Help Scout test-connection result. Component-scoped only — no DB
@@ -97,6 +106,12 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   fedex_intl_adjust_percent:         'setting.fedex_intl_adjust_percent_updated',
   domestic_uk_mainland_rate_gbp:     'setting.domestic_uk_mainland_rate_gbp_updated',
   domestic_uk_ni_rate_gbp:           'setting.domestic_uk_ni_rate_gbp_updated',
+  us_tariff_fee_gbp:                 'setting.us_tariff_fee_gbp_updated',
+  us_tariff_fee_eur:                 'setting.us_tariff_fee_eur_updated',
+  us_tariff_fee_usd:                 'setting.us_tariff_fee_usd_updated',
+  xero_us_tariff_item_code:          'setting.xero_us_tariff_item_code_updated',
+  us_tariff_intro_copy:              'setting.us_tariff_intro_copy_updated',
+  us_tariff_optout_warning:          'setting.us_tariff_optout_warning_updated',
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -184,7 +199,7 @@ export default function AdminSettingsPage() {
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, payment_mode, xero_stripe_account_code, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp')
+      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, payment_mode, xero_stripe_account_code, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -309,7 +324,10 @@ export default function AdminSettingsPage() {
       | 'fedex_box_weight_grams'
       | 'fedex_intl_adjust_percent'
       | 'domestic_uk_mainland_rate_gbp'
-      | 'domestic_uk_ni_rate_gbp',
+      | 'domestic_uk_ni_rate_gbp'
+      | 'us_tariff_fee_gbp'
+      | 'us_tariff_fee_eur'
+      | 'us_tariff_fee_usd',
   ) {
     if (!settings) return
     const draft = drafts[field]
@@ -330,7 +348,7 @@ export default function AdminSettingsPage() {
         return
       }
     } else {
-      // domestic UK rates — non-negative GBP amounts
+      // domestic UK rates + US tariff fees — non-negative amounts
       if (value < 0) {
         setErrors((e) => ({ ...e, [field]: 'Must be zero or greater.' }))
         return
@@ -338,6 +356,19 @@ export default function AdminSettingsPage() {
     }
     if (errors[field]) setErrors((e) => ({ ...e, [field]: undefined }))
     void saveField(field, value)
+  }
+
+  // Blur handler for the US tariff text fields (Xero item code + the two
+  // pay-page copy strings). Saves the trimmed draft; empty is allowed —
+  // publicSettings.ts and invoiceBuild fall back to the shipped defaults / item
+  // 910, so clearing a field resets it to default rather than breaking the page.
+  function onTariffTextBlur(
+    field: 'xero_us_tariff_item_code' | 'us_tariff_intro_copy' | 'us_tariff_optout_warning',
+  ) {
+    if (!settings) return
+    const draft = drafts[field]
+    if (draft === undefined) return
+    void saveField(field, (draft as string).trim())
   }
 
   function recentlySaved(field: keyof Settings): boolean {
@@ -791,6 +822,124 @@ export default function AdminSettingsPage() {
           </p>
         </div>
       </section>
+
+      {/* ── US tariff & customs handling (migration 000249) ───────────
+          The flat service added by default to US-bound orders, covering
+          import tariffs + customs clearance. Fee per currency, the Xero item
+          code the invoice line books to, and the customer-facing pay-page
+          copy. A 0 fee disables the service for that currency. */}
+      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+        <h3 className="mb-1 text-sm font-semibold text-ink">US tariff &amp; customs handling</h3>
+        <p className="mb-4 text-[13px] text-ink-mute">
+          Added by default to orders shipping to the US — the customer can opt out at checkout. US orders are billed in USD in practice; the GBP/EUR fees cover the rare non-USD US order. Set a fee to 0 to switch the service off for that currency.
+        </p>
+        <div className="space-y-5">
+          <FieldRow
+            label="Fee — USD ($)"
+            help="The flat US tariff & customs handling charge on US orders billed in USD. The customer sees this as its own line and can opt out."
+            saved={recentlySaved('us_tariff_fee_usd')}
+            working={working.us_tariff_fee_usd}
+            error={errors.us_tariff_fee_usd}
+          >
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              inputMode="decimal"
+              value={drafts.us_tariff_fee_usd ?? settings.us_tariff_fee_usd}
+              onChange={(e) => setDrafts((d) => ({ ...d, us_tariff_fee_usd: e.target.value === '' ? 0 : Number(e.target.value) }))}
+              onBlur={() => onShippingNumberBlur('us_tariff_fee_usd')}
+              className={`w-32 ${inputClass}`}
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Fee — GBP (£)"
+            help="Used when a US-bound order is billed in GBP (rare). VAT treatment is set by the Xero item code below, not here."
+            saved={recentlySaved('us_tariff_fee_gbp')}
+            working={working.us_tariff_fee_gbp}
+            error={errors.us_tariff_fee_gbp}
+          >
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              inputMode="decimal"
+              value={drafts.us_tariff_fee_gbp ?? settings.us_tariff_fee_gbp}
+              onChange={(e) => setDrafts((d) => ({ ...d, us_tariff_fee_gbp: e.target.value === '' ? 0 : Number(e.target.value) }))}
+              onBlur={() => onShippingNumberBlur('us_tariff_fee_gbp')}
+              className={`w-32 ${inputClass}`}
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Fee — EUR (€)"
+            help="Used when a US-bound order is billed in EUR (rare)."
+            saved={recentlySaved('us_tariff_fee_eur')}
+            working={working.us_tariff_fee_eur}
+            error={errors.us_tariff_fee_eur}
+          >
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              inputMode="decimal"
+              value={drafts.us_tariff_fee_eur ?? settings.us_tariff_fee_eur}
+              onChange={(e) => setDrafts((d) => ({ ...d, us_tariff_fee_eur: e.target.value === '' ? 0 : Number(e.target.value) }))}
+              onBlur={() => onShippingNumberBlur('us_tariff_fee_eur')}
+              className={`w-32 ${inputClass}`}
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Xero item code"
+            help="The Xero ItemCode the tariff line invoices as (pre-existing item 910). Xero derives the tax rate — set up as an export / no-VAT item — from this code. Leave blank to fall back to 910."
+            saved={recentlySaved('xero_us_tariff_item_code')}
+            working={working.xero_us_tariff_item_code}
+            error={errors.xero_us_tariff_item_code}
+          >
+            <input
+              type="text"
+              value={drafts.xero_us_tariff_item_code ?? settings.xero_us_tariff_item_code}
+              onChange={(e) => setDrafts((d) => ({ ...d, xero_us_tariff_item_code: e.target.value }))}
+              onBlur={() => onTariffTextBlur('xero_us_tariff_item_code')}
+              className={`w-32 ${inputClass}`}
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Customer intro copy"
+            help="Shown to the customer on the pay-page above the charge. The fee amount is shown on its own line, so leave it out of this text. Plain text, no markdown."
+            saved={recentlySaved('us_tariff_intro_copy')}
+            working={working.us_tariff_intro_copy}
+            error={errors.us_tariff_intro_copy}
+          >
+            <textarea
+              value={drafts.us_tariff_intro_copy ?? settings.us_tariff_intro_copy}
+              onChange={(e) => setDrafts((d) => ({ ...d, us_tariff_intro_copy: e.target.value }))}
+              onBlur={() => onTariffTextBlur('us_tariff_intro_copy')}
+              rows={4}
+              className={inputClass}
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Opt-out warning copy"
+            help="Shown when the customer chooses to remove the charge, to confirm the consequence: they deal with US Customs and any tariffs themselves. Plain text, no markdown."
+            saved={recentlySaved('us_tariff_optout_warning')}
+            working={working.us_tariff_optout_warning}
+            error={errors.us_tariff_optout_warning}
+          >
+            <textarea
+              value={drafts.us_tariff_optout_warning ?? settings.us_tariff_optout_warning}
+              onChange={(e) => setDrafts((d) => ({ ...d, us_tariff_optout_warning: e.target.value }))}
+              onBlur={() => onTariffTextBlur('us_tariff_optout_warning')}
+              rows={3}
+              className={inputClass}
+            />
+          </FieldRow>
+        </div>
+      </section>
     </div>
   )
 }
@@ -954,5 +1103,11 @@ function humanFieldLabel(field: keyof Settings): string {
     fedex_intl_adjust_percent: 'International shipping adjustment (%)',
     domestic_uk_mainland_rate_gbp: 'UK mainland shipping rate (£, inc VAT)',
     domestic_uk_ni_rate_gbp: 'Northern Ireland shipping rate (£, inc VAT)',
+    us_tariff_fee_gbp: 'US tariff fee (GBP)',
+    us_tariff_fee_eur: 'US tariff fee (EUR)',
+    us_tariff_fee_usd: 'US tariff fee (USD)',
+    xero_us_tariff_item_code: 'US tariff Xero item code',
+    us_tariff_intro_copy: 'US tariff intro copy',
+    us_tariff_optout_warning: 'US tariff opt-out warning',
   }[field]
 }

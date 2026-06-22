@@ -551,3 +551,40 @@ without paying through Stripe checkout for each one.
   and accepts `{ status: 'AUTHORISED' | 'DRAFT' }`; the one-invoice body assembly
   lives in `buildInvoicePayload` so both the live path and the batch self-test
   share it.
+- The self-test also covers the **US tariff & customs handling** line (item 910,
+  read from `settings.xero_us_tariff_item_code`) so its code + tax rate are
+  verified before go-live alongside the products, tooling and shipping.
+
+## US tariff & customs handling (migration 000249)
+
+Built 2026-06-22, on the embedded-checkout branch. A flat per-order service
+added **by default** to US-bound orders, covering import tariffs + customs
+clearance (the US ended the $800 de-minimis exemption on 29 Aug 2025). The
+customer can **opt out** on the pay-page — after confirming the consequence:
+they then deal with US Customs and any tariffs themselves. Mirrors Plasma's
+manual-invoicing convention; see https://www.plasmadesign.co.uk/us-tariffs.
+
+- **Trigger (server-authoritative):** the order's resolved delivery country is
+  `US` and the customer hasn't opted out. Country resolves as customer-entered
+  (full_cost/goodwill, on the pay-page) `??` the order's stored
+  `ship_dest_country` hint (set by the designer in the order builder — now
+  available for every shipping treatment, so free/manual US orders are caught
+  too). A `0` fee yields no charge, so it doubles as an off-switch. Pure resolver
+  `resolveUsTariff` in `_shared/orderPricing.ts` (tested via `pnpm test:order-pricing`).
+- **Embedded checkout:** `create-checkout-session` adds the tariff to the
+  PaymentIntent total and returns it in the `breakdown` (`us_tariff`). The
+  pay-page shows the line + the opt-out in the inputs panel **before** the intent
+  is created, so the charged total reflects the choice; a US order never
+  auto-advances past that panel. Toggling the opt-out after the intent re-prices
+  via "Edit order details".
+- **Amount:** admin-editable per currency in Admin → Settings
+  (`us_tariff_fee_gbp/eur/usd`, default 39 each). US orders are billed in USD in
+  practice; GBP/EUR cover the rare non-USD US order. Charged in the order
+  currency — no FX.
+- **Xero:** `stripe-webhook` threads `amount_us_tariff` to
+  `buildOrderInvoiceLines`, which adds a "US tariff & customs handling" line
+  booked to `settings.xero_us_tariff_item_code` (item 910 → export/no-VAT).
+- **Customer copy** (`us_tariff_intro_copy`, `us_tariff_optout_warning`) is
+  admin-editable and surfaced to the anon pay-page via `public_settings()`;
+  `src/lib/publicSettings.ts` falls back to the shipped defaults if blank. The
+  fee amount renders on its own line, so it's deliberately kept out of the copy.
