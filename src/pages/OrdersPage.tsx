@@ -73,7 +73,7 @@ interface OrderRow {
   proof_id: string
   material_variants: {
     display_name: string | null
-    materials: { display_name: string | null; production_route: string | null; lead_time_max_days: number | null } | null
+    materials: { code: string | null; display_name: string | null; production_route: string | null; lead_time_max_days: number | null } | null
   } | null
   proofs: { contacts: { full_name: string | null; companies: { name: string | null } | null } | null } | null
 }
@@ -85,7 +85,7 @@ const SELECT = `
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, person_quantities,
   ship_to_name, ship_to_email, ship_to_address, proof_id,
-  material_variants(display_name, materials(display_name, production_route, lead_time_max_days)),
+  material_variants(display_name, materials(code, display_name, production_route, lead_time_max_days)),
   proofs(contacts(full_name, companies(name)))
 `
 
@@ -119,6 +119,18 @@ function isExpired(o: OrderRow): boolean {
 function routeOf(o: OrderRow): 'in_house' | 'supplier' | null {
   const r = o.material_variants?.materials?.production_route
   return r === 'supplier' ? 'supplier' : r === 'in_house' ? 'in_house' : null
+}
+
+// The default supplier for a supplier-route order's material, mirroring
+// place-order's routing (metal / carbon / full-colour → QX; standard paper →
+// Solopress). Used only to NAME the button — the actual supplier is confirmed
+// (and can be switched) on the review page, so a sensible default is enough.
+// Falls back to the generic word when the material is unknown.
+function defaultSupplierLabel(o: OrderRow): string {
+  const code = o.material_variants?.materials?.code ?? ''
+  if (code.startsWith('metal_') || code === 'carbon_fibre' || code === 'carbon_fibre_cnc' || code === 'plastic_full_colour') return 'QX'
+  if (code === 'paper_standard') return 'Solopress'
+  return 'supplier'
 }
 
 function customerLabel(o: OrderRow): string {
@@ -445,6 +457,7 @@ export default function OrdersPage() {
                         order={o}
                         thumb={thumbs[o.proof_id] ?? null}
                         route={routeOf(o)}
+                        supplierLabel={defaultSupplierLabel(o)}
                         suggested={suggestedDate(o)}
                         busy={busyId === o.id}
                         onReview={() => navigate(`/orders/${o.id}/place`)}
@@ -489,6 +502,7 @@ function OrderCard({
   order,
   thumb,
   route,
+  supplierLabel,
   suggested,
   busy,
   onReview,
@@ -498,6 +512,7 @@ function OrderCard({
   order: OrderRow
   thumb: GridImage | null
   route: 'in_house' | 'supplier' | null
+  supplierLabel: string
   suggested: string | null
   busy: boolean
   onReview: () => void
@@ -750,7 +765,7 @@ function OrderCard({
 
         <div className="flex shrink-0 flex-col gap-2 sm:items-end">
           <ButtonInk onClick={onReview} disabled={!canOrder}>
-            {route === 'supplier' ? 'Review & order from supplier' : 'Review and push to production'}
+            {route === 'supplier' ? `Review & order from ${supplierLabel}` : 'Review and push to production'}
           </ButtonInk>
           {!canOrder && (
             <span className="text-right text-[11px] text-ink-mute">
