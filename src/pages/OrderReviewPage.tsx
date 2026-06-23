@@ -340,7 +340,7 @@ export default function OrderReviewPage() {
                     <p className="mt-3 text-[12px] text-ink-mute">Subject</p>
                     <p className="text-sm font-medium text-ink">{preview.subject}</p>
                     <p className="mt-3 text-[12px] text-ink-mute">Message</p>
-                    <pre className="mt-1 whitespace-pre-wrap rounded-lg border border-line bg-canvas p-3 text-[13px] text-ink">{(preview.email_lines ?? []).join('\n')}</pre>
+                    <pre className="mt-1 whitespace-pre-wrap break-words rounded-lg border border-line bg-canvas p-3 text-[13px] text-ink">{(preview.email_lines ?? []).join('\n')}</pre>
                     <p className="mt-2 text-[12px] text-ink-mute">Sent to the supplier on a new Help Scout conversation, which hands the order to Stock Control. Artwork goes via the Dropbox link above.</p>
                   </>
                 ) : (
@@ -349,7 +349,7 @@ export default function OrderReviewPage() {
                     <p className="mt-3 text-[12px] text-ink-mute">Help Scout subject will be set to</p>
                     <p className="text-sm font-medium text-ink">{preview.subject}</p>
                     <p className="mt-3 text-[12px] text-ink-mute">Note posted to the customer’s thread</p>
-                    <pre className="mt-1 whitespace-pre-wrap rounded-lg border border-line bg-canvas p-3 text-[13px] text-ink">{(preview.note_lines ?? []).join('\n')}</pre>
+                    <pre className="mt-1 whitespace-pre-wrap break-words rounded-lg border border-line bg-canvas p-3 text-[13px] text-ink">{(preview.note_lines ?? []).join('\n')}</pre>
                     {preview.helpscout_linked === false && (
                       <p className="mt-2 text-[12px] text-out">This proof has no linked Help Scout conversation — the note can’t be posted until one is linked.</p>
                     )}
