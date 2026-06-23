@@ -563,6 +563,10 @@ export default function OrderBuilderModal({
         setError('Offline orders use free or manual shipping (live rates need the online pay page).')
         return
       }
+      if (!shipDestCountryValue) {
+        setError('Choose a destination for the order — it sets the packaging (UK = domestic box, anywhere else = international box).')
+        return
+      }
     }
 
     setSubmitting(true)
@@ -883,7 +887,7 @@ export default function OrderBuilderModal({
                 Domestic/International packaging line for production). Shipping
                 cost + discount are skipped — you invoice in Xero yourself. */}
             {paymentMethod === 'offline' ? (
-              <Field label="Destination" htmlFor="order-dest-country" hint="Sets the packaging line for production — a UK address ships in the domestic box, anywhere else the international box.">
+              <Field label="Destination" htmlFor="order-dest-country" hint="Required — sets the packaging line for production: a UK destination ships in the domestic box, anywhere else the international box.">
                 <select
                   id="order-dest-country"
                   aria-label="Destination country"
@@ -891,7 +895,7 @@ export default function OrderBuilderModal({
                   onChange={(e) => setShipDestCountry(e.target.value)}
                   className={selectClass}
                 >
-                  <option value="">Destination country (optional)</option>
+                  <option value="">Choose a destination country…</option>
                   {SHIP_COUNTRIES.map((c) => (
                     <option key={c.code} value={c.code}>{c.name}</option>
                   ))}
