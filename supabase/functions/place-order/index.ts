@@ -292,18 +292,24 @@ interface SupplierRow {
   default_shipping_days: number | null
 }
 
-// Render the admin-editable supplier-order email (proofs.reply_templates row
-// 'supplier_order_email'). Only {customer} + {order_details} are substituted;
+// Render the admin-editable supplier-order email. Each supplier may have its own
+// template (proofs.reply_templates id 'supplier_order_email:<supplier_id>'); if
+// it has none, the shared default ('supplier_order_email') is used, then the
+// built-in constant. Only {customer} + {order_details} are substituted;
 // {order_details} is the machine-generated, parser-critical spec block, so the
-// admin only edits the prose around it. Falls back to the built-in default when
-// the row is missing (e.g. before the seed migration runs).
+// admin only edits the prose around it.
 const SUPPLIER_EMAIL_DEFAULT = 'Hi,\n\nPlease produce the following order for {customer}:\n\n{order_details}\n\nMany thanks.'
-async function renderSupplierEmail(admin: SupabaseClient, vars: { customer: string; order_details: string }): Promise<string> {
+async function renderSupplierEmail(admin: SupabaseClient, supplierId: string | null, vars: { customer: string; order_details: string }): Promise<string> {
+  // Most-specific first: the chosen supplier's own template, then the shared one.
+  const ids = supplierId ? [`supplier_order_email:${supplierId}`, 'supplier_order_email'] : ['supplier_order_email']
   let body = SUPPLIER_EMAIL_DEFAULT
   try {
-    const { data } = await admin.from('reply_templates').select('body').eq('id', 'supplier_order_email').maybeSingle()
-    const b = (data as { body?: string } | null)?.body
-    if (typeof b === 'string' && b.trim()) body = b
+    const { data } = await admin.from('reply_templates').select('id, body').in('id', ids)
+    const byId = new Map((data ?? []).map((r: { id: string; body: string }) => [r.id, r.body]))
+    for (const id of ids) {
+      const b = byId.get(id)
+      if (typeof b === 'string' && b.trim()) { body = b; break }
+    }
   } catch { /* fall back to the default */ }
   return body.replaceAll('{customer}', vars.customer).replaceAll('{order_details}', vars.order_details)
 }
@@ -555,7 +561,7 @@ Deno.serve(async (req) => {
   if (shipByStr) detailLines.push(`Must ship by: ${shipByStr}`)
   if (order.dropbox_folder_url) detailLines.push('', `Artwork: ${order.dropbox_folder_url}`)
 
-  const emailLines = (await renderSupplierEmail(admin, { customer: customerName, order_details: detailLines.join('\n') })).split('\n')
+  const emailLines = (await renderSupplierEmail(admin, chosen?.id ?? null, { customer: customerName, order_details: detailLines.join('\n') })).split('\n')
   const subject = `Order ${String(order.stock_order_number).trim()} - ${customerName}`
 
   if (mode === 'preview') {

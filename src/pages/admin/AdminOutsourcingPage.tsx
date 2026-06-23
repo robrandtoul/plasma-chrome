@@ -30,8 +30,13 @@ interface Supplier { id: string; name: string; email: string | null; is_internat
 interface ProductType { id: string; name: string }
 
 interface Draft { productType: string; supplierIds: string[] }
+// One email editor per target: the shared default ('supplier_order_email') +
+// one per supplier ('supplier_order_email:<supplier_id>'). A supplier with no
+// own template inherits the default (place-order falls back to it).
+interface TplEditor { id: string; label: string; displayName: string; body: string; loaded: string; hasOverride: boolean }
 
 const TEMPLATE_ID = 'supplier_order_email'
+const DEFAULT_BODY = DEFAULT_BODIES[TEMPLATE_ID] ?? ''
 
 export default function AdminOutsourcingPage() {
   const [rows, setRows] = useState<MaterialRow[]>([])
@@ -43,11 +48,10 @@ export default function AdminOutsourcingPage() {
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState<number | null>(null)
 
-  // Template editor state.
-  const [tplBody, setTplBody] = useState('')
-  const [tplLoaded, setTplLoaded] = useState('')
-  const [tplSaving, setTplSaving] = useState(false)
-  const [tplSavedAt, setTplSavedAt] = useState<number | null>(null)
+  // One email editor per target (shared default + per supplier).
+  const [editorsTpl, setEditorsTpl] = useState<TplEditor[]>([])
+  const [tplSavingId, setTplSavingId] = useState<string | null>(null)
+  const [tplSavedId, setTplSavedId] = useState<string | null>(null)
 
   useEffect(() => { void load() }, [])
 
@@ -74,7 +78,7 @@ export default function AdminOutsourcingPage() {
       .select('id, name, active')
       .eq('active', true)
       .order('sort_order')
-    const tplP = supabase.from('reply_templates').select('body').eq('id', TEMPLATE_ID).maybeSingle()
+    const tplP = supabase.from('reply_templates').select('id, body').like('id', `${TEMPLATE_ID}%`)
 
     const [matRes, supRes, ptRes, tplRes] = await Promise.all([matP, supP, ptP, tplP])
     setLoading(false)
@@ -83,16 +87,30 @@ export default function AdminOutsourcingPage() {
 
     const list = (matRes.data ?? []) as MaterialRow[]
     setRows(list)
-    setSuppliers(((supRes.data ?? []) as { id: string; name: string; email_addresses: string[] | null; is_international: boolean }[])
-      .map((s) => ({ id: s.id, name: s.name, email: Array.isArray(s.email_addresses) && s.email_addresses.length ? s.email_addresses[0] : null, is_international: !!s.is_international })))
+    const supplierList: Supplier[] = ((supRes.data ?? []) as { id: string; name: string; email_addresses: string[] | null; is_international: boolean }[])
+      .map((s) => ({ id: s.id, name: s.name, email: Array.isArray(s.email_addresses) && s.email_addresses.length ? s.email_addresses[0] : null, is_international: !!s.is_international }))
+    setSuppliers(supplierList)
     setProductTypes(((ptRes.data ?? []) as ProductType[]))
     setDrafts(Object.fromEntries(list.map((r) => [r.id, {
       productType: r.outsourced_product_type ?? '',
       supplierIds: Array.isArray(r.outsourced_supplier_ids) ? [...r.outsourced_supplier_ids] : [],
     }])))
-    const body = (tplRes.data as { body?: string } | null)?.body ?? DEFAULT_BODIES[TEMPLATE_ID] ?? ''
-    setTplBody(body)
-    setTplLoaded(body)
+    // Build the email editors: the shared default + one per supplier. A
+    // supplier with no saved override pre-fills with the default as a starting
+    // point (loaded === body so Save stays disabled until edited).
+    const rowMap = new Map(((tplRes.data ?? []) as { id: string; body: string }[]).map((r) => [r.id, r.body]))
+    const sharedBody = rowMap.get(TEMPLATE_ID) ?? DEFAULT_BODY
+    const eds: TplEditor[] = [
+      { id: TEMPLATE_ID, label: 'Default — used for any supplier without its own', displayName: 'Supplier order email (default)', body: sharedBody, loaded: sharedBody, hasOverride: rowMap.has(TEMPLATE_ID) },
+      ...supplierList.map((s): TplEditor => {
+        const id = `${TEMPLATE_ID}:${s.id}`
+        const ov = rowMap.get(id)
+        const has = !!(ov && ov.trim())
+        const body = has ? (ov as string) : sharedBody
+        return { id, label: s.name, displayName: `Supplier order email — ${s.name}`, body, loaded: body, hasOverride: has }
+      }),
+    ]
+    setEditorsTpl(eds)
   }
 
   const rowState = useMemo(() => rows.map((r) => {
@@ -144,20 +162,27 @@ export default function AdminOutsourcingPage() {
     })
   }
 
-  async function handleTplSave() {
-    if (tplSaving || tplBody === tplLoaded) return
-    setTplSaving(true); setError(null)
+  function setTplBody(id: string, body: string) {
+    setEditorsTpl((es) => es.map((e) => (e.id === id ? { ...e, body } : e)))
+    if (tplSavedId === id) setTplSavedId(null)
+  }
+
+  async function saveTpl(id: string) {
+    const ed = editorsTpl.find((e) => e.id === id)
+    if (!ed || tplSavingId || ed.body === ed.loaded || !ed.body.includes('{order_details}')) return
+    setTplSavingId(id); setError(null)
+    // Upsert: the shared default row exists (seeded); per-supplier rows are
+    // created on first save.
     const { error: err } = await supabase.from('reply_templates')
-      .update({ body: tplBody, updated_at: new Date().toISOString() })
-      .eq('id', TEMPLATE_ID)
-    setTplSaving(false)
+      .upsert({ id, display_name: ed.displayName, body: ed.body, updated_at: new Date().toISOString() }, { onConflict: 'id' })
+    setTplSavingId(null)
     if (err) { setError(`Failed to save template: ${err.message}`); return }
-    setTplLoaded(tplBody); setTplSavedAt(Date.now())
-    void logAudit({ action: 'reply_template.updated', targetType: 'reply_template', targetId: TEMPLATE_ID, targetLabel: 'Supplier order email' })
+    setEditorsTpl((es) => es.map((e) => (e.id === id ? { ...e, loaded: e.body, hasOverride: true } : e)))
+    setTplSavedId(id)
+    void logAudit({ action: 'reply_template.updated', targetType: 'reply_template', targetId: id, targetLabel: ed.displayName })
   }
 
   const recentlySaved = savedAt != null && Date.now() - savedAt < 2000
-  const tplRecentlySaved = tplSavedAt != null && Date.now() - tplSavedAt < 2000
   const supplierName = (id: string) => suppliers.find((s) => s.id === id)?.name ?? '(unknown)'
 
   return (
@@ -242,34 +267,52 @@ export default function AdminOutsourcingPage() {
             </button>
           </div>
 
-          {/* ── Supplier email template ─────────────────────────────────── */}
-          <div className="rounded-[14px] bg-surface border border-line p-5">
-            <h3 className="text-base font-semibold text-ink">Supplier order email</h3>
-            <p className="mt-1 text-sm text-ink-mute">
-              The email sent to the supplier when an outsourced order is placed. <code className="rounded bg-canvas px-1">{'{customer}'}</code> is the customer name. <code className="rounded bg-canvas px-1">{'{order_details}'}</code> is the order spec (quantity, material, type, thickness, finish, must-ship-by, per-person split, artwork link) — keep it exactly as-is, it’s how Stock Control reads the order. Only edit the wording around it.
-            </p>
-            <textarea
-              value={tplBody}
-              onChange={(e) => { setTplBody(e.target.value); if (tplSavedAt != null) setTplSavedAt(null) }}
-              rows={8}
-              className="mt-3 w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-[13px] text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
-            />
-            {!tplBody.includes('{order_details}') && (
-              <p className="mt-1 text-xs text-out">Add back <code>{'{order_details}'}</code> — without it the supplier won’t get the order spec and Stock Control can’t import it.</p>
-            )}
-            <div className="mt-3 flex items-center justify-end gap-3">
-              {tplRecentlySaved && !tplSaving && <span className="text-xs text-in-stock">Saved</span>}
-              {tplSaving && <span className="text-xs text-ink-mute">Saving…</span>}
-              <button type="button" onClick={() => { setTplBody(DEFAULT_BODIES[TEMPLATE_ID] ?? ''); if (tplSavedAt != null) setTplSavedAt(null) }}
-                disabled={tplBody === (DEFAULT_BODIES[TEMPLATE_ID] ?? '')}
-                className="rounded border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40">
-                Reset to default
-              </button>
-              <button type="button" onClick={handleTplSave} disabled={tplSaving || tplBody === tplLoaded || !tplBody.includes('{order_details}')}
-                className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40">
-                Save template
-              </button>
+          {/* ── Supplier email templates (one per supplier + a default) ──── */}
+          <div className="space-y-3">
+            <div>
+              <h3 className="text-base font-semibold text-ink">Supplier order emails</h3>
+              <p className="mt-1 text-sm text-ink-mute">
+                The email sent when an outsourced order is placed. Each supplier can have its own; one with none uses the default. <code className="rounded bg-canvas px-1">{'{customer}'}</code> is the customer name and <code className="rounded bg-canvas px-1">{'{order_details}'}</code> is the order spec (quantity, material, type, thickness, finish, must-ship-by, per-person split, artwork link) — keep that exactly as-is, it’s how Stock Control reads the order. Only edit the wording around it.
+              </p>
             </div>
+            {editorsTpl.map((ed) => {
+              const isDefault = ed.id === TEMPLATE_ID
+              const sharedBody = editorsTpl.find((e) => e.id === TEMPLATE_ID)?.body ?? DEFAULT_BODY
+              const resetTo = isDefault ? DEFAULT_BODY : sharedBody
+              const saved = tplSavedId === ed.id
+              const saving = tplSavingId === ed.id
+              return (
+                <div key={ed.id} className="rounded-[14px] bg-surface border border-line p-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <h4 className="text-sm font-semibold text-ink">{isDefault ? 'Default' : ed.label}</h4>
+                    {isDefault
+                      ? <span className="text-[11px] uppercase tracking-wide text-ink-mute">used when a supplier has no own email</span>
+                      : !ed.hasOverride && <span className="text-[11px] uppercase tracking-wide text-ink-mute">currently using the default</span>}
+                  </div>
+                  <textarea
+                    value={ed.body}
+                    onChange={(e) => setTplBody(ed.id, e.target.value)}
+                    rows={7}
+                    className="mt-2 w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-[13px] text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                  />
+                  {!ed.body.includes('{order_details}') && (
+                    <p className="mt-1 text-xs text-out">Add back <code>{'{order_details}'}</code> — without it Stock Control can’t import the order.</p>
+                  )}
+                  <div className="mt-2 flex items-center justify-end gap-3">
+                    {saved && !saving && <span className="text-xs text-in-stock">Saved</span>}
+                    {saving && <span className="text-xs text-ink-mute">Saving…</span>}
+                    <button type="button" onClick={() => setTplBody(ed.id, resetTo)} disabled={ed.body === resetTo}
+                      className="rounded border border-line px-3 py-2 text-sm font-medium text-ink-soft hover:bg-canvas disabled:cursor-not-allowed disabled:opacity-40">
+                      {isDefault ? 'Reset to built-in' : 'Reset to default'}
+                    </button>
+                    <button type="button" onClick={() => void saveTpl(ed.id)} disabled={saving || ed.body === ed.loaded || !ed.body.includes('{order_details}')}
+                      className="rounded bg-ink px-4 py-2 text-sm font-semibold text-on-ink hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40">
+                      Save
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </>
       )}
