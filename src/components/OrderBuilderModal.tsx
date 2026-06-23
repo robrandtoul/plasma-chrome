@@ -40,8 +40,9 @@ interface VariantOption {
   display_name: string
   weight_grams: number | null
   // 'thickness' | 'ink_count' | 'finish' | 'default'. Drives whether the order
-  // locks to the proof's variant (ink_count = artwork-defined) or lets the
-  // designer change it (thickness = a substrate choice the customer can change).
+  // locks to the proof's variant (ink_count + finish = artwork-defined, fixed at
+  // proof time) or lets the designer change it (thickness = a substrate choice
+  // the customer can still change at order time).
   variant_type: string | null
 }
 
@@ -202,13 +203,19 @@ export default function OrderBuilderModal({
       setVariants(options)
       // Pre-select the variant the proof priced (when it's a single displayed
       // variant priced in this currency). Lock it read-only only when it's
-      // defined by the approved artwork — ink count for letterpress / plastics.
-      // Substrate choices the customer can still change at order time (metal
-      // thickness) stay an editable picker, just pre-selected to the proof's.
+      // defined by the approved artwork and can't change at order time:
+      //   * ink_count — letterpress / plastics (the artwork has that many inks)
+      //   * finish    — standard paper (Standard / UV Spot / Foiling is printed
+      //                 into the approved artwork)
+      // Substrate choices the customer can still change at order time (metal /
+      // full-colour-plastic thickness) stay an editable picker, just pre-selected
+      // to the proof's. Metal finish is a separate option picker, not this variant.
       const fromProofOpt = displayedVariantIds.length === 1
         ? options.find((o) => o.id === displayedVariantIds[0]) ?? null
         : null
-      setLockedFromProof(!!fromProofOpt && fromProofOpt.variant_type === 'ink_count')
+      setLockedFromProof(
+        !!fromProofOpt && (fromProofOpt.variant_type === 'ink_count' || fromProofOpt.variant_type === 'finish'),
+      )
       setVariantId(fromProofOpt?.id ?? (options.length === 1 ? options[0].id : null))
       setVariantsLoading(false)
     })()
