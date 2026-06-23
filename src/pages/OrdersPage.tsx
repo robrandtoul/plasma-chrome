@@ -750,7 +750,7 @@ function OrderCard({
 
         <div className="flex shrink-0 flex-col gap-2 sm:items-end">
           <ButtonInk onClick={onReview} disabled={!canOrder}>
-            {route === 'supplier' ? 'Review & order from supplier' : 'Review & place order'}
+            {route === 'supplier' ? 'Review & order from supplier' : 'Review and push to production'}
           </ButtonInk>
           {!canOrder && (
             <span className="text-right text-[11px] text-ink-mute">
