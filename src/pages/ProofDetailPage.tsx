@@ -135,6 +135,20 @@ interface ApprovedImageRow {
   versionId: string
 }
 
+interface ProofOrder {
+  id: string
+  status: string
+  token: string | null
+  sent_at: string | null
+  paid_at: string | null
+  expires_at: string | null
+  fulfilled_at: string | null
+  xero_invoice_id: string | null
+  xero_invoice_error: string | null
+  payment_method: string | null
+  created_at: string
+}
+
 export default function ProofDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -250,6 +264,10 @@ export default function ProofDetailPage() {
   // the cached fetch resolves so the button never flashes when off.
   const [orderingEnabled, setOrderingEnabled] = useState<boolean | null>(null)
   const [showOrderBuilder, setShowOrderBuilder] = useState(false)
+  // Latest order(s) for this proof. Drives the inline order-status panel and the
+  // duplicate-order guard (don't offer a plain "Create order" when one's already
+  // in flight). Null until loaded; orders only exist for approved proofs.
+  const [orders, setOrders] = useState<ProofOrder[] | null>(null)
   // Approved artwork table data. Null = not loaded yet (project may
   // not be approved, or the fetch hasn't run); [] = approved but no
   // matching images (approval row with every slot's images deleted
@@ -439,6 +457,19 @@ export default function ProofDetailPage() {
         if (isStale() || !data) return
         setBucketRow(data as unknown as BucketInput)
         setLastActivityAt((data as { last_activity_at: string | null }).last_activity_at ?? null)
+      })
+
+    // Orders for this proof — drives the inline order-status panel + the
+    // duplicate-order guard on "Create order". Best-effort and non-blocking;
+    // orders only exist for approved proofs, so an empty result is the norm.
+    void supabase
+      .from('orders')
+      .select('id, status, token, sent_at, paid_at, expires_at, fulfilled_at, xero_invoice_id, xero_invoice_error, payment_method, created_at')
+      .eq('proof_id', proofId)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        if (isStale()) return
+        setOrders((data ?? []) as unknown as ProofOrder[])
       })
 
     // Per-version thumbnails. Same pattern as the dashboard
@@ -1392,6 +1423,32 @@ export default function ProofDetailPage() {
   const isAbandoned = proof.status === 'abandoned'
   const isLocked    = isApproved || isAbandoned
 
+  // ── Order state (Tier 2 in-context visibility + duplicate-order guard) ──────
+  const latestOrder = orders && orders.length > 0 ? orders[0] : null
+  const latestExpired = latestOrder?.status === 'sent' && !!latestOrder.expires_at && Date.parse(latestOrder.expires_at) < Date.now()
+  // "Open" = paid, placed, or a still-valid pay link — don't offer a fresh
+  // Create order (which would be a duplicate pay link / order).
+  const hasOpenOrder = !!latestOrder && (
+    latestOrder.status === 'paid' ||
+    latestOrder.status === 'fulfilled' ||
+    (latestOrder.status === 'sent' && !latestExpired)
+  )
+  const orderInvoiceProblem = !!latestOrder && !latestOrder.xero_invoice_id && !!latestOrder.xero_invoice_error && latestOrder.payment_method !== 'offline'
+  const orderSummary: { text: string; tone: 'good' | 'wait' | 'dead' } | null = (() => {
+    if (!latestOrder) return null
+    const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '')
+    switch (latestOrder.status) {
+      case 'fulfilled': return { text: `Order placed${latestOrder.fulfilled_at ? ` ${fmt(latestOrder.fulfilled_at)}` : ''}`, tone: 'good' }
+      case 'paid':      return { text: `Paid${latestOrder.paid_at ? ` ${fmt(latestOrder.paid_at)}` : ''} · awaiting placement`, tone: 'good' }
+      case 'sent':      return latestExpired
+        ? { text: `Pay link expired${latestOrder.expires_at ? ` ${fmt(latestOrder.expires_at)}` : ''}`, tone: 'dead' }
+        : { text: `Pay link sent${latestOrder.sent_at ? ` ${fmt(latestOrder.sent_at)}` : ''} · awaiting payment`, tone: 'wait' }
+      case 'expired':   return { text: 'Pay link expired', tone: 'dead' }
+      case 'cancelled': return { text: 'Order cancelled', tone: 'dead' }
+      default:          return { text: latestOrder.status, tone: 'wait' }
+    }
+  })()
+
   const currentVersion = versions.find((v) => v.is_current)
   const currentIsCustomQuote = !!currentVersion?.custom_quote
   // Workflow bucket for the status pill — matches the dashboard. Falls back to
@@ -2138,14 +2195,23 @@ export default function ProofDetailPage() {
                     the ordering master switch is on (settings.ordering_enabled,
                     migration 000228). For an approved proof this is the
                     primary action; the whole surface is inert until an admin
-                    flips the toggle. */}
+                    flips the toggle. When an order is already open (paid /
+                    placed / a live pay link), the primary becomes "View order"
+                    so a duplicate isn't the default — re-creating moves to the
+                    overflow menu behind a confirm. */}
                 {isApproved && orderingEnabled === true && (
-                  <ButtonCoral
-                    icon={Package}
-                    onClick={() => setShowOrderBuilder(true)}
-                  >
-                    Create order
-                  </ButtonCoral>
+                  hasOpenOrder ? (
+                    <Link to="/orders">
+                      <ButtonCoral icon={Package}>View order</ButtonCoral>
+                    </Link>
+                  ) : (
+                    <ButtonCoral
+                      icon={Package}
+                      onClick={() => setShowOrderBuilder(true)}
+                    >
+                      Create order
+                    </ButtonCoral>
+                  )
                 )}
                 <ButtonGhost
                   icon={ExternalLink}
@@ -2164,7 +2230,19 @@ export default function ProofDetailPage() {
                 <HeaderActionsMenu
                   items={
                     isLocked
-                      ? [{ label: 'Reopen project', onClick: () => setStatusDialog('reopen') }]
+                      ? [
+                          { label: 'Reopen project', onClick: () => setStatusDialog('reopen') },
+                          ...(isApproved && orderingEnabled === true && hasOpenOrder
+                            ? [{
+                                label: 'Create another order',
+                                onClick: () => {
+                                  if (window.confirm('This proof already has an order. Create an additional order anyway?')) {
+                                    setShowOrderBuilder(true)
+                                  }
+                                },
+                              }]
+                            : []),
+                        ]
                       : [
                           { label: 'Mark as approved', tone: 'approve', onClick: () => setStatusDialog('approve') },
                           { label: 'Abandon project', tone: 'danger', onClick: () => setStatusDialog('abandon') },
@@ -2178,6 +2256,31 @@ export default function ProofDetailPage() {
           {/* Hidden input for clipboard fallback. */}
           <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
         </section>
+
+        {/* Order-status strip — gives the approved proof in-context order state
+            (none / pay link sent / paid / placed) so the designer doesn't have
+            to scan /orders, and flags a failed Xero invoice that's otherwise
+            invisible here. Only when ordering is on and an order exists. */}
+        {isApproved && orderingEnabled === true && orderSummary && (
+          <section className="mb-8 rounded-2xl border border-line bg-canvas p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2 text-[13px]">
+                <Package aria-hidden="true" className="h-4 w-4 shrink-0 text-ink-mute" />
+                <span className="font-semibold text-ink">Order</span>
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-2 w-2 rounded-full"
+                  style={{ backgroundColor: orderSummary.tone === 'good' ? 'var(--c-in-stock)' : orderSummary.tone === 'wait' ? 'var(--c-low)' : 'var(--c-ink-mute)' }}
+                />
+                <span className="text-ink-soft">{orderSummary.text}</span>
+                {orderInvoiceProblem && (
+                  <span className="rounded-full bg-out-soft px-2 py-0.5 text-[11px] font-medium text-out ring-1 ring-out" title="The Xero invoice for this order failed — open Orders to retry it.">Invoice failed</span>
+                )}
+              </div>
+              <Link to="/orders" className="shrink-0 text-[13px] font-medium text-ink-soft underline underline-offset-2 hover:text-ink">View in Orders →</Link>
+            </div>
+          </section>
+        )}
 
         {/* "Approved on an earlier version" warning. Surfaces the
             silent dead-end where a customer approved a superseded
@@ -3164,7 +3267,7 @@ export default function ProofDetailPage() {
             hasPersonalisation={!!currentVersion.has_personalisation}
             isCustomQuote={!!currentVersion.custom_quote}
             hasHelpScoutConversation={!!proof.helpscout_conversation_id}
-            onClose={() => setShowOrderBuilder(false)}
+            onClose={() => { setShowOrderBuilder(false); if (id) void loadProof(id) }}
           />
         )
       })()}

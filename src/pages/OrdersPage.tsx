@@ -163,8 +163,13 @@ function addBusinessDays(from: Date, n: number): Date {
   return d
 }
 
+// Build the ISO date from LOCAL components. toISOString() converts to UTC, so
+// for a UK user in BST a date computed near local midnight could roll back a
+// day — and addBusinessDays counts on local getDay(), so the two would disagree
+// at the boundary. This keeps the date the designer sees == the date we store.
 function toISODate(d: Date): string {
-  return d.toISOString().slice(0, 10)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
 // Suggested date required: today + the material's max lead time (working days).
@@ -286,14 +291,28 @@ export default function OrdersPage() {
     return () => { cancelled = true }
   }, [])
 
-  // Persist a single order field (the date / Dropbox folder edits), merging
-  // into local state so the gate + UI reflect it immediately.
-  async function saveOrderField(orderId: string, patch: Partial<OrderRow>) {
+  // Persist a single order field (the date / Dropbox folder edits), merging into
+  // local state so the gate + UI reflect it immediately. Returns whether the
+  // write actually landed — these two fields gate placing the order, so a silent
+  // failure must NOT leave the card showing a saved value the DB never got. On
+  // failure we revert to the DB's truth (re-fetch the row) and report false so
+  // the caller can show an inline error and keep the gate closed.
+  async function saveOrderField(orderId: string, patch: Partial<OrderRow>): Promise<boolean> {
     setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, ...patch } : o)))
-    await supabase
+    const { error } = await supabase
       .from('orders')
       .update({ ...patch, updated_at: new Date().toISOString() })
       .eq('id', orderId)
+    if (error) {
+      // Revert the optimistic patch to whatever is actually persisted.
+      const { data: fresh } = await supabase.from('orders').select(SELECT).eq('id', orderId).maybeSingle()
+      if (fresh) {
+        const row = fresh as unknown as OrderRow
+        setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, ...row } : o)))
+      }
+      return false
+    }
+    return true
   }
 
   async function retryInvoice(o: OrderRow) {
@@ -429,7 +448,7 @@ export default function OrdersPage() {
                         suggested={suggestedDate(o)}
                         busy={busyId === o.id}
                         onReview={() => navigate(`/orders/${o.id}/place`)}
-                        onSaveField={(patch) => void saveOrderField(o.id, patch)}
+                        onSaveField={(patch) => saveOrderField(o.id, patch)}
                         onRetryInvoice={() => void retryInvoice(o)}
                       />
                     ))}
@@ -482,7 +501,7 @@ function OrderCard({
   suggested: string | null
   busy: boolean
   onReview: () => void
-  onSaveField: (patch: Partial<OrderRow>) => void
+  onSaveField: (patch: Partial<OrderRow>) => Promise<boolean>
   onRetryInvoice: () => void
 }) {
   const total = orderTotal(order)
@@ -501,6 +520,30 @@ function OrderCard({
   const [dateValue, setDateValue] = useState<string>(order.date_required ?? suggested ?? '')
   const [folderDraft, setFolderDraft] = useState<string>(order.dropbox_folder_url ?? '')
 
+  // Whether the date is actually persisted — gates placing. A pre-filled
+  // lead-time suggestion is NOT saved until the designer confirms it, and a
+  // failed save must not leave the gate open. Plus transient save feedback.
+  const [datePersisted, setDatePersisted] = useState<boolean>(!!order.date_required)
+  const [dateSaving, setDateSaving] = useState(false)
+  const [dateError, setDateError] = useState(false)
+  const [dateSaved, setDateSaved] = useState(false)
+
+  async function handleDateChange(v: string) {
+    setDateValue(v)
+    setDateError(false)
+    setDateSaved(false)
+    setDateSaving(true)
+    const ok = await onSaveField({ date_required: v || null })
+    setDateSaving(false)
+    if (ok) {
+      setDatePersisted(!!v)
+      if (v) { setDateSaved(true); window.setTimeout(() => setDateSaved(false), 2000) }
+    } else {
+      setDatePersisted(false)
+      setDateError(true)
+    }
+  }
+
   // Folder lookup: pasting the order-folder link verifies it against Dropbox and
   // pulls the order number + project from its name (the values the Stock Control
   // hand-off needs). Seeds from saved values so a revisit shows the confirmation
@@ -515,31 +558,39 @@ function OrderCard({
     const link = rawLink.trim()
     if (!link) {
       setLookup({ status: 'idle' })
-      onSaveField({ dropbox_folder_url: null, stock_order_number: null, project_name: null })
+      await onSaveField({ dropbox_folder_url: null, stock_order_number: null, project_name: null })
       return
     }
     setLookup({ status: 'loading' })
     const { data, error } = await supabase.functions.invoke<DropboxFolderResult>('dropbox-folder', { body: { link } })
     if (error || !data?.ok) {
-      setLookup({ status: 'error', error: data?.error ?? error?.message ?? 'Could not read that Dropbox link.' })
       // Keep the URL so it isn't lost, but clear the parsed fields it couldn't fill.
-      onSaveField({ dropbox_folder_url: link, stock_order_number: null, project_name: null })
+      await onSaveField({ dropbox_folder_url: link, stock_order_number: null, project_name: null })
+      setLookup({ status: 'error', error: data?.error ?? error?.message ?? 'Could not read that Dropbox link.' })
       return
     }
     const orderNumber = data.order_number ?? null
     const projectName = data.project_name ?? null
+    // Only treat the folder as verified once the DB write lands — otherwise the
+    // gate could open off a folder the order row never actually got.
+    const saved = await onSaveField({ dropbox_folder_url: link, stock_order_number: orderNumber, project_name: projectName })
+    if (!saved) {
+      setLookup({ status: 'error', error: 'Verified the folder, but couldn’t save it — please Check again.' })
+      return
+    }
     setLookup({ status: 'ok', orderNumber, projectName, fileCount: data.file_count ?? null })
-    onSaveField({ dropbox_folder_url: link, stock_order_number: orderNumber, project_name: projectName })
   }
 
   // The folder is usable for the hand-off only once it's verified AND its name
   // yields an order number (which becomes the Help Scout subject Stock Control
   // matches on). Artwork presence is informational, not a gate.
   const folderVerified = lookup.status === 'ok' && !!lookup.orderNumber
-  // Both routes need a verified folder (its name = the order number) + a date
-  // before the order can be reviewed & placed; the review page picks the route
-  // (in-house note vs supplier email) and confirms.
-  const canOrder = folderVerified && dateValue.length > 0
+  // Both routes need a verified folder (its name = the order number) + a SAVED
+  // date before the order can be reviewed & placed; the review page picks the
+  // route (in-house note vs supplier email) and confirms. The date must be
+  // persisted (not just a pre-filled suggestion) so the place-order edge fn,
+  // which reads the DB, doesn't reject an order whose gate looked green.
+  const canOrder = folderVerified && datePersisted
 
   return (
     <PanelShell>
@@ -628,12 +679,17 @@ function OrderCard({
               <input
                 type="date"
                 value={dateValue}
-                onChange={(e) => { setDateValue(e.target.value); onSaveField({ date_required: e.target.value || null }) }}
+                onChange={(e) => void handleDateChange(e.target.value)}
                 className="mt-1 h-[38px] w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
               />
-              {suggested && !order.date_required && (
-                <span className="mt-1 block text-[11px] text-ink-mute">Suggested from lead time — confirm or change</span>
-              )}
+              <div className="mt-1 space-y-0.5 text-[11px]">
+                {dateSaving && <span className="block text-ink-mute">Saving…</span>}
+                {dateError && <span className="block text-out">Couldn’t save — try again</span>}
+                {dateSaved && !dateError && <span className="block text-in-stock">✓ Saved</span>}
+                {!dateSaving && !dateError && !dateSaved && !datePersisted && dateValue && (
+                  <span className="block text-low">Suggested from lead time — pick the date to confirm</span>
+                )}
+              </div>
             </label>
             <label className="block">
               <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Order folder (Dropbox)</span>
@@ -698,7 +754,11 @@ function OrderCard({
           </ButtonInk>
           {!canOrder && (
             <span className="text-right text-[11px] text-ink-mute">
-              {!folderVerified ? 'Link & check the order folder to enable' : 'Set a date required to enable'}
+              {!folderVerified
+                ? 'Link & check the order folder to enable'
+                : dateValue
+                  ? 'Confirm the date required to enable'
+                  : 'Set a date required to enable'}
             </span>
           )}
           <Link to={`/proofs/${order.proof_id}`}>

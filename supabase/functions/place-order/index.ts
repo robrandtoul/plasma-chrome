@@ -343,7 +343,14 @@ Deno.serve(async (req) => {
       if (e instanceof HsError) return json({ ok: false, error: `Help Scout: ${e.message}` }, 502)
       return json({ ok: false, error: `Hand-off failed: ${(e as Error)?.message ?? 'unknown'}` }, 502)
     }
-    await markPlaced(admin, orderId, callerId, { route, subject })
+    const placed = await markPlaced(admin, orderId, callerId, { route, subject })
+    if (!placed.ok) {
+      // The note WAS posted to Help Scout, but the status flip failed. Surface a
+      // distinct error so the UI does NOT offer a plain retry (which would re-post
+      // the note); the human marks the order placed manually instead.
+      await logPlaceMishap(admin, orderId, callerId, { route, subject, error: placed.error })
+      return json({ ok: false, code: 'sent_not_recorded', error: `The production note was posted to Help Scout, but the order status couldn’t be updated (${placed.error}). Do NOT place it again — mark this order placed manually.` }, 500)
+    }
     return json({ ok: true, route, placed: true })
   }
 
@@ -431,13 +438,19 @@ Deno.serve(async (req) => {
     if (e instanceof HsError) return json({ ok: false, error: `Help Scout: ${e.message}` }, 502)
     return json({ ok: false, error: `Hand-off failed: ${(e as Error)?.message ?? 'unknown'}` }, 502)
   }
-  await markPlaced(admin, orderId, callerId, {
+  const placed = await markPlaced(admin, orderId, callerId, {
     route,
     subject,
     supplier_id: chosen.id,
     supplier_name: chosen.name,
     supplier_helpscout_conversation_id: newConvId,
   })
+  if (!placed.ok) {
+    // The supplier email WAS sent; only the status flip failed. Distinct error so
+    // the UI won't re-send — the order is placed, it just needs recording manually.
+    await logPlaceMishap(admin, orderId, callerId, { route, subject, supplier_name: chosen.name, supplier_helpscout_conversation_id: newConvId, error: placed.error })
+    return json({ ok: false, code: 'sent_not_recorded', error: `The order was emailed to ${chosen.name}, but the order status couldn’t be updated (${placed.error}). Do NOT send it again — mark this order placed manually.` }, 500)
+  }
   return json({ ok: true, route, placed: true, supplier: chosen.name })
 })
 
@@ -451,14 +464,21 @@ async function resolveUserId(admin: SupabaseClient, callerId: string): Promise<n
 }
 
 // Flip the order to placed ('fulfilled') + record supplier details + audit.
+// Returns { ok:false } when the flip didn't land (DB error, or the row was no
+// longer 'paid') so the caller can surface a "sent but not recorded" error
+// instead of falsely reporting success — the bug this guards against is a
+// swallowed flip failure leaving the order in 'paid' and re-placeable, which
+// re-sends the whole hand-off into production.
 async function markPlaced(
   admin: SupabaseClient,
   orderId: string,
   callerId: string,
   detail: { route: string; subject: string; supplier_id?: string; supplier_name?: string; supplier_helpscout_conversation_id?: string | null },
-): Promise<void> {
+): Promise<{ ok: boolean; error?: string }> {
   const nowIso = new Date().toISOString()
-  await admin
+  // Conditional on status='paid' so a stale/concurrent re-entry can't re-flip;
+  // .select() so we can confirm exactly one row actually moved paid→fulfilled.
+  const { data, error } = await admin
     .from('orders')
     .update({
       status: 'fulfilled',
@@ -471,9 +491,31 @@ async function markPlaced(
     })
     .eq('id', orderId)
     .eq('status', 'paid')
+    .select('id')
+  if (error) return { ok: false, error: error.message }
+  if (!data || data.length === 0) return { ok: false, error: 'order was no longer in the paid state' }
   await admin.from('audit_log').insert({
     actor_id: callerId,
     action: 'order.placed',
+    target_type: 'order',
+    target_id: orderId,
+    target_label: `Order ${orderId}`,
+    after_value: detail,
+  }).then(undefined, () => {})
+  return { ok: true }
+}
+
+// Record a "hand-off sent but status not updated" event so an order that was
+// actually placed but is stuck in 'paid' leaves a trail to reconcile from.
+async function logPlaceMishap(
+  admin: SupabaseClient,
+  orderId: string,
+  callerId: string,
+  detail: Record<string, unknown>,
+): Promise<void> {
+  await admin.from('audit_log').insert({
+    actor_id: callerId,
+    action: 'order.place_sent_not_recorded',
     target_type: 'order',
     target_id: orderId,
     target_label: `Order ${orderId}`,

@@ -562,6 +562,18 @@ export default function OrderPayPage() {
             window.setTimeout(() => { if (!cancelled) poll() }, 5000)
           }
         })
+        .catch(() => {
+          // A rejected invoke (offline, CORS, function 500 before a body) would
+          // otherwise leave vat stuck on 'loading' forever and render nothing.
+          // Degrade to the reassuring "available shortly" copy and keep trying
+          // within the same budget.
+          if (cancelled) return
+          attempts++
+          setVat({ state: 'pending' })
+          if (attempts < MAX_ATTEMPTS) {
+            window.setTimeout(() => { if (!cancelled) poll() }, 5000)
+          }
+        })
     }
     poll()
     return () => { cancelled = true }
@@ -1108,7 +1120,7 @@ export default function OrderPayPage() {
                   )}
 
                   {payError && (
-                    <div className="rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{payError}</div>
+                    <div role="alert" className="rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{payError}</div>
                   )}
 
                   <button type="button" onClick={() => void startCheckout()} disabled={paying || awaitingQuantity || !destinationComplete}
@@ -1119,7 +1131,7 @@ export default function OrderPayPage() {
                           : payTotal != null ? `Continue to payment — ${formatPrice(payTotal, order.currency)}`
                             : 'Continue to payment'}
                   </button>
-                  <p className="text-center text-[12px] text-ink-mute">
+                  <p className="text-center text-[12px] text-ink-mute" aria-live="polite">
                     {awaitingQuantity ? 'Select a quantity to see your total.'
                       : !destinationComplete ? 'Enter where we’re shipping to so we can calculate shipping.'
                         : 'Secured by Stripe.'}
@@ -1134,12 +1146,21 @@ export default function OrderPayPage() {
                     </div>
                   )}
                   <div className="space-y-4">
-                    <div id="link-auth" />
-                    <div id="address-element" />
-                    <div id="payment-element" />
+                    <div>
+                      <p className="mb-1.5 text-[12px] font-medium text-ink-mute">Contact</p>
+                      <div id="link-auth" aria-label="Contact details" />
+                    </div>
+                    <div>
+                      <p className="mb-1.5 text-[12px] font-medium text-ink-mute">Shipping address</p>
+                      <div id="address-element" aria-label="Shipping address" />
+                    </div>
+                    <div>
+                      <p className="mb-1.5 text-[12px] font-medium text-ink-mute">Payment details</p>
+                      <div id="payment-element" aria-label="Payment details" />
+                    </div>
                   </div>
                   {formError && (
-                    <div className="mt-3 rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{formError}</div>
+                    <div role="alert" className="mt-3 rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{formError}</div>
                   )}
                   <button type="button" onClick={() => void confirmPay()} disabled={submitting || !formMounted}
                     className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-on-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">

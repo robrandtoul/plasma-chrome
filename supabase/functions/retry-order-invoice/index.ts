@@ -16,6 +16,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { requireDesigner, json, CORS_HEADERS } from '../_shared/admin.ts'
 import { getAccessContext, createSalesInvoice } from '../_shared/xero.ts'
 import { buildOrderInvoiceLines } from '../_shared/invoiceBuild.ts'
+import { logAudit } from '../_shared/audit.ts'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -171,10 +172,31 @@ Deno.serve(async (req) => {
 
   if (invoiceId) {
     await admin.from('orders').update({ xero_invoice_id: invoiceId, xero_invoice_error: null }).eq('id', orderId)
+    // A manual retry mints a real Xero invoice — record who triggered it.
+    await logAudit(admin, {
+      actorId: ctxOrResp.callerId,
+      actorEmail: ctxOrResp.callerEmail,
+      actorLabel: ctxOrResp.callerLabel,
+      action: 'order.invoice_retried',
+      targetType: 'order',
+      targetId: orderId,
+      targetLabel: `Order ${reference}`,
+      afterValue: { orderId, invoiceId, currency },
+    })
     return json({ ok: true, invoiceId })
   }
 
   const msg = lastError ?? 'Xero did not return an invoice'
   await admin.from('orders').update({ xero_invoice_error: msg }).eq('id', orderId)
+  await logAudit(admin, {
+    actorId: ctxOrResp.callerId,
+    actorEmail: ctxOrResp.callerEmail,
+    actorLabel: ctxOrResp.callerLabel,
+    action: 'order.invoice_retry_failed',
+    targetType: 'order',
+    targetId: orderId,
+    targetLabel: `Order ${reference}`,
+    afterValue: { orderId, error: msg },
+  })
   return json({ ok: false, error: msg }, 200)
 })

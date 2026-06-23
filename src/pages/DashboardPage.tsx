@@ -279,6 +279,9 @@ interface StatTileProps {
   tone: 'rose' | 'amber' | 'sky' | 'neutral' | 'violet' | 'green' | 'turquoise' | 'gold' | 'blue' | 'indigo'
   onClick: () => void
   help?: string
+  // Optional small red corner count (e.g. orders with a failed Xero invoice).
+  badge?: number
+  badgeTitle?: string
 }
 
 // Tone → CSS colour mapping. Design-system tokens where they map
@@ -301,7 +304,7 @@ const TILE_COLOUR: Record<StatTileProps['tone'], string> = {
   indigo:    '#6366f1',
 }
 
-function StatTile({ label, count, active, tone, onClick, help }: StatTileProps) {
+function StatTile({ label, count, active, tone, onClick, help, badge, badgeTitle }: StatTileProps) {
   const tint = TILE_COLOUR[tone]
   return (
     <button
@@ -317,6 +320,15 @@ function StatTile({ label, count, active, tone, onClick, help }: StatTileProps) 
         backgroundColor: active ? `color-mix(in srgb, ${tint} 8%, transparent)` : undefined,
       }}
     >
+      {badge != null && badge > 0 && (
+        <span
+          className="absolute right-2 top-2 inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white"
+          style={{ backgroundColor: 'var(--c-out)' }}
+          title={badgeTitle}
+        >
+          {badge}
+        </span>
+      )}
       {/* Dot + label row. Dot picks up the tile's tone; label uses the
           eyebrow class (inline whitespace-normal so long labels wrap —
           see PR 17c for why the override has to be inline). Fixed two-line
@@ -1867,12 +1879,15 @@ export default function DashboardPage() {
   // numbers stay correct no matter how many proofs exist. Null until the
   // RPC resolves.
   const [tileCounts, setTileCounts]       = useState<TileCounts | null>(null)
-  // Order-stage tiles (Awaiting payment / Ordered), shown only when ordering
+  // Order-stage tiles (Awaiting payment / To order), shown only when ordering
   // is enabled. Counted across all orders (not the loaded proof subset); they
   // navigate to the Orders page rather than filtering the proof list, since
-  // orders aren't part of the dashboard list.
+  // orders aren't part of the dashboard list. "To order" mirrors the Orders
+  // page's actionable bucket (paid, not yet placed) — fulfilled is finished work
+  // and lives under "Recently ordered" there. invoiceProblem = paid orders whose
+  // Xero invoice failed (a books gap that's otherwise only visible on /orders).
   const [orderingOn, setOrderingOn]       = useState(false)
-  const [orderCounts, setOrderCounts]     = useState<{ awaitingPayment: number; ordered: number } | null>(null)
+  const [orderCounts, setOrderCounts]     = useState<{ awaitingPayment: number; toOrder: number; invoiceProblem: number } | null>(null)
   // current_version_id → signed thumbnail URL. Populated in
   // loadDashboard after the projects fetch by batch-signing the
   // first front image of each version. Empty entries (no version
@@ -2020,12 +2035,16 @@ export default function DashboardPage() {
       if (cancelled) return
       setOrderingOn(on)
       if (!on) return
-      const [a, o] = await Promise.all([
+      const [a, o, p] = await Promise.all([
         supabase.from('orders').select('id', { count: 'exact', head: true }).eq('status', 'sent'),
-        supabase.from('orders').select('id', { count: 'exact', head: true }).in('status', ['paid', 'fulfilled']),
+        supabase.from('orders').select('id', { count: 'exact', head: true }).eq('status', 'paid'),
+        // Paid, no Xero invoice, but a stored Xero error → a real books gap.
+        // Offline orders carry neither id nor error, so they're excluded.
+        supabase.from('orders').select('id', { count: 'exact', head: true })
+          .eq('status', 'paid').is('xero_invoice_id', null).not('xero_invoice_error', 'is', null),
       ])
       if (cancelled) return
-      setOrderCounts({ awaitingPayment: a.count ?? 0, ordered: o.count ?? 0 })
+      setOrderCounts({ awaitingPayment: a.count ?? 0, toOrder: o.count ?? 0, invoiceProblem: p.count ?? 0 })
     })()
     return () => { cancelled = true }
   }, [])
@@ -2547,8 +2566,14 @@ export default function DashboardPage() {
                         onClick={() => navigate('/orders')}
                       />
                       <StatTile
-                        label="Ordered"
-                        count={orderCounts?.ordered ?? 0}
+                        label="To order"
+                        count={orderCounts?.toOrder ?? 0}
+                        badge={orderCounts?.invoiceProblem ?? 0}
+                        badgeTitle={
+                          orderCounts?.invoiceProblem
+                            ? `${orderCounts.invoiceProblem} paid order${orderCounts.invoiceProblem === 1 ? '' : 's'} with a failed Xero invoice — open Orders to retry`
+                            : undefined
+                        }
                         active={false}
                         tone="blue"
                         onClick={() => navigate('/orders')}

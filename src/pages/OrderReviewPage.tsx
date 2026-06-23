@@ -56,6 +56,23 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
   )
 }
 
+// supabase-js surfaces a non-2xx edge response as { data: null, error }, with
+// the JSON body on error.context (a Response) — NOT on `data`. place-order
+// returns its failures (incl. the sent_not_recorded signal) with non-2xx codes,
+// so we must read { ok, error, code } off the error or every failure looks
+// opaque and the re-send guard never fires.
+async function readFnErrorBody(err: unknown): Promise<{ error?: string; code?: string } | null> {
+  const ctx = (err as { context?: { json?: () => Promise<unknown> } } | null)?.context
+  if (ctx && typeof ctx.json === 'function') {
+    try {
+      return (await ctx.json()) as { error?: string; code?: string }
+    } catch {
+      /* body wasn't JSON — fall back to the error message */
+    }
+  }
+  return null
+}
+
 export default function OrderReviewPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -69,6 +86,13 @@ export default function OrderReviewPage() {
   const [confirmError, setConfirmError] = useState<string | null>(null)
   // Supplier sends a REAL email — require an explicit second click to arm it.
   const [armed, setArmed] = useState(false)
+  // True while a supplier change re-fetches the preview — disables the picker +
+  // confirm so the armed banner, the button label, and the id actually sent
+  // can't describe different suppliers mid-fetch.
+  const [supplierLoading, setSupplierLoading] = useState(false)
+  // Set when the hand-off WAS sent but the status flip failed (place-order
+  // returns code 'sent_not_recorded') — block any retry, which would re-send.
+  const [sentNotRecorded, setSentNotRecorded] = useState<string | null>(null)
 
   const loadPreview = useCallback(async (chosenSupplierId?: string | null) => {
     if (!id) return
@@ -77,7 +101,8 @@ export default function OrderReviewPage() {
       body: { order_id: id, mode: 'preview', ...(chosenSupplierId ? { supplier_id: chosenSupplierId } : {}) },
     })
     if (fnErr || !data?.ok) {
-      setError(data?.error ?? fnErr?.message ?? 'Could not load this order for review.')
+      const body = data ?? await readFnErrorBody(fnErr)
+      setError(body?.error ?? fnErr?.message ?? 'Could not load this order for review.')
       setPreview(null)
       return
     }
@@ -111,7 +136,13 @@ export default function OrderReviewPage() {
   async function onSupplierChange(newId: string) {
     setSupplierId(newId)
     setArmed(false) // changing supplier disarms — re-confirm the new recipient
-    await loadPreview(newId)
+    setConfirmError(null) // a prior failure was about the previous supplier
+    setSupplierLoading(true)
+    try {
+      await loadPreview(newId)
+    } finally {
+      setSupplierLoading(false)
+    }
   }
 
   async function confirm() {
@@ -119,11 +150,21 @@ export default function OrderReviewPage() {
     setConfirming(true)
     setConfirmError(null)
     try {
-      const { data, error: fnErr } = await supabase.functions.invoke<{ ok: boolean; error?: string; placed?: boolean }>('place-order', {
+      const { data, error: fnErr } = await supabase.functions.invoke<{ ok: boolean; error?: string; code?: string; placed?: boolean }>('place-order', {
         body: { order_id: id, mode: 'confirm', ...(supplierId ? { supplier_id: supplierId } : {}) },
       })
+      // On a non-2xx (which is how place-order returns sent_not_recorded AND its
+      // other failures) supabase-js gives data:null + the body on error.context.
+      // Read whichever is populated so the code + message are never lost.
+      const body = data ?? await readFnErrorBody(fnErr)
+      if (body?.code === 'sent_not_recorded') {
+        // The hand-off WAS sent; only the status flip failed. Do NOT let the user
+        // retry (that re-sends) — show the manual-fix instruction instead.
+        setSentNotRecorded(body.error ?? 'The hand-off was sent but the order status could not be updated. Mark it placed manually in Stock Control.')
+        return
+      }
       if (fnErr || !data?.ok) {
-        setConfirmError(data?.error ?? fnErr?.message ?? 'Could not place the order. Please try again.')
+        setConfirmError(body?.error ?? fnErr?.message ?? 'Could not place the order. Please try again.')
         return
       }
       navigate('/orders')
@@ -134,6 +175,19 @@ export default function OrderReviewPage() {
 
   const s = preview?.summary
   const isSupplier = preview?.route === 'supplier'
+  // Hand-off preconditions the page already knows about — disable Confirm when
+  // it provably can't succeed, rather than letting the doomed round-trip run.
+  const noSuppliers = isSupplier && (preview?.suppliers ?? []).length === 0
+  const supplierEmailMissing = isSupplier && !noSuppliers && !preview?.supplier?.email
+  const hsMissing = !isSupplier && preview?.helpscout_linked === false
+  const blockReason = noSuppliers
+    ? 'No suppliers are configured in Stock Control, so this order can’t be emailed.'
+    : supplierEmailMissing
+      ? 'The selected supplier has no email address in Stock Control, so this order can’t be emailed.'
+      : hsMissing
+        ? 'This proof has no linked Help Scout conversation, so the production note can’t be posted.'
+        : null
+  const canConfirm = !blockReason
 
   return (
     <DesignerChrome active="orders">
@@ -205,7 +259,8 @@ export default function OrderReviewPage() {
                       <select
                         value={supplierId ?? ''}
                         onChange={(e) => void onSupplierChange(e.target.value)}
-                        className="mt-1 h-[38px] w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                        disabled={supplierLoading}
+                        className="mt-1 h-[38px] w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)] disabled:opacity-60"
                       >
                         {(preview.suppliers ?? []).map((sup) => (
                           <option key={sup.id} value={sup.id}>
@@ -213,7 +268,13 @@ export default function OrderReviewPage() {
                           </option>
                         ))}
                       </select>
-                      {preview.supplier && !preview.supplier.email && (
+                      {supplierLoading && (
+                        <span className="mt-1 block text-[12px] text-ink-mute">Updating preview…</span>
+                      )}
+                      {!supplierLoading && noSuppliers && (
+                        <span className="mt-1 block text-[12px] text-out">No suppliers are configured in Stock Control — add one before placing supplier orders.</span>
+                      )}
+                      {!supplierLoading && supplierEmailMissing && (
                         <span className="mt-1 block text-[12px] text-out">This supplier has no email configured in Stock Control.</span>
                       )}
                     </label>
@@ -239,41 +300,55 @@ export default function OrderReviewPage() {
               </PanelShell>
             </div>
 
-            {confirmError && (
-              <p className="mt-4 rounded-lg bg-out-soft px-3 py-2 text-[13px] text-out ring-1 ring-out">
-                <span className="font-medium">Couldn’t place the order.</span> {confirmError}
-              </p>
-            )}
+            {sentNotRecorded ? (
+              <>
+                <p className="mt-4 rounded-lg bg-low-soft px-3 py-3 text-[13px] text-ink ring-1 ring-low">
+                  <span className="font-medium">Sent, but not recorded.</span> {sentNotRecorded}
+                </p>
+                <div className="mt-6 flex items-center justify-end gap-3">
+                  <Link to="/orders"><ButtonGhost>Back to orders</ButtonGhost></Link>
+                </div>
+              </>
+            ) : (
+              <>
+                {confirmError && (
+                  <p className="mt-4 rounded-lg bg-out-soft px-3 py-2 text-[13px] text-out ring-1 ring-out">
+                    <span className="font-medium">Couldn’t place the order.</span> {confirmError}
+                  </p>
+                )}
 
-            {/* Supplier sends a real, immediate email — arm it with an explicit
-                second click so a misclick can't fire an external order. */}
-            {isSupplier && armed && (
-              <p className="mt-4 rounded-lg bg-low-soft px-3 py-2 text-[13px] text-ink ring-1 ring-low">
-                This emails <span className="font-medium">{preview.supplier?.name}</span>
-                {preview.supplier?.email ? ` (${preview.supplier.email})` : ''} right now — they’ll receive the order immediately. Send it?
-              </p>
-            )}
+                {/* Supplier sends a real, immediate email — arm it with an explicit
+                    second click so a misclick can't fire an external order. */}
+                {isSupplier && armed && (
+                  <p className="mt-4 rounded-lg bg-low-soft px-3 py-2 text-[13px] text-ink ring-1 ring-low">
+                    This emails <span className="font-medium">{preview.supplier?.name}</span>
+                    {preview.supplier?.email ? ` (${preview.supplier.email})` : ''} right now — they’ll receive the order immediately. Send it?
+                  </p>
+                )}
 
-            <div className="mt-6 flex items-center justify-end gap-3">
-              {isSupplier && armed ? (
-                <>
-                  <ButtonGhost onClick={() => setArmed(false)} disabled={confirming}>Back</ButtonGhost>
-                  <ButtonCoral onClick={() => void confirm()} disabled={confirming}>
-                    {confirming ? 'Sending…' : `Yes — email ${preview.supplier?.name ?? 'supplier'} now`}
-                  </ButtonCoral>
-                </>
-              ) : (
-                <>
-                  <Link to="/orders"><ButtonGhost disabled={confirming}>Cancel</ButtonGhost></Link>
-                  <ButtonCoral
-                    onClick={() => { if (isSupplier) { setArmed(true) } else { void confirm() } }}
-                    disabled={confirming}
-                  >
-                    {confirming ? 'Placing…' : isSupplier ? 'Confirm & email supplier' : 'Confirm & post note'}
-                  </ButtonCoral>
-                </>
-              )}
-            </div>
+                <div className="mt-6 flex items-center justify-end gap-3">
+                  {isSupplier && armed ? (
+                    <>
+                      <ButtonGhost onClick={() => { setArmed(false); setConfirmError(null) }} disabled={confirming}>Back</ButtonGhost>
+                      <ButtonCoral onClick={() => void confirm()} disabled={confirming || supplierLoading || !canConfirm} title={blockReason ?? undefined}>
+                        {confirming ? 'Sending…' : `Yes — email ${preview.supplier?.name ?? 'supplier'} now`}
+                      </ButtonCoral>
+                    </>
+                  ) : (
+                    <>
+                      <Link to="/orders"><ButtonGhost disabled={confirming}>Cancel</ButtonGhost></Link>
+                      <ButtonCoral
+                        onClick={() => { if (isSupplier) { setArmed(true) } else { void confirm() } }}
+                        disabled={confirming || supplierLoading || !canConfirm}
+                        title={blockReason ?? undefined}
+                      >
+                        {confirming ? 'Placing…' : isSupplier ? 'Confirm & email supplier' : 'Confirm & post note'}
+                      </ButtonCoral>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
           </>
         ) : null}
       </main>

@@ -802,6 +802,16 @@ export default function OrderBuilderModal({
                         setQuantityMode('locked')
                         setShippingTreatment('free')
                         setCardDiscountType('none')
+                      } else {
+                        // Back to online: undo the offline-only forcing so stale
+                        // state can't leak into the online flow. 'ZZ' is the
+                        // offline "International" sentinel — not a real country,
+                        // so the online shipping estimate can't rate it; clear it
+                        // (a 'GB' Domestic pick is real, so it can stay). Restore
+                        // the online shipping + quantity defaults.
+                        setQuantityMode('open')
+                        setShippingTreatment('full_cost')
+                        setShipDestCountry((c) => (c === 'ZZ' ? '' : c))
                       }
                     }}
                     className={[
