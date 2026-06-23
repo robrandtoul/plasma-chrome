@@ -463,6 +463,7 @@ export default function OrdersPage() {
                         thumb={thumbs[o.proof_id] ?? null}
                         route={routeOf(o)}
                         supplierLabels={allowedSupplierLabels(o, supplierNames)}
+                        supplierCount={o.material_variants?.materials?.outsourced_supplier_ids?.length ?? 0}
                         suggested={suggestedDate(o)}
                         busy={busyId === o.id}
                         onReview={() => navigate(`/orders/${o.id}/place`)}
@@ -508,6 +509,7 @@ function OrderCard({
   thumb,
   route,
   supplierLabels,
+  supplierCount,
   suggested,
   busy,
   onReview,
@@ -518,6 +520,7 @@ function OrderCard({
   thumb: GridImage | null
   route: 'in_house' | 'supplier' | null
   supplierLabels: string[]
+  supplierCount: number
   suggested: string | null
   busy: boolean
   onReview: () => void
@@ -772,10 +775,10 @@ function OrderCard({
           <ButtonInk onClick={onReview} disabled={!canOrder}>
             {route !== 'supplier'
               ? 'Review and push to production'
-              : supplierLabels.length === 1
-                ? `Review and order from ${supplierLabels[0]}`
-                : supplierLabels.length > 1
-                  ? 'Review and choose supplier'
+              : supplierCount > 1
+                ? 'Review and choose supplier'
+                : supplierCount === 1
+                  ? `Review and order from ${supplierLabels[0] ?? 'supplier'}`
                   : 'Review and order from supplier'}
           </ButtonInk>
           {!canOrder && (

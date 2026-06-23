@@ -82,7 +82,7 @@ export default function AdminOutsourcingPage() {
 
     const [matRes, supRes, ptRes, tplRes] = await Promise.all([matP, supP, ptP, tplP])
     setLoading(false)
-    const firstErr = matRes.error || supRes.error || ptRes.error
+    const firstErr = matRes.error || supRes.error || ptRes.error || tplRes.error
     if (firstErr) { setError(firstErr.message); return }
 
     const list = (matRes.data ?? []) as MaterialRow[]

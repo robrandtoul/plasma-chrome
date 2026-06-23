@@ -134,6 +134,13 @@ function titleCaseCode(code: string): string {
 // In-house Card line for Stock Control's forgiving material match.
 function buildCardLine(code: string, materialDisplay: string | null, options: unknown, front: string | null, core: string | null, back: string | null): string {
   if (code === 'paper_letterpress' || code === 'paper_letterpress_gilded') {
+    // Gilding rides on the Card line, NOT a "Finish:" line — Stock Control's
+    // in-house parser has no Finish field, so it preserves the Card value
+    // verbatim onto the job card but drops unknown lines. The " + gilding"
+    // suffix sits OUTSIDE the brackets, so parseLetterpressColours (which reads
+    // only the first parenthesis group) still gets the colour trio, and the
+    // combo resolves off the colours regardless.
+    const gild = code === 'paper_letterpress_gilded' ? ' + gilding' : ''
     if (front && core && back) {
       // Strip the "(default …)" suffix so a colour's OWN parentheses don't nest
       // inside the "Letterpress (a, b, c)" brackets. Stock Control's parser
@@ -143,9 +150,9 @@ function buildCardLine(code: string, materialDisplay: string | null, options: un
       // the 16 letterpress combos — the commonest case). The combo resolver
       // strips the same suffix, so the trio still resolves to the right combo.
       const plain = (c: string) => c.replace(/\s*\(\s*default[^)]*\)/gi, '').trim()
-      return `Letterpress (${plain(front)}, ${plain(core)}, ${plain(back)})`
+      return `Letterpress (${plain(front)}, ${plain(core)}, ${plain(back)})${gild}`
     }
-    return 'Letterpress'
+    return `Letterpress${gild}`
   }
   if (code === 'wood') {
     const species = Array.isArray(options) && options.length ? String(options[0]) : ''
@@ -319,7 +326,10 @@ async function renderSupplierEmail(admin: SupabaseClient, supplierId: string | n
     const byId = new Map((data ?? []).map((r: { id: string; body: string }) => [r.id, r.body]))
     for (const id of ids) {
       const b = byId.get(id)
-      if (typeof b === 'string' && b.trim()) { body = b; break }
+      // Require {order_details}: a template saved without it (somehow bypassing
+      // the admin UI guard) would drop the parser-critical spec block and the
+      // order would silently never import. Skip such a body and fall back.
+      if (typeof b === 'string' && b.trim() && b.includes('{order_details}')) { body = b; break }
     }
   } catch { /* fall back to the default */ }
   return body.replaceAll('{customer}', vars.customer).replaceAll('{order_details}', vars.order_details)
@@ -444,10 +454,6 @@ Deno.serve(async (req) => {
   if (route === 'in_house') {
     const card = buildCardLine(mat.code, pv.material_display, pv.material_options, front, core, back)
     const lines: string[] = [`Qty: ${qty}`, `Card: ${card}`]
-    // Gilded letterpress produces the same Card line as plain letterpress (the
-    // combo is the colour trio), so call out the gilding explicitly or the
-    // workshop can't tell them apart. The parser ignores this unknown line.
-    if (mat.code === 'paper_letterpress_gilded') lines.push('Finish: Gilded')
     if (dateRequiredStr) lines.push(`Date required: ${dateRequiredStr}`)
     if (inks.front) lines.push(`Ink on front: ${inks.front}`)
     if (inks.back) lines.push(`Ink on back: ${inks.back}`)

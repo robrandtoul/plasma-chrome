@@ -157,6 +157,11 @@ export default function AdminTemplatesSection() {
       supabase
         .from('reply_templates')
         .select('id, display_name, description, body, updated_at')
+        // Supplier order emails have their own editor on Admin → Outsourcing
+        // (with the right variables + per-supplier rows); keep them out of this
+        // generic editor, where they'd land in the wrong group with a broken
+        // Reset and the wrong variable chips.
+        .not('id', 'like', 'supplier_order_email%')
         .order('id'),
       supabase
         .from('settings')
