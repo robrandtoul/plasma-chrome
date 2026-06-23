@@ -43,6 +43,7 @@ interface OrderRow {
   amount_tooling: number | null
   amount_personalisation: number | null
   amount_shipping: number | null
+  amount_us_tariff: number | null
   // Designer-set cards discount: the config + the amount stamped at checkout.
   card_discount_type: 'none' | 'percent' | 'fixed' | null
   card_discount_value: number | null
@@ -79,7 +80,7 @@ interface OrderRow {
 
 const SELECT = `
   id, status, token, expires_at, sent_at, currency, quantity, names_count, has_personalisation,
-  custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping,
+  custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff,
   card_discount_type, card_discount_value, amount_card_discount, payment_method,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, person_quantities,
@@ -139,10 +140,13 @@ function specLabel(o: OrderRow): string {
 function orderTotal(o: OrderRow): number | null {
   // The cards discount (stamped at checkout) nets off either branch.
   const discount = Number(o.amount_card_discount ?? 0)
-  if (o.custom_quote_total != null) return round2(Number(o.custom_quote_total) - discount)
+  // US tariff rides on top of both branches (it's its own charged line), so it
+  // must be in the displayed total to match the Stripe charge + Xero invoice.
+  const tariff = Number(o.amount_us_tariff ?? 0)
+  if (o.custom_quote_total != null) return round2(Number(o.custom_quote_total) - discount + tariff)
   const parts = [o.amount_cards, o.amount_tooling, o.amount_personalisation, o.amount_shipping]
-  if (parts.every((p) => p == null)) return null
-  return round2(parts.reduce((acc: number, p) => acc + Number(p ?? 0), 0) - discount)
+  if (parts.every((p) => p == null) && tariff === 0) return null
+  return round2(parts.reduce((acc: number, p) => acc + Number(p ?? 0), 0) - discount + tariff)
 }
 
 // Add N working days to a date (skips Sat/Sun). Used to suggest the date
@@ -700,7 +704,10 @@ function OrderCard({
           <Link to={`/proofs/${order.proof_id}`}>
             <ButtonGhost size="sm">View proof &amp; artwork</ButtonGhost>
           </Link>
-          {!order.xero_invoice_id && (
+          {/* Retry invoice is for orders whose AUTO Xero invoice failed. Offline
+              orders deliberately have no auto-invoice (raised manually in Xero),
+              so retrying would create a DUPLICATE — never offer it for offline. */}
+          {!order.xero_invoice_id && order.payment_method !== 'offline' && (
             <ButtonGhost size="sm" onClick={onRetryInvoice} disabled={busy}>
               {busy ? 'Retrying…' : 'Retry invoice'}
             </ButtonGhost>

@@ -67,6 +67,8 @@ export default function OrderReviewPage() {
   const [thumb, setThumb] = useState<GridImage | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
+  // Supplier sends a REAL email — require an explicit second click to arm it.
+  const [armed, setArmed] = useState(false)
 
   const loadPreview = useCallback(async (chosenSupplierId?: string | null) => {
     if (!id) return
@@ -108,6 +110,7 @@ export default function OrderReviewPage() {
 
   async function onSupplierChange(newId: string) {
     setSupplierId(newId)
+    setArmed(false) // changing supplier disarms — re-confirm the new recipient
     await loadPreview(newId)
   }
 
@@ -242,11 +245,34 @@ export default function OrderReviewPage() {
               </p>
             )}
 
+            {/* Supplier sends a real, immediate email — arm it with an explicit
+                second click so a misclick can't fire an external order. */}
+            {isSupplier && armed && (
+              <p className="mt-4 rounded-lg bg-low-soft px-3 py-2 text-[13px] text-ink ring-1 ring-low">
+                This emails <span className="font-medium">{preview.supplier?.name}</span>
+                {preview.supplier?.email ? ` (${preview.supplier.email})` : ''} right now — they’ll receive the order immediately. Send it?
+              </p>
+            )}
+
             <div className="mt-6 flex items-center justify-end gap-3">
-              <Link to="/orders"><ButtonGhost disabled={confirming}>Cancel</ButtonGhost></Link>
-              <ButtonCoral onClick={() => void confirm()} disabled={confirming}>
-                {confirming ? 'Placing…' : isSupplier ? 'Confirm & email supplier' : 'Confirm & post note'}
-              </ButtonCoral>
+              {isSupplier && armed ? (
+                <>
+                  <ButtonGhost onClick={() => setArmed(false)} disabled={confirming}>Back</ButtonGhost>
+                  <ButtonCoral onClick={() => void confirm()} disabled={confirming}>
+                    {confirming ? 'Sending…' : `Yes — email ${preview.supplier?.name ?? 'supplier'} now`}
+                  </ButtonCoral>
+                </>
+              ) : (
+                <>
+                  <Link to="/orders"><ButtonGhost disabled={confirming}>Cancel</ButtonGhost></Link>
+                  <ButtonCoral
+                    onClick={() => { if (isSupplier) { setArmed(true) } else { void confirm() } }}
+                    disabled={confirming}
+                  >
+                    {confirming ? 'Placing…' : isSupplier ? 'Confirm & email supplier' : 'Confirm & post note'}
+                  </ButtonCoral>
+                </>
+              )}
             </div>
           </>
         ) : null}
