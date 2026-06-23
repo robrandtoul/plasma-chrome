@@ -887,19 +887,29 @@ export default function OrderBuilderModal({
                 Domestic/International packaging line for production). Shipping
                 cost + discount are skipped — you invoice in Xero yourself. */}
             {paymentMethod === 'offline' ? (
-              <Field label="Destination" htmlFor="order-dest-country" hint="Required — sets the packaging line for production: a UK destination ships in the domestic box, anywhere else the international box.">
-                <select
-                  id="order-dest-country"
-                  aria-label="Destination country"
-                  value={shipDestCountry}
-                  onChange={(e) => setShipDestCountry(e.target.value)}
-                  className={selectClass}
-                >
-                  <option value="">Choose a destination country…</option>
-                  {SHIP_COUNTRIES.map((c) => (
-                    <option key={c.code} value={c.code}>{c.name}</option>
-                  ))}
-                </select>
+              <Field label="Destination" asLabel={false} hint="Required — sets the packaging line for production: the domestic box for the UK, the international box for everywhere else.">
+                <div className="flex flex-wrap gap-2">
+                  {/* Backs the production packaging line: Domestic stores 'GB',
+                      International stores 'ZZ' (the ISO "international / unspecified"
+                      code) — the hand-off reads GB = domestic, anything else =
+                      international, so no specific country is needed offline. */}
+                  {([['GB', 'Domestic'], ['ZZ', 'International']] as const).map(([code, label]) => {
+                    const active = code === 'GB' ? shipDestCountry === 'GB' : (shipDestCountry !== '' && shipDestCountry !== 'GB')
+                    return (
+                      <button
+                        key={code}
+                        type="button"
+                        onClick={() => setShipDestCountry(code)}
+                        className={[
+                          'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                          active ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
+                        ].join(' ')}
+                      >
+                        {label}
+                      </button>
+                    )
+                  })}
+                </div>
               </Field>
             ) : (
             /* Shipping treatment (online) */
