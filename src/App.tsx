@@ -16,6 +16,7 @@ import CustomersPage from './pages/CustomersPage'
 import CustomerDetailPage from './pages/CustomerDetailPage'
 import QuotePage from './pages/QuotePage'
 import OrdersPage from './pages/OrdersPage'
+import OrderReviewPage from './pages/OrderReviewPage'
 import AdminLayout from './pages/admin/AdminLayout'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
 import AdminPricingPage from './pages/admin/AdminPricingPage'
@@ -66,6 +67,7 @@ function AppShell() {
       <Route path="/" element={<RequireAuth><DashboardPage /></RequireAuth>} />
       <Route path="/quote" element={<RequireAuth><QuotePage /></RequireAuth>} />
       <Route path="/orders" element={<RequireAuth><OrdersPage /></RequireAuth>} />
+      <Route path="/orders/:id/place" element={<RequireAuth><OrderReviewPage /></RequireAuth>} />
       <Route path="/proofs/new" element={<RequireAuth><NewProofPage /></RequireAuth>} />
       <Route path="/proofs/:id" element={<RequireAuth><ProofDetailPage /></RequireAuth>} />
       <Route path="/proofs/:id/versions/new" element={<RequireAuth><NewVersionPage /></RequireAuth>} />

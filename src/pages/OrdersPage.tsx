@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { DesignerChrome, PanelShell, Pill, ButtonInk, ButtonGhost } from '../design'
 import { formatPrice } from '../lib/currency'
@@ -222,8 +222,7 @@ export default function OrdersPage() {
   const [thumbs, setThumbs] = useState<Record<string, GridImage | null>>({})
   const [busyId, setBusyId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
-  // Per-order hand-off error (the place-inhouse-order edge function failing).
-  const [placeErrors, setPlaceErrors] = useState<Record<string, string>>({})
+  const navigate = useNavigate()
   // Sent reminders per order (the automated unpaid-order nudges, 000238).
   const [reminders, setReminders] = useState<Record<string, { count: number; lastAt: string }>>({})
 
@@ -291,64 +290,6 @@ export default function OrdersPage() {
       .from('orders')
       .update({ ...patch, updated_at: new Date().toISOString() })
       .eq('id', orderId)
-  }
-
-  // Place the order: hand it to Stock Control by posting the production note +
-  // setting the Help Scout subject (place-inhouse-order), then record the
-  // placement locally (status → fulfilled, the "ordered" terminal state on this
-  // page) plus the captured date + folder. If the hand-off fails, surface the
-  // error and don't flip the status — the order stays in the queue to retry.
-  async function markOrdered(orderId: string, fields: { date_required: string | null; dropbox_folder_url: string | null }) {
-    setBusyId(orderId)
-    setPlaceErrors((prev) => {
-      const next = { ...prev }
-      delete next[orderId]
-      return next
-    })
-    try {
-      const { data: handoff, error: handoffErr } = await supabase.functions.invoke<{ ok: boolean; error?: string; subject?: string; card?: string }>(
-        'place-inhouse-order',
-        { body: { order_id: orderId } },
-      )
-      if (handoffErr || !handoff?.ok) {
-        setPlaceErrors((prev) => ({
-          ...prev,
-          [orderId]: handoff?.error ?? handoffErr?.message ?? 'Could not post the production note to Help Scout. Please try again.',
-        }))
-        return
-      }
-
-      const { data: { session } } = await supabase.auth.getSession()
-      const uid = session?.user.id ?? null
-      const { error } = await supabase
-        .from('orders')
-        .update({
-          status: 'fulfilled',
-          fulfilled_at: new Date().toISOString(),
-          fulfilled_by: uid,
-          date_required: fields.date_required,
-          dropbox_folder_url: fields.dropbox_folder_url,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', orderId)
-        .eq('status', 'paid')
-      if (!error) {
-        setOrders((prev) =>
-          prev.map((o) =>
-            o.id === orderId ? { ...o, status: 'fulfilled', fulfilled_at: new Date().toISOString(), ...fields } : o,
-          ),
-        )
-        void logAudit({
-          action: 'order.placed',
-          targetType: 'order',
-          targetId: orderId,
-          targetLabel: `Order ${orderId}`,
-          afterValue: { date_required: fields.date_required, dropbox_folder_url: fields.dropbox_folder_url, subject: handoff.subject, card: handoff.card },
-        })
-      }
-    } finally {
-      setBusyId(null)
-    }
   }
 
   async function retryInvoice(o: OrderRow) {
@@ -483,8 +424,7 @@ export default function OrdersPage() {
                         route={routeOf(o)}
                         suggested={suggestedDate(o)}
                         busy={busyId === o.id}
-                        placeError={placeErrors[o.id] ?? null}
-                        onOrder={(fields) => void markOrdered(o.id, fields)}
+                        onReview={() => navigate(`/orders/${o.id}/place`)}
                         onSaveField={(patch) => void saveOrderField(o.id, patch)}
                         onRetryInvoice={() => void retryInvoice(o)}
                       />
@@ -528,8 +468,7 @@ function OrderCard({
   route,
   suggested,
   busy,
-  placeError,
-  onOrder,
+  onReview,
   onSaveField,
   onRetryInvoice,
 }: {
@@ -538,8 +477,7 @@ function OrderCard({
   route: 'in_house' | 'supplier' | null
   suggested: string | null
   busy: boolean
-  placeError: string | null
-  onOrder: (fields: { date_required: string | null; dropbox_folder_url: string | null }) => void
+  onReview: () => void
   onSaveField: (patch: Partial<OrderRow>) => void
   onRetryInvoice: () => void
 }) {
@@ -594,8 +532,10 @@ function OrderCard({
   // yields an order number (which becomes the Help Scout subject Stock Control
   // matches on). Artwork presence is informational, not a gate.
   const folderVerified = lookup.status === 'ok' && !!lookup.orderNumber
-  const isSupplier = route === 'supplier'
-  const canOrder = !isSupplier && folderVerified && dateValue.length > 0
+  // Both routes need a verified folder (its name = the order number) + a date
+  // before the order can be reviewed & placed; the review page picks the route
+  // (in-house note vs supplier email) and confirms.
+  const canOrder = folderVerified && dateValue.length > 0
 
   return (
     <PanelShell>
@@ -736,12 +676,6 @@ function OrderCard({
             </label>
           </div>
 
-          {placeError && (
-            <p className="mt-3 rounded-lg bg-out-soft px-3 py-2 text-[13px] text-out ring-1 ring-out">
-              <span className="font-medium">Couldn’t place the order.</span> {placeError}
-            </p>
-          )}
-
           {addrLines.length > 0 ? (
             <div className="mt-3 rounded-lg border border-line bg-canvas px-3 py-2 text-[13px] text-ink-soft">
               <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Deliver to</span>
@@ -755,19 +689,10 @@ function OrderCard({
         </div>
 
         <div className="flex shrink-0 flex-col gap-2 sm:items-end">
-          {isSupplier ? (
-            <span className="rounded-lg border border-line bg-canvas px-3 py-2 text-center text-[12px] text-ink-mute">
-              Supplier order — hand-off coming in phase 2
-            </span>
-          ) : (
-            <ButtonInk
-              onClick={() => onOrder({ date_required: dateValue || null, dropbox_folder_url: folderDraft.trim() || null })}
-              disabled={busy || !canOrder}
-            >
-              {busy ? 'Placing…' : 'Mark as ordered'}
-            </ButtonInk>
-          )}
-          {!isSupplier && !canOrder && (
+          <ButtonInk onClick={onReview} disabled={!canOrder}>
+            {route === 'supplier' ? 'Review & order from supplier' : 'Review & place order'}
+          </ButtonInk>
+          {!canOrder && (
             <span className="text-right text-[11px] text-ink-mute">
               {!folderVerified ? 'Link & check the order folder to enable' : 'Set a date required to enable'}
             </span>
