@@ -47,6 +47,7 @@ interface OrderRow {
   card_discount_type: 'none' | 'percent' | 'fixed' | null
   card_discount_value: number | null
   amount_card_discount: number | null
+  payment_method: string | null
   payment_reference: string | null
   xero_invoice_id: string | null
   xero_invoice_error: string | null
@@ -79,7 +80,7 @@ interface OrderRow {
 const SELECT = `
   id, status, token, expires_at, sent_at, currency, quantity, names_count, has_personalisation,
   custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping,
-  card_discount_type, card_discount_value, amount_card_discount,
+  card_discount_type, card_discount_value, amount_card_discount, payment_method,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, person_quantities,
   ship_to_name, ship_to_email, ship_to_address, proof_id,
@@ -612,6 +613,9 @@ function OrderCard({
               {customerLabel(order)}
             </Link>
             <Pill colour="in-stock">Paid</Pill>
+            {order.payment_method === 'offline' && (
+              <Pill colour="low" title="Recorded as paid offline (bank transfer etc.) — no Stripe/Xero record; raise the invoice manually.">Offline</Pill>
+            )}
             {order.xero_invoice_id && (
               <a
                 href={`https://go.xero.com/app/invoicing/view/${order.xero_invoice_id}`}

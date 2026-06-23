@@ -113,6 +113,10 @@ export default function OrderBuilderModal({
   onClose,
   onCreated,
 }: OrderBuilderModalProps) {
+  // Payment method: 'online' sends a pay link; 'offline' records the order as
+  // already paid (bank transfer etc.) — no link, no Stripe, no Xero. Offline
+  // forces a locked quantity + free/manual shipping (handled below).
+  const [paymentMethod, setPaymentMethod] = useState<'online' | 'offline'>('online')
   const [quantityMode, setQuantityMode] = useState<'open' | 'locked'>('open')
   const [quantity, setQuantity] = useState('')
   // Recipient names for a split-name proof, so a LOCKED order can capture a
@@ -547,6 +551,20 @@ export default function OrderBuilderModal({
       cardDiscountValueParsed = v
     }
 
+    // Offline orders are recorded as already paid, so they need a fixed
+    // quantity and a shipping figure we can settle without the pay page. The
+    // UI enforces both (locked quantity, free/manual shipping); guard anyway.
+    if (paymentMethod === 'offline') {
+      if (quantityValue == null) {
+        setError('Offline orders need a locked quantity — switch to “Lock a quantity”.')
+        return
+      }
+      if (shippingTreatment !== 'free' && shippingTreatment !== 'manual') {
+        setError('Offline orders use free or manual shipping (live rates need the online pay page).')
+        return
+      }
+    }
+
     setSubmitting(true)
     try {
       const { data, error: fnError } = await supabase.functions.invoke<
@@ -556,6 +574,7 @@ export default function OrderBuilderModal({
         body: {
           proof_id: proofId,
           currency,
+          payment_method: paymentMethod,
           quantity: quantityValue,
           person_quantities: personQuantitiesPayload,
           names_count: namesCount,
@@ -620,13 +639,23 @@ export default function OrderBuilderModal({
       {result ? (
         // ── Success ──────────────────────────────────────────────
         <div>
-          <h2 className="text-lg font-semibold text-ink">Order created</h2>
+          <h2 className="text-lg font-semibold text-ink">{paymentMethod === 'offline' ? 'Order recorded as paid' : 'Order created'}</h2>
           <p className="mt-1 text-sm text-ink-soft">
             Reference <span className="font-medium text-ink">{result.payment_reference}</span>
             {customerLabel ? ` for ${customerLabel}` : ''}.
           </p>
 
-          {sent ? (
+          {paymentMethod === 'offline' ? (
+            // Offline → recorded as paid; no link, straight into the order queue.
+            <>
+              <div className="mt-4 rounded-lg border border-in-stock bg-in-stock-soft px-3 py-2.5 text-[13px] text-ink">
+                Recorded as paid (offline) — it&rsquo;s now in the order queue, ready to order. No pay link was sent; raise the invoice in Xero when you&rsquo;re ready.
+              </div>
+              <div className="mt-5 flex items-center justify-end gap-2">
+                <ButtonCoral onClick={onClose}>Done</ButtonCoral>
+              </div>
+            </>
+          ) : sent ? (
             // Sent confirmation.
             <>
               <div className="mt-4 rounded-lg border border-in-stock bg-in-stock-soft px-3 py-2.5 text-[13px] text-ink">
@@ -754,22 +783,58 @@ export default function OrderBuilderModal({
               </Field>
             )}
 
-            {/* Quantity */}
-            <Field label="Quantity" asLabel={false} hint="Let the customer choose on the pay-page, or lock a specific quantity now.">
+            {/* Payment method */}
+            <Field label="Payment" asLabel={false} hint="Send the customer a secure pay link, or record an order they're paying offline (e.g. bank transfer) — it's saved as paid and goes straight to the order queue. You raise the invoice in Xero yourself.">
               <div className="flex flex-wrap gap-2">
-                {([['open', 'Customer chooses'], ['locked', 'Lock a quantity']] as const).map(([mode, label]) => (
+                {([['online', 'Send pay link'], ['offline', 'Offline / bank transfer']] as const).map(([m, label]) => (
                   <button
-                    key={mode}
+                    key={m}
                     type="button"
-                    onClick={() => setQuantityMode(mode)}
+                    onClick={() => {
+                      setPaymentMethod(m)
+                      if (m === 'offline') {
+                        setQuantityMode('locked')
+                        if (shippingTreatment !== 'free' && shippingTreatment !== 'manual') setShippingTreatment('free')
+                      }
+                    }}
                     className={[
                       'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
-                      quantityMode === mode ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
+                      paymentMethod === m ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
                     ].join(' ')}
                   >
                     {label}
                   </button>
                 ))}
+              </div>
+              {paymentMethod === 'offline' && (
+                <p className="mt-2 text-[13px] text-ink-soft">
+                  Recorded as paid — no link, no Stripe. Needs a set quantity and free/manual shipping.
+                </p>
+              )}
+            </Field>
+
+            {/* Quantity */}
+            <Field label="Quantity" asLabel={false} hint="Let the customer choose on the pay-page, or lock a specific quantity now.">
+              <div className="flex flex-wrap gap-2">
+                {([['open', 'Customer chooses'], ['locked', 'Lock a quantity']] as const).map(([mode, label]) => {
+                  const blocked = paymentMethod === 'offline' && mode === 'open'
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      disabled={blocked}
+                      title={blocked ? 'Offline orders need a set quantity' : undefined}
+                      onClick={() => setQuantityMode(mode)}
+                      className={[
+                        'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                        quantityMode === mode ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
+                        blocked ? 'cursor-not-allowed opacity-40' : '',
+                      ].join(' ')}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
               </div>
               {quantityMode === 'locked' && (
                 usePerPersonSplit ? (
@@ -819,7 +884,10 @@ export default function OrderBuilderModal({
                 onChange={(e) => setShippingTreatment(e.target.value as ShippingTreatment)}
                 className={selectClass}
               >
-                {TREATMENT_OPTIONS.map((o) => (
+                {(paymentMethod === 'offline'
+                  ? TREATMENT_OPTIONS.filter((o) => o.value === 'free' || o.value === 'manual')
+                  : TREATMENT_OPTIONS
+                ).map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </select>
