@@ -686,29 +686,40 @@ export default function ProofDetailPage() {
     // Delete renders only in that case, so loading it eagerly for
     // every project would waste a round-trip.
     //
-    // Shape of the join: for each approval row with state='approved',
-    // pick proof_version_images rows matching (proof_version_id,
-    // associated_name), treating SHARED_APPROVAL_KEY as
-    // associated_name IS NULL. Cross-version splits (Alice approved
-    // in v2, Bob in v3) fall out for free — we scope the image
-    // query to all of the project's version IDs and filter client-
-    // side by the approval tuples.
-    if (proofResult.data.status === 'approved' && versionIds.length > 0) {
+    // Shape of the join: for each CURRENT-version approval row with
+    // state='approved', pick proof_version_images rows on the current
+    // version matching (proof_version_id, associated_name), treating
+    // SHARED_APPROVAL_KEY as associated_name IS NULL.
+    //
+    // Scoped to the CURRENT version only — NOT every version of the
+    // project. A proof reaches 'approved' only when every required slot
+    // of the current version is approved (migrations 000126/000169/
+    // 000212), and creating a new version copies each unchanged
+    // recipient's image forward, so the current version always holds a
+    // complete image set for its approved slots. Pulling from all
+    // versions used to leak earlier-version files into the download:
+    // a recipient dropped or re-imaged in a later version left a stale
+    // state='approved' row on the superseded version, and that old
+    // version's image then matched and showed up as an "earlier
+    // version" (too many files). Anchoring to the current version is
+    // both complete and the fix.
+    const currentVersionId = loadedVersions.find((v) => v.is_current)?.id ?? null
+    if (proofResult.data.status === 'approved' && currentVersionId) {
       const approvedApprovals = approvalRowsLoaded.filter(
-        (a) => a.state === 'approved',
+        (a) => a.state === 'approved' && a.proof_version_id === currentVersionId,
       )
       if (approvedApprovals.length === 0) {
-        // Approved status with no per-name approvals shouldn't
-        // happen under the current approve-shortcut flow (it
-        // always writes approvals first), but if it ever did
-        // (legacy data, direct DB edit), show an empty table
-        // rather than crash.
+        // Approved status with no per-name approvals on the current
+        // version shouldn't happen under the current approve-shortcut
+        // flow (it always writes approvals first), but if it ever did
+        // (legacy data, direct DB edit), show an empty table rather
+        // than crash.
         setApprovedImages([])
       } else {
         const { data: imageRows } = await supabase
           .from('proof_version_images')
           .select('id, image_path, original_filename, associated_name, side, proof_version_id')
-          .in('proof_version_id', versionIds)
+          .eq('proof_version_id', currentVersionId)
           .eq('is_qr_code', false)
         if (isStale()) return
 

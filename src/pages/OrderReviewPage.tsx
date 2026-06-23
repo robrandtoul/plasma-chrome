@@ -122,8 +122,24 @@ export default function OrderReviewPage() {
         const proofId = (order as { proof_id?: string } | null)?.proof_id
         if (proofId && !cancelled) {
           try {
+            // customer-proof-images returns EVERY version's images (the
+            // customer page has a version switcher), so scope the
+            // recognition thumbnail to the current version — otherwise it
+            // can show an earlier version's artwork. Falls back to the
+            // first non-QR image if the current version can't be resolved.
+            const { data: curV } = await supabase
+              .from('proof_versions')
+              .select('id')
+              .eq('proof_id', proofId)
+              .eq('is_current', true)
+              .maybeSingle()
+            const currentVersionId = (curV as { id?: string } | null)?.id ?? null
             const { data: imgData } = await supabase.functions.invoke<{ images: GridImage[] }>('customer-proof-images', { body: { proofId } })
-            const first = (imgData?.images ?? []).find((img) => img.is_qr_code !== true) ?? null
+            const nonQr = (imgData?.images ?? []).filter((img) => img.is_qr_code !== true)
+            const first =
+              (currentVersionId
+                ? nonQr.find((img) => (img as unknown as { proof_version_id?: string }).proof_version_id === currentVersionId)
+                : null) ?? nonQr[0] ?? null
             if (!cancelled) setThumb(first)
           } catch { /* no thumbnail */ }
         }
