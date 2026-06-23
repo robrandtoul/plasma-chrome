@@ -793,8 +793,11 @@ export default function OrderBuilderModal({
                     onClick={() => {
                       setPaymentMethod(m)
                       if (m === 'offline') {
+                        // Offline records as paid + you invoice in Xero, so the
+                        // app doesn't need shipping cost or an in-app discount.
                         setQuantityMode('locked')
-                        if (shippingTreatment !== 'free' && shippingTreatment !== 'manual') setShippingTreatment('free')
+                        setShippingTreatment('free')
+                        setCardDiscountType('none')
                       }
                     }}
                     className={[
@@ -841,8 +844,8 @@ export default function OrderBuilderModal({
                   <div className="mt-2 space-y-2">
                     <p className="text-[13px] text-ink-soft">Quantity for each person</p>
                     {personNames.map((name) => (
-                      <div key={name} className="flex max-w-[320px] items-center justify-between gap-4">
-                        <label htmlFor={`bq-${name}`} className="truncate text-sm text-ink">{name}</label>
+                      <div key={name} className="flex w-full items-center justify-between gap-3">
+                        <label htmlFor={`bq-${name}`} title={name} className="min-w-0 flex-1 truncate text-sm text-ink">{name}</label>
                         <Input
                           id={`bq-${name}`}
                           type="number"
@@ -852,11 +855,11 @@ export default function OrderBuilderModal({
                           value={personQty[name] ?? ''}
                           onChange={(e) => setPersonQty((p) => ({ ...p, [name]: e.target.value }))}
                           placeholder="0"
-                          className="w-24 text-right"
+                          className="w-24 shrink-0 text-right"
                         />
                       </div>
                     ))}
-                    <div className="flex max-w-[320px] items-center justify-between gap-4 border-t border-line-soft pt-2 text-sm">
+                    <div className="flex w-full items-center justify-between gap-3 border-t border-line-soft pt-2 text-sm">
                       <span className="text-ink-soft">Total</span>
                       <span className="font-medium text-ink">{lockedSplitSum > 0 ? `${lockedSplitSum.toLocaleString()} cards` : '—'}</span>
                     </div>
@@ -876,7 +879,26 @@ export default function OrderBuilderModal({
               )}
             </Field>
 
-            {/* Shipping treatment */}
+            {/* Offline: only the destination matters here (it sets the
+                Domestic/International packaging line for production). Shipping
+                cost + discount are skipped — you invoice in Xero yourself. */}
+            {paymentMethod === 'offline' ? (
+              <Field label="Destination" htmlFor="order-dest-country" hint="Sets the packaging line for production — a UK address ships in the domestic box, anywhere else the international box.">
+                <select
+                  id="order-dest-country"
+                  aria-label="Destination country"
+                  value={shipDestCountry}
+                  onChange={(e) => setShipDestCountry(e.target.value)}
+                  className={selectClass}
+                >
+                  <option value="">Destination country (optional)</option>
+                  {SHIP_COUNTRIES.map((c) => (
+                    <option key={c.code} value={c.code}>{c.name}</option>
+                  ))}
+                </select>
+              </Field>
+            ) : (
+            /* Shipping treatment (online) */
             <Field label="Shipping" htmlFor="order-shipping-treatment" hint="Full cost / Goodwill quote the live carriage at checkout (UK flat DPD rate, or FedEx internationally) — the customer enters their postcode on the pay-page. Goodwill takes a % off. Free = no charge; Manual = a fixed amount.">
               <select
                 id="order-shipping-treatment"
@@ -884,10 +906,7 @@ export default function OrderBuilderModal({
                 onChange={(e) => setShippingTreatment(e.target.value as ShippingTreatment)}
                 className={selectClass}
               >
-                {(paymentMethod === 'offline'
-                  ? TREATMENT_OPTIONS.filter((o) => o.value === 'free' || o.value === 'manual')
-                  : TREATMENT_OPTIONS
-                ).map((o) => (
+                {TREATMENT_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>{o.label}</option>
                 ))}
               </select>
@@ -1021,10 +1040,12 @@ export default function OrderBuilderModal({
                 />
               )}
             </Field>
+            )}
 
-            {/* Card discount — designer-set, reduces only the cards line.
-                Mirrors the shipping subsidy; shows as a separate negative line
-                on the pay page + invoice (the cards stay at full price). */}
+            {/* Card discount — online only; designer-set, reduces only the cards
+                line, shown as its own negative line on the pay page + invoice.
+                Skipped for offline (you invoice in Xero). */}
+            {paymentMethod !== 'offline' && (
             <Field label="Card discount" htmlFor="order-card-discount" hint="Optional. Reduces only the cards subtotal — shows as its own discount line on the pay page and invoice. Shipping has its own subsidy above.">
               <select
                 id="order-card-discount"
@@ -1061,6 +1082,7 @@ export default function OrderBuilderModal({
                 </div>
               )}
             </Field>
+            )}
 
             {/* Custom quote total — only for custom-quote proofs */}
             {isCustomQuote && (
