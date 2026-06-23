@@ -134,7 +134,17 @@ function titleCaseCode(code: string): string {
 // In-house Card line for Stock Control's forgiving material match.
 function buildCardLine(code: string, materialDisplay: string | null, options: unknown, front: string | null, core: string | null, back: string | null): string {
   if (code === 'paper_letterpress' || code === 'paper_letterpress_gilded') {
-    if (front && core && back) return `Letterpress (${front}, ${core}, ${back})`
+    if (front && core && back) {
+      // Strip the "(default …)" suffix so a colour's OWN parentheses don't nest
+      // inside the "Letterpress (a, b, c)" brackets. Stock Control's parser
+      // captures only the first parenthesis group, so a default colour like
+      // "Ebony (default black)" would otherwise be read as a single malformed
+      // colour and bounce the whole order (the two default colours are in 14 of
+      // the 16 letterpress combos — the commonest case). The combo resolver
+      // strips the same suffix, so the trio still resolves to the right combo.
+      const plain = (c: string) => c.replace(/\s*\(\s*default[^)]*\)/gi, '').trim()
+      return `Letterpress (${plain(front)}, ${plain(core)}, ${plain(back)})`
+    }
     return 'Letterpress'
   }
   if (code === 'wood') {
@@ -404,6 +414,10 @@ Deno.serve(async (req) => {
   if (route === 'in_house') {
     const card = buildCardLine(mat.code, pv.material_display, pv.material_options, front, core, back)
     const lines: string[] = [`Qty: ${qty}`, `Card: ${card}`]
+    // Gilded letterpress produces the same Card line as plain letterpress (the
+    // combo is the colour trio), so call out the gilding explicitly or the
+    // workshop can't tell them apart. The parser ignores this unknown line.
+    if (mat.code === 'paper_letterpress_gilded') lines.push('Finish: Gilded')
     if (dateRequiredStr) lines.push(`Date required: ${dateRequiredStr}`)
     if (inks.front) lines.push(`Ink on front: ${inks.front}`)
     if (inks.back) lines.push(`Ink on back: ${inks.back}`)
@@ -514,6 +528,13 @@ Deno.serve(async (req) => {
   const specificType = (mat.display_name ?? '').trim() || null
 
   const emailLines: string[] = ['Hi,', '', `Please produce the following order for ${customerName}:`, '', `Qty: ${qty}`]
+  // Per-person breakdown so the supplier knows how many of each name to make.
+  // Stock Control's outsourced parser only reads known Key: lines, so these are
+  // ignored by the import but read by the human supplier.
+  if (splitLines.length) {
+    emailLines.push('Per person:')
+    for (const sl of splitLines) emailLines.push(sl)
+  }
   if (productType) emailLines.push(`Material: ${productType}`)
   if (specificType && specificType.toLowerCase() !== productType.toLowerCase()) emailLines.push(`Type: ${specificType}`)
   if (thickness) emailLines.push(`Thickness: ${thickness}`)
