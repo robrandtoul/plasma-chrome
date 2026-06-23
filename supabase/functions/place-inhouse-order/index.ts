@@ -9,8 +9,8 @@
 //   * Subject must read "Order <number> - <customer>" (Re:/Fw: stripped).
 //   * Note must carry a `Qty:` line and a `Card:` line (both required to be
 //     recognised as an order); plus optional `Date required:`, `Ink on front:`,
-//     `Ink on back:`, `Packaging:`, `10% extra:` spec lines and a per-person
-//     split (one "<name> — <qty>" line each, summing to Qty).
+//     `Ink on back:`, `Packaging:` spec lines and a per-person split (one
+//     "<name> — <qty>" line each, summing to Qty).
 //   * The note must NOT start with "PlasmaDesign stock-control:" (that prefix
 //     marks Stock Control's own notes and is ignored to break the webhook loop).
 //   * `Card:` resolves against Stock Control's own public.materials catalogue,
@@ -266,7 +266,6 @@ Deno.serve(async (req) => {
     order.ship_dest_country ?? (order.ship_to_address as { country?: string | null } | null)?.country ?? '',
   ).trim().toUpperCase()
   if (destCountry) lines.push(`Packaging: ${destCountry === 'GB' ? 'Domestic' : 'International'}`)
-  lines.push('10% extra: No')
   for (const sl of splitLines) lines.push(sl)
   const noteText = lines.join('<br>')
 
