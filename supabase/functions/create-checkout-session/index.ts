@@ -25,7 +25,7 @@
 // is a test key (sk_test_…).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { cardTotalForQuantity, computeOrderTotal, resolveUsTariff, type Tier } from '../_shared/orderPricing.ts'
+import { cardTotalForQuantity, computeOrderTotal, resolveCardDiscount, resolveUsTariff, type Tier } from '../_shared/orderPricing.ts'
 import {
   applyIntlAdjustment,
   fetchGbpRates,
@@ -192,7 +192,7 @@ Deno.serve(async (req) => {
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, ship_dest_country, ship_dest_postcode, payment_reference, expires_at, material_variant_id, material_option_id, quantity, names_count, has_personalisation, proof_id')
+    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, card_discount_type, card_discount_value, ship_dest_country, ship_dest_postcode, payment_reference, expires_at, material_variant_id, material_option_id, quantity, names_count, has_personalisation, proof_id')
     .eq('id', orderId)
     .eq('token', token)
     .single()
@@ -500,6 +500,18 @@ Deno.serve(async (req) => {
     : Number(modeRow?.us_tariff_fee_usd ?? 0)
   const usTariff = resolveUsTariff(effectiveDestCountry, usTariffFee, optedOutOfUsTariff)
 
+  // ── Cards discount (server-authoritative) ────────────────────────
+  // The designer's per-order discount applies to the CARDS line only (the
+  // folded amount_cards = base cards + finish; or the custom-quote figure).
+  // Resolved + capped here, stamped as amount_card_discount, shown as its own
+  // negative line on the pay page + invoice, and netted off the charged total.
+  const cardDiscountBase = order.custom_quote_total != null ? Number(order.custom_quote_total) : (amountCards ?? 0)
+  const cardDiscount = resolveCardDiscount(
+    order.card_discount_type as string | null,
+    order.card_discount_value as number | null,
+    cardDiscountBase,
+  )
+
   // Stamp the resolved breakdown so the Stripe→Xero webhook can itemise the
   // invoice. Best-effort: a failure here must not block checkout (the webhook
   // falls back to a single summary line if the breakdown is absent).
@@ -521,6 +533,7 @@ Deno.serve(async (req) => {
       amount_personalisation: amountPersonalisation,
       amount_shipping: shipping,
       amount_us_tariff: usTariff,
+      amount_card_discount: cardDiscount,
       us_tariff_opted_out: optedOutOfUsTariff,
       updated_at: new Date().toISOString(),
     })
@@ -537,7 +550,7 @@ Deno.serve(async (req) => {
   // adaptive-pricing currency swap. The shipping address + email are collected
   // by the Address/Link Elements on the page and ride the confirmPayment call,
   // surfacing on payment_intent.succeeded for the webhook's fulfilment + Xero.
-  const total = Math.round((goods + shipping + usTariff) * 100) / 100
+  const total = Math.round((goods - cardDiscount + shipping + usTariff) * 100) / 100
   const params = new URLSearchParams()
   params.set('amount', String(minorUnits(total)))
   params.set('currency', currency)
@@ -584,6 +597,7 @@ Deno.serve(async (req) => {
       personalisation: amountPersonalisation ?? 0,
       shipping,
       us_tariff: usTariff,
+      card_discount: cardDiscount,
     },
   })
 })

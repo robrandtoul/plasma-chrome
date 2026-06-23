@@ -27,12 +27,19 @@ import {
 
 type ShippingTreatment = 'full_cost' | 'goodwill' | 'free' | 'manual'
 type Currency = 'GBP' | 'EUR' | 'USD'
+type CardDiscountType = 'none' | 'percent' | 'fixed'
 
 const TREATMENT_OPTIONS: { value: ShippingTreatment; label: string }[] = [
   { value: 'full_cost', label: 'Charge full cost' },
   { value: 'goodwill', label: 'Goodwill (subsidise)' },
   { value: 'free', label: 'Free shipping' },
   { value: 'manual', label: 'Manual amount' },
+]
+
+const CARD_DISCOUNT_OPTIONS: { value: CardDiscountType; label: string }[] = [
+  { value: 'none', label: 'No discount' },
+  { value: 'percent', label: '% off' },
+  { value: 'fixed', label: 'Fixed amount off' },
 ]
 
 interface VariantOption {
@@ -122,6 +129,12 @@ export default function OrderBuilderModal({
   const [shipDestCountry, setShipDestCountry] = useState('')
   // Per-order goodwill discount, % off the computed rate (Rob, 2026-06-15).
   const [shippingDiscountPercent, setShippingDiscountPercent] = useState('')
+  // Per-order discount on the CARDS line — none / % off / fixed amount off,
+  // with an optional reason. Resolved + capped at checkout against the priced
+  // cards figure; shows as its own negative line on the pay page + invoice.
+  const [cardDiscountType, setCardDiscountType] = useState<CardDiscountType>('none')
+  const [cardDiscountValue, setCardDiscountValue] = useState('')
+  const [cardDiscountReason, setCardDiscountReason] = useState('')
   const [customQuoteTotal, setCustomQuoteTotal] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -520,6 +533,19 @@ export default function OrderBuilderModal({
       }
       customQuoteValue = c
     }
+    let cardDiscountValueParsed: number | null = null
+    if (cardDiscountType !== 'none') {
+      const v = Number(cardDiscountValue)
+      if (!Number.isFinite(v) || v <= 0) {
+        setError(cardDiscountType === 'percent' ? 'Enter a card discount percentage above 0.' : 'Enter a card discount amount above 0.')
+        return
+      }
+      if (cardDiscountType === 'percent' && v > 100) {
+        setError('Enter a card discount percentage between 0 and 100%.')
+        return
+      }
+      cardDiscountValueParsed = v
+    }
 
     setSubmitting(true)
     try {
@@ -537,6 +563,9 @@ export default function OrderBuilderModal({
           shipping_treatment: shippingTreatment,
           shipping_charged: shippingChargedValue,
           shipping_discount_percent: shippingDiscountPercentValue,
+          card_discount_type: cardDiscountType,
+          card_discount_value: cardDiscountValueParsed,
+          card_discount_reason: cardDiscountReason.trim() || undefined,
           ship_dest_country: shipDestCountryValue,
           custom_quote_total: customQuoteValue,
           material_variant_id: isCustomQuote ? undefined : variantId,
@@ -922,6 +951,46 @@ export default function OrderBuilderModal({
                   placeholder={`Shipping amount (${currency ?? 'GBP'})`}
                   className="mt-2 max-w-[240px]"
                 />
+              )}
+            </Field>
+
+            {/* Card discount — designer-set, reduces only the cards line.
+                Mirrors the shipping subsidy; shows as a separate negative line
+                on the pay page + invoice (the cards stay at full price). */}
+            <Field label="Card discount" htmlFor="order-card-discount" hint="Optional. Reduces only the cards subtotal — shows as its own discount line on the pay page and invoice. Shipping has its own subsidy above.">
+              <select
+                id="order-card-discount"
+                value={cardDiscountType}
+                onChange={(e) => setCardDiscountType(e.target.value as CardDiscountType)}
+                className={selectClass}
+              >
+                {CARD_DISCOUNT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              {cardDiscountType !== 'none' && (
+                <div className="mt-2 space-y-2">
+                  <Input
+                    aria-label={cardDiscountType === 'percent' ? 'Card discount percentage' : 'Card discount amount'}
+                    type="number"
+                    min={0}
+                    max={cardDiscountType === 'percent' ? 100 : undefined}
+                    step={cardDiscountType === 'percent' ? 1 : 0.01}
+                    inputMode={cardDiscountType === 'percent' ? 'numeric' : 'decimal'}
+                    value={cardDiscountValue}
+                    onChange={(e) => setCardDiscountValue(e.target.value)}
+                    placeholder={cardDiscountType === 'percent' ? '% off the cards (e.g. 10)' : `Amount off the cards (${currency ?? 'GBP'})`}
+                    className="max-w-[240px]"
+                  />
+                  <Input
+                    aria-label="Card discount reason (optional)"
+                    type="text"
+                    value={cardDiscountReason}
+                    onChange={(e) => setCardDiscountReason(e.target.value)}
+                    placeholder="Reason (optional — e.g. goodwill, loyalty)"
+                    className="max-w-[320px]"
+                  />
+                </div>
               )}
             </Field>
 

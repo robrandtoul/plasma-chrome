@@ -43,6 +43,10 @@ interface OrderRow {
   amount_tooling: number | null
   amount_personalisation: number | null
   amount_shipping: number | null
+  // Designer-set cards discount: the config + the amount stamped at checkout.
+  card_discount_type: 'none' | 'percent' | 'fixed' | null
+  card_discount_value: number | null
+  amount_card_discount: number | null
   payment_reference: string | null
   xero_invoice_id: string | null
   xero_invoice_error: string | null
@@ -75,6 +79,7 @@ interface OrderRow {
 const SELECT = `
   id, status, token, expires_at, sent_at, currency, quantity, names_count, has_personalisation,
   custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping,
+  card_discount_type, card_discount_value, amount_card_discount,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, person_quantities,
   ship_to_name, ship_to_email, ship_to_address, proof_id,
@@ -131,10 +136,12 @@ function specLabel(o: OrderRow): string {
 }
 
 function orderTotal(o: OrderRow): number | null {
-  if (o.custom_quote_total != null) return Number(o.custom_quote_total)
+  // The cards discount (stamped at checkout) nets off either branch.
+  const discount = Number(o.amount_card_discount ?? 0)
+  if (o.custom_quote_total != null) return round2(Number(o.custom_quote_total) - discount)
   const parts = [o.amount_cards, o.amount_tooling, o.amount_personalisation, o.amount_shipping]
   if (parts.every((p) => p == null)) return null
-  return round2(parts.reduce((acc: number, p) => acc + Number(p ?? 0), 0))
+  return round2(parts.reduce((acc: number, p) => acc + Number(p ?? 0), 0) - discount)
 }
 
 // Add N working days to a date (skips Sat/Sun). Used to suggest the date
@@ -648,6 +655,17 @@ function OrderCard({
             {order.paid_at ? ` · paid ${paidDays === 0 ? 'today' : paidDays === 1 ? 'yesterday' : `${paidDays} days ago`}` : ''}
             {total != null ? ` · ${formatPrice(total, order.currency)}` : ''}
           </p>
+
+          {order.card_discount_type && order.card_discount_type !== 'none' && (
+            <p className="mt-0.5 text-[13px] text-in-stock">
+              Cards discount: {order.card_discount_type === 'percent'
+                ? `${order.card_discount_value ?? 0}% off`
+                : `${formatPrice(Number(order.card_discount_value ?? 0), order.currency)} off`}
+              {order.amount_card_discount != null && order.amount_card_discount > 0
+                ? ` (−${formatPrice(order.amount_card_discount, order.currency)})`
+                : ''}
+            </p>
+          )}
 
           {invoiceError && (
             <p className="mt-1.5 rounded-lg bg-out-soft px-3 py-2 text-[13px] text-out ring-1 ring-out">

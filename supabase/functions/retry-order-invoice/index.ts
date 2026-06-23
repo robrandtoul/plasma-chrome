@@ -30,6 +30,7 @@ interface OrderRow {
   amount_tooling: number | null
   amount_personalisation: number | null
   amount_shipping: number | null
+  amount_card_discount: number | null
   currency: string
   status: string
   xero_invoice_id: string | null
@@ -74,7 +75,7 @@ Deno.serve(async (req) => {
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, currency, status, xero_invoice_id, payment_reference, ship_to_name, ship_to_email, ship_to_address, ship_dest_country, proofs(contacts(full_name, email))')
+    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_card_discount, currency, status, xero_invoice_id, payment_reference, ship_to_name, ship_to_email, ship_to_address, ship_dest_country, proofs(contacts(full_name, email))')
     .eq('id', orderId)
     .single<OrderRow>()
   if (orderErr || !order) return json({ error: 'Order not found' }, 404)
@@ -106,9 +107,10 @@ Deno.serve(async (req) => {
   const tooling = Number(order.amount_tooling ?? 0)
   const personalisation = Number(order.amount_personalisation ?? 0)
   const shipping = Number(order.amount_shipping ?? 0)
+  const cardDiscount = Number(order.amount_card_discount ?? 0)
   const expectedTotal = order.custom_quote_total != null
-    ? round2(Number(order.custom_quote_total) + shipping)
-    : round2(cards + tooling + personalisation + shipping)
+    ? round2(Number(order.custom_quote_total) - cardDiscount + shipping)
+    : round2(cards + tooling + personalisation - cardDiscount + shipping)
 
   // Delivery country drives domestic vs international shipping item; prefer the
   // address Stripe collected, fall back to the rating country we stored.

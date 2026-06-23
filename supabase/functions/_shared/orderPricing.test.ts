@@ -8,6 +8,7 @@ import {
   cardTotalForQuantity,
   computeOrderTotal,
   interpolateValue,
+  resolveCardDiscount,
   resolveUsTariff,
   type Tier,
   type PricingConfig,
@@ -135,6 +136,50 @@ test('computeOrderTotal: quantity out of range cannot be priced', () => {
     shipping: 0,
   })
   assertEqual(r.ok, false)
+})
+
+// ── resolveCardDiscount ─────────────────────────────────────────────
+
+test('resolveCardDiscount: percent off the cards', () => {
+  // 10% off £500 cards → £50
+  assertEqual(resolveCardDiscount('percent', 10, 500), 50)
+})
+
+test('resolveCardDiscount: percent over 100 is capped to the cards figure', () => {
+  assertEqual(resolveCardDiscount('percent', 150, 500), 500)
+})
+
+test('resolveCardDiscount: fixed amount off the cards', () => {
+  assertEqual(resolveCardDiscount('fixed', 100, 500), 100)
+})
+
+test('resolveCardDiscount: fixed amount over the cards is capped (never negative)', () => {
+  assertEqual(resolveCardDiscount('fixed', 600, 500), 500)
+})
+
+test('resolveCardDiscount: none / zero / missing value → 0', () => {
+  assertEqual(resolveCardDiscount('none', 10, 500), 0)
+  assertEqual(resolveCardDiscount('percent', 0, 500), 0)
+  assertEqual(resolveCardDiscount('fixed', null, 500), 0)
+})
+
+test('resolveCardDiscount: percent rounds to the penny', () => {
+  // 12.5% off £99.99 = 12.49875 → 12.50
+  assertEqual(resolveCardDiscount('percent', 12.5, 99.99), 12.5)
+})
+
+test('computeOrderTotal goods uses full cards; discount is applied by the caller', () => {
+  // The cards-only discount is resolved + applied at checkout against the
+  // folded amount_cards, not inside computeOrderTotal — so goods stays full
+  // here and the caller subtracts resolveCardDiscount() from the charged total.
+  const tiers: Tier[] = [{ quantity: 100, total_price: 500 }]
+  const r = computeOrderTotal({
+    tiers, quantity: 100, perExtraNameSurcharge: 39, namesCount: 2, personalisation: null, shipping: 0,
+  })
+  if (!r.ok) throw new Error('expected ok')
+  const discount = resolveCardDiscount('percent', 10, r.cards) // 10% of 500 = 50
+  assertEqual(discount, 50)
+  assertEqual(Math.round((r.total - discount) * 100) / 100, 489) // 539 − 50
 })
 
 // ── resolveUsTariff ─────────────────────────────────────────────────

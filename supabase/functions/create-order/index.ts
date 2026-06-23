@@ -16,9 +16,11 @@ import { logAudit } from '../_shared/audit.ts'
 
 type ShippingTreatment = 'full_cost' | 'goodwill' | 'free' | 'manual'
 type Currency = 'GBP' | 'EUR' | 'USD'
+type CardDiscountType = 'none' | 'percent' | 'fixed'
 
 const SHIPPING_TREATMENTS: ShippingTreatment[] = ['full_cost', 'goodwill', 'free', 'manual']
 const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
+const CARD_DISCOUNT_TYPES: CardDiscountType[] = ['none', 'percent', 'fixed']
 
 // URL-safe random token for the pay-page bearer. 32 hex chars from the
 // platform CSPRNG — unguessable and collision-safe for this volume.
@@ -145,6 +147,31 @@ Deno.serve(async (req) => {
     shippingDiscountPercent = Math.round(d * 100) / 100
   }
 
+  // card_discount — the per-order discount on the CARDS line (mirrors the
+  // shipping subsidy). type none/percent/fixed; value required for the two
+  // active types (percent 0–100, fixed >= 0); reason is an optional audit note.
+  // The actual discount amount is resolved + stamped at checkout against the
+  // priced cards figure (create-checkout-session), not here.
+  const cardDiscountType = (body.card_discount_type as CardDiscountType) ?? 'none'
+  if (!CARD_DISCOUNT_TYPES.includes(cardDiscountType)) {
+    return json({ error: 'Invalid card_discount_type' }, 400)
+  }
+  let cardDiscountValue: number | null = null
+  if (cardDiscountType !== 'none') {
+    const v = Number(body.card_discount_value)
+    if (!Number.isFinite(v) || v <= 0) {
+      return json({ error: 'card_discount_value must be greater than zero for a card discount' }, 400)
+    }
+    if (cardDiscountType === 'percent' && v > 100) {
+      return json({ error: 'card_discount_value must be between 0 and 100 for a percent discount' }, 400)
+    }
+    cardDiscountValue = Math.round(v * 100) / 100
+  }
+  const cardDiscountReason =
+    typeof body.card_discount_reason === 'string' && body.card_discount_reason.trim()
+      ? body.card_discount_reason.trim().slice(0, 255)
+      : null
+
   let customQuoteTotal: number | null = null
   if (body.custom_quote_total != null) {
     const c = Number(body.custom_quote_total)
@@ -191,6 +218,9 @@ Deno.serve(async (req) => {
       shipping_treatment: shippingTreatment,
       shipping_charged: shippingCharged,
       shipping_discount_percent: shippingDiscountPercent,
+      card_discount_type: cardDiscountType,
+      card_discount_value: cardDiscountValue,
+      card_discount_reason: cardDiscountReason,
       ship_dest_country: shipDestCountry,
       ship_dest_postcode: shipDestPostcode,
       currency,
@@ -221,6 +251,9 @@ Deno.serve(async (req) => {
       quantity,
       shipping_treatment: shippingTreatment,
       shipping_discount_percent: shippingDiscountPercent,
+      card_discount_type: cardDiscountType,
+      card_discount_value: cardDiscountValue,
+      card_discount_reason: cardDiscountReason,
       ship_dest_country: shipDestCountry,
       ship_dest_postcode: shipDestPostcode,
       has_personalisation: hasPersonalisation,

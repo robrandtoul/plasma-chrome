@@ -51,6 +51,9 @@ interface OrderPayload {
   // US tariff & customs handling (migration 000249): the charged fee + the
   // customer's opt-out choice, stamped at checkout. Null/false on legacy rows.
   amount_us_tariff: number | null
+  // Designer-set cards discount stamped at checkout (the resolved amount, >= 0).
+  // Shown as a separate negative line; null on legacy rows → no discount.
+  amount_card_discount: number | null
   us_tariff_opted_out: boolean
   // Delivery details Stripe collected, persisted by the webhook on the
   // sent → paid flip — so only present once the payment is confirmed.
@@ -201,7 +204,7 @@ export default function OrderPayPage() {
     pk: string
     amount: number
     currency: Currency
-    breakdown: { cards: number; tooling: number; personalisation: number; shipping: number; us_tariff: number }
+    breakdown: { cards: number; tooling: number; personalisation: number; shipping: number; us_tariff: number; card_discount: number }
   } | null>(null)
   // True once the elements are mounted (drives the loading state).
   const [formMounted, setFormMounted] = useState(false)
@@ -241,7 +244,7 @@ export default function OrderPayPage() {
             .filter((p) => Number.isFinite(p.quantity) && p.quantity > 0)
         : []
     try {
-      const { data, error } = await supabase.functions.invoke<{ client_secret?: string; publishable_key?: string; amount?: number; currency?: Currency; breakdown?: { cards: number; tooling: number; personalisation: number; shipping: number; us_tariff: number }; error?: string; message?: string }>(
+      const { data, error } = await supabase.functions.invoke<{ client_secret?: string; publishable_key?: string; amount?: number; currency?: Currency; breakdown?: { cards: number; tooling: number; personalisation: number; shipping: number; us_tariff: number; card_discount: number }; error?: string; message?: string }>(
         'create-checkout-session',
         {
           body: {
@@ -282,7 +285,7 @@ export default function OrderPayPage() {
         pk: data.publishable_key,
         amount: data.amount,
         currency: data.currency,
-        breakdown: data.breakdown ?? { cards: data.amount, tooling: 0, personalisation: 0, shipping: 0, us_tariff: 0 },
+        breakdown: data.breakdown ?? { cards: data.amount, tooling: 0, personalisation: 0, shipping: 0, us_tariff: 0, card_discount: 0 },
       })
     } catch {
       setPayError('We couldn’t start checkout. Please reply to the email you received and we’ll help.')
@@ -609,7 +612,8 @@ export default function OrderPayPage() {
     const personalisation = amt(o.amount_personalisation)
     const shipping = amt(o.amount_shipping)
     const usTariff = amt(o.amount_us_tariff)
-    const total = round2(cards + tooling + personalisation + shipping + usTariff)
+    const cardDiscount = amt(o.amount_card_discount)
+    const total = round2(cards - cardDiscount + tooling + personalisation + shipping + usTariff)
     const haveSummary = total > 0
     const addr = o.ship_to_address
     const haveAddress = confirmed && !!addr && !!(addr.line1 || addr.postal_code)
@@ -640,6 +644,7 @@ export default function OrderPayPage() {
                 />
               )}
               <Row label="Cards" value={formatPrice(cards, o.currency)} />
+              {cardDiscount > 0 && <Row label="Discount" value={formatPrice(-cardDiscount, o.currency)} />}
               {tooling > 0 && (
                 <Row
                   label={o.names_count > 1 ? `Extra tooling (${o.names_count} names)` : 'Extra tooling'}
@@ -969,6 +974,7 @@ export default function OrderPayPage() {
                 {checkout ? (
                   <>
                     <Row label={order.custom_quote_total != null ? 'Agreed price' : 'Cards'} value={formatPrice(checkout.breakdown.cards, checkout.currency)} />
+                    {checkout.breakdown.card_discount > 0 && <Row label="Discount" value={formatPrice(-checkout.breakdown.card_discount, checkout.currency)} />}
                     {checkout.breakdown.tooling > 0 && <Row label="Tooling" value={formatPrice(checkout.breakdown.tooling, checkout.currency)} />}
                     {checkout.breakdown.personalisation > 0 && <Row label="Personalisation" value={formatPrice(checkout.breakdown.personalisation, checkout.currency)} />}
                     <Row label="Shipping" value={checkout.breakdown.shipping > 0 ? formatPrice(checkout.breakdown.shipping, checkout.currency) : 'Free'} />

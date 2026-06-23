@@ -248,7 +248,7 @@ Deno.serve(async (req) => {
       // (so the VAT invoice is emailed exactly once).
       const { data: order } = await admin
         .from('orders')
-        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, ship_dest_country, xero_invoice_id, invoice_emailed_at')
+        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, ship_dest_country, xero_invoice_id, invoice_emailed_at')
         .eq('id', orderId)
         .single()
       let invoiceId: string | null = (order?.xero_invoice_id as string | null) ?? null
@@ -296,6 +296,7 @@ Deno.serve(async (req) => {
             amount_personalisation: null,
             amount_shipping: null,
             amount_us_tariff: null,
+            amount_card_discount: null,
           },
           { reference: referenceSafe, currency, expectedTotal, country },
         )
