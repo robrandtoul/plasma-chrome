@@ -51,6 +51,8 @@ interface OrderRow {
   // Order-placement fields (000252).
   date_required: string | null
   dropbox_folder_url: string | null
+  stock_order_number: string | null
+  project_name: string | null
   person_quantities: { name: string; quantity: number }[] | null
   ship_to_name: string | null
   ship_to_email: string | null
@@ -74,11 +76,28 @@ const SELECT = `
   id, status, token, expires_at, sent_at, currency, quantity, names_count, has_personalisation,
   custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at,
-  date_required, dropbox_folder_url, person_quantities,
+  date_required, dropbox_folder_url, stock_order_number, project_name, person_quantities,
   ship_to_name, ship_to_email, ship_to_address, proof_id,
   material_variants(display_name, materials(display_name, production_route, lead_time_max_days)),
   proofs(contacts(full_name, companies(name)))
 `
+
+// The dropbox-folder edge function response (uniform { ok } shape).
+interface DropboxFolderResult {
+  ok: boolean
+  error?: string
+  name?: string
+  order_number?: string | null
+  project_name?: string | null
+  file_count?: number
+}
+
+// Per-card state for the order-folder lookup against Dropbox.
+type FolderLookup =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'ok'; orderNumber: string | null; projectName: string | null; fileCount: number | null }
+  | { status: 'error'; error: string }
 
 // A 'sent' order whose window has passed. Status stays 'sent' in the DB (the
 // pay-page + this list derive expiry from the timestamp); reactivation just
@@ -505,13 +524,47 @@ function OrderCard({
 
   // Local drafts for the two placement fields. Date seeds from the saved value,
   // else the lead-time suggestion (the designer still has to engage with it to
-  // place — the gate checks the value is set). Folder saves on blur.
+  // place — the gate checks the value is set).
   const [dateValue, setDateValue] = useState<string>(order.date_required ?? suggested ?? '')
   const [folderDraft, setFolderDraft] = useState<string>(order.dropbox_folder_url ?? '')
 
-  const folderSet = folderDraft.trim().length > 0
+  // Folder lookup: pasting the order-folder link verifies it against Dropbox and
+  // pulls the order number + project from its name (the values the Stock Control
+  // hand-off needs). Seeds from saved values so a revisit shows the confirmation
+  // without re-fetching (the live file count is only known on a fresh check).
+  const [lookup, setLookup] = useState<FolderLookup>(() =>
+    order.stock_order_number || order.project_name
+      ? { status: 'ok', orderNumber: order.stock_order_number, projectName: order.project_name, fileCount: null }
+      : { status: 'idle' },
+  )
+
+  async function runLookup(rawLink: string) {
+    const link = rawLink.trim()
+    if (!link) {
+      setLookup({ status: 'idle' })
+      onSaveField({ dropbox_folder_url: null, stock_order_number: null, project_name: null })
+      return
+    }
+    setLookup({ status: 'loading' })
+    const { data, error } = await supabase.functions.invoke<DropboxFolderResult>('dropbox-folder', { body: { link } })
+    if (error || !data?.ok) {
+      setLookup({ status: 'error', error: data?.error ?? error?.message ?? 'Could not read that Dropbox link.' })
+      // Keep the URL so it isn't lost, but clear the parsed fields it couldn't fill.
+      onSaveField({ dropbox_folder_url: link, stock_order_number: null, project_name: null })
+      return
+    }
+    const orderNumber = data.order_number ?? null
+    const projectName = data.project_name ?? null
+    setLookup({ status: 'ok', orderNumber, projectName, fileCount: data.file_count ?? null })
+    onSaveField({ dropbox_folder_url: link, stock_order_number: orderNumber, project_name: projectName })
+  }
+
+  // The folder is usable for the hand-off only once it's verified AND its name
+  // yields an order number (which becomes the Help Scout subject Stock Control
+  // matches on). Artwork presence is informational, not a gate.
+  const folderVerified = lookup.status === 'ok' && !!lookup.orderNumber
   const isSupplier = route === 'supplier'
-  const canOrder = !isSupplier && folderSet && dateValue.length > 0
+  const canOrder = !isSupplier && folderVerified && dateValue.length > 0
 
   return (
     <PanelShell>
@@ -595,17 +648,46 @@ function OrderCard({
             </label>
             <label className="block">
               <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Order folder (Dropbox)</span>
-              <input
-                type="url"
-                value={folderDraft}
-                onChange={(e) => setFolderDraft(e.target.value)}
-                onBlur={() => { if (folderDraft.trim() !== (order.dropbox_folder_url ?? '')) onSaveField({ dropbox_folder_url: folderDraft.trim() || null }) }}
-                placeholder="Paste the order folder link…"
-                className="mt-1 h-[38px] w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
-              />
-              <span className={`mt-1 block text-[11px] ${folderSet ? 'text-in-stock' : 'text-low'}`}>
-                {folderSet ? 'Artwork folder linked' : 'Prep the artwork, then paste the folder link'}
-              </span>
+              <div className="mt-1 flex gap-2">
+                <input
+                  type="url"
+                  value={folderDraft}
+                  onChange={(e) => setFolderDraft(e.target.value)}
+                  onBlur={() => { if (folderDraft.trim() !== (order.dropbox_folder_url ?? '')) void runLookup(folderDraft) }}
+                  placeholder="Paste the order folder link…"
+                  className="h-[38px] min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                />
+                <button
+                  type="button"
+                  onClick={() => void runLookup(folderDraft)}
+                  disabled={lookup.status === 'loading' || folderDraft.trim().length === 0}
+                  className="h-[38px] shrink-0 rounded-lg border border-line px-3 text-[13px] text-ink-soft hover:bg-canvas disabled:opacity-50"
+                >
+                  {lookup.status === 'loading' ? 'Checking…' : 'Check'}
+                </button>
+              </div>
+              <div className="mt-1 space-y-0.5 text-[11px]">
+                {lookup.status === 'idle' && (
+                  <span className="block text-low">Prep the artwork, then paste the folder link</span>
+                )}
+                {lookup.status === 'loading' && <span className="block text-ink-mute">Checking folder…</span>}
+                {lookup.status === 'error' && <span className="block text-out">{lookup.error}</span>}
+                {lookup.status === 'ok' && lookup.orderNumber && (
+                  <span className="block text-in-stock">✓ Order {lookup.orderNumber} · {lookup.projectName}</span>
+                )}
+                {lookup.status === 'ok' && !lookup.orderNumber && (
+                  <span className="block text-low">
+                    Folder linked, but its name isn’t “Order &lt;number&gt; – &lt;project&gt;” — rename it so Stock Control can match it.
+                  </span>
+                )}
+                {lookup.status === 'ok' && lookup.fileCount != null && (
+                  <span className={`block ${lookup.fileCount > 0 ? 'text-ink-mute' : 'text-low'}`}>
+                    {lookup.fileCount > 0
+                      ? `${lookup.fileCount} artwork file${lookup.fileCount === 1 ? '' : 's'} in the folder`
+                      : 'No artwork files in the folder yet'}
+                  </span>
+                )}
+              </div>
             </label>
           </div>
 
@@ -636,7 +718,7 @@ function OrderCard({
           )}
           {!isSupplier && !canOrder && (
             <span className="text-right text-[11px] text-ink-mute">
-              {!folderSet ? 'Add the order folder to enable' : 'Set a date required to enable'}
+              {!folderVerified ? 'Link & check the order folder to enable' : 'Set a date required to enable'}
             </span>
           )}
           <Link to={`/proofs/${order.proof_id}`}>

@@ -4,6 +4,10 @@
 // order folder fills the order number + project that drive the Stock Control
 // hand-off, and confirms artwork is present.
 //
+// Always responds 200 with an { ok } discriminator (matching the house
+// retry-order-invoice shape) so the frontend reads outcomes uniformly; the only
+// non-200s are genuine client errors (bad method / unparseable JSON / no link).
+//
 // Auth: verify_jwt = true (the designer's session JWT). Reads the Dropbox
 // connection with a service-role client.
 
@@ -21,16 +25,16 @@ function json(body: unknown, status = 200): Response {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
-  if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
+  if (req.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405)
 
   let body: Record<string, unknown>
   try {
     body = await req.json()
   } catch {
-    return json({ error: 'Invalid JSON body' }, 400)
+    return json({ ok: false, error: 'Invalid JSON body' }, 400)
   }
   const link = typeof body.link === 'string' ? body.link.trim() : ''
-  if (!link) return json({ error: 'Missing link' }, 400)
+  if (!link) return json({ ok: false, error: 'Missing link' }, 400)
 
   const admin = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
@@ -39,7 +43,7 @@ Deno.serve(async (req) => {
   )
 
   const token = await getDropboxAccessToken(admin)
-  if (!token) return json({ error: 'Dropbox is not connected' }, 503)
+  if (!token) return json({ ok: false, error: 'Dropbox is not connected.' })
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
 
@@ -50,22 +54,23 @@ Deno.serve(async (req) => {
     body: JSON.stringify({ url: link }),
   })
   if (!metaRes.ok) {
-    const detail = await metaRes.text().catch(() => '')
-    return json({ error: 'Could not read that Dropbox link — check it is a shared folder link.', detail: detail.slice(0, 300) }, 400)
+    return json({ ok: false, error: 'Could not read that Dropbox link — check it is a shared folder link.' })
   }
   const meta = await metaRes.json().catch(() => null)
   const name = (meta?.name as string | undefined) ?? ''
   if (meta?.['.tag'] !== 'folder') {
-    return json({ error: 'That link points to a file, not the order folder.' }, 400)
+    return json({ ok: false, error: 'That link points to a file, not the order folder.' })
   }
 
   const { order_number, project_name } = parseOrderFolderName(name)
 
-  // 2) List the folder's contents (the prepped artwork files).
+  // 2) List the folder's contents (the prepped artwork files). Recursive so
+  // artwork stored in subfolders still counts — folder entries are excluded
+  // from the file tally.
   const listRes = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ path: '', shared_link: { url: link } }),
+    body: JSON.stringify({ path: '', shared_link: { url: link }, recursive: true }),
   })
   let files: { name: string; is_folder: boolean }[] = []
   if (listRes.ok) {
@@ -78,5 +83,5 @@ Deno.serve(async (req) => {
   }
   const fileCount = files.filter((f) => !f.is_folder).length
 
-  return json({ name, order_number, project_name, files, file_count: fileCount })
+  return json({ ok: true, name, order_number, project_name, files, file_count: fileCount })
 })

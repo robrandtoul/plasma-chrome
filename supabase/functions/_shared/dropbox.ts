@@ -46,11 +46,15 @@ export async function getDropboxAccessToken(admin: SupabaseClient): Promise<stri
   return access
 }
 
-// Parse an order folder name into "<number> - <project>". The number is what
-// Stock Control keys on (read from the Help Scout subject); the rest is the
-// project name. Falls back to a null number + the whole name as the project.
+// Parse an order folder name into its number + project. Folders are named
+// "Order <number> - <project>" (e.g. "Order 403792 - Glosfume") — which is also
+// exactly the Help Scout subject Stock Control keys on, so the number is read
+// from the leading digits and the project is the rest. The "Order " prefix is
+// optional and a bare "<number> - <project>" is still accepted; falls back to a
+// null number + the whole name as the project.
 export function parseOrderFolderName(name: string): { order_number: string | null; project_name: string } {
-  const m = name.match(/^\s*(\d{3,})\s*[-–—]\s*(.+?)\s*$/)
+  const cleaned = name.replace(/^\s*order\s+/i, '')
+  const m = cleaned.match(/^\s*(\d{3,})\s*[-–—]\s*(.+?)\s*$/)
   if (m) return { order_number: m[1], project_name: m[2].trim() }
-  return { order_number: null, project_name: name.trim() }
+  return { order_number: null, project_name: cleaned.trim() }
 }
