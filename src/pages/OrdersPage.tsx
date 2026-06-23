@@ -214,6 +214,8 @@ export default function OrdersPage() {
   const [thumbs, setThumbs] = useState<Record<string, GridImage | null>>({})
   const [busyId, setBusyId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  // Per-order hand-off error (the place-inhouse-order edge function failing).
+  const [placeErrors, setPlaceErrors] = useState<Record<string, string>>({})
   // Sent reminders per order (the automated unpaid-order nudges, 000238).
   const [reminders, setReminders] = useState<Record<string, { count: number; lastAt: string }>>({})
 
@@ -283,13 +285,31 @@ export default function OrdersPage() {
       .eq('id', orderId)
   }
 
-  // Place the order: record the placement (status → fulfilled, the "ordered"
-  // terminal state on this page) plus the captured date + folder. The Help
-  // Scout subject + production-note hand-off to Stock Control lands once Dropbox
-  // is connected — wired into this same action then.
+  // Place the order: hand it to Stock Control by posting the production note +
+  // setting the Help Scout subject (place-inhouse-order), then record the
+  // placement locally (status → fulfilled, the "ordered" terminal state on this
+  // page) plus the captured date + folder. If the hand-off fails, surface the
+  // error and don't flip the status — the order stays in the queue to retry.
   async function markOrdered(orderId: string, fields: { date_required: string | null; dropbox_folder_url: string | null }) {
     setBusyId(orderId)
+    setPlaceErrors((prev) => {
+      const next = { ...prev }
+      delete next[orderId]
+      return next
+    })
     try {
+      const { data: handoff, error: handoffErr } = await supabase.functions.invoke<{ ok: boolean; error?: string; subject?: string; card?: string }>(
+        'place-inhouse-order',
+        { body: { order_id: orderId } },
+      )
+      if (handoffErr || !handoff?.ok) {
+        setPlaceErrors((prev) => ({
+          ...prev,
+          [orderId]: handoff?.error ?? handoffErr?.message ?? 'Could not post the production note to Help Scout. Please try again.',
+        }))
+        return
+      }
+
       const { data: { session } } = await supabase.auth.getSession()
       const uid = session?.user.id ?? null
       const { error } = await supabase
@@ -315,7 +335,7 @@ export default function OrdersPage() {
           targetType: 'order',
           targetId: orderId,
           targetLabel: `Order ${orderId}`,
-          afterValue: { date_required: fields.date_required, dropbox_folder_url: fields.dropbox_folder_url },
+          afterValue: { date_required: fields.date_required, dropbox_folder_url: fields.dropbox_folder_url, subject: handoff.subject, card: handoff.card },
         })
       }
     } finally {
@@ -455,6 +475,7 @@ export default function OrdersPage() {
                         route={routeOf(o)}
                         suggested={suggestedDate(o)}
                         busy={busyId === o.id}
+                        placeError={placeErrors[o.id] ?? null}
                         onOrder={(fields) => void markOrdered(o.id, fields)}
                         onSaveField={(patch) => void saveOrderField(o.id, patch)}
                         onRetryInvoice={() => void retryInvoice(o)}
@@ -499,6 +520,7 @@ function OrderCard({
   route,
   suggested,
   busy,
+  placeError,
   onOrder,
   onSaveField,
   onRetryInvoice,
@@ -508,6 +530,7 @@ function OrderCard({
   route: 'in_house' | 'supplier' | null
   suggested: string | null
   busy: boolean
+  placeError: string | null
   onOrder: (fields: { date_required: string | null; dropbox_folder_url: string | null }) => void
   onSaveField: (patch: Partial<OrderRow>) => void
   onRetryInvoice: () => void
@@ -690,6 +713,12 @@ function OrderCard({
               </div>
             </label>
           </div>
+
+          {placeError && (
+            <p className="mt-3 rounded-lg bg-out-soft px-3 py-2 text-[13px] text-out ring-1 ring-out">
+              <span className="font-medium">Couldn’t place the order.</span> {placeError}
+            </p>
+          )}
 
           {addrLines.length > 0 ? (
             <div className="mt-3 rounded-lg border border-line bg-canvas px-3 py-2 text-[13px] text-ink-soft">
