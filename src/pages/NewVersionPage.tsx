@@ -394,7 +394,7 @@ export default function NewVersionPage() {
   // loader (~line 740) seeds it from v(N-1)'s is_qr_code rows so
   // the designer sees the prior QRs alongside the artwork carry
   // cards. Each entry carries its file (new) or imagePath (existing)
-  // plus jsQR-decoded contents + recipient assignment. The save
+  // plus decoded contents + recipient assignment. The save
   // flow uploads new files, then inserts proof_version_images rows
   // with is_qr_code = true; existing entries re-use v1's image_path
   // unless the designer has unkept them via the Keep toggle.
