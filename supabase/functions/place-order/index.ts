@@ -172,6 +172,17 @@ function fmtDate(iso: string | null): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+// Neutralise any note line shaped like a per-person split entry ("name — 50")
+// so Stock Control's detectSplit (which scans the whole note and validates the
+// counts sum to the quantity) can't fold a note line into — or break — the real
+// split. Append a full stop so the line no longer ends in digits. Same shape as
+// the deployed detectSplit regex.
+function sanitiseInhouseNote(note: string): string {
+  return note.split('\n').map((line) =>
+    /^\s*.+?\s*[—–:-]\s*\d{1,6}\s*$/.test(line) ? `${line.replace(/\s+$/, '')}.` : line,
+  ).join('\n')
+}
+
 // ── Artwork attachments (in-house) ──────────────────────────────────────────
 // Stock Control's in-house ingester mirrors the production note's attachments
 // onto the job card, so we attach the prepped Dropbox files to the note — the
@@ -445,6 +456,13 @@ Deno.serve(async (req) => {
     // Belt-and-braces: the link is in the note too, so anything not attached
     // (too big / not artwork) is still reachable from the job card.
     if (order.dropbox_folder_url) lines.push(`Artwork: ${order.dropbox_folder_url}`)
+    // Optional per-order note for the production team, AFTER the spec (so the
+    // parser's first-wins fields aren't affected) and split-sanitised so a
+    // "name — 50"-shaped note line can't fold into / break the real split.
+    if (note) {
+      lines.push('')
+      for (const nl of sanitiseInhouseNote(note).split('\n')) lines.push(nl)
+    }
     const subject = `Order ${String(order.stock_order_number).trim()} - ${String(order.project_name ?? customerName).trim()}`.replace(/\s-\s*$/, '').trim()
 
     // Plan the artwork attachments from the Dropbox folder (best-effort: a

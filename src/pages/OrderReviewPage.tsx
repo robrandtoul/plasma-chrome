@@ -355,18 +355,6 @@ export default function OrderReviewPage() {
                     <p className="text-sm font-medium text-ink">{preview.subject}</p>
                     <p className="mt-3 text-[12px] text-ink-mute">Message</p>
                     <pre className="mt-1 whitespace-pre-wrap break-words rounded-lg border border-line bg-canvas p-3 text-[13px] text-ink">{(preview.email_lines ?? []).join('\n')}</pre>
-                    <label className="mt-3 block">
-                      <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Note to supplier (optional)</span>
-                      <textarea
-                        value={note}
-                        onChange={(e) => setNote(e.target.value)}
-                        onBlur={() => { void loadPreview(supplierId, note) }}
-                        rows={3}
-                        placeholder="Project-specific instructions for this order — added to the email above the sign-off."
-                        className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px] text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
-                      />
-                      <span className="mt-1 block text-[12px] text-ink-mute">Added after the order details (which the supplier’s system reads). Click out to see it in the message above.</span>
-                    </label>
                     <p className="mt-2 text-[12px] text-ink-mute">Sent to the supplier on a new Help Scout conversation, which hands the order to Stock Control. Artwork goes via the Dropbox link above.</p>
                   </>
                 ) : (
@@ -403,6 +391,24 @@ export default function OrderReviewPage() {
                     <p className="mt-2 text-[12px] text-ink-mute">Stock Control reads this note and schedules the job.</p>
                   </>
                 )}
+
+                {/* Per-order note — project-specific instructions for whoever
+                    makes this order. Appended after the order details (which the
+                    parser reads), so it's safe for both routes. */}
+                <label className="mt-4 block border-t border-line-soft pt-3">
+                  <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">
+                    {isSupplier ? 'Note to supplier (optional)' : 'Note to production (optional)'}
+                  </span>
+                  <textarea
+                    value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    onBlur={() => { void loadPreview(supplierId, note) }}
+                    rows={3}
+                    placeholder="Project-specific instructions for this order."
+                    className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px] text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                  />
+                  <span className="mt-1 block text-[12px] text-ink-mute">Added after the order details (which Stock Control reads). Click out to see it in the message above.</span>
+                </label>
               </PanelShell>
             </div>
 
