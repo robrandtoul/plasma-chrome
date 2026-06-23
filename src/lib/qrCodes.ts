@@ -2,24 +2,31 @@
 //
 // The proof-viewer's QR workflow (000168 / 000169) needs three
 // things in the browser: read a QR JPEG into a pixel buffer, decode
-// it with jsQR, then classify and parse the decoded string. This
-// file is the single place those three steps live.
+// it, then classify and parse the decoded string. This file is the
+// single place those three steps live.
+//
+// The decoder is ZXing (@zxing/library). It replaced jsQR after a
+// real designer upload — a stylised "dotted" QR with rounded finder
+// patterns — failed to decode. jsQR is unreliable on stylised codes:
+// across tiny pixel differences it returns null, decodes, or throws
+// an internal "Invalid module size", and that throw surfaced to the
+// designer as a raw "Unknown decode error". ZXing read the same file
+// cleanly at every resolution. See decodeQrFromImageData() for the
+// exact recipe.
 //
 // All entry points are pure async/sync functions — no React, no
 // DOM-specific assumptions beyond the browser globals (HTMLImage-
-// Element, OffscreenCanvas / HTMLCanvasElement) that jsQR already
-// needs. The designer's upload pipeline calls decodeQrFromFile()
-// the moment a file lands in the drop zone; the customer page
-// reads pre-decoded `qr_decoded_data` straight from the DB and
-// passes it through formatVCard / formatWifi / formatMecard.
+// Element, HTMLCanvasElement). The designer's upload pipeline calls
+// decodeQrFromFile() the moment a file lands in the drop zone; the
+// customer page reads pre-decoded `qr_decoded_data` straight from
+// the DB and passes it through formatVCard / formatWifi /
+// formatMecard.
 //
-// jsQR is imported dynamically inside decodeQrFromFile() so that
+// ZXing is imported dynamically inside decodeQrFromImageData() so
 // the pure-string parsers (classifyQrData, parseVCard, parseWifi,
 // parseMecard, isShortenedUrl) can be exercised by the unit-test
-// runner without jsqr installed, and so the main bundle only
-// pays the jsQR cost when a decode is actually triggered.
-
-// Lazy-imported inside decodeQrFromFile(); see comment above.
+// runner without the decoder installed, and so the main bundle only
+// pays the decoder cost when a decode is actually triggered.
 
 // ── Public types ─────────────────────────────────────────────────────
 
@@ -100,11 +107,10 @@ export function classifyQrData(data: string): QrKind {
 // ── decodeQrFromFile ─────────────────────────────────────────────────
 //
 // Browser-side path: File → HTMLImageElement → canvas → ImageData
-// → jsQR. inversionAttempts: 'attemptBoth' covers QRs printed on
-// dark backgrounds (rare, but cheap to handle here). Throws
-// QrDecodeError if jsQR can't find a QR pattern — the upload UI
-// surfaces that as a rose-toned "Couldn't read a QR code in this
-// image" message rather than silently storing an undecodable JPEG.
+// → ZXing. Every failure mode is funnelled into a QrDecodeError so
+// the upload UI always shows a friendly, actionable message and
+// never a raw "Unknown decode error". An undecodable JPEG never
+// makes it past this gate into storage.
 
 export async function decodeQrFromFile(file: File): Promise<DecodedQr> {
   if (!/^image\//i.test(file.type)) {
@@ -114,41 +120,112 @@ export async function decodeQrFromFile(file: File): Promise<DecodedQr> {
   }
 
   const imageData = await loadImageData(file)
-  // Dynamic import keeps the top-level module load free of the
-  // jsqr dependency; matters for the test runner (which can
-  // exercise the pure parsers without npm/pnpm install) and
-  // produces a code-split for the production bundle so the
-  // designer-only decoder isn't paid for on the customer page.
-  const { default: jsQR } = await import('jsqr')
-  const result = jsQR(imageData.data, imageData.width, imageData.height, {
-    inversionAttempts: 'attemptBoth',
-  })
+  const data = await decodeQrFromImageData(imageData)
+  return { data, kind: classifyQrData(data) }
+}
 
-  if (!result || !result.data) {
+// ── decodeQrFromImageData ────────────────────────────────────────────
+//
+// The ZXing recipe, verified against the real designer upload that
+// jsQR couldn't read: RGBA → luminance → RGBLuminanceSource →
+// HybridBinarizer → QRCodeReader, with TRY_HARDER on and the format
+// pinned to QR. We try the image then its inverse, so a QR printed
+// light-on-dark still decodes (the case jsQR's inversionAttempts:
+// 'attemptBoth' used to cover). ZXing is imported dynamically so the
+// bundle only pays for it when a decode runs and the pure parsers
+// stay testable without the dependency.
+
+async function decodeQrFromImageData(imageData: ImageData): Promise<string> {
+  let ZXing: typeof import('@zxing/library')
+  try {
+    ZXing = await import('@zxing/library')
+  } catch {
     throw new QrDecodeError(
-      'No QR code detected in this image. Try a clearer export or a higher-resolution JPEG.',
+      "Couldn't load the QR decoder. Check your connection and try again.",
     )
   }
+  const {
+    RGBLuminanceSource,
+    BinaryBitmap,
+    HybridBinarizer,
+    QRCodeReader,
+    DecodeHintType,
+    BarcodeFormat,
+  } = ZXing
 
-  return {
-    data: result.data,
-    kind: classifyQrData(result.data),
+  const { data, width, height } = imageData
+  // ZXing reads a Uint8ClampedArray of length width*height as a
+  // luminance buffer (an Int32Array would instead be read as packed
+  // ARGB). Convert our RGBA pixels with the standard luma weights.
+  const luminances = new Uint8ClampedArray(width * height)
+  for (let i = 0; i < width * height; i++) {
+    const r = data[i * 4]
+    const g = data[i * 4 + 1]
+    const b = data[i * 4 + 2]
+    luminances[i] = (r * 0.299 + g * 0.587 + b * 0.114) | 0
   }
+
+  const hints = new Map()
+  hints.set(DecodeHintType.TRY_HARDER, true)
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE])
+
+  const source = new RGBLuminanceSource(luminances, width, height)
+  for (const candidate of [source, source.invert()]) {
+    try {
+      const result = new QRCodeReader().decode(
+        new BinaryBitmap(new HybridBinarizer(candidate)),
+        hints,
+      )
+      const text = result.getText()
+      if (text) return text
+    } catch {
+      // ZXing throws NotFoundException / FormatException /
+      // ChecksumException when a pass can't read a QR. Swallow it and
+      // try the next candidate; if both fail we throw our own
+      // QrDecodeError below.
+    }
+  }
+
+  throw new QrDecodeError(
+    "No QR code detected in this image. If it's a stylised QR, try a clearer or higher-contrast export.",
+  )
 }
+
+// Cap very large print exports before reading pixels: keeps
+// getImageData under the browser's max-canvas-area limit (a separate
+// source of the old "Unknown decode error") and keeps decoding fast.
+// A QR has a fixed module count, so downscaling within reason doesn't
+// hurt readability — ZXing read this proof's QR fine down to ~200px.
+const MAX_DECODE_DIMENSION = 2000
 
 async function loadImageData(file: File): Promise<ImageData> {
   const url = URL.createObjectURL(file)
   try {
     const img = await loadHtmlImage(url)
+    const naturalW = img.naturalWidth
+    const naturalH = img.naturalHeight
+    if (!naturalW || !naturalH) {
+      throw new QrDecodeError('Image has no readable dimensions.')
+    }
+    const scale = Math.min(1, MAX_DECODE_DIMENSION / Math.max(naturalW, naturalH))
+    const width = Math.max(1, Math.round(naturalW * scale))
+    const height = Math.max(1, Math.round(naturalH * scale))
+
     const canvas = document.createElement('canvas')
-    canvas.width = img.naturalWidth
-    canvas.height = img.naturalHeight
+    canvas.width = width
+    canvas.height = height
     const ctx = canvas.getContext('2d')
     if (!ctx) {
       throw new QrDecodeError('Browser failed to provide a 2D canvas context.')
     }
-    ctx.drawImage(img, 0, 0)
-    return ctx.getImageData(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(img, 0, 0, width, height)
+    try {
+      return ctx.getImageData(0, 0, width, height)
+    } catch {
+      throw new QrDecodeError(
+        'Browser failed to read the image pixels (the image may be too large).',
+      )
+    }
   } finally {
     URL.revokeObjectURL(url)
   }

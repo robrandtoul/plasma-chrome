@@ -1,8 +1,8 @@
 // Designer-side QR upload section for the version forms.
 //
 // Renders between Proof Images and Change Notes. Designer drops a
-// QR JPEG; the component runs jsQR client-side via
-// decodeQrFromFile (src/lib/qrCodes.ts), shows a green tick + the
+// QR JPEG; the component runs decodeQrFromFile client-side
+// (src/lib/qrCodes.ts, ZXing under the hood), shows a green tick + the
 // decoded contents inline when the decode succeeds, or a rose-
 // toned error when no QR pattern is found. The customer never
 // sees an undecodable QR — it never makes it past this gate.
