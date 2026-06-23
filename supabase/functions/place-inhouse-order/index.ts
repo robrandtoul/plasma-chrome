@@ -186,7 +186,7 @@ Deno.serve(async (req) => {
   // 1) Order.
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, status, quantity, person_quantities, date_required, stock_order_number, project_name, proof_id')
+    .select('id, status, quantity, person_quantities, date_required, stock_order_number, project_name, proof_id, ship_dest_country, ship_to_address')
     .eq('id', orderId)
     .maybeSingle()
   if (orderErr) return json({ ok: false, error: `Order lookup failed: ${orderErr.message}` }, 500)
@@ -260,6 +260,12 @@ Deno.serve(async (req) => {
   if (dateStr) lines.push(`Date required: ${dateStr}`)
   if (inks.front) lines.push(`Ink on front: ${inks.front}`)
   if (inks.back) lines.push(`Ink on back: ${inks.back}`)
+  // Packaging is which box production uses: UK destinations ship in the domestic
+  // box, everywhere else the international box. Keyed off the rated destination.
+  const destCountry = String(
+    order.ship_dest_country ?? (order.ship_to_address as { country?: string | null } | null)?.country ?? '',
+  ).trim().toUpperCase()
+  if (destCountry) lines.push(`Packaging: ${destCountry === 'GB' ? 'Domestic' : 'International'}`)
   lines.push('10% extra: No')
   for (const sl of splitLines) lines.push(sl)
   const noteText = lines.join('<br>')
