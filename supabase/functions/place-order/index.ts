@@ -507,9 +507,15 @@ Deno.serve(async (req) => {
   const productType = productTypeFor(mat.code)
   const thickness = variantType === 'thickness' ? variantName : null
   const finish = optionName ?? (variantType === 'finish' ? variantName : null)
+  // The specific card (e.g. "Stainless Steel", "Carbon Fibre CNC"). Material:
+  // stays the coarse product type Stock Control matches on; Type: carries the
+  // exact material so the supplier knows which metal / variant to make. Skipped
+  // when it would just repeat Material: (case-insensitive).
+  const specificType = (mat.display_name ?? '').trim() || null
 
   const emailLines: string[] = ['Hi,', '', `Please produce the following order for ${customerName}:`, '', `Qty: ${qty}`]
   if (productType) emailLines.push(`Material: ${productType}`)
+  if (specificType && specificType.toLowerCase() !== productType.toLowerCase()) emailLines.push(`Type: ${specificType}`)
   if (thickness) emailLines.push(`Thickness: ${thickness}`)
   if (finish) emailLines.push(`Finish: ${finish}`)
   if (shipByStr) emailLines.push(`Must ship by: ${shipByStr}`)
