@@ -100,12 +100,15 @@ export default function OrderReviewPage() {
   // Set when the hand-off WAS sent but the status flip failed (place-order
   // returns code 'sent_not_recorded') — block any retry, which would re-send.
   const [sentNotRecorded, setSentNotRecorded] = useState<string | null>(null)
+  // Optional project-specific note appended to the supplier email (supplier
+  // route). Re-previewed on blur so the reviewer sees exactly what's sent.
+  const [note, setNote] = useState('')
 
-  const loadPreview = useCallback(async (chosenSupplierId?: string | null) => {
+  const loadPreview = useCallback(async (chosenSupplierId?: string | null, noteArg?: string) => {
     if (!id) return
     setError(null)
     const { data, error: fnErr } = await supabase.functions.invoke<PreviewResponse>('place-order', {
-      body: { order_id: id, mode: 'preview', ...(chosenSupplierId ? { supplier_id: chosenSupplierId } : {}) },
+      body: { order_id: id, mode: 'preview', ...(chosenSupplierId ? { supplier_id: chosenSupplierId } : {}), ...(noteArg ? { note: noteArg } : {}) },
     })
     if (fnErr || !data?.ok) {
       const body = data ?? await readFnErrorBody(fnErr)
@@ -186,7 +189,7 @@ export default function OrderReviewPage() {
     setConfirmError(null) // a prior failure was about the previous supplier
     setSupplierLoading(true)
     try {
-      await loadPreview(newId)
+      await loadPreview(newId, note)
     } finally {
       setSupplierLoading(false)
     }
@@ -198,7 +201,7 @@ export default function OrderReviewPage() {
     setConfirmError(null)
     try {
       const { data, error: fnErr } = await supabase.functions.invoke<{ ok: boolean; error?: string; code?: string; placed?: boolean }>('place-order', {
-        body: { order_id: id, mode: 'confirm', ...(supplierId ? { supplier_id: supplierId } : {}) },
+        body: { order_id: id, mode: 'confirm', ...(supplierId ? { supplier_id: supplierId } : {}), ...(note ? { note } : {}) },
       })
       // On a non-2xx (which is how place-order returns sent_not_recorded AND its
       // other failures) supabase-js gives data:null + the body on error.context.
@@ -352,6 +355,18 @@ export default function OrderReviewPage() {
                     <p className="text-sm font-medium text-ink">{preview.subject}</p>
                     <p className="mt-3 text-[12px] text-ink-mute">Message</p>
                     <pre className="mt-1 whitespace-pre-wrap break-words rounded-lg border border-line bg-canvas p-3 text-[13px] text-ink">{(preview.email_lines ?? []).join('\n')}</pre>
+                    <label className="mt-3 block">
+                      <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Note to supplier (optional)</span>
+                      <textarea
+                        value={note}
+                        onChange={(e) => setNote(e.target.value)}
+                        onBlur={() => { void loadPreview(supplierId, note) }}
+                        rows={3}
+                        placeholder="Project-specific instructions for this order — added to the email above the sign-off."
+                        className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px] text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                      />
+                      <span className="mt-1 block text-[12px] text-ink-mute">Added after the order details (which the supplier’s system reads). Click out to see it in the message above.</span>
+                    </label>
                     <p className="mt-2 text-[12px] text-ink-mute">Sent to the supplier on a new Help Scout conversation, which hands the order to Stock Control. Artwork goes via the Dropbox link above.</p>
                   </>
                 ) : (

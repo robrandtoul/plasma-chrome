@@ -331,6 +331,11 @@ Deno.serve(async (req) => {
   const orderId = String(body.order_id ?? '').trim()
   const mode = body.mode === 'confirm' ? 'confirm' : 'preview'
   const supplierIdOverride = typeof body.supplier_id === 'string' && body.supplier_id ? body.supplier_id : null
+  // Optional per-order note from the review page (supplier route): project-
+  // specific instructions appended AFTER the machine-readable spec so the
+  // outsourced parser (which first-wins on Qty/Material/… and ignores unknown
+  // lines) can't be thrown off by it.
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 2000) : ''
   if (!orderId) return json({ ok: false, error: 'order_id is required' }, 400)
 
   // ── Load order + proof + current version ──────────────────────────────────
@@ -561,7 +566,10 @@ Deno.serve(async (req) => {
   if (shipByStr) detailLines.push(`Must ship by: ${shipByStr}`)
   if (order.dropbox_folder_url) detailLines.push('', `Artwork: ${order.dropbox_folder_url}`)
 
-  const emailLines = (await renderSupplierEmail(admin, chosen?.id ?? null, { customer: customerName, order_details: detailLines.join('\n') })).split('\n')
+  // Append the optional per-order note after the spec block (before the
+  // template's sign-off, since it's part of {order_details}).
+  const orderDetails = detailLines.join('\n') + (note ? `\n\n${note}` : '')
+  const emailLines = (await renderSupplierEmail(admin, chosen?.id ?? null, { customer: customerName, order_details: orderDetails })).split('\n')
   const subject = `Order ${String(order.stock_order_number).trim()} - ${customerName}`
 
   if (mode === 'preview') {
