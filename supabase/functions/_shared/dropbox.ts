@@ -61,16 +61,16 @@ export async function getDropboxAccessToken(admin: SupabaseClient): Promise<stri
 export async function listSharedLinkEntries(
   token: string,
   url: string,
-): Promise<{ name: string; is_folder: boolean; path: string }[]> {
+): Promise<{ name: string; is_folder: boolean; path: string; size: number }[]> {
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-  const out: { name: string; is_folder: boolean; path: string }[] = []
+  const out: { name: string; is_folder: boolean; path: string; size: number }[] = []
   const MAX_ENTRIES = 2000
   const MAX_DEPTH = 4
 
   // One level, following pagination. `path` is relative to the shared-link
   // root: '' is the folder the link points at, '/Sub' is a child folder.
-  async function listLevel(path: string): Promise<{ name: string; isFolder: boolean }[]> {
-    const level: { name: string; isFolder: boolean }[] = []
+  async function listLevel(path: string): Promise<{ name: string; isFolder: boolean; size: number }[]> {
+    const level: { name: string; isFolder: boolean; size: number }[] = []
     let res = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
       method: 'POST',
       headers,
@@ -80,7 +80,11 @@ export async function listSharedLinkEntries(
       const page = await res.json().catch(() => null)
       const entries = Array.isArray(page?.entries) ? page.entries : []
       for (const e of entries) {
-        level.push({ name: (e.name as string) ?? '', isFolder: e['.tag'] === 'folder' })
+        level.push({
+          name: (e.name as string) ?? '',
+          isFolder: e['.tag'] === 'folder',
+          size: typeof e.size === 'number' ? e.size : 0,
+        })
       }
       if (!page?.has_more || !page?.cursor) break
       res = await fetch('https://api.dropboxapi.com/2/files/list_folder/continue', {
@@ -97,13 +101,38 @@ export async function listSharedLinkEntries(
     for (const e of await listLevel(path)) {
       if (out.length >= MAX_ENTRIES) break
       const childPath = `${path}/${e.name}`
-      out.push({ name: e.name, is_folder: e.isFolder, path: childPath })
+      out.push({ name: e.name, is_folder: e.isFolder, path: childPath, size: e.size })
       if (e.isFolder) await walk(childPath, depth + 1)
     }
   }
 
   await walk('', 0)
   return out
+}
+
+// Download one file's bytes from a shared-link folder via the content endpoint.
+// `path` is relative to the shared-link root (e.g. "/Proof01.pdf"), exactly as
+// returned by listSharedLinkEntries. Returns null on any failure so callers can
+// stay best-effort.
+export async function downloadSharedLinkFile(
+  token: string,
+  url: string,
+  path: string,
+): Promise<Uint8Array | null> {
+  // The Dropbox-API-Arg header must be ASCII — escape any non-ASCII (unicode
+  // filenames) as \uXXXX or Dropbox rejects the request.
+  let arg = ''
+  for (const ch of JSON.stringify({ url, path })) {
+    const code = ch.charCodeAt(0)
+    arg += code > 0x7e ? '\\u' + code.toString(16).padStart(4, '0') : ch
+  }
+  const res = await fetch('https://content.dropboxapi.com/2/sharing/get_shared_link_file', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Dropbox-API-Arg': arg },
+  })
+  if (!res.ok) return null
+  const buf = await res.arrayBuffer().catch(() => null)
+  return buf ? new Uint8Array(buf) : null
 }
 
 // Parse an order folder name into its number + project. Folders are named

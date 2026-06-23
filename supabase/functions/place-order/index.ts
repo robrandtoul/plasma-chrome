@@ -20,6 +20,8 @@
 // you see is what's sent). verify_jwt = true; designer/admin gate.
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { encodeBase64 } from 'jsr:@std/encoding/base64'
+import { getDropboxAccessToken, listSharedLinkEntries, downloadSharedLinkFile } from '../_shared/dropbox.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -77,11 +79,19 @@ async function setConversationSubject(token: string, conversationId: string | nu
   }
 }
 
-async function createNote(token: string, conversationId: string | number, userId: number, text: string): Promise<void> {
+async function createNote(
+  token: string,
+  conversationId: string | number,
+  userId: number,
+  text: string,
+  attachments?: { fileName: string; mimeType: string; data: string }[],
+): Promise<void> {
+  const payload: Record<string, unknown> = { user: userId, text }
+  if (attachments && attachments.length) payload.attachments = attachments
   const resp = await fetch(`https://api.helpscout.net/v2/conversations/${conversationId}/notes`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user: userId, text }),
+    body: JSON.stringify(payload),
   })
   if (!resp.ok && resp.status !== 201) {
     const b = await resp.text().catch(() => '')
@@ -150,6 +160,71 @@ function fmtDate(iso: string | null): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+// ── Artwork attachments (in-house) ──────────────────────────────────────────
+// Stock Control's in-house ingester mirrors the production note's attachments
+// onto the job card, so we attach the prepped Dropbox files to the note — the
+// automated version of the manual "attach the files" step. Help Scout caps an
+// attachment at 10 MB; larger / non-artwork files are skipped but stay reachable
+// via the Dropbox link in the note.
+const HS_ATTACH_MAX_BYTES = 10 * 1024 * 1024
+const ARTWORK_TOTAL_MAX_BYTES = 20 * 1024 * 1024
+const ARTWORK_MAX_FILES = 10
+
+// Map an artwork filename to a mime type, or null if it's not a file Stock
+// Control would surface on the job card (mirrors its classifyAttachment).
+function artworkMime(name: string): string | null {
+  const f = name.toLowerCase()
+  if (/\.jpe?g$/.test(f)) return 'image/jpeg'
+  if (/\.png$/.test(f)) return 'image/png'
+  if (/\.webp$/.test(f)) return 'image/webp'
+  if (/\.gif$/.test(f)) return 'image/gif'
+  if (/\.tiff?$/.test(f)) return 'image/tiff'
+  if (/\.svg$/.test(f)) return 'image/svg+xml'
+  if (/\.pdf$/.test(f)) return 'application/pdf'
+  if (/\.(ai|eps)$/.test(f)) return 'application/postscript'
+  return null
+}
+
+interface FolderEntry { name: string; is_folder: boolean; path: string; size: number }
+type ArtworkPlan = { attach: string[]; skipped: { name: string; reason: string }[] }
+
+// Decide which folder files we'll attach (by type + size) WITHOUT downloading —
+// used for the preview and to drive the confirm download.
+function planArtwork(entries: FolderEntry[]): { plan: ArtworkPlan; toFetch: { name: string; path: string; mime: string }[] } {
+  const plan: ArtworkPlan = { attach: [], skipped: [] }
+  const toFetch: { name: string; path: string; mime: string }[] = []
+  for (const e of entries) {
+    if (e.is_folder) continue
+    const mime = artworkMime(e.name)
+    if (!mime) { plan.skipped.push({ name: e.name, reason: 'not an artwork file' }); continue }
+    if (e.size > HS_ATTACH_MAX_BYTES) { plan.skipped.push({ name: e.name, reason: 'over 10 MB' }); continue }
+    if (toFetch.length >= ARTWORK_MAX_FILES) { plan.skipped.push({ name: e.name, reason: 'attachment limit reached' }); continue }
+    plan.attach.push(e.name)
+    toFetch.push({ name: e.name, path: e.path, mime })
+  }
+  return { plan, toFetch }
+}
+
+// Download the planned files and base64-encode them for the Help Scout note.
+// Best-effort: a file that won't download is skipped; the total is capped so a
+// large folder can't blow the edge function's memory or the HS request size.
+async function buildArtworkAttachments(
+  token: string,
+  url: string,
+  toFetch: { name: string; path: string; mime: string }[],
+): Promise<{ fileName: string; mimeType: string; data: string }[]> {
+  const out: { fileName: string; mimeType: string; data: string }[] = []
+  let total = 0
+  for (const f of toFetch) {
+    const bytes = await downloadSharedLinkFile(token, url, f.path)
+    if (!bytes || bytes.length > HS_ATTACH_MAX_BYTES) continue
+    if (total + bytes.length > ARTWORK_TOTAL_MAX_BYTES) break
+    total += bytes.length
+    out.push({ fileName: f.name, mimeType: f.mime, data: encodeBase64(bytes) })
+  }
+  return out
 }
 
 // YYYY-MM-DD (the safest "Must ship by" format for the outsourced ingester).
@@ -322,10 +397,29 @@ Deno.serve(async (req) => {
     if (inks.back) lines.push(`Ink on back: ${inks.back}`)
     if (packaging) lines.push(`Packaging: ${packaging}`)
     for (const sl of splitLines) lines.push(sl)
+    // Belt-and-braces: the link is in the note too, so anything not attached
+    // (too big / not artwork) is still reachable from the job card.
+    if (order.dropbox_folder_url) lines.push(`Artwork: ${order.dropbox_folder_url}`)
     const subject = `Order ${String(order.stock_order_number).trim()} - ${String(order.project_name ?? customerName).trim()}`.replace(/\s-\s*$/, '').trim()
 
+    // Plan the artwork attachments from the Dropbox folder (best-effort: a
+    // listing failure just means no attachments — the note + link still go).
+    let artworkPlan: ArtworkPlan = { attach: [], skipped: [] }
+    let toFetch: { name: string; path: string; mime: string }[] = []
+    let dbxToken: string | null = null
+    if (order.dropbox_folder_url) {
+      try {
+        dbxToken = await getDropboxAccessToken(admin)
+        if (dbxToken) {
+          const planned = planArtwork(await listSharedLinkEntries(dbxToken, order.dropbox_folder_url))
+          artworkPlan = planned.plan
+          toFetch = planned.toFetch
+        }
+      } catch { /* best-effort */ }
+    }
+
     if (mode === 'preview') {
-      return json({ ok: true, route, subject, note_lines: lines, summary, helpscout_linked: !!conversationId })
+      return json({ ok: true, route, subject, note_lines: lines, summary, helpscout_linked: !!conversationId, artwork_plan: artworkPlan })
     }
 
     // confirm
@@ -338,7 +432,15 @@ Deno.serve(async (req) => {
     try {
       const token = await getAccessToken(appId, appSecret)
       await setConversationSubject(token, conversationId, subject)
-      await createNote(token, conversationId, userId, lines.join('<br>'))
+      // Download + attach the prepped artwork. Best-effort: if a download fails
+      // we still post the note (with whatever attached) + the Dropbox link.
+      let attachments: { fileName: string; mimeType: string; data: string }[] = []
+      if (dbxToken && toFetch.length && order.dropbox_folder_url) {
+        try {
+          attachments = await buildArtworkAttachments(dbxToken, order.dropbox_folder_url, toFetch)
+        } catch { /* best-effort: post the note without attachments */ }
+      }
+      await createNote(token, conversationId, userId, lines.join('<br>'), attachments)
     } catch (e) {
       if (e instanceof HsError) return json({ ok: false, error: `Help Scout: ${e.message}` }, 502)
       return json({ ok: false, error: `Hand-off failed: ${(e as Error)?.message ?? 'unknown'}` }, 502)

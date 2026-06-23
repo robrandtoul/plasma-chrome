@@ -46,6 +46,9 @@ interface PreviewResponse {
   ship_by?: string
   summary?: PreviewSummary
   helpscout_linked?: boolean
+  // In-house only: which Dropbox folder files will be attached to the note (so
+  // Stock Control mirrors them onto the job card) vs skipped (too big / not art).
+  artwork_plan?: { attach: string[]; skipped: { name: string; reason: string }[] }
 }
 
 function Row({ label, value }: { label: string; value: ReactNode }) {
@@ -349,6 +352,27 @@ export default function OrderReviewPage() {
                     <pre className="mt-1 whitespace-pre-wrap rounded-lg border border-line bg-canvas p-3 text-[13px] text-ink">{(preview.note_lines ?? []).join('\n')}</pre>
                     {preview.helpscout_linked === false && (
                       <p className="mt-2 text-[12px] text-out">This proof has no linked Help Scout conversation — the note can’t be posted until one is linked.</p>
+                    )}
+                    {preview.artwork_plan && (
+                      <div className="mt-3 rounded-lg border border-line-soft bg-canvas/60 p-3 text-[12px]">
+                        {preview.artwork_plan.attach.length > 0 ? (
+                          <>
+                            <p className="font-medium text-ink">
+                              {preview.artwork_plan.attach.length} artwork file{preview.artwork_plan.attach.length === 1 ? '' : 's'} will be attached to the note
+                            </p>
+                            <ul className="mt-1 list-disc pl-4 text-ink-soft">
+                              {preview.artwork_plan.attach.map((n) => <li key={n} className="break-all">{n}</li>)}
+                            </ul>
+                          </>
+                        ) : (
+                          <p className="text-ink-mute">No files will be attached — production will open the Dropbox folder from the link in the note.</p>
+                        )}
+                        {preview.artwork_plan.skipped.length > 0 && (
+                          <p className="mt-1.5 text-ink-mute">
+                            Skipped (use the Dropbox link): {preview.artwork_plan.skipped.map((s) => `${s.name} (${s.reason})`).join(', ')}
+                          </p>
+                        )}
+                      </div>
                     )}
                     <p className="mt-2 text-[12px] text-ink-mute">Stock Control reads this note and schedules the job.</p>
                   </>
