@@ -487,10 +487,17 @@ export default function OrderBuilderModal({
     let quantityValue: number | null = null
     let personQuantitiesPayload: { name: string; quantity: number }[] | null = null
     if (quantityMode === 'locked') {
-      if (usePerPersonSplit) {
+      if (namesCount > 1) {
+        // Multi-name proof: a per-person split is REQUIRED so production knows
+        // how many of each name to make — a locked total alone is ambiguous.
+        // (Open "customer chooses" orders capture the split at checkout.)
+        if (personNames.length === 0) {
+          setError("Recipient names haven't loaded yet — close and reopen the order, then try again.")
+          return
+        }
         const entries = personNames.map((n) => ({ name: n, quantity: parseInt(personQty[n] ?? '', 10) }))
         if (entries.some((e) => !Number.isInteger(e.quantity) || e.quantity <= 0)) {
-          setError('Enter a quantity greater than zero for each person, or let the customer choose.')
+          setError('Enter a quantity (greater than zero) for each person, or let the customer choose.')
           return
         }
         personQuantitiesPayload = entries
@@ -854,9 +861,12 @@ export default function OrderBuilderModal({
                 })}
               </div>
               {quantityMode === 'locked' && (
-                usePerPersonSplit ? (
+                namesCount > 1 ? (
+                  personNames.length === 0 ? (
+                    <p className="mt-2 text-[13px] text-ink-mute">Loading recipients…</p>
+                  ) : (
                   <div className="mt-2 space-y-2">
-                    <p className="text-[13px] text-ink-soft">Quantity for each person</p>
+                    <p className="text-[13px] text-ink-soft">Quantity for each person <span className="text-ink-mute">(required)</span></p>
                     {personNames.map((name) => (
                       <div key={name} className="flex w-full items-center justify-between gap-3">
                         <label htmlFor={`bq-${name}`} title={name} className="min-w-0 flex-1 truncate text-sm text-ink">{name}</label>
@@ -878,6 +888,7 @@ export default function OrderBuilderModal({
                       <span className="font-medium text-ink">{lockedSplitSum > 0 ? `${lockedSplitSum.toLocaleString()} cards` : '—'}</span>
                     </div>
                   </div>
+                  )
                 ) : (
                   <Input
                     type="number"
