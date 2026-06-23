@@ -121,16 +121,17 @@ function routeOf(o: OrderRow): 'in_house' | 'supplier' | null {
   return r === 'supplier' ? 'supplier' : r === 'in_house' ? 'in_house' : null
 }
 
-// The default supplier for a supplier-route order's material, mirroring
-// place-order's routing (metal / carbon / full-colour → QX; standard paper →
-// Solopress). Used only to NAME the button — the actual supplier is confirmed
-// (and can be switched) on the review page, so a sensible default is enough.
-// Falls back to the generic word when the material is unknown.
-function defaultSupplierLabel(o: OrderRow): string {
+// The suppliers a supplier-route order may go to, by material, mirroring
+// place-order's routing (metal / carbon → QX; full-colour → QX or Swype;
+// standard paper → Solopress). Drives the button: one option names it ("…from
+// QX"), several offer a choice ("…choose supplier"). The actual supplier is
+// picked + confirmed on the review page. Empty = unknown material.
+function allowedSupplierLabels(o: OrderRow): string[] {
   const code = o.material_variants?.materials?.code ?? ''
-  if (code.startsWith('metal_') || code === 'carbon_fibre' || code === 'carbon_fibre_cnc' || code === 'plastic_full_colour') return 'QX'
-  if (code === 'paper_standard') return 'Solopress'
-  return 'supplier'
+  if (code.startsWith('metal_') || code === 'carbon_fibre' || code === 'carbon_fibre_cnc') return ['QX']
+  if (code === 'plastic_full_colour') return ['QX', 'Swype']
+  if (code === 'paper_standard') return ['Solopress']
+  return []
 }
 
 function customerLabel(o: OrderRow): string {
@@ -457,7 +458,7 @@ export default function OrdersPage() {
                         order={o}
                         thumb={thumbs[o.proof_id] ?? null}
                         route={routeOf(o)}
-                        supplierLabel={defaultSupplierLabel(o)}
+                        supplierLabels={allowedSupplierLabels(o)}
                         suggested={suggestedDate(o)}
                         busy={busyId === o.id}
                         onReview={() => navigate(`/orders/${o.id}/place`)}
@@ -502,7 +503,7 @@ function OrderCard({
   order,
   thumb,
   route,
-  supplierLabel,
+  supplierLabels,
   suggested,
   busy,
   onReview,
@@ -512,7 +513,7 @@ function OrderCard({
   order: OrderRow
   thumb: GridImage | null
   route: 'in_house' | 'supplier' | null
-  supplierLabel: string
+  supplierLabels: string[]
   suggested: string | null
   busy: boolean
   onReview: () => void
@@ -765,7 +766,13 @@ function OrderCard({
 
         <div className="flex shrink-0 flex-col gap-2 sm:items-end">
           <ButtonInk onClick={onReview} disabled={!canOrder}>
-            {route === 'supplier' ? `Review & order from ${supplierLabel}` : 'Review and push to production'}
+            {route !== 'supplier'
+              ? 'Review and push to production'
+              : supplierLabels.length === 1
+                ? `Review and order from ${supplierLabels[0]}`
+                : supplierLabels.length > 1
+                  ? 'Review and choose supplier'
+                  : 'Review and order from supplier'}
           </ButtonInk>
           {!canOrder && (
             <span className="text-right text-[11px] text-ink-mute">

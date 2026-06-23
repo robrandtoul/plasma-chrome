@@ -242,6 +242,18 @@ function defaultSupplierName(code: string): string {
   return ''
 }
 
+// Suppliers (by exact Stock Control name) that may be ordered from for a
+// material — metal/carbon → QX only; full-colour plastic → QX or Swype;
+// standard paper → Solopress only. The picker is scoped to this so a metal
+// order can't be sent to Solopress etc. null = unmapped material → no scope
+// (show all active, defensive). First entry is the default selection.
+function allowedSupplierNames(code: string): string[] | null {
+  if (code.startsWith('metal_') || code === 'carbon_fibre' || code === 'carbon_fibre_cnc') return ['QX Metals']
+  if (code === 'plastic_full_colour') return ['QX Metals', 'Swype']
+  if (code === 'paper_standard') return ['Solopress']
+  return null
+}
+
 // Material → Stock Control outsourced product-type name (the `Material:` line).
 function productTypeFor(code: string): string {
   if (code.startsWith('metal_')) return 'Metal'
@@ -462,13 +474,19 @@ Deno.serve(async (req) => {
     .from('outsourced_suppliers')
     .select('id, name, email_addresses, is_international, default_shipping_days, active')
     .eq('active', true)
-  const suppliers: SupplierRow[] = (supRows ?? []).map((s: { id: string; name: string; email_addresses: string[] | null; is_international: boolean; default_shipping_days: number | null }) => ({
-    id: s.id,
-    name: s.name,
-    email: Array.isArray(s.email_addresses) && s.email_addresses.length ? s.email_addresses[0] : null,
-    is_international: !!s.is_international,
-    default_shipping_days: s.default_shipping_days,
-  }))
+  // Scope to the suppliers valid for this material (e.g. metal → QX only;
+  // full-colour → QX or Swype) so the picker can't send to the wrong one. An
+  // unmapped material (allowed === null) shows all active suppliers.
+  const allowed = allowedSupplierNames(mat.code)
+  const suppliers: SupplierRow[] = (supRows ?? [])
+    .filter((s: { name: string }) => !allowed || allowed.includes(s.name))
+    .map((s: { id: string; name: string; email_addresses: string[] | null; is_international: boolean; default_shipping_days: number | null }) => ({
+      id: s.id,
+      name: s.name,
+      email: Array.isArray(s.email_addresses) && s.email_addresses.length ? s.email_addresses[0] : null,
+      is_international: !!s.is_international,
+      default_shipping_days: s.default_shipping_days,
+    }))
 
   const defaultName = defaultSupplierName(mat.code)
   const chosen =
