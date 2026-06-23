@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { DesignerChrome, PanelShell, ButtonCoral, ButtonGhost } from '../design'
-import type { GridImage } from '../components/ImageGrid'
+import { ImageCard, type GridImage } from '../components/ImageGrid'
+import Modal from '../components/Modal'
 
 // OrderReviewPage (/orders/:id/place) — the review-and-confirm screen for placing
 // a PAID order into production. Shows the artwork, spec, quantities, destination
@@ -81,7 +82,10 @@ export default function OrderReviewPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [supplierId, setSupplierId] = useState<string | null>(null)
-  const [thumb, setThumb] = useState<GridImage | null>(null)
+  // The full set of approved artwork for the order's CURRENT version (every
+  // name + side), shown as a gallery the reviewer can open full size.
+  const [artwork, setArtwork] = useState<GridImage[]>([])
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
   // Supplier sends a REAL email — require an explicit second click to arm it.
@@ -115,18 +119,19 @@ export default function OrderReviewPage() {
     void (async () => {
       setLoading(true)
       await loadPreview()
-      // Representative artwork thumbnail (recognition aid). Resolve the proof id
-      // off the order; ignore failures (the page works without a thumbnail).
+      // Approved artwork for review. Resolve the proof id off the order; ignore
+      // failures (the page still works without artwork).
       if (id) {
         const { data: order } = await supabase.from('orders').select('proof_id').eq('id', id).maybeSingle()
         const proofId = (order as { proof_id?: string } | null)?.proof_id
         if (proofId && !cancelled) {
           try {
-            // customer-proof-images returns EVERY version's images (the
-            // customer page has a version switcher), so scope the
-            // recognition thumbnail to the current version — otherwise it
-            // can show an earlier version's artwork. Falls back to the
-            // first non-QR image if the current version can't be resolved.
+            // customer-proof-images returns EVERY version's images (the customer
+            // page has a version switcher), so scope to the CURRENT version —
+            // otherwise earlier-version artwork would leak in. Show ALL of the
+            // current version's non-QR images (every name + side) so the
+            // reviewer sees exactly what's being produced. Falls back to all
+            // non-QR images only if the current version can't be resolved.
             const { data: curV } = await supabase
               .from('proof_versions')
               .select('id')
@@ -134,14 +139,37 @@ export default function OrderReviewPage() {
               .eq('is_current', true)
               .maybeSingle()
             const currentVersionId = (curV as { id?: string } | null)?.id ?? null
-            const { data: imgData } = await supabase.functions.invoke<{ images: GridImage[] }>('customer-proof-images', { body: { proofId } })
-            const nonQr = (imgData?.images ?? []).filter((img) => img.is_qr_code !== true)
-            const first =
-              (currentVersionId
-                ? nonQr.find((img) => (img as unknown as { proof_version_id?: string }).proof_version_id === currentVersionId)
-                : null) ?? nonQr[0] ?? null
-            if (!cancelled) setThumb(first)
-          } catch { /* no thumbnail */ }
+            const nonQr = ((await supabase.functions.invoke<{ images: GridImage[] }>('customer-proof-images', { body: { proofId } })).data?.images ?? [])
+              .filter((img) => img.is_qr_code !== true)
+            const scoped = currentVersionId
+              ? nonQr.filter((img) => (img as unknown as { proof_version_id?: string }).proof_version_id === currentVersionId)
+              : []
+            const gallery = scoped.length > 0 ? scoped : nonQr
+            // Caption each image with name + side, but only show a dimension when
+            // it actually varies (mirrors the proof page's approved-artwork
+            // table): hide the name when everything is shared, hide the side when
+            // it's one-sided.
+            const hasNames = gallery.some((g) => g.associated_name)
+            const hasBack = gallery.some((g) => g.side === 'back')
+            const labelled = gallery.map((g) => ({
+              ...g,
+              label: [
+                hasNames ? (g.associated_name ?? 'Shared') : '',
+                hasBack ? (g.side === 'back' ? 'Back' : 'Front') : '',
+              ].filter(Boolean).join(' · '),
+            }))
+            labelled.sort((a, b) => {
+              const an = a.associated_name == null ? 0 : 1
+              const bn = b.associated_name == null ? 0 : 1
+              if (an !== bn) return an - bn
+              const nameCmp = (a.associated_name ?? '').localeCompare(b.associated_name ?? '')
+              if (nameCmp !== 0) return nameCmp
+              const as = (a.side ?? 'front') === 'front' ? 0 : 1
+              const bs = (b.side ?? 'front') === 'front' ? 0 : 1
+              return as - bs
+            })
+            if (!cancelled) setArtwork(labelled)
+          } catch { /* no artwork */ }
         }
       }
       if (!cancelled) setLoading(false)
@@ -228,18 +256,30 @@ export default function OrderReviewPage() {
               </span>
             </p>
 
+            {/* Approved artwork — the whole point of the review: see exactly
+                what's being produced. Every name + side of the current version,
+                each opening full size in a lightbox. */}
+            {artwork.length > 0 && (
+              <PanelShell className="mt-6">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Approved artwork</h2>
+                <p className="mt-1 text-xs text-ink-mute">
+                  This is exactly what will be produced. Click any image to view it full size.
+                </p>
+                <div className={`mt-3 grid gap-4 ${artwork.length === 1 ? 'max-w-md' : 'sm:grid-cols-2'}`}>
+                  {artwork.map((img) => (
+                    <ImageCard key={img.id} image={img} alt={img.label || 'Approved artwork'} onClick={setLightboxSrc} />
+                  ))}
+                </div>
+              </PanelShell>
+            )}
+
             <div className="mt-6 grid gap-5 lg:grid-cols-2">
               {/* Left: the order at a glance */}
               <PanelShell>
-                <div className="flex gap-4">
-                  {thumb && (
-                    <img src={thumb.signed_url} alt="Proof artwork" className="h-20 w-20 shrink-0 rounded-lg object-cover ring-1 ring-line" />
-                  )}
-                  <div className="min-w-0">
-                    <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Order</h2>
-                    <p className="mt-1 text-base font-semibold text-ink">{s.material ?? 'Cards'}{s.variant && s.variant !== s.material ? ` · ${s.variant}` : ''}</p>
-                    {s.finish && <p className="text-sm text-ink-soft">{s.finish}</p>}
-                  </div>
+                <div className="min-w-0">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Order</h2>
+                  <p className="mt-1 text-base font-semibold text-ink">{s.material ?? 'Cards'}{s.variant && s.variant !== s.material ? ` · ${s.variant}` : ''}</p>
+                  {s.finish && <p className="text-sm text-ink-soft">{s.finish}</p>}
                 </div>
                 <div className="mt-4 divide-y divide-line-soft border-t border-line-soft">
                   <Row label="Quantity" value={`${s.quantity.toLocaleString()} cards`} />
@@ -365,6 +405,24 @@ export default function OrderReviewPage() {
                 </div>
               </>
             )}
+
+            {/* Full-size artwork viewer. Portal-based Modal with its own Esc +
+                backdrop close; bg-black/80 backdrop, transparent panel. */}
+            <Modal
+              open={!!lightboxSrc}
+              onClose={() => setLightboxSrc(null)}
+              ariaLabel="Approved artwork preview"
+              backdropClassName="bg-black/80"
+              panelClassName="bg-transparent"
+            >
+              {lightboxSrc && (
+                <img
+                  src={lightboxSrc}
+                  alt="Approved artwork"
+                  className="max-h-[calc(100dvh-2rem)] max-w-full rounded-lg object-contain"
+                />
+              )}
+            </Modal>
           </>
         ) : null}
       </main>
