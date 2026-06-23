@@ -242,19 +242,11 @@ function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10)
 }
 
-// The supplier default for a material (Rob's routing). Full colour plastic
-// defaults to QX but the picker offers the alternate (Swype).
-function defaultSupplierName(code: string): string {
-  if (code.startsWith('metal_')) return 'QX Metals'
-  if (code === 'carbon_fibre' || code === 'carbon_fibre_cnc') return 'QX Metals'
-  if (code === 'plastic_full_colour') return 'QX Metals'
-  if (code === 'paper_standard') return 'Solopress'
-  return ''
-}
-
-// Suppliers (by exact Stock Control name) that may be ordered from for a
-// material — metal/carbon → QX only; full-colour plastic → QX or Swype;
-// standard paper → Solopress only. The picker is scoped to this so a metal
+// Legacy fallback only (the per-material routing now lives in
+// proofs.materials.outsourced_supplier_ids, admin-editable). Suppliers (by exact
+// Stock Control name) that may be ordered from for a material — metal/carbon →
+// QX only; full-colour plastic → QX or Swype; standard paper → Solopress only.
+// Used only when a material has no configured supplier ids yet. A metal
 // order can't be sent to Solopress etc. null = unmapped material → no scope
 // (show all active, defensive). First entry is the default selection.
 function allowedSupplierNames(code: string): string[] | null {
@@ -300,6 +292,22 @@ interface SupplierRow {
   default_shipping_days: number | null
 }
 
+// Render the admin-editable supplier-order email (proofs.reply_templates row
+// 'supplier_order_email'). Only {customer} + {order_details} are substituted;
+// {order_details} is the machine-generated, parser-critical spec block, so the
+// admin only edits the prose around it. Falls back to the built-in default when
+// the row is missing (e.g. before the seed migration runs).
+const SUPPLIER_EMAIL_DEFAULT = 'Hi,\n\nPlease produce the following order for {customer}:\n\n{order_details}\n\nMany thanks.'
+async function renderSupplierEmail(admin: SupabaseClient, vars: { customer: string; order_details: string }): Promise<string> {
+  let body = SUPPLIER_EMAIL_DEFAULT
+  try {
+    const { data } = await admin.from('reply_templates').select('body').eq('id', 'supplier_order_email').maybeSingle()
+    const b = (data as { body?: string } | null)?.body
+    if (typeof b === 'string' && b.trim()) body = b
+  } catch { /* fall back to the default */ }
+  return body.replaceAll('{customer}', vars.customer).replaceAll('{order_details}', vars.order_details)
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   if (req.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405)
@@ -342,12 +350,12 @@ Deno.serve(async (req) => {
 
   const { data: pv } = await admin
     .from('proof_versions')
-    .select('material_display, ink_names, material_options, front_colour_id, core_colour_id, back_colour_id, materials(code, display_name, production_route)')
+    .select('material_display, ink_names, material_options, front_colour_id, core_colour_id, back_colour_id, materials(code, display_name, production_route, outsourced_product_type, outsourced_supplier_ids)')
     .eq('proof_id', order.proof_id)
     .eq('is_current', true)
     .maybeSingle()
   if (!pv) return json({ ok: false, error: 'No current proof version found.' }, 404)
-  const mat = (pv as { materials: { code: string; display_name: string | null; production_route: string | null } | null }).materials
+  const mat = (pv as { materials: { code: string; display_name: string | null; production_route: string | null; outsourced_product_type: string | null; outsourced_supplier_ids: string[] | null } | null }).materials
   if (!mat) return json({ ok: false, error: 'This version has no single material (mixed / variant round) — place it manually.' }, 400)
   const route = mat.production_route === 'supplier' ? 'supplier' : 'in_house'
 
@@ -488,12 +496,15 @@ Deno.serve(async (req) => {
     .from('outsourced_suppliers')
     .select('id, name, email_addresses, is_international, default_shipping_days, active')
     .eq('active', true)
-  // Scope to the suppliers valid for this material (e.g. metal → QX only;
-  // full-colour → QX or Swype) so the picker can't send to the wrong one. An
-  // unmapped material (allowed === null) shows all active suppliers.
-  const allowed = allowedSupplierNames(mat.code)
+  // Scope to the suppliers configured for this material on Admin > Outsourcing
+  // (proofs.materials.outsourced_supplier_ids), so the picker can't send to the
+  // wrong one. Falls back to the legacy hard-coded routing if a material has no
+  // config yet (defensive — every seeded supplier material carries it).
+  const configIds = Array.isArray(mat.outsourced_supplier_ids) ? mat.outsourced_supplier_ids : []
+  const legacyAllowed = allowedSupplierNames(mat.code)
   const suppliers: SupplierRow[] = (supRows ?? [])
-    .filter((s: { name: string }) => !allowed || allowed.includes(s.name))
+    .filter((s: { id: string; name: string }) =>
+      configIds.length > 0 ? configIds.includes(s.id) : (!legacyAllowed || legacyAllowed.includes(s.name)))
     .map((s: { id: string; name: string; email_addresses: string[] | null; is_international: boolean; default_shipping_days: number | null }) => ({
       id: s.id,
       name: s.name,
@@ -501,47 +512,50 @@ Deno.serve(async (req) => {
       is_international: !!s.is_international,
       default_shipping_days: s.default_shipping_days,
     }))
+  if (suppliers.length === 0) return json({ ok: false, error: 'No suppliers are configured for this material — set them on Admin → Outsourcing.' }, 400)
 
-  const defaultName = defaultSupplierName(mat.code)
+  // No default when several suppliers are allowed: the person placing the order
+  // must pick one (the review page disables Confirm until they do). A lone
+  // allowed supplier is used directly. An override always wins (and is validated
+  // against the allowed set, so a crafted request can't reach a disallowed one).
   const chosen =
-    (supplierIdOverride && suppliers.find((s) => s.id === supplierIdOverride)) ||
-    suppliers.find((s) => s.name === defaultName) ||
-    suppliers[0] ||
-    null
-  if (!chosen) return json({ ok: false, error: 'No active suppliers are configured.' }, 400)
+    (supplierIdOverride ? suppliers.find((s) => s.id === supplierIdOverride) ?? null : null) ||
+    (suppliers.length === 1 ? suppliers[0] : null)
 
-  // Must ship by = date required − the supplier's shipping (transit) days.
+  // Must ship by = date required − the chosen supplier's transit days. Before a
+  // pick (several allowed), preview against the longest window so the date is a
+  // safe lower bound; it re-resolves once the placer chooses.
+  const shipDays = chosen
+    ? Number(chosen.default_shipping_days ?? 0)
+    : suppliers.reduce((m, s) => Math.max(m, Number(s.default_shipping_days ?? 0)), 0)
   const dr = new Date(order.date_required as string)
-  const shipDays = Number(chosen.default_shipping_days ?? 0)
   const shipBy = new Date(dr)
   if (Number.isFinite(shipDays) && shipDays > 0) shipBy.setDate(shipBy.getDate() - shipDays)
-  const shipByIso = isoDate(shipBy)
-  const shipByStr = fmtDate(shipByIso)
+  const shipByStr = fmtDate(isoDate(shipBy))
 
-  const productType = productTypeFor(mat.code)
+  // Material: = the coarse product type Stock Control matches on (admin-set per
+  // material; legacy fallback). Type: = the specific card so the supplier knows
+  // which metal/variant; skipped when it would just repeat Material:.
+  const productType = (mat.outsourced_product_type ?? '').trim() || productTypeFor(mat.code)
   const thickness = variantType === 'thickness' ? variantName : null
   const finish = optionName ?? (variantType === 'finish' ? variantName : null)
-  // The specific card (e.g. "Stainless Steel", "Carbon Fibre CNC"). Material:
-  // stays the coarse product type Stock Control matches on; Type: carries the
-  // exact material so the supplier knows which metal / variant to make. Skipped
-  // when it would just repeat Material: (case-insensitive).
   const specificType = (mat.display_name ?? '').trim() || null
 
-  const emailLines: string[] = ['Hi,', '', `Please produce the following order for ${customerName}:`, '', `Qty: ${qty}`]
-  // Per-person breakdown so the supplier knows how many of each name to make.
-  // Stock Control's outsourced parser only reads known Key: lines, so these are
-  // ignored by the import but read by the human supplier.
+  // Machine-generated, parser-critical spec block. Injected into the editable
+  // supplier-email template as {order_details}; never freely edited.
+  const detailLines: string[] = [`Qty: ${qty}`]
   if (splitLines.length) {
-    emailLines.push('Per person:')
-    for (const sl of splitLines) emailLines.push(sl)
+    detailLines.push('Per person:')
+    for (const sl of splitLines) detailLines.push(sl)
   }
-  if (productType) emailLines.push(`Material: ${productType}`)
-  if (specificType && specificType.toLowerCase() !== productType.toLowerCase()) emailLines.push(`Type: ${specificType}`)
-  if (thickness) emailLines.push(`Thickness: ${thickness}`)
-  if (finish) emailLines.push(`Finish: ${finish}`)
-  if (shipByStr) emailLines.push(`Must ship by: ${shipByStr}`)
-  if (order.dropbox_folder_url) emailLines.push('', `Artwork: ${order.dropbox_folder_url}`)
-  emailLines.push('', 'Many thanks.')
+  if (productType) detailLines.push(`Material: ${productType}`)
+  if (specificType && specificType.toLowerCase() !== productType.toLowerCase()) detailLines.push(`Type: ${specificType}`)
+  if (thickness) detailLines.push(`Thickness: ${thickness}`)
+  if (finish) detailLines.push(`Finish: ${finish}`)
+  if (shipByStr) detailLines.push(`Must ship by: ${shipByStr}`)
+  if (order.dropbox_folder_url) detailLines.push('', `Artwork: ${order.dropbox_folder_url}`)
+
+  const emailLines = (await renderSupplierEmail(admin, { customer: customerName, order_details: detailLines.join('\n') })).split('\n')
   const subject = `Order ${String(order.stock_order_number).trim()} - ${customerName}`
 
   if (mode === 'preview') {
@@ -558,6 +572,7 @@ Deno.serve(async (req) => {
   }
 
   // confirm
+  if (!chosen) return json({ ok: false, error: 'Choose a supplier to order from.' }, 400)
   if (!chosen.email) return json({ ok: false, error: `${chosen.name} has no email address configured in Stock Control.` }, 400)
   const appId = Deno.env.get('HELPSCOUT_APP_ID')?.trim()
   const appSecret = Deno.env.get('HELPSCOUT_APP_SECRET')?.trim()

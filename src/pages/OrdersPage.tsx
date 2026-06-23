@@ -73,7 +73,7 @@ interface OrderRow {
   proof_id: string
   material_variants: {
     display_name: string | null
-    materials: { code: string | null; display_name: string | null; production_route: string | null; lead_time_max_days: number | null } | null
+    materials: { code: string | null; display_name: string | null; production_route: string | null; lead_time_max_days: number | null; outsourced_supplier_ids: string[] | null } | null
   } | null
   proofs: { contacts: { full_name: string | null; companies: { name: string | null } | null } | null } | null
 }
@@ -85,7 +85,7 @@ const SELECT = `
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, person_quantities,
   ship_to_name, ship_to_email, ship_to_address, proof_id,
-  material_variants(display_name, materials(code, display_name, production_route, lead_time_max_days)),
+  material_variants(display_name, materials(code, display_name, production_route, lead_time_max_days, outsourced_supplier_ids)),
   proofs(contacts(full_name, companies(name)))
 `
 
@@ -121,17 +121,14 @@ function routeOf(o: OrderRow): 'in_house' | 'supplier' | null {
   return r === 'supplier' ? 'supplier' : r === 'in_house' ? 'in_house' : null
 }
 
-// The suppliers a supplier-route order may go to, by material, mirroring
-// place-order's routing (metal / carbon → QX; full-colour → QX or Swype;
-// standard paper → Solopress). Drives the button: one option names it ("…from
-// QX"), several offer a choice ("…choose supplier"). The actual supplier is
-// picked + confirmed on the review page. Empty = unknown material.
-function allowedSupplierLabels(o: OrderRow): string[] {
-  const code = o.material_variants?.materials?.code ?? ''
-  if (code.startsWith('metal_') || code === 'carbon_fibre' || code === 'carbon_fibre_cnc') return ['QX']
-  if (code === 'plastic_full_colour') return ['QX', 'Swype']
-  if (code === 'paper_standard') return ['Solopress']
-  return []
+// The suppliers a supplier-route order may go to, from the material's
+// admin-editable config (materials.outsourced_supplier_ids → live Stock Control
+// names). Drives the button: one names it ("…from QX Metals"), several offer a
+// choice ("…choose supplier"). The actual supplier is picked + confirmed on the
+// review page. Empty = none configured / names not loaded yet.
+function allowedSupplierLabels(o: OrderRow, supplierNames: Record<string, string>): string[] {
+  const ids = o.material_variants?.materials?.outsourced_supplier_ids ?? []
+  return ids.map((id) => supplierNames[id]).filter((n): n is string => !!n)
 }
 
 function customerLabel(o: OrderRow): string {
@@ -247,10 +244,17 @@ export default function OrdersPage() {
   const navigate = useNavigate()
   // Sent reminders per order (the automated unpaid-order nudges, 000238).
   const [reminders, setReminders] = useState<Record<string, { count: number; lastAt: string }>>({})
+  // Stock Control supplier id → name, for the supplier-route button labels
+  // (the routing stores ids; names live in Stock Control). Best-effort.
+  const [supplierNames, setSupplierNames] = useState<Record<string, string>>({})
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
+      void supabase.schema('public').from('outsourced_suppliers').select('id, name').then(({ data }) => {
+        if (cancelled || !data) return
+        setSupplierNames(Object.fromEntries((data as { id: string; name: string }[]).map((s) => [s.id, s.name])))
+      })
       const { data } = await supabase
         .from('orders')
         .select(SELECT)
@@ -458,7 +462,7 @@ export default function OrdersPage() {
                         order={o}
                         thumb={thumbs[o.proof_id] ?? null}
                         route={routeOf(o)}
-                        supplierLabels={allowedSupplierLabels(o)}
+                        supplierLabels={allowedSupplierLabels(o, supplierNames)}
                         suggested={suggestedDate(o)}
                         busy={busyId === o.id}
                         onReview={() => navigate(`/orders/${o.id}/place`)}

@@ -225,15 +225,21 @@ export default function OrderReviewPage() {
   // Hand-off preconditions the page already knows about — disable Confirm when
   // it provably can't succeed, rather than letting the doomed round-trip run.
   const noSuppliers = isSupplier && (preview?.suppliers ?? []).length === 0
-  const supplierEmailMissing = isSupplier && !noSuppliers && !preview?.supplier?.email
+  // Several allowed suppliers + none picked yet → the placer must choose (no
+  // default, by design). A single allowed supplier is auto-selected upstream.
+  const mustChoose = isSupplier && !noSuppliers && (preview?.suppliers ?? []).length > 1 && !supplierId
+  // Only meaningful once a supplier is resolved (picked or the lone one).
+  const supplierEmailMissing = isSupplier && !!preview?.supplier && !preview.supplier.email
   const hsMissing = !isSupplier && preview?.helpscout_linked === false
   const blockReason = noSuppliers
-    ? 'No suppliers are configured in Stock Control, so this order can’t be emailed.'
-    : supplierEmailMissing
-      ? 'The selected supplier has no email address in Stock Control, so this order can’t be emailed.'
-      : hsMissing
-        ? 'This proof has no linked Help Scout conversation, so the production note can’t be posted.'
-        : null
+    ? 'No suppliers are configured for this material — set them on Admin → Outsourcing.'
+    : mustChoose
+      ? 'Choose a supplier to order from.'
+      : supplierEmailMissing
+        ? 'The selected supplier has no email address in Stock Control, so this order can’t be emailed.'
+        : hsMissing
+          ? 'This proof has no linked Help Scout conversation, so the production note can’t be posted.'
+          : null
   const canConfirm = !blockReason
 
   return (
@@ -321,6 +327,8 @@ export default function OrderReviewPage() {
                         disabled={supplierLoading}
                         className="mt-1 h-[38px] w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)] disabled:opacity-60"
                       >
+                        {/* No default when several are allowed — make the placer pick. */}
+                        {!supplierId && <option value="">Choose a supplier…</option>}
                         {(preview.suppliers ?? []).map((sup) => (
                           <option key={sup.id} value={sup.id}>
                             {sup.name}{sup.email ? ` (${sup.email})` : ''}{sup.is_international ? ' · intl' : ''}
@@ -330,8 +338,11 @@ export default function OrderReviewPage() {
                       {supplierLoading && (
                         <span className="mt-1 block text-[12px] text-ink-mute">Updating preview…</span>
                       )}
+                      {!supplierLoading && mustChoose && (
+                        <span className="mt-1 block text-[12px] text-ink-mute">Choose which supplier to order from.</span>
+                      )}
                       {!supplierLoading && noSuppliers && (
-                        <span className="mt-1 block text-[12px] text-out">No suppliers are configured in Stock Control — add one before placing supplier orders.</span>
+                        <span className="mt-1 block text-[12px] text-out">No suppliers are configured for this material — set them on Admin → Outsourcing.</span>
                       )}
                       {!supplierLoading && supplierEmailMissing && (
                         <span className="mt-1 block text-[12px] text-out">This supplier has no email configured in Stock Control.</span>
