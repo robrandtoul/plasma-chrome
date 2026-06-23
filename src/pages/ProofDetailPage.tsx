@@ -131,8 +131,67 @@ interface ApprovedImageRow {
   // match the DB. Rendered as 'Shared' and zipped into the Shared/
   // directory.
   associatedName: string | null
+  // Set (collection) only (migrations 000210/000212): the layout
+  // this image belongs to, its customer-facing title, and its sort
+  // order. Null on every other shape. When set, the identity column
+  // and ZIP folder fold by layoutTitle instead of associatedName
+  // (which is always null on a collection image), and rows sort by
+  // layoutSortOrder rather than the recipient-name order.
+  layoutId: string | null
+  layoutTitle: string | null
+  layoutSortOrder: number | null
   versionNumber: number
   versionId: string
+}
+
+// True when the approved set is a Set (collection): its images fold
+// by layout title rather than by recipient/shared. Detected from the
+// rows themselves (any row carrying a layoutId) so the render table
+// and the ZIP builder agree without re-reading version state.
+function isCollectionApproved(rows: ApprovedImageRow[]): boolean {
+  return rows.some((r) => r.layoutId != null)
+}
+
+// The identity-column value + ZIP folder name for one approved image.
+// Collections fold by layout title; every other shape folds by
+// associated_name (Shared when null). A collection row with a missing
+// title (layout deleted mid-flight) falls back so the bundle still
+// extracts and the table still reads.
+function approvedIdentity(row: ApprovedImageRow): string {
+  if (row.layoutId != null) return row.layoutTitle ?? 'Untitled layout'
+  return row.associatedName ?? 'Shared'
+}
+
+// Shared sort for the approved-artwork table + ZIP, in one place so
+// both render the same order. Collections sort by layout sort_order
+// (then title as a stable tiebreak); recipients put Shared first,
+// then follow the current version's names[] order. Front before back
+// within an identity, then a stable tiebreak on image id.
+function sortApprovedRows(
+  rows: ApprovedImageRow[],
+  nameOrder: Map<string, number>,
+): ApprovedImageRow[] {
+  return [...rows].sort((a, b) => {
+    if (a.layoutId != null || b.layoutId != null) {
+      const aPos = a.layoutSortOrder ?? Infinity
+      const bPos = b.layoutSortOrder ?? Infinity
+      if (aPos !== bPos) return aPos - bPos
+      const aTitle = a.layoutTitle ?? ''
+      const bTitle = b.layoutTitle ?? ''
+      if (aTitle !== bTitle) return aTitle < bTitle ? -1 : 1
+    } else {
+      const aShared = a.associatedName == null ? 0 : 1
+      const bShared = b.associatedName == null ? 0 : 1
+      if (aShared !== bShared) return aShared - bShared
+      const aPos = a.associatedName == null ? -1 : nameOrder.get(a.associatedName) ?? Infinity
+      const bPos = b.associatedName == null ? -1 : nameOrder.get(b.associatedName) ?? Infinity
+      if (aPos !== bPos) return aPos - bPos
+    }
+    const aSide = (a.side ?? 'front') === 'front' ? 0 : 1
+    const bSide = (b.side ?? 'front') === 'front' ? 0 : 1
+    if (aSide !== bSide) return aSide - bSide
+    return a.imageId < b.imageId ? -1 : 1
+  })
 }
 
 interface ProofOrder {
@@ -427,7 +486,7 @@ export default function ProofDetailPage() {
         .single(),
       supabase
         .from('proof_versions')
-        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, created_by, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, last_reply_sent_at, last_reply_sent_by, displayed_variant_ids, is_variant_round, is_per_direction_pricing, material_options, has_personalisation, front_colour_id, core_colour_id, back_colour_id, materials(display_quantities)')
+        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, created_by, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, shape, last_reply_sent_at, last_reply_sent_by, displayed_variant_ids, is_variant_round, is_per_direction_pricing, material_options, has_personalisation, front_colour_id, core_colour_id, back_colour_id, materials(display_quantities)')
         .eq('proof_id', proofId)
         .order('version_number', { ascending: false }),
     ])
@@ -703,7 +762,14 @@ export default function ProofDetailPage() {
     // version's image then matched and showed up as an "earlier
     // version" (too many files). Anchoring to the current version is
     // both complete and the fix.
-    const currentVersionId = loadedVersions.find((v) => v.is_current)?.id ?? null
+    const currentVersion = loadedVersions.find((v) => v.is_current) ?? null
+    const currentVersionId = currentVersion?.id ?? null
+    // Set (collection) images fold by layout (proof_layouts), not by
+    // recipient name: their approvals are keyed name = layout_id and
+    // their images carry layout_id with associated_name NULL (000212).
+    // The name/associated_name join below never matches those, so a
+    // collection needs the layout-keyed path instead.
+    const isCollection = currentVersion?.shape === 'set_collection'
     if (proofResult.data.status === 'approved' && currentVersionId) {
       const approvedApprovals = approvalRowsLoaded.filter(
         (a) => a.state === 'approved' && a.proof_version_id === currentVersionId,
@@ -716,49 +782,103 @@ export default function ProofDetailPage() {
         // than crash.
         setApprovedImages([])
       } else {
+        // For a collection, load the layout titles + sort order so the
+        // identity column / ZIP folders read as the layout name (the
+        // approval row only carries the layout id).
+        const layoutMeta = new Map<string, { title: string; sortOrder: number }>()
+        if (isCollection) {
+          const { data: layoutRows } = await supabase
+            .from('proof_layouts')
+            .select('id, title, sort_order')
+            .eq('proof_version_id', currentVersionId)
+          if (isStale()) return
+          for (const l of (layoutRows ?? []) as {
+            id: string
+            title: string
+            sort_order: number
+          }[]) {
+            layoutMeta.set(l.id, { title: l.title, sortOrder: l.sort_order })
+          }
+        }
+
         const { data: imageRows } = await supabase
           .from('proof_version_images')
-          .select('id, image_path, original_filename, associated_name, side, proof_version_id')
+          .select('id, image_path, original_filename, associated_name, side, proof_version_id, layout_id')
           .eq('proof_version_id', currentVersionId)
           .eq('is_qr_code', false)
         if (isStale()) return
 
-        const approvalTuples = new Set(
-          approvedApprovals.map(
-            (a) =>
-              `${a.proof_version_id}|${a.name === SHARED_APPROVAL_KEY ? '__null__' : a.name}`,
-          ),
-        )
         const versionNumberById = new Map<string, number>()
         for (const v of loadedVersions) versionNumberById.set(v.id, v.version_number)
 
-        // Dedupe by image id as a belt-and-braces guard — a shared
-        // image shouldn't appear under two approvals (Shared has
-        // its own approval row), but defensive dedupe costs
-        // nothing.
-        const seen = new Set<string>()
-        const rows: ApprovedImageRow[] = []
-        for (const r of (imageRows ?? []) as {
+        type ImageRow = {
           id: string
           image_path: string
           original_filename: string | null
           associated_name: string | null
           side: 'front' | 'back' | null
           proof_version_id: string
-        }[]) {
-          const key = `${r.proof_version_id}|${r.associated_name ?? '__null__'}`
-          if (!approvalTuples.has(key)) continue
-          if (seen.has(r.id)) continue
-          seen.add(r.id)
-          rows.push({
-            imageId: r.id,
-            imagePath: r.image_path,
-            originalFilename: r.original_filename,
-            side: r.side,
-            associatedName: r.associated_name,
-            versionId: r.proof_version_id,
-            versionNumber: versionNumberById.get(r.proof_version_id) ?? 0,
-          })
+          layout_id: string | null
+        }
+
+        // Dedupe by image id as a belt-and-braces guard — an image
+        // shouldn't appear under two approvals (each slot has its own
+        // approval row), but defensive dedupe costs nothing.
+        const seen = new Set<string>()
+        const rows: ApprovedImageRow[] = []
+
+        if (isCollection) {
+          // Collection: approvals are keyed name = layout_id; images
+          // carry layout_id (associated_name is null). Include an
+          // image iff its layout is an approved layout.
+          const approvedLayoutIds = new Set(approvedApprovals.map((a) => a.name))
+          for (const r of (imageRows ?? []) as ImageRow[]) {
+            if (r.layout_id == null) continue
+            if (!approvedLayoutIds.has(r.layout_id)) continue
+            if (seen.has(r.id)) continue
+            seen.add(r.id)
+            const meta = layoutMeta.get(r.layout_id)
+            rows.push({
+              imageId: r.id,
+              imagePath: r.image_path,
+              originalFilename: r.original_filename,
+              side: r.side,
+              associatedName: r.associated_name,
+              layoutId: r.layout_id,
+              layoutTitle: meta?.title ?? null,
+              layoutSortOrder: meta?.sortOrder ?? null,
+              versionId: r.proof_version_id,
+              versionNumber: versionNumberById.get(r.proof_version_id) ?? 0,
+            })
+          }
+        } else {
+          // Recipients / shared (every non-collection shape): match an
+          // image on (proof_version_id, associated_name), treating
+          // SHARED_APPROVAL_KEY as associated_name IS NULL.
+          const approvalTuples = new Set(
+            approvedApprovals.map(
+              (a) =>
+                `${a.proof_version_id}|${a.name === SHARED_APPROVAL_KEY ? '__null__' : a.name}`,
+            ),
+          )
+          for (const r of (imageRows ?? []) as ImageRow[]) {
+            const key = `${r.proof_version_id}|${r.associated_name ?? '__null__'}`
+            if (!approvalTuples.has(key)) continue
+            if (seen.has(r.id)) continue
+            seen.add(r.id)
+            rows.push({
+              imageId: r.id,
+              imagePath: r.image_path,
+              originalFilename: r.original_filename,
+              side: r.side,
+              associatedName: r.associated_name,
+              layoutId: null,
+              layoutTitle: null,
+              layoutSortOrder: null,
+              versionId: r.proof_version_id,
+              versionNumber: versionNumberById.get(r.proof_version_id) ?? 0,
+            })
+          }
         }
         setApprovedImages(rows)
       }
@@ -861,17 +981,36 @@ export default function ProofDetailPage() {
     // Shared-presence is checked the same way for the same reason.
     const currentVersion = versions.find((v) => v.is_current)
     if (currentVersion) {
-      const { data: sharedRows } = await supabase
-        .from('proof_version_images')
-        .select('id')
-        .eq('proof_version_id', currentVersion.id)
-        .is('associated_name', null)
-        .eq('is_qr_code', false)
-        .limit(1)
-      const hasShared = (sharedRows?.length ?? 0) > 0
+      // Build the expected approval-slot keys for this shape:
+      //   • Set (collection) → one key per layout, name = layout_id
+      //     (the receive-all analogue of a recipient name; 000212).
+      //     A collection's images all carry associated_name NULL, so
+      //     the names/__shared__ path below would wrongly resolve to a
+      //     single __shared__ slot — branch out before that.
+      //   • Every other shape → recipient names + __shared__ when the
+      //     current version has a shared (non-QR) image.
+      // The layout ids are read fresh from the DB so a layout
+      // added/removed between page load and click is seen.
+      let keys: string[]
+      if (currentVersion.shape === 'set_collection') {
+        const { data: layoutRows } = await supabase
+          .from('proof_layouts')
+          .select('id')
+          .eq('proof_version_id', currentVersion.id)
+        keys = (layoutRows ?? []).map((l) => (l as { id: string }).id)
+      } else {
+        const { data: sharedRows } = await supabase
+          .from('proof_version_images')
+          .select('id')
+          .eq('proof_version_id', currentVersion.id)
+          .is('associated_name', null)
+          .eq('is_qr_code', false)
+          .limit(1)
+        const hasShared = (sharedRows?.length ?? 0) > 0
 
-      const keys: string[] = [...currentVersion.names]
-      if (hasShared) keys.push(SHARED_APPROVAL_KEY)
+        keys = [...currentVersion.names]
+        if (hasShared) keys.push(SHARED_APPROVAL_KEY)
+      }
 
       if (keys.length > 0) {
         const { data: existingRows, error: existingErr } = await supabase
@@ -1250,24 +1389,7 @@ export default function ProofDetailPage() {
       const currentVersion = versions.find((v) => v.is_current)
       const nameOrder = new Map<string, number>()
       currentVersion?.names.forEach((n, i) => nameOrder.set(n, i))
-      const sorted = [...approvedImages].sort((a, b) => {
-        // Shared (null name) first
-        const aShared = a.associatedName == null ? 0 : 1
-        const bShared = b.associatedName == null ? 0 : 1
-        if (aShared !== bShared) return aShared - bShared
-        // Then by position in current version's names[]; names
-        // that aren't on the current version (cross-version
-        // approval edge case) fall to the bottom, stable.
-        const aPos = a.associatedName == null ? -1 : nameOrder.get(a.associatedName) ?? Infinity
-        const bPos = b.associatedName == null ? -1 : nameOrder.get(b.associatedName) ?? Infinity
-        if (aPos !== bPos) return aPos - bPos
-        // Front before back within a name. Null side normalises
-        // to 'front' for back-compat sort stability.
-        const aSide = (a.side ?? 'front') === 'front' ? 0 : 1
-        const bSide = (b.side ?? 'front') === 'front' ? 0 : 1
-        if (aSide !== bSide) return aSide - bSide
-        return a.imageId < b.imageId ? -1 : 1
-      })
+      const sorted = sortApprovedRows(approvedImages, nameOrder)
 
       const blobs = await runQueued(sorted, (row) => fetchBlob(row.imagePath))
 
@@ -1279,7 +1401,12 @@ export default function ProofDetailPage() {
       // folder (no hierarchy when there's only one group), and
       // the manifest omits the Name column. Parity with the UI
       // table's Name-column suppression above.
-      const isAllShared = approvedImages.every((r) => r.associatedName == null)
+      //
+      // A Set (collection) is never "all shared" even though every
+      // collection image has a null associated_name — each layout is
+      // its own identity (its own folder), so the column stays.
+      const isCollection = isCollectionApproved(approvedImages)
+      const isAllShared = !isCollection && approvedImages.every((r) => r.associatedName == null)
 
       // One folder per identity: {name}/ in Business mode, or no
       // folder (root-level) in Membership mode. Filename is the
@@ -1294,7 +1421,9 @@ export default function ProofDetailPage() {
         if (isAllShared) {
           zip.file(leaf, blobs[i])
         } else {
-          const folder = row.associatedName == null ? 'Shared' : row.associatedName
+          // Recipients → name (Shared when null); collections → layout
+          // title. One folder per identity.
+          const folder = approvedIdentity(row)
           zip.file(`${folder}/${leaf}`, blobs[i])
         }
       }
@@ -1317,18 +1446,21 @@ export default function ProofDetailPage() {
         `Approved: ${approvedDate}\n` +
         `Material: ${currentMaterial}\n\n`
 
-      // Mirror the UI table's identity-column label swap. Read
-      // card_type from the current version so "Variant" shows
-      // for tiered membership and "Name" stays for business.
-      const identityColumnLabel =
-        currentVersion?.card_type === 'membership' ? 'Variant' : 'Name'
+      // Mirror the UI table's identity-column label swap. "Layout"
+      // for a Set (collection), else card_type drives "Variant"
+      // (tiered membership) vs "Name" (business).
+      const identityColumnLabel = isCollection
+        ? 'Layout'
+        : currentVersion?.card_type === 'membership'
+          ? 'Variant'
+          : 'Name'
       const columns: string[] = []
       if (!isAllShared) columns.push(identityColumnLabel)
       if (!isOneSided) columns.push('Side')
       columns.push('Version', 'Filename')
       const manifestLines: string[] = [columns.join('\t')]
       for (const row of sorted) {
-        const nameCol = row.associatedName ?? 'Shared'
+        const nameCol = approvedIdentity(row)
         const sideCol = (row.side ?? 'front') === 'front' ? 'Front' : 'Back'
         const versionCol = `v${row.versionNumber}`
         const fileCol = row.originalFilename ?? `unnamed-${row.imageId.slice(0, 8)}.jpg`
@@ -3026,27 +3158,24 @@ export default function ProofDetailPage() {
           // manifest, and root-level placement in the ZIP —
           // nothing to fold under a one-repeating-value column.
           // Same parity rule as isOneSided.
-          const isAllShared = rows.length > 0 && rows.every((r) => r.associatedName == null)
-          // Column-label copy: "Name" for business (recipient
-          // people), "Variant" for membership with ≥1 variants
-          // (tier labels). When isAllShared triggers the column
-          // is suppressed entirely so the label is moot in that
-          // case. Read card_type from the current version — in
+          // A Set (collection) is never "all shared": each layout is
+          // its own identity (its own row group), so the column stays
+          // even though every collection image has a null
+          // associated_name.
+          const isCollection = isCollectionApproved(rows)
+          const isAllShared = !isCollection && rows.length > 0 && rows.every((r) => r.associatedName == null)
+          // Column-label copy: "Layout" for a Set (collection), else
+          // "Name" for business (recipient people) / "Variant" for
+          // membership (tier labels). When isAllShared triggers the
+          // column is suppressed entirely so the label is moot in
+          // that case. Read card_type from the current version — in
           // practice every version in a project shares one mode.
-          const identityColumnLabel =
-            currentVersion?.card_type === 'membership' ? 'Variant' : 'Name'
-          const sorted = [...rows].sort((a, b) => {
-            const aShared = a.associatedName == null ? 0 : 1
-            const bShared = b.associatedName == null ? 0 : 1
-            if (aShared !== bShared) return aShared - bShared
-            const aPos = a.associatedName == null ? -1 : nameOrder.get(a.associatedName) ?? Infinity
-            const bPos = b.associatedName == null ? -1 : nameOrder.get(b.associatedName) ?? Infinity
-            if (aPos !== bPos) return aPos - bPos
-            const aSide = (a.side ?? 'front') === 'front' ? 0 : 1
-            const bSide = (b.side ?? 'front') === 'front' ? 0 : 1
-            if (aSide !== bSide) return aSide - bSide
-            return a.imageId < b.imageId ? -1 : 1
-          })
+          const identityColumnLabel = isCollection
+            ? 'Layout'
+            : currentVersion?.card_type === 'membership'
+              ? 'Variant'
+              : 'Name'
+          const sorted = sortApprovedRows(rows, nameOrder)
           return (
             <section>
               <h2 className="mb-2 text-sm font-semibold uppercase tracking-widest text-ink-dim">Approved artwork</h2>
@@ -3075,7 +3204,7 @@ export default function ProofDetailPage() {
                       </thead>
                       <tbody>
                         {sorted.map((row) => {
-                          const nameCol = row.associatedName ?? 'Shared'
+                          const nameCol = approvedIdentity(row)
                           const sideCol = (row.side ?? 'front') === 'front' ? 'Front' : 'Back'
                           const fileLabel = row.originalFilename ?? (
                             <span className="italic text-ink-dim">— (no filename captured)</span>
