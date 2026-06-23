@@ -46,6 +46,66 @@ export async function getDropboxAccessToken(admin: SupabaseClient): Promise<stri
   return access
 }
 
+// List the files under a Dropbox shared-link folder.
+//
+// IMPORTANT: Dropbox's files/list_folder only supports NON-recursive listing
+// when reading through a shared_link ("Only non-recursive mode is supported for
+// shared link" — https://www.dropbox.com/developers). Passing recursive:true
+// together with shared_link makes the call fail, which previously left the file
+// tally at zero even for folders that clearly had artwork in them. So we list
+// each level non-recursively and walk subfolders ourselves via the shared_link
+// + path form (path is relative to the shared-link root), with depth + entry
+// caps so a deep/large tree can't run away, and following has_more pagination.
+// Returns one entry per item; folder entries are flagged so the caller can
+// exclude them from the file count.
+export async function listSharedLinkEntries(
+  token: string,
+  url: string,
+): Promise<{ name: string; is_folder: boolean; path: string }[]> {
+  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+  const out: { name: string; is_folder: boolean; path: string }[] = []
+  const MAX_ENTRIES = 2000
+  const MAX_DEPTH = 4
+
+  // One level, following pagination. `path` is relative to the shared-link
+  // root: '' is the folder the link points at, '/Sub' is a child folder.
+  async function listLevel(path: string): Promise<{ name: string; isFolder: boolean }[]> {
+    const level: { name: string; isFolder: boolean }[] = []
+    let res = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ path, shared_link: { url }, recursive: false }),
+    })
+    while (res.ok) {
+      const page = await res.json().catch(() => null)
+      const entries = Array.isArray(page?.entries) ? page.entries : []
+      for (const e of entries) {
+        level.push({ name: (e.name as string) ?? '', isFolder: e['.tag'] === 'folder' })
+      }
+      if (!page?.has_more || !page?.cursor) break
+      res = await fetch('https://api.dropboxapi.com/2/files/list_folder/continue', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ cursor: page.cursor }),
+      })
+    }
+    return level
+  }
+
+  async function walk(path: string, depth: number): Promise<void> {
+    if (depth > MAX_DEPTH || out.length >= MAX_ENTRIES) return
+    for (const e of await listLevel(path)) {
+      if (out.length >= MAX_ENTRIES) break
+      const childPath = `${path}/${e.name}`
+      out.push({ name: e.name, is_folder: e.isFolder, path: childPath })
+      if (e.isFolder) await walk(childPath, depth + 1)
+    }
+  }
+
+  await walk('', 0)
+  return out
+}
+
 // Parse an order folder name into its number + project. Folders are named
 // "Order <number> - <project>" (e.g. "Order 403792 - Glosfume") — which is also
 // exactly the Help Scout subject Stock Control keys on, so the number is read

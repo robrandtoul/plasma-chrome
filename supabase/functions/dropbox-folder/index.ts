@@ -12,7 +12,7 @@
 // connection with a service-role client.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { getDropboxAccessToken, parseOrderFolderName } from '../_shared/dropbox.ts'
+import { getDropboxAccessToken, parseOrderFolderName, listSharedLinkEntries } from '../_shared/dropbox.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -64,23 +64,11 @@ Deno.serve(async (req) => {
 
   const { order_number, project_name } = parseOrderFolderName(name)
 
-  // 2) List the folder's contents (the prepped artwork files). Recursive so
-  // artwork stored in subfolders still counts — folder entries are excluded
-  // from the file tally.
-  const listRes = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ path: '', shared_link: { url: link }, recursive: true }),
-  })
-  let files: { name: string; is_folder: boolean }[] = []
-  if (listRes.ok) {
-    const listing = await listRes.json().catch(() => null)
-    const entries = Array.isArray(listing?.entries) ? listing.entries : []
-    files = entries.map((e: Record<string, unknown>) => ({
-      name: (e.name as string) ?? '',
-      is_folder: e['.tag'] === 'folder',
-    }))
-  }
+  // 2) List the folder's contents (the prepped artwork files). Dropbox only
+  // supports NON-recursive listing through a shared link, so the helper walks
+  // subfolders itself rather than passing recursive:true (which fails and used
+  // to silently report zero files). Folder entries are excluded from the tally.
+  const files = await listSharedLinkEntries(token, link)
   const fileCount = files.filter((f) => !f.is_folder).length
 
   return json({ ok: true, name, order_number, project_name, files, file_count: fileCount })
