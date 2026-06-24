@@ -83,7 +83,7 @@ interface OrderPayload {
 // Only the projected result crosses to the client — never a raw Stock Control
 // row. 'broad' is date-free; 'granular' adds an ETA (a live tracking link is
 // deferred until a carrier URL is available).
-type TrackingStage = 'in_production' | 'on_its_way' | 'delivered'
+type TrackingStage = 'paid' | 'in_production' | 'on_its_way' | 'delivered'
 type TrackingProjection =
   | { level: 'off' }
   | { level: 'broad' | 'granular'; stage?: TrackingStage; eta?: string }
@@ -656,7 +656,7 @@ export default function OrderPayPage() {
       { key: 'on_its_way', label: 'On its way' },
       { key: 'delivered', label: 'Delivered' },
     ]
-    const stageIdx = p.stage === 'delivered' ? 3 : p.stage === 'on_its_way' ? 2 : 1
+    const stageIdx = p.stage === 'delivered' ? 3 : p.stage === 'on_its_way' ? 2 : p.stage === 'in_production' ? 1 : 0
     return (
       <div className="mt-5 rounded-xl border border-line bg-canvas p-4">
         <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Order progress</p>
