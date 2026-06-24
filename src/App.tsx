@@ -24,6 +24,7 @@ import AdminMaterialsPage from './pages/admin/AdminMaterialsPage'
 import AdminMaterialEditor from './pages/admin/AdminMaterialEditor'
 import AdminAddOnEditor from './pages/admin/AdminAddOnEditor'
 import AdminActivityPage from './pages/admin/AdminActivityPage'
+import AdminOrderLogPage from './pages/admin/AdminOrderLogPage'
 import AdminSettingsPage from './pages/admin/AdminSettingsPage'
 import AdminTemplatesPage from './pages/admin/AdminTemplatesPage'
 import AdminOutsourcingPage from './pages/admin/AdminOutsourcingPage'
@@ -86,6 +87,7 @@ function AppShell() {
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="customers" element={<CustomersPage />} />
         <Route path="customers/:companyId" element={<CustomerDetailPage />} />
+        <Route path="orders" element={<AdminOrderLogPage />} />
         <Route path="materials" element={<AdminMaterialsPage />} />
         <Route path="material-options" element={<AdminMaterialOptionsPage />} />
         <Route path="pricing" element={<AdminPricingPage />} />

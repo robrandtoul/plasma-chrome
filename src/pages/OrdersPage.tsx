@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { DesignerChrome, PanelShell, Pill, ButtonInk, ButtonGhost } from '../design'
 import { formatPrice } from '../lib/currency'
 import { customerOrderUrl } from '../lib/customerOrderUrl'
+import { orderTotal, specLabel as specLabelShared, customerLabel as customerLabelShared } from '../lib/orderDisplay'
 import { logAudit } from '../lib/audit'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency } from '../lib/types'
@@ -25,7 +26,6 @@ import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 // proofs.orders, 000229) joined to the proof's contact/company, the chosen
 // variant, and the material's production route + lead time.
 
-const round2 = (n: number) => Math.round(n * 100) / 100
 // Reactivating an expired link extends it by the same window create-order uses.
 const ORDER_EXPIRY_DAYS = 14
 
@@ -134,32 +134,20 @@ function allowedSupplierLabels(o: OrderRow, supplierNames: Record<string, string
   return ids.map((id) => supplierNames[id]).filter((n): n is string => !!n)
 }
 
+// Thin adapters from this page's nested OrderRow onto the shared display
+// helpers (src/lib/orderDisplay.ts), so the work queue and the admin Order log
+// can't drift on a displayed total / label. orderTotal is used directly — an
+// OrderRow already satisfies the helper's OrderAmounts shape.
 function customerLabel(o: OrderRow): string {
-  return (
-    o.proofs?.contacts?.companies?.name?.trim() ||
-    o.proofs?.contacts?.full_name?.trim() ||
-    '—'
-  )
+  return customerLabelShared(o.proofs?.contacts?.companies?.name, o.proofs?.contacts?.full_name)
 }
 
 function specLabel(o: OrderRow): string {
-  const material = o.material_variants?.materials?.display_name?.trim() ?? ''
-  const variant = o.material_variants?.display_name?.trim() ?? ''
-  if (o.custom_quote_total != null && !material) return 'Custom quote'
-  if (variant && variant !== material) return `${material} · ${variant}`.replace(/^ · /, '')
-  return material || 'Custom quote'
-}
-
-function orderTotal(o: OrderRow): number | null {
-  // The cards discount (stamped at checkout) nets off either branch.
-  const discount = Number(o.amount_card_discount ?? 0)
-  // US tariff rides on top of both branches (it's its own charged line), so it
-  // must be in the displayed total to match the Stripe charge + Xero invoice.
-  const tariff = Number(o.amount_us_tariff ?? 0)
-  if (o.custom_quote_total != null) return round2(Number(o.custom_quote_total) - discount + tariff)
-  const parts = [o.amount_cards, o.amount_tooling, o.amount_personalisation, o.amount_shipping]
-  if (parts.every((p) => p == null) && tariff === 0) return null
-  return round2(parts.reduce((acc: number, p) => acc + Number(p ?? 0), 0) - discount + tariff)
+  return specLabelShared(
+    o.material_variants?.materials?.display_name,
+    o.material_variants?.display_name,
+    o.custom_quote_total,
+  )
 }
 
 // Add N working days to a date (skips Sat/Sun). Used to suggest the date
