@@ -244,7 +244,11 @@ export default function OrderBuilderModal({
   // version's single offered option when it offered exactly one, else the base
   // option — the designer changes it to whatever finish the customer wants.
   useEffect(() => {
-    if (isCustomQuote || !materialId) { setMaterialOptions([]); setOptionId(null); return }
+    // Load + auto-select the finish even for a custom quote — it's production
+    // spec the supplier needs. The picker below stays hidden for custom quotes
+    // (gated on !isCustomQuote), so the offered/base finish is applied
+    // automatically without asking, and now persists onto the order.
+    if (!materialId) { setMaterialOptions([]); setOptionId(null); return }
     let cancelled = false
     void (async () => {
       const [optsRes, matRes] = await Promise.all([
@@ -598,8 +602,13 @@ export default function OrderBuilderModal({
           card_discount_reason: cardDiscountReason.trim() || undefined,
           ship_dest_country: shipDestCountryValue,
           custom_quote_total: customQuoteValue,
-          material_variant_id: isCustomQuote ? undefined : variantId,
-          material_option_id: isCustomQuote ? undefined : (optionId ?? undefined),
+          // Persist the chosen thickness + finish even on a custom quote: they're
+          // the production spec (what the supplier makes), not pricing. The custom
+          // total still drives the charge; dropping these used to leave the supplier
+          // hand-off with no Thickness/Finish line. Null when none was picked (e.g. a
+          // mixed-material variant round), which stays harmless.
+          material_variant_id: variantId,
+          material_option_id: optionId ?? undefined,
         },
       })
       if (fnError) {
