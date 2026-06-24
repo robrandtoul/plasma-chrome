@@ -54,6 +54,7 @@ interface OrderRow {
   xero_invoice_error: string | null
   paid_at: string | null
   fulfilled_at: string | null
+  revised_at: string | null
   // Order-placement fields (000252).
   date_required: string | null
   dropbox_folder_url: string | null
@@ -82,7 +83,7 @@ const SELECT = `
   id, status, token, expires_at, sent_at, currency, quantity, names_count, has_personalisation,
   custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff,
   card_discount_type, card_discount_value, amount_card_discount, payment_method,
-  payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at,
+  payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, person_quantities,
   ship_to_name, ship_to_email, ship_to_address, proof_id,
   material_variants(display_name, materials(code, display_name, production_route, lead_time_max_days, outsourced_supplier_ids)),
@@ -258,7 +259,7 @@ export default function OrdersPage() {
       const { data } = await supabase
         .from('orders')
         .select(SELECT)
-        .in('status', ['sent', 'paid', 'fulfilled'])
+        .in('status', ['sent', 'paid', 'fulfilled', 'revision'])
         .order('sent_at', { ascending: false })
         .limit(300)
       if (cancelled) return
@@ -289,7 +290,7 @@ export default function OrdersPage() {
 
       // Representative thumbnail per proof — a recognition aid; the card links
       // to the proof for the authoritative approved artwork.
-      const proofIds = Array.from(new Set(rows.filter((r) => r.status === 'paid').map((r) => r.proof_id)))
+      const proofIds = Array.from(new Set(rows.filter((r) => r.status === 'paid' || r.status === 'revision').map((r) => r.proof_id)))
       await Promise.all(
         proofIds.map(async (proofId) => {
           try {
@@ -395,6 +396,28 @@ export default function OrdersPage() {
     }
   }
 
+  // Cancel an unpaid order link (abort). order-lifecycle flips sent→cancelled,
+  // posts the customer a Help Scout note, and writes the audit row server-side —
+  // so no client logAudit here (that would double-log). The page never refetches,
+  // so drop the row locally to remove the card.
+  async function cancelOrder(o: OrderRow) {
+    if (!window.confirm('Cancel this unpaid order link? The customer will be told it has been cancelled.')) return
+    setBusyId(o.id)
+    try {
+      const { data, error } = await supabase.functions.invoke<{ ok: boolean; status?: string; error?: string }>(
+        'order-lifecycle',
+        { body: { order_id: o.id, action: 'cancel', reason: 'abort', notify: true } },
+      )
+      if (error || !data?.ok) {
+        window.alert(`Could not cancel the order: ${error?.message ?? data?.error ?? 'unknown error'}`)
+        return
+      }
+      setOrders((prev) => prev.filter((r) => r.id !== o.id))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   const awaitingPayment = orders.filter((o) => o.status === 'sent')
   // To order: paid, not yet placed. A blocking problem (failed invoice) floats
   // to the top; otherwise oldest-paid-first so nothing sits in the queue.
@@ -408,6 +431,8 @@ export default function OrdersPage() {
       return new Date(a.paid_at ?? a.sent_at ?? 0).getTime() - new Date(b.paid_at ?? b.sent_at ?? 0).getTime()
     })
   const recentlyOrdered = orders.filter((o) => o.status === 'fulfilled').slice(0, 30)
+  // Paid/placed orders held while the proof is being redesigned (revision).
+  const beingRevised = orders.filter((o) => o.status === 'revision')
 
   return (
     <DesignerChrome active="orders">
@@ -438,6 +463,7 @@ export default function OrdersPage() {
                       reminder={reminders[o.id] ?? null}
                       onCopy={() => void copyLink(o)}
                       onReactivate={() => void reactivate(o)}
+                      onCancel={() => void cancelOrder(o)}
                     />
                   ))}
                 </div>
@@ -476,6 +502,25 @@ export default function OrdersPage() {
               </div>
             </section>
 
+            {beingRevised.length > 0 && (
+              <section className="mt-10">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Being revised · {beingRevised.length}</h2>
+                <p className="mt-1 text-[13px] text-ink-mute">
+                  Paid orders held while the artwork is being changed. Re-approve the new proof and replace the files in the Dropbox order folder, then review &amp; place again.
+                </p>
+                <div className="mt-3 space-y-4">
+                  {beingRevised.map((o) => (
+                    <RevisionCard
+                      key={o.id}
+                      order={o}
+                      thumb={thumbs[o.proof_id] ?? null}
+                      onReview={() => navigate(`/orders/${o.id}/place`)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+
             {recentlyOrdered.length > 0 && (
               <section className="mt-10">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Recently ordered</h2>
@@ -501,6 +546,63 @@ export default function OrdersPage() {
         )}
       </main>
     </DesignerChrome>
+  )
+}
+
+// A paid/placed order held while the proof is being redesigned (revision). The
+// card is informational + navigational: the authoritative gates (folder verify,
+// re-approval, and — for a previously-placed order — the "old Stock Control job
+// cancelled" confirmation) live on the review & place page, which is where
+// place-order is actually invoked.
+function RevisionCard({
+  order,
+  thumb,
+  onReview,
+}: {
+  order: OrderRow
+  thumb: GridImage | null
+  onReview: () => void
+}) {
+  const wasPlaced = !!order.fulfilled_at
+  return (
+    <PanelShell>
+      <div className="mb-3 rounded-lg bg-out-soft px-3 py-2 text-[13px] font-semibold text-out ring-1 ring-out">
+        Paid · revision in progress — do not produce the previous artwork.
+      </div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+        {thumb && (
+          <img
+            src={thumb.signed_url}
+            alt="Proof artwork"
+            className="h-20 w-20 shrink-0 rounded-lg object-cover ring-1 ring-line"
+          />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to={`/proofs/${order.proof_id}`} className="text-base font-semibold text-ink hover:underline">
+              {customerLabel(order)}
+            </Link>
+            <Pill colour="out">Revision</Pill>
+          </div>
+          <p className="mt-0.5 text-sm text-ink-soft">{specLabel(order)}</p>
+          <p className="mt-0.5 text-[13px] text-ink-mute">
+            {order.payment_reference}
+            {order.revised_at ? ` · being revised since ${formatDate(order.revised_at)}` : ''}
+          </p>
+          <p className="mt-2 text-[13px] text-ink-soft">
+            {wasPlaced
+              ? 'Already placed: cancel the old Stock Control job, re-approve the new proof, and replace the Dropbox files before re-placing.'
+              : 'Re-approve the new proof and replace the Dropbox files, then re-place.'}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+          <ButtonInk onClick={onReview}>Review &amp; place</ButtonInk>
+          <Link to={`/proofs/${order.proof_id}`}>
+            <ButtonGhost size="sm">View proof &amp; artwork</ButtonGhost>
+          </Link>
+        </div>
+      </div>
+    </PanelShell>
   )
 }
 
@@ -815,6 +917,7 @@ function AwaitingPaymentCard({
   reminder,
   onCopy,
   onReactivate,
+  onCancel,
 }: {
   order: OrderRow
   expired: boolean
@@ -823,6 +926,7 @@ function AwaitingPaymentCard({
   reminder: { count: number; lastAt: string } | null
   onCopy: () => void
   onReactivate: () => void
+  onCancel: () => void
 }) {
   const total = orderTotal(order)
   return (
@@ -861,6 +965,7 @@ function AwaitingPaymentCard({
               {busy ? 'Reactivating…' : 'Reactivate link'}
             </ButtonInk>
           )}
+          <ButtonGhost size="sm" onClick={onCancel} disabled={busy}>Cancel order</ButtonGhost>
         </div>
       </div>
     </PanelShell>

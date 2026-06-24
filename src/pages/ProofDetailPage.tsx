@@ -15,6 +15,7 @@ import OrderBuilderModal from '../components/OrderBuilderModal'
 import { logAudit } from '../lib/audit'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import type {
+  Currency,
   LetterpressCoreColour,
   ProofNameApproval,
   QrSnapshot,
@@ -25,6 +26,7 @@ import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/shar
 import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, openDesignerPreview } from '../lib/customerProofUrl'
+import { formatPrice } from '../lib/currency'
 // QuoteLink now lives inside DesignerChrome (PR 31).
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
 import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, MessageSquare, Clock, Activity, Package, HelpCircle } from 'lucide-react'
@@ -78,6 +80,20 @@ interface Proof {
 
 function formatLongDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+}
+
+// Order total matching OrdersPage.orderTotal and the Stripe charge: custom quote
+// when set, else the summed amount_* lines, minus the cards discount, plus the
+// US tariff. Returns null when nothing is priced. Used by the reopen warning so
+// the £ figure shown matches what the customer actually paid.
+function orderTotal(o: ProofOrder): number | null {
+  const r2 = (n: number) => Math.round(n * 100) / 100
+  const discount = Number(o.amount_card_discount ?? 0)
+  const tariff = Number(o.amount_us_tariff ?? 0)
+  if (o.custom_quote_total != null) return r2(Number(o.custom_quote_total) - discount + tariff)
+  const parts = [o.amount_cards, o.amount_tooling, o.amount_personalisation, o.amount_shipping]
+  if (parts.every((p) => p == null) && tariff === 0) return null
+  return r2(parts.reduce((acc: number, p) => acc + Number(p ?? 0), 0) - discount + tariff)
 }
 
 // Colour + label per round outcome for the engagement panel's rounds
@@ -206,6 +222,16 @@ interface ProofOrder {
   xero_invoice_error: string | null
   payment_method: string | null
   created_at: string
+  revised_at: string | null
+  currency: Currency
+  amount_cards: number | null
+  amount_tooling: number | null
+  amount_personalisation: number | null
+  amount_shipping: number | null
+  amount_us_tariff: number | null
+  amount_card_discount: number | null
+  custom_quote_total: number | null
+  material_variants: { materials: { production_route: string | null } | null } | null
 }
 
 export default function ProofDetailPage() {
@@ -290,6 +316,9 @@ export default function ProofDetailPage() {
   const [copied, setCopied] = useState(false)
   const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | 'abandon' | 'delete' | null>(null)
   const [statusWorking, setStatusWorking] = useState(false)
+  // Required-checkbox gate for reopening a proof whose order was already PLACED:
+  // the designer must confirm they've cancelled the old Stock Control job first.
+  const [reopenJobCancelled, setReopenJobCancelled] = useState(false)
   // Synchronous guard against double-click on the confirm dialog
   // buttons. The disabled={working} prop is bound to React state,
   // so a second click that lands before the state commits would
@@ -523,7 +552,7 @@ export default function ProofDetailPage() {
     // orders only exist for approved proofs, so an empty result is the norm.
     void supabase
       .from('orders')
-      .select('id, status, token, sent_at, paid_at, expires_at, fulfilled_at, xero_invoice_id, xero_invoice_error, payment_method, created_at')
+      .select('id, status, token, sent_at, paid_at, expires_at, fulfilled_at, xero_invoice_id, xero_invoice_error, payment_method, created_at, revised_at, currency, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, custom_quote_total, material_variants(materials(production_route))')
       .eq('proof_id', proofId)
       .order('created_at', { ascending: false })
       .then(({ data }) => {
@@ -1212,7 +1241,27 @@ export default function ProofDetailPage() {
   async function handleReopen() {
     if (!proof) return
     setStatusWorking(true)
-    // Atomic status flip + clear of every per-recipient approval row
+    // STEP 1 — order-side flip BEFORE reopen_proof. When there's an open order it
+    // must be cancelled (unpaid) or held for revision (paid/placed) first; if
+    // that fails we must NOT clear approvals against a still-live order (the
+    // stale-artwork hazard the whole flow guards against). order-lifecycle writes
+    // its own order.cancelled / order.revision_started audit and posts the
+    // customer a Help Scout note (best-effort).
+    if (reopenOrderState === 'sent' || reopenOrderState === 'paid' || reopenOrderState === 'fulfilled') {
+      const action = reopenOrderState === 'sent' ? 'cancel' : 'revise'
+      const lcBody: Record<string, unknown> = { order_id: reopenOrder!.id, action, notify: true }
+      if (action === 'cancel') lcBody.reason = 'reopen'
+      const { data: lc, error: lcErr } = await supabase.functions.invoke<{ ok: boolean; status?: string; error?: string }>(
+        'order-lifecycle',
+        { body: lcBody },
+      )
+      if (lcErr || !lc?.ok) {
+        setStatusWorking(false)
+        showToast(`Couldn't update the order before reopening: ${lcErr?.message ?? lc?.error ?? 'unknown error'}`)
+        return // leave the dialog open so the designer can retry; reopen_proof NOT called
+      }
+    }
+    // STEP 2 — atomic status flip + clear of every per-recipient approval row
     // across every version of this proof. The DELETE is critical:
     // without it, v1's approved rows survive the reopen and the
     // carry-forward block in NewVersionPage picks them up when a
@@ -1227,6 +1276,7 @@ export default function ProofDetailPage() {
     })
     setStatusWorking(false)
     setStatusDialog(null)
+    setReopenJobCancelled(false)
     if (error) {
       // Surface the failure to the designer rather than silently
       // returning to the proof view: the previous "if (!error)" with
@@ -1574,8 +1624,27 @@ export default function ProofDetailPage() {
   const hasOpenOrder = !!latestOrder && (
     latestOrder.status === 'paid' ||
     latestOrder.status === 'fulfilled' ||
+    latestOrder.status === 'revision' ||
     (latestOrder.status === 'sent' && !latestExpired)
   )
+  // The order the reopen acts on: the newest order still OPEN in a state that
+  // needs an order-side change (an unpaid link to cancel, or a paid/placed order
+  // to hold for revision). `orders` is sorted newest-first. A 'revision' order is
+  // deliberately excluded — it's already held, so reopening again is a plain
+  // reopen; this also makes a partial-failure retry safe (after the order flip
+  // lands, the next attempt skips straight to reopen_proof). Keying off the newest
+  // OPEN order (not strictly orders[0]) avoids stranding a live paid/placed order
+  // behind a newer dead one.
+  const reopenOrder = orders?.find((o) => o.status === 'sent' || o.status === 'paid' || o.status === 'fulfilled') ?? null
+  // A still-'sent' link is cancelled on reopen even if its window has lapsed:
+  // status stays 'sent' in the DB until cancelled, and an expired link is
+  // reactivatable — so it must be killed, or it could be paid against a redesign.
+  const reopenOrderState: 'none' | 'sent' | 'paid' | 'fulfilled' =
+    !reopenOrder ? 'none'
+    : reopenOrder.status === 'sent' ? 'sent'
+    : reopenOrder.status === 'paid' ? 'paid'
+    : reopenOrder.status === 'fulfilled' ? 'fulfilled'
+    : 'none'
   const orderInvoiceProblem = !!latestOrder && !latestOrder.xero_invoice_id && !!latestOrder.xero_invoice_error && latestOrder.payment_method !== 'offline'
   const orderSummary: { text: string; tone: 'good' | 'wait' | 'dead' } | null = (() => {
     if (!latestOrder) return null
@@ -1588,6 +1657,7 @@ export default function ProofDetailPage() {
         : { text: `Pay link sent${latestOrder.sent_at ? ` ${fmt(latestOrder.sent_at)}` : ''} · awaiting payment`, tone: 'wait' }
       case 'expired':   return { text: 'Pay link expired', tone: 'dead' }
       case 'cancelled': return { text: 'Order cancelled', tone: 'dead' }
+      case 'revision':  return { text: `Paid · being revised${latestOrder.revised_at ? ` ${fmt(latestOrder.revised_at)}` : ''}`, tone: 'wait' }
       default:          return { text: latestOrder.status, tone: 'wait' }
     }
   })()
@@ -2374,7 +2444,7 @@ export default function ProofDetailPage() {
                   items={
                     isLocked
                       ? [
-                          { label: 'Reopen project', onClick: () => setStatusDialog('reopen') },
+                          { label: 'Reopen project', onClick: () => { setReopenJobCancelled(false); setStatusDialog('reopen') } },
                           ...(isApproved && orderingEnabled === true && hasOpenOrder
                             ? [{
                                 label: 'Create another order',
@@ -3472,20 +3542,47 @@ export default function ProofDetailPage() {
       )}
 
       {/* Reopen confirm dialog */}
-      {statusDialog === 'reopen' && (
-        <ConfirmDialog
-          message={
-            isAbandoned
-              ? 'Reopen this project? This will reopen the project and allow new proof versions to be added.'
-              : 'Reopen this project? It will go back to in progress and you\'ll be able to add new proof versions.'
-          }
-          confirmLabel="Reopen"
-          confirmClass="bg-ink hover:opacity-90 text-on-ink"
-          working={statusWorking}
-          onConfirm={guardStatusAction(handleReopen)}
-          onCancel={() => setStatusDialog(null)}
-        />
-      )}
+      {statusDialog === 'reopen' && (() => {
+        // Order-aware reopen (docs/order-cancel-and-revision-spec.md §3c). The
+        // dialog copy + gating depend on the latest order's state: cancel an
+        // unpaid link, hold a paid/placed order for revision (with a money
+        // warning, and — once placed — a required "old job cancelled" checkbox).
+        const placedDate = reopenOrder?.fulfilled_at ? formatLongDate(reopenOrder.fulfilled_at) : 'an earlier date'
+        const paidDate = reopenOrder?.paid_at ? formatLongDate(reopenOrder.paid_at) : 'an earlier date'
+        const total = reopenOrder ? orderTotal(reopenOrder) : null
+        const money = total != null && reopenOrder ? formatPrice(total, reopenOrder.currency) : 'the order amount'
+        const route = reopenOrder?.material_variants?.materials?.production_route
+        const placedWith = route === 'in_house' ? 'in-house production' : route === 'supplier' ? 'an outside supplier' : 'production'
+        const checker = route === 'in_house' ? 'the workshop' : route === 'supplier' ? 'the supplier' : 'production'
+        let message: string
+        let checkbox: { label: string; checked: boolean; onChange: (v: boolean) => void } | undefined
+        let confirmDisabled = false
+        if (reopenOrderState === 'sent') {
+          message = 'Reopening will cancel the unpaid order link and let the customer know. You can create a new order once the proof is re-approved.'
+        } else if (reopenOrderState === 'paid') {
+          message = `This order has been PAID (${money} on ${paidDate}) but not yet placed. Reopening holds it for revision — the payment is NOT refunded automatically; refund or credit it yourself if the change affects the price. The customer will be told their cards are being updated.`
+        } else if (reopenOrderState === 'fulfilled') {
+          message = `This order was PAID (${money}) and placed with ${placedWith} on ${placedDate}. Before reopening: (1) cancel the job in Stock Control, (2) check with ${checker} that it has NOT printed. The previously-approved artwork must not be produced. The payment is NOT refunded automatically.`
+          checkbox = { label: "I've cancelled the Stock Control job.", checked: reopenJobCancelled, onChange: setReopenJobCancelled }
+          confirmDisabled = !reopenJobCancelled
+        } else {
+          message = isAbandoned
+            ? 'Reopen this project? This will reopen the project and allow new proof versions to be added.'
+            : 'Reopen this project? It will go back to in progress and you\'ll be able to add new proof versions.'
+        }
+        return (
+          <ConfirmDialog
+            message={message}
+            checkbox={checkbox}
+            confirmDisabled={confirmDisabled}
+            confirmLabel="Reopen"
+            confirmClass="bg-ink hover:opacity-90 text-on-ink"
+            working={statusWorking}
+            onConfirm={guardStatusAction(handleReopen)}
+            onCancel={() => { setStatusDialog(null); setReopenJobCancelled(false) }}
+          />
+        )
+      })()}
 
       {/* Toast */}
       {toast && (
@@ -3887,6 +3984,8 @@ function ConfirmDialog({
   confirmClass,
   working,
   errorMsg,
+  confirmDisabled,
+  checkbox,
   onConfirm,
   onCancel,
 }: {
@@ -3895,6 +3994,11 @@ function ConfirmDialog({
   confirmClass: string
   working: boolean
   errorMsg?: string | null
+  // An independent pre-condition gate for the confirm button (separate from the
+  // double-click `working` guard). Used by the reopen dialog's "I've cancelled
+  // the Stock Control job" checkbox on a placed order.
+  confirmDisabled?: boolean
+  checkbox?: { label: string; checked: boolean; onChange: (v: boolean) => void }
   onConfirm: () => void
   onCancel: () => void
 }) {
@@ -3915,6 +4019,17 @@ function ConfirmDialog({
       {errorMsg && (
         <p className="mt-3 rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{errorMsg}</p>
       )}
+      {checkbox && (
+        <label className="mt-4 flex items-start gap-2 text-sm text-ink-soft">
+          <input
+            type="checkbox"
+            checked={checkbox.checked}
+            onChange={(e) => checkbox.onChange(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span>{checkbox.label}</span>
+        </label>
+      )}
       <div className="mt-5 flex justify-end gap-2">
         <button
           onClick={onCancel}
@@ -3925,7 +4040,7 @@ function ConfirmDialog({
         </button>
         <button
           onClick={onConfirm}
-          disabled={working}
+          disabled={working || !!confirmDisabled}
           className={`rounded px-4 py-2 text-sm font-semibold disabled:opacity-50 ${confirmClass}`}
         >
           {working ? 'Working…' : confirmLabel}

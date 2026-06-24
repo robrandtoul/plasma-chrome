@@ -103,6 +103,16 @@ export default function OrderReviewPage() {
   // Optional project-specific note appended to the supplier email (supplier
   // route). Re-previewed on blur so the reviewer sees exactly what's sent.
   const [note, setNote] = useState('')
+  // A revision order that was ALREADY placed (fulfilled_at set) is being
+  // re-placed — place-order requires confirmation the old Stock Control job was
+  // cancelled first (docs/order-cancel-and-revision-spec.md §3b). Resolved from
+  // the order row on load.
+  const [revisionReplace, setRevisionReplace] = useState(false)
+  const [oldJobCancelled, setOldJobCancelled] = useState(false)
+  // A revision order (scenario 3 or 4) whose proof has been reopened but not yet
+  // re-approved can't be placed (place-order 409s server-side); gate the button
+  // client-side too so the reviewer sees why, rather than a post-click error.
+  const [revisionNeedsApproval, setRevisionNeedsApproval] = useState(false)
 
   const loadPreview = useCallback(async (chosenSupplierId?: string | null, noteArg?: string) => {
     if (!id) return
@@ -128,8 +138,18 @@ export default function OrderReviewPage() {
       // Approved artwork for review. Resolve the proof id off the order; ignore
       // failures (the page still works without artwork).
       if (id) {
-        const { data: order } = await supabase.from('orders').select('proof_id').eq('id', id).maybeSingle()
+        const { data: order } = await supabase.from('orders').select('proof_id, status, fulfilled_at').eq('id', id).maybeSingle()
         const proofId = (order as { proof_id?: string } | null)?.proof_id
+        const orderStatus = (order as { status?: string } | null)?.status ?? null
+        if (!cancelled) {
+          const o = order as { status?: string; fulfilled_at?: string | null } | null
+          setRevisionReplace(o?.status === 'revision' && !!o?.fulfilled_at)
+        }
+        // For a revision order, gate Confirm on the proof being re-approved.
+        if (proofId && orderStatus === 'revision' && !cancelled) {
+          const { data: pr } = await supabase.from('proofs').select('status').eq('id', proofId).maybeSingle()
+          if (!cancelled) setRevisionNeedsApproval(((pr as { status?: string } | null)?.status ?? null) !== 'approved')
+        }
         if (proofId && !cancelled) {
           try {
             // customer-proof-images returns EVERY version's images (the customer
@@ -201,7 +221,7 @@ export default function OrderReviewPage() {
     setConfirmError(null)
     try {
       const { data, error: fnErr } = await supabase.functions.invoke<{ ok: boolean; error?: string; code?: string; placed?: boolean }>('place-order', {
-        body: { order_id: id, mode: 'confirm', ...(supplierId ? { supplier_id: supplierId } : {}), ...(note ? { note } : {}) },
+        body: { order_id: id, mode: 'confirm', ...(supplierId ? { supplier_id: supplierId } : {}), ...(note ? { note } : {}), ...(revisionReplace ? { old_job_cancelled: oldJobCancelled } : {}) },
       })
       // On a non-2xx (which is how place-order returns sent_not_recorded AND its
       // other failures) supabase-js gives data:null + the body on error.context.
@@ -234,7 +254,11 @@ export default function OrderReviewPage() {
   // Only meaningful once a supplier is resolved (picked or the lone one).
   const supplierEmailMissing = isSupplier && !!preview?.supplier && !preview.supplier.email
   const hsMissing = !isSupplier && preview?.helpscout_linked === false
-  const blockReason = noSuppliers
+  const blockReason = revisionNeedsApproval
+    ? 'Re-approve the new proof before placing this revision.'
+    : (revisionReplace && !oldJobCancelled)
+    ? 'Confirm you’ve cancelled the old Stock Control job to place this revision.'
+    : noSuppliers
     ? 'No suppliers are configured for this material — set them on Admin → Outsourcing.'
     : mustChoose
       ? 'Choose a supplier to order from.'
@@ -427,6 +451,17 @@ export default function OrderReviewPage() {
                   <p className="mt-4 rounded-lg bg-out-soft px-3 py-2 text-[13px] text-out ring-1 ring-out">
                     <span className="font-medium">Couldn’t place the order.</span> {confirmError}
                   </p>
+                )}
+
+                {revisionReplace && (
+                  <div className="mt-4 rounded-lg bg-out-soft px-3 py-3 text-[13px] text-out ring-1 ring-out">
+                    <p className="font-medium">This order was already placed, then revised.</p>
+                    <p className="mt-1">Cancel the old job in Stock Control and confirm with production it hasn’t printed before re-placing — the previously-approved artwork must not be produced.</p>
+                    <label className="mt-2 flex items-start gap-2">
+                      <input type="checkbox" checked={oldJobCancelled} onChange={(e) => setOldJobCancelled(e.target.checked)} className="mt-0.5" />
+                      <span>I’ve cancelled the old Stock Control job.</span>
+                    </label>
+                  </div>
                 )}
 
                 {/* Supplier sends a real, immediate email — arm it with an explicit

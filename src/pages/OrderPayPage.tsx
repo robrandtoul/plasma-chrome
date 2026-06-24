@@ -27,7 +27,7 @@ import type { Currency, CustomerProofGraph } from '../lib/types'
 interface OrderPayload {
   id: string
   proof_id: string
-  status: 'draft' | 'sent' | 'paid' | 'fulfilled' | 'expired' | 'cancelled'
+  status: 'draft' | 'sent' | 'paid' | 'fulfilled' | 'expired' | 'cancelled' | 'revision'
   material_variant_id: string | null
   material_option_id: string | null
   quantity: number | null
@@ -738,11 +738,40 @@ export default function OrderPayPage() {
 
   const isExpired =
     order.status === 'expired' ||
-    order.status === 'cancelled' ||
     (order.status === 'sent' && order.expires_at != null && new Date(order.expires_at).getTime() < Date.now())
 
   if (order.status === 'paid' || order.status === 'fulfilled') {
     return renderConfirmation(true, order)
+  }
+
+  // Order was cancelled (abort, or a reopen-for-changes on an unpaid link).
+  // Calm and reorder-friendly, not an error tone.
+  if (order.status === 'cancelled') {
+    return (
+      <Screen>
+        <PanelShell className="max-w-md text-center">
+          <h1 className="text-lg font-semibold text-ink">This order has been cancelled</h1>
+          <p className="mt-2 text-sm text-ink-soft">
+            This order is no longer active. If you&rsquo;d like to reorder, just reply to the email you received and we&rsquo;ll set it up for you.
+          </p>
+        </PanelShell>
+      </Screen>
+    )
+  }
+
+  // Paid/placed order held while the proof is being redesigned (revision).
+  // The payment stands; a fresh proof follows once it's ready.
+  if (order.status === 'revision') {
+    return (
+      <Screen>
+        <PanelShell className="max-w-md text-center">
+          <h1 className="text-lg font-semibold text-ink">We&rsquo;re updating your cards</h1>
+          <p className="mt-2 text-sm text-ink-soft">
+            We&rsquo;re making changes to your artwork. A new proof will follow once it&rsquo;s ready — there&rsquo;s nothing you need to do right now.
+          </p>
+        </PanelShell>
+      </Screen>
+    )
   }
 
   if (isExpired) {

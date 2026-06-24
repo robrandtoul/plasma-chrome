@@ -114,7 +114,7 @@ export function substituteVariables(text: string, ctx: TemplateContext): string 
 // Designer-picked templates (first_proof, revision) use unprefixed
 // IDs and render in the "Pre-send messages" sub-section.
 
-export type TemplateVariableScope = 'designer_picked' | 'proof_viewer' | 'order' | 'order_reminder' | 'order_confirmation' | 'supplier_order'
+export type TemplateVariableScope = 'designer_picked' | 'proof_viewer' | 'order' | 'order_reminder' | 'order_confirmation' | 'order_lifecycle' | 'supplier_order'
 
 export interface TemplateVariableMeta {
   // Variable name as it appears between braces in templates. Plain
@@ -157,6 +157,10 @@ export const TEMPLATE_VARIABLES: TemplateVariableMeta[] = [
   { name: 'first_name',          scope: 'order_confirmation', description: "Customer's first name (falls back to a friendly greeting if unknown)",          conditional: false },
   { name: 'company',             scope: 'order_confirmation', description: 'Company name (when set)',                                                       conditional: true  },
   { name: 'payment_reference',   scope: 'order_confirmation', description: 'The order reference (ORD-…) shown to the customer',                             conditional: false },
+  // Order lifecycle (order_cancelled / order_revision) — posted by the
+  // order-lifecycle edge function, which has order → proof → contact context.
+  { name: 'first_name',          scope: 'order_lifecycle', description: "Customer's first name",                                                           conditional: false },
+  { name: 'company',             scope: 'order_lifecycle', description: 'Company name (when set)',                                                         conditional: true  },
   // Supplier order email (supplier_order_email) — emailed to the supplier when
   // an outsourced order is placed. The spec block is machine-generated.
   { name: 'customer',            scope: 'supplier_order',  description: "Customer name the cards are for",                                                conditional: false },
@@ -219,6 +223,13 @@ export const DEFAULT_BODIES: Record<string, string> = {
   // payment lands; Help Scout emails it to the customer (migration 000248).
   order_paid_confirmation:
     `Hi {first_name},\n\nThank you — we've received your payment and your cards{? company} for {company}{/?} are now in production. Your order reference is {payment_reference}.\n\nWe'll email you dispatch details as soon as your cards are on their way, and your VAT invoice will arrive in a separate email shortly.\n\nIf you have any questions, just reply to this email.`,
+  // Order lifecycle messages — posted by the order-lifecycle edge function when an
+  // order link is cancelled (order_cancelled) or a paid/placed order is held for
+  // a redesign (order_revision). Seeded in 000260. No sign-off.
+  order_cancelled:
+    `Hi {first_name},\n\nWe've cancelled the order and payment link for your cards{? company} for {company}{/?}. No payment has been taken.\n\nIf you'd like to go ahead after all, just reply and we'll send a fresh link.`,
+  order_revision:
+    `Hi {first_name},\n\nWe're updating your cards{? company} for {company}{/?} — a fresh proof will follow shortly for you to approve before we go ahead.\n\nIf you have any questions in the meantime, just reply to this email.`,
   // Supplier order email — emailed to the supplier when an outsourced order is
   // placed. {order_details} is the machine-generated, parser-critical spec block
   // (Qty / split / Material / Type / Thickness / Finish / Must ship by / Artwork);

@@ -502,6 +502,12 @@ verify_jwt = true
 [functions.send-order-reminders]
 verify_jwt = true
 
+# order-lifecycle: designer-initiated cancel / revise of an order. Self-auths via
+# requireDesigner (bearer JWT → active admin/designer), so verify_jwt = false
+# like the other designer/admin functions — the handler is the real gate.
+[functions.order-lifecycle]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

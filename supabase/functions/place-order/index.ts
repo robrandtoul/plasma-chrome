@@ -357,25 +357,46 @@ Deno.serve(async (req) => {
   // outsourced parser (which first-wins on Qty/Material/… and ignores unknown
   // lines) can't be thrown off by it.
   const note = typeof body.note === 'string' ? body.note.trim().slice(0, 2000) : ''
+  // Re-place attestation (revision flow): when a previously-PLACED order is
+  // re-placed after a redesign, the OLD Stock Control job must be cancelled by a
+  // human first — proof-viewer can't do it. The review page sends this ack.
+  const oldJobCancelled = body.old_job_cancelled === true
   if (!orderId) return json({ ok: false, error: 'order_id is required' }, 400)
 
   // ── Load order + proof + current version ──────────────────────────────────
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, status, quantity, person_quantities, date_required, stock_order_number, project_name, proof_id, ship_dest_country, ship_to_address, material_variant_id, material_option_id, dropbox_folder_url, payment_reference, currency')
+    .select('id, status, quantity, person_quantities, date_required, stock_order_number, project_name, proof_id, ship_dest_country, ship_to_address, material_variant_id, material_option_id, dropbox_folder_url, payment_reference, currency, fulfilled_at')
     .eq('id', orderId)
     .maybeSingle()
   if (orderErr) return json({ ok: false, error: `Order lookup failed: ${orderErr.message}` }, 500)
   if (!order) return json({ ok: false, error: 'Order not found.' }, 404)
-  if (order.status !== 'paid') return json({ ok: false, error: `Order is ${order.status}, not paid — it can't be placed.` }, 409)
+  if (order.status !== 'paid' && order.status !== 'revision') return json({ ok: false, error: `Order is ${order.status}, not paid — it can't be placed.` }, 409)
+  // A non-null fulfilled_at means this order already had a Stock Control job
+  // (scenario 4: paid AND placed, then revised). Re-placing requires the
+  // designer to confirm they've cancelled that old job. A first-ever placement
+  // (fulfilled_at null, incl. scenario 3) needs no ack. Enforced on confirm only
+  // so the review screen can still preview a re-place.
+  const isReplace = !!order.fulfilled_at
+  if (mode === 'confirm' && isReplace && !oldJobCancelled) {
+    return json({ ok: false, code: 'old_job_not_cancelled', error: 'Cancel the old Stock Control job first, then confirm the re-place.' }, 409)
+  }
   if (!order.stock_order_number) return json({ ok: false, error: 'Link and check the Dropbox order folder first (no order number).' }, 400)
   if (!order.date_required) return json({ ok: false, error: 'Set the date required first.' }, 400)
 
   const { data: proof } = await admin
     .from('proofs')
-    .select('id, helpscout_conversation_id, contacts:contact_id ( full_name, companies:company_id ( name ) )')
+    .select('id, status, helpscout_conversation_id, contacts:contact_id ( full_name, companies:company_id ( name ) )')
     .eq('id', order.proof_id)
     .maybeSingle()
+  // The proof must be approved to place. Always true for a first placement; the
+  // gate matters for a revision re-place — after a reopen the proof goes back to
+  // in_progress with approvals cleared, so this blocks handing off artwork that
+  // hasn't been re-approved. Confirm only, so the review screen can still preview.
+  const proofStatus = (proof as { status?: string | null } | null)?.status ?? null
+  if (mode === 'confirm' && proofStatus !== 'approved') {
+    return json({ ok: false, error: "The proof isn't approved — re-approve it before placing this order." }, 409)
+  }
   const conversationId = (proof as { helpscout_conversation_id: string | null } | null)?.helpscout_conversation_id ?? null
   const contact = (proof as { contacts?: { full_name?: string | null; companies?: { name?: string | null } | null } | null } | null)?.contacts ?? null
   const customerName = (contact?.companies?.name?.trim()) || (contact?.full_name?.trim()) || (order.project_name?.trim()) || 'Customer'
@@ -514,7 +535,7 @@ Deno.serve(async (req) => {
       if (e instanceof HsError) return json({ ok: false, error: `Help Scout: ${e.message}` }, 502)
       return json({ ok: false, error: `Hand-off failed: ${(e as Error)?.message ?? 'unknown'}` }, 502)
     }
-    const placed = await markPlaced(admin, orderId, callerId, { route, subject })
+    const placed = await markPlaced(admin, orderId, callerId, { route, subject, ...(isReplace ? { old_job_cancelled: oldJobCancelled } : {}) })
     if (!placed.ok) {
       // The note WAS posted to Help Scout, but the status flip failed. Surface a
       // distinct error so the UI does NOT offer a plain retry (which would re-post
@@ -644,6 +665,7 @@ Deno.serve(async (req) => {
     supplier_id: chosen.id,
     supplier_name: chosen.name,
     supplier_helpscout_conversation_id: newConvId,
+    ...(isReplace ? { old_job_cancelled: oldJobCancelled } : {}),
   })
   if (!placed.ok) {
     // The supplier email WAS sent; only the status flip failed. Distinct error so
@@ -673,11 +695,12 @@ async function markPlaced(
   admin: SupabaseClient,
   orderId: string,
   callerId: string,
-  detail: { route: string; subject: string; supplier_id?: string; supplier_name?: string; supplier_helpscout_conversation_id?: string | null },
+  detail: { route: string; subject: string; supplier_id?: string; supplier_name?: string; supplier_helpscout_conversation_id?: string | null; old_job_cancelled?: boolean },
 ): Promise<{ ok: boolean; error?: string }> {
   const nowIso = new Date().toISOString()
-  // Conditional on status='paid' so a stale/concurrent re-entry can't re-flip;
-  // .select() so we can confirm exactly one row actually moved paid→fulfilled.
+  // Conditional on status in (paid, revision) so a stale/concurrent re-entry
+  // can't re-flip; .select() so we can confirm exactly one row actually moved to
+  // fulfilled (paid→fulfilled, or revision→fulfilled on a re-place).
   const { data, error } = await admin
     .from('orders')
     .update({
@@ -690,10 +713,10 @@ async function markPlaced(
       updated_at: nowIso,
     })
     .eq('id', orderId)
-    .eq('status', 'paid')
+    .in('status', ['paid', 'revision'])
     .select('id')
   if (error) return { ok: false, error: error.message }
-  if (!data || data.length === 0) return { ok: false, error: 'order was no longer in the paid state' }
+  if (!data || data.length === 0) return { ok: false, error: 'order was no longer placeable (not paid/revision)' }
   await admin.from('audit_log').insert({
     actor_id: callerId,
     action: 'order.placed',
