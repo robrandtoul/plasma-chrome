@@ -113,6 +113,7 @@ export interface DashboardLatestEvent {
     | 'customer_reply'
     | 'staff_reply'
     | 'pay_link_opened'
+    | 'pay_link_sent'
   actor_name: string
   recipient_name: string | null
   helpscout_thread_id: string | null
@@ -196,6 +197,39 @@ export function payLinkOpenEvents(opens: PayLinkOpenRow[], projects: DashboardPr
       id: `paylink-${o.id}`,
       created_at: o.pay_link_opened_at,
       event_type: 'pay_link_opened',
+      actor_name: p?.contact_name ?? p?.company_name ?? 'Customer',
+      recipient_name: null,
+      helpscout_thread_id: null,
+      proof_id: o.proof_id,
+      version_number: p?.current_version_number ?? 0,
+      contact_name: p?.contact_name ?? null,
+      company_name: p?.company_name ?? null,
+    })
+  }
+  return out
+}
+
+// A successful order pay-link SEND (orders.sent_at, stamped by create-order when
+// it posts the pay link). Like the open/reply rows, it's a timestamp bridged into
+// the feed here. Offline orders send no link, so they're skipped. Same 30-day window.
+export interface PayLinkSentRow {
+  id: string
+  proof_id: string
+  sent_at: string | null
+  payment_method: string | null
+}
+export function payLinkSentEvents(sents: PayLinkSentRow[], projects: DashboardProject[]): DashboardLatestEvent[] {
+  const cutoff = Date.now() - HELPSCOUT_REPLY_WINDOW_MS
+  const byProof = new Map(projects.map((p) => [p.proof_id, p]))
+  const out: DashboardLatestEvent[] = []
+  for (const o of sents) {
+    if (o.payment_method === 'offline') continue
+    if (!o.sent_at || new Date(o.sent_at).getTime() < cutoff) continue
+    const p = byProof.get(o.proof_id)
+    out.push({
+      id: `paylink-sent-${o.id}`,
+      created_at: o.sent_at,
+      event_type: 'pay_link_sent',
       actor_name: p?.contact_name ?? p?.company_name ?? 'Customer',
       recipient_name: null,
       helpscout_thread_id: null,

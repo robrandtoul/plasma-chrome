@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import { DesignerChrome, useDesignerProfile, ButtonCoral, ButtonInk, ProofStatusPill, HelpTip } from '../design'
-import { Plus, X, Maximize2, Bell, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard } from 'lucide-react'
+import { Plus, X, Maximize2, Bell, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Link as LinkIcon } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -44,7 +44,9 @@ import {
   recentHelpscoutActivity,
   helpscoutReplyEvents,
   payLinkOpenEvents,
+  payLinkSentEvents,
   type PayLinkOpenRow,
+  type PayLinkSentRow,
   type DashboardLatestEvent,
   type DashboardProject,
   type DesignerColour,
@@ -1593,6 +1595,13 @@ const ACTIVITY_VISUAL: Record<DashboardLatestEvent['event_type'], ActivityVisual
     tint: 'var(--c-allocated)',
     verbCopy: () => 'opened the payment link',
   },
+  // Synthetic row from the order's sent_at — we sent the customer the pay link.
+  // Outbound action (muted hue, like staff_reply), with a distinct icon + verb.
+  pay_link_sent: {
+    icon: LinkIcon,
+    tint: 'var(--c-ink-mute)',
+    verbCopy: () => 'was sent a payment link',
+  },
 }
 
 function LatestActivityPanel({
@@ -2100,6 +2109,14 @@ export default function DashboardPage() {
       .not('pay_link_opened_at', 'is', null)
       .order('pay_link_opened_at', { ascending: false })
       .limit(20)
+    // Successful pay-link sends (orders.sent_at) — any status, online only
+    // (offline orders send no link; filtered in payLinkSentEvents).
+    const payLinkSentsPromise = supabase
+      .from('orders')
+      .select('id, proof_id, sent_at, payment_method')
+      .not('sent_at', 'is', null)
+      .order('sent_at', { ascending: false })
+      .limit(20)
     const pinsPromise = supabase
       .from('proof_pins')
       .select('proof_id, scope, user_id, pinned_at')
@@ -2126,7 +2143,8 @@ export default function DashboardPage() {
       { data: leadTimeRows },
       { data: counts },
       { data: payLinkOpenRows },
-    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise, payLinkOpensPromise])
+      { data: payLinkSentRows },
+    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise, payLinkOpensPromise, payLinkSentsPromise])
 
     const typedProjects = (projectRows ?? []) as DashboardProject[]
     setProjects(typedProjects)
@@ -2138,7 +2156,7 @@ export default function DashboardPage() {
     // proof, not stored events), then sort newest-first and cap at 20 so the feed
     // stays "the latest 20 things that happened" across both sources.
     const realEvents = (events ?? []) as DashboardLatestEvent[]
-    const mergedEvents = [...realEvents, ...helpscoutReplyEvents(typedProjects), ...payLinkOpenEvents((payLinkOpenRows ?? []) as PayLinkOpenRow[], typedProjects)]
+    const mergedEvents = [...realEvents, ...helpscoutReplyEvents(typedProjects), ...payLinkOpenEvents((payLinkOpenRows ?? []) as PayLinkOpenRow[], typedProjects), ...payLinkSentEvents((payLinkSentRows ?? []) as PayLinkSentRow[], typedProjects)]
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
       .slice(0, 20)
     setLatestEvents(mergedEvents)
