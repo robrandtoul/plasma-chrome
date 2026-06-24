@@ -112,6 +112,7 @@ export interface DashboardLatestEvent {
     | 'designer_override_approve'
     | 'customer_reply'
     | 'staff_reply'
+    | 'pay_link_opened'
   actor_name: string
   recipient_name: string | null
   helpscout_thread_id: string | null
@@ -170,6 +171,39 @@ export function helpscoutReplyEvents(projects: DashboardProject[]): DashboardLat
         actor_name: 'You',
       })
     }
+  }
+  return out
+}
+
+// A pay-link open is a timestamp on the order (record_order_pay_link_opened,
+// 000262), never a stored event — so, like the *_reply rows above, it's bridged
+// into the Latest-activity feed shape here. Proof display info is looked up from
+// the loaded projects so the row reads "Acme opened the pay link". Same 30-day
+// window + the feed's 20-row cap bound it.
+export interface PayLinkOpenRow {
+  id: string
+  proof_id: string
+  pay_link_opened_at: string | null
+}
+export function payLinkOpenEvents(opens: PayLinkOpenRow[], projects: DashboardProject[]): DashboardLatestEvent[] {
+  const cutoff = Date.now() - HELPSCOUT_REPLY_WINDOW_MS
+  const byProof = new Map(projects.map((p) => [p.proof_id, p]))
+  const out: DashboardLatestEvent[] = []
+  for (const o of opens) {
+    if (!o.pay_link_opened_at || new Date(o.pay_link_opened_at).getTime() < cutoff) continue
+    const p = byProof.get(o.proof_id)
+    out.push({
+      id: `paylink-${o.id}`,
+      created_at: o.pay_link_opened_at,
+      event_type: 'pay_link_opened',
+      actor_name: p?.contact_name ?? p?.company_name ?? 'Customer',
+      recipient_name: null,
+      helpscout_thread_id: null,
+      proof_id: o.proof_id,
+      version_number: p?.current_version_number ?? 0,
+      contact_name: p?.contact_name ?? null,
+      company_name: p?.company_name ?? null,
+    })
   }
   return out
 }

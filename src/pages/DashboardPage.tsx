@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import { DesignerChrome, useDesignerProfile, ButtonCoral, ButtonInk, ProofStatusPill, HelpTip } from '../design'
-import { Plus, X, Maximize2, Bell, MessageSquare, Mail, Send, Eye, Check, Clock } from 'lucide-react'
+import { Plus, X, Maximize2, Bell, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -43,6 +43,8 @@ import {
   proofBucket,
   recentHelpscoutActivity,
   helpscoutReplyEvents,
+  payLinkOpenEvents,
+  type PayLinkOpenRow,
   type DashboardLatestEvent,
   type DashboardProject,
   type DesignerColour,
@@ -1584,6 +1586,13 @@ const ACTIVITY_VISUAL: Record<DashboardLatestEvent['event_type'], ActivityVisual
     // a reply we send looks like the customer replying to us.
     verbCopy: () => 'was sent a reply',
   },
+  // Synthetic row from the order's pay_link_opened_at (000262) — the customer
+  // opened the payment link. Same "customer opened something" hue as a view.
+  pay_link_opened: {
+    icon: CreditCard,
+    tint: 'var(--c-allocated)',
+    verbCopy: () => 'opened the payment link',
+  },
 }
 
 function LatestActivityPanel({
@@ -2081,6 +2090,16 @@ export default function DashboardPage() {
       .select('*')
       .order('created_at', { ascending: false })
       .limit(20)
+    // Pay-link opens (000262) — the customer opened a still-payable link.
+    // Synthesised into the feed like the Help Scout reply rows below, bounded by
+    // the same 20-row feed cap.
+    const payLinkOpensPromise = supabase
+      .from('orders')
+      .select('id, proof_id, pay_link_opened_at')
+      .eq('status', 'sent')
+      .not('pay_link_opened_at', 'is', null)
+      .order('pay_link_opened_at', { ascending: false })
+      .limit(20)
     const pinsPromise = supabase
       .from('proof_pins')
       .select('proof_id, scope, user_id, pinned_at')
@@ -2106,7 +2125,8 @@ export default function DashboardPage() {
       { data: pinRows },
       { data: leadTimeRows },
       { data: counts },
-    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise])
+      { data: payLinkOpenRows },
+    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise, payLinkOpensPromise])
 
     const typedProjects = (projectRows ?? []) as DashboardProject[]
     setProjects(typedProjects)
@@ -2118,7 +2138,7 @@ export default function DashboardPage() {
     // proof, not stored events), then sort newest-first and cap at 20 so the feed
     // stays "the latest 20 things that happened" across both sources.
     const realEvents = (events ?? []) as DashboardLatestEvent[]
-    const mergedEvents = [...realEvents, ...helpscoutReplyEvents(typedProjects)]
+    const mergedEvents = [...realEvents, ...helpscoutReplyEvents(typedProjects), ...payLinkOpenEvents((payLinkOpenRows ?? []) as PayLinkOpenRow[], typedProjects)]
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
       .slice(0, 20)
     setLatestEvents(mergedEvents)

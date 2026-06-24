@@ -408,6 +408,19 @@ export default function OrderPayPage() {
       }
       const o = data as OrderPayload
       setOrder(o)
+      // Record that the customer opened a still-payable pay link (most-recent
+      // open). Fire-and-forget, ~1.5s after the page mounts in the browser, so
+      // an email scanner that fetches the link without running JS — or an
+      // instant bounce — doesn't log a false open. Token-validated server-side
+      // (record_order_pay_link_opened), exactly like the read above.
+      if (o.status === 'sent') {
+        setTimeout(() => {
+          if (cancelled) return
+          void supabase
+            .rpc('record_order_pay_link_opened', { p_order_id: id, p_token: token })
+            .then(({ error: e }) => { if (e) console.error('[OrderPayPage] record pay-link open failed:', e.message) })
+        }, 1500)
+      }
       // Pre-fill the destination country from the designer's optional hint so
       // the customer usually just adds their postcode.
       if (o.ship_dest_country) setDestCountry(o.ship_dest_country)
