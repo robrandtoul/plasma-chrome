@@ -54,6 +54,13 @@ interface OrderPayload {
   // Designer-set cards discount stamped at checkout (the resolved amount, >= 0).
   // Shown as a separate negative line; null on legacy rows → no discount.
   amount_card_discount: number | null
+  // Designer-set cards discount RULE (type + value). public_get_order returns
+  // the whole order row, so these are already on the wire — the open-quantity
+  // pre-checkout summary uses them to show the discount + the correct button
+  // total before create-checkout-session stamps the resolved amount. Mirrors
+  // the server's resolveCardDiscount.
+  card_discount_type: 'none' | 'percent' | 'fixed' | null
+  card_discount_value: number | null
   us_tariff_opted_out: boolean
   // Delivery details Stripe collected, persisted by the webhook on the
   // sent → paid flip — so only present once the payment is confirmed.
@@ -867,9 +874,24 @@ export default function OrderPayPage() {
     return 0
   }
 
+  // Cards discount for a given cards-base, mirroring the server's
+  // resolveCardDiscount EXACTLY so the displayed figure equals the charge. The
+  // base is the cards line (cards + finish folded), matching create-checkout-session.
+  function cardDiscountForBase(base: number): number {
+    const t = order?.card_discount_type
+    const v = Number(order?.card_discount_value)
+    if (t !== 'percent' && t !== 'fixed') return 0
+    if (!Number.isFinite(v) || v <= 0) return 0
+    const b = Number.isFinite(base) && base > 0 ? base : 0
+    if (b <= 0) return 0
+    const raw = t === 'percent' ? b * (v / 100) : v
+    const capped = Math.min(Math.max(raw, 0), b)
+    return Math.round(capped * 100) / 100
+  }
+
   // Full pay total for a combined quantity: cards + tooling + personalisation
-  // + finish surcharge + shipping. Shared by the single-selector and per-person
-  // paths.
+  // + finish surcharge − designer discount + shipping. Shared by the
+  // single-selector and per-person paths.
   function payTotalForQty(qty: number): number | null {
     if (!order || qty <= 0) return null
     const cards = cardTotalForQty(qty)
@@ -877,7 +899,11 @@ export default function OrderPayPage() {
     const splitName = perExtraName && order.names_count > 1 ? (order.names_count - 1) * perExtraName : 0
     const pers = personalisation ? Math.max(personalisation.minCharge, qty * personalisation.perCardRate) : 0
     const finish = finishSurchargeForQty(qty)
-    return round2(round2(cards + splitName + pers + finish) + shippingAmount + tariffAmount)
+    // Designer discount applies to the cards line (cards + finish) only, netted
+    // off the total exactly as create-checkout-session does — so the button and
+    // Total match the amount actually charged.
+    const discount = cardDiscountForBase(round2(cards + finish))
+    return round2(round2(cards + splitName + pers + finish) - discount + shippingAmount + tariffAmount)
   }
 
   // Per-person entries → combined sum. Complete only when every person has a
@@ -944,7 +970,7 @@ export default function OrderPayPage() {
   const payTotal = shippingComputedAtCheckout
     ? null
     : order.custom_quote_total != null
-      ? order.custom_quote_total + shippingAmount + tariffAmount
+      ? round2(order.custom_quote_total - cardDiscountForBase(order.custom_quote_total) + shippingAmount + tariffAmount)
       : isSplitOpen
         ? splitTotal
         : isSingleOpen
@@ -956,15 +982,18 @@ export default function OrderPayPage() {
   const displayQty =
     order.quantity ??
     (isSplitOpen ? (splitComplete ? splitSum : null) : isSingleOpen ? chosenQuantity : null)
-  // Card subtotal (cards + tooling + personalisation; shipping is 0 here for
-  // shipping-rated orders). Shown so the customer always sees the card price,
-  // even when the all-in total is finalised on Stripe (full_cost / goodwill).
-  const cardsSubtotal =
+  // Pre-checkout preview components, mirroring the post-checkout breakdown so
+  // the customer sees Cards / Discount before paying — not an undiscounted
+  // lump. Cards base = cards + finish (the discount base); the discount and
+  // tooling are derived from it for the chosen / locked quantity.
+  const previewCardsBase =
     order.custom_quote_total != null
       ? order.custom_quote_total
-      : displayQty != null
-        ? payTotalForQty(displayQty)
+      : displayQty != null && cardTotalForQty(displayQty) != null
+        ? round2((cardTotalForQty(displayQty) as number) + finishSurchargeForQty(displayQty))
         : null
+  const previewDiscount = previewCardsBase != null ? cardDiscountForBase(previewCardsBase) : 0
+  const previewTooling = perExtraName && order.names_count > 1 ? round2((order.names_count - 1) * perExtraName) : 0
 
   // ── Single-screen checkout ────────────────────────────────────────
   // One page: order recap + cost summary on the left; on the right either the
@@ -1023,9 +1052,11 @@ export default function OrderPayPage() {
                   </>
                 ) : (
                   <>
-                    {order.custom_quote_total == null && cardsSubtotal != null && (
-                      <Row label="Cards" value={formatPrice(cardsSubtotal, order.currency)} />
+                    {previewCardsBase != null && (
+                      <Row label={order.custom_quote_total != null ? 'Agreed price' : 'Cards'} value={formatPrice(previewCardsBase, order.currency)} />
                     )}
+                    {previewDiscount > 0 && <Row label="Discount" value={formatPrice(-previewDiscount, order.currency)} />}
+                    {previewTooling > 0 && <Row label="Tooling" value={formatPrice(previewTooling, order.currency)} />}
                     <Row label={SHIPPING_LABEL[order.shipping_treatment]} value={
                       order.shipping_treatment === 'free' ? 'Free'
                         : order.shipping_charged != null ? formatPrice(order.shipping_charged, order.currency)

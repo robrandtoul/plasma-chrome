@@ -8,8 +8,9 @@
 // for key presence, and the sk_test_/sk_live_ PREFIX of the selected key (so a
 // "mode=live but a test key is in the live slot" misconfiguration is visible).
 //
-// Auth: admin only (requireAdmin). Read-only; makes one Xero GET /Organisation
-// call via the existing connection when Xero is connected.
+// Auth: admin only (requireAdmin). Read-only; makes one Xero GET /connections
+// call via the existing connection when Xero is connected (NOT GET /Organisation,
+// which needs the accounting.settings scope this app doesn't request).
 
 import { requireAdmin, json, CORS_HEADERS } from '../_shared/admin.ts'
 import { getAccessContext, listBankAccounts } from '../_shared/xero.ts'
@@ -58,7 +59,7 @@ Deno.serve(async (req) => {
   }
 
   // ── Xero ─────────────────────────────────────────────────────────
-  // One live GET /Organisation through the existing connection so the panel
+  // One live GET /connections through the existing connection so the panel
   // always shows the truth (no stored copy to drift). Degrades to
   // connected:false on any failure rather than erroring the whole panel.
   let xero: {
@@ -76,25 +77,38 @@ Deno.serve(async (req) => {
     if (!acc) {
       xero = { ...xero, connected: false, error: 'Not connected' }
     } else {
+      // Bank accounts (for the Stripe clearing-account picker) need the
+      // accounting.settings.read scope, which this app doesn't request — so this
+      // returns [] today. Harmless; the picker just stays empty.
       bankAccounts = await listBankAccounts(acc.accessToken, acc.tenantId)
-      const res = await fetch('https://api.xero.com/api.xro/2.0/Organisation', {
-        headers: {
-          Authorization: `Bearer ${acc.accessToken}`,
-          'Xero-tenant-id': acc.tenantId,
-          Accept: 'application/json',
-        },
+      // Verify + name the org via GET /connections. We deliberately do NOT call
+      // GET /Organisation: that endpoint needs the accounting.settings scope this
+      // app never requested, so it always 401s and made the panel falsely report
+      // a Xero error even when invoicing was fine. /connections works with the
+      // app's existing scopes, authoritatively lists which orgs the token can act
+      // on, and so also catches a stale stored tenant (a drifted connection).
+      const res = await fetch('https://api.xero.com/connections', {
+        headers: { Authorization: `Bearer ${acc.accessToken}`, Accept: 'application/json' },
       })
       if (!res.ok) {
         xero = { ...xero, connected: true, error: `Xero ${res.status}` }
       } else {
-        const data = await res.json().catch(() => null)
-        const org = data?.Organisations?.[0] ?? null
-        xero = {
-          connected: true,
-          orgName: (org?.Name as string | undefined) ?? null,
-          isDemoCompany: typeof org?.IsDemoCompany === 'boolean' ? org.IsDemoCompany : null,
-          baseCurrency: (org?.BaseCurrency as string | undefined) ?? null,
-          error: null,
+        const conns = await res.json().catch(() => null)
+        const match = Array.isArray(conns) ? (conns.find((c) => c?.tenantId === acc.tenantId) ?? null) : null
+        if (!match) {
+          // Token is valid but the stored org isn't among its live connections —
+          // the connection has drifted (e.g. a Demo org that has since reset).
+          xero = { ...xero, connected: false, error: 'Connected organisation has changed — reconnect Xero.' }
+        } else {
+          const name = (match.tenantName as string | undefined) ?? null
+          // Xero sandbox orgs are always named "Demo Company (…)".
+          xero = {
+            connected: true,
+            orgName: name,
+            isDemoCompany: name ? /^demo company\b/i.test(name) : null,
+            baseCurrency: null,
+            error: null,
+          }
         }
       }
     }
