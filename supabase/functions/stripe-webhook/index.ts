@@ -407,7 +407,7 @@ Deno.serve(async (req) => {
   try {
     const { data: ord } = await admin
       .from('orders')
-      .select('proof_id, created_by, payment_reference, confirmation_sent_at')
+      .select('proof_id, created_by, payment_reference, confirmation_sent_at, token')
       .eq('id', orderId)
       .single()
     if (ord && !ord.confirmation_sent_at) {
@@ -465,6 +465,13 @@ Deno.serve(async (req) => {
             const fullName = contact?.full_name ?? null
             const firstName = (fullName?.trim().split(/\s+/)[0]) || (conv.primaryCustomer?.first ?? '') || 'there'
             const company = contact?.companies?.name ?? ''
+            // Link back to the customer's order page (which doubles as the
+            // tracking page once tracking is enabled). The template wraps it in
+            // a {? order_url}…{/?} conditional, so an unset base URL / token just
+            // drops the line cleanly. Same base-URL env the reminder sender uses.
+            const baseUrl = (Deno.env.get('PROOF_VIEWER_BASE_URL')?.trim() ?? '').replace(/\/+$/, '')
+            const orderToken = (ord.token as string | null) ?? ''
+            const orderUrl = baseUrl && orderToken ? `${baseUrl}/order/${orderId}?token=${encodeURIComponent(orderToken)}` : ''
             const { data: tplRow } = await admin
               .from('reply_templates')
               .select('body')
@@ -476,6 +483,7 @@ Deno.serve(async (req) => {
                 first_name: firstName,
                 company,
                 payment_reference: (ord.payment_reference as string | null) ?? reference ?? orderId,
+                order_url: orderUrl,
               },
             )
             const replyThreadId = await postStaffReply(token, conversationId, {

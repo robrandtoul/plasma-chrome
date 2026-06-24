@@ -150,6 +150,9 @@ export default function OrderBuilderModal({
   // (Admin → Templates), falling back to the code default.
   const [message, setMessage] = useState('')
   const [orderTemplateBody, setOrderTemplateBody] = useState<string | null>(null)
+  // Offline orders send an order CONFIRMATION (no "pay" language) instead of the
+  // pay-link message; loaded alongside it below.
+  const [orderConfirmTemplateBody, setOrderConfirmTemplateBody] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
@@ -426,11 +429,15 @@ export default function OrderBuilderModal({
     let cancelled = false
     void supabase
       .from('reply_templates')
-      .select('body')
-      .eq('id', 'order_payment_link')
-      .maybeSingle()
+      .select('id, body')
+      .in('id', ['order_payment_link', 'order_confirmation_link'])
       .then(({ data }) => {
-        if (!cancelled && data && typeof data.body === 'string') setOrderTemplateBody(data.body)
+        if (cancelled || !data) return
+        for (const row of data as { id: string; body: string }[]) {
+          if (typeof row.body !== 'string') continue
+          if (row.id === 'order_payment_link') setOrderTemplateBody(row.body)
+          else if (row.id === 'order_confirmation_link') setOrderConfirmTemplateBody(row.body)
+        }
       })
     return () => { cancelled = true }
   }, [])
@@ -441,9 +448,11 @@ export default function OrderBuilderModal({
   useEffect(() => {
     if (!result) return
     const url = customerOrderUrl(result.id, result.token)
-    const body = orderTemplateBody ?? DEFAULT_BODIES.order_payment_link
+    const body = paymentMethod === 'offline'
+      ? (orderConfirmTemplateBody ?? DEFAULT_BODIES.order_confirmation_link)
+      : (orderTemplateBody ?? DEFAULT_BODIES.order_payment_link)
     setMessage(renderTemplate(body, { order_url: url }))
-  }, [result, orderTemplateBody])
+  }, [result, orderTemplateBody, orderConfirmTemplateBody, paymentMethod])
 
   // Send the pay-link to the customer on the proof's linked Help Scout
   // conversation (the same send-helpscout-reply path the detail page uses).
@@ -665,21 +674,21 @@ export default function OrderBuilderModal({
             {customerLabel ? ` for ${customerLabel}` : ''}.
           </p>
 
-          {paymentMethod === 'offline' ? (
-            // Offline → recorded as paid; no link, straight into the order queue.
-            <>
-              <div className="mt-4 rounded-lg border border-in-stock bg-in-stock-soft px-3 py-2.5 text-[13px] text-ink">
-                Recorded as paid (offline) — it&rsquo;s now in the order queue, ready to order. No pay link was sent; raise the invoice in Xero when you&rsquo;re ready.
-              </div>
-              <div className="mt-5 flex items-center justify-end gap-2">
-                <ButtonCoral onClick={onClose}>Done</ButtonCoral>
-              </div>
-            </>
-          ) : sent ? (
+          {/* Offline → recorded as paid; the link below is an order confirmation
+              (not a pay link), which the designer sends manually. */}
+          {paymentMethod === 'offline' && (
+            <div className="mt-4 rounded-lg border border-in-stock bg-in-stock-soft px-3 py-2.5 text-[13px] text-ink">
+              Recorded as paid (offline) — it&rsquo;s now in the order queue, ready to order. Raise the invoice in Xero when you&rsquo;re ready. You can send the customer their order link below — it doubles as their tracking page.
+            </div>
+          )}
+
+          {sent ? (
             // Sent confirmation.
             <>
               <div className="mt-4 rounded-lg border border-in-stock bg-in-stock-soft px-3 py-2.5 text-[13px] text-ink">
-                Payment link sent to the customer on Help Scout. They&rsquo;ll get it by email.
+                {paymentMethod === 'offline'
+                  ? 'Order confirmation sent to the customer on Help Scout. They’ll get it by email.'
+                  : 'Payment link sent to the customer on Help Scout. They’ll get it by email.'}
               </div>
               <div className="mt-5 flex items-center justify-end gap-2">
                 <ButtonGhost onClick={copyLink}>{copied ? 'Copied' : 'Copy link'}</ButtonGhost>
@@ -690,7 +699,9 @@ export default function OrderBuilderModal({
             // Send via Help Scout — editable message with the link embedded.
             <>
               <p className="mt-3 text-[13px] text-ink-soft">
-                Send the payment link to the customer on the linked Help Scout conversation:
+                {paymentMethod === 'offline'
+                  ? 'Send an order confirmation with their order link to the customer on the linked Help Scout conversation:'
+                  : 'Send the payment link to the customer on the linked Help Scout conversation:'}
               </p>
               <textarea
                 value={message}
@@ -716,7 +727,7 @@ export default function OrderBuilderModal({
                 <p className="break-all font-mono text-[12px] text-ink-soft">{customerOrderUrl(result.id, result.token)}</p>
               </div>
               <p className="mt-2 text-[12px] text-ink-mute">
-                This proof has no linked Help Scout conversation, so copy the link and send it to the customer yourself.
+                This proof has no linked Help Scout conversation, so copy the order link and send it to the customer yourself.
               </p>
               <div className="mt-5 flex items-center justify-end gap-2">
                 <ButtonGhost onClick={copyLink}>{copied ? 'Copied' : 'Copy link'}</ButtonGhost>

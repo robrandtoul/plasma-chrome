@@ -493,7 +493,9 @@ export default function OrdersPage() {
                         supplierCount={o.material_variants?.materials?.outsourced_supplier_ids?.length ?? 0}
                         suggested={suggestedDate(o)}
                         busy={busyId === o.id}
+                        copied={copiedId === o.id}
                         onReview={() => navigate(`/orders/${o.id}/place`)}
+                        onCopy={() => void copyLink(o)}
                         onSaveField={(patch) => saveOrderField(o.id, patch)}
                         onRetryInvoice={() => void retryInvoice(o)}
                       />
@@ -515,7 +517,9 @@ export default function OrdersPage() {
                       key={o.id}
                       order={o}
                       thumb={thumbs[o.proof_id] ?? null}
+                      copied={copiedId === o.id}
                       onReview={() => navigate(`/orders/${o.id}/place`)}
+                      onCopy={() => void copyLink(o)}
                     />
                   ))}
                 </div>
@@ -537,6 +541,14 @@ export default function OrdersPage() {
                       <div className="flex items-center gap-3 text-ink-soft">
                         <span>{o.quantity != null ? `${o.quantity.toLocaleString()} cards` : 'Custom'}</span>
                         <span className="text-ink-mute">Ordered {formatDate(o.fulfilled_at)}</span>
+                        <button
+                          type="button"
+                          onClick={() => void copyLink(o)}
+                          title="Copy the customer's order link (doubles as their tracking page)"
+                          className="shrink-0 rounded px-2 py-1 text-[12px] text-ink-soft ring-1 ring-line hover:bg-canvas"
+                        >
+                          {copiedId === o.id ? 'Copied' : 'Copy link'}
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -558,11 +570,15 @@ export default function OrdersPage() {
 function RevisionCard({
   order,
   thumb,
+  copied,
   onReview,
+  onCopy,
 }: {
   order: OrderRow
   thumb: GridImage | null
+  copied: boolean
   onReview: () => void
+  onCopy: () => void
 }) {
   const wasPlaced = !!order.fulfilled_at
   return (
@@ -601,6 +617,7 @@ function RevisionCard({
           <Link to={`/proofs/${order.proof_id}`}>
             <ButtonGhost size="sm">View proof &amp; artwork</ButtonGhost>
           </Link>
+          <ButtonGhost size="sm" onClick={onCopy}>{copied ? 'Copied' : 'Copy order link'}</ButtonGhost>
         </div>
       </div>
     </PanelShell>
@@ -615,7 +632,9 @@ function OrderCard({
   supplierCount,
   suggested,
   busy,
+  copied,
   onReview,
+  onCopy,
   onSaveField,
   onRetryInvoice,
 }: {
@@ -626,7 +645,9 @@ function OrderCard({
   supplierCount: number
   suggested: string | null
   busy: boolean
+  copied: boolean
   onReview: () => void
+  onCopy: () => void
   onSaveField: (patch: Partial<OrderRow>) => Promise<boolean>
   onRetryInvoice: () => void
 }) {
@@ -896,6 +917,7 @@ function OrderCard({
           <Link to={`/proofs/${order.proof_id}`}>
             <ButtonGhost size="sm">View proof &amp; artwork</ButtonGhost>
           </Link>
+          <ButtonGhost size="sm" onClick={onCopy}>{copied ? 'Copied' : 'Copy order link'}</ButtonGhost>
           {/* Retry invoice is for orders whose AUTO Xero invoice failed. Offline
               orders deliberately have no auto-invoice (raised manually in Xero),
               so retrying would create a DUPLICATE — never offer it for offline. */}
