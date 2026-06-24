@@ -202,7 +202,10 @@ export function ResolvePopover({
       className={['inline-flex', className].filter(Boolean).join(' ')}
       onClick={(e) => e.stopPropagation()}
     >
-      <span className="inline-flex cursor-pointer" onClick={() => setOpen((v) => !v)}>
+      {/* min-w-0 so this flex level can shrink below its content width —
+          without it the truncate on the dashboard reason chip never clamps
+          and the chip overflows into the Material / Versions columns. */}
+      <span className="inline-flex min-w-0 cursor-pointer" onClick={() => setOpen((v) => !v)}>
         {children}
       </span>
 
