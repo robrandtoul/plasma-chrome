@@ -73,7 +73,20 @@ interface OrderPayload {
     postal_code: string | null
     country: string | null
   } | null
+  // Server-computed customer order-tracking projection (Order log Phase 3).
+  // Always present; level 'off' = nothing shown (the OFF-by-default master
+  // switch + the per-route/per-supplier disclosure rules are resolved entirely
+  // server-side, so the raw production status / supplier dates never reach here).
+  tracking_projection?: TrackingProjection
 }
+
+// Only the projected result crosses to the client — never a raw Stock Control
+// row. 'broad' is date-free; 'granular' adds an ETA (a live tracking link is
+// deferred until a carrier URL is available).
+type TrackingStage = 'in_production' | 'on_its_way' | 'delivered'
+type TrackingProjection =
+  | { level: 'off' }
+  | { level: 'broad' | 'granular'; stage?: TrackingStage; eta?: string }
 
 // One-line spec shown in the artwork recap on the post-payment confirmation.
 type RecapSpec = {
@@ -631,6 +644,53 @@ export default function OrderPayPage() {
     )
   }
 
+  // Quiet order-progress strip (Phase 3). Renders nothing unless tracking is
+  // enabled AND resolves to a real stage for this order — so with the master
+  // switch off (the default) the paid screen is unchanged. Broad shows the
+  // date-free stage checklist; granular appends an ETA.
+  function renderTrackingStrip(p: TrackingProjection | undefined) {
+    if (!p || p.level === 'off' || !p.stage) return null
+    const steps: { key: string; label: string }[] = [
+      { key: 'paid', label: 'Paid' },
+      { key: 'in_production', label: 'In production' },
+      { key: 'on_its_way', label: 'On its way' },
+      { key: 'delivered', label: 'Delivered' },
+    ]
+    const stageIdx = p.stage === 'delivered' ? 3 : p.stage === 'on_its_way' ? 2 : 1
+    return (
+      <div className="mt-5 rounded-xl border border-line bg-canvas p-4">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Order progress</p>
+        <ol className="mt-2 space-y-1.5">
+          {steps.map((s, i) => {
+            const reached = i <= stageIdx
+            const isCurrent = i === stageIdx
+            return (
+              <li key={s.key} className="flex items-center gap-2.5">
+                <span
+                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] ${
+                    reached ? 'bg-[var(--c-in-stock)] text-white' : 'border border-line text-transparent'
+                  }`}
+                  aria-hidden="true"
+                >
+                  ✓
+                </span>
+                <span className={`text-[13px] ${isCurrent ? 'font-semibold text-ink' : reached ? 'text-ink-soft' : 'text-ink-mute'}`}>
+                  {s.label}
+                  {isCurrent ? ' — now' : ''}
+                </span>
+              </li>
+            )
+          })}
+        </ol>
+        {p.level === 'granular' && p.eta && (
+          <p className="mt-3 border-t border-line pt-3 text-[13px] text-ink-soft">
+            Estimated arrival <span className="font-medium text-ink">{p.eta}</span>
+          </p>
+        )}
+      </div>
+    )
+  }
+
   // Rich post-payment confirmation, shared by the confirmed and optimistic
   // (?paid=1, pre-webhook) states. Shows the approved-artwork recap, an itemised
   // paid summary (from the breakdown stamped at checkout), the delivery address
@@ -729,6 +789,9 @@ export default function OrderPayPage() {
               </ul>
             )}
           </div>
+
+          {/* Order progress (Phase 3) — only when tracking is enabled + resolved. */}
+          {confirmed && renderTrackingStrip(o.tracking_projection)}
 
           {/* Self-serve VAT invoice (Xero online-invoice link, once it reconciles). */}
           {renderVatInvoice()}

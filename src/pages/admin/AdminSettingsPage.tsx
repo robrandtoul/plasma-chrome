@@ -52,7 +52,21 @@ interface Settings {
   xero_us_tariff_item_code: string
   us_tariff_intro_copy: string
   us_tariff_optout_warning: string
+  /** Customer order tracking (Phase 3, migration 000265). Master switch +
+   *  per-route/per-supplier disclosure. Off by default → customers see nothing
+   *  after "Paid". The projection is resolved server-side; this only controls
+   *  how much is disclosed. */
+  customer_tracking_enabled: boolean
+  customer_tracking_config: CustomerTrackingConfig
 }
+
+type TrackingLevel = 'off' | 'broad' | 'granular'
+interface CustomerTrackingConfig {
+  inhouse: TrackingLevel
+  outsourced_default: TrackingLevel
+  suppliers: Record<string, TrackingLevel>
+}
+const TRACKING_DEFAULT_CONFIG: CustomerTrackingConfig = { inhouse: 'granular', outsourced_default: 'broad', suppliers: {} }
 
 // Help Scout test-connection result. Component-scoped only — no DB
 // persistence. Resets to "not tested" on page revisit, accepted v1
@@ -112,6 +126,8 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   xero_us_tariff_item_code:          'setting.xero_us_tariff_item_code_updated',
   us_tariff_intro_copy:              'setting.us_tariff_intro_copy_updated',
   us_tariff_optout_warning:          'setting.us_tariff_optout_warning_updated',
+  customer_tracking_enabled:         'setting.customer_tracking_enabled_updated',
+  customer_tracking_config:          'setting.customer_tracking_config_updated',
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -127,6 +143,15 @@ export default function AdminSettingsPage() {
 
   // Local drafts so text fields don't round-trip on every keystroke.
   const [drafts, setDrafts] = useState<Partial<Settings>>({})
+
+  // Stock Control suppliers (public schema), for the per-supplier tracking
+  // overrides. Best-effort; the override keys are the supplier id. Loaded once.
+  const [trackingSuppliers, setTrackingSuppliers] = useState<{ id: string; name: string; active: boolean }[]>([])
+  useEffect(() => {
+    void supabase.schema('public').from('outsourced_suppliers').select('id, name, active').then(({ data }) => {
+      if (data) setTrackingSuppliers(data as { id: string; name: string; active: boolean }[])
+    })
+  }, [])
 
   // Help Scout connection state. No mount-time check — test only
   // fires when the admin clicks the Test connection button.
@@ -199,7 +224,7 @@ export default function AdminSettingsPage() {
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, payment_mode, xero_stripe_account_code, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning')
+      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, payment_mode, xero_stripe_account_code, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -658,6 +683,132 @@ export default function AdminSettingsPage() {
         </div>
       </section>
 
+      {/* ── Customer order tracking (Phase 3) ─────────────────────── */}
+      {(() => {
+        const cfg: CustomerTrackingConfig = {
+          ...TRACKING_DEFAULT_CONFIG,
+          ...(settings.customer_tracking_config ?? {}),
+          suppliers: settings.customer_tracking_config?.suppliers ?? {},
+        }
+        const levelOptions: { value: TrackingLevel; label: string }[] = [
+          { value: 'off', label: 'Off' },
+          { value: 'broad', label: 'Broad' },
+          { value: 'granular', label: 'Granular' },
+        ]
+        const setSupplier = (id: string, v: TrackingLevel | null) => {
+          const suppliers = { ...cfg.suppliers }
+          if (v == null) delete suppliers[id]
+          else suppliers[id] = v
+          void saveField('customer_tracking_config', { ...cfg, suppliers })
+        }
+        const sortedSuppliers = [...trackingSuppliers].sort(
+          (a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name),
+        )
+        const knownIds = new Set(trackingSuppliers.map((s) => s.id))
+        const orphanIds = Object.keys(cfg.suppliers).filter((id) => !knownIds.has(id))
+        return (
+          <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+            <h3 className="mb-1 text-sm font-semibold text-ink">Customer order tracking</h3>
+            <p className="mb-4 text-xs text-ink-mute">
+              Shows a quiet order-progress strip on the customer&rsquo;s paid screen. Off by default — turn it on, then choose how much detail each route and supplier reveals. <span className="font-medium">Broad</span> shows date-free stages (In production → On its way → Delivered) so a late supplier stays invisible; <span className="font-medium">Granular</span> adds an estimated arrival date.
+            </p>
+            <div className="space-y-5">
+              <FieldRow
+                label="Customer order tracking enabled"
+                help="The master switch. When off (the default), the customer sees nothing after Paid — exactly today's behaviour. Turn on to start showing the progress strip, governed by the levels below. In-house jobs have no shipping data, so they top out at 'On its way' with no date."
+                saved={recentlySaved('customer_tracking_enabled')}
+                working={working.customer_tracking_enabled}
+                error={errors.customer_tracking_enabled}
+              >
+                <Toggle
+                  value={settings.customer_tracking_enabled}
+                  onChange={(v) => void saveField('customer_tracking_enabled', v)}
+                  disabled={!!working.customer_tracking_enabled}
+                  label="Customer order tracking enabled"
+                />
+              </FieldRow>
+
+              {settings.customer_tracking_enabled && (
+                <>
+                  <FieldRow
+                    label="In-house orders"
+                    help="Disclosure level for orders you produce in-house. In-house has no carrier tracking, so Granular behaves like Broad (no date or link)."
+                    saved={recentlySaved('customer_tracking_config')}
+                    working={working.customer_tracking_config}
+                    error={errors.customer_tracking_config}
+                  >
+                    <RadioGroup<TrackingLevel>
+                      value={cfg.inhouse}
+                      onChange={(v) => saveField('customer_tracking_config', { ...cfg, inhouse: v })}
+                      options={levelOptions}
+                    />
+                  </FieldRow>
+
+                  <FieldRow
+                    label="Outsourced orders — default"
+                    help="The level for supplier-produced orders that don't have their own override below. Default is Broad, so a supplier's dates and reliability stay private until you choose to expose them per supplier."
+                    saved={recentlySaved('customer_tracking_config')}
+                    working={working.customer_tracking_config}
+                    error={errors.customer_tracking_config}
+                  >
+                    <RadioGroup<TrackingLevel>
+                      value={cfg.outsourced_default}
+                      onChange={(v) => saveField('customer_tracking_config', { ...cfg, outsourced_default: v })}
+                      options={levelOptions}
+                    />
+                  </FieldRow>
+
+                  <div className="border-t border-line-soft pt-4">
+                    <p className="text-sm font-medium text-ink-soft">Per-supplier overrides</p>
+                    <p className="mt-1 mb-3 text-xs text-ink-mute">
+                      Dial a trusted supplier up to Granular, or hold an unreliable one at Broad / Off, regardless of the outsourced default. &ldquo;Use default&rdquo; removes the override.
+                    </p>
+                    {sortedSuppliers.length === 0 && orphanIds.length === 0 ? (
+                      <p className="text-[13px] text-ink-mute">No suppliers found.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {sortedSuppliers.map((s) => (
+                          <div key={s.id} className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
+                            <span className="text-[13px] text-ink">
+                              {s.name}
+                              {!s.active && <span className="ml-1.5 text-[11px] text-ink-mute">(inactive)</span>}
+                            </span>
+                            <RadioGroup<TrackingLevel | null>
+                              value={cfg.suppliers[s.id] ?? null}
+                              onChange={(v) => setSupplier(s.id, v)}
+                              options={[
+                                { value: null, label: 'Use default' },
+                                { value: 'off', label: 'Off' },
+                                { value: 'broad', label: 'Broad' },
+                                { value: 'granular', label: 'Granular' },
+                              ]}
+                            />
+                          </div>
+                        ))}
+                        {orphanIds.map((id) => (
+                          <div key={id} className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
+                            <span className="text-[13px] text-ink-mute">
+                              Unknown supplier <span className="font-mono text-[11px]">{id.slice(0, 8)}…</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setSupplier(id, null)}
+                              className="self-start rounded px-2.5 py-1 text-[12px] text-ink-soft ring-1 ring-line hover:bg-canvas"
+                            >
+                              Clear override
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+        )
+      })()}
+
       {/* ── Designer defaults ─────────────────────────────────────── */}
       <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
         <h3 className="mb-4 text-sm font-semibold text-ink">Designer defaults</h3>
@@ -1109,5 +1260,7 @@ function humanFieldLabel(field: keyof Settings): string {
     xero_us_tariff_item_code: 'US tariff Xero item code',
     us_tariff_intro_copy: 'US tariff intro copy',
     us_tariff_optout_warning: 'US tariff opt-out warning',
+    customer_tracking_enabled: 'Customer order tracking enabled',
+    customer_tracking_config: 'Customer order tracking config',
   }[field]
 }
