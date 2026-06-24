@@ -15,10 +15,14 @@ const CONNECTIONS_URL = 'https://api.xero.com/connections'
 // Xero's NEW granular scopes (apps created after 2 March 2026 only get
 // these — the old broad `accounting.transactions` is gone, which was the
 // invalid_scope cause). We need: accounting.contacts (find/create the
-// customer), accounting.invoices (create the invoice), offline_access
-// (refresh token), openid (the connection/identity).
+// customer), accounting.invoices (create the invoice), accounting.payments
+// (record the payment so the invoice marks Paid — without this, PUT /Payments
+// returns 401 AuthorizationUnsuccessful while invoice creation still works),
+// offline_access (refresh token), openid (the connection/identity).
+// NOTE: adding/removing a scope requires the admin to RECONNECT Xero so the
+// new consent + token carry it; a token refresh keeps the original grant.
 export const XERO_SCOPES =
-  'openid accounting.contacts accounting.invoices offline_access'
+  'openid accounting.contacts accounting.invoices accounting.payments offline_access'
 
 function clientId(): string {
   return Deno.env.get('XERO_CLIENT_ID') ?? ''
