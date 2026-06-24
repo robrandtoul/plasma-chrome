@@ -7,6 +7,7 @@ import { customerOrderUrl } from '../lib/customerOrderUrl'
 import { logAudit } from '../lib/audit'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency } from '../lib/types'
+import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 
 // Orders / "to order" surface (Ordering & checkout, Step 6 — overhauled).
 //
@@ -34,6 +35,7 @@ interface OrderRow {
   token: string
   expires_at: string | null
   sent_at: string | null
+  pay_link_opened_at: string | null
   currency: Currency
   quantity: number | null
   names_count: number
@@ -80,7 +82,7 @@ interface OrderRow {
 }
 
 const SELECT = `
-  id, status, token, expires_at, sent_at, currency, quantity, names_count, has_personalisation,
+  id, status, token, expires_at, sent_at, pay_link_opened_at, currency, quantity, names_count, has_personalisation,
   custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff,
   card_discount_type, card_discount_value, amount_card_discount, payment_method,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
@@ -960,6 +962,11 @@ function AwaitingPaymentCard({
             Ref {order.payment_reference}
             {order.sent_at ? ` · sent ${formatDate(order.sent_at)}` : ''}
             {order.expires_at ? ` · ${expired ? 'expired' : 'expires'} ${formatDate(order.expires_at)}` : ''}
+          </p>
+          <p className="mt-0.5 text-[13px] text-ink-mute">
+            {order.pay_link_opened_at
+              ? <span title={formatAbsoluteDateTime(order.pay_link_opened_at)}>Pay link opened {relativeTime(order.pay_link_opened_at)}</span>
+              : 'Pay link not opened yet'}
           </p>
           {reminder && (
             <p className="mt-1 text-[13px] text-ink-soft">
