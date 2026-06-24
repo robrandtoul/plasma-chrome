@@ -294,11 +294,22 @@ export default function OrdersPage() {
       await Promise.all(
         proofIds.map(async (proofId) => {
           try {
-            const { data: imgData } = await supabase.functions.invoke<{ images: GridImage[] }>(
-              'customer-proof-images',
-              { body: { proofId } },
-            )
-            const first = (imgData?.images ?? []).find((img) => img.is_qr_code !== true) ?? null
+            // customer-proof-images returns EVERY version's images (the customer
+            // page has a version switcher), so scope the thumbnail to the CURRENT
+            // version — otherwise an earlier version's artwork shows (e.g. a v1
+            // plastic card for a proof now approved in wood). Mirrors the
+            // OrderReviewPage gallery; falls back to the first non-QR image only
+            // when the current version can't be resolved.
+            const [{ data: curV }, { data: imgData }] = await Promise.all([
+              supabase.from('proof_versions').select('id').eq('proof_id', proofId).eq('is_current', true).maybeSingle(),
+              supabase.functions.invoke<{ images: GridImage[] }>('customer-proof-images', { body: { proofId } }),
+            ])
+            const currentVersionId = (curV as { id?: string } | null)?.id ?? null
+            const nonQr = (imgData?.images ?? []).filter((img) => img.is_qr_code !== true)
+            const scoped = currentVersionId
+              ? nonQr.filter((img) => (img as unknown as { proof_version_id?: string }).proof_version_id === currentVersionId)
+              : []
+            const first = (scoped.length > 0 ? scoped : nonQr)[0] ?? null
             if (!cancelled) setThumbs((prev) => ({ ...prev, [proofId]: first }))
           } catch {
             // ignore — card renders without a thumbnail
