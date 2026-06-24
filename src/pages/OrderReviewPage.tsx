@@ -46,8 +46,8 @@ interface PreviewResponse {
   ship_by?: string
   summary?: PreviewSummary
   helpscout_linked?: boolean
-  // In-house only: which Dropbox folder files will be attached to the note (so
-  // Stock Control mirrors them onto the job card) vs skipped (too big / not art).
+  // Both routes: which Dropbox folder files will be attached (to the in-house
+  // note, or to the supplier email) vs skipped (too big / not artwork).
   artwork_plan?: { attach: string[]; skipped: { name: string; reason: string }[] }
 }
 
@@ -379,7 +379,28 @@ export default function OrderReviewPage() {
                     <p className="text-sm font-medium text-ink">{preview.subject}</p>
                     <p className="mt-3 text-[12px] text-ink-mute">Message</p>
                     <pre className="mt-1 whitespace-pre-wrap break-words rounded-lg border border-line bg-canvas p-3 text-[13px] text-ink">{(preview.email_lines ?? []).join('\n')}</pre>
-                    <p className="mt-2 text-[12px] text-ink-mute">Sent to the supplier on a new Help Scout conversation, which hands the order to Stock Control. Artwork goes via the Dropbox link above.</p>
+                    {preview.artwork_plan && (
+                      <div className="mt-3 rounded-lg border border-line-soft bg-canvas/60 p-3 text-[12px]">
+                        {preview.artwork_plan.attach.length > 0 ? (
+                          <>
+                            <p className="font-medium text-ink">
+                              {preview.artwork_plan.attach.length} artwork file{preview.artwork_plan.attach.length === 1 ? '' : 's'} will be attached to the email
+                            </p>
+                            <ul className="mt-1 list-disc pl-4 text-ink-soft">
+                              {preview.artwork_plan.attach.map((n) => <li key={n} className="break-all">{n}</li>)}
+                            </ul>
+                          </>
+                        ) : (
+                          <p className="text-ink-mute">No files will be attached — the supplier opens the Dropbox folder from the link in the email.</p>
+                        )}
+                        {preview.artwork_plan.skipped.length > 0 && (
+                          <p className="mt-1.5 text-ink-mute">
+                            Skipped (use the Dropbox link): {preview.artwork_plan.skipped.map((s) => `${s.name} (${s.reason})`).join(', ')}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    <p className="mt-2 text-[12px] text-ink-mute">Sent to the supplier on a new Help Scout conversation, which hands the order to Stock Control. The artwork files are attached, with the Dropbox link in the email as a backup.</p>
                   </>
                 ) : (
                   <>

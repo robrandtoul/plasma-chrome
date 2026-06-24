@@ -104,7 +104,7 @@ async function createNote(
 // Scout emails out. Returns the new conversation id (Resource-Id header).
 async function createSupplierConversation(
   token: string,
-  opts: { mailboxId: number; subject: string; supplierEmail: string; userId: number; text: string },
+  opts: { mailboxId: number; subject: string; supplierEmail: string; userId: number; text: string; attachments?: { fileName: string; mimeType: string; data: string }[] },
 ): Promise<string | null> {
   const resp = await fetch('https://api.helpscout.net/v2/conversations', {
     method: 'POST',
@@ -115,7 +115,8 @@ async function createSupplierConversation(
       status: 'pending',
       mailboxId: opts.mailboxId,
       customer: { email: opts.supplierEmail },
-      threads: [{ type: 'reply', customer: { email: opts.supplierEmail }, user: opts.userId, text: opts.text }],
+      // Attachments ride on the reply thread (same shape as the in-house note).
+      threads: [{ type: 'reply', customer: { email: opts.supplierEmail }, user: opts.userId, text: opts.text, ...(opts.attachments && opts.attachments.length ? { attachments: opts.attachments } : {}) }],
     }),
   })
   if (!resp.ok) {
@@ -617,6 +618,23 @@ Deno.serve(async (req) => {
   const emailLines = (await renderSupplierEmail(admin, chosen?.id ?? null, { customer: customerName, order_details: orderDetails })).split('\n')
   const subject = `Order ${String(order.stock_order_number).trim()} - ${customerName}`
 
+  // Plan the artwork attachments from the Dropbox folder (best-effort: a listing
+  // failure just means no attachments — the email + folder link still go). Same
+  // as the in-house route, so the supplier gets the files AND the link.
+  let artworkPlan: ArtworkPlan = { attach: [], skipped: [] }
+  let toFetch: { name: string; path: string; mime: string }[] = []
+  let dbxToken: string | null = null
+  if (order.dropbox_folder_url) {
+    try {
+      dbxToken = await getDropboxAccessToken(admin)
+      if (dbxToken) {
+        const planned = planArtwork(await listSharedLinkEntries(dbxToken, order.dropbox_folder_url))
+        artworkPlan = planned.plan
+        toFetch = planned.toFetch
+      }
+    } catch { /* best-effort */ }
+  }
+
   if (mode === 'preview') {
     return json({
       ok: true,
@@ -627,6 +645,7 @@ Deno.serve(async (req) => {
       suppliers,
       ship_by: shipByStr,
       summary,
+      artwork_plan: artworkPlan,
     })
   }
 
@@ -648,12 +667,22 @@ Deno.serve(async (req) => {
       mailboxId = Number.isInteger(envMb) && envMb > 0 ? envMb : null
     }
     if (mailboxId == null) return json({ ok: false, error: 'Could not resolve a Help Scout mailbox to send from.' }, 502)
+    // Download + attach the prepped artwork (best-effort, same as in-house). The
+    // Dropbox link stays in the email body so anything too big to attach (Help
+    // Scout caps a file at 10 MB) is still reachable.
+    let attachments: { fileName: string; mimeType: string; data: string }[] = []
+    if (dbxToken && toFetch.length && order.dropbox_folder_url) {
+      try {
+        attachments = await buildArtworkAttachments(dbxToken, order.dropbox_folder_url, toFetch)
+      } catch { /* best-effort: send the email without attachments */ }
+    }
     newConvId = await createSupplierConversation(token, {
       mailboxId,
       subject,
       supplierEmail: chosen.email,
       userId,
       text: emailLines.join('<br>'),
+      attachments,
     })
   } catch (e) {
     if (e instanceof HsError) return json({ ok: false, error: `Help Scout: ${e.message}` }, 502)
