@@ -130,16 +130,8 @@ export const ORDER_REMINDER_DEFAULT_BODIES: Record<string, string> = {
     `Hi {first_name},\n\nA quick reminder that your order link{? company} for {company}{/?} expires on {order_expiry}. If you'd still like to go ahead, you can complete it here:\n\n{order_url}\n\nIf the link has lapsed by the time you read this, just reply and we'll send a fresh one.`,
 }
 
-// Default bodies for the two order-lifecycle templates (migration 000260),
-// posted as a customer-visible Help Scout reply by the order-lifecycle edge
-// function when an order link is cancelled or a paid/placed order is held for
-// a redesign. Fallback when the reply_templates row is missing. Must stay in
-// sync with the seed migration (000260) and src/lib/replyTemplates.ts
-// DEFAULT_BODIES. No sign-off — Help Scout auto-appends the configured
-// signature. No link variable, so templateProblem() must NOT gate these.
-export const ORDER_LIFECYCLE_DEFAULT_BODIES: Record<string, string> = {
-  order_cancelled:
-    `Hi {first_name},\n\nWe've cancelled the order and payment link for your cards{? company} for {company}{/?}. No payment has been taken.\n\nIf you'd like to go ahead after all, just reply and we'll send a fresh link.`,
-  order_revision:
-    `Hi {first_name},\n\nWe're updating your cards{? company} for {company}{/?} — a fresh proof will follow shortly for you to approve before we go ahead.\n\nIf you have any questions in the meantime, just reply to this email.`,
-}
+// The order_cancelled / order_revision default bodies (migration 000260) live in
+// src/lib/replyTemplates.ts DEFAULT_BODIES (admin "Reset to default") and the
+// 000260 seed. The order-lifecycle edge function inlines its own matching copy
+// (self-contained MCP deploy, like place-order), so there is deliberately no
+// _shared constant here to keep in sync.
