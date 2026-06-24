@@ -88,6 +88,31 @@ type TrackingProjection =
   | { level: 'off' }
   | { level: 'broad' | 'granular'; stage?: TrackingStage; eta?: string }
 
+// Customer-facing copy per tracking stage: the headline + the one line that
+// replaces the old static "what happens next" box, so it stays accurate on
+// every visit (not just right after payment).
+const STAGE_META: Record<TrackingStage, { label: string; line: string }> = {
+  paid:          { label: 'Paid',          line: 'We’ve got your order and we’re getting it ready.' },
+  in_production: { label: 'In production', line: 'We’re making your cards now — we’ll email you the moment they’re on their way.' },
+  on_its_way:    { label: 'On its way',    line: 'Your cards are on their way.' },
+  delivered:     { label: 'Delivered',     line: 'Delivered — we hope they look great.' },
+}
+const STAGE_STEPS: { key: TrackingStage; label: string }[] = [
+  { key: 'paid', label: 'Paid' },
+  { key: 'in_production', label: 'In production' },
+  { key: 'on_its_way', label: 'On its way' },
+  { key: 'delivered', label: 'Delivered' },
+]
+function stageIndex(stage: TrackingStage): number {
+  return stage === 'delivered' ? 3 : stage === 'on_its_way' ? 2 : stage === 'in_production' ? 1 : 0
+}
+
+// Metals (and similar) express their variant as a thickness ("300 micron"),
+// which reads clearer to a customer than the generic "Option" label.
+function variantLabel(variant: string): string {
+  return /micron|µm|\bum\b/i.test(variant) ? 'Thickness' : 'Option'
+}
+
 // One-line spec shown in the artwork recap on the post-payment confirmation.
 type RecapSpec = {
   material: string
@@ -644,49 +669,60 @@ export default function OrderPayPage() {
     )
   }
 
-  // Quiet order-progress strip (Phase 3). Renders nothing unless tracking is
-  // enabled AND resolves to a real stage for this order — so with the master
-  // switch off (the default) the paid screen is unchanged. Broad shows the
-  // date-free stage checklist; granular appends an ETA.
-  function renderTrackingStrip(p: TrackingProjection | undefined) {
+  // Promoted order-status block (Phase 3): the hero of the return-visit screen.
+  // Leads with the current stage + a stage-driven line (which replaces the old
+  // static "what happens next" box), then a horizontal progress bar. Renders
+  // nothing unless tracking is enabled AND resolves to a real stage, so with the
+  // master switch off the screen is unchanged. Granular appends an ETA.
+  function renderStatusBlock(p: TrackingProjection | undefined) {
     if (!p || p.level === 'off' || !p.stage) return null
-    const steps: { key: string; label: string }[] = [
-      { key: 'paid', label: 'Paid' },
-      { key: 'in_production', label: 'In production' },
-      { key: 'on_its_way', label: 'On its way' },
-      { key: 'delivered', label: 'Delivered' },
-    ]
-    const stageIdx = p.stage === 'delivered' ? 3 : p.stage === 'on_its_way' ? 2 : p.stage === 'in_production' ? 1 : 0
+    const stageIdx = stageIndex(p.stage)
+    const meta = STAGE_META[p.stage]
     return (
-      <div className="mt-5 rounded-xl border border-line bg-canvas p-4">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Order progress</p>
-        <ol className="mt-2 space-y-1.5">
-          {steps.map((s, i) => {
-            const reached = i <= stageIdx
-            const isCurrent = i === stageIdx
-            return (
-              <li key={s.key} className="flex items-center gap-2.5">
-                <span
-                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[9px] ${
-                    reached ? 'bg-[var(--c-in-stock)] text-white' : 'border border-line text-transparent'
-                  }`}
-                  aria-hidden="true"
-                >
-                  ✓
-                </span>
-                <span className={`text-[13px] ${isCurrent ? 'font-semibold text-ink' : reached ? 'text-ink-soft' : 'text-ink-mute'}`}>
-                  {s.label}
-                  {isCurrent ? ' — now' : ''}
-                </span>
-              </li>
-            )
-          })}
-        </ol>
+      <div className="mt-5 rounded-xl border border-line bg-canvas p-4 sm:p-5">
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-in-stock-soft" aria-hidden="true">
+            <span className="h-2.5 w-2.5 rounded-full bg-[var(--c-in-stock)]" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-base font-semibold text-ink">{meta.label}</p>
+            <p className="text-[12px] text-ink-mute">Step {stageIdx + 1} of 4</p>
+          </div>
+        </div>
+        <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">{meta.line}</p>
         {p.level === 'granular' && p.eta && (
-          <p className="mt-3 border-t border-line pt-3 text-[13px] text-ink-soft">
+          <p className="mt-1.5 text-[13px] text-ink-soft">
             Estimated arrival <span className="font-medium text-ink">{p.eta}</span>
           </p>
         )}
+        <div className="relative mt-5">
+          <div className="absolute left-[11px] right-[11px] top-[11px] h-0.5 bg-line" />
+          <div
+            className="absolute left-[11px] top-[11px] h-0.5 bg-[var(--c-in-stock)]"
+            style={{ width: `calc((100% - 22px) * ${stageIdx} / 3)` }}
+          />
+          <ol className="relative flex justify-between">
+            {STAGE_STEPS.map((s, i) => {
+              const reached = i <= stageIdx
+              const isCurrent = i === stageIdx
+              return (
+                <li key={s.key} className="flex w-16 flex-col items-center gap-1.5 text-center">
+                  <span
+                    className={`flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full text-[11px] ${
+                      reached ? 'bg-[var(--c-in-stock)] text-white' : 'border-[1.5px] border-line bg-surface text-transparent'
+                    }`}
+                    aria-hidden="true"
+                  >
+                    ✓
+                  </span>
+                  <span className={`text-[11px] leading-tight ${isCurrent ? 'font-semibold text-ink' : reached ? 'text-ink-soft' : 'text-ink-mute'}`}>
+                    {s.label}
+                  </span>
+                </li>
+              )
+            })}
+          </ol>
+        </div>
       </div>
     )
   }
@@ -712,17 +748,33 @@ export default function OrderPayPage() {
     const addressLine = addr
       ? [addr.line1, addr.line2, addr.city, addr.region, addr.postal_code, addr.country].filter(Boolean).join(', ')
       : ''
+    // The warm "thank you" intro is for the immediate post-payment view (the
+    // ?paid=1 redirect, or the pre-webhook optimistic state). A later return
+    // visit gets a quieter "Your order" header led by the live status block.
+    const isImmediate = !confirmed || justPaid
     return (
       <Screen>
         <PanelShell className="w-full max-w-lg">
-          <Pill colour="in-stock">{confirmed ? 'Paid' : 'Payment received'}</Pill>
-          <h1 className="mt-3 text-xl font-semibold text-ink">
-            {confirmed ? 'Order confirmed' : 'Thank you — payment received'}
-          </h1>
+          {isImmediate ? (
+            <>
+              <Pill colour="in-stock">{confirmed ? 'Paid' : 'Payment received'}</Pill>
+              <h1 className="mt-3 text-xl font-semibold text-ink">
+                {confirmed ? 'Order confirmed' : 'Thank you — payment received'}
+              </h1>
+            </>
+          ) : (
+            <>
+              <Pill colour="in-stock">Paid</Pill>
+              <h1 className="mt-3 text-xl font-semibold text-ink">Your order</h1>
+            </>
+          )}
           {company && <p className="mt-1 text-sm text-ink-soft">{company}</p>}
           {o.payment_reference && (
             <p className="mt-0.5 text-sm text-ink-soft">Reference {o.payment_reference}</p>
           )}
+
+          {/* Order status — the hero of a return visit, led right under the header. */}
+          {!isImmediate && renderStatusBlock(o.tracking_projection)}
 
           <Recap thumbs={thumbs} spec={spec} />
 
@@ -773,25 +825,26 @@ export default function OrderPayPage() {
             </div>
           )}
 
-          {/* What happens next. */}
-          <div className="mt-5 rounded-xl border border-line bg-canvas p-4 text-sm text-ink-soft">
-            <p className="font-medium text-ink">What happens next</p>
-            {confirmed ? (
-              <ul className="mt-2 list-disc space-y-1.5 pl-5">
-                <li>Your cards are now in production.</li>
-                <li>We&rsquo;ll email you dispatch details as soon as they&rsquo;re on their way.</li>
-              </ul>
-            ) : (
-              <ul className="mt-2 list-disc space-y-1.5 pl-5">
-                <li>We&rsquo;re just confirming your payment — this only takes a moment.</li>
-                <li>A receipt is on its way to your email.</li>
-                <li>You can safely close this page.</li>
-              </ul>
-            )}
-          </div>
-
-          {/* Order progress (Phase 3) — only when tracking is enabled + resolved. */}
-          {confirmed && renderTrackingStrip(o.tracking_projection)}
+          {/* What happens next — the reassurance shown ONLY on the immediate
+              post-payment view. On a return visit the status block above answers
+              "where's my order" instead, so this would just be redundant. */}
+          {isImmediate && (
+            <div className="mt-5 rounded-xl border border-line bg-canvas p-4 text-sm text-ink-soft">
+              <p className="font-medium text-ink">What happens next</p>
+              {confirmed ? (
+                <ul className="mt-2 list-disc space-y-1.5 pl-5">
+                  <li>We&rsquo;ve got your order and we&rsquo;re getting started.</li>
+                  <li>We&rsquo;ll email you dispatch details as soon as your cards are on their way.</li>
+                </ul>
+              ) : (
+                <ul className="mt-2 list-disc space-y-1.5 pl-5">
+                  <li>We&rsquo;re just confirming your payment — this only takes a moment.</li>
+                  <li>A receipt is on its way to your email.</li>
+                  <li>You can safely close this page.</li>
+                </ul>
+              )}
+            </div>
+          )}
 
           {/* Self-serve VAT invoice (Xero online-invoice link, once it reconciles). */}
           {renderVatInvoice()}
@@ -1105,7 +1158,7 @@ export default function OrderPayPage() {
                 <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
                   <dt className="text-ink-mute">Material</dt>
                   <dd className="text-ink">{spec.material}</dd>
-                  {spec.variant && (<><dt className="text-ink-mute">Option</dt><dd className="text-ink">{spec.variant}</dd></>)}
+                  {spec.variant && (<><dt className="text-ink-mute">{variantLabel(spec.variant)}</dt><dd className="text-ink">{spec.variant}</dd></>)}
                   {spec.finish && (<><dt className="text-ink-mute">Finish</dt><dd className="text-ink">{spec.finish}</dd></>)}
                   {spec.inks.length > 0 && (<><dt className="text-ink-mute">Ink</dt><dd className="text-ink">{spec.inks.join(', ')}</dd></>)}
                 </dl>
@@ -1387,7 +1440,7 @@ function Recap({ thumbs, spec }: { thumbs: GridImage[]; spec: RecapSpec | null }
           <dd className="text-ink">{spec.material}</dd>
           {spec.variant && (
             <>
-              <dt className="text-ink-mute">Option</dt>
+              <dt className="text-ink-mute">{variantLabel(spec.variant)}</dt>
               <dd className="text-ink">{spec.variant}</dd>
             </>
           )}
