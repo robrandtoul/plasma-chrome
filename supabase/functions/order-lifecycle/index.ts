@@ -12,10 +12,11 @@
 // returns ok, because the state change is the important thing.
 //
 // Auth: the function self-authenticates via requireDesigner (reads the bearer
-// JWT, confirms an active admin/designer), so it deploys with verify_jwt = false
-// like every sibling designer/admin function (create-order, proof-action, …) —
-// the platform passes the request through and requireDesigner is the real gate.
-// Attribution is the verified caller (callerId from the JWT).
+// JWT, confirms an active admin/designer). Deployed with verify_jwt = true to
+// match the live place-order sibling (same requireDesigner pattern, also deployed
+// via MCP) — the designer frontend always sends a fresh session JWT, so the
+// platform check passes and requireDesigner is the role gate on top. Attribution
+// is the verified caller (callerId from the JWT).
 
 import { json, requireDesigner, CORS_HEADERS } from '../_shared/admin.ts'
 import { logAudit } from '../_shared/audit.ts'

@@ -503,10 +503,11 @@ verify_jwt = true
 verify_jwt = true
 
 # order-lifecycle: designer-initiated cancel / revise of an order. Self-auths via
-# requireDesigner (bearer JWT → active admin/designer), so verify_jwt = false
-# like the other designer/admin functions — the handler is the real gate.
+# requireDesigner (bearer JWT → active admin/designer). verify_jwt = true to match
+# the live place-order deploy (same pattern, deployed via MCP); the designer
+# frontend always sends a fresh session JWT, and requireDesigner is the role gate.
 [functions.order-lifecycle]
-verify_jwt = false
+verify_jwt = true
 
 [analytics]
 enabled = true
