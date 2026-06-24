@@ -89,6 +89,15 @@ interface OrderLogRow {
   customer_tracking_number: string | null
   tracking_last_event_at: string | null
   tracking_last_event_description: string | null
+  // The frozen spec (Phase 2). Present on orders created/placed after the
+  // snapshot shipped; null for older orders (the table fields already fall back
+  // to the live join in the RPC). Used here only for the artwork-spec detail.
+  order_spec_snapshot: {
+    ink_names?: string[] | null
+    letterpress?: { front: string | null; core: string | null; back: string | null } | null
+    captured_at?: string | null
+    stage?: string | null
+  } | null
 }
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
@@ -546,6 +555,23 @@ function OrderDetailModal({ order: o, onClose }: { order: OrderLogRow; onClose: 
               />
             )}
           </Section>
+
+          {/* Artwork spec — the frozen inks + letterpress colours the customer
+              approved (from the Phase 2 snapshot). Only shown when captured. */}
+          {(() => {
+            const snap = o.order_spec_snapshot
+            const inks = (snap?.ink_names ?? []).filter(Boolean)
+            const lp = snap?.letterpress ?? null
+            if (inks.length === 0 && !lp) return null
+            return (
+              <Section title="Artwork spec">
+                {inks.length > 0 && <Row label="Inks" value={inks.join(', ')} />}
+                {lp?.front && <Row label="Front colour" value={lp.front} />}
+                {lp?.core && <Row label="Core colour" value={lp.core} />}
+                {lp?.back && <Row label="Back colour" value={lp.back} />}
+              </Section>
+            )
+          })()}
 
           {/* Person split */}
           {o.person_quantities && o.person_quantities.length > 0 && (
