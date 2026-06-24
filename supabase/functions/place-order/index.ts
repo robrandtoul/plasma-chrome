@@ -22,6 +22,7 @@
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { encodeBase64 } from 'jsr:@std/encoding/base64'
 import { getDropboxAccessToken, listSharedLinkEntries, downloadSharedLinkFile } from '../_shared/dropbox.ts'
+import { buildOrderSpecSnapshot, type OrderSpecSnapshot } from '../_shared/orderSpecSnapshot.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -367,7 +368,7 @@ Deno.serve(async (req) => {
   // ── Load order + proof + current version ──────────────────────────────────
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, status, quantity, person_quantities, date_required, stock_order_number, project_name, proof_id, ship_dest_country, ship_to_address, material_variant_id, material_option_id, dropbox_folder_url, payment_reference, currency, fulfilled_at')
+    .select('id, status, quantity, person_quantities, has_personalisation, custom_quote_total, date_required, stock_order_number, project_name, proof_id, ship_dest_country, ship_to_address, material_variant_id, material_option_id, dropbox_folder_url, payment_reference, currency, fulfilled_at')
     .eq('id', orderId)
     .maybeSingle()
   if (orderErr) return json({ ok: false, error: `Order lookup failed: ${orderErr.message}` }, 500)
@@ -387,7 +388,7 @@ Deno.serve(async (req) => {
 
   const { data: proof } = await admin
     .from('proofs')
-    .select('id, status, helpscout_conversation_id, contacts:contact_id ( full_name, companies:company_id ( name ) )')
+    .select('id, status, helpscout_conversation_id, contacts:contact_id ( full_name, email, companies:company_id ( name ) )')
     .eq('id', order.proof_id)
     .maybeSingle()
   // The proof must be approved to place. Always true for a first placement; the
@@ -399,7 +400,7 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: "The proof isn't approved — re-approve it before placing this order." }, 409)
   }
   const conversationId = (proof as { helpscout_conversation_id: string | null } | null)?.helpscout_conversation_id ?? null
-  const contact = (proof as { contacts?: { full_name?: string | null; companies?: { name?: string | null } | null } | null } | null)?.contacts ?? null
+  const contact = (proof as { contacts?: { full_name?: string | null; email?: string | null; companies?: { name?: string | null } | null } | null } | null)?.contacts ?? null
   const customerName = (contact?.companies?.name?.trim()) || (contact?.full_name?.trim()) || (order.project_name?.trim()) || 'Customer'
 
   const { data: pv } = await admin
@@ -452,6 +453,34 @@ Deno.serve(async (req) => {
   if (!Number.isFinite(qty) || qty <= 0) return json({ ok: false, error: 'This order has no fixed quantity to place.' }, 400)
 
   const inks = buildInks(pv.ink_names)
+
+  // Durable spec snapshot (Order log Phase 2). Rebuilt from the spec we just
+  // read live + OVERWRITTEN on every placement (first place AND a revision
+  // re-place), so it reflects the exact spec handed to production — which is the
+  // record the order log should keep. Same builder as create-order so the two
+  // writers can't drift. Stamped inside markPlaced, only once the hand-off sends.
+  const orderSpecSnapshot = buildOrderSpecSnapshot({
+    materialCode: mat.code ?? null,
+    materialDisplay: mat.display_name ?? pv.material_display ?? null,
+    variantDisplay: variantName,
+    variantType,
+    optionDisplay: optionName,
+    inkNames: (pv.ink_names as string[] | null) ?? null,
+    letterpressFront: front,
+    letterpressCore: core,
+    letterpressBack: back,
+    quantity: qty,
+    personQuantities: (order.person_quantities as { name: string; quantity: number }[] | null) ?? null,
+    hasPersonalisation: order.has_personalisation === true,
+    customQuoteTotal: order.custom_quote_total != null ? Number(order.custom_quote_total) : null,
+    contactEmail: contact?.email ?? null,
+    contactName: contact?.full_name ?? null,
+    companyName: contact?.companies?.name ?? null,
+    stage: 'place',
+    capturedBy: callerId,
+    capturedAt: new Date().toISOString(),
+  })
+
   const destCountry = String(order.ship_dest_country ?? (order.ship_to_address as { country?: string | null } | null)?.country ?? '').trim().toUpperCase()
   const packaging = destCountry ? (destCountry === 'GB' ? 'Domestic' : 'International') : null
   const dateRequiredStr = fmtDate(order.date_required)
@@ -536,7 +565,7 @@ Deno.serve(async (req) => {
       if (e instanceof HsError) return json({ ok: false, error: `Help Scout: ${e.message}` }, 502)
       return json({ ok: false, error: `Hand-off failed: ${(e as Error)?.message ?? 'unknown'}` }, 502)
     }
-    const placed = await markPlaced(admin, orderId, callerId, { route, subject, ...(isReplace ? { old_job_cancelled: oldJobCancelled } : {}) })
+    const placed = await markPlaced(admin, orderId, callerId, orderSpecSnapshot, { route, subject, ...(isReplace ? { old_job_cancelled: oldJobCancelled } : {}) })
     if (!placed.ok) {
       // The note WAS posted to Help Scout, but the status flip failed. Surface a
       // distinct error so the UI does NOT offer a plain retry (which would re-post
@@ -688,7 +717,7 @@ Deno.serve(async (req) => {
     if (e instanceof HsError) return json({ ok: false, error: `Help Scout: ${e.message}` }, 502)
     return json({ ok: false, error: `Hand-off failed: ${(e as Error)?.message ?? 'unknown'}` }, 502)
   }
-  const placed = await markPlaced(admin, orderId, callerId, {
+  const placed = await markPlaced(admin, orderId, callerId, orderSpecSnapshot, {
     route,
     subject,
     supplier_id: chosen.id,
@@ -724,6 +753,7 @@ async function markPlaced(
   admin: SupabaseClient,
   orderId: string,
   callerId: string,
+  snapshot: OrderSpecSnapshot,
   detail: { route: string; subject: string; supplier_id?: string; supplier_name?: string; supplier_helpscout_conversation_id?: string | null; old_job_cancelled?: boolean },
 ): Promise<{ ok: boolean; error?: string }> {
   const nowIso = new Date().toISOString()
@@ -736,6 +766,8 @@ async function markPlaced(
       status: 'fulfilled',
       fulfilled_at: nowIso,
       fulfilled_by: callerId,
+      // Overwrite the spec snapshot with what was actually handed off (Phase 2).
+      order_spec_snapshot: snapshot,
       ...(detail.supplier_id ? { supplier_id: detail.supplier_id } : {}),
       ...(detail.supplier_name ? { supplier_name: detail.supplier_name } : {}),
       ...(detail.supplier_helpscout_conversation_id ? { supplier_helpscout_conversation_id: detail.supplier_helpscout_conversation_id } : {}),

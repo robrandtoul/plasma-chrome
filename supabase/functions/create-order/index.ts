@@ -21,6 +21,7 @@
 import { json, requireDesigner } from '../_shared/admin.ts'
 import { logAudit } from '../_shared/audit.ts'
 import { cardTotalForQuantity, computeOrderTotal, resolveCardDiscount, type Tier } from '../_shared/orderPricing.ts'
+import { buildOrderSpecSnapshot } from '../_shared/orderSpecSnapshot.ts'
 
 type ShippingTreatment = 'full_cost' | 'goodwill' | 'free' | 'manual'
 type Currency = 'GBP' | 'EUR' | 'USD'
@@ -320,11 +321,90 @@ Deno.serve(async (req) => {
   const nowIso = new Date().toISOString()
   const isOffline = paymentMethod === 'offline'
 
+  // ── Durable spec snapshot (Order log Phase 2) ───────────────────
+  // Freeze the spec as at order time: the proof can be revised, or a material
+  // renamed, after this — the snapshot is what the admin order log reads back
+  // (via admin_search_orders' COALESCE) so the record never drifts. The same
+  // shape is rebuilt + overwritten at place-order. Best-effort: a read miss
+  // leaves order_spec_snapshot null and the log falls back to the live join, so
+  // a snapshot failure must never block creating the order.
+  let orderSpecSnapshot: ReturnType<typeof buildOrderSpecSnapshot> | null = null
+  try {
+    const [pvRes, contactRes, variantRes, optionRes] = await Promise.all([
+      admin
+        .from('proof_versions')
+        .select('material_display, ink_names, front_colour_id, core_colour_id, back_colour_id, materials(code, display_name)')
+        .eq('proof_id', proofId)
+        .eq('is_current', true)
+        .maybeSingle(),
+      admin
+        .from('proofs')
+        .select('contacts:contact_id ( full_name, email, companies:company_id ( name ) )')
+        .eq('id', proofId)
+        .maybeSingle(),
+      materialVariantId
+        ? admin.from('material_variants').select('display_name, variant_type').eq('id', materialVariantId).maybeSingle()
+        : Promise.resolve({ data: null }),
+      materialOptionId
+        ? admin.from('material_options').select('display_name').eq('id', materialOptionId).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ])
+
+    const pv = pvRes.data as {
+      material_display?: string | null
+      ink_names?: string[] | null
+      front_colour_id?: string | null
+      core_colour_id?: string | null
+      back_colour_id?: string | null
+      materials?: { code?: string | null; display_name?: string | null } | null
+    } | null
+    const contact = (contactRes.data as { contacts?: { full_name?: string | null; email?: string | null; companies?: { name?: string | null } | null } | null } | null)?.contacts ?? null
+    const variant = variantRes.data as { display_name?: string | null; variant_type?: string | null } | null
+    const option = optionRes.data as { display_name?: string | null } | null
+
+    // Resolve the version's letterpress layer colours (ids → names).
+    let lpFront: string | null = null, lpCore: string | null = null, lpBack: string | null = null
+    const colourIds = [pv?.front_colour_id, pv?.core_colour_id, pv?.back_colour_id].filter(Boolean) as string[]
+    if (colourIds.length) {
+      const { data: cols } = await admin.from('letterpress_core_colours').select('id, name').in('id', colourIds)
+      const byId = new Map((cols ?? []).map((c: { id: string; name: string }) => [c.id, c.name]))
+      lpFront = (pv?.front_colour_id && byId.get(pv.front_colour_id)) || null
+      lpCore = (pv?.core_colour_id && byId.get(pv.core_colour_id)) || null
+      lpBack = (pv?.back_colour_id && byId.get(pv.back_colour_id)) || null
+    }
+
+    orderSpecSnapshot = buildOrderSpecSnapshot({
+      materialCode: pv?.materials?.code ?? null,
+      materialDisplay: pv?.materials?.display_name ?? pv?.material_display ?? null,
+      variantDisplay: variant?.display_name ?? null,
+      variantType: variant?.variant_type ?? null,
+      optionDisplay: option?.display_name ?? null,
+      inkNames: pv?.ink_names ?? null,
+      letterpressFront: lpFront,
+      letterpressCore: lpCore,
+      letterpressBack: lpBack,
+      quantity,
+      personQuantities,
+      hasPersonalisation,
+      customQuoteTotal,
+      contactEmail: contact?.email ?? null,
+      contactName: contact?.full_name ?? null,
+      companyName: contact?.companies?.name ?? null,
+      stage: 'create',
+      capturedBy: callerId,
+      capturedAt: nowIso,
+    })
+  } catch {
+    // Snapshot is best-effort; never block order creation on it.
+    orderSpecSnapshot = null
+  }
+
   const { data: order, error: insertErr } = await admin
     .from('orders')
     .insert({
       proof_id: proofId,
       status: isOffline ? 'paid' : 'sent',
+      order_spec_snapshot: orderSpecSnapshot,
       material_variant_id: materialVariantId,
       material_option_id: materialOptionId,
       quantity,
