@@ -64,6 +64,13 @@ export interface ModalVersion {
   // in approved-artwork + variant-vs-name framing. Customer-
   // facing surfaces don't distinguish.
   card_type: 'business' | 'membership'
+  // Proof-type-wizard shape (migration 000210): recipients |
+  // set_single | set_collection | selection. Nullable on legacy
+  // rows that predate the wizard. Only set_collection changes the
+  // approved-artwork behaviour here — its images fold by
+  // proof_layouts (layout_id) rather than by recipient name, and
+  // its approvals are keyed name = layout_id (000212).
+  shape: 'recipients' | 'set_single' | 'set_collection' | 'selection' | null
   // Variant-round flags (migrations 000138 / 000142, renamed in
   // 000144). Pulled into the modal so the docket (currency pill,
   // Specification, Pricing card) hides when each direction is

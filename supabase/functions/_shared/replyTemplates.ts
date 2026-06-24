@@ -129,3 +129,9 @@ export const ORDER_REMINDER_DEFAULT_BODIES: Record<string, string> = {
   order_reminder_2:
     `Hi {first_name},\n\nA quick reminder that your order link{? company} for {company}{/?} expires on {order_expiry}. If you'd still like to go ahead, you can complete it here:\n\n{order_url}\n\nIf the link has lapsed by the time you read this, just reply and we'll send a fresh one.`,
 }
+
+// The order_cancelled / order_revision default bodies (migration 000260) live in
+// src/lib/replyTemplates.ts DEFAULT_BODIES (admin "Reset to default") and the
+// 000260 seed. The order-lifecycle edge function inlines its own matching copy
+// (self-contained MCP deploy, like place-order), so there is deliberately no
+// _shared constant here to keep in sync.

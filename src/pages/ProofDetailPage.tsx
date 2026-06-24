@@ -15,6 +15,7 @@ import OrderBuilderModal from '../components/OrderBuilderModal'
 import { logAudit } from '../lib/audit'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import type {
+  Currency,
   LetterpressCoreColour,
   ProofNameApproval,
   QrSnapshot,
@@ -25,6 +26,7 @@ import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/shar
 import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, openDesignerPreview } from '../lib/customerProofUrl'
+import { formatPrice } from '../lib/currency'
 // QuoteLink now lives inside DesignerChrome (PR 31).
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
 import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, MessageSquare, Clock, Activity, Package, HelpCircle } from 'lucide-react'
@@ -80,6 +82,20 @@ function formatLongDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
 }
 
+// Order total matching OrdersPage.orderTotal and the Stripe charge: custom quote
+// when set, else the summed amount_* lines, minus the cards discount, plus the
+// US tariff. Returns null when nothing is priced. Used by the reopen warning so
+// the £ figure shown matches what the customer actually paid.
+function orderTotal(o: ProofOrder): number | null {
+  const r2 = (n: number) => Math.round(n * 100) / 100
+  const discount = Number(o.amount_card_discount ?? 0)
+  const tariff = Number(o.amount_us_tariff ?? 0)
+  if (o.custom_quote_total != null) return r2(Number(o.custom_quote_total) - discount + tariff)
+  const parts = [o.amount_cards, o.amount_tooling, o.amount_personalisation, o.amount_shipping]
+  if (parts.every((p) => p == null) && tariff === 0) return null
+  return r2(parts.reduce((acc: number, p) => acc + Number(p ?? 0), 0) - discount + tariff)
+}
+
 // Colour + label per round outcome for the engagement panel's rounds
 // strip; the RoundOutcome union + the precedence live in proofSnapshot.
 // Colours mirror the dashboard status palette.
@@ -131,8 +147,91 @@ interface ApprovedImageRow {
   // match the DB. Rendered as 'Shared' and zipped into the Shared/
   // directory.
   associatedName: string | null
+  // Set (collection) only (migrations 000210/000212): the layout
+  // this image belongs to, its customer-facing title, and its sort
+  // order. Null on every other shape. When set, the identity column
+  // and ZIP folder fold by layoutTitle instead of associatedName
+  // (which is always null on a collection image), and rows sort by
+  // layoutSortOrder rather than the recipient-name order.
+  layoutId: string | null
+  layoutTitle: string | null
+  layoutSortOrder: number | null
   versionNumber: number
   versionId: string
+}
+
+// True when the approved set is a Set (collection): its images fold
+// by layout title rather than by recipient/shared. Detected from the
+// rows themselves (any row carrying a layoutId) so the render table
+// and the ZIP builder agree without re-reading version state.
+function isCollectionApproved(rows: ApprovedImageRow[]): boolean {
+  return rows.some((r) => r.layoutId != null)
+}
+
+// The identity-column value + ZIP folder name for one approved image.
+// Collections fold by layout title; every other shape folds by
+// associated_name (Shared when null). A collection row with a missing
+// title (layout deleted mid-flight) falls back so the bundle still
+// extracts and the table still reads.
+function approvedIdentity(row: ApprovedImageRow): string {
+  if (row.layoutId != null) return row.layoutTitle ?? 'Untitled layout'
+  return row.associatedName ?? 'Shared'
+}
+
+// Shared sort for the approved-artwork table + ZIP, in one place so
+// both render the same order. Collections sort by layout sort_order
+// (then title as a stable tiebreak); recipients put Shared first,
+// then follow the current version's names[] order. Front before back
+// within an identity, then a stable tiebreak on image id.
+function sortApprovedRows(
+  rows: ApprovedImageRow[],
+  nameOrder: Map<string, number>,
+): ApprovedImageRow[] {
+  return [...rows].sort((a, b) => {
+    if (a.layoutId != null || b.layoutId != null) {
+      const aPos = a.layoutSortOrder ?? Infinity
+      const bPos = b.layoutSortOrder ?? Infinity
+      if (aPos !== bPos) return aPos - bPos
+      const aTitle = a.layoutTitle ?? ''
+      const bTitle = b.layoutTitle ?? ''
+      if (aTitle !== bTitle) return aTitle < bTitle ? -1 : 1
+    } else {
+      const aShared = a.associatedName == null ? 0 : 1
+      const bShared = b.associatedName == null ? 0 : 1
+      if (aShared !== bShared) return aShared - bShared
+      const aPos = a.associatedName == null ? -1 : nameOrder.get(a.associatedName) ?? Infinity
+      const bPos = b.associatedName == null ? -1 : nameOrder.get(b.associatedName) ?? Infinity
+      if (aPos !== bPos) return aPos - bPos
+    }
+    const aSide = (a.side ?? 'front') === 'front' ? 0 : 1
+    const bSide = (b.side ?? 'front') === 'front' ? 0 : 1
+    if (aSide !== bSide) return aSide - bSide
+    return a.imageId < b.imageId ? -1 : 1
+  })
+}
+
+interface ProofOrder {
+  id: string
+  status: string
+  token: string | null
+  sent_at: string | null
+  paid_at: string | null
+  expires_at: string | null
+  fulfilled_at: string | null
+  xero_invoice_id: string | null
+  xero_invoice_error: string | null
+  payment_method: string | null
+  created_at: string
+  revised_at: string | null
+  currency: Currency
+  amount_cards: number | null
+  amount_tooling: number | null
+  amount_personalisation: number | null
+  amount_shipping: number | null
+  amount_us_tariff: number | null
+  amount_card_discount: number | null
+  custom_quote_total: number | null
+  material_variants: { materials: { production_route: string | null } | null } | null
 }
 
 export default function ProofDetailPage() {
@@ -217,6 +316,9 @@ export default function ProofDetailPage() {
   const [copied, setCopied] = useState(false)
   const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | 'abandon' | 'delete' | null>(null)
   const [statusWorking, setStatusWorking] = useState(false)
+  // Required-checkbox gate for reopening a proof whose order was already PLACED:
+  // the designer must confirm they've cancelled the old Stock Control job first.
+  const [reopenJobCancelled, setReopenJobCancelled] = useState(false)
   // Synchronous guard against double-click on the confirm dialog
   // buttons. The disabled={working} prop is bound to React state,
   // so a second click that lands before the state commits would
@@ -250,6 +352,10 @@ export default function ProofDetailPage() {
   // the cached fetch resolves so the button never flashes when off.
   const [orderingEnabled, setOrderingEnabled] = useState<boolean | null>(null)
   const [showOrderBuilder, setShowOrderBuilder] = useState(false)
+  // Latest order(s) for this proof. Drives the inline order-status panel and the
+  // duplicate-order guard (don't offer a plain "Create order" when one's already
+  // in flight). Null until loaded; orders only exist for approved proofs.
+  const [orders, setOrders] = useState<ProofOrder[] | null>(null)
   // Approved artwork table data. Null = not loaded yet (project may
   // not be approved, or the fetch hasn't run); [] = approved but no
   // matching images (approval row with every slot's images deleted
@@ -409,7 +515,7 @@ export default function ProofDetailPage() {
         .single(),
       supabase
         .from('proof_versions')
-        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, created_by, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, last_reply_sent_at, last_reply_sent_by, displayed_variant_ids, is_variant_round, is_per_direction_pricing, material_options, has_personalisation, front_colour_id, core_colour_id, back_colour_id, materials(display_quantities)')
+        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, created_by, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, shape, last_reply_sent_at, last_reply_sent_by, displayed_variant_ids, is_variant_round, is_per_direction_pricing, material_options, has_personalisation, front_colour_id, core_colour_id, back_colour_id, materials(display_quantities)')
         .eq('proof_id', proofId)
         .order('version_number', { ascending: false }),
     ])
@@ -439,6 +545,19 @@ export default function ProofDetailPage() {
         if (isStale() || !data) return
         setBucketRow(data as unknown as BucketInput)
         setLastActivityAt((data as { last_activity_at: string | null }).last_activity_at ?? null)
+      })
+
+    // Orders for this proof — drives the inline order-status panel + the
+    // duplicate-order guard on "Create order". Best-effort and non-blocking;
+    // orders only exist for approved proofs, so an empty result is the norm.
+    void supabase
+      .from('orders')
+      .select('id, status, token, sent_at, paid_at, expires_at, fulfilled_at, xero_invoice_id, xero_invoice_error, payment_method, created_at, revised_at, currency, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, custom_quote_total, material_variants(materials(production_route))')
+      .eq('proof_id', proofId)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        if (isStale()) return
+        setOrders((data ?? []) as unknown as ProofOrder[])
       })
 
     // Per-version thumbnails. Same pattern as the dashboard
@@ -655,68 +774,140 @@ export default function ProofDetailPage() {
     // Delete renders only in that case, so loading it eagerly for
     // every project would waste a round-trip.
     //
-    // Shape of the join: for each approval row with state='approved',
-    // pick proof_version_images rows matching (proof_version_id,
-    // associated_name), treating SHARED_APPROVAL_KEY as
-    // associated_name IS NULL. Cross-version splits (Alice approved
-    // in v2, Bob in v3) fall out for free — we scope the image
-    // query to all of the project's version IDs and filter client-
-    // side by the approval tuples.
-    if (proofResult.data.status === 'approved' && versionIds.length > 0) {
+    // Shape of the join: for each CURRENT-version approval row with
+    // state='approved', pick proof_version_images rows on the current
+    // version matching (proof_version_id, associated_name), treating
+    // SHARED_APPROVAL_KEY as associated_name IS NULL.
+    //
+    // Scoped to the CURRENT version only — NOT every version of the
+    // project. A proof reaches 'approved' only when every required slot
+    // of the current version is approved (migrations 000126/000169/
+    // 000212), and creating a new version copies each unchanged
+    // recipient's image forward, so the current version always holds a
+    // complete image set for its approved slots. Pulling from all
+    // versions used to leak earlier-version files into the download:
+    // a recipient dropped or re-imaged in a later version left a stale
+    // state='approved' row on the superseded version, and that old
+    // version's image then matched and showed up as an "earlier
+    // version" (too many files). Anchoring to the current version is
+    // both complete and the fix.
+    const currentVersion = loadedVersions.find((v) => v.is_current) ?? null
+    const currentVersionId = currentVersion?.id ?? null
+    // Set (collection) images fold by layout (proof_layouts), not by
+    // recipient name: their approvals are keyed name = layout_id and
+    // their images carry layout_id with associated_name NULL (000212).
+    // The name/associated_name join below never matches those, so a
+    // collection needs the layout-keyed path instead.
+    const isCollection = currentVersion?.shape === 'set_collection'
+    if (proofResult.data.status === 'approved' && currentVersionId) {
       const approvedApprovals = approvalRowsLoaded.filter(
-        (a) => a.state === 'approved',
+        (a) => a.state === 'approved' && a.proof_version_id === currentVersionId,
       )
       if (approvedApprovals.length === 0) {
-        // Approved status with no per-name approvals shouldn't
-        // happen under the current approve-shortcut flow (it
-        // always writes approvals first), but if it ever did
-        // (legacy data, direct DB edit), show an empty table
-        // rather than crash.
+        // Approved status with no per-name approvals on the current
+        // version shouldn't happen under the current approve-shortcut
+        // flow (it always writes approvals first), but if it ever did
+        // (legacy data, direct DB edit), show an empty table rather
+        // than crash.
         setApprovedImages([])
       } else {
+        // For a collection, load the layout titles + sort order so the
+        // identity column / ZIP folders read as the layout name (the
+        // approval row only carries the layout id).
+        const layoutMeta = new Map<string, { title: string; sortOrder: number }>()
+        if (isCollection) {
+          const { data: layoutRows } = await supabase
+            .from('proof_layouts')
+            .select('id, title, sort_order')
+            .eq('proof_version_id', currentVersionId)
+          if (isStale()) return
+          for (const l of (layoutRows ?? []) as {
+            id: string
+            title: string
+            sort_order: number
+          }[]) {
+            layoutMeta.set(l.id, { title: l.title, sortOrder: l.sort_order })
+          }
+        }
+
         const { data: imageRows } = await supabase
           .from('proof_version_images')
-          .select('id, image_path, original_filename, associated_name, side, proof_version_id')
-          .in('proof_version_id', versionIds)
+          .select('id, image_path, original_filename, associated_name, side, proof_version_id, layout_id')
+          .eq('proof_version_id', currentVersionId)
           .eq('is_qr_code', false)
         if (isStale()) return
 
-        const approvalTuples = new Set(
-          approvedApprovals.map(
-            (a) =>
-              `${a.proof_version_id}|${a.name === SHARED_APPROVAL_KEY ? '__null__' : a.name}`,
-          ),
-        )
         const versionNumberById = new Map<string, number>()
         for (const v of loadedVersions) versionNumberById.set(v.id, v.version_number)
 
-        // Dedupe by image id as a belt-and-braces guard — a shared
-        // image shouldn't appear under two approvals (Shared has
-        // its own approval row), but defensive dedupe costs
-        // nothing.
-        const seen = new Set<string>()
-        const rows: ApprovedImageRow[] = []
-        for (const r of (imageRows ?? []) as {
+        type ImageRow = {
           id: string
           image_path: string
           original_filename: string | null
           associated_name: string | null
           side: 'front' | 'back' | null
           proof_version_id: string
-        }[]) {
-          const key = `${r.proof_version_id}|${r.associated_name ?? '__null__'}`
-          if (!approvalTuples.has(key)) continue
-          if (seen.has(r.id)) continue
-          seen.add(r.id)
-          rows.push({
-            imageId: r.id,
-            imagePath: r.image_path,
-            originalFilename: r.original_filename,
-            side: r.side,
-            associatedName: r.associated_name,
-            versionId: r.proof_version_id,
-            versionNumber: versionNumberById.get(r.proof_version_id) ?? 0,
-          })
+          layout_id: string | null
+        }
+
+        // Dedupe by image id as a belt-and-braces guard — an image
+        // shouldn't appear under two approvals (each slot has its own
+        // approval row), but defensive dedupe costs nothing.
+        const seen = new Set<string>()
+        const rows: ApprovedImageRow[] = []
+
+        if (isCollection) {
+          // Collection: approvals are keyed name = layout_id; images
+          // carry layout_id (associated_name is null). Include an
+          // image iff its layout is an approved layout.
+          const approvedLayoutIds = new Set(approvedApprovals.map((a) => a.name))
+          for (const r of (imageRows ?? []) as ImageRow[]) {
+            if (r.layout_id == null) continue
+            if (!approvedLayoutIds.has(r.layout_id)) continue
+            if (seen.has(r.id)) continue
+            seen.add(r.id)
+            const meta = layoutMeta.get(r.layout_id)
+            rows.push({
+              imageId: r.id,
+              imagePath: r.image_path,
+              originalFilename: r.original_filename,
+              side: r.side,
+              associatedName: r.associated_name,
+              layoutId: r.layout_id,
+              layoutTitle: meta?.title ?? null,
+              layoutSortOrder: meta?.sortOrder ?? null,
+              versionId: r.proof_version_id,
+              versionNumber: versionNumberById.get(r.proof_version_id) ?? 0,
+            })
+          }
+        } else {
+          // Recipients / shared (every non-collection shape): match an
+          // image on (proof_version_id, associated_name), treating
+          // SHARED_APPROVAL_KEY as associated_name IS NULL.
+          const approvalTuples = new Set(
+            approvedApprovals.map(
+              (a) =>
+                `${a.proof_version_id}|${a.name === SHARED_APPROVAL_KEY ? '__null__' : a.name}`,
+            ),
+          )
+          for (const r of (imageRows ?? []) as ImageRow[]) {
+            const key = `${r.proof_version_id}|${r.associated_name ?? '__null__'}`
+            if (!approvalTuples.has(key)) continue
+            if (seen.has(r.id)) continue
+            seen.add(r.id)
+            rows.push({
+              imageId: r.id,
+              imagePath: r.image_path,
+              originalFilename: r.original_filename,
+              side: r.side,
+              associatedName: r.associated_name,
+              layoutId: null,
+              layoutTitle: null,
+              layoutSortOrder: null,
+              versionId: r.proof_version_id,
+              versionNumber: versionNumberById.get(r.proof_version_id) ?? 0,
+            })
+          }
         }
         setApprovedImages(rows)
       }
@@ -819,17 +1010,36 @@ export default function ProofDetailPage() {
     // Shared-presence is checked the same way for the same reason.
     const currentVersion = versions.find((v) => v.is_current)
     if (currentVersion) {
-      const { data: sharedRows } = await supabase
-        .from('proof_version_images')
-        .select('id')
-        .eq('proof_version_id', currentVersion.id)
-        .is('associated_name', null)
-        .eq('is_qr_code', false)
-        .limit(1)
-      const hasShared = (sharedRows?.length ?? 0) > 0
+      // Build the expected approval-slot keys for this shape:
+      //   • Set (collection) → one key per layout, name = layout_id
+      //     (the receive-all analogue of a recipient name; 000212).
+      //     A collection's images all carry associated_name NULL, so
+      //     the names/__shared__ path below would wrongly resolve to a
+      //     single __shared__ slot — branch out before that.
+      //   • Every other shape → recipient names + __shared__ when the
+      //     current version has a shared (non-QR) image.
+      // The layout ids are read fresh from the DB so a layout
+      // added/removed between page load and click is seen.
+      let keys: string[]
+      if (currentVersion.shape === 'set_collection') {
+        const { data: layoutRows } = await supabase
+          .from('proof_layouts')
+          .select('id')
+          .eq('proof_version_id', currentVersion.id)
+        keys = (layoutRows ?? []).map((l) => (l as { id: string }).id)
+      } else {
+        const { data: sharedRows } = await supabase
+          .from('proof_version_images')
+          .select('id')
+          .eq('proof_version_id', currentVersion.id)
+          .is('associated_name', null)
+          .eq('is_qr_code', false)
+          .limit(1)
+        const hasShared = (sharedRows?.length ?? 0) > 0
 
-      const keys: string[] = [...currentVersion.names]
-      if (hasShared) keys.push(SHARED_APPROVAL_KEY)
+        keys = [...currentVersion.names]
+        if (hasShared) keys.push(SHARED_APPROVAL_KEY)
+      }
 
       if (keys.length > 0) {
         const { data: existingRows, error: existingErr } = await supabase
@@ -1031,7 +1241,27 @@ export default function ProofDetailPage() {
   async function handleReopen() {
     if (!proof) return
     setStatusWorking(true)
-    // Atomic status flip + clear of every per-recipient approval row
+    // STEP 1 — order-side flip BEFORE reopen_proof. When there's an open order it
+    // must be cancelled (unpaid) or held for revision (paid/placed) first; if
+    // that fails we must NOT clear approvals against a still-live order (the
+    // stale-artwork hazard the whole flow guards against). order-lifecycle writes
+    // its own order.cancelled / order.revision_started audit and posts the
+    // customer a Help Scout note (best-effort).
+    if (reopenOrderState === 'sent' || reopenOrderState === 'paid' || reopenOrderState === 'fulfilled') {
+      const action = reopenOrderState === 'sent' ? 'cancel' : 'revise'
+      const lcBody: Record<string, unknown> = { order_id: reopenOrder!.id, action, notify: true }
+      if (action === 'cancel') lcBody.reason = 'reopen'
+      const { data: lc, error: lcErr } = await supabase.functions.invoke<{ ok: boolean; status?: string; error?: string }>(
+        'order-lifecycle',
+        { body: lcBody },
+      )
+      if (lcErr || !lc?.ok) {
+        setStatusWorking(false)
+        showToast(`Couldn't update the order before reopening: ${lcErr?.message ?? lc?.error ?? 'unknown error'}`)
+        return // leave the dialog open so the designer can retry; reopen_proof NOT called
+      }
+    }
+    // STEP 2 — atomic status flip + clear of every per-recipient approval row
     // across every version of this proof. The DELETE is critical:
     // without it, v1's approved rows survive the reopen and the
     // carry-forward block in NewVersionPage picks them up when a
@@ -1046,6 +1276,7 @@ export default function ProofDetailPage() {
     })
     setStatusWorking(false)
     setStatusDialog(null)
+    setReopenJobCancelled(false)
     if (error) {
       // Surface the failure to the designer rather than silently
       // returning to the proof view: the previous "if (!error)" with
@@ -1208,24 +1439,7 @@ export default function ProofDetailPage() {
       const currentVersion = versions.find((v) => v.is_current)
       const nameOrder = new Map<string, number>()
       currentVersion?.names.forEach((n, i) => nameOrder.set(n, i))
-      const sorted = [...approvedImages].sort((a, b) => {
-        // Shared (null name) first
-        const aShared = a.associatedName == null ? 0 : 1
-        const bShared = b.associatedName == null ? 0 : 1
-        if (aShared !== bShared) return aShared - bShared
-        // Then by position in current version's names[]; names
-        // that aren't on the current version (cross-version
-        // approval edge case) fall to the bottom, stable.
-        const aPos = a.associatedName == null ? -1 : nameOrder.get(a.associatedName) ?? Infinity
-        const bPos = b.associatedName == null ? -1 : nameOrder.get(b.associatedName) ?? Infinity
-        if (aPos !== bPos) return aPos - bPos
-        // Front before back within a name. Null side normalises
-        // to 'front' for back-compat sort stability.
-        const aSide = (a.side ?? 'front') === 'front' ? 0 : 1
-        const bSide = (b.side ?? 'front') === 'front' ? 0 : 1
-        if (aSide !== bSide) return aSide - bSide
-        return a.imageId < b.imageId ? -1 : 1
-      })
+      const sorted = sortApprovedRows(approvedImages, nameOrder)
 
       const blobs = await runQueued(sorted, (row) => fetchBlob(row.imagePath))
 
@@ -1237,7 +1451,12 @@ export default function ProofDetailPage() {
       // folder (no hierarchy when there's only one group), and
       // the manifest omits the Name column. Parity with the UI
       // table's Name-column suppression above.
-      const isAllShared = approvedImages.every((r) => r.associatedName == null)
+      //
+      // A Set (collection) is never "all shared" even though every
+      // collection image has a null associated_name — each layout is
+      // its own identity (its own folder), so the column stays.
+      const isCollection = isCollectionApproved(approvedImages)
+      const isAllShared = !isCollection && approvedImages.every((r) => r.associatedName == null)
 
       // One folder per identity: {name}/ in Business mode, or no
       // folder (root-level) in Membership mode. Filename is the
@@ -1252,7 +1471,9 @@ export default function ProofDetailPage() {
         if (isAllShared) {
           zip.file(leaf, blobs[i])
         } else {
-          const folder = row.associatedName == null ? 'Shared' : row.associatedName
+          // Recipients → name (Shared when null); collections → layout
+          // title. One folder per identity.
+          const folder = approvedIdentity(row)
           zip.file(`${folder}/${leaf}`, blobs[i])
         }
       }
@@ -1275,18 +1496,21 @@ export default function ProofDetailPage() {
         `Approved: ${approvedDate}\n` +
         `Material: ${currentMaterial}\n\n`
 
-      // Mirror the UI table's identity-column label swap. Read
-      // card_type from the current version so "Variant" shows
-      // for tiered membership and "Name" stays for business.
-      const identityColumnLabel =
-        currentVersion?.card_type === 'membership' ? 'Variant' : 'Name'
+      // Mirror the UI table's identity-column label swap. "Layout"
+      // for a Set (collection), else card_type drives "Variant"
+      // (tiered membership) vs "Name" (business).
+      const identityColumnLabel = isCollection
+        ? 'Layout'
+        : currentVersion?.card_type === 'membership'
+          ? 'Variant'
+          : 'Name'
       const columns: string[] = []
       if (!isAllShared) columns.push(identityColumnLabel)
       if (!isOneSided) columns.push('Side')
       columns.push('Version', 'Filename')
       const manifestLines: string[] = [columns.join('\t')]
       for (const row of sorted) {
-        const nameCol = row.associatedName ?? 'Shared'
+        const nameCol = approvedIdentity(row)
         const sideCol = (row.side ?? 'front') === 'front' ? 'Front' : 'Back'
         const versionCol = `v${row.versionNumber}`
         const fileCol = row.originalFilename ?? `unnamed-${row.imageId.slice(0, 8)}.jpg`
@@ -1391,6 +1615,52 @@ export default function ProofDetailPage() {
   const isDormant   = proof.status === 'dormant'
   const isAbandoned = proof.status === 'abandoned'
   const isLocked    = isApproved || isAbandoned
+
+  // ── Order state (Tier 2 in-context visibility + duplicate-order guard) ──────
+  const latestOrder = orders && orders.length > 0 ? orders[0] : null
+  const latestExpired = latestOrder?.status === 'sent' && !!latestOrder.expires_at && Date.parse(latestOrder.expires_at) < Date.now()
+  // "Open" = paid, placed, or a still-valid pay link — don't offer a fresh
+  // Create order (which would be a duplicate pay link / order).
+  const hasOpenOrder = !!latestOrder && (
+    latestOrder.status === 'paid' ||
+    latestOrder.status === 'fulfilled' ||
+    latestOrder.status === 'revision' ||
+    (latestOrder.status === 'sent' && !latestExpired)
+  )
+  // The order the reopen acts on: the newest order still OPEN in a state that
+  // needs an order-side change (an unpaid link to cancel, or a paid/placed order
+  // to hold for revision). `orders` is sorted newest-first. A 'revision' order is
+  // deliberately excluded — it's already held, so reopening again is a plain
+  // reopen; this also makes a partial-failure retry safe (after the order flip
+  // lands, the next attempt skips straight to reopen_proof). Keying off the newest
+  // OPEN order (not strictly orders[0]) avoids stranding a live paid/placed order
+  // behind a newer dead one.
+  const reopenOrder = orders?.find((o) => o.status === 'sent' || o.status === 'paid' || o.status === 'fulfilled') ?? null
+  // A still-'sent' link is cancelled on reopen even if its window has lapsed:
+  // status stays 'sent' in the DB until cancelled, and an expired link is
+  // reactivatable — so it must be killed, or it could be paid against a redesign.
+  const reopenOrderState: 'none' | 'sent' | 'paid' | 'fulfilled' =
+    !reopenOrder ? 'none'
+    : reopenOrder.status === 'sent' ? 'sent'
+    : reopenOrder.status === 'paid' ? 'paid'
+    : reopenOrder.status === 'fulfilled' ? 'fulfilled'
+    : 'none'
+  const orderInvoiceProblem = !!latestOrder && !latestOrder.xero_invoice_id && !!latestOrder.xero_invoice_error && latestOrder.payment_method !== 'offline'
+  const orderSummary: { text: string; tone: 'good' | 'wait' | 'dead' } | null = (() => {
+    if (!latestOrder) return null
+    const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '')
+    switch (latestOrder.status) {
+      case 'fulfilled': return { text: `Order placed${latestOrder.fulfilled_at ? ` ${fmt(latestOrder.fulfilled_at)}` : ''}`, tone: 'good' }
+      case 'paid':      return { text: `Paid${latestOrder.paid_at ? ` ${fmt(latestOrder.paid_at)}` : ''} · awaiting placement`, tone: 'good' }
+      case 'sent':      return latestExpired
+        ? { text: `Pay link expired${latestOrder.expires_at ? ` ${fmt(latestOrder.expires_at)}` : ''}`, tone: 'dead' }
+        : { text: `Pay link sent${latestOrder.sent_at ? ` ${fmt(latestOrder.sent_at)}` : ''} · awaiting payment`, tone: 'wait' }
+      case 'expired':   return { text: 'Pay link expired', tone: 'dead' }
+      case 'cancelled': return { text: 'Order cancelled', tone: 'dead' }
+      case 'revision':  return { text: `Paid · being revised${latestOrder.revised_at ? ` ${fmt(latestOrder.revised_at)}` : ''}`, tone: 'wait' }
+      default:          return { text: latestOrder.status, tone: 'wait' }
+    }
+  })()
 
   const currentVersion = versions.find((v) => v.is_current)
   const currentIsCustomQuote = !!currentVersion?.custom_quote
@@ -2138,14 +2408,23 @@ export default function ProofDetailPage() {
                     the ordering master switch is on (settings.ordering_enabled,
                     migration 000228). For an approved proof this is the
                     primary action; the whole surface is inert until an admin
-                    flips the toggle. */}
+                    flips the toggle. When an order is already open (paid /
+                    placed / a live pay link), the primary becomes "View order"
+                    so a duplicate isn't the default — re-creating moves to the
+                    overflow menu behind a confirm. */}
                 {isApproved && orderingEnabled === true && (
-                  <ButtonCoral
-                    icon={Package}
-                    onClick={() => setShowOrderBuilder(true)}
-                  >
-                    Create order
-                  </ButtonCoral>
+                  hasOpenOrder ? (
+                    <Link to="/orders">
+                      <ButtonCoral icon={Package}>View order</ButtonCoral>
+                    </Link>
+                  ) : (
+                    <ButtonCoral
+                      icon={Package}
+                      onClick={() => setShowOrderBuilder(true)}
+                    >
+                      Create order
+                    </ButtonCoral>
+                  )
                 )}
                 <ButtonGhost
                   icon={ExternalLink}
@@ -2164,7 +2443,19 @@ export default function ProofDetailPage() {
                 <HeaderActionsMenu
                   items={
                     isLocked
-                      ? [{ label: 'Reopen project', onClick: () => setStatusDialog('reopen') }]
+                      ? [
+                          { label: 'Reopen project', onClick: () => { setReopenJobCancelled(false); setStatusDialog('reopen') } },
+                          ...(isApproved && orderingEnabled === true && hasOpenOrder
+                            ? [{
+                                label: 'Create another order',
+                                onClick: () => {
+                                  if (window.confirm('This proof already has an order. Create an additional order anyway?')) {
+                                    setShowOrderBuilder(true)
+                                  }
+                                },
+                              }]
+                            : []),
+                        ]
                       : [
                           { label: 'Mark as approved', tone: 'approve', onClick: () => setStatusDialog('approve') },
                           { label: 'Abandon project', tone: 'danger', onClick: () => setStatusDialog('abandon') },
@@ -2178,6 +2469,31 @@ export default function ProofDetailPage() {
           {/* Hidden input for clipboard fallback. */}
           <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
         </section>
+
+        {/* Order-status strip — gives the approved proof in-context order state
+            (none / pay link sent / paid / placed) so the designer doesn't have
+            to scan /orders, and flags a failed Xero invoice that's otherwise
+            invisible here. Only when ordering is on and an order exists. */}
+        {isApproved && orderingEnabled === true && orderSummary && (
+          <section className="mb-8 rounded-2xl border border-line bg-canvas p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2 text-[13px]">
+                <Package aria-hidden="true" className="h-4 w-4 shrink-0 text-ink-mute" />
+                <span className="font-semibold text-ink">Order</span>
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-2 w-2 rounded-full"
+                  style={{ backgroundColor: orderSummary.tone === 'good' ? 'var(--c-in-stock)' : orderSummary.tone === 'wait' ? 'var(--c-low)' : 'var(--c-ink-mute)' }}
+                />
+                <span className="text-ink-soft">{orderSummary.text}</span>
+                {orderInvoiceProblem && (
+                  <span className="rounded-full bg-out-soft px-2 py-0.5 text-[11px] font-medium text-out ring-1 ring-out" title="The Xero invoice for this order failed — open Orders to retry it.">Invoice failed</span>
+                )}
+              </div>
+              <Link to="/orders" className="shrink-0 text-[13px] font-medium text-ink-soft underline underline-offset-2 hover:text-ink">View in Orders →</Link>
+            </div>
+          </section>
+        )}
 
         {/* "Approved on an earlier version" warning. Surfaces the
             silent dead-end where a customer approved a superseded
@@ -2912,27 +3228,24 @@ export default function ProofDetailPage() {
           // manifest, and root-level placement in the ZIP —
           // nothing to fold under a one-repeating-value column.
           // Same parity rule as isOneSided.
-          const isAllShared = rows.length > 0 && rows.every((r) => r.associatedName == null)
-          // Column-label copy: "Name" for business (recipient
-          // people), "Variant" for membership with ≥1 variants
-          // (tier labels). When isAllShared triggers the column
-          // is suppressed entirely so the label is moot in that
-          // case. Read card_type from the current version — in
+          // A Set (collection) is never "all shared": each layout is
+          // its own identity (its own row group), so the column stays
+          // even though every collection image has a null
+          // associated_name.
+          const isCollection = isCollectionApproved(rows)
+          const isAllShared = !isCollection && rows.length > 0 && rows.every((r) => r.associatedName == null)
+          // Column-label copy: "Layout" for a Set (collection), else
+          // "Name" for business (recipient people) / "Variant" for
+          // membership (tier labels). When isAllShared triggers the
+          // column is suppressed entirely so the label is moot in
+          // that case. Read card_type from the current version — in
           // practice every version in a project shares one mode.
-          const identityColumnLabel =
-            currentVersion?.card_type === 'membership' ? 'Variant' : 'Name'
-          const sorted = [...rows].sort((a, b) => {
-            const aShared = a.associatedName == null ? 0 : 1
-            const bShared = b.associatedName == null ? 0 : 1
-            if (aShared !== bShared) return aShared - bShared
-            const aPos = a.associatedName == null ? -1 : nameOrder.get(a.associatedName) ?? Infinity
-            const bPos = b.associatedName == null ? -1 : nameOrder.get(b.associatedName) ?? Infinity
-            if (aPos !== bPos) return aPos - bPos
-            const aSide = (a.side ?? 'front') === 'front' ? 0 : 1
-            const bSide = (b.side ?? 'front') === 'front' ? 0 : 1
-            if (aSide !== bSide) return aSide - bSide
-            return a.imageId < b.imageId ? -1 : 1
-          })
+          const identityColumnLabel = isCollection
+            ? 'Layout'
+            : currentVersion?.card_type === 'membership'
+              ? 'Variant'
+              : 'Name'
+          const sorted = sortApprovedRows(rows, nameOrder)
           return (
             <section>
               <h2 className="mb-2 text-sm font-semibold uppercase tracking-widest text-ink-dim">Approved artwork</h2>
@@ -2961,7 +3274,7 @@ export default function ProofDetailPage() {
                       </thead>
                       <tbody>
                         {sorted.map((row) => {
-                          const nameCol = row.associatedName ?? 'Shared'
+                          const nameCol = approvedIdentity(row)
                           const sideCol = (row.side ?? 'front') === 'front' ? 'Front' : 'Back'
                           const fileLabel = row.originalFilename ?? (
                             <span className="italic text-ink-dim">— (no filename captured)</span>
@@ -3164,7 +3477,7 @@ export default function ProofDetailPage() {
             hasPersonalisation={!!currentVersion.has_personalisation}
             isCustomQuote={!!currentVersion.custom_quote}
             hasHelpScoutConversation={!!proof.helpscout_conversation_id}
-            onClose={() => setShowOrderBuilder(false)}
+            onClose={() => { setShowOrderBuilder(false); if (id) void loadProof(id) }}
           />
         )
       })()}
@@ -3229,20 +3542,47 @@ export default function ProofDetailPage() {
       )}
 
       {/* Reopen confirm dialog */}
-      {statusDialog === 'reopen' && (
-        <ConfirmDialog
-          message={
-            isAbandoned
-              ? 'Reopen this project? This will reopen the project and allow new proof versions to be added.'
-              : 'Reopen this project? It will go back to in progress and you\'ll be able to add new proof versions.'
-          }
-          confirmLabel="Reopen"
-          confirmClass="bg-ink hover:opacity-90 text-on-ink"
-          working={statusWorking}
-          onConfirm={guardStatusAction(handleReopen)}
-          onCancel={() => setStatusDialog(null)}
-        />
-      )}
+      {statusDialog === 'reopen' && (() => {
+        // Order-aware reopen (docs/order-cancel-and-revision-spec.md §3c). The
+        // dialog copy + gating depend on the latest order's state: cancel an
+        // unpaid link, hold a paid/placed order for revision (with a money
+        // warning, and — once placed — a required "old job cancelled" checkbox).
+        const placedDate = reopenOrder?.fulfilled_at ? formatLongDate(reopenOrder.fulfilled_at) : 'an earlier date'
+        const paidDate = reopenOrder?.paid_at ? formatLongDate(reopenOrder.paid_at) : 'an earlier date'
+        const total = reopenOrder ? orderTotal(reopenOrder) : null
+        const money = total != null && reopenOrder ? formatPrice(total, reopenOrder.currency) : 'the order amount'
+        const route = reopenOrder?.material_variants?.materials?.production_route
+        const placedWith = route === 'in_house' ? 'in-house production' : route === 'supplier' ? 'an outside supplier' : 'production'
+        const checker = route === 'in_house' ? 'the workshop' : route === 'supplier' ? 'the supplier' : 'production'
+        let message: string
+        let checkbox: { label: string; checked: boolean; onChange: (v: boolean) => void } | undefined
+        let confirmDisabled = false
+        if (reopenOrderState === 'sent') {
+          message = 'Reopening will cancel the unpaid order link and let the customer know. You can create a new order once the proof is re-approved.'
+        } else if (reopenOrderState === 'paid') {
+          message = `This order has been PAID (${money} on ${paidDate}) but not yet placed. Reopening holds it for revision — the payment is NOT refunded automatically; refund or credit it yourself if the change affects the price. The customer will be told their cards are being updated.`
+        } else if (reopenOrderState === 'fulfilled') {
+          message = `This order was PAID (${money}) and placed with ${placedWith} on ${placedDate}. Before reopening: (1) cancel the job in Stock Control, (2) check with ${checker} that it has NOT printed. The previously-approved artwork must not be produced. The payment is NOT refunded automatically.`
+          checkbox = { label: "I've cancelled the Stock Control job.", checked: reopenJobCancelled, onChange: setReopenJobCancelled }
+          confirmDisabled = !reopenJobCancelled
+        } else {
+          message = isAbandoned
+            ? 'Reopen this project? This will reopen the project and allow new proof versions to be added.'
+            : 'Reopen this project? It will go back to in progress and you\'ll be able to add new proof versions.'
+        }
+        return (
+          <ConfirmDialog
+            message={message}
+            checkbox={checkbox}
+            confirmDisabled={confirmDisabled}
+            confirmLabel="Reopen"
+            confirmClass="bg-ink hover:opacity-90 text-on-ink"
+            working={statusWorking}
+            onConfirm={guardStatusAction(handleReopen)}
+            onCancel={() => { setStatusDialog(null); setReopenJobCancelled(false) }}
+          />
+        )
+      })()}
 
       {/* Toast */}
       {toast && (
@@ -3644,6 +3984,8 @@ function ConfirmDialog({
   confirmClass,
   working,
   errorMsg,
+  confirmDisabled,
+  checkbox,
   onConfirm,
   onCancel,
 }: {
@@ -3652,6 +3994,11 @@ function ConfirmDialog({
   confirmClass: string
   working: boolean
   errorMsg?: string | null
+  // An independent pre-condition gate for the confirm button (separate from the
+  // double-click `working` guard). Used by the reopen dialog's "I've cancelled
+  // the Stock Control job" checkbox on a placed order.
+  confirmDisabled?: boolean
+  checkbox?: { label: string; checked: boolean; onChange: (v: boolean) => void }
   onConfirm: () => void
   onCancel: () => void
 }) {
@@ -3672,6 +4019,17 @@ function ConfirmDialog({
       {errorMsg && (
         <p className="mt-3 rounded-lg bg-out-soft px-3 py-2 text-xs text-out">{errorMsg}</p>
       )}
+      {checkbox && (
+        <label className="mt-4 flex items-start gap-2 text-sm text-ink-soft">
+          <input
+            type="checkbox"
+            checked={checkbox.checked}
+            onChange={(e) => checkbox.onChange(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span>{checkbox.label}</span>
+        </label>
+      )}
       <div className="mt-5 flex justify-end gap-2">
         <button
           onClick={onCancel}
@@ -3682,7 +4040,7 @@ function ConfirmDialog({
         </button>
         <button
           onClick={onConfirm}
-          disabled={working}
+          disabled={working || !!confirmDisabled}
           className={`rounded px-4 py-2 text-sm font-semibold disabled:opacity-50 ${confirmClass}`}
         >
           {working ? 'Working…' : confirmLabel}

@@ -33,6 +33,10 @@ export interface OrderForInvoice {
   amount_personalisation: number | null
   amount_shipping: number | null
   amount_us_tariff: number | null
+  // Designer-set per-order discount on the cards line, stamped at checkout.
+  // Booked as a separate negative line carrying the product's own item code so
+  // it inherits the correct VAT rate; null / 0 → no discount line.
+  amount_card_discount: number | null
 }
 
 export interface InvoiceBuildContext {
@@ -139,6 +143,7 @@ export async function buildOrderInvoiceLines(
   const personalisation = Number(order.amount_personalisation ?? 0)
   const shipping = Number(order.amount_shipping ?? 0)
   const usTariff = Number(order.amount_us_tariff ?? 0)
+  const cardDiscount = round2(Number(order.amount_card_discount ?? 0))
   // The code that lands on the product line, before any summary-fallback below.
   let productItemCode: string | null = null
 
@@ -169,6 +174,13 @@ export async function buildOrderInvoiceLines(
         itemCode: toolingItem,
       })
     }
+  }
+  // Designer-set cards discount — a separate negative line carrying the SAME
+  // item code as the product line, so Xero applies the cards line's own VAT rate
+  // to the (negative) discount and the net VAT comes out right. The cards line
+  // stays at full price; this shows the saving and nets the total down.
+  if (cardDiscount > 0 && lines.length > 0) {
+    lines.push({ description: 'Discount', amount: -cardDiscount, itemCode })
   }
   if (shipping > 0) {
     lines.push({

@@ -113,6 +113,7 @@ function templateScope(id: string): TemplateVariableScope {
   if (id.startsWith('proof_')) return 'proof_viewer'
   if (id.startsWith('order_reminder')) return 'order_reminder'
   if (id === 'order_paid_confirmation') return 'order_confirmation'
+  if (id === 'order_cancelled' || id === 'order_revision') return 'order_lifecycle'
   if (id.startsWith('order_')) return 'order'
   return 'designer_picked'
 }
@@ -157,6 +158,11 @@ export default function AdminTemplatesSection() {
       supabase
         .from('reply_templates')
         .select('id, display_name, description, body, updated_at')
+        // Supplier order emails have their own editor on Admin → Outsourcing
+        // (with the right variables + per-supplier rows); keep them out of this
+        // generic editor, where they'd land in the wrong group with a broken
+        // Reset and the wrong variable chips.
+        .not('id', 'like', 'supplier_order_email%')
         .order('id'),
       supabase
         .from('settings')
@@ -288,7 +294,7 @@ export default function AdminTemplatesSection() {
           />
           <TemplateGroup
             heading="Order messages"
-            blurb="The message offered in the order builder when sending a customer their payment link. The designer can still tweak it per-order before sending; this sets the starting text."
+            blurb="Customer messages across the order lifecycle: the pay-link sent from the order builder, the automated reminders, the paid confirmation, and the cancel / revision notices. Each card's own description says when it's used."
             templates={templates.filter((t) => templateGroup(t.id) === 'order')}
             onSaved={handleSaved}
           />
@@ -583,6 +589,7 @@ function VariableHelpPanel() {
   const order = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order')
   const orderReminder = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order_reminder')
   const orderConfirmation = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order_confirmation')
+  const orderLifecycle = TEMPLATE_VARIABLES.filter((v) => v.scope === 'order_lifecycle')
 
   return (
     <div className="mt-6 rounded-xl border border-line bg-canvas p-4">
@@ -639,6 +646,18 @@ function VariableHelpPanel() {
       </h4>
       <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
         {orderConfirmation.map((v) => (
+          <div key={v.name} className="contents">
+            <dt className="font-mono text-ink-soft">{`{${v.name}}`}</dt>
+            <dd className="text-ink-mute">{v.description}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <h4 className="mt-4 text-xs font-semibold uppercase tracking-wider text-ink-dim">
+        Order cancel / revision variables
+      </h4>
+      <dl className="mt-2 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1.5 text-xs">
+        {orderLifecycle.map((v) => (
           <div key={v.name} className="contents">
             <dt className="font-mono text-ink-soft">{`{${v.name}}`}</dt>
             <dd className="text-ink-mute">{v.description}</dd>

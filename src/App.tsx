@@ -16,6 +16,7 @@ import CustomersPage from './pages/CustomersPage'
 import CustomerDetailPage from './pages/CustomerDetailPage'
 import QuotePage from './pages/QuotePage'
 import OrdersPage from './pages/OrdersPage'
+import OrderReviewPage from './pages/OrderReviewPage'
 import AdminLayout from './pages/admin/AdminLayout'
 import AdminUsersPage from './pages/admin/AdminUsersPage'
 import AdminPricingPage from './pages/admin/AdminPricingPage'
@@ -25,6 +26,7 @@ import AdminAddOnEditor from './pages/admin/AdminAddOnEditor'
 import AdminActivityPage from './pages/admin/AdminActivityPage'
 import AdminSettingsPage from './pages/admin/AdminSettingsPage'
 import AdminTemplatesPage from './pages/admin/AdminTemplatesPage'
+import AdminOutsourcingPage from './pages/admin/AdminOutsourcingPage'
 import AdminSiteCopyPage from './pages/admin/AdminSiteCopyPage'
 import AdminAiDraftsPage from './pages/admin/AdminAiDraftsPage'
 import AdminCreateMaterialPage from './pages/admin/AdminCreateMaterialPage'
@@ -66,6 +68,7 @@ function AppShell() {
       <Route path="/" element={<RequireAuth><DashboardPage /></RequireAuth>} />
       <Route path="/quote" element={<RequireAuth><QuotePage /></RequireAuth>} />
       <Route path="/orders" element={<RequireAuth><OrdersPage /></RequireAuth>} />
+      <Route path="/orders/:id/place" element={<RequireAuth><OrderReviewPage /></RequireAuth>} />
       <Route path="/proofs/new" element={<RequireAuth><NewProofPage /></RequireAuth>} />
       <Route path="/proofs/:id" element={<RequireAuth><ProofDetailPage /></RequireAuth>} />
       <Route path="/proofs/:id/versions/new" element={<RequireAuth><NewVersionPage /></RequireAuth>} />
@@ -88,6 +91,7 @@ function AppShell() {
         <Route path="pricing" element={<AdminPricingPage />} />
         <Route path="lead-times" element={<AdminLeadTimesPage />} />
         <Route path="card-weights" element={<AdminCardWeightsPage />} />
+        <Route path="outsourcing" element={<AdminOutsourcingPage />} />
         <Route path="xero-item-codes" element={<AdminXeroItemCodesPage />} />
         <Route path="xero-self-test" element={<AdminXeroSelfTestPage />} />
         <Route path="materials/new" element={<AdminCreateMaterialPage />} />

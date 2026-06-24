@@ -16,6 +16,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { requireDesigner, json, CORS_HEADERS } from '../_shared/admin.ts'
 import { getAccessContext, createSalesInvoice } from '../_shared/xero.ts'
 import { buildOrderInvoiceLines } from '../_shared/invoiceBuild.ts'
+import { logAudit } from '../_shared/audit.ts'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -30,8 +31,10 @@ interface OrderRow {
   amount_tooling: number | null
   amount_personalisation: number | null
   amount_shipping: number | null
+  amount_card_discount: number | null
   currency: string
   status: string
+  payment_method: string | null
   xero_invoice_id: string | null
   payment_reference: string | null
   ship_to_name: string | null
@@ -74,7 +77,7 @@ Deno.serve(async (req) => {
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, currency, status, xero_invoice_id, payment_reference, ship_to_name, ship_to_email, ship_to_address, ship_dest_country, proofs(contacts(full_name, email))')
+    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_card_discount, currency, status, payment_method, xero_invoice_id, payment_reference, ship_to_name, ship_to_email, ship_to_address, ship_dest_country, proofs(contacts(full_name, email))')
     .eq('id', orderId)
     .single<OrderRow>()
   if (orderErr || !order) return json({ error: 'Order not found' }, 404)
@@ -86,6 +89,11 @@ Deno.serve(async (req) => {
   }
   if (order.xero_invoice_id) {
     return json({ error: 'This order already has a Xero invoice.', invoiceId: order.xero_invoice_id }, 409)
+  }
+  // Offline (bank-transfer) orders are invoiced manually in Xero and never carry
+  // an auto-invoice, so a "retry" here would DUPLICATE the manual invoice. Reject.
+  if (order.payment_method === 'offline') {
+    return json({ error: 'This is an offline (bank-transfer) order — its invoice is raised manually in Xero, so there is nothing to retry.' }, 409)
   }
 
   const ctx = await getAccessContext(admin)
@@ -106,9 +114,10 @@ Deno.serve(async (req) => {
   const tooling = Number(order.amount_tooling ?? 0)
   const personalisation = Number(order.amount_personalisation ?? 0)
   const shipping = Number(order.amount_shipping ?? 0)
+  const cardDiscount = Number(order.amount_card_discount ?? 0)
   const expectedTotal = order.custom_quote_total != null
-    ? round2(Number(order.custom_quote_total) + shipping)
-    : round2(cards + tooling + personalisation + shipping)
+    ? round2(Number(order.custom_quote_total) - cardDiscount + shipping)
+    : round2(cards + tooling + personalisation - cardDiscount + shipping)
 
   // Delivery country drives domestic vs international shipping item; prefer the
   // address Stripe collected, fall back to the rating country we stored.
@@ -163,10 +172,31 @@ Deno.serve(async (req) => {
 
   if (invoiceId) {
     await admin.from('orders').update({ xero_invoice_id: invoiceId, xero_invoice_error: null }).eq('id', orderId)
+    // A manual retry mints a real Xero invoice — record who triggered it.
+    await logAudit(admin, {
+      actorId: ctxOrResp.callerId,
+      actorEmail: ctxOrResp.callerEmail,
+      actorLabel: ctxOrResp.callerLabel,
+      action: 'order.invoice_retried',
+      targetType: 'order',
+      targetId: orderId,
+      targetLabel: `Order ${reference}`,
+      afterValue: { orderId, invoiceId, currency },
+    })
     return json({ ok: true, invoiceId })
   }
 
   const msg = lastError ?? 'Xero did not return an invoice'
   await admin.from('orders').update({ xero_invoice_error: msg }).eq('id', orderId)
+  await logAudit(admin, {
+    actorId: ctxOrResp.callerId,
+    actorEmail: ctxOrResp.callerEmail,
+    actorLabel: ctxOrResp.callerLabel,
+    action: 'order.invoice_retry_failed',
+    targetType: 'order',
+    targetId: orderId,
+    targetLabel: `Order ${reference}`,
+    afterValue: { orderId, error: msg },
+  })
   return json({ ok: false, error: msg }, 200)
 })

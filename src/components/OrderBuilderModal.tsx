@@ -27,6 +27,7 @@ import {
 
 type ShippingTreatment = 'full_cost' | 'goodwill' | 'free' | 'manual'
 type Currency = 'GBP' | 'EUR' | 'USD'
+type CardDiscountType = 'none' | 'percent' | 'fixed'
 
 const TREATMENT_OPTIONS: { value: ShippingTreatment; label: string }[] = [
   { value: 'full_cost', label: 'Charge full cost' },
@@ -35,13 +36,20 @@ const TREATMENT_OPTIONS: { value: ShippingTreatment; label: string }[] = [
   { value: 'manual', label: 'Manual amount' },
 ]
 
+const CARD_DISCOUNT_OPTIONS: { value: CardDiscountType; label: string }[] = [
+  { value: 'none', label: 'No discount' },
+  { value: 'percent', label: '% off' },
+  { value: 'fixed', label: 'Fixed amount off' },
+]
+
 interface VariantOption {
   id: string
   display_name: string
   weight_grams: number | null
   // 'thickness' | 'ink_count' | 'finish' | 'default'. Drives whether the order
-  // locks to the proof's variant (ink_count = artwork-defined) or lets the
-  // designer change it (thickness = a substrate choice the customer can change).
+  // locks to the proof's variant (ink_count + finish = artwork-defined, fixed at
+  // proof time) or lets the designer change it (thickness = a substrate choice
+  // the customer can still change at order time).
   variant_type: string | null
 }
 
@@ -105,6 +113,10 @@ export default function OrderBuilderModal({
   onClose,
   onCreated,
 }: OrderBuilderModalProps) {
+  // Payment method: 'online' sends a pay link; 'offline' records the order as
+  // already paid (bank transfer etc.) — no link, no Stripe, no Xero. Offline
+  // forces a locked quantity + free/manual shipping (handled below).
+  const [paymentMethod, setPaymentMethod] = useState<'online' | 'offline'>('online')
   const [quantityMode, setQuantityMode] = useState<'open' | 'locked'>('open')
   const [quantity, setQuantity] = useState('')
   // Recipient names for a split-name proof, so a LOCKED order can capture a
@@ -121,6 +133,12 @@ export default function OrderBuilderModal({
   const [shipDestCountry, setShipDestCountry] = useState('')
   // Per-order goodwill discount, % off the computed rate (Rob, 2026-06-15).
   const [shippingDiscountPercent, setShippingDiscountPercent] = useState('')
+  // Per-order discount on the CARDS line — none / % off / fixed amount off,
+  // with an optional reason. Resolved + capped at checkout against the priced
+  // cards figure; shows as its own negative line on the pay page + invoice.
+  const [cardDiscountType, setCardDiscountType] = useState<CardDiscountType>('none')
+  const [cardDiscountValue, setCardDiscountValue] = useState('')
+  const [cardDiscountReason, setCardDiscountReason] = useState('')
   const [customQuoteTotal, setCustomQuoteTotal] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -202,13 +220,19 @@ export default function OrderBuilderModal({
       setVariants(options)
       // Pre-select the variant the proof priced (when it's a single displayed
       // variant priced in this currency). Lock it read-only only when it's
-      // defined by the approved artwork — ink count for letterpress / plastics.
-      // Substrate choices the customer can still change at order time (metal
-      // thickness) stay an editable picker, just pre-selected to the proof's.
+      // defined by the approved artwork and can't change at order time:
+      //   * ink_count — letterpress / plastics (the artwork has that many inks)
+      //   * finish    — standard paper (Standard / UV Spot / Foiling is printed
+      //                 into the approved artwork)
+      // Substrate choices the customer can still change at order time (metal /
+      // full-colour-plastic thickness) stay an editable picker, just pre-selected
+      // to the proof's. Metal finish is a separate option picker, not this variant.
       const fromProofOpt = displayedVariantIds.length === 1
         ? options.find((o) => o.id === displayedVariantIds[0]) ?? null
         : null
-      setLockedFromProof(!!fromProofOpt && fromProofOpt.variant_type === 'ink_count')
+      setLockedFromProof(
+        !!fromProofOpt && (fromProofOpt.variant_type === 'ink_count' || fromProofOpt.variant_type === 'finish'),
+      )
       setVariantId(fromProofOpt?.id ?? (options.length === 1 ? options[0].id : null))
       setVariantsLoading(false)
     })()
@@ -463,10 +487,17 @@ export default function OrderBuilderModal({
     let quantityValue: number | null = null
     let personQuantitiesPayload: { name: string; quantity: number }[] | null = null
     if (quantityMode === 'locked') {
-      if (usePerPersonSplit) {
+      if (namesCount > 1) {
+        // Multi-name proof: a per-person split is REQUIRED so production knows
+        // how many of each name to make — a locked total alone is ambiguous.
+        // (Open "customer chooses" orders capture the split at checkout.)
+        if (personNames.length === 0) {
+          setError("Recipient names haven't loaded yet — close and reopen the order, then try again.")
+          return
+        }
         const entries = personNames.map((n) => ({ name: n, quantity: parseInt(personQty[n] ?? '', 10) }))
         if (entries.some((e) => !Number.isInteger(e.quantity) || e.quantity <= 0)) {
-          setError('Enter a quantity greater than zero for each person, or let the customer choose.')
+          setError('Enter a quantity (greater than zero) for each person, or let the customer choose.')
           return
         }
         personQuantitiesPayload = entries
@@ -513,6 +544,37 @@ export default function OrderBuilderModal({
       }
       customQuoteValue = c
     }
+    let cardDiscountValueParsed: number | null = null
+    if (cardDiscountType !== 'none') {
+      const v = Number(cardDiscountValue)
+      if (!Number.isFinite(v) || v <= 0) {
+        setError(cardDiscountType === 'percent' ? 'Enter a card discount percentage above 0.' : 'Enter a card discount amount above 0.')
+        return
+      }
+      if (cardDiscountType === 'percent' && v > 100) {
+        setError('Enter a card discount percentage between 0 and 100%.')
+        return
+      }
+      cardDiscountValueParsed = v
+    }
+
+    // Offline orders are recorded as already paid, so they need a fixed
+    // quantity and a shipping figure we can settle without the pay page. The
+    // UI enforces both (locked quantity, free/manual shipping); guard anyway.
+    if (paymentMethod === 'offline') {
+      if (quantityValue == null) {
+        setError('Offline orders need a locked quantity — switch to “Lock a quantity”.')
+        return
+      }
+      if (shippingTreatment !== 'free' && shippingTreatment !== 'manual') {
+        setError('Offline orders use free or manual shipping (live rates need the online pay page).')
+        return
+      }
+      if (!shipDestCountryValue) {
+        setError('Choose a destination for the order — it sets the packaging (UK = domestic box, anywhere else = international box).')
+        return
+      }
+    }
 
     setSubmitting(true)
     try {
@@ -523,6 +585,7 @@ export default function OrderBuilderModal({
         body: {
           proof_id: proofId,
           currency,
+          payment_method: paymentMethod,
           quantity: quantityValue,
           person_quantities: personQuantitiesPayload,
           names_count: namesCount,
@@ -530,6 +593,9 @@ export default function OrderBuilderModal({
           shipping_treatment: shippingTreatment,
           shipping_charged: shippingChargedValue,
           shipping_discount_percent: shippingDiscountPercentValue,
+          card_discount_type: cardDiscountType,
+          card_discount_value: cardDiscountValueParsed,
+          card_discount_reason: cardDiscountReason.trim() || undefined,
           ship_dest_country: shipDestCountryValue,
           custom_quote_total: customQuoteValue,
           material_variant_id: isCustomQuote ? undefined : variantId,
@@ -584,13 +650,23 @@ export default function OrderBuilderModal({
       {result ? (
         // ── Success ──────────────────────────────────────────────
         <div>
-          <h2 className="text-lg font-semibold text-ink">Order created</h2>
+          <h2 className="text-lg font-semibold text-ink">{paymentMethod === 'offline' ? 'Order recorded as paid' : 'Order created'}</h2>
           <p className="mt-1 text-sm text-ink-soft">
             Reference <span className="font-medium text-ink">{result.payment_reference}</span>
             {customerLabel ? ` for ${customerLabel}` : ''}.
           </p>
 
-          {sent ? (
+          {paymentMethod === 'offline' ? (
+            // Offline → recorded as paid; no link, straight into the order queue.
+            <>
+              <div className="mt-4 rounded-lg border border-in-stock bg-in-stock-soft px-3 py-2.5 text-[13px] text-ink">
+                Recorded as paid (offline) — it&rsquo;s now in the order queue, ready to order. No pay link was sent; raise the invoice in Xero when you&rsquo;re ready.
+              </div>
+              <div className="mt-5 flex items-center justify-end gap-2">
+                <ButtonCoral onClick={onClose}>Done</ButtonCoral>
+              </div>
+            </>
+          ) : sent ? (
             // Sent confirmation.
             <>
               <div className="mt-4 rounded-lg border border-in-stock bg-in-stock-soft px-3 py-2.5 text-[13px] text-ink">
@@ -718,30 +794,82 @@ export default function OrderBuilderModal({
               </Field>
             )}
 
-            {/* Quantity */}
-            <Field label="Quantity" asLabel={false} hint="Let the customer choose on the pay-page, or lock a specific quantity now.">
+            {/* Payment method */}
+            <Field label="Payment" asLabel={false} hint="Send the customer a secure pay link, or record an order they're paying offline (e.g. bank transfer) — it's saved as paid and goes straight to the order queue. You raise the invoice in Xero yourself.">
               <div className="flex flex-wrap gap-2">
-                {([['open', 'Customer chooses'], ['locked', 'Lock a quantity']] as const).map(([mode, label]) => (
+                {([['online', 'Send pay link'], ['offline', 'Offline / bank transfer']] as const).map(([m, label]) => (
                   <button
-                    key={mode}
+                    key={m}
                     type="button"
-                    onClick={() => setQuantityMode(mode)}
+                    onClick={() => {
+                      setPaymentMethod(m)
+                      if (m === 'offline') {
+                        // Offline records as paid + you invoice in Xero, so the
+                        // app doesn't need shipping cost or an in-app discount.
+                        setQuantityMode('locked')
+                        setShippingTreatment('free')
+                        setCardDiscountType('none')
+                      } else {
+                        // Back to online: undo the offline-only forcing so stale
+                        // state can't leak into the online flow. 'ZZ' is the
+                        // offline "International" sentinel — not a real country,
+                        // so the online shipping estimate can't rate it; clear it
+                        // (a 'GB' Domestic pick is real, so it can stay). Restore
+                        // the online shipping + quantity defaults.
+                        setQuantityMode('open')
+                        setShippingTreatment('full_cost')
+                        setShipDestCountry((c) => (c === 'ZZ' ? '' : c))
+                      }
+                    }}
                     className={[
                       'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
-                      quantityMode === mode ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
+                      paymentMethod === m ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
                     ].join(' ')}
                   >
                     {label}
                   </button>
                 ))}
               </div>
+              {paymentMethod === 'offline' && (
+                <p className="mt-2 text-[13px] text-ink-soft">
+                  Recorded as paid — no link, no Stripe. Needs a set quantity and free/manual shipping.
+                </p>
+              )}
+            </Field>
+
+            {/* Quantity */}
+            <Field label="Quantity" asLabel={false} hint="Let the customer choose on the pay-page, or lock a specific quantity now.">
+              <div className="flex flex-wrap gap-2">
+                {([['open', 'Customer chooses'], ['locked', 'Lock a quantity']] as const).map(([mode, label]) => {
+                  const blocked = paymentMethod === 'offline' && mode === 'open'
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      disabled={blocked}
+                      title={blocked ? 'Offline orders need a set quantity' : undefined}
+                      onClick={() => setQuantityMode(mode)}
+                      className={[
+                        'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                        quantityMode === mode ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
+                        blocked ? 'cursor-not-allowed opacity-40' : '',
+                      ].join(' ')}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
               {quantityMode === 'locked' && (
-                usePerPersonSplit ? (
+                namesCount > 1 ? (
+                  personNames.length === 0 ? (
+                    <p className="mt-2 text-[13px] text-ink-mute">Loading recipients…</p>
+                  ) : (
                   <div className="mt-2 space-y-2">
-                    <p className="text-[13px] text-ink-soft">Quantity for each person</p>
+                    <p className="text-[13px] text-ink-soft">Quantity for each person <span className="text-ink-mute">(required)</span></p>
                     {personNames.map((name) => (
-                      <div key={name} className="flex max-w-[320px] items-center justify-between gap-4">
-                        <label htmlFor={`bq-${name}`} className="truncate text-sm text-ink">{name}</label>
+                      <div key={name} className="flex w-full items-center justify-between gap-3">
+                        <label htmlFor={`bq-${name}`} title={name} className="min-w-0 flex-1 truncate text-sm text-ink">{name}</label>
                         <Input
                           id={`bq-${name}`}
                           type="number"
@@ -751,15 +879,16 @@ export default function OrderBuilderModal({
                           value={personQty[name] ?? ''}
                           onChange={(e) => setPersonQty((p) => ({ ...p, [name]: e.target.value }))}
                           placeholder="0"
-                          className="w-24 text-right"
+                          className="w-24 shrink-0 text-right"
                         />
                       </div>
                     ))}
-                    <div className="flex max-w-[320px] items-center justify-between gap-4 border-t border-line-soft pt-2 text-sm">
+                    <div className="flex w-full items-center justify-between gap-3 border-t border-line-soft pt-2 text-sm">
                       <span className="text-ink-soft">Total</span>
                       <span className="font-medium text-ink">{lockedSplitSum > 0 ? `${lockedSplitSum.toLocaleString()} cards` : '—'}</span>
                     </div>
                   </div>
+                  )
                 ) : (
                   <Input
                     type="number"
@@ -775,7 +904,36 @@ export default function OrderBuilderModal({
               )}
             </Field>
 
-            {/* Shipping treatment */}
+            {/* Offline: only the destination matters here (it sets the
+                Domestic/International packaging line for production). Shipping
+                cost + discount are skipped — you invoice in Xero yourself. */}
+            {paymentMethod === 'offline' ? (
+              <Field label="Destination" asLabel={false} hint="Required — sets the packaging line for production: the domestic box for the UK, the international box for everywhere else.">
+                <div className="flex flex-wrap gap-2">
+                  {/* Backs the production packaging line: Domestic stores 'GB',
+                      International stores 'ZZ' (the ISO "international / unspecified"
+                      code) — the hand-off reads GB = domestic, anything else =
+                      international, so no specific country is needed offline. */}
+                  {([['GB', 'Domestic'], ['ZZ', 'International']] as const).map(([code, label]) => {
+                    const active = code === 'GB' ? shipDestCountry === 'GB' : (shipDestCountry !== '' && shipDestCountry !== 'GB')
+                    return (
+                      <button
+                        key={code}
+                        type="button"
+                        onClick={() => setShipDestCountry(code)}
+                        className={[
+                          'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                          active ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
+                        ].join(' ')}
+                      >
+                        {label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </Field>
+            ) : (
+            /* Shipping treatment (online) */
             <Field label="Shipping" htmlFor="order-shipping-treatment" hint="Full cost / Goodwill quote the live carriage at checkout (UK flat DPD rate, or FedEx internationally) — the customer enters their postcode on the pay-page. Goodwill takes a % off. Free = no charge; Manual = a fixed amount.">
               <select
                 id="order-shipping-treatment"
@@ -917,6 +1075,49 @@ export default function OrderBuilderModal({
                 />
               )}
             </Field>
+            )}
+
+            {/* Card discount — online only; designer-set, reduces only the cards
+                line, shown as its own negative line on the pay page + invoice.
+                Skipped for offline (you invoice in Xero). */}
+            {paymentMethod !== 'offline' && (
+            <Field label="Card discount" htmlFor="order-card-discount" hint="Optional. Reduces only the cards subtotal — shows as its own discount line on the pay page and invoice. Shipping has its own subsidy above.">
+              <select
+                id="order-card-discount"
+                value={cardDiscountType}
+                onChange={(e) => setCardDiscountType(e.target.value as CardDiscountType)}
+                className={selectClass}
+              >
+                {CARD_DISCOUNT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              {cardDiscountType !== 'none' && (
+                <div className="mt-2 space-y-2">
+                  <Input
+                    aria-label={cardDiscountType === 'percent' ? 'Card discount percentage' : 'Card discount amount'}
+                    type="number"
+                    min={0}
+                    max={cardDiscountType === 'percent' ? 100 : undefined}
+                    step={cardDiscountType === 'percent' ? 1 : 0.01}
+                    inputMode={cardDiscountType === 'percent' ? 'numeric' : 'decimal'}
+                    value={cardDiscountValue}
+                    onChange={(e) => setCardDiscountValue(e.target.value)}
+                    placeholder={cardDiscountType === 'percent' ? '% off the cards (e.g. 10)' : `Amount off the cards (${currency ?? 'GBP'})`}
+                    className="max-w-[240px]"
+                  />
+                  <Input
+                    aria-label="Card discount reason (optional)"
+                    type="text"
+                    value={cardDiscountReason}
+                    onChange={(e) => setCardDiscountReason(e.target.value)}
+                    placeholder="Reason (optional — e.g. goodwill, loyalty)"
+                    className="max-w-[320px]"
+                  />
+                </div>
+              )}
+            </Field>
+            )}
 
             {/* Custom quote total — only for custom-quote proofs */}
             {isCustomQuote && (

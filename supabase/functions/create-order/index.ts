@@ -8,17 +8,37 @@
 // function does not price anything or move any money.
 //
 // Auth: requireDesigner (admin or designer; anon/customers rejected).
-// Writes go through the service-role client. The order is created
+// Writes go through the service-role client. The order is normally created
 // 'sent' (the pay-link is live) with the caller stamped as created_by.
+//
+// Offline payment (payment_method='offline'): for a customer paying by bank
+// transfer etc., the order is created already 'paid' — no pay link, no Stripe,
+// no Xero (the designer raises the invoice themselves). The price breakdown is
+// computed + stamped here (so the To-order queue + records have a total) using
+// the SAME shared pricing maths the online checkout uses. Offline requires a
+// fixed quantity and free/manual shipping (live rates need the online pay page).
 
 import { json, requireDesigner } from '../_shared/admin.ts'
 import { logAudit } from '../_shared/audit.ts'
+import { cardTotalForQuantity, computeOrderTotal, resolveCardDiscount, type Tier } from '../_shared/orderPricing.ts'
 
 type ShippingTreatment = 'full_cost' | 'goodwill' | 'free' | 'manual'
 type Currency = 'GBP' | 'EUR' | 'USD'
+type CardDiscountType = 'none' | 'percent' | 'fixed'
+type PaymentMethod = 'online' | 'offline'
 
 const SHIPPING_TREATMENTS: ShippingTreatment[] = ['full_cost', 'goodwill', 'free', 'manual']
 const CURRENCIES: Currency[] = ['GBP', 'EUR', 'USD']
+const CARD_DISCOUNT_TYPES: CardDiscountType[] = ['none', 'percent', 'fixed']
+
+function splitNameForCurrency(
+  m: { split_name_surcharge_gbp: number | null; split_name_surcharge_eur: number | null; split_name_surcharge_usd: number | null } | null,
+  currency: string,
+): number | null {
+  if (!m) return null
+  const v = currency === 'GBP' ? m.split_name_surcharge_gbp : currency === 'EUR' ? m.split_name_surcharge_eur : m.split_name_surcharge_usd
+  return v == null ? null : Number(v)
+}
 
 // URL-safe random token for the pay-page bearer. 32 hex chars from the
 // platform CSPRNG — unguessable and collision-safe for this volume.
@@ -145,11 +165,52 @@ Deno.serve(async (req) => {
     shippingDiscountPercent = Math.round(d * 100) / 100
   }
 
+  // card_discount — the per-order discount on the CARDS line (mirrors the
+  // shipping subsidy). type none/percent/fixed; value required for the two
+  // active types (percent 0–100, fixed >= 0); reason is an optional audit note.
+  // The actual discount amount is resolved + stamped at checkout against the
+  // priced cards figure (create-checkout-session), not here.
+  const cardDiscountType = (body.card_discount_type as CardDiscountType) ?? 'none'
+  if (!CARD_DISCOUNT_TYPES.includes(cardDiscountType)) {
+    return json({ error: 'Invalid card_discount_type' }, 400)
+  }
+  let cardDiscountValue: number | null = null
+  if (cardDiscountType !== 'none') {
+    const v = Number(body.card_discount_value)
+    if (!Number.isFinite(v) || v <= 0) {
+      return json({ error: 'card_discount_value must be greater than zero for a card discount' }, 400)
+    }
+    if (cardDiscountType === 'percent' && v > 100) {
+      return json({ error: 'card_discount_value must be between 0 and 100 for a percent discount' }, 400)
+    }
+    cardDiscountValue = Math.round(v * 100) / 100
+  }
+  const cardDiscountReason =
+    typeof body.card_discount_reason === 'string' && body.card_discount_reason.trim()
+      ? body.card_discount_reason.trim().slice(0, 255)
+      : null
+
   let customQuoteTotal: number | null = null
   if (body.custom_quote_total != null) {
     const c = Number(body.custom_quote_total)
     if (!Number.isFinite(c) || c < 0) return json({ error: 'custom_quote_total must be zero or greater' }, 400)
     customQuoteTotal = Math.round(c * 100) / 100
+  }
+
+  // payment_method — 'online' (default; pay link) or 'offline' (bank transfer
+  // etc.). Offline is created already paid, so it needs a fixed quantity and a
+  // shipping figure we can settle without the online pay page (free / manual).
+  const paymentMethod: PaymentMethod = body.payment_method === 'offline' ? 'offline' : 'online'
+  if (paymentMethod === 'offline') {
+    if (quantity == null) {
+      return json({ error: 'An offline order needs a fixed quantity (the customer can’t pick one without the pay page).' }, 400)
+    }
+    if (shippingTreatment !== 'free' && shippingTreatment !== 'manual') {
+      return json({ error: 'An offline order must use free or manual shipping — live rates need the online pay page.' }, 400)
+    }
+    if (customQuoteTotal == null && !materialVariantId) {
+      return json({ error: 'An offline grid order needs a material variant to price the cards.' }, 400)
+    }
   }
 
   // expires_at: an explicit ISO string wins; otherwise default to 14 days from
@@ -171,16 +232,99 @@ Deno.serve(async (req) => {
     return json({ error: 'Orders can only be created for approved proofs' }, 409)
   }
 
+  // ── Offline breakdown (priced + stamped now, like the online checkout) ──
+  // Grid order → cards (incl. the folded finish surcharge) + split-name tooling
+  // + personalisation, via the shared computeOrderTotal (same maths as the
+  // online checkout; the reads mirror create-checkout-session's grid branch).
+  // Custom quote → the agreed figure as the cards line. Shipping is free (0) or
+  // the manual figure. Card discount resolved + capped against the cards figure.
+  let amountCards: number | null = null
+  let amountTooling: number | null = null
+  let amountPersonalisation: number | null = null
+  let amountShipping: number | null = null
+  let amountCardDiscount: number | null = null
+  if (paymentMethod === 'offline') {
+    const round2 = (n: number) => Math.round(n * 100) / 100
+    if (customQuoteTotal != null) {
+      amountCards = customQuoteTotal
+      amountTooling = 0
+      amountPersonalisation = 0
+    } else {
+      const { data: tierRows } = await admin
+        .from('price_tiers')
+        .select('quantity, total_price')
+        .eq('material_variant_id', materialVariantId)
+        .eq('currency', currency)
+      const tiers: Tier[] = (tierRows ?? []).map((t) => ({ quantity: t.quantity as number, total_price: Number(t.total_price) }))
+
+      const { data: variant } = await admin
+        .from('material_variants')
+        .select('material_id')
+        .eq('id', materialVariantId)
+        .single()
+      let perExtraName: number | null = null
+      if (variant?.material_id) {
+        const { data: material } = await admin
+          .from('materials')
+          .select('split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd')
+          .eq('id', variant.material_id)
+          .single()
+        perExtraName = splitNameForCurrency(material, currency)
+      }
+
+      let personalisation: { perCardRate: number; minCharge: number } | null = null
+      if (hasPersonalisation) {
+        const { data: p } = await admin
+          .from('personalisation_pricing')
+          .select('per_card_rate, min_charge')
+          .eq('currency', currency)
+          .single()
+        if (p) personalisation = { perCardRate: Number(p.per_card_rate), minCharge: Number(p.min_charge) }
+      }
+
+      let optionSurcharge = 0
+      if (materialOptionId) {
+        const { data: surRows } = await admin
+          .from('material_option_surcharges')
+          .select('quantity, surcharge')
+          .eq('material_option_id', materialOptionId)
+          .eq('currency', currency)
+        const surTiers: Tier[] = (surRows ?? []).map((s) => ({ quantity: s.quantity as number, total_price: Number(s.surcharge) }))
+        if (surTiers.length > 0) optionSurcharge = cardTotalForQuantity(surTiers, quantity as number) ?? 0
+      }
+
+      const priced = computeOrderTotal({
+        tiers,
+        quantity: quantity as number,
+        perExtraNameSurcharge: perExtraName,
+        namesCount,
+        personalisation,
+        optionSurcharge,
+        shipping: 0,
+      })
+      if (!priced.ok) {
+        return json({ error: 'Couldn’t price this quantity offline — check it’s within the material’s price tiers.' }, 422)
+      }
+      amountCards = round2(priced.cards + priced.finish)
+      amountTooling = priced.splitName
+      amountPersonalisation = priced.personalisation
+    }
+    amountShipping = shippingTreatment === 'manual' ? round2(Number(shippingCharged ?? 0)) : 0
+    const cardsBase = customQuoteTotal != null ? customQuoteTotal : (amountCards ?? 0)
+    amountCardDiscount = resolveCardDiscount(cardDiscountType, cardDiscountValue, cardsBase)
+  }
+
   // ── Insert ──────────────────────────────────────────────────────
   const token = randomToken()
   const payment_reference = paymentReference()
   const nowIso = new Date().toISOString()
+  const isOffline = paymentMethod === 'offline'
 
   const { data: order, error: insertErr } = await admin
     .from('orders')
     .insert({
       proof_id: proofId,
-      status: 'sent',
+      status: isOffline ? 'paid' : 'sent',
       material_variant_id: materialVariantId,
       material_option_id: materialOptionId,
       quantity,
@@ -191,6 +335,9 @@ Deno.serve(async (req) => {
       shipping_treatment: shippingTreatment,
       shipping_charged: shippingCharged,
       shipping_discount_percent: shippingDiscountPercent,
+      card_discount_type: cardDiscountType,
+      card_discount_value: cardDiscountValue,
+      card_discount_reason: cardDiscountReason,
       ship_dest_country: shipDestCountry,
       ship_dest_postcode: shipDestPostcode,
       currency,
@@ -199,6 +346,20 @@ Deno.serve(async (req) => {
       payment_reference,
       created_by: callerId,
       sent_at: nowIso,
+      payment_method: paymentMethod,
+      // Offline → created already paid, with the breakdown stamped so the
+      // To-order queue + records have a total (no Stripe, no Xero here).
+      ...(isOffline
+        ? {
+            paid_at: nowIso,
+            amount_cards: amountCards,
+            amount_tooling: amountTooling,
+            amount_personalisation: amountPersonalisation,
+            amount_shipping: amountShipping,
+            amount_us_tariff: 0,
+            amount_card_discount: amountCardDiscount,
+          }
+        : {}),
     })
     .select('id, token, status, payment_reference')
     .single()
@@ -217,15 +378,20 @@ Deno.serve(async (req) => {
     targetLabel: `Order ${order.payment_reference} for proof ${proofId}`,
     afterValue: {
       status: order.status,
+      payment_method: paymentMethod,
       currency,
       quantity,
       shipping_treatment: shippingTreatment,
       shipping_discount_percent: shippingDiscountPercent,
+      card_discount_type: cardDiscountType,
+      card_discount_value: cardDiscountValue,
+      card_discount_reason: cardDiscountReason,
       ship_dest_country: shipDestCountry,
       ship_dest_postcode: shipDestPostcode,
       has_personalisation: hasPersonalisation,
       custom_quote_total: customQuoteTotal,
       material_option_id: materialOptionId,
+      ...(isOffline ? { amount_cards: amountCards, amount_shipping: amountShipping, amount_card_discount: amountCardDiscount } : {}),
     },
   })
 

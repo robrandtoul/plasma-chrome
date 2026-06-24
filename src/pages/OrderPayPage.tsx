@@ -27,7 +27,7 @@ import type { Currency, CustomerProofGraph } from '../lib/types'
 interface OrderPayload {
   id: string
   proof_id: string
-  status: 'draft' | 'sent' | 'paid' | 'fulfilled' | 'expired' | 'cancelled'
+  status: 'draft' | 'sent' | 'paid' | 'fulfilled' | 'expired' | 'cancelled' | 'revision'
   material_variant_id: string | null
   material_option_id: string | null
   quantity: number | null
@@ -51,6 +51,9 @@ interface OrderPayload {
   // US tariff & customs handling (migration 000249): the charged fee + the
   // customer's opt-out choice, stamped at checkout. Null/false on legacy rows.
   amount_us_tariff: number | null
+  // Designer-set cards discount stamped at checkout (the resolved amount, >= 0).
+  // Shown as a separate negative line; null on legacy rows → no discount.
+  amount_card_discount: number | null
   us_tariff_opted_out: boolean
   // Delivery details Stripe collected, persisted by the webhook on the
   // sent → paid flip — so only present once the payment is confirmed.
@@ -201,7 +204,7 @@ export default function OrderPayPage() {
     pk: string
     amount: number
     currency: Currency
-    breakdown: { cards: number; tooling: number; personalisation: number; shipping: number; us_tariff: number }
+    breakdown: { cards: number; tooling: number; personalisation: number; shipping: number; us_tariff: number; card_discount: number }
   } | null>(null)
   // True once the elements are mounted (drives the loading state).
   const [formMounted, setFormMounted] = useState(false)
@@ -241,7 +244,7 @@ export default function OrderPayPage() {
             .filter((p) => Number.isFinite(p.quantity) && p.quantity > 0)
         : []
     try {
-      const { data, error } = await supabase.functions.invoke<{ client_secret?: string; publishable_key?: string; amount?: number; currency?: Currency; breakdown?: { cards: number; tooling: number; personalisation: number; shipping: number; us_tariff: number }; error?: string; message?: string }>(
+      const { data, error } = await supabase.functions.invoke<{ client_secret?: string; publishable_key?: string; amount?: number; currency?: Currency; breakdown?: { cards: number; tooling: number; personalisation: number; shipping: number; us_tariff: number; card_discount: number }; error?: string; message?: string }>(
         'create-checkout-session',
         {
           body: {
@@ -282,7 +285,7 @@ export default function OrderPayPage() {
         pk: data.publishable_key,
         amount: data.amount,
         currency: data.currency,
-        breakdown: data.breakdown ?? { cards: data.amount, tooling: 0, personalisation: 0, shipping: 0, us_tariff: 0 },
+        breakdown: data.breakdown ?? { cards: data.amount, tooling: 0, personalisation: 0, shipping: 0, us_tariff: 0, card_discount: 0 },
       })
     } catch {
       setPayError('We couldn’t start checkout. Please reply to the email you received and we’ll help.')
@@ -559,6 +562,18 @@ export default function OrderPayPage() {
             window.setTimeout(() => { if (!cancelled) poll() }, 5000)
           }
         })
+        .catch(() => {
+          // A rejected invoke (offline, CORS, function 500 before a body) would
+          // otherwise leave vat stuck on 'loading' forever and render nothing.
+          // Degrade to the reassuring "available shortly" copy and keep trying
+          // within the same budget.
+          if (cancelled) return
+          attempts++
+          setVat({ state: 'pending' })
+          if (attempts < MAX_ATTEMPTS) {
+            window.setTimeout(() => { if (!cancelled) poll() }, 5000)
+          }
+        })
     }
     poll()
     return () => { cancelled = true }
@@ -609,7 +624,8 @@ export default function OrderPayPage() {
     const personalisation = amt(o.amount_personalisation)
     const shipping = amt(o.amount_shipping)
     const usTariff = amt(o.amount_us_tariff)
-    const total = round2(cards + tooling + personalisation + shipping + usTariff)
+    const cardDiscount = amt(o.amount_card_discount)
+    const total = round2(cards - cardDiscount + tooling + personalisation + shipping + usTariff)
     const haveSummary = total > 0
     const addr = o.ship_to_address
     const haveAddress = confirmed && !!addr && !!(addr.line1 || addr.postal_code)
@@ -640,6 +656,7 @@ export default function OrderPayPage() {
                 />
               )}
               <Row label="Cards" value={formatPrice(cards, o.currency)} />
+              {cardDiscount > 0 && <Row label="Discount" value={formatPrice(-cardDiscount, o.currency)} />}
               {tooling > 0 && (
                 <Row
                   label={o.names_count > 1 ? `Extra tooling (${o.names_count} names)` : 'Extra tooling'}
@@ -721,11 +738,40 @@ export default function OrderPayPage() {
 
   const isExpired =
     order.status === 'expired' ||
-    order.status === 'cancelled' ||
     (order.status === 'sent' && order.expires_at != null && new Date(order.expires_at).getTime() < Date.now())
 
   if (order.status === 'paid' || order.status === 'fulfilled') {
     return renderConfirmation(true, order)
+  }
+
+  // Order was cancelled (abort, or a reopen-for-changes on an unpaid link).
+  // Calm and reorder-friendly, not an error tone.
+  if (order.status === 'cancelled') {
+    return (
+      <Screen>
+        <PanelShell className="max-w-md text-center">
+          <h1 className="text-lg font-semibold text-ink">This order has been cancelled</h1>
+          <p className="mt-2 text-sm text-ink-soft">
+            This order is no longer active. If you&rsquo;d like to reorder, just reply to the email you received and we&rsquo;ll set it up for you.
+          </p>
+        </PanelShell>
+      </Screen>
+    )
+  }
+
+  // Paid/placed order held while the proof is being redesigned (revision).
+  // The payment stands; a fresh proof follows once it's ready.
+  if (order.status === 'revision') {
+    return (
+      <Screen>
+        <PanelShell className="max-w-md text-center">
+          <h1 className="text-lg font-semibold text-ink">We&rsquo;re updating your cards</h1>
+          <p className="mt-2 text-sm text-ink-soft">
+            We&rsquo;re making changes to your artwork. A new proof will follow once it&rsquo;s ready — there&rsquo;s nothing you need to do right now.
+          </p>
+        </PanelShell>
+      </Screen>
+    )
   }
 
   if (isExpired) {
@@ -969,6 +1015,7 @@ export default function OrderPayPage() {
                 {checkout ? (
                   <>
                     <Row label={order.custom_quote_total != null ? 'Agreed price' : 'Cards'} value={formatPrice(checkout.breakdown.cards, checkout.currency)} />
+                    {checkout.breakdown.card_discount > 0 && <Row label="Discount" value={formatPrice(-checkout.breakdown.card_discount, checkout.currency)} />}
                     {checkout.breakdown.tooling > 0 && <Row label="Tooling" value={formatPrice(checkout.breakdown.tooling, checkout.currency)} />}
                     {checkout.breakdown.personalisation > 0 && <Row label="Personalisation" value={formatPrice(checkout.breakdown.personalisation, checkout.currency)} />}
                     <Row label="Shipping" value={checkout.breakdown.shipping > 0 ? formatPrice(checkout.breakdown.shipping, checkout.currency) : 'Free'} />
@@ -1102,7 +1149,7 @@ export default function OrderPayPage() {
                   )}
 
                   {payError && (
-                    <div className="rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{payError}</div>
+                    <div role="alert" className="rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{payError}</div>
                   )}
 
                   <button type="button" onClick={() => void startCheckout()} disabled={paying || awaitingQuantity || !destinationComplete}
@@ -1113,7 +1160,7 @@ export default function OrderPayPage() {
                           : payTotal != null ? `Continue to payment — ${formatPrice(payTotal, order.currency)}`
                             : 'Continue to payment'}
                   </button>
-                  <p className="text-center text-[12px] text-ink-mute">
+                  <p className="text-center text-[12px] text-ink-mute" aria-live="polite">
                     {awaitingQuantity ? 'Select a quantity to see your total.'
                       : !destinationComplete ? 'Enter where we’re shipping to so we can calculate shipping.'
                         : 'Secured by Stripe.'}
@@ -1128,12 +1175,21 @@ export default function OrderPayPage() {
                     </div>
                   )}
                   <div className="space-y-4">
-                    <div id="link-auth" />
-                    <div id="address-element" />
-                    <div id="payment-element" />
+                    <div>
+                      <p className="mb-1.5 text-[12px] font-medium text-ink-mute">Contact</p>
+                      <div id="link-auth" aria-label="Contact details" />
+                    </div>
+                    <div>
+                      <p className="mb-1.5 text-[12px] font-medium text-ink-mute">Shipping address</p>
+                      <div id="address-element" aria-label="Shipping address" />
+                    </div>
+                    <div>
+                      <p className="mb-1.5 text-[12px] font-medium text-ink-mute">Payment details</p>
+                      <div id="payment-element" aria-label="Payment details" />
+                    </div>
                   </div>
                   {formError && (
-                    <div className="mt-3 rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{formError}</div>
+                    <div role="alert" className="mt-3 rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{formError}</div>
                   )}
                   <button type="button" onClick={() => void confirmPay()} disabled={submitting || !formMounted}
                     className="mt-4 inline-flex w-full items-center justify-center rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-on-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
