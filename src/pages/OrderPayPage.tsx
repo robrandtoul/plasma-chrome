@@ -113,15 +113,6 @@ function variantLabel(variant: string): string {
   return /micron|µm|\bum\b/i.test(variant) ? 'Thickness' : 'Option'
 }
 
-// One-line spec shown in the artwork recap on the post-payment confirmation.
-type RecapSpec = {
-  material: string
-  variant: string | null
-  finish: string | null
-  approvedAt: string | null
-  inks: string[]
-}
-
 const SHIPPING_LABEL: Record<OrderPayload['shipping_treatment'], string> = {
   full_cost: 'Standard shipping',
   goodwill: 'Shipping (partly covered by us)',
@@ -753,8 +744,9 @@ export default function OrderPayPage() {
     // visit gets a quieter "Your order" header led by the live status block.
     const isImmediate = !confirmed || justPaid
     return (
-      <Screen>
-        <PanelShell className="w-full max-w-lg">
+      <div className="flex min-h-screen justify-center bg-canvas px-4 py-8">
+        <div className="w-full max-w-4xl">
+          {/* Header — full width across the top. */}
           {isImmediate ? (
             <>
               <Pill colour="in-stock">{confirmed ? 'Paid' : 'Payment received'}</Pill>
@@ -773,87 +765,108 @@ export default function OrderPayPage() {
             <p className="mt-0.5 text-sm text-ink-soft">Reference {o.payment_reference}</p>
           )}
 
-          {/* Order status — the hero of a return visit, led right under the header. */}
+          {/* Order status — full-width hero on a return visit. */}
           {!isImmediate && renderStatusBlock(o.tracking_projection)}
 
-          <Recap thumbs={thumbs} spec={spec} />
-
-          {/* What was ordered + paid — from the breakdown stamped at checkout. */}
-          {haveSummary && (
-            <div className="mt-5 space-y-2 border-t border-line pt-5 text-sm">
-              {o.quantity != null && (
-                <Row
-                  label="Quantity"
-                  value={o.names_count > 1 ? `${o.quantity.toLocaleString()} cards in total` : o.quantity.toLocaleString()}
-                />
-              )}
-              <Row label="Cards" value={formatPrice(cards, o.currency)} />
-              {cardDiscount > 0 && <Row label="Discount" value={formatPrice(-cardDiscount, o.currency)} />}
-              {tooling > 0 && (
-                <Row
-                  label={o.names_count > 1 ? `Extra tooling (${o.names_count} names)` : 'Extra tooling'}
-                  value={formatPrice(tooling, o.currency)}
-                />
-              )}
-              {personalisation > 0 && <Row label="Personalisation" value={formatPrice(personalisation, o.currency)} />}
-              <Row
-                label={SHIPPING_LABEL[o.shipping_treatment]}
-                value={shipping > 0 ? formatPrice(shipping, o.currency) : 'Free'}
-              />
-              {usTariff > 0 && <Row label="US tariff & customs handling" value={formatPrice(usTariff, o.currency)} />}
-              <div className="flex items-center justify-between gap-4 border-t border-line pt-2.5 text-base">
-                <span className="font-semibold text-ink">{confirmed ? 'Total paid' : 'Total'}</span>
-                <span className="font-semibold text-ink">{formatPrice(total, o.currency)}</span>
-              </div>
-              {o.currency === 'GBP' && <p className="text-[12px] text-ink-mute">Includes VAT.</p>}
-            </div>
-          )}
-
-          {/* Delivery address — only once the webhook has stored what Stripe collected. */}
-          {haveAddress && (
-            <div className="mt-5 border-t border-line pt-4 text-sm">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Shipping to</p>
-              <p className="mt-1 text-ink">
-                {o.ship_to_name && (
-                  <>
-                    {o.ship_to_name}
-                    <br />
-                  </>
+          {/* Two columns on desktop (lg+); stacks to one column on mobile. */}
+          <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+            {/* LEFT — order summary: approved artwork + spec + what was paid. */}
+            <PanelShell className="self-start">
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Order summary</p>
+                {spec?.approvedAt && (
+                  <p className="text-[12px] text-ink-mute">Approved {formatApprovedDate(spec.approvedAt)}</p>
                 )}
-                {addressLine}
-              </p>
-            </div>
-          )}
-
-          {/* What happens next — the reassurance shown ONLY on the immediate
-              post-payment view. On a return visit the status block above answers
-              "where's my order" instead, so this would just be redundant. */}
-          {isImmediate && (
-            <div className="mt-5 rounded-xl border border-line bg-canvas p-4 text-sm text-ink-soft">
-              <p className="font-medium text-ink">What happens next</p>
-              {confirmed ? (
-                <ul className="mt-2 list-disc space-y-1.5 pl-5">
-                  <li>We&rsquo;ve got your order and we&rsquo;re getting started.</li>
-                  <li>We&rsquo;ll email you dispatch details as soon as your cards are on their way.</li>
-                </ul>
-              ) : (
-                <ul className="mt-2 list-disc space-y-1.5 pl-5">
-                  <li>We&rsquo;re just confirming your payment — this only takes a moment.</li>
-                  <li>A receipt is on its way to your email.</li>
-                  <li>You can safely close this page.</li>
-                </ul>
+              </div>
+              {thumbs.length > 0 && (
+                <div className={`mt-3 grid gap-3 ${thumbs.length > 1 ? 'sm:grid-cols-2' : ''}`}>
+                  {thumbs.map((img) => (
+                    <img key={img.id} src={img.signed_url} alt="Approved proof artwork" className="w-full rounded-lg bg-surface ring-1 ring-line" />
+                  ))}
+                </div>
               )}
-            </div>
-          )}
+              {spec && (
+                <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+                  <dt className="text-ink-mute">Material</dt>
+                  <dd className="text-ink">{spec.material}</dd>
+                  {spec.variant && (<><dt className="text-ink-mute">{variantLabel(spec.variant)}</dt><dd className="text-ink">{spec.variant}</dd></>)}
+                  {spec.finish && (<><dt className="text-ink-mute">Finish</dt><dd className="text-ink">{spec.finish}</dd></>)}
+                  {spec.inks.length > 0 && (<><dt className="text-ink-mute">Ink</dt><dd className="text-ink">{spec.inks.join(', ')}</dd></>)}
+                </dl>
+              )}
+              {haveSummary && (
+                <div className="mt-4 space-y-2 border-t border-line pt-4 text-sm">
+                  {o.quantity != null && (
+                    <Row
+                      label="Quantity"
+                      value={o.names_count > 1 ? `${o.quantity.toLocaleString()} cards in total` : o.quantity.toLocaleString()}
+                    />
+                  )}
+                  <Row label="Cards" value={formatPrice(cards, o.currency)} />
+                  {cardDiscount > 0 && <Row label="Discount" value={formatPrice(-cardDiscount, o.currency)} />}
+                  {tooling > 0 && (
+                    <Row
+                      label={o.names_count > 1 ? `Extra tooling (${o.names_count} names)` : 'Extra tooling'}
+                      value={formatPrice(tooling, o.currency)}
+                    />
+                  )}
+                  {personalisation > 0 && <Row label="Personalisation" value={formatPrice(personalisation, o.currency)} />}
+                  <Row
+                    label={SHIPPING_LABEL[o.shipping_treatment]}
+                    value={shipping > 0 ? formatPrice(shipping, o.currency) : 'Free'}
+                  />
+                  {usTariff > 0 && <Row label="US tariff & customs handling" value={formatPrice(usTariff, o.currency)} />}
+                  <div className="flex items-center justify-between gap-4 border-t border-line pt-2.5 text-base">
+                    <span className="font-semibold text-ink">{confirmed ? 'Total paid' : 'Total'}</span>
+                    <span className="font-semibold text-ink">{formatPrice(total, o.currency)}</span>
+                  </div>
+                  {o.currency === 'GBP' && <p className="text-[12px] text-ink-mute">Includes VAT.</p>}
+                </div>
+              )}
+            </PanelShell>
 
-          {/* Self-serve VAT invoice (Xero online-invoice link, once it reconciles). */}
-          {renderVatInvoice()}
+            {/* RIGHT — next steps (immediate), delivery, invoice, help. */}
+            <PanelShell className="self-start">
+              {/* What happens next — only on the immediate post-payment view. */}
+              {isImmediate && (
+                <div className="text-sm text-ink-soft">
+                  <p className="font-medium text-ink">What happens next</p>
+                  {confirmed ? (
+                    <ul className="mt-2 list-disc space-y-1.5 pl-5">
+                      <li>We&rsquo;ve got your order and we&rsquo;re getting started.</li>
+                      <li>We&rsquo;ll email you dispatch details as soon as your cards are on their way.</li>
+                    </ul>
+                  ) : (
+                    <ul className="mt-2 list-disc space-y-1.5 pl-5">
+                      <li>We&rsquo;re just confirming your payment — this only takes a moment.</li>
+                      <li>A receipt is on its way to your email.</li>
+                      <li>You can safely close this page.</li>
+                    </ul>
+                  )}
+                </div>
+              )}
 
-          <p className="mt-4 text-center text-[12px] text-ink-mute">
-            Questions about your order? Just reply to your order email and we&rsquo;ll help.
-          </p>
-        </PanelShell>
-      </Screen>
+              {/* Delivery address — once the webhook has stored what Stripe collected. */}
+              {haveAddress && (
+                <div className={`text-sm ${isImmediate ? 'mt-5 border-t border-line pt-5' : ''}`}>
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Shipping to</p>
+                  <p className="mt-1 text-ink">
+                    {o.ship_to_name && (<>{o.ship_to_name}<br /></>)}
+                    {addressLine}
+                  </p>
+                </div>
+              )}
+
+              {/* Self-serve VAT invoice (self-spaces with its own top margin). */}
+              {renderVatInvoice()}
+
+              <p className="mt-5 text-[12px] text-ink-mute">
+                Questions about your order? Just reply to your order email and we&rsquo;ll help.
+              </p>
+            </PanelShell>
+          </div>
+        </div>
+      </div>
     )
   }
 
@@ -1408,58 +1421,6 @@ function formatApprovedDate(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-}
-
-// Approved-artwork recap (thumbnails + one-line spec + approved date), shown on
-// the post-payment confirmation. Renders nothing when neither resolved.
-function Recap({ thumbs, spec }: { thumbs: GridImage[]; spec: RecapSpec | null }) {
-  if (thumbs.length === 0 && !spec) return null
-  return (
-    <div className="mt-5 rounded-xl border border-line bg-canvas p-4">
-      <div className="flex items-baseline justify-between gap-3">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Approved artwork</p>
-        {spec?.approvedAt && (
-          <p className="text-[12px] text-ink-mute">Approved {formatApprovedDate(spec.approvedAt)}</p>
-        )}
-      </div>
-      {thumbs.length > 0 && (
-        <div className={`mt-3 grid gap-3 ${thumbs.length > 1 ? 'sm:grid-cols-2' : ''}`}>
-          {thumbs.map((img) => (
-            <img
-              key={img.id}
-              src={img.signed_url}
-              alt="Approved proof artwork"
-              className="w-full rounded-lg bg-surface ring-1 ring-line"
-            />
-          ))}
-        </div>
-      )}
-      {spec && (
-        <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-          <dt className="text-ink-mute">Material</dt>
-          <dd className="text-ink">{spec.material}</dd>
-          {spec.variant && (
-            <>
-              <dt className="text-ink-mute">{variantLabel(spec.variant)}</dt>
-              <dd className="text-ink">{spec.variant}</dd>
-            </>
-          )}
-          {spec.finish && (
-            <>
-              <dt className="text-ink-mute">Finish</dt>
-              <dd className="text-ink">{spec.finish}</dd>
-            </>
-          )}
-          {spec.inks.length > 0 && (
-            <>
-              <dt className="text-ink-mute">Ink</dt>
-              <dd className="text-ink">{spec.inks.join(', ')}</dd>
-            </>
-          )}
-        </dl>
-      )}
-    </div>
-  )
 }
 
 function Row({ label, value, bold = false }: { label: string; value: string; bold?: boolean }) {
