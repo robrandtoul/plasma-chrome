@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { ExternalLink } from 'lucide-react'
+import { Sheet } from '../design/Sheet'
+import { useIsMobile } from '../design/useIsMobile'
 import Modal from './Modal'
 import MessageSendPanel from './MessageSendPanel'
 import { attentionReason, attentionResolution, attentionShortLabel, nudgeTemplateFor } from '../lib/needsAttention'
@@ -64,6 +66,7 @@ export function ResolvePopover({
   className = '',
 }: ResolvePopoverProps) {
   const navigate = useNavigate()
+  const isMobile = useIsMobile()
   const triggerRef = useRef<HTMLSpanElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
@@ -102,8 +105,11 @@ export function ResolvePopover({
   }, [open, proofId, autoNudgeDisabledAt])
 
   // Close on click-outside (ignoring the trigger + card) and on Esc.
+  // Desktop popover only — the mobile Sheet manages its own backdrop /
+  // Escape dismissal, and these listeners would treat a tap inside the
+  // sheet as "outside" and close it prematurely.
   useEffect(() => {
-    if (!open) return
+    if (!open || isMobile) return
     function onDown(e: MouseEvent) {
       const t = e.target as Node
       if (triggerRef.current?.contains(t) || cardRef.current?.contains(t)) return
@@ -118,7 +124,7 @@ export function ResolvePopover({
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [open, isMobile])
 
   const messageContext: TemplateContext = {
     first_name: firstName(contactFullName ?? ''),
@@ -190,6 +196,105 @@ export function ResolvePopover({
     onSnoozed?.()
   }
 
+  // Action buttons size up to full-width 50px touch targets on mobile (where
+  // the body renders inside a bottom Sheet); the compact desktop popover keeps
+  // the original sizing so its output is pixel-identical.
+  const primaryBtn = isMobile
+    ? 'flex w-full min-h-[50px] items-center justify-center rounded-[10px] bg-ink px-4 text-[15px] font-semibold text-on-ink hover:opacity-90 disabled:opacity-60'
+    : 'inline-flex items-center justify-center rounded-[6px] bg-ink px-3 py-1.5 text-[12px] font-semibold text-on-ink hover:opacity-90 disabled:opacity-60'
+  const secondaryBtn = isMobile
+    ? 'flex w-full min-h-[50px] items-center justify-center gap-1.5 rounded-[10px] border border-line px-4 text-[15px] font-medium text-ink-soft hover:bg-canvas'
+    : 'inline-flex items-center justify-center gap-1.5 rounded-[6px] border border-line px-3 py-1.5 text-[12px] font-medium text-ink-soft hover:bg-canvas'
+
+  const popoverBody = (
+    <div className={isMobile ? 'px-4 pb-1 text-[14px] leading-snug' : 'text-[12px] leading-snug'}>
+      <div className="font-semibold text-ink">Needs attention</div>
+      <div className="mt-1 text-ink-soft">{attentionReason(ruleCode, meta)}</div>
+      <div className="mt-1.5 text-ink-soft">
+        <span className="font-semibold text-ink">To resolve · </span>
+        {attentionResolution(ruleCode)}
+      </div>
+      {/* Secondary signals (000221) — the other rules that also fired
+          but lost the one-chip collapse. Visibility only; the chip's
+          rule stays the one to act on first. */}
+      {(meta?.others?.length ?? 0) > 0 && (
+        <div className="mt-1.5 text-[11px] text-ink-mute">
+          Also: {meta!.others!.map(attentionShortLabel).join(' · ')}
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-col gap-1.5">
+        {staleNotice && (
+          <p className="rounded-md bg-canvas px-2.5 py-1.5 text-[11px] text-ink-soft">{staleNotice}</p>
+        )}
+        {/* Primary action — depends on the rule. */}
+        {ruleCode === 'request_changes_no_version' ? (
+          <button
+            type="button"
+            onClick={() => { setOpen(false); navigate(`/proofs/${proofId}/versions/new`) }}
+            className={primaryBtn}
+          >
+            Start new version
+          </button>
+        ) : nudgeTemplate && hasHelpscoutConversation && versionId ? (
+          <button
+            type="button"
+            disabled={checkingStale}
+            onClick={() => void openSendPanel()}
+            className={primaryBtn}
+          >
+            {checkingStale ? 'Checking…' : 'Send a reminder'}
+          </button>
+        ) : nudgeTemplate && !hasHelpscoutConversation ? (
+          <p className="text-[11px] text-ink-mute">No Help Scout conversation linked — reply manually.</p>
+        ) : null}
+
+        {/* Secondary — always offer the thread link when there is one. */}
+        {helpscoutUrl && (
+          <a
+            href={helpscoutUrl}
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => setOpen(false)}
+            className={secondaryBtn}
+          >
+            Open Help Scout thread
+            <ExternalLink size={isMobile ? 13 : 11} aria-hidden="true" />
+          </a>
+        )}
+      </div>
+
+      {/* Quiet per-proof opt-out from automated chasing. Hidden until
+          the lazy fetch above resolves so a wrong state never shows. */}
+      {autoNudgeDisabledAt !== undefined && (
+        <div className="mt-2.5 border-t border-line-soft pt-2">
+          {autoNudgeDisabledAt === null ? (
+            <button
+              type="button"
+              disabled={autoNudgeBusy}
+              onClick={() => void setAutoChasing(true)}
+              className="text-[11px] text-ink-mute underline underline-offset-2 hover:text-ink disabled:opacity-50 max-md:inline-flex max-md:min-h-[44px] max-md:items-center"
+            >
+              Stop auto-chasing this proof
+            </button>
+          ) : (
+            <div className="flex items-center gap-2 text-[11px] text-ink-mute max-md:min-h-[44px]">
+              <span>Auto-chasing off</span>
+              <button
+                type="button"
+                disabled={autoNudgeBusy}
+                onClick={() => void setAutoChasing(false)}
+                className="underline underline-offset-2 hover:text-ink disabled:opacity-50 max-md:inline-flex max-md:min-h-[44px] max-md:items-center"
+              >
+                Undo
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+
   return (
     // Outer span only stops propagation: React portals (the card + modal
     // below) bubble events through the React tree, so without this a click
@@ -209,96 +314,15 @@ export function ResolvePopover({
         {children}
       </span>
 
-      {open && triggerRef.current && (
+      {open && (isMobile ? (
+        <Sheet open onClose={() => setOpen(false)} ariaLabel="Needs attention">
+          {popoverBody}
+        </Sheet>
+      ) : triggerRef.current ? (
         <PopoverCard anchor={triggerRef.current} cardRef={cardRef}>
-          <div className="text-[12px] leading-snug">
-            <div className="font-semibold text-ink">Needs attention</div>
-            <div className="mt-1 text-ink-soft">{attentionReason(ruleCode, meta)}</div>
-            <div className="mt-1.5 text-ink-soft">
-              <span className="font-semibold text-ink">To resolve · </span>
-              {attentionResolution(ruleCode)}
-            </div>
-            {/* Secondary signals (000221) — the other rules that also fired
-                but lost the one-chip collapse. Visibility only; the chip's
-                rule stays the one to act on first. */}
-            {(meta?.others?.length ?? 0) > 0 && (
-              <div className="mt-1.5 text-[11px] text-ink-mute">
-                Also: {meta!.others!.map(attentionShortLabel).join(' · ')}
-              </div>
-            )}
-
-            <div className="mt-3 flex flex-col gap-1.5">
-              {staleNotice && (
-                <p className="rounded-md bg-canvas px-2.5 py-1.5 text-[11px] text-ink-soft">{staleNotice}</p>
-              )}
-              {/* Primary action — depends on the rule. */}
-              {ruleCode === 'request_changes_no_version' ? (
-                <button
-                  type="button"
-                  onClick={() => { setOpen(false); navigate(`/proofs/${proofId}/versions/new`) }}
-                  className="inline-flex items-center justify-center rounded-[6px] bg-ink px-3 py-1.5 text-[12px] font-semibold text-on-ink hover:opacity-90"
-                >
-                  Start new version
-                </button>
-              ) : nudgeTemplate && hasHelpscoutConversation && versionId ? (
-                <button
-                  type="button"
-                  disabled={checkingStale}
-                  onClick={() => void openSendPanel()}
-                  className="inline-flex items-center justify-center rounded-[6px] bg-ink px-3 py-1.5 text-[12px] font-semibold text-on-ink hover:opacity-90 disabled:opacity-60"
-                >
-                  {checkingStale ? 'Checking…' : 'Send a reminder'}
-                </button>
-              ) : nudgeTemplate && !hasHelpscoutConversation ? (
-                <p className="text-[11px] text-ink-mute">No Help Scout conversation linked — reply manually.</p>
-              ) : null}
-
-              {/* Secondary — always offer the thread link when there is one. */}
-              {helpscoutUrl && (
-                <a
-                  href={helpscoutUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => setOpen(false)}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-[6px] border border-line px-3 py-1.5 text-[12px] font-medium text-ink-soft hover:bg-canvas"
-                >
-                  Open Help Scout thread
-                  <ExternalLink size={11} aria-hidden="true" />
-                </a>
-              )}
-            </div>
-
-            {/* Quiet per-proof opt-out from automated chasing. Hidden until
-                the lazy fetch above resolves so a wrong state never shows. */}
-            {autoNudgeDisabledAt !== undefined && (
-              <div className="mt-2.5 border-t border-line-soft pt-2">
-                {autoNudgeDisabledAt === null ? (
-                  <button
-                    type="button"
-                    disabled={autoNudgeBusy}
-                    onClick={() => void setAutoChasing(true)}
-                    className="text-[11px] text-ink-mute underline underline-offset-2 hover:text-ink disabled:opacity-50"
-                  >
-                    Stop auto-chasing this proof
-                  </button>
-                ) : (
-                  <div className="flex items-center gap-2 text-[11px] text-ink-mute">
-                    <span>Auto-chasing off</span>
-                    <button
-                      type="button"
-                      disabled={autoNudgeBusy}
-                      onClick={() => void setAutoChasing(false)}
-                      className="underline underline-offset-2 hover:text-ink disabled:opacity-50"
-                    >
-                      Undo
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          {popoverBody}
         </PopoverCard>
-      )}
+      ) : null)}
 
       {/* Reminder send modal — reuses MessageSendPanel, pre-filled with the
           rule's nudge template, plus the opt-out auto-snooze checkbox. */}

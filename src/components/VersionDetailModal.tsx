@@ -620,6 +620,7 @@ export default function VersionDetailModal({
         onClose={handleClose}
         preventClose={deleteState !== 'idle'}
         ariaLabelledBy="version-detail-title"
+        mobileSheet={false}
         panelClassName="relative flex max-h-full w-full flex-col overflow-hidden bg-surface sm:max-h-[90vh] sm:max-w-2xl sm:rounded-2xl"
       >
           {/* Header */}
@@ -1106,6 +1107,7 @@ export default function VersionDetailModal({
         ariaLabel="Proof image preview"
         backdropClassName="bg-black/80"
         panelClassName="bg-transparent"
+        mobileSheet={false}
       >
         {lightboxSrc && (
           <img

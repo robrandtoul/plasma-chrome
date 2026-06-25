@@ -115,6 +115,95 @@
 }
 
 /*
+  Modal → mobile bottom sheet (src/components/Modal.tsx). Below md:, the
+  centred dialog panel becomes a full-width bottom sheet that grows to its
+  content up to 92dvh then scrolls, with rounded top corners and
+  safe-area bottom padding. Plain !important rules (not @layer) so they
+  beat each caller's panelClassName regardless of utility order — the same
+  approach .px-gutter uses to override Tailwind utilities cleanly. Scoped
+  to the phone media query so every desktop modal is byte-for-byte
+  unchanged at md:+. Opt out per-modal with mobileSheet={false} (image
+  viewers / already-mobile panels).
+*/
+@media (max-width: 767px) {
+  .modal-mobile-centre {
+    align-items: flex-end !important;
+    padding: 0 !important;
+  }
+  .modal-mobile-sheet {
+    width: 100% !important;
+    max-width: none !important;
+    max-height: 92dvh !important;
+    margin: 0 !important;
+    overflow-y: auto !important;
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border-top-left-radius: 24px !important;
+    border-top-right-radius: 24px !important;
+    padding-bottom: calc(env(safe-area-inset-bottom) + 1.25rem) !important;
+  }
+}
+
+/*
+  Responsive tables (screen 5 of the iPhone redesign). Two strategies,
+  both desktop-untouched (scoped to the phone media query):
+
+  .table-cards   — below md:, collapse a <table> into a stack of cards,
+                   one per <tr>. The header row is hidden and each <td>
+                   shows its column name from a `data-label` attribute as
+                   an inline label · value row. Long strings wrap.
+  .table-scroll  — keep the grid but make it scroll horizontally with a
+                   right-edge fade + shadow so a clipped column is
+                   signalled rather than silently cut off. Used for the
+                   dense admin tables a card layout can't sensibly carry.
+*/
+.table-scroll { overflow-x: auto; }
+@media (max-width: 767px) {
+  .table-scroll {
+    background:
+      linear-gradient(to left, var(--c-surface) 32%, rgba(255, 255, 255, 0)) right center / 32px 100% no-repeat,
+      radial-gradient(farthest-side at 100% 50%, rgba(22, 19, 17, 0.10), rgba(22, 19, 17, 0)) right center / 14px 100% no-repeat;
+    background-attachment: local, scroll;
+  }
+
+  .table-cards thead { display: none; }
+  .table-cards,
+  .table-cards tbody,
+  .table-cards tr,
+  .table-cards td { display: block; width: 100%; }
+  .table-cards tr {
+    border: 1px solid var(--c-line);
+    border-radius: var(--radius-md);
+    background: var(--c-surface);
+    padding: 10px 14px;
+    margin-bottom: 10px;
+  }
+  .table-cards tr:last-child { margin-bottom: 0; }
+  .table-cards td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 4px 0 !important;
+    border: 0 !important;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+  .table-cards td::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    text-align: left;
+    font-weight: 600;
+    color: var(--c-ink-mute);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  /* A cell flagged as the card title spans the row, left-aligned, no label. */
+  .table-cards td[data-title] { text-align: left; }
+  .table-cards td[data-title]::before { content: none; }
+}
+
+/*
   Block horizontal scrolling caused by transient layout overshoot
   (e.g. a button with `mr-[-2px]` for an off-grid ring) without
   breaking `position: sticky` for descendants. `overflow-x: hidden`
@@ -135,6 +224,15 @@ body {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
+
+/* Mobile bottom-sheet entrance (src/design/Sheet.tsx). Slides up from
+   the bottom edge. Honours prefers-reduced-motion via the global
+   duration override below. */
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+.animate-sheet-up { animation: sheet-up 0.22s cubic-bezier(0.32, 0.72, 0, 1); }
 
 /*
   Honour the OS-level reduced-motion preference. Collapses all

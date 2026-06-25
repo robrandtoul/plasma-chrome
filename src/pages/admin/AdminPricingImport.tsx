@@ -261,7 +261,7 @@ function PreviewView({
             New tiers ({preview.creates.length})
           </button>
           {showCreates && (
-            <div className="mt-2 overflow-hidden rounded-lg ring-1 ring-line">
+            <div className="mt-2 table-scroll rounded-lg ring-1 ring-line">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-line-soft bg-canvas text-left">
@@ -301,7 +301,7 @@ function PreviewView({
             Changes ({preview.changes.length})
           </button>
           {showChanges && (
-            <div className="mt-2 overflow-hidden rounded-lg ring-1 ring-line">
+            <div className="mt-2 table-scroll rounded-lg ring-1 ring-line">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-line-soft bg-canvas text-left">
