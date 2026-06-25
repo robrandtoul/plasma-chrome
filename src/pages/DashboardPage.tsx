@@ -45,8 +45,10 @@ import {
   helpscoutReplyEvents,
   payLinkOpenEvents,
   payLinkSentEvents,
+  orderReminderEvents,
   type PayLinkOpenRow,
   type PayLinkSentRow,
+  type OrderReminderRow,
   type DashboardLatestEvent,
   type DashboardProject,
   type DesignerColour,
@@ -1602,6 +1604,14 @@ const ACTIVITY_VISUAL: Record<DashboardLatestEvent['event_type'], ActivityVisual
     tint: 'var(--c-ink-mute)',
     verbCopy: () => 'was sent a payment link',
   },
+  // Synthetic row from a sent order_nudges reminder (000238) — the automated
+  // unpaid-order chase went out. Outbound (muted hue, like pay_link_sent) with
+  // a Bell to read as a reminder. The version number isn't relevant (order-level).
+  order_reminder_sent: {
+    icon: Bell,
+    tint: 'var(--c-ink-mute)',
+    verbCopy: () => 'was sent a payment reminder',
+  },
 }
 
 function LatestActivityPanel({
@@ -2117,6 +2127,16 @@ export default function DashboardPage() {
       .not('sent_at', 'is', null)
       .order('sent_at', { ascending: false })
       .limit(20)
+    // Sent unpaid-order reminders (order_nudges, 000238). Synthesised into the
+    // feed like the pay-link rows; proof_id comes from the embedded parent
+    // order. Only real sends (state = 'sent') — dry-run rows are skipped, so
+    // nothing shows until auto_order_reminders_enabled is flipped on.
+    const orderRemindersPromise = supabase
+      .from('order_nudges')
+      .select('id, created_at, orders(proof_id)')
+      .eq('state', 'sent')
+      .order('created_at', { ascending: false })
+      .limit(20)
     const pinsPromise = supabase
       .from('proof_pins')
       .select('proof_id, scope, user_id, pinned_at')
@@ -2144,7 +2164,8 @@ export default function DashboardPage() {
       { data: counts },
       { data: payLinkOpenRows },
       { data: payLinkSentRows },
-    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise, payLinkOpensPromise, payLinkSentsPromise])
+      { data: orderReminderRows },
+    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise, payLinkOpensPromise, payLinkSentsPromise, orderRemindersPromise])
 
     const typedProjects = (projectRows ?? []) as DashboardProject[]
     setProjects(typedProjects)
@@ -2156,7 +2177,17 @@ export default function DashboardPage() {
     // proof, not stored events), then sort newest-first and cap at 20 so the feed
     // stays "the latest 20 things that happened" across both sources.
     const realEvents = (events ?? []) as DashboardLatestEvent[]
-    const mergedEvents = [...realEvents, ...helpscoutReplyEvents(typedProjects), ...payLinkOpenEvents((payLinkOpenRows ?? []) as PayLinkOpenRow[], typedProjects), ...payLinkSentEvents((payLinkSentRows ?? []) as PayLinkSentRow[], typedProjects)]
+    // Flatten the order_nudges → orders embed to a proof_id per reminder. The
+    // PostgREST to-one embed can surface as an object or a single-element array
+    // depending on type inference, so normalise both; rows whose parent order
+    // is gone (null) are dropped.
+    const orderReminders: OrderReminderRow[] = ((orderReminderRows ?? []) as Array<{ id: string; created_at: string | null; orders: { proof_id: string } | { proof_id: string }[] | null }>)
+      .map((r) => {
+        const ord = Array.isArray(r.orders) ? r.orders[0] : r.orders
+        return ord?.proof_id ? { id: r.id, created_at: r.created_at, proof_id: ord.proof_id } : null
+      })
+      .filter((r): r is OrderReminderRow => r !== null)
+    const mergedEvents = [...realEvents, ...helpscoutReplyEvents(typedProjects), ...payLinkOpenEvents((payLinkOpenRows ?? []) as PayLinkOpenRow[], typedProjects), ...payLinkSentEvents((payLinkSentRows ?? []) as PayLinkSentRow[], typedProjects), ...orderReminderEvents(orderReminders, typedProjects)]
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
       .slice(0, 20)
     setLatestEvents(mergedEvents)

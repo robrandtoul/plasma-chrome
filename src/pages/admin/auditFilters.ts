@@ -185,6 +185,15 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'proof.reply_sent',                label: 'Reply sent to customer' },
     { code: 'proof.internal_notes_updated',    label: 'Internal notes updated' },
   ]},
+  { name: 'Orders', actions: [
+    { code: 'order.created',                  label: 'Order created' },
+    { code: 'order.placed',                   label: 'Order placed for production' },
+    { code: 'order.place_sent_not_recorded',  label: 'Order placed but not recorded' },
+    { code: 'order.link_reactivated',         label: 'Pay link reactivated' },
+    { code: 'order.invoice_retried',          label: 'Invoice retried' },
+    { code: 'order.invoice_retry_failed',     label: 'Invoice retry failed' },
+    { code: 'order.auto_reminder_sent',       label: 'Order reminder sent' },
+  ]},
   { name: 'Customer-facing', actions: [
     { code: 'version.viewed',                label: 'Proof viewed' },
     { code: 'version.approved_by_customer',  label: 'Approved by customer' },
@@ -234,6 +243,7 @@ export const TARGET_TYPE_OPTIONS: ActionDef[] = [
   { code: 'pricing',       label: 'Pricing import' },
   { code: 'setting',       label: 'Setting' },
   { code: 'template',      label: 'Reply template' },
+  { code: 'order',         label: 'Order' },
 ]
 
 /** Flat lookup: action code → human label. Falls back to the raw code. */
