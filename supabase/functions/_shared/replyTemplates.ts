@@ -120,14 +120,14 @@ export const NUDGE_DEFAULT_BODIES: Record<string, string> = {
 export const ORDER_CONFIRMATION_DEFAULT_BODY =
   `Hi {first_name},\n\nThank you — we've received your payment and your cards{? company} for {company}{/?} are now in production. Your order reference is {payment_reference}.{? order_url}\n\nYou can view your order here, where it'll show its progress as we make and ship it:\n\n{order_url}{/?}\n\nWe'll email you dispatch details as soon as your cards are on their way, and your VAT invoice will arrive in a separate email shortly.\n\nIf you have any questions, just reply to this email.`
 
-// Default bodies for the two order-reminder templates (migration 000238), the
-// fallback when the reply_templates row is missing. Must stay in sync with the
-// seed migration and src/lib/replyTemplates.ts DEFAULT_BODIES. No sign-off.
+// Default body for the order-reminder template (migration 000238; collapsed
+// from two stages to one repeating reminder in 000270), the fallback when the
+// reply_templates row is missing. Must stay in sync with the seed migration and
+// src/lib/replyTemplates.ts DEFAULT_BODIES. The expiry sentence renders only
+// when the order has an expiry date. No sign-off.
 export const ORDER_REMINDER_DEFAULT_BODIES: Record<string, string> = {
   order_reminder_1:
-    `Hi {first_name},\n\nJust a gentle reminder that your cards{? company} for {company}{/?} are approved and ready to order whenever you're set. You can choose your quantity and pay securely here:\n\n{order_url}`,
-  order_reminder_2:
-    `Hi {first_name},\n\nA quick reminder that your order link{? company} for {company}{/?} expires on {order_expiry}. If you'd still like to go ahead, you can complete it here:\n\n{order_url}\n\nIf the link has lapsed by the time you read this, just reply and we'll send a fresh one.`,
+    `Hi {first_name},\n\nJust a reminder that your cards{? company} for {company}{/?} are approved and ready to order whenever you're set. You can choose your quantity and pay securely here:\n\n{order_url}{? order_expiry}\n\nThis order link expires on {order_expiry}.{/?}`,
 }
 
 // The order_cancelled / order_revision default bodies (migration 000260) live in

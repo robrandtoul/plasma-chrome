@@ -146,12 +146,12 @@ export const TEMPLATE_VARIABLES: TemplateVariableMeta[] = [
   // Order messages (order_payment_link) — composed by the designer in the order
   // builder before sending the pay-link to the customer.
   { name: 'order_url',           scope: 'order',           description: "Customer order pay-page link",                                                    conditional: false },
-  // Order reminders (order_reminder_1 / _2) — sent by the automated sender,
-  // which has the full order → proof → contact context.
+  // Order reminder (order_reminder_1) — the single repeating reminder sent by
+  // the automated sender, which has the full order → proof → contact context.
   { name: 'first_name',          scope: 'order_reminder',  description: "Customer's first name",                                                           conditional: false },
   { name: 'company',             scope: 'order_reminder',  description: 'Company name (when set)',                                                         conditional: true  },
   { name: 'order_url',           scope: 'order_reminder',  description: 'Customer order pay-page link',                                                    conditional: false },
-  { name: 'order_expiry',        scope: 'order_reminder',  description: 'Date the order link expires',                                                     conditional: false },
+  { name: 'order_expiry',        scope: 'order_reminder',  description: 'Date the order link expires (when set)',                                          conditional: true  },
   // Order-paid confirmation (order_paid_confirmation) — posted automatically by
   // the Stripe webhook when a payment lands; Help Scout emails it to the customer.
   { name: 'first_name',          scope: 'order_confirmation', description: "Customer's first name (falls back to a friendly greeting if unknown)",          conditional: false },
@@ -221,11 +221,11 @@ export const DEFAULT_BODIES: Record<string, string> = {
   // same order page, which doubles as the tracking page once tracking is on.
   order_confirmation_link:
     `Hi,\n\nThank you for your order — it's confirmed and on its way into production. You can view your order here, where it'll show its progress as we make and ship it:\n\n{order_url}\n\nIf you have any questions, just reply to this email.`,
-  // Order reminders — automated follow-ups for an unpaid order (000238).
+  // Order reminder — the single repeating automated follow-up for an unpaid
+  // order (000238; collapsed from two stages to one in 000270). The expiry
+  // sentence renders only when the order has an expiry date.
   order_reminder_1:
-    `Hi {first_name},\n\nJust a gentle reminder that your cards{? company} for {company}{/?} are approved and ready to order whenever you're set. You can choose your quantity and pay securely here:\n\n{order_url}`,
-  order_reminder_2:
-    `Hi {first_name},\n\nA quick reminder that your order link{? company} for {company}{/?} expires on {order_expiry}. If you'd still like to go ahead, you can complete it here:\n\n{order_url}\n\nIf the link has lapsed by the time you read this, just reply and we'll send a fresh one.`,
+    `Hi {first_name},\n\nJust a reminder that your cards{? company} for {company}{/?} are approved and ready to order whenever you're set. You can choose your quantity and pay securely here:\n\n{order_url}{? order_expiry}\n\nThis order link expires on {order_expiry}.{/?}`,
   // Order-paid confirmation — posted automatically by the Stripe webhook when a
   // payment lands; Help Scout emails it to the customer (migration 000248).
   order_paid_confirmation:

@@ -31,6 +31,11 @@ interface Settings {
   /** Unpaid-order reminder automation switch (migration 000238). Off keeps
    *  the send-order-reminders job in dry-run (logs only, sends nothing). */
   auto_order_reminders_enabled: boolean
+  /** Unpaid-order reminder cadence (migration 000270). How many reminders an
+   *  unpaid order may receive, and the days between them (counted from when the
+   *  pay link was sent). Only consumed when auto_order_reminders_enabled is on. */
+  order_reminders_max: number
+  order_reminder_interval_days: number
   /** Stripe payment mode (migration 000241): 'test' (sandbox) or 'live'. The
    *  checkout functions read this to pick which Stripe key set to use. */
   payment_mode: 'test' | 'live'
@@ -114,6 +119,8 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   request_changes_confirmation_copy: 'setting.request_changes_confirmation_copy_updated',
   ordering_enabled:                  'setting.ordering_enabled_updated',
   auto_order_reminders_enabled:      'setting.auto_order_reminders_enabled_updated',
+  order_reminders_max:               'setting.order_reminders_max_updated',
+  order_reminder_interval_days:      'setting.order_reminder_interval_days_updated',
   payment_mode:                      'setting.payment_mode_updated',
   xero_stripe_account_code:          'setting.xero_stripe_account_code_updated',
   fedex_box_weight_grams:            'setting.fedex_box_weight_grams_updated',
@@ -224,7 +231,7 @@ export default function AdminSettingsPage() {
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, payment_mode, xero_stripe_account_code, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config')
+      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, xero_stripe_account_code, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -383,6 +390,30 @@ export default function AdminSettingsPage() {
     void saveField(field, value)
   }
 
+  // Blur handler for the two unpaid-order reminder cadence inputs (000270).
+  // Both are whole numbers within their column CHECK range; same surface-a-pill
+  // philosophy as onShippingNumberBlur above (no silent snap-back).
+  function onReminderNumberBlur(field: 'order_reminders_max' | 'order_reminder_interval_days') {
+    if (!settings) return
+    const draft = drafts[field]
+    if (draft === undefined) return
+    const value = Number(draft)
+    if (!Number.isInteger(value)) {
+      setErrors((e) => ({ ...e, [field]: 'Whole number only.' }))
+      return
+    }
+    if (field === 'order_reminders_max' && (value < 1 || value > 5)) {
+      setErrors((e) => ({ ...e, [field]: 'Between 1 and 5.' }))
+      return
+    }
+    if (field === 'order_reminder_interval_days' && (value < 1 || value > 30)) {
+      setErrors((e) => ({ ...e, [field]: 'Between 1 and 30.' }))
+      return
+    }
+    if (errors[field]) setErrors((e) => ({ ...e, [field]: undefined }))
+    void saveField(field, value)
+  }
+
   // Blur handler for the US tariff text fields (Xero item code + the two
   // pay-page copy strings). Saves the trimmed draft; empty is allowed —
   // publicSettings.ts and invoiceBuild fall back to the shipped defaults / item
@@ -512,7 +543,7 @@ export default function AdminSettingsPage() {
 
           <FieldRow
             label="Send unpaid-order reminders automatically"
-            help="When on, a customer who's been sent an order link but hasn't paid gets up to two gentle email reminders on their Help Scout thread — a first nudge about a week after the link is sent, and a second just before the link expires. The moment they pay (or the link expires) the reminders stop. When off (the default), the daily job still runs but only logs what it would have sent — nothing is emailed. Edit the wording under Templates → Order messages. Saves immediately."
+            help="When on, a customer who's been sent an order link but hasn't paid gets automated reminders on their Help Scout thread, using the cadence set below. The moment they pay (or the link expires) the reminders stop. When off (the default), the daily job still runs but only logs what it would have sent — nothing is emailed. Edit the wording under Templates → Order messages. Saves immediately."
             saved={recentlySaved('auto_order_reminders_enabled')}
             working={working.auto_order_reminders_enabled}
             error={errors.auto_order_reminders_enabled}
@@ -522,6 +553,48 @@ export default function AdminSettingsPage() {
               onChange={(v) => void saveField('auto_order_reminders_enabled', v)}
               disabled={!!working.auto_order_reminders_enabled}
               label="Send unpaid-order reminders automatically"
+            />
+          </FieldRow>
+
+          {/* Reminder cadence (migration 000270). Both inert until the switch
+              above is on; the sender clamps to these same bounds. */}
+          <FieldRow
+            label="Maximum reminders per order"
+            help="How many reminders a single unpaid order can receive before the sender stops (1–5). Reminders also stop the moment the order is paid or its pay link expires. Only used when the switch above is on."
+            saved={recentlySaved('order_reminders_max')}
+            working={working.order_reminders_max}
+            error={errors.order_reminders_max}
+          >
+            <input
+              type="number"
+              min={1}
+              max={5}
+              step={1}
+              inputMode="numeric"
+              value={drafts.order_reminders_max ?? settings.order_reminders_max}
+              onChange={(e) => setDrafts((d) => ({ ...d, order_reminders_max: e.target.value === '' ? 1 : Number(e.target.value) }))}
+              onBlur={() => onReminderNumberBlur('order_reminders_max')}
+              className={`w-32 ${inputClass}`}
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Days between reminders"
+            help="Gap in days between reminders, counted from when the pay link was sent (1–30). For example, 3 sends the first reminder 3 days after the link goes out, the next at day 6, and so on, up to the maximum above. Only used when the switch above is on."
+            saved={recentlySaved('order_reminder_interval_days')}
+            working={working.order_reminder_interval_days}
+            error={errors.order_reminder_interval_days}
+          >
+            <input
+              type="number"
+              min={1}
+              max={30}
+              step={1}
+              inputMode="numeric"
+              value={drafts.order_reminder_interval_days ?? settings.order_reminder_interval_days}
+              onChange={(e) => setDrafts((d) => ({ ...d, order_reminder_interval_days: e.target.value === '' ? 1 : Number(e.target.value) }))}
+              onBlur={() => onReminderNumberBlur('order_reminder_interval_days')}
+              className={`w-32 ${inputClass}`}
             />
           </FieldRow>
 
@@ -1248,6 +1321,8 @@ function humanFieldLabel(field: keyof Settings): string {
     request_changes_confirmation_copy: 'Request changes confirmation copy',
     ordering_enabled: 'Ordering & checkout enabled',
     auto_order_reminders_enabled: 'Send unpaid-order reminders automatically',
+    order_reminders_max: 'Maximum reminders per order',
+    order_reminder_interval_days: 'Days between reminders',
     payment_mode: 'Stripe payment mode',
     xero_stripe_account_code: 'Xero Stripe clearing account',
     fedex_box_weight_grams: 'FedEx box weight (grams)',

@@ -4,6 +4,17 @@ Operational companion to migration `000238` and the `send-order-reminders`
 edge function. The order-side equivalent of `followup-automation-rollout.md`,
 and it mirrors that one step-for-step.
 
+> **Cadence is now admin-editable (migration `000270`).** The original
+> two-stage model (a gentle nudge at day 7 + a pre-expiry nudge) was replaced
+> by a single repeating reminder driven by two settings —
+> `order_reminders_max` (default 3) and `order_reminder_interval_days`
+> (default 3) — both editable under **Admin → Settings → Ordering & checkout**.
+> Reminder *k* is sent once *k × interval* days have passed since the link was
+> sent, up to the max, and always stops at the link's expiry. The
+> `order_reminder_2` template was retired; `order_reminder_1` is the single
+> reminder. Anywhere below that says "two reminders / before-expiry", read it
+> as this cadence instead.
+
 Everything here is prod-touching. Per the house rule Rob runs each step (SQL
 into the **stock-control** project's dashboard SQL editor; shell lines in the
 local `proof-viewer` checkout).
