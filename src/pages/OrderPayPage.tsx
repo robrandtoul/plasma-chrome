@@ -81,12 +81,12 @@ interface OrderPayload {
 }
 
 // Only the projected result crosses to the client — never a raw Stock Control
-// row. 'broad' is date-free; 'granular' adds an ETA (a live tracking link is
-// deferred until a carrier URL is available).
+// row. 'broad' is date-free; 'granular' adds the customer's outbound tracking
+// number (a clickable carrier link is deferred until a carrier URL is available).
 type TrackingStage = 'paid' | 'in_production' | 'on_its_way' | 'delivered'
 type TrackingProjection =
   | { level: 'off' }
-  | { level: 'broad' | 'granular'; stage?: TrackingStage; eta?: string }
+  | { level: 'broad' | 'granular'; stage?: TrackingStage; tracking_number?: string }
 
 // Customer-facing copy per tracking stage: the headline + the one line that
 // replaces the old static "what happens next" box, so it stays accurate on
@@ -681,9 +681,9 @@ export default function OrderPayPage() {
           </div>
         </div>
         <p className="mt-3 text-[13px] leading-relaxed text-ink-soft">{meta.line}</p>
-        {p.level === 'granular' && p.eta && (
+        {p.level === 'granular' && p.tracking_number && (
           <p className="mt-1.5 text-[13px] text-ink-soft">
-            Estimated arrival <span className="font-medium text-ink">{p.eta}</span>
+            Tracking number <span className="font-medium text-ink">{p.tracking_number}</span>
           </p>
         )}
         <div className="relative mt-5">
