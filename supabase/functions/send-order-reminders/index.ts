@@ -10,12 +10,13 @@
 // can trigger a run.
 //
 // What it does: for each order whose pay-link was sent but not paid and is
-// still live (status 'sent', expires_at in the future or unset), it sends up
-// to two reminders on the proof's Help Scout thread —
-//   • reminder 1 (gentle)      ~7 days after the link was sent
-//   • reminder 2 (pre-expiry)  in the last few days before expires_at
-// then stops. The moment the order is paid / expires / is cancelled it drops
-// out of the candidate set, so no further reminders go out.
+// still live (status 'sent', expires_at in the future or unset), it sends a
+// repeating reminder on the proof's Help Scout thread. The cadence is admin-set
+// (settings.order_reminders_max / order_reminder_interval_days, migration
+// 000270): reminder k goes out once k × interval days have passed since the
+// link was sent, up to the max, one per run, and never after the link expires.
+// The moment the order is paid / expires / is cancelled it drops out of the
+// candidate set, so no further reminders go out.
 //
 // Two architecture rules carried over from the proof sender:
 //   #1 The sender is the authority — every guard is re-checked in THIS run
@@ -54,12 +55,12 @@ import {
 } from '../_shared/nudgeDecision.ts'
 
 const DAY_MS = 24 * 60 * 60 * 1000
-// Reminder cadence. Reminder 1 fires this many days after the link was sent;
-// reminder 2 fires once we're within this many days of expiry (and after
-// reminder 1 has gone). Deliberately hardcoded for v1 — promote to settings if
-// the figures ever need to move without a redeploy.
-const REMINDER_1_AFTER_SENT_DAYS = 7
-const REMINDER_2_BEFORE_EXPIRY_DAYS = 3
+// Cadence fallbacks. The live figures come from settings (order_reminders_max /
+// order_reminder_interval_days, migration 000270); these apply only if a column
+// reads null. Reminder k is sent once k × interval days have passed since the
+// link was sent, up to the max, one per run, never past expiry.
+const DEFAULT_REMINDERS_MAX = 3
+const DEFAULT_INTERVAL_DAYS = 3
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -125,7 +126,7 @@ interface OrderRow {
 
 interface LedgerInsert {
   order_id: string
-  reminder_no: 1 | 2
+  reminder_no: number
   source: 'auto'
   state: 'sending' | 'sent' | 'failed' | 'skipped' | 'dry_run'
   outcome: string
@@ -160,10 +161,15 @@ async function run(admin: Admin): Promise<Response> {
   // ── Mode resolution ──────────────────────────────────────────────────────
   const { data: settings, error: settingsErr } = await admin
     .from('settings')
-    .select('auto_order_reminders_enabled, replies_enabled')
+    .select('auto_order_reminders_enabled, replies_enabled, order_reminders_max, order_reminder_interval_days')
     .eq('id', 1)
     .single()
   if (settingsErr) return json({ error: `settings: ${settingsErr.message}` }, 500)
+
+  // Admin-tuned cadence (migration 000270), clamped to the column bounds with a
+  // fallback in case a column reads null.
+  const maxReminders = Math.min(5, Math.max(1, Number(settings?.order_reminders_max ?? DEFAULT_REMINDERS_MAX)))
+  const intervalDays = Math.min(30, Math.max(1, Number(settings?.order_reminder_interval_days ?? DEFAULT_INTERVAL_DAYS)))
 
   const bankHolidays = await fetchBankHolidays()
 
@@ -289,7 +295,7 @@ async function run(admin: Admin): Promise<Response> {
     return (data?.id as string) ?? null
   }
   const logState = mode === 'live' ? 'skipped' : 'dry_run'
-  const logSkip = async (order: OrderRow, reminderNo: 1 | 2, outcome: string, conversationId: string | null) => {
+  const logSkip = async (order: OrderRow, reminderNo: number, outcome: string, conversationId: string | null) => {
     const id = await insertLedger({ order_id: order.id, reminder_no: reminderNo, source: 'auto', state: logState, outcome, helpscout_conversation_id: conversationId })
     if (id) skipped++
   }
@@ -301,7 +307,7 @@ async function run(admin: Admin): Promise<Response> {
   // Template bodies (DB row → seeded fallback), fetched once.
   const bodies: Record<string, string> = { ...ORDER_REMINDER_DEFAULT_BODIES }
   {
-    const { data: tpls } = await admin.from('reply_templates').select('id, body').in('id', ['order_reminder_1', 'order_reminder_2'])
+    const { data: tpls } = await admin.from('reply_templates').select('id, body').in('id', ['order_reminder_1'])
     for (const t of tpls ?? []) {
       if (typeof t.body === 'string' && t.body.trim() !== '') bodies[t.id as string] = t.body as string
     }
@@ -315,13 +321,23 @@ async function run(admin: Admin): Promise<Response> {
     const conversationId = proof?.conversationId ?? null
     const stagesDone = emitted.get(order.id) ?? new Set<number>()
 
-    // ── Which stage (if any) is due now? ─────────────────────────────────────
+    // ── Which reminder (if any) is due now? ──────────────────────────────────
+    // Reminders run 1..maxReminders, one per run. The next reminder is one past
+    // the highest already emitted; it's due once that many intervals have
+    // elapsed since the link was sent, and only while the link is still live
+    // (expiry, if set, is the hard stop). A cron that missed days catches up one
+    // reminder per run rather than bursting.
     const sentMs = Date.parse(order.sent_at)
-    const reminder1Due = (now.getTime() - sentMs) >= REMINDER_1_AFTER_SENT_DAYS * DAY_MS && !stagesDone.has(1)
     const expiresMs = order.expires_at ? Date.parse(order.expires_at) : null
-    const reminder2Due = expiresMs != null && stagesDone.has(1) && !stagesDone.has(2) &&
-      now.getTime() >= expiresMs - REMINDER_2_BEFORE_EXPIRY_DAYS * DAY_MS && now.getTime() < expiresMs
-    const stage: 1 | 2 | null = reminder2Due ? 2 : (reminder1Due ? 1 : null)
+    const highestDone = stagesDone.size > 0 ? Math.max(...stagesDone) : 0
+    const nextNo = highestDone + 1
+    const dueAtMs = sentMs + nextNo * intervalDays * DAY_MS
+    const stage: number | null =
+      nextNo <= maxReminders &&
+      now.getTime() >= dueAtMs &&
+      (expiresMs == null || now.getTime() < expiresMs)
+        ? nextNo
+        : null
     if (stage == null) continue // not due — drop silently
 
     // ── Guards (architecture rule #1) ────────────────────────────────────────
@@ -333,7 +349,9 @@ async function run(admin: Admin): Promise<Response> {
 
     const orderUrl = `${baseUrl}/order/${order.id}?token=${encodeURIComponent(order.token)}`
     const orderExpiry = expiresMs != null ? expiryFmt.format(new Date(expiresMs)) : ''
-    const templateId = stage === 2 ? 'order_reminder_2' : 'order_reminder_1'
+    // One repeating template since 000270; it mentions expiry only when set,
+    // via a {? order_expiry} conditional block.
+    const templateId = 'order_reminder_1'
     const body = bodies[templateId]
     const contactFirst = (contact?.fullName ?? '').trim().split(/\s+/)[0] || ''
 
