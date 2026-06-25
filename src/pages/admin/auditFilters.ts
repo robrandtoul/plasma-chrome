@@ -146,6 +146,11 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'core_colour_updated',                       label: 'Core colour updated' },
     { code: 'core_colour_deactivated',                   label: 'Core colour deactivated' },
     { code: 'core_colour_reactivated',                   label: 'Core colour reactivated' },
+    { code: 'material.outsourcing_updated',              label: 'Material outsourcing updated' },
+    { code: 'material_variant.xero_item_codes_updated',  label: 'Variant Xero item codes updated' },
+    { code: 'material_option.created',                   label: 'Material option created' },
+    { code: 'material_option.updated',                   label: 'Material option updated' },
+    { code: 'material_option.deleted',                   label: 'Material option deleted' },
   ]},
   { name: 'Pricing', actions: [
     { code: 'price_tier_created',                          label: 'Price tier created' },
@@ -199,6 +204,13 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'version.approved_by_customer',  label: 'Approved by customer' },
     { code: 'template.body_updated',         label: 'Reply template body updated' },
     { code: 'template.reset_to_default',     label: 'Reply template reset to default' },
+    { code: 'reply_template.updated',        label: 'Reply template updated' },
+  ]},
+  { name: 'AI drafts', actions: [
+    { code: 'ai_draft_house_rule.created', label: 'AI draft house rule added' },
+    { code: 'ai_draft_house_rule.updated', label: 'AI draft house rule updated' },
+    { code: 'ai_draft_exemplar.created',   label: 'AI draft exemplar added' },
+    { code: 'ai_draft_exemplar.updated',   label: 'AI draft exemplar updated' },
   ]},
   { name: 'Settings', actions: [
     { code: 'setting.disclaimer_updated',                       label: 'Disclaimer copy updated' },
@@ -225,6 +237,9 @@ export const ACTION_GROUPS: { name: string; actions: ActionDef[] }[] = [
     { code: 'setting.domestic_uk_ni_rate_gbp_updated',          label: 'Northern Ireland shipping rate updated' },
     { code: 'setting.login_copy_updated',                       label: 'Login page copy updated' },
     { code: 'setting.metal_thickness_notes_updated',            label: 'Metal thickness notes updated' },
+    { code: 'setting.auto_nudges_enabled_updated',              label: 'Auto follow-up reminders toggle changed' },
+    { code: 'setting.ai_drafts_mode_updated',                   label: 'AI drafts mode changed' },
+    { code: 'setting.ai_drafts_triage_model_updated',           label: 'AI drafts triage model changed' },
   ]},
 ]
 
@@ -244,6 +259,11 @@ export const TARGET_TYPE_OPTIONS: ActionDef[] = [
   { code: 'setting',       label: 'Setting' },
   { code: 'template',      label: 'Reply template' },
   { code: 'order',         label: 'Order' },
+  { code: 'reply_template',      label: 'Reply template' },
+  { code: 'material_option',     label: 'Material option' },
+  { code: 'ai_draft_house_rule', label: 'AI draft house rule' },
+  { code: 'ai_draft_exemplar',   label: 'AI draft exemplar' },
+  { code: 'ai_draft_proposal',   label: 'AI draft proposal' },
 ]
 
 /** Flat lookup: action code → human label. Falls back to the raw code. */

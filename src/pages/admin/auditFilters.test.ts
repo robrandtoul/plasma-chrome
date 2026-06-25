@@ -48,6 +48,39 @@ function walk(dir: string, out: string[] = []): string[] {
   return out
 }
 
+// Capture the argument text of every `logAudit(...)` call, tracking paren
+// depth (and skipping string contents, so a stray `(`/`)` inside a label or
+// reason can't unbalance the scan) so a multi-line call is grabbed whole.
+// All audit writes in src/ go through logAudit; scoping extraction to these
+// calls is what stops a non-audit `action:` key — e.g. an edge-function invoke
+// body `{ action: 'run' }` or `{ action: 'cancel' }` — from being mistaken for
+// an audit action code (the original whole-file scan flagged exactly those).
+function extractLogAuditCalls(body: string): string[] {
+  const calls: string[] = []
+  const NEEDLE = 'logAudit('
+  let idx = 0
+  while ((idx = body.indexOf(NEEDLE, idx)) !== -1) {
+    let i = idx + NEEDLE.length - 1 // sits on the opening '('
+    const start = i
+    let depth = 0
+    let quote: string | null = null
+    for (; i < body.length; i++) {
+      const ch = body[i]
+      if (quote) {
+        if (ch === '\\') { i++; continue } // skip the escaped char
+        if (ch === quote) quote = null
+        continue
+      }
+      if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue }
+      if (ch === '(') depth++
+      else if (ch === ')') { depth--; if (depth === 0) { i++; break } }
+    }
+    calls.push(body.slice(start, i))
+    idx = Math.max(i, idx + NEEDLE.length)
+  }
+  return calls
+}
+
 function collectKeyLiteralsFromSrc(key: 'action' | 'targetType'): Set<string> {
   // Resolve src/ relative to this test file so the script is robust
   // to where it's launched from.
@@ -56,17 +89,20 @@ function collectKeyLiteralsFromSrc(key: 'action' | 'targetType'): Set<string> {
   const srcDir = join(here, '..', '..', '..')
   const files = walk(srcDir)
   const codes = new Set<string>()
-  // Match `<key>: 'code'` or `<key>: "code"`. Single-line literals
-  // only; intentional, since multi-line / template-literal codes are
-  // vanishingly rare and would just be false-positive pollution.
+  // Match `<key>: 'code'` or `<key>: "code"` WITHIN a logAudit(...) call.
+  // Dynamic codes (variables / ternaries) can't be extracted statically and
+  // are audited by hand, per the file header.
   const re = new RegExp(`${key}:\\s*['"]([a-zA-Z0-9_.]+)['"]`, 'g')
   for (const f of files) {
     // Skip self to avoid the test's own literals.
     if (f.endsWith('auditFilters.test.ts')) continue
     const body = readFileSync(f, 'utf8')
-    let m: RegExpExecArray | null
-    while ((m = re.exec(body)) !== null) {
-      codes.add(m[1])
+    for (const call of extractLogAuditCalls(body)) {
+      re.lastIndex = 0
+      let m: RegExpExecArray | null
+      while ((m = re.exec(call)) !== null) {
+        codes.add(m[1])
+      }
     }
   }
   return codes
