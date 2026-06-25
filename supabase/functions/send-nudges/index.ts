@@ -83,12 +83,12 @@ const NUDGE_RULES: NudgeRuleSpec[] = [
   {
     code: 'sent_never_viewed',
     templateId: 'nudge_sent_never_viewed',
-    freshSubject: 'Your card proof from Plasma Design',
+    freshSubject: 'Your card proof from PlasmaDesign',
   },
   {
     code: 'viewed_not_actioned',
     templateId: 'nudge_viewed_not_actioned',
-    freshSubject: 'Your card proof from Plasma Design',
+    freshSubject: 'Your card proof from PlasmaDesign',
   },
 ]
 const NUDGE_RULE_BY_CODE = new Map(NUDGE_RULES.map((r) => [r.code, r]))
