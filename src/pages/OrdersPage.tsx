@@ -586,7 +586,7 @@ function RevisionCard({
       <div className="mb-3 rounded-lg bg-out-soft px-3 py-2 text-[13px] font-semibold text-out ring-1 ring-out">
         Paid · revision in progress — do not produce the previous artwork.
       </div>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+      <div className="flex flex-col gap-4 md:flex-row md:items-start">
         {thumb && (
           <img
             src={thumb.signed_url}
@@ -612,12 +612,14 @@ function RevisionCard({
               : 'Re-approve the new proof and replace the Dropbox files, then re-place.'}
           </p>
         </div>
-        <div className="flex shrink-0 flex-col gap-2 sm:items-end">
-          <ButtonInk onClick={onReview}>Review &amp; place</ButtonInk>
-          <Link to={`/proofs/${order.proof_id}`}>
-            <ButtonGhost size="sm">View proof &amp; artwork</ButtonGhost>
-          </Link>
-          <ButtonGhost size="sm" onClick={onCopy}>{copied ? 'Copied' : 'Copy order link'}</ButtonGhost>
+        <div className="flex shrink-0 flex-col gap-2 md:items-end">
+          <ButtonInk onClick={onReview} className="max-md:w-full max-md:h-[50px] max-md:text-[15px]">Review &amp; place</ButtonInk>
+          <div className="flex gap-2 md:contents">
+            <Link to={`/proofs/${order.proof_id}`} className="max-md:flex-1">
+              <ButtonGhost size="sm" className="max-md:w-full max-md:h-11">View proof &amp; artwork</ButtonGhost>
+            </Link>
+            <ButtonGhost size="sm" onClick={onCopy} className="max-md:flex-1 max-md:h-11">{copied ? 'Copied' : 'Copy order link'}</ButtonGhost>
+          </div>
         </div>
       </div>
     </PanelShell>
@@ -741,7 +743,7 @@ function OrderCard({
 
   return (
     <PanelShell>
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+      <div className="flex flex-col gap-4 md:flex-row md:items-start">
         {thumb && (
           <img
             src={thumb.signed_url}
@@ -814,20 +816,31 @@ function OrderCard({
           )}
 
           {invoiceError && (
-            <p className="mt-1.5 rounded-lg bg-out-soft px-3 py-2 text-[13px] text-out ring-1 ring-out">
-              <span className="font-medium">Invoice not created.</span> {invoiceError}
-            </p>
+            <>
+              {/* Desktop: full message inline. */}
+              <p className="mt-1.5 hidden rounded-lg bg-out-soft px-3 py-2 text-[13px] text-out ring-1 ring-out md:block">
+                <span className="font-medium">Invoice not created.</span> {invoiceError}
+              </p>
+              {/* Mobile: a single 46px row that expands to the full message on tap. */}
+              <details className="mt-1.5 rounded-lg bg-out-soft px-3 text-out ring-1 ring-out md:hidden">
+                <summary className="flex min-h-[46px] cursor-pointer list-none items-center gap-2 text-[13px] font-medium">
+                  <span aria-hidden="true">⚠</span>
+                  Xero invoice failed
+                </summary>
+                <p className="pb-2 text-[13px]">{invoiceError}</p>
+              </details>
+            </>
           )}
 
           {/* Placement fields: date required + the Dropbox order folder (the gate). */}
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
             <label className="block">
               <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Date required</span>
               <input
                 type="date"
                 value={dateValue}
                 onChange={(e) => void handleDateChange(e.target.value)}
-                className="mt-1 h-[38px] w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                className="mt-1 h-[38px] max-md:h-12 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
               />
               <div className="mt-1 space-y-0.5 text-[11px]">
                 {dateSaving && <span className="block text-ink-mute">Saving…</span>}
@@ -847,13 +860,13 @@ function OrderCard({
                   onChange={(e) => setFolderDraft(e.target.value)}
                   onBlur={() => { if (folderDraft.trim() !== (order.dropbox_folder_url ?? '')) void runLookup(folderDraft) }}
                   placeholder="Paste the order folder link…"
-                  className="h-[38px] min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                  className="h-[38px] max-md:h-12 min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
                 />
                 <button
                   type="button"
                   onClick={() => void runLookup(folderDraft)}
                   disabled={lookup.status === 'loading' || folderDraft.trim().length === 0}
-                  className="h-[38px] shrink-0 rounded-lg border border-line px-3 text-[13px] text-ink-soft hover:bg-canvas disabled:opacity-50"
+                  className="h-[38px] max-md:h-12 shrink-0 rounded-lg border border-line px-3 text-[13px] text-ink-soft hover:bg-canvas disabled:opacity-50"
                 >
                   {lookup.status === 'loading' ? 'Checking…' : 'Check'}
                 </button>
@@ -884,19 +897,35 @@ function OrderCard({
           </div>
 
           {addrLines.length > 0 ? (
-            <div className="mt-3 rounded-lg border border-line bg-canvas px-3 py-2 text-[13px] text-ink-soft">
-              <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Deliver to</span>
-              {addrLines.map((line, i) => (
-                <span key={i} className="block">{line}</span>
-              ))}
-            </div>
+            <>
+              {/* Desktop: full address block. */}
+              <div className="mt-3 hidden rounded-lg border border-line bg-canvas px-3 py-2 text-[13px] text-ink-soft md:block">
+                <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Deliver to</span>
+                {addrLines.map((line, i) => (
+                  <span key={i} className="block">{line}</span>
+                ))}
+              </div>
+              {/* Mobile: a 48px disclosure with the postcode line as a peek so
+                  the full address doesn't stretch the card. */}
+              <details className="mt-3 rounded-lg border border-line bg-canvas px-3 text-[13px] text-ink-soft md:hidden">
+                <summary className="flex min-h-[48px] cursor-pointer list-none items-center justify-between gap-2">
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">Delivery details</span>
+                  <span className="truncate text-ink-mute">{addrLines[addrLines.length - 1]}</span>
+                </summary>
+                <div className="pb-2">
+                  {addrLines.map((line, i) => (
+                    <span key={i} className="block">{line}</span>
+                  ))}
+                </div>
+              </details>
+            </>
           ) : (
             <p className="mt-3 text-[13px] text-ink-mute">Delivery address on the Stripe payment / Xero invoice.</p>
           )}
         </div>
 
-        <div className="flex shrink-0 flex-col gap-2 sm:items-end">
-          <ButtonInk onClick={onReview} disabled={!canOrder}>
+        <div className="flex shrink-0 flex-col gap-2 md:items-end">
+          <ButtonInk onClick={onReview} disabled={!canOrder} className="max-md:w-full max-md:h-[50px] max-md:text-[15px]">
             {route !== 'supplier'
               ? 'Review and push to production'
               : supplierCount > 1
@@ -906,7 +935,7 @@ function OrderCard({
                   : 'Review and order from supplier'}
           </ButtonInk>
           {!canOrder && (
-            <span className="text-right text-[11px] text-ink-mute">
+            <span className="text-right text-[11px] text-ink-mute max-md:text-center">
               {!folderVerified
                 ? 'Link & check the order folder to enable'
                 : dateValue
@@ -914,18 +943,22 @@ function OrderCard({
                   : 'Set a date required to enable'}
             </span>
           )}
-          <Link to={`/proofs/${order.proof_id}`}>
-            <ButtonGhost size="sm">View proof &amp; artwork</ButtonGhost>
-          </Link>
-          <ButtonGhost size="sm" onClick={onCopy}>{copied ? 'Copied' : 'Copy order link'}</ButtonGhost>
-          {/* Retry invoice is for orders whose AUTO Xero invoice failed. Offline
-              orders deliberately have no auto-invoice (raised manually in Xero),
-              so retrying would create a DUPLICATE — never offer it for offline. */}
-          {!order.xero_invoice_id && order.payment_method !== 'offline' && (
-            <ButtonGhost size="sm" onClick={onRetryInvoice} disabled={busy}>
-              {busy ? 'Retrying…' : 'Retry invoice'}
-            </ButtonGhost>
-          )}
+          {/* Secondary actions: a side column on desktop (md:contents lets each
+              button flow as a column child) but a single 44px row on mobile. */}
+          <div className="flex gap-2 md:contents">
+            <Link to={`/proofs/${order.proof_id}`} className="max-md:flex-1">
+              <ButtonGhost size="sm" className="max-md:w-full max-md:h-11">View proof &amp; artwork</ButtonGhost>
+            </Link>
+            <ButtonGhost size="sm" onClick={onCopy} className="max-md:flex-1 max-md:h-11">{copied ? 'Copied' : 'Copy order link'}</ButtonGhost>
+            {/* Retry invoice is for orders whose AUTO Xero invoice failed. Offline
+                orders deliberately have no auto-invoice (raised manually in Xero),
+                so retrying would create a DUPLICATE — never offer it for offline. */}
+            {!order.xero_invoice_id && order.payment_method !== 'offline' && (
+              <ButtonGhost size="sm" onClick={onRetryInvoice} disabled={busy} className="max-md:flex-1 max-md:h-11">
+                {busy ? 'Retrying…' : 'Retry invoice'}
+              </ButtonGhost>
+            )}
+          </div>
         </div>
       </div>
     </PanelShell>
@@ -954,7 +987,7 @@ function AwaitingPaymentCard({
   const total = orderTotal(order)
   return (
     <PanelShell>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Link to={`/proofs/${order.proof_id}`} className="text-base font-semibold text-ink hover:underline">
@@ -986,14 +1019,14 @@ function AwaitingPaymentCard({
             </p>
           )}
         </div>
-        <div className="flex shrink-0 flex-col gap-2 sm:items-end">
-          <ButtonGhost size="sm" onClick={onCopy}>{copied ? 'Copied' : 'Copy link'}</ButtonGhost>
+        <div className="flex shrink-0 flex-col gap-2 md:items-end">
+          <ButtonGhost size="sm" onClick={onCopy} className="max-md:w-full max-md:h-11">{copied ? 'Copied' : 'Copy link'}</ButtonGhost>
           {expired && (
-            <ButtonInk onClick={onReactivate} disabled={busy}>
+            <ButtonInk onClick={onReactivate} disabled={busy} className="max-md:w-full max-md:h-[50px] max-md:text-[15px]">
               {busy ? 'Reactivating…' : 'Reactivate link'}
             </ButtonInk>
           )}
-          <ButtonGhost size="sm" onClick={onCancel} disabled={busy}>Cancel order</ButtonGhost>
+          <ButtonGhost size="sm" onClick={onCancel} disabled={busy} className="max-md:w-full max-md:h-11">Cancel order</ButtonGhost>
         </div>
       </div>
     </PanelShell>

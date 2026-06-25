@@ -29,7 +29,7 @@ import { customerProofPath, openDesignerPreview } from '../lib/customerProofUrl'
 import { formatPrice } from '../lib/currency'
 // QuoteLink now lives inside DesignerChrome (PR 31).
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
-import { ChevronRight, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, MessageSquare, Clock, Activity, Package, HelpCircle } from 'lucide-react'
+import { ChevronRight, ChevronLeft, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, MessageSquare, Clock, Activity, Package, HelpCircle } from 'lucide-react'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -2057,12 +2057,12 @@ export default function ProofDetailPage() {
           { icon: Eye, label: 'Total views', value: String(totalViews) },
           { icon: Package, label: 'Quantity', value: quantityRange ?? '—' },
         ].map(({ icon: Icon, label, value }) => (
-          <div key={label} className="rounded-[10px] bg-canvas px-3 py-2.5">
+          <div key={label} className="rounded-[10px] bg-canvas px-3 py-2.5 max-md:px-4 max-md:py-3.5">
             <div className="flex items-center gap-1.5 text-ink-mute">
               <Icon size={12} aria-hidden="true" />
               <span className="eyebrow">{label}</span>
             </div>
-            <div className="mt-1 text-[17px] font-semibold leading-tight text-ink">{value}</div>
+            <div className="mt-1 text-[17px] font-semibold leading-tight text-ink max-md:text-[26px]">{value}</div>
           </div>
         ))}
       </div>
@@ -2293,10 +2293,16 @@ export default function ProofDetailPage() {
         {/* Breadcrumb — Proofs › <Customer name>. Replaces the old
             "← Back to projects" link; the chrome handles QuoteLink
             and nav so this row carries the page's hierarchy only. */}
-        <nav className="mb-6 flex items-center gap-1.5 text-[13px]">
-          <Link to="/" className="text-ink-mute hover:text-ink transition-colors">Proofs</Link>
-          <ChevronRight size={14} className="text-ink-dim" aria-hidden="true" />
-          <span className="text-ink-soft truncate">{proof.contacts.full_name}</span>
+        <nav className="mb-6 flex items-center gap-1.5 text-[13px] max-md:min-h-[44px] max-md:text-[15px]">
+          <Link to="/" className="flex items-center gap-1 text-ink-mute hover:text-ink transition-colors max-md:py-2.5">
+            <ChevronLeft size={16} className="md:hidden" aria-hidden="true" />
+            Proofs
+          </Link>
+          {/* The "› <customer>" tail is redundant on mobile (the name leads
+              the header card just below), so it collapses to a plain back
+              control there. */}
+          <ChevronRight size={14} className="text-ink-dim max-md:hidden" aria-hidden="true" />
+          <span className="text-ink-soft truncate max-md:hidden">{proof.contacts.full_name}</span>
         </nav>
 
         {/* Header card — bordered, status-rule on the left, customer
@@ -2377,8 +2383,10 @@ export default function ProofDetailPage() {
 
             </div>
 
-            {/* Right: status pill + primary actions + destructive row. */}
-            <div className="flex flex-col items-end gap-3 shrink-0">
+            {/* Right: status pill + primary actions + destructive row.
+                On mobile the cluster spans the full card width so the two
+                everyday actions can stack as full-width 50px buttons. */}
+            <div className="flex flex-col items-end gap-3 shrink-0 max-md:w-full max-md:items-stretch">
               <div className="flex items-center gap-2">
                 {statusBucket
                   ? (statusBucket.bucket === 'needs_attention' && bucketRow?.rule_code
@@ -2419,10 +2427,11 @@ export default function ProofDetailPage() {
                   (Mark as approved / Abandon, or Reopen when locked)
                   move into a quiet overflow menu so they no longer
                   compete with the everyday actions for attention. */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 max-md:w-full max-md:flex-col max-md:items-stretch">
                 {!isLocked && (
                   <ButtonCoral
                     icon={Plus}
+                    className="max-md:w-full max-md:h-[50px] max-md:text-[15px]"
                     onClick={() => navigate(`/proofs/${proof.id}/versions/new`)}
                   >
                     Add a new version
@@ -2438,12 +2447,13 @@ export default function ProofDetailPage() {
                     overflow menu behind a confirm. */}
                 {isApproved && orderingEnabled === true && (
                   hasOpenOrder ? (
-                    <Link to="/orders">
-                      <ButtonCoral icon={Package}>View order</ButtonCoral>
+                    <Link to="/orders" className="max-md:block max-md:w-full">
+                      <ButtonCoral icon={Package} className="max-md:w-full max-md:h-[50px] max-md:text-[15px]">View order</ButtonCoral>
                     </Link>
                   ) : (
                     <ButtonCoral
                       icon={Package}
+                      className="max-md:w-full max-md:h-[50px] max-md:text-[15px]"
                       onClick={() => setShowOrderBuilder(true)}
                     >
                       Create order
@@ -2452,6 +2462,7 @@ export default function ProofDetailPage() {
                 )}
                 <ButtonGhost
                   icon={ExternalLink}
+                  className="max-md:w-full max-md:h-[50px] max-md:text-[15px]"
                   disabled={versions.length === 0}
                   title={versions.length === 0 ? 'Add a version to enable preview' : undefined}
                   onClick={() => {
@@ -2464,6 +2475,7 @@ export default function ProofDetailPage() {
                 >
                   Open customer view
                 </ButtonGhost>
+                <div className="max-md:self-end">
                 <HeaderActionsMenu
                   items={
                     isLocked
@@ -2486,6 +2498,7 @@ export default function ProofDetailPage() {
                         ]
                   }
                 />
+                </div>
               </div>
             </div>
           </div>
@@ -2588,10 +2601,11 @@ export default function ProofDetailPage() {
                     Names section below for the detail.
                   </p>
                 )}
-                <div className="mt-3 flex flex-wrap items-center gap-3">
+                <div className="mt-3 flex flex-wrap items-center gap-3 max-md:flex-col max-md:items-stretch">
                   <ButtonCoral
                     icon={Plus}
                     size="sm"
+                    className="max-md:w-full max-md:h-[50px] max-md:text-[15px]"
                     onClick={() => navigate(`/proofs/${proof.id}/versions/new`)}
                   >
                     Add a new version
@@ -2601,7 +2615,7 @@ export default function ProofDetailPage() {
                       href={proof.helpscout_conversation_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-[13px] text-ink-soft hover:text-ink"
+                      className="inline-flex items-center gap-1 text-[13px] text-ink-soft hover:text-ink max-md:min-h-[44px] max-md:justify-center max-md:py-2.5"
                     >
                       Reply in Help Scout <ExternalLink size={12} aria-hidden="true" />
                     </a>
@@ -3282,8 +3296,8 @@ export default function ProofDetailPage() {
                 </div>
               ) : (
                 <>
-                  <div className="overflow-x-auto rounded-2xl bg-surface shadow-sm ring-1 ring-line">
-                    <table className="w-full text-sm">
+                  <div className="overflow-x-auto rounded-2xl bg-surface shadow-sm ring-1 ring-line max-md:bg-transparent max-md:shadow-none max-md:ring-0">
+                    <table className="w-full text-sm table-cards">
                       <thead>
                         <tr className="border-b border-line-soft">
                           {!isAllShared && (
@@ -3306,13 +3320,13 @@ export default function ProofDetailPage() {
                           return (
                             <tr key={row.imageId} className="border-b border-line-soft last:border-0">
                               {!isAllShared && (
-                                <td className="px-4 py-3 font-medium text-ink">{nameCol}</td>
+                                <td data-title className="px-4 py-3 font-medium text-ink">{nameCol}</td>
                               )}
                               {!isOneSided && (
-                                <td className="px-4 py-3 text-ink-mute">{sideCol}</td>
+                                <td data-label="Side" className="px-4 py-3 text-ink-mute">{sideCol}</td>
                               )}
-                              <td className="px-4 py-3 text-ink-mute">v{row.versionNumber}</td>
-                              <td className="px-4 py-3 text-ink-soft">{fileLabel}</td>
+                              <td data-label="Version" className="px-4 py-3 text-ink-mute">v{row.versionNumber}</td>
+                              <td data-label="Filename" className="px-4 py-3 text-ink-soft max-md:break-all">{fileLabel}</td>
                             </tr>
                           )
                         })}
@@ -3667,7 +3681,7 @@ function HeaderActionsMenu({ items }: { items: HeaderMenuItem[] }) {
         aria-expanded={open}
         aria-label="More actions"
         onClick={() => setOpen((o) => !o)}
-        className="inline-flex h-[38px] w-[38px] items-center justify-center rounded-[4px] border border-line bg-surface text-ink-soft transition-colors hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
+        className="inline-flex h-[38px] w-[38px] max-md:h-[44px] max-md:w-[44px] items-center justify-center rounded-[4px] border border-line bg-surface text-ink-soft transition-colors hover:bg-canvas focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--c-brand)]"
       >
         <MoreHorizontal size={16} aria-hidden="true" />
       </button>

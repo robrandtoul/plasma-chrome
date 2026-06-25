@@ -4,6 +4,8 @@
 
 export { tokens, type TokenName } from './tokens'
 export { useEscape } from './useEscape'
+export { useIsMobile } from './useIsMobile'
+export { Sheet } from './Sheet'
 export { Eyebrow } from './Eyebrow'
 export { Num } from './Num'
 export { ButtonInk, ButtonCoral, ButtonGhost, type ButtonProps } from './Button'

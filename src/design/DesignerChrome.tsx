@@ -45,6 +45,8 @@ interface DesignerChromeProps {
   actions?: ReactNode
   /** Optional controlled search field. Omit to hide. */
   search?: { value: string; onChange: (v: string) => void; placeholder?: string }
+  /** Mobile-only bell button in the top bar (Dashboard activity rail). */
+  mobileBell?: { onClick: () => void; hasUnseen: boolean }
   /** Called after the EditProfileModal saves. Lets the host page
    *  refetch any data that depends on the profile (e.g. dashboard
    *  rows that show designer-avatar columns). */
@@ -56,6 +58,7 @@ export function DesignerChrome({
   active,
   actions,
   search,
+  mobileBell,
   onProfileSaved,
   children,
 }: DesignerChromeProps) {
@@ -113,6 +116,7 @@ export function DesignerChrome({
         }}
         search={search}
         actions={headerActions}
+        mobileBell={mobileBell}
         onEditProfile={() => setEditProfileOpen(true)}
         onSignOut={handleSignOut}
       />
@@ -136,6 +140,14 @@ export function DesignerChrome({
         />
       )}
       {children}
+      {/* Mobile-only bottom clearance so page content can scroll clear of
+          the fixed BottomTabBar. One spacer here covers every designer
+          page; hidden at md:+ so the desktop layout is untouched. */}
+      <div
+        aria-hidden="true"
+        className="md:hidden"
+        style={{ height: 'calc(64px + env(safe-area-inset-bottom))' }}
+      />
     </DesignerProfileContext.Provider>
   )
 }

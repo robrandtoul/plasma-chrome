@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
-import { DesignerChrome, useDesignerProfile, ButtonCoral, ButtonInk, ProofStatusPill, HelpTip } from '../design'
-import { Plus, X, Maximize2, Bell, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Link as LinkIcon } from 'lucide-react'
+import { DesignerChrome, useDesignerProfile, useIsMobile, Sheet, ButtonCoral, ButtonInk, ProofStatusPill, HelpTip } from '../design'
+import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Link as LinkIcon } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -317,7 +317,7 @@ function StatTile({ label, count, active, tone, onClick, help, badge, badgeTitle
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative"
+      className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative max-md:w-[140px] max-md:shrink-0 max-md:snap-start max-md:rounded-[12px] max-md:border max-md:border-line"
       style={{
         // Active state: a soft tint of the tile's tone fills the cell
         // background. Cleaner than an inset ring when each cell sits
@@ -389,12 +389,16 @@ function OverflowMenu({
   onSnooze,
   onUnsnooze,
 }: OverflowMenuProps) {
+  const isMobile = useIsMobile()
   const [open, setOpen] = useState(false)
   const btnRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!open) return
+    // Desktop dropdown only — the mobile action sheet manages its own
+    // backdrop / Escape dismissal, and these document listeners would
+    // otherwise treat a tap on a sheet row as "outside" and close it.
+    if (!open || isMobile) return
     function onDocClick(e: MouseEvent) {
       const t = e.target as Node
       // The menu is portalled to <body>, so the click-outside test must
@@ -413,7 +417,18 @@ function OverflowMenu({
       document.removeEventListener('mousedown', onDocClick)
       document.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [open, isMobile])
+
+  // Display name + spec for the mobile action sheet header. Mirrors the
+  // row's own name/spec derivation so the sheet reads as "this project".
+  const sheetName = proof.company_name || proof.contact_name || '(no contact)'
+  const sheetSpec = [
+    proof.material_display,
+    proof.current_version_number != null ? `v${proof.current_version_number}` : null,
+  ].filter(Boolean).join(' · ')
+  // 56px sheet rows; first:border-t-0 keeps the divider out of the top edge.
+  const sheetRow =
+    'flex w-full min-h-[56px] items-center gap-3 border-t border-line-soft px-4 text-left text-[15px] text-ink-soft hover:bg-canvas first:border-t-0'
 
   // Position the menu via a fixed-position portal so it escapes the row
   // card's overflow-hidden (which was clipping the dropdown). Right-
@@ -430,6 +445,104 @@ function OverflowMenu({
         }
       })()
     : null
+
+  // Mobile: a visible 44×44 kebab that opens a bottom action sheet,
+  // replacing the desktop hover-only dropdown.
+  if (isMobile) {
+    return (
+      <>
+        <button
+          ref={btnRef}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label="Project actions"
+          onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-ink-mute hover:bg-canvas hover:text-ink"
+        >
+          <MoreHorizontal size={20} aria-hidden="true" />
+        </button>
+        <Sheet open={open} onClose={() => setOpen(false)} title={sheetName} subtitle={sheetSpec} ariaLabel="Project actions">
+          <div className="px-4">
+            <div className="overflow-hidden rounded-[14px] border border-line bg-surface">
+              {canAddVersion ? (
+                <Link
+                  to={`/proofs/${proof.proof_id}/versions/new`}
+                  onClick={() => setOpen(false)}
+                  className={`${sheetRow} font-medium text-brand`}
+                >
+                  <Plus size={18} aria-hidden="true" /> Add a new version
+                </Link>
+              ) : (
+                <span className={`${sheetRow} cursor-not-allowed text-ink-dim`}>
+                  <Plus size={18} aria-hidden="true" /> Add a new version
+                </span>
+              )}
+              {proof.current_version_id && (
+                <button
+                  type="button"
+                  onClick={() => { setOpen(false); openDesignerPreview(proof.proof_id) }}
+                  className={sheetRow}
+                >
+                  <Eye size={18} aria-hidden="true" className="text-ink-mute" /> Preview
+                </button>
+              )}
+              {proof.helpscout_conversation_url && (
+                <a
+                  href={proof.helpscout_conversation_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setOpen(false)}
+                  className={sheetRow}
+                >
+                  <LinkIcon size={18} aria-hidden="true" className="text-ink-mute" /> Open in Help Scout
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={() => { setOpen(false); onToggleMinePin(proof.proof_id) }}
+                className={sheetRow}
+              >
+                <PinIcon className="h-[18px] w-[18px] text-ink-mute" filled={minePinned} />
+                {minePinned ? 'Unpin from your list' : 'Pin to your list'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setOpen(false); onToggleTeamPin(proof.proof_id) }}
+                className={sheetRow}
+              >
+                <UsersIcon className="h-[18px] w-[18px] text-ink-mute" />
+                {teamPinned ? 'Unpin from the team list' : 'Pin for the team'}
+              </button>
+              {proof.snoozed_until && proof.snooze_rule_code && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false)
+                    if (proof.snooze_rule_code) void onUnsnooze(proof.proof_id, proof.snooze_rule_code)
+                  }}
+                  className={sheetRow}
+                  style={{ color: '#7b3ff2' }}
+                >
+                  <ClockIcon className="h-[18px] w-[18px]" /> Unsnooze
+                </button>
+              )}
+              {proof.rule_code && !proof.snoozed_until && (
+                <SnoozeButton proof={proof} onSnooze={onSnooze} sheetStyle />
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="mt-3 flex w-full min-h-[56px] items-center justify-center rounded-[14px] border border-line bg-surface text-[15px] font-medium text-ink-soft hover:bg-canvas"
+            >
+              Cancel
+            </button>
+          </div>
+        </Sheet>
+      </>
+    )
+  }
 
   return (
     <>
@@ -547,9 +660,12 @@ interface SnoozeButtonProps {
   // in OverflowMenu. Used on narrow viewports where the action strip is
   // hidden and the snooze action has to be reachable from the ⋯ menu.
   menuStyle?: boolean
+  // sheetStyle: a taller (56px) full-width row matching the mobile action
+  // sheet's other rows. Same options popover as the other variants.
+  sheetStyle?: boolean
 }
 
-function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }: SnoozeButtonProps) {
+function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false, sheetStyle = false }: SnoozeButtonProps) {
   const [open, setOpen]       = useState(false)
   const [note, setNote]       = useState('')
   const [saving, setSaving]   = useState(false)
@@ -645,7 +761,7 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
   const popPos = open && btnRef.current
     ? (() => {
         const r = btnRef.current!.getBoundingClientRect()
-        const left = (stripStyle || menuStyle)
+        const left = (stripStyle || menuStyle || sheetStyle)
           ? Math.max(16, r.right - POPOVER_W)
           : Math.max(16, Math.min(r.left, window.innerWidth - POPOVER_W - 16))
         const top = Math.max(16, Math.min(r.bottom + 4, window.innerHeight - POPOVER_H_GUESS - 16))
@@ -655,7 +771,18 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
 
   return (
     <div className="relative">
-      {menuStyle ? (
+      {sheetStyle ? (
+        <button
+          ref={btnRef}
+          type="button"
+          aria-label="Snooze this alert"
+          onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
+          className="flex w-full min-h-[56px] items-center gap-3 border-t border-line-soft px-4 text-left text-[15px] text-ink-soft hover:bg-canvas"
+        >
+          <ClockIcon className="h-[18px] w-[18px] shrink-0 text-ink-mute" />
+          <span>Snooze…</span>
+        </button>
+      ) : menuStyle ? (
         <button
           ref={btnRef}
           type="button"
@@ -689,7 +816,7 @@ function SnoozeButton({ proof, onSnooze, stripStyle = false, menuStyle = false }
           ref={popRef}
           aria-label="Snooze options"
           style={popPos}
-          className="fixed z-[60] overflow-hidden rounded-[10px] bg-surface py-2 shadow-md border border-line"
+          className="fixed z-[90] overflow-hidden rounded-[10px] bg-surface py-2 shadow-md border border-line"
           onClick={(e) => e.stopPropagation()}
         >
           {customMode ? (
@@ -926,6 +1053,11 @@ function ProjectRow({
 
   function handleThumbMouseEnter() {
     if (!thumbnailUrl) return
+    // Hover preview is a mouse-only affordance: gate it behind a real
+    // fine+hover pointer so it never half-fires on touch (where tap
+    // already opens the lightbox). matchMedia is cheap to read here.
+    if (typeof window !== 'undefined' && 'matchMedia' in window &&
+        !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return
     // 400ms delay matches the standard tooltip pattern — long enough
     // to skip accidental flyovers, short enough to feel responsive
     // when a designer pauses to look.
@@ -954,6 +1086,7 @@ function ProjectRow({
     }
   }, [])
   const navigate = useNavigate()
+  const isMobile = useIsMobile()
   const canAddVersion = project.status === 'in_progress' || project.status === 'dormant'
 
   // Single source of truth for this row's status pill label/colour and the
@@ -990,6 +1123,116 @@ function ProjectRow({
   const updatedLabel = ts
     ? new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
     : '—'
+
+  // ── Mobile: single-column card ─────────────────────────────────────────
+  // The desktop multi-column grid + hover-only action overlay can't work on
+  // touch. Below md: render a card where everything (thumbnail, name, spec
+  // sub-line, reason, status pill) is always visible and the actions live
+  // behind a visible kebab → bottom action sheet (OverflowMenu, which is
+  // itself mobile-aware). The whole card taps through to the proof; the
+  // kebab / reason chip / thumbnail stopPropagation.
+  if (isMobile) {
+    const specLine = [
+      project.material_display,
+      project.current_version_number != null ? `v${project.current_version_number}` : null,
+    ].filter(Boolean).join(' · ')
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => navigate(`/proofs/${project.proof_id}`)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            navigate(`/proofs/${project.proof_id}`)
+          }
+        }}
+        className={[
+          'relative overflow-hidden rounded-[10px] bg-surface border border-line border-l-[10px] pl-3 pr-2 py-3 transition-colors active:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)]',
+          project.status === 'dormant' ? 'opacity-60' : '',
+        ].join(' ')}
+        style={{ borderLeftColor: bucket.colour }}
+      >
+        <div className="flex items-start gap-3">
+          <div
+            ref={thumbRef}
+            onClick={handleThumbClick}
+            className={[
+              'relative flex shrink-0 items-center justify-center w-14 h-11 rounded-[4px] bg-ink text-on-ink font-mono font-medium text-[10px] tracking-wider overflow-hidden',
+              thumbnailUrl ? 'cursor-zoom-in' : '',
+            ].join(' ')}
+          >
+            {thumbnailUrl ? (
+              <img src={thumbnailUrl} alt="" loading="lazy" className="w-full h-full object-contain" />
+            ) : (
+              thumbInitials
+            )}
+          </div>
+          {lightboxOpen && thumbnailUrl && (
+            <ThumbnailLightbox
+              imageUrl={thumbnailUrl}
+              projectName={projectName}
+              onClose={() => setLightboxOpen(false)}
+              onOpenProject={() => navigate(`/proofs/${project.proof_id}`)}
+            />
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[15px] font-medium text-ink">{projectName}</div>
+                {subline && <div className="truncate text-xs text-ink-mute mt-0.5">{subline}</div>}
+                {specLine && <div className="truncate text-xs text-ink-mute mt-0.5">{specLine}</div>}
+              </div>
+              <OverflowMenu
+                proof={project}
+                canAddVersion={canAddVersion}
+                minePinned={minePinned}
+                teamPinned={teamPinned}
+                onToggleMinePin={onToggleMinePin}
+                onToggleTeamPin={onToggleTeamPin}
+                onSnooze={onSnooze}
+                onUnsnooze={onUnsnooze}
+              />
+            </div>
+            {project.rule_code && (
+              <ResolvePopover
+                proofId={project.proof_id}
+                ruleCode={project.rule_code}
+                meta={project.rule_meta}
+                helpscoutUrl={project.helpscout_conversation_url}
+                hasHelpscoutConversation={!!project.helpscout_conversation_id}
+                versionId={project.current_version_id}
+                versionNumber={project.current_version_number}
+                contactFullName={project.contact_name}
+                companyName={project.company_name}
+                onSnoozed={onAfterResolve}
+                className="mt-1.5 max-w-full cursor-pointer"
+              >
+                <span className="flex min-w-0 items-center gap-1.5 text-[13px] text-out">
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-out" aria-hidden="true" />
+                  <span className="truncate">{attentionReason(project.rule_code, project.rule_meta)}</span>
+                </span>
+              </ResolvePopover>
+            )}
+            {ts && (
+              <div className="mt-1 truncate text-xs text-ink-soft" title={formatAbsoluteDateTime(ts)}>
+                {verb} {relativeTime(ts)}
+              </div>
+            )}
+            {project.follow_up_rule_code != null && project.follow_up_sent_count != null && project.follow_up_max_nudges != null && (
+              <div className="mt-0.5 truncate text-[11px]" style={{ color: '#6366f1' }}>
+                Reminder {project.follow_up_sent_count} of {project.follow_up_max_nudges}
+                {project.follow_up_last_sent_at ? ` · last ${relativeTime(project.follow_up_last_sent_at)}` : ''}
+              </div>
+            )}
+            <div className="mt-2">
+              <ProofStatusPill label={bucket.label} colour={bucket.colour} />
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -1962,6 +2205,47 @@ export default function DashboardPage() {
   // without every call site threading it through. Empty = working set.
   const serverSearchRef = useRef('')
 
+  // ── Mobile-only: activity bell + sheet, and the stat-tiles scroll strip.
+  // None of this has any effect at md:+ (the bell is md:hidden, the activity
+  // aside renders as before, and the tiles are a grid not a scroll strip).
+  const [activitySheetOpen, setActivitySheetOpen] = useState(false)
+  const [activityTab, setActivityTab] = useState<'activity' | 'followups' | 'leadtimes'>('activity')
+  const [activitySeenAt, setActivitySeenAt] = useState<string | null>(() => {
+    try { return localStorage.getItem('dash.activity.seenAt') } catch { return null }
+  })
+  const tilesStripRef = useRef<HTMLDivElement>(null)
+  const tilesSaveTimer = useRef<number | null>(null)
+
+  const newestActivityAt = latestEvents[0]?.created_at ?? null
+  const activityHasUnseen =
+    newestActivityAt != null && (activitySeenAt == null || newestActivityAt > activitySeenAt)
+  function openActivitySheet() {
+    setActivitySheetOpen(true)
+    if (newestActivityAt) {
+      setActivitySeenAt(newestActivityAt)
+      try { localStorage.setItem('dash.activity.seenAt', newestActivityAt) } catch { /* */ }
+    }
+  }
+  function handleTilesScroll(e: React.UIEvent<HTMLDivElement>) {
+    const x = e.currentTarget.scrollLeft
+    if (tilesSaveTimer.current) window.clearTimeout(tilesSaveTimer.current)
+    tilesSaveTimer.current = window.setTimeout(() => {
+      try { localStorage.setItem('dash.tiles.x', String(x)) } catch { /* */ }
+    }, 150)
+  }
+  // Restore the tiles scroll position once the list has rendered (it only
+  // exists when !loading). iOS keeps localStorage across PWA relaunches, so
+  // the strip lands where the designer left it.
+  useLayoutEffect(() => {
+    if (loading) return
+    const el = tilesStripRef.current
+    if (!el) return
+    try {
+      const saved = localStorage.getItem('dash.tiles.x')
+      if (saved) el.scrollLeft = parseInt(saved, 10) || 0
+    } catch { /* */ }
+  }, [loading])
+
   useEffect(() => { loadDashboard() }, [])
 
   // Server-side search (scaling C). The `search` box filters the loaded
@@ -2511,6 +2795,7 @@ export default function DashboardPage() {
     <DesignerChrome
       active="proofs"
       search={{ value: search, onChange: setSearch }}
+      mobileBell={{ onClick: openActivitySheet, hasUnseen: activityHasUnseen }}
       onProfileSaved={() => {
         // Refetch dashboard rows so the designer-avatar columns on
         // every project tile pick up the new avatar/initials/colour
@@ -2556,8 +2841,8 @@ export default function DashboardPage() {
                     )}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <ButtonCoral icon={Plus} onClick={() => navigate('/proofs/new')}>
+                <div className="flex items-center gap-2 max-md:w-full">
+                  <ButtonCoral icon={Plus} onClick={() => navigate('/proofs/new')} className="max-md:w-full max-md:h-11">
                     New project
                   </ButtonCoral>
                 </div>
@@ -2573,7 +2858,11 @@ export default function DashboardPage() {
                   (rose for Needs attention,
                   amber→sky→turquoise→green for workflow,
                   violet/neutral for on-hold). */}
-              <div className={`grid grid-cols-2 md:grid-cols-3 ${orderingOn ? 'xl:grid-cols-10' : 'xl:grid-cols-8'} xl:divide-x xl:divide-line`}>
+              <div
+                ref={tilesStripRef}
+                onScroll={handleTilesScroll}
+                className={`flex gap-2.5 overflow-x-auto px-4 pb-3 [scroll-snap-type:x_mandatory] md:gap-0 md:overflow-x-visible md:px-0 md:pb-0 md:[scroll-snap-type:none] md:grid md:grid-cols-3 ${orderingOn ? 'xl:grid-cols-10' : 'xl:grid-cols-8'} xl:divide-x xl:divide-line`}
+              >
                   <StatTile
                     label="Needs attention"
                     help={tagHelp('tile', 'needs_attention')}
@@ -2705,8 +2994,8 @@ export default function DashboardPage() {
                           tile, Snoozed → Snoozed tile) and the Abandoned
                           checkbox handles the rare abandoned filter. Chip
                           state is single-select; 'all' is the no-op default. */}
-                      <div className="flex flex-wrap items-center gap-3">
-                        <span className="eyebrow text-ink-mute pr-1">Filter</span>
+                      <div className="flex flex-wrap items-center gap-3 max-md:flex-nowrap max-md:overflow-x-auto">
+                        <span className="eyebrow text-ink-mute pr-1 max-md:shrink-0">Filter</span>
                         {(CHIPS as readonly { value: ChipKey; label: string }[]).map(({ value, label }) => {
                           const isActive = chipFilter === value
                           return (
@@ -2716,7 +3005,7 @@ export default function DashboardPage() {
                               onClick={() => handleChipChange(value)}
                               aria-pressed={isActive}
                               className={[
-                                'inline-flex items-center h-[30px] px-3 rounded-full text-[12px] font-medium transition-colors',
+                                'inline-flex items-center h-[30px] px-3 rounded-full text-[12px] font-medium transition-colors max-md:shrink-0',
                                 isActive
                                   ? 'bg-ink text-on-ink border border-ink'
                                   : 'border border-line bg-surface text-ink-soft hover:bg-canvas',
@@ -2727,14 +3016,18 @@ export default function DashboardPage() {
                           )
                         })}
 
-                        {/* Right cluster */}
-                        <span className="flex-1" aria-hidden="true" />
-                        <span className="text-[12px] text-ink-mute tabular-nums font-mono">
+                        {/* Right cluster. On mobile the spacer collapses so the
+                            count + Sort/Group/Abandoned controls pack into the
+                            same horizontal scroll row as the chips. */}
+                        <span className="hidden md:block flex-1" aria-hidden="true" />
+                        <span className="md:hidden w-2 shrink-0" aria-hidden="true" />
+                        <span className="text-[12px] text-ink-mute tabular-nums font-mono max-md:shrink-0">
                           {filteredProjects.length} showing
                         </span>
-                        <span className="h-4 w-px bg-line" aria-hidden="true" />
+                        <span className="h-4 w-px bg-line max-md:shrink-0" aria-hidden="true" />
                         <SelectField
                           label="Sort"
+                          className="max-md:shrink-0"
                           value={sort}
                           onChange={(v) => handleSortChange(v as SortMode)}
                           options={[
@@ -2745,6 +3038,7 @@ export default function DashboardPage() {
                         />
                         <SelectField
                           label="Group"
+                          className="max-md:shrink-0"
                           value={group}
                           onChange={(v) => handleGroupChange(v as GroupMode)}
                           options={[
@@ -2760,7 +3054,7 @@ export default function DashboardPage() {
                               return next
                             })
                           }}
-                          className={`inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                          className={`inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs font-medium transition-colors max-md:shrink-0 ${
                             showAbandoned
                               ? 'border-line bg-canvas text-ink'
                               : 'border-line bg-surface text-ink-mute hover:bg-canvas hover:text-ink-soft'
@@ -2890,6 +3184,34 @@ export default function DashboardPage() {
         )}
       </div>
     </div>
+
+    {/* Mobile activity sheet — the right-hand activity aside is hidden
+        below lg:, so the top-bar bell opens this sheet instead. A
+        segmented control swaps between the same three panels; no new
+        data. Self-gates to mobile via the Sheet primitive. */}
+    <Sheet
+      open={activitySheetOpen}
+      onClose={() => setActivitySheetOpen(false)}
+      title="Latest activity"
+      ariaLabel="Latest activity"
+    >
+      <div className="px-4 pt-1">
+        <SegmentedControl
+          value={activityTab}
+          onChange={setActivityTab}
+          options={[
+            { value: 'activity', label: 'Activity' },
+            { value: 'followups', label: 'Follow-ups' },
+            { value: 'leadtimes', label: 'Lead times' },
+          ]}
+        />
+        <div className="mt-3">
+          {activityTab === 'activity' && <LatestActivityPanel events={latestEvents} navigate={navigate} />}
+          {activityTab === 'followups' && <NudgeOutboxPanel projects={projects} onAfterSend={() => loadDashboard()} />}
+          {activityTab === 'leadtimes' && <LeadTimesChart leadTimes={leadTimes} navigate={navigate} />}
+        </div>
+      </div>
+    </Sheet>
     </DesignerChrome>
   )
 }
@@ -2905,14 +3227,16 @@ function SelectField<T extends string>({
   value,
   onChange,
   label,
+  className = '',
 }: {
   options: Array<{ value: T; label: string }>
   value: T
   onChange: (v: T) => void
   label?: string
+  className?: string
 }) {
   return (
-    <div className="relative inline-flex items-center rounded-[8px] border border-line bg-surface hover:bg-canvas focus-within:border-[var(--c-brand)] focus-within:outline focus-within:outline-2 focus-within:outline-offset-[-1px] focus-within:outline-[var(--c-brand)] transition-colors">
+    <div className={`relative inline-flex items-center rounded-[8px] border border-line bg-surface hover:bg-canvas focus-within:border-[var(--c-brand)] focus-within:outline focus-within:outline-2 focus-within:outline-offset-[-1px] focus-within:outline-[var(--c-brand)] transition-colors ${className}`}>
       {label && (
         <span className="pointer-events-none select-none pl-2.5 text-xs font-medium text-ink-mute">
           {label}
@@ -2939,6 +3263,43 @@ function SelectField<T extends string>({
       >
         <polyline points="4 6 8 10 12 6" />
       </svg>
+    </div>
+  )
+}
+
+// Segmented control for the mobile activity sheet (Activity / Follow-ups /
+// Lead times). A muted track with a white selected thumb; equal-width
+// segments, flex-centred labels, 34px tall.
+function SegmentedControl<T extends string>({
+  value,
+  onChange,
+  options,
+}: {
+  value: T
+  onChange: (v: T) => void
+  options: Array<{ value: T; label: string }>
+}) {
+  return (
+    <div className="flex h-[34px] items-center rounded-[10px] bg-line p-0.5" role="tablist">
+      {options.map((o) => {
+        const active = o.value === value
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(o.value)}
+            className={[
+              'flex h-full flex-1 items-center justify-center rounded-[8px] text-[12px] font-medium transition-colors',
+              active ? 'bg-surface text-ink' : 'text-ink-mute',
+            ].join(' ')}
+            style={active ? { boxShadow: '0 1px 2px rgba(22,19,17,0.08)' } : undefined}
+          >
+            {o.label}
+          </button>
+        )
+      })}
     </div>
   )
 }

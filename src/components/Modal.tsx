@@ -104,6 +104,15 @@ interface ModalProps {
    * Don't pass position / inset / z classes — those are baked in.
    */
   backdropClassName?: string
+  /**
+   * Below md:, the centred dialog becomes a full-width bottom sheet
+   * (rounded top, max 92dvh, scrolls, safe-area padded). Default true so
+   * every modal gets the mobile treatment with no per-caller work. Set
+   * false for panels that already handle mobile themselves or that aren't
+   * cards (e.g. transparent full-bleed image viewers). The desktop layout
+   * at md:+ is unaffected either way.
+   */
+  mobileSheet?: boolean
   children: ReactNode
 }
 
@@ -125,6 +134,7 @@ export default function Modal({
   ariaDescribedBy,
   panelClassName,
   backdropClassName,
+  mobileSheet = true,
   children,
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -251,7 +261,7 @@ export default function Modal({
         onMouseDown={handleBackdropMouseDown}
       />
       <div
-        className={CENTRING_BASE_CLASS}
+        className={`${CENTRING_BASE_CLASS}${mobileSheet ? ' modal-mobile-centre' : ''}`}
         onMouseDown={handleBackdropMouseDown}
       >
         <div
@@ -262,7 +272,7 @@ export default function Modal({
           aria-label={ariaLabel}
           aria-describedby={ariaDescribedBy}
           tabIndex={-1}
-          className={panelClassName ?? DEFAULT_PANEL_CLASS}
+          className={`${panelClassName ?? DEFAULT_PANEL_CLASS}${mobileSheet ? ' modal-mobile-sheet' : ''}`}
           // Stop mousedown from bubbling up to the centring container
           // so a press inside the panel (e.g. start of a textarea
           // drag-select) never registers as a backdrop click.

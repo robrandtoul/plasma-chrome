@@ -6,8 +6,19 @@ import {
   type ReactNode,
 } from 'react'
 import { Link } from 'react-router-dom'
-import { Search } from 'lucide-react'
+import {
+  Search,
+  Bell,
+  Layers,
+  Package,
+  FileText,
+  UserCircle,
+  LogOut,
+  Settings,
+  type LucideIcon,
+} from 'lucide-react'
 import { PlasmaWordmark } from './PlasmaWordmark'
+import { Sheet } from './Sheet'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
 
 // Shared chrome for every designer-facing page. Sticky top bar with
@@ -80,6 +91,9 @@ interface DesignerHeaderProps {
   /** Optional content placed to the left of the user pill. Use for
    *  page-specific CTAs like the dashboard's "New proof" button. */
   actions?: ReactNode
+  /** Mobile-only bell button in the top bar (Dashboard activity rail).
+   *  Hidden at md:+ where the activity aside is visible instead. */
+  mobileBell?: { onClick: () => void; hasUnseen: boolean }
   onEditProfile?: () => void
   onSignOut?: () => void
 }
@@ -90,6 +104,7 @@ export function DesignerHeader({
   user,
   search,
   actions,
+  mobileBell,
   onEditProfile,
   onSignOut,
 }: DesignerHeaderProps) {
@@ -97,6 +112,11 @@ export function DesignerHeader({
   // admin turns the feature on. Fail-safe false (getOrderingEnabled) so a
   // settings outage never reveals the unfinished feature.
   const [orderingEnabled, setOrderingEnabled] = useState(false)
+  // Mobile-only: the search field collapses behind an icon button, and
+  // the bottom-tab Account entry opens an account sheet. Neither piece of
+  // state has any effect at md:+ where the desktop chrome is rendered.
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [accountOpen, setAccountOpen] = useState(false)
   useEffect(() => {
     let cancelled = false
     void getOrderingEnabled().then((on) => { if (!cancelled) setOrderingEnabled(on) })
@@ -108,46 +128,260 @@ export function DesignerHeader({
     return true
   })
   return (
-    <header className="sticky top-0 z-[5] bg-surface border-b border-line">
-      <div className="mx-auto max-w-[1280px] flex items-center gap-4 px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 sm:gap-5 sm:px-7">
-        <Link to="/" className="flex-shrink-0">
-          <PlasmaWordmark tagline="Proofs" />
-        </Link>
-        <nav
-          aria-label="Designer navigation"
-          className="hidden md:flex items-center gap-1 ml-3"
-        >
-          {visibleNav.map((n) => {
-            const isActive = n.id === active
-            const cls = [
-              'inline-flex items-center h-8 px-3 rounded-full text-[13px] transition-colors',
-              isActive
-                ? 'text-ink bg-canvas border border-line'
-                : 'text-ink-mute border border-transparent hover:text-ink hover:bg-canvas',
-            ].join(' ')
-            return (
-              <Link key={n.id} to={n.to} className={cls}>
-                {n.label}
-              </Link>
-            )
-          })}
-        </nav>
+    <>
+      {/* The mobile-only cream/blur top bar is layered behind max-md:
+          variants so the desktop bar (bg-surface, no blur) is byte-for-byte
+          unchanged at md:+. */}
+      <header className="sticky top-0 z-[5] bg-surface border-b border-line max-md:bg-[rgba(251,247,240,0.92)] max-md:backdrop-blur-[8px]">
+        <div className="mx-auto max-w-[1280px] flex items-center gap-4 px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 sm:gap-5 sm:px-7">
+          <Link to="/" className="flex-shrink-0">
+            <PlasmaWordmark tagline="Proofs" />
+          </Link>
+          <nav
+            aria-label="Designer navigation"
+            className="hidden md:flex items-center gap-1 ml-3"
+          >
+            {visibleNav.map((n) => {
+              const isActive = n.id === active
+              const cls = [
+                'inline-flex items-center h-8 px-3 rounded-full text-[13px] transition-colors',
+                isActive
+                  ? 'text-ink bg-canvas border border-line'
+                  : 'text-ink-mute border border-transparent hover:text-ink hover:bg-canvas',
+              ].join(' ')
+              return (
+                <Link key={n.id} to={n.to} className={cls}>
+                  {n.label}
+                </Link>
+              )
+            })}
+          </nav>
 
-        {search ? (
-          <SearchField {...search} />
-        ) : (
-          <span className="flex-1" aria-hidden="true" />
+          {search ? (
+            <SearchField {...search} />
+          ) : (
+            <span className="flex-1" aria-hidden="true" />
+          )}
+
+          {/* SearchField is hidden < md, so add a mobile flex spacer to
+              push the right-hand icon cluster to the screen edge. */}
+          {search && <span className="flex-1 md:hidden" aria-hidden="true" />}
+
+          {actions && <div className="flex items-center gap-2">{actions}</div>}
+
+          {/* Mobile-only: search toggle + (Dashboard) bell. Hidden at md:+
+              where the desktop search field and activity rail take over. */}
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearchOpen((v) => !v)}
+              aria-label="Search"
+              aria-expanded={searchOpen}
+              className="md:hidden flex h-11 w-11 items-center justify-center rounded-full text-ink-soft hover:bg-canvas"
+            >
+              <Search size={20} aria-hidden="true" />
+            </button>
+          )}
+          {mobileBell && (
+            <button
+              type="button"
+              onClick={mobileBell.onClick}
+              aria-label="Latest activity"
+              className="md:hidden relative flex h-11 w-11 items-center justify-center rounded-full text-ink-soft hover:bg-canvas"
+            >
+              <Bell size={20} aria-hidden="true" />
+              {mobileBell.hasUnseen && (
+                <span
+                  className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-brand"
+                  style={{ boxShadow: '0 0 0 2px var(--c-bg)' }}
+                  aria-hidden="true"
+                />
+              )}
+            </button>
+          )}
+
+          <UserPill
+            user={user}
+            onEditProfile={onEditProfile}
+            onSignOut={onSignOut}
+          />
+        </div>
+
+        {/* Mobile expandable search row, shown directly under the top bar. */}
+        {search && searchOpen && (
+          <div className="md:hidden px-4 pb-3">
+            <MobileSearchField {...search} onClose={() => setSearchOpen(false)} />
+          </div>
         )}
+      </header>
 
-        {actions && <div className="flex items-center gap-2">{actions}</div>}
+      <BottomTabBar
+        active={active}
+        orderingEnabled={orderingEnabled}
+        onAccount={() => setAccountOpen(true)}
+      />
 
-        <UserPill
-          user={user}
-          onEditProfile={onEditProfile}
-          onSignOut={onSignOut}
-        />
+      <AccountSheet
+        open={accountOpen}
+        onClose={() => setAccountOpen(false)}
+        user={user}
+        role={role}
+        onEditProfile={onEditProfile}
+        onSignOut={onSignOut}
+      />
+    </>
+  )
+}
+
+// ── Mobile bottom tab bar ──────────────────────────────────────────────
+//
+// Fixed bottom navigation, rendered only below md:. Four tabs drawn from
+// the same nav set the desktop pill strip uses: Proofs / Orders (only
+// when ordering is on) / Quote / Account. Admin folds into Account — the
+// Account tab opens the AccountSheet, which carries the Admin link for
+// admins plus Edit profile + Sign out. Active state is driven off the
+// same `active` prop the desktop pills read; the Account tab lights up on
+// admin routes (active === 'admin').
+function BottomTabBar({
+  active,
+  orderingEnabled,
+  onAccount,
+}: {
+  active: DesignerNavId | null
+  orderingEnabled: boolean
+  onAccount: () => void
+}) {
+  const linkTabs: { id: DesignerNavId; label: string; to: string; Icon: LucideIcon }[] = [
+    { id: 'proofs', label: 'Proofs', to: '/', Icon: Layers },
+    ...(orderingEnabled
+      ? [{ id: 'orders' as DesignerNavId, label: 'Orders', to: '/orders', Icon: Package }]
+      : []),
+    { id: 'quote', label: 'Quote', to: '/quote', Icon: FileText },
+  ]
+  return (
+    <nav
+      aria-label="Primary"
+      className="md:hidden fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-line bg-[rgba(255,255,255,0.94)] backdrop-blur-[14px]"
+      style={{
+        height: 'calc(64px + env(safe-area-inset-bottom))',
+        paddingBottom: 'env(safe-area-inset-bottom)',
+      }}
+    >
+      {linkTabs.map(({ id, label, to, Icon }) => (
+        <Link
+          key={id}
+          to={to}
+          className="flex flex-1 items-center justify-center"
+          aria-current={active === id ? 'page' : undefined}
+        >
+          <TabInner label={label} Icon={Icon} active={active === id} />
+        </Link>
+      ))}
+      <button
+        type="button"
+        onClick={onAccount}
+        className="flex flex-1 items-center justify-center"
+        aria-current={active === 'admin' ? 'page' : undefined}
+      >
+        <TabInner label="Account" Icon={UserCircle} active={active === 'admin'} />
+      </button>
+    </nav>
+  )
+}
+
+function TabInner({ label, Icon, active }: { label: string; Icon: LucideIcon; active: boolean }) {
+  return (
+    <span
+      className={[
+        'flex min-h-[52px] min-w-[60px] flex-col items-center justify-center gap-0.5 rounded-[12px] px-3 py-1.5 transition-colors',
+        active ? 'text-brand bg-brand-50' : 'text-ink-mute',
+      ].join(' ')}
+    >
+      <Icon size={22} aria-hidden="true" />
+      <span className="text-[11px] font-medium leading-none">{label}</span>
+    </span>
+  )
+}
+
+// Mobile account sheet, opened from the Account bottom tab. Mirrors the
+// UserPill popover (Edit profile + Sign out) and adds the Admin entry for
+// admins — the desktop Admin pill has no bottom-tab equivalent, so it
+// lives here.
+function AccountSheet({
+  open,
+  onClose,
+  user,
+  role,
+  onEditProfile,
+  onSignOut,
+}: {
+  open: boolean
+  onClose: () => void
+  user: UserProps
+  role: 'admin' | 'designer' | null
+  onEditProfile?: () => void
+  onSignOut?: () => void
+}) {
+  return (
+    <Sheet open={open} onClose={onClose} title="Account" ariaLabel="Account">
+      <div className="px-4">
+        <div className="flex items-center gap-3 px-2 py-2">
+          <span
+            className="inline-flex h-10 w-10 items-center justify-center overflow-hidden rounded-full font-mono text-[13px] font-medium"
+            style={user.avatarUrl ? undefined : { backgroundColor: COLOUR_BG[user.colour], color: '#fff' }}
+          >
+            {user.avatarUrl ? (
+              <img src={user.avatarUrl} alt="" className="h-full w-full object-cover" />
+            ) : (
+              user.initials
+            )}
+          </span>
+          <div className="min-w-0">
+            <div className="truncate text-[15px] font-medium text-ink">{user.name ?? 'Account'}</div>
+          </div>
+        </div>
+
+        <div className="mt-1 overflow-hidden rounded-[14px] border border-line bg-surface">
+          {role === 'admin' && (
+            <Link
+              to="/admin/users"
+              onClick={onClose}
+              className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
+            >
+              <Settings size={18} aria-hidden="true" className="text-ink-mute" />
+              Admin
+            </Link>
+          )}
+          {onEditProfile && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose()
+                onEditProfile()
+              }}
+              className="flex w-full min-h-[56px] items-center gap-3 px-4 text-left text-[15px] text-ink-soft hover:bg-canvas"
+            >
+              <UserCircle size={18} aria-hidden="true" className="text-ink-mute" />
+              Edit profile
+            </button>
+          )}
+        </div>
+
+        {onSignOut && (
+          <button
+            type="button"
+            onClick={() => {
+              onClose()
+              onSignOut()
+            }}
+            className="mt-3 flex w-full min-h-[56px] items-center justify-center gap-2 rounded-[14px] border border-line bg-surface text-[15px] font-medium text-out hover:bg-canvas"
+          >
+            <LogOut size={18} aria-hidden="true" />
+            Sign out
+          </button>
+        )}
       </div>
-    </header>
+    </Sheet>
   )
 }
 
@@ -169,6 +403,35 @@ function SearchField({ value, onChange, placeholder }: SearchProps) {
       >
         ⌘ K
       </span>
+    </label>
+  )
+}
+
+// Full-width mobile search field, revealed under the top bar when the
+// search icon is tapped. Drives the same controlled value/onChange as the
+// desktop SearchField. 16px text avoids the iOS focus-zoom (the global
+// rule in design-tokens.css already forces this < 640px, restated here
+// for clarity).
+function MobileSearchField({
+  value,
+  onChange,
+  placeholder,
+  onClose,
+}: SearchProps & { onClose: () => void }) {
+  return (
+    <label className="flex h-[46px] items-center gap-2 rounded-[10px] border border-line bg-surface px-3 focus-within:border-[var(--c-brand)] focus-within:outline focus-within:outline-2 focus-within:outline-offset-[-1px] focus-within:outline-[var(--c-brand)]">
+      <Search size={16} aria-hidden="true" className="text-ink-mute flex-shrink-0" />
+      <input
+        type="search"
+        autoFocus
+        value={value}
+        onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
+        placeholder={placeholder ?? 'Search customer or company…'}
+        className="flex-1 bg-transparent text-[16px] text-ink placeholder:text-ink-dim outline-none"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onClose()
+        }}
+      />
     </label>
   )
 }

@@ -526,6 +526,7 @@ export default function OrderReviewPage() {
               ariaLabel="Approved artwork preview"
               backdropClassName="bg-black/80"
               panelClassName="bg-transparent"
+              mobileSheet={false}
             >
               {lightboxSrc && (
                 <img

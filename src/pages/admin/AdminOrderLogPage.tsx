@@ -356,7 +356,7 @@ export default function AdminOrderLogPage() {
         </div>
       ) : (
         <>
-          <div className="overflow-x-auto overflow-y-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
+          <div className="table-scroll overflow-y-hidden rounded-2xl bg-surface shadow-sm ring-1 ring-line">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-line-soft">
