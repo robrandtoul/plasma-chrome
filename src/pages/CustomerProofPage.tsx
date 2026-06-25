@@ -4,6 +4,7 @@ import { Send, Check, Layers, PoundSterling, DollarSign, Euro, BookOpen, Info, E
 import { supabase } from '../lib/supabase'
 import { Pill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, StatusRule, Field, Input, Textarea, tokens, type PillColour } from '../design'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
+import { CustomerHeader } from '../components/CustomerHeader'
 import type { PublicProof, PublicProofVersion, PublicMaterialOption, PublicMaterialOptionSurcharge, PublicPriceTier, PublicMaterialVariant, RoundVariant, CustomerProofGraph, PersonalisationPricing } from '../lib/types'
 import { compilePersonalisationSurcharges, personalisationBreakeven } from '../lib/personalisation'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
@@ -2287,31 +2288,15 @@ export default function CustomerProofPage() {
           Container width + padding match the dark masthead and <main>
           below (max-w-1280 / px-6 sm:px-7) so the wordmark's left edge
           lines up with the cards rather than sitting inboard. */}
-      <header
-        className="sticky top-0 z-[5] bg-ink text-on-ink"
-      >
-        <div className="mx-auto max-w-[1280px] flex items-center gap-4 px-gutter pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-3.5">
-          {/* Full-colour Plasma logo lockup on the ink banner — the
-              only branding the customer sees. White-text variant
-              designed for dark backgrounds; steps up a touch at sm+
-              where the masthead has more room. */}
-          <img
-            src="/logo-dark.png"
-            alt="PlasmaDesign Proofs"
-            className="h-[47px] sm:h-[60px] w-auto"
-          />
-          <div className="ml-auto flex items-center gap-4">
-            {lastUpdated && (
-              <span
-                className="eyebrow hidden sm:inline"
-                style={{ color: 'rgba(255,255,255,0.65)' }}
-              >
-                Last updated {lastUpdated}
-              </span>
-            )}
-          </div>
-        </div>
-      </header>
+      <CustomerHeader
+        right={
+          lastUpdated ? (
+            <span className="eyebrow hidden sm:inline" style={{ color: 'rgba(255,255,255,0.65)' }}>
+              Last updated {lastUpdated}
+            </span>
+          ) : undefined
+        }
+      />
 
       {/* V2 dark masthead strip — newspaper-rule horizontal band
           beneath the cream sticky header. Left cluster: company
