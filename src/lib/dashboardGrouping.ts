@@ -114,6 +114,7 @@ export interface DashboardLatestEvent {
     | 'staff_reply'
     | 'pay_link_opened'
     | 'pay_link_sent'
+    | 'order_reminder_sent'
   actor_name: string
   recipient_name: string | null
   helpscout_thread_id: string | null
@@ -234,6 +235,43 @@ export function payLinkSentEvents(sents: PayLinkSentRow[], projects: DashboardPr
       recipient_name: null,
       helpscout_thread_id: null,
       proof_id: o.proof_id,
+      version_number: p?.current_version_number ?? 0,
+      contact_name: p?.contact_name ?? null,
+      company_name: p?.company_name ?? null,
+    })
+  }
+  return out
+}
+
+// A sent unpaid-order reminder (order_nudges, 000238 — the automated chase the
+// send-order-reminders edge function posts on the Help Scout thread). Like the
+// pay-link rows above it's a timestamp bridged into the feed; the reminder lives
+// on the order, so its proof_id is resolved from the embedded parent order at
+// fetch time. Only real sends reach here — the fetch filters state = 'sent', so
+// dry-run rows (the current pre-go-live state) never appear. Same 30-day window
+// + the feed's 20-row cap.
+export interface OrderReminderRow {
+  id: string
+  proof_id: string
+  created_at: string | null
+}
+export function orderReminderEvents(reminders: OrderReminderRow[], projects: DashboardProject[]): DashboardLatestEvent[] {
+  const cutoff = Date.now() - HELPSCOUT_REPLY_WINDOW_MS
+  const byProof = new Map(projects.map((p) => [p.proof_id, p]))
+  const out: DashboardLatestEvent[] = []
+  for (const r of reminders) {
+    if (!r.created_at || new Date(r.created_at).getTime() < cutoff) continue
+    const p = byProof.get(r.proof_id)
+    out.push({
+      id: `order-reminder-${r.id}`,
+      created_at: r.created_at,
+      event_type: 'order_reminder_sent',
+      // Outbound like pay_link_sent: the customer is the recipient, so they
+      // lead the row ("Acme was sent a payment reminder"), never "You".
+      actor_name: p?.contact_name ?? p?.company_name ?? 'Customer',
+      recipient_name: null,
+      helpscout_thread_id: null,
+      proof_id: r.proof_id,
       version_number: p?.current_version_number ?? 0,
       contact_name: p?.contact_name ?? null,
       company_name: p?.company_name ?? null,
