@@ -13,6 +13,7 @@ export type TimelineEntryType =
   | 'project_created'
   | 'version_created'
   | 'reply_sent'
+  | 'reminder_sent'
   | 'customer_email_reply'
   | 'view'
   | 'approve'
@@ -62,6 +63,25 @@ export interface TimelineEventRow {
   variant_display_name: string | null
 }
 
+// A sent reminder from the proof_nudges ledger. One row per genuine
+// outbound chase (manual one-click or the automatic send-nudges cron),
+// surfaced as its own timeline entry so the whole cadence is visible —
+// not collapsed into the single, overwritten last_reply_sent_at stamp.
+export interface TimelineReminderRow {
+  /** proof_nudges.id — render key. */
+  id: string
+  proof_version_id: string
+  /** 'auto' = the send-nudges cron; 'manual' = a designer's one-click chase. */
+  source: 'auto' | 'manual'
+  created_at: string
+  /**
+   * Designer auth id for a manual nudge; null for an automatic send (the
+   * sender records no author). Resolved to a name via designerNamesById,
+   * exactly like version attribution.
+   */
+  sent_by?: string | null
+}
+
 export interface TimelineSources {
   proof: {
     created_at: string
@@ -89,6 +109,13 @@ export interface TimelineSources {
     last_reply_sent_by?: string | null
   }>
   events: TimelineEventRow[]
+  /**
+   * Sent reminders from the proof_nudges ledger (state='sent' only — the
+   * caller filters skips out). Each becomes its own 'reminder_sent' entry,
+   * numbered per version. Optional: callers that don't load the ledger
+   * (older tests, the preview harness) simply omit it.
+   */
+  reminders?: TimelineReminderRow[]
   /** proof_version_id → non-bot view rows (any extra fields ignored). */
   viewsByVersion: ReadonlyMap<string, ReadonlyArray<{ viewed_at: string }>>
   /**
@@ -116,15 +143,44 @@ const TIE_RANK: Record<TimelineEntryType, number> = {
   terms_acknowledged: 4,
   view: 5,
   reply_sent: 6,
+  reminder_sent: 6,
   version_created: 7,
   project_created: 8,
 }
 
+// last_reply_sent_at is stamped inside the same request that logs a
+// reminder, so the version stamp and the ledger row land within a second
+// or two of each other. A reply the timeline should keep as its own
+// "Reply sent" row — a designer's genuine typed reply — happens at an
+// unrelated time (the automatic chase only fires at 09:00/15:00), so a
+// tight window cleanly tells "the stamp IS this reminder" from "the stamp
+// is a separate human reply".
+const REMINDER_REPLY_DEDUP_MS = 2 * 60 * 1000
+
 export function buildTimelineEntries(sources: TimelineSources): TimelineEntry[] {
-  const { proof, versions, events, viewsByVersion, designerNamesById } = sources
+  const { proof, versions, events, reminders, viewsByVersion, designerNamesById } = sources
   const entries: TimelineEntry[] = []
   const designerName = (id: string | null | undefined): string | null =>
     (id && designerNamesById?.get(id)) || null
+
+  // Sent reminders, oldest-first per version, so the ordinal reads
+  // "reminder 1 / 2 / 3 for v2" across both manual and automatic sends.
+  // Also drives dedup of the version's single last_reply_sent_at stamp
+  // below: whichever reminder sent most recently overwrote that stamp, so
+  // the generic "Reply sent" entry it would otherwise produce is the SAME
+  // outbound touch — suppress it and let the richer reminder entry stand.
+  const sentReminders = [...(reminders ?? [])].sort((a, b) =>
+    a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+  )
+  const reminderOrdinal = new Map<string, number>()
+  const latestReminderAtByVersion = new Map<string, string>()
+  const perVersionCount = new Map<string, number>()
+  for (const r of sentReminders) {
+    const n = (perVersionCount.get(r.proof_version_id) ?? 0) + 1
+    perVersionCount.set(r.proof_version_id, n)
+    reminderOrdinal.set(r.id, n)
+    latestReminderAtByVersion.set(r.proof_version_id, r.created_at) // sorted asc → last wins
+  }
 
   const milestone = (
     id: string,
@@ -187,22 +243,53 @@ export function buildTimelineEntries(sources: TimelineSources): TimelineEntry[] 
       ...milestone(`version_created:${v.id}`, 'version_created', v.created_at, `v${v.version_number} created`),
       ...(creator ? { actor: creator, verb: `created v${v.version_number}` } : {}),
     })
-    // Only the latest reply per version is stored (last_reply_sent_at
-    // is overwritten on re-send), so a "Send again" replaces the
-    // earlier entry rather than stacking — acceptable for a history
-    // view; the precise audit trail lives in Help Scout.
+    // Only the latest reply per version is stored (last_reply_sent_at is
+    // overwritten on re-send). When that latest send was a reminder, the
+    // reminder ledger now carries it as its own (richer) entry, so skip the
+    // generic "Reply sent" duplicate; otherwise this captures a designer's
+    // genuine typed reply. The precise audit trail lives in Help Scout.
     if (v.last_reply_sent_at) {
-      const sender = designerName(v.last_reply_sent_by)
-      entries.push({
-        ...milestone(
-          `reply_sent:${v.id}`,
-          'reply_sent',
-          v.last_reply_sent_at,
-          `Reply sent for v${v.version_number}`,
-        ),
-        ...(sender ? { actor: sender, verb: `sent a reply for v${v.version_number}` } : {}),
-      })
+      const latestReminderAt = latestReminderAtByVersion.get(v.id)
+      const isReminderStamp =
+        latestReminderAt != null &&
+        Math.abs(Date.parse(v.last_reply_sent_at) - Date.parse(latestReminderAt)) <=
+          REMINDER_REPLY_DEDUP_MS
+      if (!isReminderStamp) {
+        const sender = designerName(v.last_reply_sent_by)
+        entries.push({
+          ...milestone(
+            `reply_sent:${v.id}`,
+            'reply_sent',
+            v.last_reply_sent_at,
+            `Reply sent for v${v.version_number}`,
+          ),
+          ...(sender ? { actor: sender, verb: `sent a reply for v${v.version_number}` } : {}),
+        })
+      }
     }
+  }
+
+  // Reminder entries, one per sent ledger row. Manual chase with a
+  // resolved sender → attributed ("Rob sent reminder 1 for v2"); automatic
+  // send (or an unresolved manual sender) → the unattributed copy, the
+  // automatic case marked "Automatic" so it reads plainly as the bot.
+  for (const r of sentReminders) {
+    const vn = versionNumberById.get(r.proof_version_id)
+    const vLabel = vn != null ? `v${vn}` : 'a version'
+    const n = reminderOrdinal.get(r.id) ?? 1
+    const sender = r.source === 'manual' ? designerName(r.sent_by) : null
+    entries.push({
+      id: `reminder:${r.id}`,
+      type: 'reminder_sent',
+      at: r.created_at,
+      actor: sender,
+      verb: sender
+        ? `sent reminder ${n} for ${vLabel}`
+        : `${r.source === 'auto' ? 'Automatic reminder' : 'Reminder'} ${n} sent for ${vLabel}`,
+      comment: null,
+      recipientName: null,
+      failedNotification: false,
+    })
   }
 
   for (const e of events) {

@@ -51,7 +51,7 @@ import {
 } from '../lib/proofSnapshot'
 import { ResolvePopover } from '../components/ResolvePopover'
 import ProofTimeline from '../components/ProofTimeline'
-import type { TimelineEventRow } from '../lib/proofTimeline'
+import type { TimelineEventRow, TimelineReminderRow } from '../lib/proofTimeline'
 
 interface Proof {
   id: string
@@ -300,6 +300,10 @@ export default function ProofDetailPage() {
   // Activity timeline panel. Populated from the same fetch as the
   // eventsByVersionAndName reduction above (no extra round-trip).
   const [timelineEvents, setTimelineEvents] = useState<TimelineEventRow[]>([])
+  // Sent reminders (proof_nudges ledger) feeding the Activity timeline.
+  // Every genuine outbound chase, manual or automatic — so the cadence
+  // shows in full rather than collapsing into last_reply_sent_at.
+  const [timelineReminders, setTimelineReminders] = useState<TimelineReminderRow[]>([])
   // auth user id → designer full name, for the timeline's "Donna
   // created v2" / "Donna sent a reply for v2" attribution. Resolved
   // from profiles (open authenticated SELECT) because audit_log —
@@ -616,16 +620,35 @@ export default function ProofDetailPage() {
       setHeroImages([])
     }
 
+    // Sent reminders (proof_nudges) for the Activity timeline — every
+    // genuine outbound chase, not just the latest one surviving on
+    // last_reply_sent_at. state='sent' drops the cron's skipped
+    // (cooldown / grace / snoozed) rows. Best-effort: a failure just
+    // leaves the timeline without reminder entries.
+    let loadedReminders: TimelineReminderRow[] = []
+    {
+      const { data: nudgeRows } = await supabase
+        .from('proof_nudges')
+        .select('id, proof_version_id, source, sent_by, created_at')
+        .eq('proof_id', proofId)
+        .eq('state', 'sent')
+        .order('created_at', { ascending: true })
+      if (isStale()) return
+      loadedReminders = (nudgeRows ?? []) as TimelineReminderRow[]
+      setTimelineReminders(loadedReminders)
+    }
+
     // Resolve designer names for the timeline's attribution lines.
-    // One small .in() lookup on profiles covering both created_by and
-    // last_reply_sent_by across every version. Non-blocking and
-    // best-effort — a failure just leaves entries on the
-    // unattributed milestone copy ("v2 created").
+    // One small .in() lookup on profiles covering created_by and
+    // last_reply_sent_by across every version, plus manual-reminder
+    // senders. Non-blocking and best-effort — a failure just leaves
+    // entries on the unattributed milestone copy ("v2 created").
     const designerIds = Array.from(
       new Set(
-        loadedVersions
-          .flatMap((v) => [v.created_by, v.last_reply_sent_by])
-          .filter((id): id is string => id != null),
+        [
+          ...loadedVersions.flatMap((v) => [v.created_by, v.last_reply_sent_by]),
+          ...loadedReminders.map((r) => r.sent_by),
+        ].filter((id): id is string => id != null),
       ),
     )
     if (designerIds.length > 0) {
@@ -2254,6 +2277,7 @@ export default function ProofDetailPage() {
       }}
       versions={versions}
       events={timelineEvents}
+      reminders={timelineReminders}
       viewsByVersion={viewsByVersion}
       designerNamesById={designerNames}
       proofId={proof.id}

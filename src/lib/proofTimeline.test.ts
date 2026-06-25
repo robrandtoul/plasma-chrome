@@ -290,6 +290,63 @@ test('email reply falls back to "Customer" when no contact name', () => {
   assert(!!reply && reply.actor === 'Customer', 'should fall back to "Customer"')
 })
 
+test('sent reminders produce per-version numbered entries, attributed for manual, labelled for auto', () => {
+  const entries = buildTimelineEntries(
+    baseSources({
+      versions: [{ id: 'v1', version_number: 1, created_at: '2026-05-01T10:00:00Z', last_reply_sent_at: null }],
+      // Deliberately out of order — ordinals must be assigned oldest-first.
+      reminders: [
+        { id: 'n2', proof_version_id: 'v1', source: 'auto', created_at: '2026-05-08T09:00:00Z', sent_by: null },
+        { id: 'n1', proof_version_id: 'v1', source: 'manual', created_at: '2026-05-04T15:00:00Z', sent_by: 'designer-1' },
+      ],
+      designerNamesById: new Map([['designer-1', 'Rob Randtoul']]),
+    }),
+  )
+  const reminders = entries.filter((e) => e.type === 'reminder_sent')
+  assert(reminders.length === 2, `expected 2 reminder entries, got ${reminders.length}`)
+  const manual = entries.find((e) => e.id === 'reminder:n1')!
+  const auto = entries.find((e) => e.id === 'reminder:n2')!
+  assert(manual.actor === 'Rob Randtoul' && manual.verb === 'sent reminder 1 for v1', `manual: ${manual.actor} / ${manual.verb}`)
+  assert(auto.actor === null && auto.verb === 'Automatic reminder 2 sent for v1', `auto: ${auto.actor} / ${auto.verb}`)
+})
+
+test('reply_sent is suppressed when last_reply_sent_at is the latest reminder send', () => {
+  const entries = buildTimelineEntries(
+    baseSources({
+      versions: [{
+        id: 'v1', version_number: 1, created_at: '2026-05-01T10:00:00Z',
+        // Stamped by the auto nudge, ~half a second after its ledger row.
+        last_reply_sent_at: '2026-05-08T09:00:00.500Z', last_reply_sent_by: null,
+      }],
+      reminders: [
+        { id: 'n1', proof_version_id: 'v1', source: 'auto', created_at: '2026-05-08T09:00:00Z', sent_by: null },
+      ],
+    }),
+  )
+  assert(!entries.some((e) => e.type === 'reply_sent'), 'reply_sent should dedup against the coincident reminder')
+  assert(entries.some((e) => e.id === 'reminder:n1'), 'the reminder entry should remain in its place')
+})
+
+test('a genuine reply after the last reminder still renders its own reply_sent', () => {
+  const entries = buildTimelineEntries(
+    baseSources({
+      versions: [{
+        id: 'v1', version_number: 1, created_at: '2026-05-01T10:00:00Z',
+        // A designer typed a real reply the next day — hours past the nudge.
+        last_reply_sent_at: '2026-05-09T11:00:00Z', last_reply_sent_by: 'designer-1',
+      }],
+      reminders: [
+        { id: 'n1', proof_version_id: 'v1', source: 'auto', created_at: '2026-05-08T09:00:00Z', sent_by: null },
+      ],
+      designerNamesById: new Map([['designer-1', 'Jack Johnson']]),
+    }),
+  )
+  const reply = entries.find((e) => e.type === 'reply_sent')
+  assert(!!reply, 'a genuine later reply should survive')
+  assert(reply!.actor === 'Jack Johnson' && reply!.verb === 'sent a reply for v1', `reply: ${reply?.actor} / ${reply?.verb}`)
+  assert(entries.some((e) => e.type === 'reminder_sent'), 'the reminder should also show')
+})
+
 // ── Result ────────────────────────────────────────────────────────────────────
 
 console.log(`\n${passed} passed, ${failed} failed`)
