@@ -3,7 +3,9 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { formatPrice } from '../lib/currency'
 import { getPublicSettings } from '../lib/publicSettings'
+import { Lock } from 'lucide-react'
 import { Pill, PanelShell } from '../design'
+import { CustomerHeader } from '../components/CustomerHeader'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 import { interpolateValue } from '../lib/quote/interpolation'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
@@ -744,7 +746,9 @@ export default function OrderPayPage() {
     // visit gets a quieter "Your order" header led by the live status block.
     const isImmediate = !confirmed || justPaid
     return (
-      <div className="flex min-h-screen justify-center bg-canvas px-4 py-8">
+      <div className="min-h-screen bg-canvas">
+        <CustomerHeader innerClassName="max-w-4xl" />
+        <div className="flex justify-center px-4 py-8">
         <div className="w-full max-w-4xl">
           {/* Header — full width across the top. */}
           {isImmediate ? (
@@ -865,6 +869,7 @@ export default function OrderPayPage() {
               </p>
             </PanelShell>
           </div>
+        </div>
         </div>
       </div>
     )
@@ -1145,7 +1150,16 @@ export default function OrderPayPage() {
   // on the full checkout with the form already showing.
   if (canCheckout) {
     return (
-      <div className="flex min-h-screen justify-center bg-canvas px-4 py-8">
+      <div className="min-h-screen bg-canvas">
+        <CustomerHeader
+          innerClassName="max-w-5xl"
+          right={
+            <span className="inline-flex items-center gap-1.5 text-[12px]" style={{ color: 'rgba(255,255,255,0.72)' }}>
+              <Lock size={13} aria-hidden="true" /> Secure payment
+            </span>
+          }
+        />
+        <div className="flex justify-center px-4 py-8">
         <div className="w-full max-w-5xl">
           <p className="eyebrow">Complete your order</p>
           <h1 className="mt-1 text-xl font-semibold text-ink">{company ? company : 'Your order'}</h1>
@@ -1388,6 +1402,7 @@ export default function OrderPayPage() {
             </p>
           )}
         </div>
+        </div>
       </div>
     )
   }
@@ -1434,8 +1449,11 @@ function Row({ label, value, bold = false }: { label: string; value: string; bol
 
 function Screen({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-canvas p-4">
-      {children}
+    <div className="flex min-h-screen flex-col bg-canvas">
+      <CustomerHeader innerClassName="max-w-5xl" />
+      <div className="flex flex-1 items-center justify-center p-4">
+        {children}
+      </div>
     </div>
   )
 }
