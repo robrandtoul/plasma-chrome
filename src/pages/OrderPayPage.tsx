@@ -748,8 +748,7 @@ export default function OrderPayPage() {
     return (
       <div className="min-h-screen bg-canvas">
         <CustomerHeader innerClassName="max-w-4xl" />
-        <div className="flex justify-center px-4 py-8">
-        <div className="w-full max-w-4xl">
+        <div className="mx-auto max-w-4xl px-gutter py-8">
           {/* Header — full width across the top. */}
           {isImmediate ? (
             <>
@@ -869,7 +868,6 @@ export default function OrderPayPage() {
               </p>
             </PanelShell>
           </div>
-        </div>
         </div>
       </div>
     )
@@ -1159,8 +1157,7 @@ export default function OrderPayPage() {
             </span>
           }
         />
-        <div className="flex justify-center px-4 py-8">
-        <div className="w-full max-w-5xl">
+        <div className="mx-auto max-w-5xl px-gutter py-8">
           <p className="eyebrow">Complete your order</p>
           <h1 className="mt-1 text-xl font-semibold text-ink">{company ? company : 'Your order'}</h1>
           <p className="mt-1 text-sm text-ink-soft">Reference {order.payment_reference}</p>
@@ -1401,7 +1398,6 @@ export default function OrderPayPage() {
               This payment link is valid until {formatApprovedDate(order.expires_at)}. After that, just reply to your email and we&rsquo;ll send a fresh one.
             </p>
           )}
-        </div>
         </div>
       </div>
     )
