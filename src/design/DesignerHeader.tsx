@@ -15,6 +15,7 @@ import {
   UserCircle,
   LogOut,
   Settings,
+  MessageSquare,
   type LucideIcon,
 } from 'lucide-react'
 import { PlasmaWordmark } from './PlasmaWordmark'
@@ -32,7 +33,7 @@ import { getOrderingEnabled } from '../lib/orderingEnabled'
 // field as a controlled input so the parent can both read the value
 // (to drive filtering) and clear it from elsewhere if needed.
 
-export type DesignerNavId = 'proofs' | 'quote' | 'orders' | 'admin'
+export type DesignerNavId = 'proofs' | 'quote' | 'orders' | 'feedback' | 'admin'
 export type DesignerHeaderColour = 'blue' | 'teal' | 'coral' | 'purple'
 
 interface NavItem {
@@ -51,6 +52,8 @@ const NAV: NavItem[] = [
   // Orders is shown only when the ordering feature is switched on
   // (settings.ordering_enabled) — see the gate in DesignerHeader.
   { id: 'orders', label: 'Orders', to: '/orders' },
+  // Feedback deliberately omitted here — it's a right-aligned icon button
+  // next to the account pill (see the header) rather than a text nav pill.
   { id: 'admin',  label: 'Admin',  to: '/admin/users' },
 ]
 
@@ -200,6 +203,24 @@ export function DesignerHeader({
             </button>
           )}
 
+          {/* Feedback — a right-aligned icon by the account button rather than
+              a text pill in the main nav. Desktop only; on mobile it lives in
+              the account sheet (below). */}
+          <Link
+            to="/feedback"
+            aria-label="Feedback"
+            title="Feedback"
+            aria-current={active === 'feedback' ? 'page' : undefined}
+            className={[
+              'hidden md:flex h-9 w-9 items-center justify-center rounded-full transition-colors',
+              active === 'feedback'
+                ? 'text-ink bg-canvas border border-line'
+                : 'text-ink-mute hover:text-ink hover:bg-canvas',
+            ].join(' ')}
+          >
+            <MessageSquare size={18} aria-hidden="true" />
+          </Link>
+
           <UserPill
             user={user}
             onEditProfile={onEditProfile}
@@ -281,9 +302,9 @@ function BottomTabBar({
         type="button"
         onClick={onAccount}
         className="flex flex-1 items-center justify-center"
-        aria-current={active === 'admin' ? 'page' : undefined}
+        aria-current={active === 'admin' || active === 'feedback' ? 'page' : undefined}
       >
-        <TabInner label="Account" Icon={UserCircle} active={active === 'admin'} />
+        <TabInner label="Account" Icon={UserCircle} active={active === 'admin' || active === 'feedback'} />
       </button>
     </nav>
   )
@@ -342,6 +363,14 @@ function AccountSheet({
         </div>
 
         <div className="mt-1 overflow-hidden rounded-[14px] border border-line bg-surface">
+          <Link
+            to="/feedback"
+            onClick={onClose}
+            className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
+          >
+            <MessageSquare size={18} aria-hidden="true" className="text-ink-mute" />
+            Feedback
+          </Link>
           {role === 'admin' && (
             <Link
               to="/admin/users"
