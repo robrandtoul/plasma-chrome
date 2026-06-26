@@ -82,9 +82,6 @@ export default function FeedbackPage() {
     return true
   })
 
-  // Open count for the heading — anything not finished.
-  const openCount = items.filter((it) => it.status !== 'done' && it.status !== 'wont_do').length
-
   function handleCreated(item: FeedbackItem) {
     setItems((prev) => [item, ...prev])
     setModalOpen(false)
@@ -169,32 +166,51 @@ export default function FeedbackPage() {
           </ButtonCoral>
         </div>
 
-        {/* Filters — compact dropdowns rather than a wall of pills. */}
-        <div className="mt-6 flex flex-wrap items-center gap-2">
-          <FilterSelect
-            allLabel="All statuses"
-            value={statusFilter}
-            onChange={(v) => setStatusFilter(v as StatusFilter)}
-            options={FEEDBACK_STATUSES}
-          />
-          <FilterSelect
-            allLabel="All types"
-            value={typeFilter}
-            onChange={(v) => setTypeFilter(v as TypeFilter)}
-            options={FEEDBACK_TYPES}
-          />
-          <FilterSelect
-            allLabel="All priorities"
-            value={priorityFilter}
-            onChange={(v) => setPriorityFilter(v as PriorityFilter)}
-            options={FEEDBACK_PRIORITIES}
-          />
-          <FilterChip active={mineOnly} onClick={() => setMineOnly((v) => !v)}>
-            Mine
-          </FilterChip>
-          <span className="ml-auto text-[12px] text-ink-mute">
-            {openCount} open · {items.length} total
-          </span>
+        {/* Filters — same design language as the dashboard: a bordered panel
+            with the primary axis (status) as ink pills, secondary axes as
+            dropdowns, a checkbox toggle, and an "N showing" count. */}
+        <div className="mt-6 rounded-[14px] border border-line bg-surface px-5 py-4">
+          <div className="flex flex-wrap items-center gap-3 max-md:flex-nowrap max-md:overflow-x-auto">
+            <span className="eyebrow pr-1 text-ink-mute max-md:shrink-0">Filter</span>
+            <FilterPill active={statusFilter === 'all'} onClick={() => setStatusFilter('all')}>
+              All
+            </FilterPill>
+            {FEEDBACK_STATUSES.map((s) => (
+              <FilterPill
+                key={s.value}
+                active={statusFilter === s.value}
+                onClick={() => setStatusFilter((cur) => (cur === s.value ? 'all' : s.value))}
+              >
+                {s.label}
+              </FilterPill>
+            ))}
+
+            <span className="hidden flex-1 md:block" aria-hidden="true" />
+            <span className="w-2 shrink-0 md:hidden" aria-hidden="true" />
+
+            <span className="font-mono text-[12px] tabular-nums text-ink-mute max-md:shrink-0">
+              {filtered.length} showing
+            </span>
+            <span className="h-4 w-px bg-line max-md:shrink-0" aria-hidden="true" />
+
+            <FilterSelect
+              label="Type"
+              className="max-md:shrink-0"
+              value={typeFilter}
+              onChange={(v) => setTypeFilter(v as TypeFilter)}
+              options={[{ value: 'all', label: 'All' }, ...FEEDBACK_TYPES.map((t) => ({ value: t.value, label: t.label }))]}
+            />
+            <FilterSelect
+              label="Priority"
+              className="max-md:shrink-0"
+              value={priorityFilter}
+              onChange={(v) => setPriorityFilter(v as PriorityFilter)}
+              options={[{ value: 'all', label: 'All' }, ...FEEDBACK_PRIORITIES.map((p) => ({ value: p.value, label: p.label }))]}
+            />
+            <FilterToggle active={mineOnly} onClick={() => setMineOnly((v) => !v)}>
+              Mine
+            </FilterToggle>
+          </div>
         </div>
 
         {/* List */}
@@ -236,37 +252,9 @@ export default function FeedbackPage() {
   )
 }
 
-// Compact dropdown filter (status / type / priority). 'all' is the first
-// option; the rest come from the feedback metadata. Uses the app's
-// select-styled chevron so it matches every other styled select.
-function FilterSelect({
-  allLabel,
-  value,
-  onChange,
-  options,
-}: {
-  allLabel: string
-  value: string
-  onChange: (value: string) => void
-  options: { value: string; label: string }[]
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="select-styled h-8 rounded-full border border-line bg-surface pl-3 text-[13px] text-ink-soft transition-colors hover:bg-canvas focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
-    >
-      <option value="all">{allLabel}</option>
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
-  )
-}
-
-function FilterChip({
+// Primary-axis filter pill (status), matching the dashboard's chip row:
+// active = solid ink, inactive = outlined.
+function FilterPill({
   active,
   onClick,
   children,
@@ -281,12 +269,107 @@ function FilterChip({
       onClick={onClick}
       aria-pressed={active}
       className={[
-        'h-8 rounded-full border px-3 text-[13px] transition-colors',
+        'inline-flex h-[30px] items-center rounded-full px-3 text-[12px] font-medium transition-colors max-md:shrink-0',
         active
-          ? 'border-ink bg-ink text-on-ink'
-          : 'border-line bg-surface text-ink-mute hover:bg-canvas hover:text-ink',
+          ? 'border border-ink bg-ink text-on-ink'
+          : 'border border-line bg-surface text-ink-soft hover:bg-canvas',
       ].join(' ')}
     >
+      {children}
+    </button>
+  )
+}
+
+// Secondary filter dropdown, mirroring the dashboard's SelectField: a muted
+// label, a native <select> with the OS chrome stripped, and an overlay chevron.
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+  className = '',
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  options: { value: string; label: string }[]
+  className?: string
+}) {
+  return (
+    <div
+      className={`relative inline-flex items-center rounded-[8px] border border-line bg-surface transition-colors hover:bg-canvas focus-within:border-[var(--c-brand)] focus-within:outline focus-within:outline-2 focus-within:outline-offset-[-1px] focus-within:outline-[var(--c-brand)] ${className}`}
+    >
+      <span className="pointer-events-none select-none pl-2.5 text-xs font-medium text-ink-mute">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="cursor-pointer appearance-none bg-transparent py-1.5 pl-1 pr-7 text-xs font-medium text-ink focus:outline-none"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <svg
+        aria-hidden
+        viewBox="0 0 16 16"
+        className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ink-mute"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <polyline points="4 6 8 10 12 6" />
+      </svg>
+    </div>
+  )
+}
+
+// Checkbox-style toggle (Mine), matching the dashboard's "Abandoned" control.
+function FilterToggle({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={[
+        'inline-flex items-center gap-1.5 rounded-[8px] border px-2.5 py-1.5 text-xs font-medium transition-colors max-md:shrink-0',
+        active
+          ? 'border-line bg-canvas text-ink'
+          : 'border-line bg-surface text-ink-mute hover:bg-canvas hover:text-ink-soft',
+      ].join(' ')}
+    >
+      <span
+        className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] border ${
+          active ? 'border-ink bg-ink' : 'border-line'
+        }`}
+      >
+        {active && (
+          <svg
+            viewBox="0 0 10 10"
+            className="h-2.5 w-2.5 text-on-ink"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline points="1.5 5 4 7.5 8.5 2.5" />
+          </svg>
+        )}
+      </span>
       {children}
     </button>
   )
