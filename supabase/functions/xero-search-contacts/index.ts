@@ -5,8 +5,8 @@
 //
 // Read-only: no writes, no money, no customer/proof data — just the org's Xero
 // contacts the designer is choosing which invoice to file under. Auth:
-// requireDesigner (the same staff audience as the Orders surface). verify_jwt
-// stays on at the platform level.
+// requireDesigner validates the caller's JWT in-body, so this deploys with
+// platform verify_jwt OFF, mirroring create-order / retry-order-invoice.
 
 import { json, requireDesigner, CORS_HEADERS } from '../_shared/admin.ts'
 import { getAccessContext, searchContacts } from '../_shared/xero.ts'
