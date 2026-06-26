@@ -37,6 +37,7 @@ interface OrderRow {
   payment_method: string | null
   xero_invoice_id: string | null
   xero_contact_id: string | null
+  xero_contact_name: string | null
   payment_reference: string | null
   ship_to_name: string | null
   ship_to_email: string | null
@@ -78,7 +79,7 @@ Deno.serve(async (req) => {
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_card_discount, currency, status, payment_method, xero_invoice_id, xero_contact_id, payment_reference, ship_to_name, ship_to_email, ship_to_address, ship_dest_country, proofs(contacts(full_name, email))')
+    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_card_discount, currency, status, payment_method, xero_invoice_id, xero_contact_id, xero_contact_name, payment_reference, ship_to_name, ship_to_email, ship_to_address, ship_dest_country, proofs(contacts(full_name, email))')
     .eq('id', orderId)
     .single<OrderRow>()
   if (orderErr || !order) return json({ error: 'Order not found' }, 404)
@@ -127,9 +128,12 @@ Deno.serve(async (req) => {
   const { lines } = await buildOrderInvoiceLines(admin, order, { reference, currency, expectedTotal, country })
 
   // Contact: the delivery name/email Stripe collected, falling back to the
-  // proof's contact so the invoice is never "Customer" with no email.
+  // proof's contact so the invoice is never "Customer" with no email. For a NEW
+  // customer the designer-chosen name (xero_contact_name) wins, so a retried
+  // new-customer invoice creates the same contact the webhook would have;
+  // ignored on the bound path (ContactID wins).
   const contact = order.proofs?.contacts ?? null
-  const contactName = (order.ship_to_name?.trim() || contact?.full_name?.trim() || contact?.email?.trim() || 'Customer')
+  const contactName = (order.xero_contact_name?.trim() || order.ship_to_name?.trim() || contact?.full_name?.trim() || contact?.email?.trim() || 'Customer')
   const contactEmail = order.ship_to_email?.trim() || contact?.email?.trim() || null
 
   const addr = order.ship_to_address

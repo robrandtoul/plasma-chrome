@@ -28,9 +28,13 @@ interface Props {
   value: XeroContact | null
   onChange: (v: XeroContact | null) => void
   disabled?: boolean
+  // Whether to show the "Leave blank — new customer" shortcut. Off when the
+  // parent owns the new-vs-existing decision via its own toggle, so this picker
+  // is purely "find the existing customer".
+  allowNew?: boolean
 }
 
-export default function XeroContactPicker({ value, onChange, disabled }: Props) {
+export default function XeroContactPicker({ value, onChange, disabled, allowNew = true }: Props) {
   // Editing = showing the search box. Off by default when a value is set (we
   // show the chosen contact), on when there's nothing chosen yet.
   const [editing, setEditing] = useState(false)
@@ -140,31 +144,35 @@ export default function XeroContactPicker({ value, onChange, disabled }: Props) 
             ))}
         </div>
       )}
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
-        {value && (
-          <button
-            type="button"
-            onClick={() => {
-              setEditing(false)
-              setQ('')
-            }}
-            className="text-[12px] text-ink-mute hover:underline"
-          >
-            Keep {value.name}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => {
-            onChange(null)
-            setEditing(false)
-            setQ('')
-          }}
-          className="text-[12px] text-ink-mute hover:underline"
-        >
-          Leave blank — new customer (Xero creates it)
-        </button>
-      </div>
+      {(value || allowNew) && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+          {value && (
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(false)
+                setQ('')
+              }}
+              className="text-[12px] text-ink-mute hover:underline"
+            >
+              Keep {value.name}
+            </button>
+          )}
+          {allowNew && (
+            <button
+              type="button"
+              onClick={() => {
+                onChange(null)
+                setEditing(false)
+                setQ('')
+              }}
+              className="text-[12px] text-ink-mute hover:underline"
+            >
+              Leave blank — new customer (Xero creates it)
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

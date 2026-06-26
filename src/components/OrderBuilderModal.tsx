@@ -186,6 +186,15 @@ export default function OrderBuilderModal({
   // (the auto-loaded variant / finish / Xero pre-fill don't count — they set
   // state directly, not through a DOM change event or a picker click).
   const [dirty, setDirty] = useState(false)
+  // Existing vs new Xero customer — an explicit, REQUIRED choice for online
+  // orders so a new contact is never created by accident (a blank field used to
+  // silently make one). null = not chosen yet; the pre-fill flips it to
+  // 'existing'. Offline orders don't ask (invoiced in Xero by hand).
+  const [xeroMode, setXeroMode] = useState<'existing' | 'new' | null>(null)
+  // Name the new Xero contact is created under (the 'new' path). Defaults to the
+  // proof's company (or contact) name, so a new contact is the customer — not
+  // whoever happens to pay. Editable.
+  const [newCustomerName, setNewCustomerName] = useState(customerLabel ?? '')
 
   // Indicative shipping estimate (full_cost / goodwill). Quantity it's based on
   // defaults to the locked quantity, else a representative 250.
@@ -328,6 +337,9 @@ export default function OrderBuilderModal({
         // alongside the id on every order, so this is just belt-and-braces.
         if (row?.xero_contact_id && row?.xero_contact_name) {
           setXeroContact({ id: row.xero_contact_id, name: row.xero_contact_name })
+          // A returning customer we already have → default to Existing, with
+          // them pre-selected (visible — the designer confirms or changes it).
+          setXeroMode('existing')
         }
       })
     return () => { cancelled = true }
@@ -622,6 +634,23 @@ export default function OrderBuilderModal({
       }
     }
 
+    // Xero customer is a required, explicit choice for online orders, so a new
+    // Xero contact is never created by accident. (Offline is invoiced by hand.)
+    if (paymentMethod === 'online') {
+      if (xeroMode === null) {
+        setError('Choose whether this is an existing Xero customer or a new one.')
+        return
+      }
+      if (xeroMode === 'existing' && !xeroContact) {
+        setError('Search and pick the existing Xero customer — or switch to “New customer”.')
+        return
+      }
+      if (xeroMode === 'new' && !newCustomerName.trim()) {
+        setError('Enter a name for the new Xero customer.')
+        return
+      }
+    }
+
     setSubmitting(true)
     try {
       const { data, error: fnError } = await supabase.functions.invoke<
@@ -651,11 +680,19 @@ export default function OrderBuilderModal({
           // mixed-material variant round), which stays harmless.
           material_variant_id: variantId,
           material_option_id: optionId ?? undefined,
-          // Which existing Xero contact the paid invoice files under. Online
-          // only — an offline order is invoiced manually in Xero. Null = new
-          // customer; the webhook captures the contact Xero creates.
-          xero_contact_id: paymentMethod === 'online' ? (xeroContact?.id ?? null) : null,
-          xero_contact_name: paymentMethod === 'online' ? (xeroContact?.name ?? null) : null,
+          // Online only — an offline order is invoiced manually in Xero.
+          // Existing → bind to the chosen contact (id + name). New → no id (the
+          // webhook lets Xero create one) but we pass the name so the new contact
+          // is the customer, not whoever pays; null id + null name only on offline.
+          xero_contact_id: paymentMethod === 'online' && xeroMode === 'existing' ? (xeroContact?.id ?? null) : null,
+          xero_contact_name:
+            paymentMethod === 'online'
+              ? xeroMode === 'existing'
+                ? (xeroContact?.name ?? null)
+                : xeroMode === 'new'
+                  ? (newCustomerName.trim() || null)
+                  : null
+              : null,
         },
       })
       if (fnError) {
@@ -929,9 +966,58 @@ export default function OrderBuilderModal({
                 label="Xero customer"
                 asLabel={false}
                 className="md:col-span-2"
-                hint="Which existing Xero contact this paid invoice files under, so it shows under the right customer in Xero. Search your Xero customers, or leave blank to let Xero create a new one — we’ll remember it for next time."
+                hint="Choose whether this paid invoice files under an existing Xero customer or creates a new one — so a duplicate contact is never made by accident."
               >
-                <XeroContactPicker value={xeroContact} onChange={(v) => { setXeroContact(v); setDirty(true) }} />
+                <div className="flex flex-wrap gap-2">
+                  {([['existing', 'Existing customer'], ['new', 'New customer']] as const).map(([m, label]) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => { setXeroMode(m); setDirty(true) }}
+                      className={[
+                        'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                        xeroMode === m ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
+                      ].join(' ')}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {xeroMode === null && (
+                  <p className="mt-2 text-[13px] text-ink-soft">
+                    Pick one to continue — it stops a new Xero contact being created by accident.
+                  </p>
+                )}
+
+                {/* Existing → search & select; the picker has no "leave blank"
+                    escape here (that's the New toggle), so it's purely a finder. */}
+                {xeroMode === 'existing' && (
+                  <div className="mt-2">
+                    <XeroContactPicker
+                      value={xeroContact}
+                      onChange={(v) => { setXeroContact(v); setDirty(true) }}
+                      allowNew={false}
+                    />
+                  </div>
+                )}
+
+                {/* New → name the contact so it's created as the customer (the
+                    company), not whoever happens to pay. Defaulted from the proof. */}
+                {xeroMode === 'new' && (
+                  <div className="mt-2 space-y-1.5">
+                    <Input
+                      aria-label="New Xero customer name"
+                      type="text"
+                      value={newCustomerName}
+                      onChange={(e) => setNewCustomerName(e.target.value)}
+                      placeholder="Name for the new Xero contact (e.g. the company name)"
+                    />
+                    <p className="text-[12px] text-ink-mute">
+                      We&rsquo;ll create this contact in Xero under this name when they pay, and remember it for next time.
+                    </p>
+                  </div>
+                )}
               </Field>
             )}
 

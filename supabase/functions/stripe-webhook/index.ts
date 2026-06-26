@@ -248,7 +248,7 @@ Deno.serve(async (req) => {
       // (so the VAT invoice is emailed exactly once).
       const { data: order } = await admin
         .from('orders')
-        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, ship_dest_country, xero_invoice_id, xero_contact_id, invoice_emailed_at')
+        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, ship_dest_country, xero_invoice_id, xero_contact_id, xero_contact_name, invoice_emailed_at')
         .eq('id', orderId)
         .single()
       let invoiceId: string | null = (order?.xero_invoice_id as string | null) ?? null
@@ -279,8 +279,14 @@ Deno.serve(async (req) => {
           }
         : null
 
-      const contactName = shipName || shipEmail || 'Customer'
+      const payerName = shipName || shipEmail || 'Customer'
       const contactEmail = shipEmail
+      // For a NEW customer (no bound id) the designer may have named the contact
+      // (e.g. the company) so it's created as the customer, not whoever pays —
+      // use that, falling back to the payer. Ignored on the bound path, where the
+      // ContactID wins and the Name is never sent. The payer's own name still
+      // drives the email-recipient person added to a bound company contact below.
+      const newContactName = (order?.xero_contact_name as string | null)?.trim() || payerName
 
       // Create the invoice only if we haven't already (a duplicate event must
       // never mint a second invoice or record a second clearing payment).
@@ -308,7 +314,7 @@ Deno.serve(async (req) => {
         )
 
         const created = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
-          contactName,
+          contactName: newContactName,
           contactEmail,
           currency,
           reference: referenceSafe,
@@ -337,7 +343,7 @@ Deno.serve(async (req) => {
         if (!invoiceId && wasItemised) {
           console.warn(`[stripe-webhook] itemised invoice rejected for order ${orderId}; retrying as a single summary line`)
           const retry = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
-            contactName,
+            contactName: newContactName,
             contactEmail,
             currency,
             reference: referenceSafe,
@@ -417,7 +423,7 @@ Deno.serve(async (req) => {
           // the payer). Best-effort: a miss just means Xero emails the company,
           // and the payer still has the pay-page invoice link + Stripe receipt.
           if (boundContactId) {
-            const rec = await ensureInvoiceEmailRecipient(ctx.accessToken, ctx.tenantId, boundContactId, contactEmail, contactName)
+            const rec = await ensureInvoiceEmailRecipient(ctx.accessToken, ctx.tenantId, boundContactId, contactEmail, payerName)
             if (!rec.ok) console.warn('[stripe-webhook] could not add payer as invoice email recipient', { orderId, error: rec.error })
             else if (rec.added) console.log('[stripe-webhook] payer added as invoice email recipient on bound contact', { orderId })
           }
