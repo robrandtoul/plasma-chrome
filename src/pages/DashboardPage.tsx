@@ -1221,7 +1221,9 @@ function ProjectRow({
             )}
             {project.follow_up_rule_code != null && project.follow_up_sent_count != null && project.follow_up_max_nudges != null && (
               <div className="mt-0.5 truncate text-[11px]" style={{ color: '#6366f1' }}>
-                Reminder {project.follow_up_sent_count} of {project.follow_up_max_nudges}
+                {project.follow_up_sent_count === 0
+                  ? 'Reminder queued'
+                  : `Reminder ${project.follow_up_sent_count} of ${project.follow_up_max_nudges}`}
                 {project.follow_up_last_sent_at ? ` · last ${relativeTime(project.follow_up_last_sent_at)}` : ''}
               </div>
             )}
@@ -1407,7 +1409,9 @@ function ProjectRow({
               is so the designer can see it's in hand without opening it. */}
           {project.follow_up_rule_code != null && project.follow_up_sent_count != null && project.follow_up_max_nudges != null && (
             <div className="mt-0.5 truncate text-[11px]" style={{ color: '#6366f1' }}>
-              Reminder {project.follow_up_sent_count} of {project.follow_up_max_nudges}
+              {project.follow_up_sent_count === 0
+                ? 'Reminder queued'
+                : `Reminder ${project.follow_up_sent_count} of ${project.follow_up_max_nudges}`}
               {project.follow_up_last_sent_at ? ` · last ${relativeTime(project.follow_up_last_sent_at)}` : ''}
             </div>
           )}

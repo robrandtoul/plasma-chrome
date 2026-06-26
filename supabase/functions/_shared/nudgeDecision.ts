@@ -227,6 +227,14 @@ export function isWithinSendWindow(now: Date, bankHolidays: ReadonlySet<string>)
 
 // ── The per-proof decision ───────────────────────────────────────────────────
 
+// LOCKSTEP: the dashboard mirrors this function's pre-send guards in SQL — see
+// proofs.proofs_in_follow_up() "Branch B" (migration 000273). That mirror
+// decides whether a chase proof is hidden from "Needs attention" as
+// "automation will handle it". If you add or rename a guard here that changes
+// whether a proof WILL be auto-sent (anchor / no-send-evidence, proof-wide
+// snooze, opt-out, follow-up tag, customer-reply floor, per-version cap,
+// threshold), update Branch B in lockstep — otherwise a proof the automation
+// can't actually send may be wrongly hidden from the human pile.
 export function decideForProof(
   facts: CandidateFacts,
   ledger: LedgerRow[],
