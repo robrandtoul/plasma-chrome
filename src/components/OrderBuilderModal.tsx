@@ -181,6 +181,11 @@ export default function OrderBuilderModal({
   // from this customer's last order so a returning customer is one click;
   // designer can change it or leave it blank for a new customer (000275).
   const [xeroContact, setXeroContact] = useState<XeroContact | null>(null)
+  // Whether the designer has changed anything yet. Guards an accidental
+  // backdrop / Esc / Cancel dismissal from silently binning a part-filled form
+  // (the auto-loaded variant / finish / Xero pre-fill don't count — they set
+  // state directly, not through a DOM change event or a picker click).
+  const [dirty, setDirty] = useState(false)
 
   // Indicative shipping estimate (full_cost / goodwill). Quantity it's based on
   // defaults to the locked quantity, else a representative 250.
@@ -696,11 +701,27 @@ export default function OrderBuilderModal({
   })()
   const estimateCurrency = currency ?? 'GBP'
 
+  // Backdrop / Esc / Cancel all route through here so an accidental click-off
+  // can't wipe a part-filled form. Once the order's created (result set) there's
+  // nothing to lose, and a pristine form closes without nagging.
+  function handleDismiss() {
+    if (result || !dirty) {
+      onClose()
+      return
+    }
+    if (window.confirm('Discard this order? Anything you’ve entered will be lost.')) onClose()
+  }
+
   return (
-    <Modal open onClose={onClose} ariaLabel="Create order" panelClassName="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+    <Modal
+      open
+      onClose={handleDismiss}
+      ariaLabel="Create order"
+      panelClassName="w-full max-w-lg md:max-w-3xl md:max-h-[88vh] overflow-y-auto rounded-2xl bg-white shadow-xl"
+    >
       {result ? (
         // ── Success ──────────────────────────────────────────────
-        <div>
+        <div className="p-6">
           <h2 className="text-lg font-semibold text-ink">{paymentMethod === 'offline' ? 'Order recorded as paid' : 'Order created'}</h2>
           <p className="mt-1 text-sm text-ink-soft">
             Reference <span className="font-medium text-ink">{result.payment_reference}</span>
@@ -772,21 +793,30 @@ export default function OrderBuilderModal({
       ) : (
         // ── Form ─────────────────────────────────────────────────
         <div>
-          <h2 className="text-lg font-semibold text-ink">Create order</h2>
-          <p className="mt-1 text-sm text-ink-soft">
-            {customerLabel ? `For ${customerLabel}. ` : ''}
-            {materialDisplay ?? 'Material'} · {currency ?? '—'}
-            {namesCount > 1 ? ` · ${namesCount} people` : ''}
-            {hasPersonalisation ? ' · personalisation' : ''}
-          </p>
+          {/* Sticky header — stays put while the body scrolls, so the customer
+              + material context is always visible. */}
+          <div className="sticky top-0 z-10 border-b border-line-soft bg-white px-6 pt-6 pb-4">
+            <h2 className="text-lg font-semibold text-ink">Create order</h2>
+            <p className="mt-1 text-sm text-ink-soft">
+              {customerLabel ? `For ${customerLabel}. ` : ''}
+              {materialDisplay ?? 'Material'} · {currency ?? '—'}
+              {namesCount > 1 ? ` · ${namesCount} people` : ''}
+              {hasPersonalisation ? ' · personalisation' : ''}
+            </p>
+          </div>
 
-          {currencyMissing && (
-            <div className="mt-4 rounded-lg border border-low bg-low-soft px-3 py-2 text-[13px] text-ink">
-              This proof has no single currency (a per-direction-pricing round), so it can&rsquo;t be ordered through this flow yet.
-            </div>
-          )}
+          {/* Scrollable body. Two columns on desktop (md+), a single stack on
+              mobile. The onChange catches any input/select/textarea edit and
+              marks the form dirty so the dismiss guard can warn before binning
+              it; the button pickers below call setDirty themselves. */}
+          <div className="px-6 py-5" onChange={() => setDirty(true)}>
+            {currencyMissing && (
+              <div className="mb-4 rounded-lg border border-low bg-low-soft px-3 py-2 text-[13px] text-ink">
+                This proof has no single currency (a per-direction-pricing round), so it can&rsquo;t be ordered through this flow yet.
+              </div>
+            )}
 
-          <div className="mt-4 space-y-5">
+            <div className="grid grid-cols-1 gap-x-5 gap-y-5 md:grid-cols-2">
             {/* Variant — grid orders only; sets the price tiers the
                 server prices against. */}
             {!isCustomQuote && (
@@ -834,7 +864,7 @@ export default function OrderBuilderModal({
                     <button
                       key={o.id}
                       type="button"
-                      onClick={() => setOptionId(o.id)}
+                      onClick={() => { setOptionId(o.id); setDirty(true) }}
                       className={[
                         'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
                         optionId === o.id ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
@@ -855,6 +885,7 @@ export default function OrderBuilderModal({
                     key={m}
                     type="button"
                     onClick={() => {
+                      setDirty(true)
                       setPaymentMethod(m)
                       if (m === 'offline') {
                         // Offline records as paid + you invoice in Xero, so the
@@ -897,9 +928,10 @@ export default function OrderBuilderModal({
               <Field
                 label="Xero customer"
                 asLabel={false}
+                className="md:col-span-2"
                 hint="Which existing Xero contact this paid invoice files under, so it shows under the right customer in Xero. Search your Xero customers, or leave blank to let Xero create a new one — we’ll remember it for next time."
               >
-                <XeroContactPicker value={xeroContact} onChange={setXeroContact} />
+                <XeroContactPicker value={xeroContact} onChange={(v) => { setXeroContact(v); setDirty(true) }} />
               </Field>
             )}
 
@@ -914,7 +946,7 @@ export default function OrderBuilderModal({
                       type="button"
                       disabled={blocked}
                       title={blocked ? 'Offline orders need a set quantity' : undefined}
-                      onClick={() => setQuantityMode(mode)}
+                      onClick={() => { setQuantityMode(mode); setDirty(true) }}
                       className={[
                         'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
                         quantityMode === mode ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
@@ -974,7 +1006,7 @@ export default function OrderBuilderModal({
                 Domestic/International packaging line for production). Shipping
                 cost + discount are skipped — you invoice in Xero yourself. */}
             {paymentMethod === 'offline' ? (
-              <Field label="Destination" asLabel={false} hint="Required — sets the packaging line for production: the domestic box for the UK, the international box for everywhere else.">
+              <Field label="Destination" asLabel={false} className="md:col-span-2" hint="Required — sets the packaging line for production: the domestic box for the UK, the international box for everywhere else.">
                 <div className="flex flex-wrap gap-2">
                   {/* Backs the production packaging line: Domestic stores 'GB',
                       International stores 'ZZ' (the ISO "international / unspecified"
@@ -986,7 +1018,7 @@ export default function OrderBuilderModal({
                       <button
                         key={code}
                         type="button"
-                        onClick={() => setShipDestCountry(code)}
+                        onClick={() => { setShipDestCountry(code); setDirty(true) }}
                         className={[
                           'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
                           active ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
@@ -1000,7 +1032,7 @@ export default function OrderBuilderModal({
               </Field>
             ) : (
             /* Shipping treatment (online) */
-            <Field label="Shipping" htmlFor="order-shipping-treatment" hint="Full cost / Goodwill quote the live carriage at checkout (UK flat DPD rate, or FedEx internationally) — the customer enters their postcode on the pay-page. Goodwill takes a % off. Free = no charge; Manual = a fixed amount.">
+            <Field label="Shipping" htmlFor="order-shipping-treatment" className="md:col-span-2" hint="Full cost / Goodwill quote the live carriage at checkout (UK flat DPD rate, or FedEx internationally) — the customer enters their postcode on the pay-page. Goodwill takes a % off. Free = no charge; Manual = a fixed amount.">
               <select
                 id="order-shipping-treatment"
                 value={shippingTreatment}
@@ -1147,7 +1179,7 @@ export default function OrderBuilderModal({
                 line, shown as its own negative line on the pay page + invoice.
                 Skipped for offline (you invoice in Xero). */}
             {paymentMethod !== 'offline' && (
-            <Field label="Card discount" htmlFor="order-card-discount" hint="Optional. Reduces only the cards subtotal — shows as its own discount line on the pay page and invoice. Shipping has its own subsidy above.">
+            <Field label="Card discount" htmlFor="order-card-discount" className="md:col-span-2" hint="Optional. Reduces only the cards subtotal — shows as its own discount line on the pay page and invoice. Shipping has its own subsidy above.">
               <select
                 id="order-card-discount"
                 value={cardDiscountType}
@@ -1201,14 +1233,17 @@ export default function OrderBuilderModal({
                 />
               </Field>
             )}
+            </div>
+
+            {error && (
+              <div className="mt-4 rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{error}</div>
+            )}
           </div>
 
-          {error && (
-            <div className="mt-4 rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{error}</div>
-          )}
-
-          <div className="mt-6 flex items-center justify-end gap-2">
-            <ButtonGhost onClick={onClose} disabled={submitting}>Cancel</ButtonGhost>
+          {/* Sticky footer — Cancel + Create stay reachable however tall the
+              form gets, on both the desktop card and the mobile sheet. */}
+          <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t border-line-soft bg-white px-6 py-4">
+            <ButtonGhost onClick={handleDismiss} disabled={submitting}>Cancel</ButtonGhost>
             <ButtonCoral onClick={() => void submit()} disabled={submitting || currencyMissing}>
               {submitting ? 'Creating…' : 'Create order'}
             </ButtonCoral>
