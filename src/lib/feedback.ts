@@ -47,7 +47,7 @@ export const FEEDBACK_STATUSES: {
   label: string
   colour: PillColour
 }[] = [
-  { value: 'new', label: 'New', colour: 'brand' },
+  { value: 'new', label: 'New', colour: 'critical' },
   { value: 'under_review', label: 'Under review', colour: 'neutral' },
   { value: 'planned', label: 'Planned', colour: 'allocated' },
   { value: 'in_progress', label: 'In progress', colour: 'low' },
