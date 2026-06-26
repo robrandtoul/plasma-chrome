@@ -12,14 +12,18 @@ import {
   FEEDBACK_STATUSES,
   FEEDBACK_TYPES,
   FEEDBACK_TYPE_META,
+  FEEDBACK_PRIORITIES,
+  FEEDBACK_PRIORITY_META,
   authorBadgeColour,
   type FeedbackItem,
   type FeedbackStatus,
   type FeedbackType,
+  type FeedbackPriority,
 } from '../lib/feedback'
 
 type StatusFilter = FeedbackStatus | 'all'
 type TypeFilter = FeedbackType | 'all'
+type PriorityFilter = FeedbackPriority | 'all'
 
 // Small initials badge matching a staffer's header avatar colour.
 function AuthorBadge({ initials, colour }: { initials: string | null; colour: string | null }) {
@@ -45,6 +49,7 @@ export default function FeedbackPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
+  const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all')
   const [mineOnly, setMineOnly] = useState(false)
 
   useEffect(() => {
@@ -72,6 +77,7 @@ export default function FeedbackPage() {
   const filtered = items.filter((it) => {
     if (statusFilter !== 'all' && it.status !== statusFilter) return false
     if (typeFilter !== 'all' && it.type !== typeFilter) return false
+    if (priorityFilter !== 'all' && it.priority !== priorityFilter) return false
     if (mineOnly && it.created_by !== userId) return false
     return true
   })
@@ -84,8 +90,13 @@ export default function FeedbackPage() {
     setModalOpen(false)
   }
 
-  // Admin: persist a status / note change + keep local state in sync.
-  async function saveTriage(item: FeedbackItem, status: FeedbackStatus, adminNote: string) {
+  // Admin: persist a status / priority / note change + keep local state in sync.
+  async function saveTriage(
+    item: FeedbackItem,
+    status: FeedbackStatus,
+    priority: FeedbackPriority,
+    adminNote: string,
+  ) {
     const { data: prof } = await supabase
       .from('profiles')
       .select('full_name')
@@ -95,6 +106,7 @@ export default function FeedbackPage() {
     const nowIso = new Date().toISOString()
     const patch = {
       status,
+      priority,
       admin_note: adminNote.trim() || null,
       status_changed_at: nowIso,
       status_changed_by: userId,
@@ -109,8 +121,8 @@ export default function FeedbackPage() {
       targetType: 'feedback',
       targetId: item.id,
       targetLabel: item.title,
-      beforeValue: { status: item.status },
-      afterValue: { status },
+      beforeValue: { status: item.status, priority: item.priority },
+      afterValue: { status, priority },
     })
     return true
   }
@@ -179,6 +191,16 @@ export default function FeedbackPage() {
               onClick={() => setTypeFilter((cur) => (cur === t.value ? 'all' : t.value))}
             >
               {t.label}
+            </FilterChip>
+          ))}
+          <span className="mx-1 h-5 w-px bg-line" aria-hidden="true" />
+          {FEEDBACK_PRIORITIES.map((p) => (
+            <FilterChip
+              key={p.value}
+              active={priorityFilter === p.value}
+              onClick={() => setPriorityFilter((cur) => (cur === p.value ? 'all' : p.value))}
+            >
+              {p.label}
             </FilterChip>
           ))}
           <span className="mx-1 h-5 w-px bg-line" aria-hidden="true" />
@@ -262,12 +284,18 @@ function FeedbackCard({
   item: FeedbackItem
   isAdmin: boolean
   canDelete: boolean
-  onSaveTriage: (item: FeedbackItem, status: FeedbackStatus, note: string) => Promise<boolean>
+  onSaveTriage: (
+    item: FeedbackItem,
+    status: FeedbackStatus,
+    priority: FeedbackPriority,
+    note: string,
+  ) => Promise<boolean>
   onDelete: (item: FeedbackItem) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [signedUrls, setSignedUrls] = useState<string[] | null>(null)
   const [statusDraft, setStatusDraft] = useState<FeedbackStatus>(item.status)
+  const [priorityDraft, setPriorityDraft] = useState<FeedbackPriority>(item.priority)
   const [noteDraft, setNoteDraft] = useState(item.admin_note ?? '')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -276,8 +304,9 @@ function FeedbackCard({
   // Re-seed the admin drafts if the underlying item changes (e.g. after a save).
   useEffect(() => {
     setStatusDraft(item.status)
+    setPriorityDraft(item.priority)
     setNoteDraft(item.admin_note ?? '')
-  }, [item.status, item.admin_note])
+  }, [item.status, item.priority, item.admin_note])
 
   // Generate signed URLs for the screenshots the first time the card opens.
   useEffect(() => {
@@ -296,13 +325,17 @@ function FeedbackCard({
   }, [expanded, signedUrls, item.attachment_paths])
 
   const typeMeta = FEEDBACK_TYPE_META[item.type]
-  const dirty = statusDraft !== item.status || (noteDraft.trim() || null) !== (item.admin_note ?? null)
+  const priorityMeta = FEEDBACK_PRIORITY_META[item.priority]
+  const dirty =
+    statusDraft !== item.status ||
+    priorityDraft !== item.priority ||
+    (noteDraft.trim() || null) !== (item.admin_note ?? null)
 
   async function handleSave() {
     setSaving(true)
     setSaved(false)
     setSaveError(false)
-    const ok = await onSaveTriage(item, statusDraft, noteDraft)
+    const ok = await onSaveTriage(item, statusDraft, priorityDraft, noteDraft)
     setSaving(false)
     if (ok) {
       setSaved(true)
@@ -324,6 +357,7 @@ function FeedbackCard({
           <div className="flex flex-wrap items-center gap-2">
             <Pill colour={typeMeta.colour}>{typeMeta.label}</Pill>
             <FeedbackStatusPill status={item.status} />
+            <Pill colour={priorityMeta.colour}>{priorityMeta.label}</Pill>
             <span className="text-[15px] font-medium text-ink">{item.title}</span>
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[12px] text-ink-mute">
@@ -396,20 +430,36 @@ function FeedbackCard({
             <div className="mt-4 rounded-lg border border-line bg-canvas p-3">
               <span className="eyebrow mb-2 block">Triage</span>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
-                <label className="block sm:w-44">
-                  <span className="sr-only">Status</span>
-                  <select
-                    value={statusDraft}
-                    onChange={(e) => setStatusDraft(e.target.value as FeedbackStatus)}
-                    className="select-styled h-9 w-full rounded-[8px] border border-line bg-surface px-2 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
-                  >
-                    {FEEDBACK_STATUSES.map((s) => (
-                      <option key={s.value} value={s.value}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <div className="flex gap-2 sm:w-44 sm:shrink-0 sm:flex-col">
+                  <label className="block flex-1 sm:flex-none">
+                    <span className="sr-only">Status</span>
+                    <select
+                      value={statusDraft}
+                      onChange={(e) => setStatusDraft(e.target.value as FeedbackStatus)}
+                      className="select-styled h-9 w-full rounded-[8px] border border-line bg-surface px-2 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                    >
+                      {FEEDBACK_STATUSES.map((s) => (
+                        <option key={s.value} value={s.value}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="block flex-1 sm:flex-none">
+                    <span className="sr-only">Priority</span>
+                    <select
+                      value={priorityDraft}
+                      onChange={(e) => setPriorityDraft(e.target.value as FeedbackPriority)}
+                      className="select-styled h-9 w-full rounded-[8px] border border-line bg-surface px-2 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                    >
+                      {FEEDBACK_PRIORITIES.map((p) => (
+                        <option key={p.value} value={p.value}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
                 <Textarea
                   value={noteDraft}
                   onChange={(e) => setNoteDraft(e.target.value)}

@@ -6,7 +6,14 @@ import { useAuth } from '../lib/auth'
 import { logAudit } from '../lib/audit'
 import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { Field, Input, Textarea, ButtonInk, ButtonGhost } from '../design'
-import { FEEDBACK_TYPES, FEEDBACK_BUCKET, type FeedbackItem, type FeedbackType } from '../lib/feedback'
+import {
+  FEEDBACK_TYPES,
+  FEEDBACK_PRIORITIES,
+  FEEDBACK_BUCKET,
+  type FeedbackItem,
+  type FeedbackType,
+  type FeedbackPriority,
+} from '../lib/feedback'
 import ScreenshotAnnotator from './ScreenshotAnnotator'
 
 const MAX_ATTACHMENTS = 6
@@ -39,6 +46,7 @@ export default function FeedbackModal({ onClose, onCreated }: FeedbackModalProps
   const fileRef = useRef<HTMLInputElement>(null)
 
   const [type, setType] = useState<FeedbackType>('idea')
+  const [priority, setPriority] = useState<FeedbackPriority>('medium')
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [area, setArea] = useState('')
@@ -155,6 +163,7 @@ export default function FeedbackModal({ onClose, onCreated }: FeedbackModalProps
       .insert({
         created_by: userId,
         type,
+        priority,
         title: cleanTitle,
         body: body.trim() || null,
         area: area.trim() || null,
@@ -222,6 +231,30 @@ export default function FeedbackModal({ onClose, onCreated }: FeedbackModalProps
                 ].join(' ')}
               >
                 {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Priority — a suggestion; an admin can change it later. */}
+        <div>
+          <span className="eyebrow mb-1.5 block">Priority</span>
+          <div className="flex gap-2" role="radiogroup" aria-label="Priority">
+            {FEEDBACK_PRIORITIES.map((p) => (
+              <button
+                key={p.value}
+                type="button"
+                role="radio"
+                aria-checked={priority === p.value}
+                onClick={() => setPriority(p.value)}
+                className={[
+                  'h-9 flex-1 rounded-[8px] border text-[13px] font-medium transition-colors',
+                  priority === p.value
+                    ? 'border-brand bg-brand-50 text-ink'
+                    : 'border-line bg-surface text-ink-mute hover:bg-canvas',
+                ].join(' ')}
+              >
+                {p.label}
               </button>
             ))}
           </div>

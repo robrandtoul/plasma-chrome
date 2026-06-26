@@ -8,6 +8,7 @@ import type { PillColour } from '../design'
 export const FEEDBACK_BUCKET = 'feedback-attachments'
 
 export type FeedbackType = 'bug' | 'idea' | 'improvement'
+export type FeedbackPriority = 'low' | 'medium' | 'high'
 export type FeedbackStatus =
   | 'new'
   | 'under_review'
@@ -25,6 +26,7 @@ export interface FeedbackItem {
   created_by_initials: string | null
   created_by_colour: string | null
   type: FeedbackType
+  priority: FeedbackPriority
   title: string
   body: string | null
   area: string | null
@@ -76,6 +78,25 @@ export const FEEDBACK_TYPE_META: Record<
 > = Object.fromEntries(
   FEEDBACK_TYPES.map((t) => [t.value, { label: t.label, colour: t.colour }]),
 ) as Record<FeedbackType, { label: string; colour: PillColour }>
+
+// Priority. Submitters suggest one when posting (default medium); admins can
+// override it during triage. Ordered low → high for the filter bar.
+export const FEEDBACK_PRIORITIES: {
+  value: FeedbackPriority
+  label: string
+  colour: PillColour
+}[] = [
+  { value: 'low', label: 'Low', colour: 'neutral' },
+  { value: 'medium', label: 'Medium', colour: 'low' },
+  { value: 'high', label: 'High', colour: 'out' },
+]
+
+export const FEEDBACK_PRIORITY_META: Record<
+  FeedbackPriority,
+  { label: string; colour: PillColour }
+> = Object.fromEntries(
+  FEEDBACK_PRIORITIES.map((p) => [p.value, { label: p.label, colour: p.colour }]),
+) as Record<FeedbackPriority, { label: string; colour: PillColour }>
 
 // Map the four legacy designer-colour names onto a CSS colour for the small
 // author initials badge on each card. Mirrors DesignerHeader's COLOUR_BG so
