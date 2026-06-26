@@ -15,7 +15,7 @@ import {
   UserCircle,
   LogOut,
   Settings,
-  MessageSquarePlus,
+  MessageSquare,
   type LucideIcon,
 } from 'lucide-react'
 import { PlasmaWordmark } from './PlasmaWordmark'
@@ -52,8 +52,8 @@ const NAV: NavItem[] = [
   // Orders is shown only when the ordering feature is switched on
   // (settings.ordering_enabled) — see the gate in DesignerHeader.
   { id: 'orders', label: 'Orders', to: '/orders' },
-  // Staff feedback board (bugs + ideas). Visible to everyone signed in.
-  { id: 'feedback', label: 'Feedback', to: '/feedback' },
+  // Feedback deliberately omitted here — it's a right-aligned icon button
+  // next to the account pill (see the header) rather than a text nav pill.
   { id: 'admin',  label: 'Admin',  to: '/admin/users' },
 ]
 
@@ -203,6 +203,24 @@ export function DesignerHeader({
             </button>
           )}
 
+          {/* Feedback — a right-aligned icon by the account button rather than
+              a text pill in the main nav. Desktop only; on mobile it lives in
+              the account sheet (below). */}
+          <Link
+            to="/feedback"
+            aria-label="Feedback"
+            title="Feedback"
+            aria-current={active === 'feedback' ? 'page' : undefined}
+            className={[
+              'hidden md:flex h-9 w-9 items-center justify-center rounded-full transition-colors',
+              active === 'feedback'
+                ? 'text-ink bg-canvas border border-line'
+                : 'text-ink-mute hover:text-ink hover:bg-canvas',
+            ].join(' ')}
+          >
+            <MessageSquare size={18} aria-hidden="true" />
+          </Link>
+
           <UserPill
             user={user}
             onEditProfile={onEditProfile}
@@ -350,7 +368,7 @@ function AccountSheet({
             onClick={onClose}
             className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
           >
-            <MessageSquarePlus size={18} aria-hidden="true" className="text-ink-mute" />
+            <MessageSquare size={18} aria-hidden="true" className="text-ink-mute" />
             Feedback
           </Link>
           {role === 'admin' && (

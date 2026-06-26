@@ -169,44 +169,32 @@ export default function FeedbackPage() {
           </ButtonCoral>
         </div>
 
-        {/* Filters */}
+        {/* Filters — compact dropdowns rather than a wall of pills. */}
         <div className="mt-6 flex flex-wrap items-center gap-2">
-          <FilterChip active={statusFilter === 'all'} onClick={() => setStatusFilter('all')}>
-            All{openCount > 0 ? ` · ${openCount} open` : ''}
-          </FilterChip>
-          {FEEDBACK_STATUSES.map((s) => (
-            <FilterChip
-              key={s.value}
-              active={statusFilter === s.value}
-              onClick={() => setStatusFilter((cur) => (cur === s.value ? 'all' : s.value))}
-            >
-              {s.label}
-            </FilterChip>
-          ))}
-          <span className="mx-1 h-5 w-px bg-line" aria-hidden="true" />
-          {FEEDBACK_TYPES.map((t) => (
-            <FilterChip
-              key={t.value}
-              active={typeFilter === t.value}
-              onClick={() => setTypeFilter((cur) => (cur === t.value ? 'all' : t.value))}
-            >
-              {t.label}
-            </FilterChip>
-          ))}
-          <span className="mx-1 h-5 w-px bg-line" aria-hidden="true" />
-          {FEEDBACK_PRIORITIES.map((p) => (
-            <FilterChip
-              key={p.value}
-              active={priorityFilter === p.value}
-              onClick={() => setPriorityFilter((cur) => (cur === p.value ? 'all' : p.value))}
-            >
-              {p.label}
-            </FilterChip>
-          ))}
-          <span className="mx-1 h-5 w-px bg-line" aria-hidden="true" />
+          <FilterSelect
+            allLabel="All statuses"
+            value={statusFilter}
+            onChange={(v) => setStatusFilter(v as StatusFilter)}
+            options={FEEDBACK_STATUSES}
+          />
+          <FilterSelect
+            allLabel="All types"
+            value={typeFilter}
+            onChange={(v) => setTypeFilter(v as TypeFilter)}
+            options={FEEDBACK_TYPES}
+          />
+          <FilterSelect
+            allLabel="All priorities"
+            value={priorityFilter}
+            onChange={(v) => setPriorityFilter(v as PriorityFilter)}
+            options={FEEDBACK_PRIORITIES}
+          />
           <FilterChip active={mineOnly} onClick={() => setMineOnly((v) => !v)}>
             Mine
           </FilterChip>
+          <span className="ml-auto text-[12px] text-ink-mute">
+            {openCount} open · {items.length} total
+          </span>
         </div>
 
         {/* List */}
@@ -245,6 +233,36 @@ export default function FeedbackPage() {
 
       {modalOpen && <FeedbackModal onClose={() => setModalOpen(false)} onCreated={handleCreated} />}
     </DesignerChrome>
+  )
+}
+
+// Compact dropdown filter (status / type / priority). 'all' is the first
+// option; the rest come from the feedback metadata. Uses the app's
+// select-styled chevron so it matches every other styled select.
+function FilterSelect({
+  allLabel,
+  value,
+  onChange,
+  options,
+}: {
+  allLabel: string
+  value: string
+  onChange: (value: string) => void
+  options: { value: string; label: string }[]
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="select-styled h-8 rounded-full border border-line bg-surface pl-3 text-[13px] text-ink-soft transition-colors hover:bg-canvas focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+    >
+      <option value="all">{allLabel}</option>
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
   )
 }
 
