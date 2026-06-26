@@ -77,8 +77,8 @@ const REAL_LABELS: Array<[string, string | null]> = [
   ['Natural (Matte) Steel',                       'metal_steel'],
   ['Stainless Steel',                             'metal_steel'],
   ['Stainless Steel with Infill',                 'metal_steel'],
-  ['Copper Steel',                                'metal_steel'],  // "X Steel" = steel in a copper finish
-  ['Gold Steel',                                  'metal_steel'],  // "X Steel" = steel in a gold finish
+  ['Copper Steel',                                null],  // copper + steel both real -> designer picks
+  ['Gold Steel',                                  null],  // gold + steel both real -> designer picks
   ['Acid Green Plastic',                          null],  // no distinctive plastic word
   ['Satin White Plastic',                         'plastic_satin'],
   ['Translucent Plastic',                         'plastic_translucent'],
@@ -108,15 +108,18 @@ test('the matte colour metals need both words', () => {
   assertEqual(matchCode('White Metal'), null)      // no "matte" -> ambiguous
 })
 
-test('colour metals yield to steel, but cross-family clashes stay null', () => {
-  // "X Steel" reads as steel in an X finish, so steel wins over a colour metal.
-  assertEqual(matchCode('Copper Steel'), 'metal_steel')
-  assertEqual(matchCode('Gold Steel'), 'metal_steel')
-  // But the colour metals still match on their own (no "steel" in the label).
+test('a label naming two real metals is ambiguous; one-metal labels resolve', () => {
+  // copper and gold are catalogue materials, so "Copper/Gold Steel" could mean
+  // steel in that finish OR the Copper/Gold Metal product — prompt, don't guess.
+  assertEqual(matchCode('Copper Steel'), null)
+  assertEqual(matchCode('Gold Steel'), null)
+  // silver/brushed/mirror are finishes, not materials, so steel is the only
+  // candidate and resolves cleanly.
+  assertEqual(matchCode('Silver Steel'), 'metal_steel')
+  assertEqual(matchCode('Brushed Steel'), 'metal_steel')
+  // the colour metals still resolve on their own when steel isn't named.
   assertEqual(matchCode('Copper Metal'), 'metal_copper')
   assertEqual(matchCode('Gold Metal'), 'metal_gold')
-  // A genuine two-family clash has no head metal and stays ambiguous.
-  assertEqual(matchCode('Wood Steel'), null)
 })
 
 test('full colour plastic, acrylic and standard paper', () => {

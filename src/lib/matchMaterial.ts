@@ -53,14 +53,15 @@ const RULES: Record<string, MatchRule> = {
   acrylic:                  { all: [['acrylic', 'perspex']] },
   carbon_fibre:             { all: [['carbon']], none: ['cnc'] },
   carbon_fibre_cnc:         { all: [['carbon'], ['cnc']] },
-  // "X Steel" labels (Gold/Copper/Silver/Brushed/Mirror Steel) describe a
-  // FINISH on steel, not a separate metal — the catalogue names its colour
-  // metals plainly ("Copper Metal", "Gold Metal"). So copper/gold yield to
-  // steel when both words appear: the card is steel, with that colour as a
-  // finish the designer picks below. (A genuine cross-family clash like
-  // "Wood Steel" still leaves two candidates and resolves to null.)
-  metal_copper:             { all: [['copper']], none: ['steel'] },
-  metal_gold:               { all: [['gold']], none: ['steel'] },
+  // Copper and Gold are catalogue materials in their own right ("Copper Metal",
+  // "Gold Metal"), so a label like "Copper Steel" is genuinely ambiguous — it
+  // could be steel in a copper finish OR the Copper Metal product. Both stay as
+  // candidates, so the two-candidate rule resolves it to null and the designer
+  // chooses, rather than us guessing a wrong metal they have to catch. (Finish
+  // words that AREN'T materials — silver, brushed, mirror — leave steel as the
+  // sole candidate, so "Silver Steel" still resolves cleanly to steel.)
+  metal_copper:             { all: [['copper']] },
+  metal_gold:               { all: [['gold']] },
   metal_gun_metal:          { all: [['gun']] },
   metal_matte_black:        { all: [['matte', 'matt'], ['black']] },
   metal_matte_white:        { all: [['matte', 'matt'], ['white']] },
