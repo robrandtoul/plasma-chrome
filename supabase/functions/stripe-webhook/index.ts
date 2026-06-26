@@ -16,7 +16,7 @@
 // against STRIPE_WEBHOOK_SECRET below. Do not add a Supabase JWT gate.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { getAccessContext, createSalesInvoice, recordInvoicePayment, emailSalesInvoice } from '../_shared/xero.ts'
+import { getAccessContext, createSalesInvoice, recordInvoicePayment, emailSalesInvoice, ensureInvoiceEmailRecipient } from '../_shared/xero.ts'
 import { buildOrderInvoiceLines } from '../_shared/invoiceBuild.ts'
 import { getAccessToken, fetchConversation, postStaffReply, hideThread, HsError } from '../_shared/helpscout.ts'
 import { renderTemplate, ORDER_CONFIRMATION_DEFAULT_BODY } from '../_shared/replyTemplates.ts'
@@ -248,10 +248,16 @@ Deno.serve(async (req) => {
       // (so the VAT invoice is emailed exactly once).
       const { data: order } = await admin
         .from('orders')
-        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, ship_dest_country, xero_invoice_id, invoice_emailed_at')
+        .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, ship_dest_country, xero_invoice_id, xero_contact_id, invoice_emailed_at')
         .eq('id', orderId)
         .single()
       let invoiceId: string | null = (order?.xero_invoice_id as string | null) ?? null
+
+      // The existing Xero contact the designer chose at order time (000275). When
+      // set, the invoice binds to it so it files under the customer's record;
+      // when null, this is a new customer and we let Xero create the contact,
+      // then write its ContactID back below so the next order pre-fills it.
+      const boundContactId = (order?.xero_contact_id as string | null) ?? null
 
       // Delivery country that drives the domestic-vs-international shipping line.
       // Use the destination the order was RATED against (ship_dest_country, set
@@ -308,8 +314,13 @@ Deno.serve(async (req) => {
           reference: referenceSafe,
           lines,
           address: invoiceAddress,
+          contactId: boundContactId,
         })
         invoiceId = created.invoiceId
+        // The created invoice object echoes back the resolved Contact (incl. the
+        // ContactID Xero assigned for a new customer) — kept so we can remember
+        // it on the order below.
+        let createdInvoice = created.invoice
         // Xero's rejection text, kept so we can stamp it on the order when both
         // attempts fail — that's what the Orders page surfaces as "Invoice
         // failed" and what makes a silent miss visible (000240).
@@ -332,14 +343,31 @@ Deno.serve(async (req) => {
             reference: referenceSafe,
             lines: [{ description: `Order ${referenceSafe}`, amount: expectedTotal, itemCode: null }],
             address: invoiceAddress,
+            contactId: boundContactId,
           })
           invoiceId = retry.invoiceId
+          if (retry.invoice) createdInvoice = retry.invoice
           if (retry.error) lastError = retry.error
         }
         if (invoiceId) {
           // Success — store the id and clear any prior error so a row that has
           // since invoiced never keeps a stale "failed" flag.
           await admin.from('orders').update({ xero_invoice_id: invoiceId, xero_invoice_error: null }).eq('id', orderId)
+
+          // Auto-remember (000275): when this order wasn't bound to a Xero
+          // contact (a new customer), capture the ContactID Xero just created so
+          // the customer's NEXT order pre-fills it in the Create order modal.
+          // Only on the unbound path — a bound order already has the right id,
+          // and re-reading it from the echoed invoice would be a no-op.
+          if (!boundContactId) {
+            const c = (createdInvoice?.Contact as { ContactID?: string; Name?: string } | undefined) ?? null
+            if (c?.ContactID) {
+              await admin
+                .from('orders')
+                .update({ xero_contact_id: c.ContactID, ...(c.Name ? { xero_contact_name: c.Name } : {}) })
+                .eq('id', orderId)
+            }
+          }
 
           // If a Stripe clearing account is configured (000242), record the
           // payment into it so the invoice is marked PAID immediately, matching
@@ -379,6 +407,20 @@ Deno.serve(async (req) => {
           // invoice error — the invoice itself is fine.
           console.warn('[stripe-webhook] invoice email skipped: no buyer email on order', { orderId, invoiceId })
         } else {
+          // When the invoice is filed under an existing (company) Xero contact,
+          // Xero would email it to THAT contact's address, not the person who
+          // paid. To keep the VAT receipt reaching the payer (Rob's choice), add
+          // them as an "include in emails" person on the bound contact first —
+          // a no-op when they're already the primary email or an included person
+          // (the common B2B case where the buyer is the company contact), and
+          // skipped entirely on the new-customer path (the contact already IS
+          // the payer). Best-effort: a miss just means Xero emails the company,
+          // and the payer still has the pay-page invoice link + Stripe receipt.
+          if (boundContactId) {
+            const rec = await ensureInvoiceEmailRecipient(ctx.accessToken, ctx.tenantId, boundContactId, contactEmail, contactName)
+            if (!rec.ok) console.warn('[stripe-webhook] could not add payer as invoice email recipient', { orderId, error: rec.error })
+            else if (rec.added) console.log('[stripe-webhook] payer added as invoice email recipient on bound contact', { orderId })
+          }
           const emailed = await emailSalesInvoice(ctx.accessToken, ctx.tenantId, invoiceId)
           if (emailed.ok) {
             await admin.from('orders').update({ invoice_emailed_at: new Date().toISOString() }).eq('id', orderId)

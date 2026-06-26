@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import Modal from './Modal'
 import { Field, Input, ButtonCoral, ButtonGhost } from '../design'
+import XeroContactPicker, { type XeroContact } from './XeroContactPicker'
 import { supabase } from '../lib/supabase'
 import { customerOrderUrl } from '../lib/customerOrderUrl'
 import { SHIP_COUNTRIES, REPRESENTATIVE_POSTCODES } from '../lib/shipCountries'
@@ -176,6 +177,11 @@ export default function OrderBuilderModal({
   // pricing for (so we display it read-only rather than as a picker).
   const [lockedFromProof, setLockedFromProof] = useState(false)
 
+  // Xero customer the paid invoice files under (online orders only). Pre-filled
+  // from this customer's last order so a returning customer is one click;
+  // designer can change it or leave it blank for a new customer (000275).
+  const [xeroContact, setXeroContact] = useState<XeroContact | null>(null)
+
   // Indicative shipping estimate (full_cost / goodwill). Quantity it's based on
   // defaults to the locked quantity, else a representative 250.
   const [shippingSettings, setShippingSettings] = useState<ShippingSettings | null>(null)
@@ -299,6 +305,28 @@ export default function OrderBuilderModal({
     })()
     return () => { cancelled = true }
   }, [namesCount, currentVersionId])
+
+  // Pre-fill the Xero customer from this customer's most recent order (matched
+  // by company, or the contact itself when they have no company). Returning
+  // customer → one click; new customer → empty, designer searches or leaves it
+  // blank. Best-effort: a miss just leaves the picker empty.
+  useEffect(() => {
+    if (!proofId) return
+    let cancelled = false
+    void supabase
+      .rpc('last_xero_contact_for_proof', { p_proof_id: proofId })
+      .then(({ data }) => {
+        if (cancelled || !Array.isArray(data) || data.length === 0) return
+        const row = data[0] as { xero_contact_id: string | null; xero_contact_name: string | null }
+        // Only pre-fill when we have a human-readable name too — never surface a
+        // raw Xero ContactID as the customer label. The name is written
+        // alongside the id on every order, so this is just belt-and-braces.
+        if (row?.xero_contact_id && row?.xero_contact_name) {
+          setXeroContact({ id: row.xero_contact_id, name: row.xero_contact_name })
+        }
+      })
+    return () => { cancelled = true }
+  }, [proofId])
 
   // Shipping settings (box tare, intl adjustment %, domestic flat rates) +
   // live GBP→EUR/USD rates, for the indicative estimate. Both have their own
@@ -618,6 +646,11 @@ export default function OrderBuilderModal({
           // mixed-material variant round), which stays harmless.
           material_variant_id: variantId,
           material_option_id: optionId ?? undefined,
+          // Which existing Xero contact the paid invoice files under. Online
+          // only — an offline order is invoiced manually in Xero. Null = new
+          // customer; the webhook captures the contact Xero creates.
+          xero_contact_id: paymentMethod === 'online' ? (xeroContact?.id ?? null) : null,
+          xero_contact_name: paymentMethod === 'online' ? (xeroContact?.name ?? null) : null,
         },
       })
       if (fnError) {
@@ -856,6 +889,19 @@ export default function OrderBuilderModal({
                 </p>
               )}
             </Field>
+
+            {/* Xero customer — online only; an offline order is invoiced
+                manually in Xero, so the designer picks the customer there. Sets
+                which existing Xero contact the paid invoice files under. */}
+            {paymentMethod === 'online' && (
+              <Field
+                label="Xero customer"
+                asLabel={false}
+                hint="Which existing Xero contact this paid invoice files under, so it shows under the right customer in Xero. Search your Xero customers, or leave blank to let Xero create a new one — we’ll remember it for next time."
+              >
+                <XeroContactPicker value={xeroContact} onChange={setXeroContact} />
+              </Field>
+            )}
 
             {/* Quantity */}
             <Field label="Quantity" asLabel={false} hint="Let the customer choose on the pay-page, or lock a specific quantity now.">
