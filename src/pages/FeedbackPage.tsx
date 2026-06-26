@@ -24,6 +24,10 @@ import {
 type StatusFilter = FeedbackStatus | 'all'
 type TypeFilter = FeedbackType | 'all'
 type PriorityFilter = FeedbackPriority | 'all'
+type SortMode = 'newest' | 'priority'
+
+// High → Medium → Low for the "Priority" sort.
+const PRIORITY_RANK: Record<FeedbackPriority, number> = { high: 0, medium: 1, low: 2 }
 
 // Small initials badge matching a staffer's header avatar colour.
 function AuthorBadge({ initials, colour }: { initials: string | null; colour: string | null }) {
@@ -51,6 +55,7 @@ export default function FeedbackPage() {
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all')
   const [mineOnly, setMineOnly] = useState(false)
+  const [sort, setSort] = useState<SortMode>('newest')
 
   useEffect(() => {
     let cancelled = false
@@ -81,6 +86,16 @@ export default function FeedbackPage() {
     if (mineOnly && it.created_by !== userId) return false
     return true
   })
+
+  // items arrive newest-first from the query, so 'newest' keeps that order.
+  // 'priority' orders High → Medium → Low, newest-first within each level.
+  const visible =
+    sort === 'priority'
+      ? [...filtered].sort((a, b) => {
+          const r = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
+          return r !== 0 ? r : b.created_at.localeCompare(a.created_at)
+        })
+      : filtered
 
   function handleCreated(item: FeedbackItem) {
     setItems((prev) => [item, ...prev])
@@ -194,6 +209,16 @@ export default function FeedbackPage() {
             <span className="h-4 w-px bg-line max-md:shrink-0" aria-hidden="true" />
 
             <FilterSelect
+              label="Sort"
+              className="max-md:shrink-0"
+              value={sort}
+              onChange={(v) => setSort(v as SortMode)}
+              options={[
+                { value: 'newest', label: 'Newest' },
+                { value: 'priority', label: 'Priority' },
+              ]}
+            />
+            <FilterSelect
               label="Type"
               className="max-md:shrink-0"
               value={typeFilter}
@@ -232,7 +257,7 @@ export default function FeedbackPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {filtered.map((it) => (
+              {visible.map((it) => (
                 <FeedbackCard
                   key={it.id}
                   item={it}
