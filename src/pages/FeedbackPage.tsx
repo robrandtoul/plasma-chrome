@@ -1,6 +1,25 @@
 import { useEffect, useState } from 'react'
-import { Plus, MessageSquarePlus, ImageIcon, Trash2 } from 'lucide-react'
-import { DesignerChrome, ButtonCoral, ButtonGhost, ButtonInk, Pill, Textarea } from '../design'
+import {
+  Plus,
+  MessageSquarePlus,
+  ImageIcon,
+  Trash2,
+  Bug,
+  Lightbulb,
+  Wrench,
+  ChevronDown,
+  ChevronRight,
+  CheckCircle2,
+  Archive,
+} from 'lucide-react'
+import {
+  DesignerChrome,
+  ButtonCoral,
+  ButtonGhost,
+  ButtonInk,
+  Textarea,
+  type PillColour,
+} from '../design'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { logAudit } from '../lib/audit'
@@ -10,10 +29,10 @@ import FeedbackStatusPill from '../components/FeedbackStatusPill'
 import {
   FEEDBACK_BUCKET,
   FEEDBACK_STATUSES,
+  FEEDBACK_STATUS_META,
   FEEDBACK_TYPES,
   FEEDBACK_TYPE_META,
   FEEDBACK_PRIORITIES,
-  FEEDBACK_PRIORITY_META,
   authorBadgeColour,
   type FeedbackItem,
   type FeedbackStatus,
@@ -21,13 +40,67 @@ import {
   type FeedbackPriority,
 } from '../lib/feedback'
 
-type StatusFilter = FeedbackStatus | 'all'
+// The three lifecycle sections the board groups into. Status is the spine of
+// the page: it lives in the section header (and Open work's sub-dividers), not
+// as a per-card pill — so a colour on a card can only ever mean priority/type.
+type FeedbackSection = 'open' | 'shipped' | 'parked'
+type ScopeFilter = 'open' | 'all' | 'resolved'
 type TypeFilter = FeedbackType | 'all'
 type PriorityFilter = FeedbackPriority | 'all'
-type SortMode = 'newest' | 'priority'
+// 'smart' = grouped lifecycle sections; 'newest' = one flat newest-first list
+// (restores the global-recency view, since status_changed_at only shows when a
+// card is expanded).
+type SortMode = 'smart' | 'newest'
 
-// High → Medium → Low for the "Priority" sort.
+const SECTION_OF: Record<FeedbackStatus, FeedbackSection> = {
+  new: 'open',
+  under_review: 'open',
+  planned: 'open',
+  in_progress: 'open',
+  done: 'shipped',
+  wont_do: 'parked',
+}
+
+const SECTIONS: { key: FeedbackSection; label: string }[] = [
+  { key: 'open', label: 'Open work' },
+  { key: 'shipped', label: 'Shipped' },
+  { key: 'parked', label: 'Parked' },
+]
+
+// Sub-status order inside Open work: active work surfaces at the top.
+const OPEN_SUBSTATUS_ORDER: FeedbackStatus[] = ['in_progress', 'planned', 'under_review', 'new']
+
+// High → Medium → Low for the priority sort inside a section.
 const PRIORITY_RANK: Record<FeedbackPriority, number> = { high: 0, medium: 1, low: 2 }
+
+const TYPE_ICON: Record<FeedbackType, typeof Bug> = {
+  bug: Bug,
+  idea: Lightbulb,
+  improvement: Wrench,
+}
+
+// Solid dot colour per Pill colour, for the Open-work sub-divider markers.
+const PILL_DOT: Record<PillColour, string> = {
+  brand: 'var(--c-brand)',
+  'in-stock': 'var(--c-in-stock)',
+  low: 'var(--c-low)',
+  out: 'var(--c-out)',
+  critical: 'var(--c-critical)',
+  allocated: 'var(--c-allocated)',
+  neutral: 'var(--c-ink-mute, #8a8a8a)',
+  mute: 'var(--c-ink-dim, #aaaaaa)',
+}
+
+function sectionInScope(section: FeedbackSection, scope: ScopeFilter): boolean {
+  if (scope === 'all') return true
+  if (scope === 'open') return section === 'open'
+  return section === 'shipped' || section === 'parked'
+}
+
+function priorityRecencySort(a: FeedbackItem, b: FeedbackItem): number {
+  const r = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
+  return r !== 0 ? r : b.created_at.localeCompare(a.created_at)
+}
 
 // Small initials badge matching a staffer's header avatar colour.
 function AuthorBadge({ initials, colour }: { initials: string | null; colour: string | null }) {
@@ -51,11 +124,16 @@ export default function FeedbackPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [scope, setScope] = useState<ScopeFilter>('open')
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all')
   const [mineOnly, setMineOnly] = useState(false)
-  const [sort, setSort] = useState<SortMode>('newest')
+  const [sort, setSort] = useState<SortMode>('smart')
+  // Section collapse: explicit user toggles override the scope-derived default.
+  const [sectionOverrides, setSectionOverrides] = useState<Partial<Record<FeedbackSection, boolean>>>({})
+  // Card expansion lives on the page (not per-card) so a card stays open after
+  // an admin status change re-groups it into a different section.
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     let cancelled = false
@@ -79,23 +157,35 @@ export default function FeedbackPage() {
     }
   }, [])
 
-  const filtered = items.filter((it) => {
-    if (statusFilter !== 'all' && it.status !== statusFilter) return false
+  // Type / priority / mine filters (status scope is applied separately so the
+  // section list and the "N showing" count share one predicate).
+  function matchesFilters(it: FeedbackItem): boolean {
     if (typeFilter !== 'all' && it.type !== typeFilter) return false
     if (priorityFilter !== 'all' && it.priority !== priorityFilter) return false
     if (mineOnly && it.created_by !== userId) return false
     return true
-  })
+  }
 
-  // items arrive newest-first from the query, so 'newest' keeps that order.
-  // 'priority' orders High → Medium → Low, newest-first within each level.
-  const visible =
-    sort === 'priority'
-      ? [...filtered].sort((a, b) => {
-          const r = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
-          return r !== 0 ? r : b.created_at.localeCompare(a.created_at)
-        })
-      : filtered
+  const inScope = items.filter((it) => matchesFilters(it) && sectionInScope(SECTION_OF[it.status], scope))
+
+  function defaultExpanded(section: FeedbackSection): boolean {
+    if (section === 'open') return true
+    return scope === 'resolved'
+  }
+  function isSectionExpanded(section: FeedbackSection): boolean {
+    return sectionOverrides[section] ?? defaultExpanded(section)
+  }
+  function toggleSection(section: FeedbackSection) {
+    setSectionOverrides((prev) => ({ ...prev, [section]: !isSectionExpanded(section) }))
+  }
+  function toggleExpand(id: string) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   function handleCreated(item: FeedbackItem) {
     setItems((prev) => [item, ...prev])
@@ -158,6 +248,72 @@ export default function FeedbackPage() {
     })
   }
 
+  function renderCard(it: FeedbackItem, showStatus: boolean) {
+    return (
+      <FeedbackCard
+        key={it.id}
+        item={it}
+        isAdmin={isAdmin}
+        canDelete={isAdmin || it.created_by === userId}
+        showStatus={showStatus}
+        expanded={expandedIds.has(it.id)}
+        onToggleExpand={() => toggleExpand(it.id)}
+        onSaveTriage={saveTriage}
+        onDelete={deleteItem}
+      />
+    )
+  }
+
+  // Grouped (smart) body: one block per in-scope, non-empty section.
+  const groupedBody = SECTIONS.filter((s) => sectionInScope(s.key, scope)).map((section) => {
+    const secItems = inScope.filter((it) => SECTION_OF[it.status] === section.key)
+    if (secItems.length === 0) return null
+    const expanded = isSectionExpanded(section.key)
+    return (
+      <section key={section.key}>
+        <SectionHeader
+          section={section.key}
+          label={section.label}
+          count={secItems.length}
+          expanded={expanded}
+          onToggle={() => toggleSection(section.key)}
+        />
+        {expanded &&
+          (section.key === 'open' ? (
+            <div className="space-y-1">
+              {OPEN_SUBSTATUS_ORDER.map((status) => {
+                const group = secItems
+                  .filter((it) => it.status === status)
+                  .sort(priorityRecencySort)
+                if (group.length === 0) return null
+                return (
+                  <div key={status}>
+                    <SubDivider status={status} count={group.length} />
+                    <div className="space-y-3">{group.map((it) => renderCard(it, false))}</div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="mt-2 space-y-3">
+              {[...secItems]
+                .sort((a, b) => b.created_at.localeCompare(a.created_at))
+                .map((it) => renderCard(it, false))}
+            </div>
+          ))}
+      </section>
+    )
+  })
+
+  // Flat (newest) body: one stream, newest first, status shown on each card.
+  const flatBody = (
+    <div className="space-y-3">
+      {[...inScope]
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        .map((it) => renderCard(it, true))}
+    </div>
+  )
+
   return (
     <DesignerChrome
       active="feedback"
@@ -181,30 +337,27 @@ export default function FeedbackPage() {
           </ButtonCoral>
         </div>
 
-        {/* Filters — same design language as the dashboard: a bordered panel
-            with the primary axis (status) as ink pills, secondary axes as
-            dropdowns, a checkbox toggle, and an "N showing" count. */}
+        {/* Filters — the primary axis is now the lifecycle scope (Open / All /
+            Resolved) as ink pills; status itself drives the sections below, so
+            it's no longer a per-card pill. Secondary axes stay as dropdowns. */}
         <div className="mt-6 rounded-[14px] border border-line bg-surface px-5 py-4">
           <div className="flex flex-wrap items-center gap-3 max-md:flex-nowrap max-md:overflow-x-auto">
-            <span className="eyebrow pr-1 text-ink-mute max-md:shrink-0">Filter</span>
-            <FilterPill active={statusFilter === 'all'} onClick={() => setStatusFilter('all')}>
+            <span className="eyebrow pr-1 text-ink-mute max-md:shrink-0">Show</span>
+            <FilterPill active={scope === 'open'} onClick={() => setScope('open')}>
+              Open
+            </FilterPill>
+            <FilterPill active={scope === 'all'} onClick={() => setScope('all')}>
               All
             </FilterPill>
-            {FEEDBACK_STATUSES.map((s) => (
-              <FilterPill
-                key={s.value}
-                active={statusFilter === s.value}
-                onClick={() => setStatusFilter((cur) => (cur === s.value ? 'all' : s.value))}
-              >
-                {s.label}
-              </FilterPill>
-            ))}
+            <FilterPill active={scope === 'resolved'} onClick={() => setScope('resolved')}>
+              Resolved
+            </FilterPill>
 
             <span className="hidden flex-1 md:block" aria-hidden="true" />
             <span className="w-2 shrink-0 md:hidden" aria-hidden="true" />
 
             <span className="font-mono text-[12px] tabular-nums text-ink-mute max-md:shrink-0">
-              {filtered.length} showing
+              {inScope.length} showing
             </span>
             <span className="h-4 w-px bg-line max-md:shrink-0" aria-hidden="true" />
 
@@ -214,8 +367,8 @@ export default function FeedbackPage() {
               value={sort}
               onChange={(v) => setSort(v as SortMode)}
               options={[
+                { value: 'smart', label: 'Smart' },
                 { value: 'newest', label: 'Newest' },
-                { value: 'priority', label: 'Priority' },
               ]}
             />
             <FilterSelect
@@ -246,7 +399,7 @@ export default function FeedbackPage() {
             <div className="rounded-[14px] border border-dashed border-line bg-canvas px-6 py-12 text-center">
               <p className="text-sm text-out">Couldn’t load feedback — please reload the page.</p>
             </div>
-          ) : filtered.length === 0 ? (
+          ) : inScope.length === 0 ? (
             <div className="rounded-[14px] border border-dashed border-line bg-canvas px-6 py-12 text-center">
               <MessageSquarePlus size={28} className="mx-auto text-ink-dim" aria-hidden="true" />
               <p className="mt-3 text-sm text-ink-soft">
@@ -255,19 +408,10 @@ export default function FeedbackPage() {
                   : 'Nothing matches these filters.'}
               </p>
             </div>
+          ) : sort === 'newest' ? (
+            flatBody
           ) : (
-            <div className="space-y-3">
-              {visible.map((it) => (
-                <FeedbackCard
-                  key={it.id}
-                  item={it}
-                  isAdmin={isAdmin}
-                  canDelete={isAdmin || it.created_by === userId}
-                  onSaveTriage={saveTriage}
-                  onDelete={deleteItem}
-                />
-              ))}
-            </div>
+            <div className="space-y-6">{groupedBody}</div>
           )}
         </div>
       </main>
@@ -277,7 +421,7 @@ export default function FeedbackPage() {
   )
 }
 
-// Primary-axis filter pill (status), matching the dashboard's chip row:
+// Lifecycle-scope filter pill, matching the dashboard's chip row:
 // active = solid ink, inactive = outlined.
 function FilterPill({
   active,
@@ -303,6 +447,64 @@ function FilterPill({
       {children}
     </button>
   )
+}
+
+// Section header row — chevron + label + per-section count. Toggles collapse.
+function SectionHeader({
+  section,
+  label,
+  count,
+  expanded,
+  onToggle,
+}: {
+  section: FeedbackSection
+  label: string
+  count: number
+  expanded: boolean
+  onToggle: () => void
+}) {
+  const Chevron = expanded ? ChevronDown : ChevronRight
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      className="flex w-full items-center gap-2 rounded-[8px] px-1 py-1.5 text-left hover:bg-canvas"
+    >
+      <Chevron size={16} className="shrink-0 text-ink-mute" aria-hidden="true" />
+      {section === 'shipped' && (
+        <CheckCircle2 size={15} className="shrink-0" style={{ color: 'var(--c-in-stock)' }} aria-hidden="true" />
+      )}
+      {section === 'parked' && (
+        <Archive size={15} className="shrink-0 text-ink-mute" aria-hidden="true" />
+      )}
+      <span className="text-[13px] font-medium text-ink">{label}</span>
+      <span className="font-mono text-[12px] tabular-nums text-ink-mute">· {count}</span>
+    </button>
+  )
+}
+
+// Sub-status divider inside Open work — a coloured dot + label carry the status
+// that used to be a per-card pill.
+function SubDivider({ status, count }: { status: FeedbackStatus; count: number }) {
+  const meta = FEEDBACK_STATUS_META[status]
+  return (
+    <div className="mb-1 mt-2 flex items-center gap-2 px-1">
+      <span
+        className="h-2 w-2 shrink-0 rounded-full"
+        style={{ background: PILL_DOT[meta.colour] }}
+        aria-hidden="true"
+      />
+      <span className="text-[11px] font-medium uppercase tracking-wide text-ink-mute">{meta.label}</span>
+      <span className="font-mono text-[11px] tabular-nums text-ink-dim">{count}</span>
+    </div>
+  )
+}
+
+// Monochrome type glyph that replaces the coloured Type pill on each card.
+function TypeIcon({ type }: { type: FeedbackType }) {
+  const Icon = TYPE_ICON[type]
+  return <Icon size={15} className="shrink-0 text-ink-mute" aria-label={FEEDBACK_TYPE_META[type].label} />
 }
 
 // Secondary filter dropdown, mirroring the dashboard's SelectField: a muted
@@ -404,12 +606,18 @@ function FeedbackCard({
   item,
   isAdmin,
   canDelete,
+  showStatus,
+  expanded,
+  onToggleExpand,
   onSaveTriage,
   onDelete,
 }: {
   item: FeedbackItem
   isAdmin: boolean
   canDelete: boolean
+  showStatus: boolean
+  expanded: boolean
+  onToggleExpand: () => void
   onSaveTriage: (
     item: FeedbackItem,
     status: FeedbackStatus,
@@ -418,7 +626,6 @@ function FeedbackCard({
   ) => Promise<boolean>
   onDelete: (item: FeedbackItem) => void
 }) {
-  const [expanded, setExpanded] = useState(false)
   const [signedUrls, setSignedUrls] = useState<string[] | null>(null)
   const [statusDraft, setStatusDraft] = useState<FeedbackStatus>(item.status)
   const [priorityDraft, setPriorityDraft] = useState<FeedbackPriority>(item.priority)
@@ -450,12 +657,17 @@ function FeedbackCard({
     }
   }, [expanded, signedUrls, item.attachment_paths])
 
-  const typeMeta = FEEDBACK_TYPE_META[item.type]
-  const priorityMeta = FEEDBACK_PRIORITY_META[item.priority]
   const dirty =
     statusDraft !== item.status ||
     priorityDraft !== item.priority ||
     (noteDraft.trim() || null) !== (item.admin_note ?? null)
+
+  // Priority is the only signal allowed loud colour: a left edge-stripe, with a
+  // small word on the meta line as a backstop (a 3px stripe alone is too easy to
+  // miss on a phone, and "no stripe" must not read as "broken").
+  const stripeColour =
+    item.priority === 'high' ? 'var(--c-out)' : item.priority === 'medium' ? 'var(--c-low)' : null
+  const priorityWord = item.priority === 'high' ? 'High' : item.priority === 'medium' ? 'Med' : null
 
   async function handleSave() {
     setSaving(true)
@@ -472,18 +684,24 @@ function FeedbackCard({
   }
 
   return (
-    <div className="overflow-hidden rounded-[14px] border border-line bg-surface">
+    <div className="relative overflow-hidden rounded-[14px] border border-line bg-surface">
+      {stripeColour && (
+        <span
+          className="absolute bottom-0 left-0 top-0 w-[3px]"
+          style={{ background: stripeColour }}
+          aria-hidden="true"
+        />
+      )}
       <button
         type="button"
-        onClick={() => setExpanded((v) => !v)}
+        onClick={onToggleExpand}
         aria-expanded={expanded}
         className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-canvas"
       >
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <Pill colour={typeMeta.colour}>{typeMeta.label}</Pill>
-            <FeedbackStatusPill status={item.status} />
-            <Pill colour={priorityMeta.colour}>{priorityMeta.label}</Pill>
+            <TypeIcon type={item.type} />
+            {showStatus && <FeedbackStatusPill status={item.status} />}
             <span className="text-[15px] font-medium text-ink">{item.title}</span>
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[12px] text-ink-mute">
@@ -503,6 +721,14 @@ function FeedbackCard({
                 <span className="inline-flex items-center gap-1">
                   <ImageIcon size={12} aria-hidden="true" />
                   {item.attachment_paths.length}
+                </span>
+              </>
+            )}
+            {priorityWord && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="font-medium" style={{ color: stripeColour ?? undefined }}>
+                  {priorityWord}
                 </span>
               </>
             )}
