@@ -10,6 +10,7 @@ import { PricingDisplayField, type PricingDisplayValue } from '../components/Pri
 import { CurrencyField } from '../components/CurrencyField'
 import NameChipInput from '../components/NameChipInput'
 import { matchImageToName } from '../lib/matchImageToName'
+import { matchMaterialByLabel } from '../lib/matchMaterial'
 import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { PageDropOverlay } from '../components/PageDropOverlay'
 import MessageSendPanel from '../components/MessageSendPanel'
@@ -441,6 +442,11 @@ export default function NewVersionPage() {
   // Always null when v(N-1) is a standard proof — the picker doesn't
   // render and no downstream consumer reads this value on that path.
   const [carryVariantSelection, setCarryVariantSelection] = useState<string | null>(null)
+  // Drives the small note under the direction picker once a material has been
+  // auto-suggested for the chosen direction: 'matched' = we filled the Material
+  // field from the direction label; 'unmatched' = the label was ambiguous, so
+  // the designer must pick. Null when nothing has been suggested yet.
+  const [carryMaterialNote, setCarryMaterialNote] = useState<'matched' | 'unmatched' | null>(null)
   // Keep toggle state per v1 row. Default true on mount for every
   // carried row. Flips to false automatically when a replacement
   // is queued for that row (and stays false even if the replacement
@@ -976,6 +982,12 @@ export default function NewVersionPage() {
           : allImagesWithUrls
         if (isVariantRoundSource) {
           setCarryVariantSelection(defaultCarryVariantId)
+          // Pre-fill the Material field from the default direction's label so
+          // the continuation isn't stuck on an empty Material with a greyed
+          // Save. Uses the local materialsList (the picker list this effect
+          // just built) since the materials state isn't readable yet.
+          const defaultDir = sourceVariants.find((v) => v.id === defaultCarryVariantId)
+          suggestMaterialForDirection(defaultDir?.display_name, materialsList)
         }
 
         // Seed the QR section with v1's QR rows as 'existing'
@@ -2315,6 +2327,51 @@ export default function NewVersionPage() {
     })
   }
 
+  // Auto-suggest the catalogue material for a chosen variant-round direction.
+  //
+  // A per-direction-pricing variant round (the "choose between two materials"
+  // proof) stores no material on the version — material_id is NULL and the
+  // directions are free-text labels (migrations 000142 / 000144). So when the
+  // designer continues one direction as the next version, there's nothing to
+  // inherit and the Material field starts empty, leaving Save greyed out. This
+  // matches the direction's label back to a real material and pre-fills it, so
+  // the form lands on a normal, fully-priced single-material proof.
+  //
+  // `label` is the direction's display_name; `materialsList` is passed in so
+  // the initial-load caller can use the freshly-built list before it has been
+  // committed to state. matchMaterialByLabel is conservative — on an ambiguous
+  // label it returns null and we leave the Material field empty for the
+  // designer to fill (surfaced as a Save blocker), never a wrong guess.
+  function suggestMaterialForDirection(label: string | undefined, materialsList: Material[]) {
+    if (!label) {
+      setCarryMaterialNote(null)
+      return
+    }
+    const match = matchMaterialByLabel(label, materialsList)
+    if (match) {
+      if (match.id !== selectedMaterialId) {
+        // Re-arm the variant-round source flag so the [selectedMaterialId]
+        // effect blanks the option picker (forcing a deliberate finish/species
+        // pick) and loads the new material's variants. When two directions map
+        // to the SAME material the set is a no-op and the effect won't re-run —
+        // that's fine, the already-loaded variants/options stay valid and the
+        // re-scoped carry images are all that changes.
+        inheritedSourceIsVariantRoundRef.current = true
+        setSelectedMaterialId(match.id)
+      }
+      setCarryMaterialNote('matched')
+    } else {
+      // No confident match — clear any previously-suggested material so the
+      // designer makes the call; the empty Material field then shows up as a
+      // Save blocker.
+      if (selectedMaterialId) setSelectedMaterialId('')
+      setCarryMaterialNote('unmatched')
+    }
+    // Open the form so the Material field (and the rest) are visible — the
+    // collapsed summary card can't surface them.
+    setFormExpanded(true)
+  }
+
   // Re-scope the carry-forward to a different source variant. Called
   // by the picker rendered at the top of the Proof Images section
   // when v(N-1) was a variant round.
@@ -2486,6 +2543,17 @@ export default function NewVersionPage() {
         }
       }
       setShared(true)
+    }
+
+    // Re-suggest the material for the newly-chosen direction (runs last so the
+    // material-change effect's image reset is the final write). Start fresh
+    // clears the note and leaves the material alone — the customer may have
+    // gone a different way entirely, so the designer chooses from scratch.
+    if (nextVariantId === START_FRESH_SENTINEL) {
+      setCarryMaterialNote(null)
+    } else {
+      const nextDir = v1Carry.sourceVariants.find((v) => v.id === nextVariantId)
+      suggestMaterialForDirection(nextDir?.display_name, materials)
     }
   }
 
@@ -4356,6 +4424,20 @@ export default function NewVersionPage() {
   // excluded — its layouts* validations above gate it instead (Phase 2).
   const canSave = isValid && wizardResolved
 
+  // Every reason the Save button is disabled, in one plain-English list shared
+  // by the summary card, the sticky action bar, and the button tooltip — so a
+  // greyed-out Save always explains itself. missingFieldItems covers the field
+  // validations; the wizard gate (Save is also blocked until the proof-type
+  // questions resolve) is prepended here because missingFieldItems never emits
+  // it. The fallback guards the impossible-but-defensive case of Save being
+  // disabled with nothing in the list.
+  const saveBlockers = [
+    ...(wizardResolved ? [] : ['Answer the proof-type questions']),
+    ...missingFieldItems(validations, optionLabelSingular),
+  ]
+  const saveBlockerItems = saveBlockers.length > 0 ? saveBlockers : ['Some required fields are incomplete']
+  const saveBlockerSentence = saveBlockerItems.map((s) => `${s}.`).join(' ')
+
   // Specific images message. Priority: no-slot universe first
   // (can't save an empty shape — unreachable once names becomes
   // required, kept as belt-and-braces), then the first empty
@@ -4866,23 +4948,20 @@ export default function NewVersionPage() {
                     The material has been archived. Edit details to pick a current one, or keep this for continuity.
                   </p>
                 )}
-                {/* Missing-required items list — surfaces validation
-                    gaps in the collapsed summary so the designer doesn't
-                    have to open Edit details to discover them. Reads
-                    the same `missingFieldItems` data the Save tooltip
-                    uses, just rendered as bullets so each item is its
-                    own scannable line. Hidden once everything validates. */}
-                {!isValid && (() => {
-                  const items = missingFieldItems(validations, optionLabelSingular)
-                  if (items.length === 0) return null
-                  return (
-                    <ul className="mt-3 list-disc space-y-1 pl-5 text-sm font-medium text-out">
-                      {items.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  )
-                })()}
+                {/* Every reason Save is disabled — surfaces them in the
+                    collapsed summary so the designer doesn't have to open Edit
+                    details to discover them. Gated on !canSave (not !isValid)
+                    so the proof-type-wizard gate is covered too: a continuation
+                    whose only outstanding step is an unanswered wizard would
+                    otherwise show nothing here while Save stayed greyed. Same
+                    `saveBlockerItems` list the action bar and tooltip use. */}
+                {!canSave && (
+                  <ul className="mt-3 list-disc space-y-1 pl-5 text-sm font-medium text-out">
+                    {saveBlockerItems.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                )}
                 {!formExpanded && (
                   <div className="mt-4 flex justify-end">
                     <button
@@ -5797,6 +5876,20 @@ export default function NewVersionPage() {
                     No customer selection on file — defaulted to <strong>{v1Carry.sourceVariants[0]?.display_name}</strong>. Switch above if the agreed direction was different, or pick <strong>Start fresh</strong> if none of v{v1Carry.versionNumber}&apos;s artwork should carry across.
                   </p>
                 )}
+                {/* Material auto-suggested from the chosen direction's label.
+                    The original proof never stored a material per direction, so
+                    we map the label back to a catalogue material and pre-fill
+                    it — the designer confirms or changes it below. */}
+                {carryVariantSelection !== START_FRESH_SENTINEL && carryMaterialNote === 'matched' && selectedMaterialId && (
+                  <p className="mt-2.5 text-xs text-low">
+                    Material set to <strong>{materials.find((m) => m.id === selectedMaterialId)?.display_name ?? 'a suggested material'}</strong> for this direction — change it below if it&apos;s not right.
+                  </p>
+                )}
+                {carryVariantSelection !== START_FRESH_SENTINEL && carryMaterialNote === 'unmatched' && (
+                  <p className="mt-2.5 text-xs text-low">
+                    Couldn&apos;t match this direction to a material automatically — pick the material for this version below.
+                  </p>
+                )}
                 {/* "Picked a direction but no slot for it yet" notice.
                     Fires when the carry has images but the active shape
                     has no slot universe — typically business + 0 names
@@ -6314,33 +6407,38 @@ export default function NewVersionPage() {
           content scrolls clear of this bar. */}
       {!savedVersion && (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-surface/95 backdrop-blur">
-          <div className="mx-auto flex max-w-2xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
-            <Link
-              to={`/proofs/${proofId}`}
-              className="text-sm font-medium text-ink-mute hover:text-ink-soft"
-            >
-              Cancel
-            </Link>
-            <button
-              type="submit"
-              form="new-version-form"
-              disabled={submitting || !canSave}
-              title={
-                !wizardResolved
-                  ? 'Answer the proof-type questions to continue.'
-                  : !isValid
-                    ? missingFieldsHint(validations, optionLabelSingular)
-                    : undefined
-              }
-              aria-label={!canSave ? 'Save version, not yet available' : undefined}
-              className={[
-                'rounded px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
-                canSave ? 'bg-ink hover:opacity-90' : 'bg-ink/60',
-                'disabled:cursor-not-allowed disabled:opacity-50',
-              ].join(' ')}
-            >
-              {submitting ? 'Uploading and saving…' : 'Save version'}
-            </button>
+          <div className="mx-auto max-w-2xl px-4 py-3 sm:px-6">
+            {/* Why Save is disabled, right next to the button — so a designer
+                at the bottom of a long form doesn't have to hover the tooltip
+                or scroll back up to the summary card to find out. Hidden while
+                a save is in flight (the button shows its own progress copy). */}
+            {!canSave && !submitting && (
+              <p className="mb-2.5 text-xs font-medium text-out">
+                To save: {saveBlockerSentence}
+              </p>
+            )}
+            <div className="flex items-center justify-between gap-3">
+              <Link
+                to={`/proofs/${proofId}`}
+                className="text-sm font-medium text-ink-mute hover:text-ink-soft"
+              >
+                Cancel
+              </Link>
+              <button
+                type="submit"
+                form="new-version-form"
+                disabled={submitting || !canSave}
+                title={!canSave ? saveBlockerSentence : undefined}
+                aria-label={!canSave ? 'Save version, not yet available' : undefined}
+                className={[
+                  'rounded px-4 py-2 text-sm font-semibold text-on-ink transition-colors',
+                  canSave ? 'bg-ink hover:opacity-90' : 'bg-ink/60',
+                  'disabled:cursor-not-allowed disabled:opacity-50',
+                ].join(' ')}
+              >
+                {submitting ? 'Uploading and saving…' : 'Save version'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -6472,20 +6570,6 @@ function missingFieldItems(
   if (!validations.layoutsTitles) items.push('Give every layout a title')
   if (!validations.layoutsImages) items.push('Add at least one image to every layout')
   return items
-}
-
-// Single-sentence form for the Save button's title tooltip and
-// aria-label. Joins each item with a period + space ("Select a
-// species. Add at least one name.") so the tooltip reads as flowing
-// instructions rather than a stacked list (which the tooltip wouldn't
-// render anyway).
-function missingFieldsHint(
-  validations: Record<string, boolean>,
-  optionLabelSingular: string = 'option',
-): string {
-  const items = missingFieldItems(validations, optionLabelSingular)
-  if (items.length === 0) return 'Some required fields are incomplete.'
-  return items.map((s) => `${s}.`).join(' ')
 }
 
 const inputClass = 'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand'

@@ -20,6 +20,7 @@
     "test:order-pricing": "tsx supabase/functions/_shared/orderPricing.test.ts",
     "test:order-snapshot": "tsx supabase/functions/_shared/orderSpecSnapshot.test.ts",
     "test:nudges": "tsx supabase/functions/_shared/nudgeDecision.test.ts",
+    "test:material-match": "tsx src/lib/matchMaterial.test.ts",
     "backtest": "tsx scripts/run-backtest.ts",
     "test:ai-drafts": "tsx supabase/functions/_shared/aiDrafts/guardrails.test.ts"
   },
