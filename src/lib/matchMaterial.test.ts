@@ -77,8 +77,8 @@ const REAL_LABELS: Array<[string, string | null]> = [
   ['Natural (Matte) Steel',                       'metal_steel'],
   ['Stainless Steel',                             'metal_steel'],
   ['Stainless Steel with Infill',                 'metal_steel'],
-  ['Copper Steel',                                null],  // two metal nouns -> ambiguous
-  ['Gold Steel',                                  null],  // two metal nouns -> ambiguous
+  ['Copper Steel',                                'metal_steel'],  // "X Steel" = steel in a copper finish
+  ['Gold Steel',                                  'metal_steel'],  // "X Steel" = steel in a gold finish
   ['Acid Green Plastic',                          null],  // no distinctive plastic word
   ['Satin White Plastic',                         'plastic_satin'],
   ['Translucent Plastic',                         'plastic_translucent'],
@@ -106,6 +106,17 @@ test('the matte colour metals need both words', () => {
   assertEqual(matchCode('Matte White Metal'), 'metal_matte_white')
   assertEqual(matchCode('Matte'), null)            // no colour -> ambiguous
   assertEqual(matchCode('White Metal'), null)      // no "matte" -> ambiguous
+})
+
+test('colour metals yield to steel, but cross-family clashes stay null', () => {
+  // "X Steel" reads as steel in an X finish, so steel wins over a colour metal.
+  assertEqual(matchCode('Copper Steel'), 'metal_steel')
+  assertEqual(matchCode('Gold Steel'), 'metal_steel')
+  // But the colour metals still match on their own (no "steel" in the label).
+  assertEqual(matchCode('Copper Metal'), 'metal_copper')
+  assertEqual(matchCode('Gold Metal'), 'metal_gold')
+  // A genuine two-family clash has no head metal and stays ambiguous.
+  assertEqual(matchCode('Wood Steel'), null)
 })
 
 test('full colour plastic, acrylic and standard paper', () => {

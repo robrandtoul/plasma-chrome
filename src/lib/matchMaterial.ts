@@ -53,17 +53,19 @@ const RULES: Record<string, MatchRule> = {
   acrylic:                  { all: [['acrylic', 'perspex']] },
   carbon_fibre:             { all: [['carbon']], none: ['cnc'] },
   carbon_fibre_cnc:         { all: [['carbon'], ['cnc']] },
-  metal_copper:             { all: [['copper']] },
-  metal_gold:               { all: [['gold']] },
+  // "X Steel" labels (Gold/Copper/Silver/Brushed/Mirror Steel) describe a
+  // FINISH on steel, not a separate metal — the catalogue names its colour
+  // metals plainly ("Copper Metal", "Gold Metal"). So copper/gold yield to
+  // steel when both words appear: the card is steel, with that colour as a
+  // finish the designer picks below. (A genuine cross-family clash like
+  // "Wood Steel" still leaves two candidates and resolves to null.)
+  metal_copper:             { all: [['copper']], none: ['steel'] },
+  metal_gold:               { all: [['gold']], none: ['steel'] },
   metal_gun_metal:          { all: [['gun']] },
   metal_matte_black:        { all: [['matte', 'matt'], ['black']] },
   metal_matte_white:        { all: [['matte', 'matt'], ['white']] },
   metal_mini_steel:         { all: [['mini']] },
-  // Steel is disqualified only by `mini` (that's Mini Stainless Steel). A
-  // label with a second metal noun — "Copper Steel" / "Gold Steel" — leaves
-  // BOTH that metal and steel as candidates, so the two-candidate rule below
-  // resolves it to null rather than guessing. (Don't list copper/gold here:
-  // that would disqualify steel and let the other metal win outright.)
+  // Steel is the base metal; disqualified only by `mini` (Mini Stainless Steel).
   metal_steel:              { all: [['steel']], none: ['mini'] },
   metal_titanium:           { all: [['titanium']] },
   paper_letterpress:        { all: [['letterpress']], none: ['gilded', 'gilding', 'gild'] },
