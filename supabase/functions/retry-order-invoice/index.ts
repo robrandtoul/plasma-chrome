@@ -36,6 +36,8 @@ interface OrderRow {
   status: string
   payment_method: string | null
   xero_invoice_id: string | null
+  xero_contact_id: string | null
+  xero_contact_name: string | null
   payment_reference: string | null
   ship_to_name: string | null
   ship_to_email: string | null
@@ -77,7 +79,7 @@ Deno.serve(async (req) => {
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_card_discount, currency, status, payment_method, xero_invoice_id, payment_reference, ship_to_name, ship_to_email, ship_to_address, ship_dest_country, proofs(contacts(full_name, email))')
+    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_card_discount, currency, status, payment_method, xero_invoice_id, xero_contact_id, xero_contact_name, payment_reference, ship_to_name, ship_to_email, ship_to_address, ship_dest_country, proofs(contacts(full_name, email))')
     .eq('id', orderId)
     .single<OrderRow>()
   if (orderErr || !order) return json({ error: 'Order not found' }, 404)
@@ -126,9 +128,12 @@ Deno.serve(async (req) => {
   const { lines } = await buildOrderInvoiceLines(admin, order, { reference, currency, expectedTotal, country })
 
   // Contact: the delivery name/email Stripe collected, falling back to the
-  // proof's contact so the invoice is never "Customer" with no email.
+  // proof's contact so the invoice is never "Customer" with no email. For a NEW
+  // customer the designer-chosen name (xero_contact_name) wins, so a retried
+  // new-customer invoice creates the same contact the webhook would have;
+  // ignored on the bound path (ContactID wins).
   const contact = order.proofs?.contacts ?? null
-  const contactName = (order.ship_to_name?.trim() || contact?.full_name?.trim() || contact?.email?.trim() || 'Customer')
+  const contactName = (order.xero_contact_name?.trim() || order.ship_to_name?.trim() || contact?.full_name?.trim() || contact?.email?.trim() || 'Customer')
   const contactEmail = order.ship_to_email?.trim() || contact?.email?.trim() || null
 
   const addr = order.ship_to_address
@@ -143,6 +148,10 @@ Deno.serve(async (req) => {
       }
     : null
 
+  // Bind to the designer-chosen Xero contact (000275) so the retried invoice
+  // files under the customer's record, exactly as the webhook would have.
+  const boundContactId = order.xero_contact_id ?? null
+
   const created = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
     contactName,
     contactEmail,
@@ -150,8 +159,10 @@ Deno.serve(async (req) => {
     reference,
     lines,
     address: invoiceAddress,
+    contactId: boundContactId,
   })
   let invoiceId = created.invoiceId
+  let createdInvoice = created.invoice
   let lastError = created.error
 
   // Same single-summary-line fallback the webhook uses for a code Xero won't
@@ -165,13 +176,27 @@ Deno.serve(async (req) => {
       reference,
       lines: [{ description: `Order ${reference}`, amount: expectedTotal, itemCode: null }],
       address: invoiceAddress,
+      contactId: boundContactId,
     })
     invoiceId = retry.invoiceId
+    if (retry.invoice) createdInvoice = retry.invoice
     if (retry.error) lastError = retry.error
   }
 
   if (invoiceId) {
     await admin.from('orders').update({ xero_invoice_id: invoiceId, xero_invoice_error: null }).eq('id', orderId)
+
+    // Auto-remember (000275): an unbound retry still creates a Xero contact, so
+    // capture its ContactID for the customer's next order, mirroring the webhook.
+    if (!boundContactId) {
+      const c = (createdInvoice?.Contact as { ContactID?: string; Name?: string } | undefined) ?? null
+      if (c?.ContactID) {
+        await admin
+          .from('orders')
+          .update({ xero_contact_id: c.ContactID, ...(c.Name ? { xero_contact_name: c.Name } : {}) })
+          .eq('id', orderId)
+      }
+    }
     // A manual retry mints a real Xero invoice — record who triggered it.
     await logAudit(admin, {
       actorId: ctxOrResp.callerId,

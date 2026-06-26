@@ -127,6 +127,23 @@ Deno.serve(async (req) => {
   // checkout applies the matching option surcharge; null = base / no finish.
   const materialOptionId = typeof body.material_option_id === 'string' ? body.material_option_id : null
 
+  // Chosen Xero customer — the EXISTING Xero contact this order's invoice should
+  // file under, so paid invoices consolidate under the customer's Xero record
+  // (rather than spawning a fresh contact from the payer). Designer-picked in
+  // the Create order modal via the xero-search-contacts typeahead. Null = no
+  // pick / a new customer, in which case stripe-webhook lets Xero create the
+  // contact and writes its ContactID back onto the order for next time. The name
+  // is denormalised for the Orders log + the modal pre-fill. Online only; an
+  // offline order is invoiced manually in Xero, so this is irrelevant there.
+  const xeroContactId =
+    typeof body.xero_contact_id === 'string' && body.xero_contact_id.trim()
+      ? body.xero_contact_id.trim()
+      : null
+  const xeroContactName =
+    typeof body.xero_contact_name === 'string' && body.xero_contact_name.trim()
+      ? body.xero_contact_name.trim().slice(0, 255)
+      : null
+
   // shipping_charged: only meaningful for the manual treatment; a
   // resolved figure for the other treatments is computed at pay time.
   let shippingCharged: number | null = null
@@ -213,6 +230,13 @@ Deno.serve(async (req) => {
       return json({ error: 'An offline grid order needs a material variant to price the cards.' }, 400)
     }
   }
+
+  // Offline orders are invoiced manually in Xero, so a Xero-contact binding is
+  // meaningless there. Null it regardless of what the client sent, so an offline
+  // row never carries an irrelevant (never-used) binding even if a direct API
+  // call bypasses the modal's online-only guard.
+  const effectiveXeroContactId = paymentMethod === 'offline' ? null : xeroContactId
+  const effectiveXeroContactName = paymentMethod === 'offline' ? null : xeroContactName
 
   // expires_at: an explicit ISO string wins; otherwise default to 14 days from
   // now. The pay-page shows this date to the customer and refuses payment past
@@ -407,6 +431,8 @@ Deno.serve(async (req) => {
       order_spec_snapshot: orderSpecSnapshot,
       material_variant_id: materialVariantId,
       material_option_id: materialOptionId,
+      xero_contact_id: effectiveXeroContactId,
+      xero_contact_name: effectiveXeroContactName,
       quantity,
       names_count: namesCount,
       person_quantities: personQuantities,
@@ -471,6 +497,8 @@ Deno.serve(async (req) => {
       has_personalisation: hasPersonalisation,
       custom_quote_total: customQuoteTotal,
       material_option_id: materialOptionId,
+      xero_contact_id: effectiveXeroContactId,
+      xero_contact_name: effectiveXeroContactName,
       ...(isOffline ? { amount_cards: amountCards, amount_shipping: amountShipping, amount_card_discount: amountCardDiscount } : {}),
     },
   })

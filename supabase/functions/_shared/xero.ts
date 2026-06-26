@@ -177,6 +177,12 @@ export interface InvoiceParams {
   reference: string // the order's payment_reference (Stripe<->Xero match key)
   lines: InvoiceLine[]
   address?: InvoiceAddress | null
+  // When set, bind the invoice to this EXISTING Xero contact by ContactID so it
+  // files under the customer's existing record (with all their invoice history)
+  // rather than spawning a fresh contact from the payer. Xero IGNORES the Name /
+  // EmailAddress / Addresses fields whenever a ContactID is supplied, so those
+  // are used only on the new-customer fallback where this is null.
+  contactId?: string | null
 }
 
 // The result of a create attempt. `invoiceId` is null on any failure (the
@@ -254,25 +260,32 @@ export function buildInvoicePayload(
     Date: today,
     DueDate: today,
     CurrencyCode: p.currency,
-    Contact: {
-      Name: p.contactName,
-      ...(p.contactEmail ? { EmailAddress: p.contactEmail } : {}),
-      ...(p.address && (p.address.line1 || p.address.postalCode)
-        ? {
-            Addresses: [
-              {
-                AddressType: 'POBOX',
-                ...(p.address.line1 ? { AddressLine1: p.address.line1 } : {}),
-                ...(p.address.line2 ? { AddressLine2: p.address.line2 } : {}),
-                ...(p.address.city ? { City: p.address.city } : {}),
-                ...(p.address.region ? { Region: p.address.region } : {}),
-                ...(p.address.postalCode ? { PostalCode: p.address.postalCode } : {}),
-                ...(p.address.country ? { Country: p.address.country } : {}),
-              },
-            ],
-          }
-        : {}),
-    },
+    // Bind to an existing Xero contact by ContactID when the designer chose one
+    // (so the invoice files under the customer's existing record); otherwise
+    // build the contact from the payer — the legacy match-or-create path Xero
+    // resolves by Name. Xero ignores Name/Email/Addresses when a ContactID is
+    // present, so the company contact's own details are never overwritten.
+    Contact: p.contactId
+      ? { ContactID: p.contactId }
+      : {
+          Name: p.contactName,
+          ...(p.contactEmail ? { EmailAddress: p.contactEmail } : {}),
+          ...(p.address && (p.address.line1 || p.address.postalCode)
+            ? {
+                Addresses: [
+                  {
+                    AddressType: 'POBOX',
+                    ...(p.address.line1 ? { AddressLine1: p.address.line1 } : {}),
+                    ...(p.address.line2 ? { AddressLine2: p.address.line2 } : {}),
+                    ...(p.address.city ? { City: p.address.city } : {}),
+                    ...(p.address.region ? { Region: p.address.region } : {}),
+                    ...(p.address.postalCode ? { PostalCode: p.address.postalCode } : {}),
+                    ...(p.address.country ? { Country: p.address.country } : {}),
+                  },
+                ],
+              }
+            : {}),
+        },
     LineItems: lineItems,
   }
 }
@@ -397,4 +410,99 @@ export async function listBankAccounts(
   return ((data?.Accounts as Array<{ Name?: string; Code?: string }> | undefined) ?? [])
     .map((a) => ({ name: a.Name ?? '', code: a.Code ?? '' }))
     .filter((a) => a.code)
+}
+
+// Search the org's contacts for the Create-order Xero-customer picker. Uses
+// Xero's `searchTerm` query param — a case-insensitive match across Name,
+// FirstName, LastName, ContactNumber, CompanyNumber and EmailAddress — so the
+// designer can find a customer by company name OR a person's email. Returns a
+// light id+name+email list capped at `limit` so the picker stays snappy; []
+// on any failure (the picker just shows "no matches"). Archived contacts are
+// excluded (Xero omits them unless includeArchived=true).
+export async function searchContacts(
+  accessToken: string,
+  tenantId: string,
+  term: string,
+  limit = 25,
+): Promise<{ id: string; name: string; email: string | null }[]> {
+  const res = await fetch(
+    `https://api.xero.com/api.xro/2.0/Contacts?searchTerm=${encodeURIComponent(term)}&page=1`,
+    { headers: { Authorization: `Bearer ${accessToken}`, 'Xero-tenant-id': tenantId, Accept: 'application/json' } },
+  )
+  if (!res.ok) return []
+  const data = await res.json().catch(() => null)
+  return ((data?.Contacts as Array<{ ContactID?: string; Name?: string; EmailAddress?: string }> | undefined) ?? [])
+    .filter((c) => c.ContactID && c.Name)
+    .slice(0, limit)
+    .map((c) => ({ id: c.ContactID as string, name: c.Name as string, email: c.EmailAddress || null }))
+}
+
+// Keep the VAT-invoice email reaching the person who PAID even when the invoice
+// is filed under a different (company) Xero contact. Xero emails an invoice to
+// the bound contact's primary email PLUS any ContactPerson flagged
+// IncludeInEmails — so when the payer's email is neither the contact's primary
+// nor an already-included person, add them as an included contact person
+// (preserving the existing primary email and any other persons). Idempotent:
+// returns added=false when the payer is already a recipient, so a Stripe retry
+// never duplicates the person. Best-effort: returns ok=false + Xero's text on
+// failure so the caller logs it without failing the webhook. Requires the
+// accounting.contacts WRITE scope (already in XERO_SCOPES).
+export async function ensureInvoiceEmailRecipient(
+  accessToken: string,
+  tenantId: string,
+  contactId: string,
+  email: string,
+  name?: string | null,
+): Promise<{ ok: boolean; added: boolean; error: string | null }> {
+  const target = email.trim().normalize('NFC').toLowerCase()
+  if (!target) return { ok: true, added: false, error: null }
+
+  // Read the contact's current primary email + persons so we never clobber them.
+  const getRes = await fetch(`https://api.xero.com/api.xro/2.0/Contacts/${contactId}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, 'Xero-tenant-id': tenantId, Accept: 'application/json' },
+  })
+  if (!getRes.ok) {
+    const text = await getRes.text().catch(() => '<body read failed>')
+    return { ok: false, added: false, error: `${getRes.status} ${text}` }
+  }
+  const data = await getRes.json().catch(() => null)
+  const contact = (data?.Contacts?.[0] as Record<string, unknown> | undefined) ?? null
+  if (!contact) return { ok: false, added: false, error: 'contact not found' }
+
+  const primary = String(contact.EmailAddress ?? '').trim().normalize('NFC').toLowerCase()
+  if (primary === target) return { ok: true, added: false, error: null } // already the primary recipient
+
+  // Preserve every existing person verbatim (we spread the raw objects, so any
+  // Xero-side fields survive) — Xero replaces the ContactPersons array with what
+  // we send, while omitted top-level fields (EmailAddress, Name, Addresses) are
+  // left unchanged (verified Xero merge semantics).
+  const persons = (contact.ContactPersons as Array<Record<string, unknown>> | undefined) ?? []
+  const already = persons.some(
+    (p) => String(p.EmailAddress ?? '').trim().normalize('NFC').toLowerCase() === target && p.IncludeInEmails === true,
+  )
+  if (already) return { ok: true, added: false, error: null }
+
+  // Append the payer as an included person, preserving every existing one.
+  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean)
+  const first = parts[0] || 'Customer'
+  const last = parts.slice(1).join(' ')
+  const updatedPersons = [
+    ...persons,
+    { FirstName: first, ...(last ? { LastName: last } : {}), EmailAddress: email.trim(), IncludeInEmails: true },
+  ]
+  const postRes = await fetch(`https://api.xero.com/api.xro/2.0/Contacts/${contactId}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Xero-tenant-id': tenantId,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({ ContactID: contactId, ContactPersons: updatedPersons }),
+  })
+  if (!postRes.ok) {
+    const text = await postRes.text().catch(() => '<body read failed>')
+    return { ok: false, added: false, error: `${postRes.status} ${text}` }
+  }
+  return { ok: true, added: true, error: null }
 }
