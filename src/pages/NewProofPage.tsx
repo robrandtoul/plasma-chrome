@@ -107,6 +107,17 @@ export default function NewProofPage() {
   const [overrideReason, setOverrideReason] = useState('')
   const [urlFormatError, setUrlFormatError] = useState<string | null>(null)
 
+  // ── Duplicate-conversation guard ───────────────────────────────────────────
+  // When the chosen Help Scout conversation already backs an existing proof,
+  // the first save is blocked and this holds that proof (for the warning
+  // message + a link to it). Keyed on the CONVERSATION, not the contact —
+  // one customer can have several genuinely separate jobs, each on its own
+  // thread; reusing the same thread is the real duplicate signal (the Orama
+  // case: two proofs on conversation 3355765215). `convoDupChecking` covers
+  // the brief lookup so the Create button shows progress.
+  const [convoDupWarning, setConvoDupWarning] = useState<{ proofId: string; label: string } | null>(null)
+  const [convoDupChecking, setConvoDupChecking] = useState(false)
+
   // ── Paste-from-Help-Scout flow (primary entry point) ───────────────────────
   const [pasteInput, setPasteInput] = useState('')
   const [pasteInFlight, setPasteInFlight] = useState(false)
@@ -592,7 +603,15 @@ export default function NewProofPage() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
+    await submitProof(false)
+  }
+
+  // skipConvoGuard=true is the "Create a separate proof anyway" override
+  // from the duplicate-conversation warning; the normal submit passes false
+  // so the guard runs.
+  async function submitProof(skipConvoGuard: boolean) {
     setError('')
+    setConvoDupWarning(null)
 
     // Helper: surface a manual-section validation error AND expand
     // the disclosure if it's still collapsed, so the field the
@@ -656,6 +675,39 @@ export default function NewProofPage() {
       setError(`Pick a Help Scout conversation, or provide an override reason of at least ${MIN_OVERRIDE_REASON_LENGTH} characters.`)
       scrollToHelpscout()
       return
+    }
+
+    // Resolve the Help Scout link once. Insert either a conversation link
+    // (id + URL, URL also mirrored to the legacy thread_url column) or an
+    // override reason — never both, never neither (the DB check constraint
+    // enforces the latter).
+    const resolvedConvoId  = parsedUrl?.id ?? null
+    const resolvedConvoUrl = parsedUrl?.url ?? null
+    const resolvedOverride = resolvedConvoId ? null : reason
+
+    // Duplicate-conversation guard. A new proof keyed to a conversation that
+    // already backs a proof almost always means "add a version to the
+    // existing proof", not "start a second one". Block the first save and
+    // point the designer at that proof; "Create a separate proof anyway"
+    // (skipConvoGuard) is the explicit override for the rare distinct job
+    // that genuinely shares a thread.
+    if (!skipConvoGuard && resolvedConvoId) {
+      setConvoDupChecking(true)
+      const { data: existingProof, error: dupErr } = await supabase
+        .from('proofs')
+        .select('id, contacts(full_name, companies(name))')
+        .eq('helpscout_conversation_id', resolvedConvoId)
+        .limit(1)
+        .maybeSingle()
+      setConvoDupChecking(false)
+      // Fail open: a lookup error must never block legitimate creation.
+      if (!dupErr && existingProof) {
+        const c = (existingProof as any).contacts
+        const who = c?.companies?.name ?? c?.full_name ?? 'an existing customer'
+        setConvoDupWarning({ proofId: (existingProof as any).id, label: who })
+        scrollToHelpscout()
+        return
+      }
     }
 
     setSubmitting(true)
@@ -754,13 +806,7 @@ export default function NewProofPage() {
         })
       }
 
-      // 3. Create proof. Insert either a link (conversation_id + URL
-      // mirrored to the legacy thread_url column) or an override
-      // reason — never both, never neither (DB check constraint
-      // enforces the latter).
-      const resolvedConvoId = parsedUrl?.id ?? null
-      const resolvedConvoUrl = parsedUrl?.url ?? null
-      const resolvedOverride = resolvedConvoId ? null : reason
+      // 3. Create proof, using the Help Scout link resolved above.
       const { data, error } = await supabase
         .from('proofs')
         .insert({
@@ -1285,6 +1331,33 @@ export default function NewProofPage() {
             </div>
           </section>
 
+          {convoDupWarning && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <p className="font-medium">
+                {convoDupWarning.label} already has a proof on this Help Scout conversation.
+              </p>
+              <p className="mt-1 text-amber-800">
+                To keep every round of artwork together, open that proof and add a
+                new version instead of starting a second project.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link
+                  to={`/proofs/${convoDupWarning.proofId}`}
+                  className="inline-flex h-9 items-center rounded-lg bg-amber-600 px-3 text-[13px] font-medium text-white transition-colors hover:bg-amber-700"
+                >
+                  Open existing proof
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => { setConvoDupWarning(null); void submitProof(true) }}
+                  className="inline-flex h-9 items-center rounded-lg border border-amber-400 px-3 text-[13px] font-medium text-amber-900 transition-colors hover:bg-amber-100"
+                >
+                  Create a separate proof anyway
+                </button>
+              </div>
+            </div>
+          )}
+
           {error && (
             <p className="rounded-lg bg-out-soft px-4 py-3 text-sm text-out">{error}</p>
           )}
@@ -1304,14 +1377,16 @@ export default function NewProofPage() {
           <ButtonInk
             type="submit"
             block
-            busy={submitting || pasteInFlight || hsLookupInFlight}
+            busy={submitting || convoDupChecking || pasteInFlight || hsLookupInFlight}
             className="h-11"
           >
             {submitting
               ? 'Creating…'
-              : (pasteInFlight || hsLookupInFlight)
-                ? 'Looking up…'
-                : 'Create project'}
+              : convoDupChecking
+                ? 'Checking…'
+                : (pasteInFlight || hsLookupInFlight)
+                  ? 'Looking up…'
+                  : 'Create project'}
           </ButtonInk>
         </form>
       </div>
