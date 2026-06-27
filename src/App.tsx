@@ -39,6 +39,7 @@ import AdminCardWeightsPage from './pages/admin/AdminCardWeightsPage'
 import AdminXeroItemCodesPage from './pages/admin/AdminXeroItemCodesPage'
 import AdminMaterialOptionsPage from './pages/admin/AdminMaterialOptionsPage'
 import AdminXeroSelfTestPage from './pages/admin/AdminXeroSelfTestPage'
+import AdminAnalyticsPage from './pages/admin/AdminAnalyticsPage'
 import DesignDemo from './design/_demo'
 
 // Inner shell so the Cmd-K / Ctrl-K shortcut can mount inside the
@@ -86,6 +87,7 @@ function AppShell() {
       {/* Admin area — all paths under /admin go through the admin shell */}
       <Route path="/admin" element={<RequireAdmin><AdminLayout /></RequireAdmin>}>
         <Route index element={<Navigate to="users" replace />} />
+        <Route path="analytics" element={<AdminAnalyticsPage />} />
         <Route path="users" element={<AdminUsersPage />} />
         <Route path="customers" element={<CustomersPage />} />
         <Route path="customers/:companyId" element={<CustomerDetailPage />} />

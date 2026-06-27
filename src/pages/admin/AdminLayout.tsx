@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import {
+  BarChart3,
   Users,
   Building2,
   Layers,
@@ -27,6 +28,7 @@ import { DesignerChrome } from '../../design'
 // row carries a Lucide icon per the handoff. Add entries here to extend
 // the shell.
 const TABS: { to: string; label: string; icon: LucideIcon }[] = [
+  { to: '/admin/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/admin/users', label: 'Users', icon: Users },
   { to: '/admin/materials', label: 'Materials', icon: Layers },
   { to: '/admin/material-options', label: 'Material options', icon: SlidersHorizontal },

@@ -26,6 +26,7 @@ import { tagHelp } from '../lib/tagHelp'
 import { ResolvePopover } from '../components/ResolvePopover'
 import { NudgeOutboxPanel } from '../components/NudgeOutboxPanel'
 import CollapsibleSidebarPanel from '../components/CollapsibleSidebarPanel'
+import HotLeadsCard from '../components/HotLeadsCard'
 // QuoteLink imported + rendered inside DesignerChrome (PR 31) so
 // every designer page surfaces the same new-tab "phone rings"
 // affordance without re-importing.
@@ -2146,7 +2147,7 @@ function HeroGreeting() {
 
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const { session } = useAuth()
+  const { session, role } = useAuth()
   const userId = session?.user.id ?? null
   const [projects, setProjects]           = useState<DashboardProject[]>([])
   // Server-computed tile counts (migration 000202). Counted across every
@@ -2968,6 +2969,12 @@ export default function DashboardPage() {
                   />
               </div>
             </section>
+
+            {/* Hot leads to chase — the daily prompt. Full width under the
+                tiles so it's the first actionable thing on the page, on every
+                viewport. Admin-only "Open in Analytics" deep-link (the page is
+                admin-gated); fails quiet if the RPC isn't available. */}
+            <HotLeadsCard isAdmin={role === 'admin'} currentUserId={userId} />
 
             {/* 2-column grid for the rest of the page: list card on the
                 left, Latest activity sidebar on the right. Lives below
