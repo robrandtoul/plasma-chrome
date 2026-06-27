@@ -81,6 +81,7 @@ function makeProject(overrides: Partial<DashboardProject> = {}): DashboardProjec
     follow_up_sent_count:       null,
     follow_up_max_nudges:       null,
     follow_up_last_sent_at:     null,
+    has_open_change_request:    false,
     ...overrides,
   }
 }
@@ -396,6 +397,24 @@ test('change request older than the current version does not fire → awaiting_c
     latest_non_view_event_at: daysAgo(3), // answered by a newer version
   })
   assertEqual(proofBucket(p).bucket, 'awaiting_customer')
+})
+
+// 000279: multi-slot proof (Set collection / multi-recipient). The customer
+// requested changes on one slot, then APPROVED a different slot afterwards — so
+// the latest non-view event is an `approve` and the old latest-event signal
+// would mask the open request as awaiting_customer. has_open_change_request
+// carries the per-slot truth, so it still buckets as changes_requested.
+test('open change request masked by a later approve on another slot → changes_requested', () => {
+  const p = makeProject({
+    status: 'in_progress',
+    current_version_id: 'v1',
+    current_version_viewed_at: hoursAgo(2),
+    version_created_at: daysAgo(3),
+    latest_non_view_event_type: 'approve', // last action was approving a different slot
+    latest_non_view_event_at: hoursAgo(1),
+    has_open_change_request: true,
+  })
+  assertEqual(proofBucket(p).bucket, 'changes_requested')
 })
 
 test('automation actively chasing a viewed proof → in_follow_up (not awaiting_customer)', () => {

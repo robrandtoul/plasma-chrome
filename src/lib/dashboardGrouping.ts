@@ -85,6 +85,13 @@ export interface DashboardProject {
   follow_up_sent_count: number | null
   follow_up_max_nudges: number | null
   follow_up_last_sent_at: string | null
+  // 000279: the current version has at least one slot (recipient / layout /
+  // shared section) still in `changes_requested`. The per-slot truth behind the
+  // Changes-requested bucket — robust to a later approve on a *different* slot,
+  // which the single latest_non_view_event_type signal would let mask the
+  // outstanding request (the bug on multi-slot Set collections + multi-recipient
+  // proofs). Self-clears when a new version resets the changed slot.
+  has_open_change_request: boolean
 }
 
 export type SectionKind = 'pinned' | 'team' | 'snoozed' | 'time' | 'company'
@@ -398,6 +405,8 @@ export interface BucketInput {
   helpscout_last_customer_reply_at: string | null
   // 000246: non-null when the automation is actively chasing this proof.
   follow_up_rule_code: 'sent_never_viewed' | 'viewed_not_actioned' | null
+  // 000279: an outstanding change request on any slot of the current version.
+  has_open_change_request: boolean
 }
 
 // Label + colour per bucket. Colours are the same tokens/hexes the headline
@@ -424,12 +433,16 @@ const BUCKET_META: Record<ProofBucket, { label: string; colour: string }> = {
 }
 
 // Mirrors the change-request half of the customer_responded tile predicate
-// (dashboard_tile_counts, 000213): the latest non-view customer event is a
-// change request raised after the current version was uploaded (so a later
-// page-view doesn't mask it, and a request answered by a fresh version
-// doesn't linger). Exported so the dashboard click-through filter reuses the
-// exact same test, keeping the tile and the list in lockstep.
+// (dashboard_tile_counts, 000213 + 000279). Primary signal is the per-slot
+// truth `has_open_change_request` (any slot of the current version still in
+// `changes_requested`) — robust to a later approve on a *different* slot, which
+// the latest-event signal alone would let mask the outstanding request on a
+// multi-slot proof. The old latest-event test is kept as an OR fallback so no
+// proof that already counted as Changes-requested loses the label. Exported so
+// the dashboard click-through filter reuses the exact same test, keeping the
+// tile and the list in lockstep with the SQL.
 export function isChangesRequested(p: BucketInput): boolean {
+  if (p.has_open_change_request) return true
   return (
     p.latest_non_view_event_type === 'request_changes' &&
     !!p.latest_non_view_event_at &&
