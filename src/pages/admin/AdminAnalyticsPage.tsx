@@ -33,6 +33,12 @@ interface Funnel {
   order_paid: number
   viewed_no_decision: number
   median_days_to_approve: number | null
+  returning_n: number
+  returning_approved: number
+  new_n: number
+  new_approved: number
+  cr_proofs: number
+  cr_recovered: number
   payment_mode: string | null
 }
 interface WeekRow {
@@ -54,10 +60,14 @@ interface DesignerRow {
   proofs_all: number
   approved_all: number
   abandoned_all: number
-  in_progress_all: number
-  proofs_mature: number
-  approved_mature: number
-  approve_pct_mature: number | string | null
+  open_now: number
+  returning_share_pct: number | string | null
+  new_mature_n: number
+  new_mature_approved: number
+  new_mature_pct: number | string | null
+  cr_n: number
+  cr_recovered: number
+  cr_recovery_pct: number | string | null
   avg_days_to_approve: number | string | null
 }
 interface SegmentRow {
@@ -72,6 +82,7 @@ interface HotLead {
   company_name: string | null
   contact_name: string | null
   contact_email: string | null
+  designer_user_id: string | null
   designer_name: string | null
   designer_initials: string | null
   designer_colour: string | null
@@ -83,6 +94,7 @@ interface HotLead {
   days_since_view: number | string | null
   nudges_sent: number
   reengaged: boolean
+  is_returning: boolean
   helpscout_conversation_url: string | null
   tier: 'hot' | 'reengaged' | 'stale' | 'warm'
 }
@@ -127,7 +139,7 @@ export default function AdminAnalyticsPage() {
       setLoading(true)
       setError(null)
       try {
-        const [f, w, d, sMat, sCur, sShape, sRec, h] = await Promise.all([
+        const [f, w, d, sMat, sCur, sShape, sRec, sRet, h] = await Promise.all([
           supabase.rpc('analytics_funnel'),
           supabase.rpc('analytics_weekly'),
           supabase.rpc('analytics_by_designer'),
@@ -135,15 +147,17 @@ export default function AdminAnalyticsPage() {
           supabase.rpc('analytics_by_segment', { p_dimension: 'currency' }),
           supabase.rpc('analytics_by_segment', { p_dimension: 'shape' }),
           supabase.rpc('analytics_by_segment', { p_dimension: 'recipients' }),
+          supabase.rpc('analytics_by_segment', { p_dimension: 'returning' }),
           supabase.rpc('analytics_hot_leads'),
         ])
-        const firstErr = [f, w, d, sMat, sCur, sShape, sRec, h].find((r) => r.error)?.error
+        const firstErr = [f, w, d, sMat, sCur, sShape, sRec, sRet, h].find((r) => r.error)?.error
         if (firstErr) throw firstErr
         if (cancelled) return
         setFunnel(f.data as Funnel)
         setWeekly((w.data ?? []) as WeekRow[])
         setDesigners((d.data ?? []) as DesignerRow[])
         setSegments({
+          returning: (sRet.data ?? []) as SegmentRow[],
           material: (sMat.data ?? []) as SegmentRow[],
           currency: (sCur.data ?? []) as SegmentRow[],
           shape: (sShape.data ?? []) as SegmentRow[],
@@ -204,7 +218,7 @@ export default function AdminAnalyticsPage() {
         <div className="rounded-2xl bg-out-soft p-6 text-sm text-out ring-1 ring-out">
           Failed to load analytics: {error}
           <p className="mt-2 text-ink-mute">
-            If this says a function does not exist, migration <code>000276</code> hasn’t been applied yet.
+            If this says a function does not exist, migrations <code>000276</code>/<code>000277</code> haven’t been applied yet.
           </p>
         </div>
       ) : (
@@ -225,7 +239,6 @@ function FunnelSection({ funnel, weekly }: { funnel: Funnel; weekly: WeekRow[] }
   const stages: { key: string; label: string; value: number; colour: string; note?: string }[] = [
     { key: 'enq', label: 'Qualified enquiries (proofs)', value: funnel.total_proofs, colour: 'var(--c-ink-mute)' },
     { key: 'view', label: 'Opened by customer', value: funnel.viewed, colour: 'var(--c-allocated)' },
-    { key: 'dec', label: 'Made a decision (in-app)', value: funnel.decided, colour: 'var(--c-allocated)' },
     { key: 'appr', label: 'Approved', value: funnel.approved, colour: 'var(--c-in-stock)' },
     { key: 'sent', label: 'Order sent', value: funnel.order_sent, colour: 'var(--c-in-stock)' },
     { key: 'paid', label: 'Paid (won)', value: funnel.order_paid, colour: 'var(--c-in-stock)' },
@@ -234,6 +247,9 @@ function FunnelSection({ funnel, weekly }: { funnel: Funnel; weekly: WeekRow[] }
   const paidRate = pct(funnel.order_paid, total)
   const leakRate = pct(funnel.viewed_no_decision, total)
   const isLive = (funnel.payment_mode ?? '').toLowerCase() === 'live'
+  const returningRate = pct(funnel.returning_approved, funnel.returning_n)
+  const newRate = pct(funnel.new_approved, funnel.new_n)
+  const recoveryRate = pct(funnel.cr_recovered, funnel.cr_proofs)
 
   return (
     <div className="space-y-5">
@@ -262,6 +278,30 @@ function FunnelSection({ funnel, weekly }: { funnel: Funnel; weekly: WeekRow[] }
         <span className="text-ink-soft">
           This is the biggest leak — customers see the proof and go quiet. The Hot leads tab lists the ones worth chasing.
         </span>
+      </div>
+
+      {/* Returning vs new + change-request recovery — the two cuts the
+          designer-disparity analysis surfaced. Returning uses only the durable
+          `repeat customer` tag; recovery isolates handling from lead quality. */}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <PanelShell title="Returning vs new" eyebrow="Conversion by customer type" icon={Users} accent="var(--c-in-stock)">
+          <TwoBar
+            a={{ label: 'Returning', pct: returningRate, n: funnel.returning_n, approved: funnel.returning_approved, colour: 'var(--c-in-stock)' }}
+            b={{ label: 'New', pct: newRate, n: funnel.new_n, approved: funnel.new_approved, colour: 'var(--c-allocated)' }}
+          />
+          <p className="mt-2 text-xs text-ink-mute">
+            Returning = the durable <code>repeat customer</code> tag (the only tag safe for conversion analysis).
+          </p>
+        </PanelShell>
+        <PanelShell title="Change-request recovery" eyebrow="Handling, not lead quality" icon={TrendingUp} accent="var(--c-brand)">
+          <div className="flex items-baseline gap-2">
+            <span className="text-3xl font-bold text-ink">{fmtPct(recoveryRate)}</span>
+            <span className="text-sm text-ink-mute">{funnel.cr_recovered} of {funnel.cr_proofs} won back</span>
+          </div>
+          <p className="mt-2 text-xs text-ink-mute">
+            Of customers who requested changes, the share later approved — the clearest read on how well revisions land.
+          </p>
+        </PanelShell>
       </div>
 
       {/* Funnel bars */}
@@ -518,10 +558,12 @@ function HotLeadsSection({ leads }: { leads: HotLead[] }) {
 // ── 3. Team ──────────────────────────────────────────────────────────────────
 function TeamSection({ rows }: { rows: DesignerRow[] }) {
   return (
-    <PanelShell title="Conversion by designer" eyebrow="Maturity-controlled" icon={Users} accent="var(--c-allocated)">
+    <PanelShell title="Conversion by designer" eyebrow="Controlled — not a league table" icon={Users} accent="var(--c-allocated)">
       <p className="mb-3 text-sm text-ink-mute">
-        “Mature %” counts only proofs older than 7 days, so a designer holding fresher work isn’t unfairly
-        marked down. Lead quality can still differ between designers — treat this as a prompt to look, not a verdict.
+        Raw approval rate misleads — designers carry different currency, product and returning-customer mixes.
+        These columns control for that: <strong>new-customer conversion</strong> counts only new customers on
+        proofs older than 7 days, and <strong>change-request recovery</strong> (the share of change requests
+        later won back) isolates handling from lead quality. Small samples wobble — read the direction, not the decimal.
       </p>
       <div className="table-scroll overflow-y-hidden rounded-xl ring-1 ring-line">
         <table className="w-full text-sm">
@@ -529,46 +571,33 @@ function TeamSection({ rows }: { rows: DesignerRow[] }) {
             <tr className="border-b border-line-soft bg-canvas">
               <th className={thCls}>Designer</th>
               <th className={`${thCls} text-right`}>Proofs</th>
-              <th className={`${thCls} text-right`}>Approved</th>
-              <th className={`${thCls} text-right`}>Abandoned</th>
-              <th className={`${thCls} text-right`}>Mature cohort</th>
-              <th className={`${thCls}`}>Mature approval %</th>
-              <th className={`${thCls} text-right`}>Avg days to approve</th>
+              <th className={`${thCls} text-right`}>Open queue</th>
+              <th className={`${thCls} text-right`}>Returning</th>
+              <th className={thCls}>New-customer conv. (mature)</th>
+              <th className={thCls}>Change-request recovery</th>
+              <th className={`${thCls} text-right`}>Avg days</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => {
-              const maturePct = r.approve_pct_mature != null ? num(r.approve_pct_mature) : null
-              return (
-                <tr key={r.designer_user_id ?? r.designer_name ?? Math.random()} className="border-b border-line-soft last:border-0">
-                  <td className="px-3 py-2.5 font-medium text-ink">{r.designer_name ?? 'Unknown'}</td>
-                  <td className="px-3 py-2.5 text-right text-ink-soft">{r.proofs_all}</td>
-                  <td className="px-3 py-2.5 text-right text-ink-soft">{r.approved_all}</td>
-                  <td className="px-3 py-2.5 text-right text-ink-soft">{r.abandoned_all}</td>
-                  <td className="px-3 py-2.5 text-right text-ink-mute">
-                    {r.approved_mature}/{r.proofs_mature}
-                  </td>
-                  <td className="px-3 py-2.5">
-                    {maturePct == null ? (
-                      <span className="text-ink-dim">—</span>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <div className="h-2 w-24 overflow-hidden rounded-full bg-canvas ring-1 ring-line-soft">
-                          <div
-                            className="h-full rounded-full"
-                            style={{ width: `${Math.min(100, maturePct)}%`, backgroundColor: 'var(--c-in-stock)' }}
-                          />
-                        </div>
-                        <span className="text-xs font-semibold text-ink">{fmtPct(maturePct)}</span>
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-3 py-2.5 text-right text-ink-mute">
-                    {r.avg_days_to_approve != null ? `${num(r.avg_days_to_approve)}d` : '—'}
-                  </td>
-                </tr>
-              )
-            })}
+            {rows.map((r) => (
+              <tr key={r.designer_user_id ?? r.designer_name ?? Math.random()} className="border-b border-line-soft last:border-0">
+                <td className="px-3 py-2.5 font-medium text-ink">{r.designer_name ?? 'Unknown'}</td>
+                <td className="px-3 py-2.5 text-right text-ink-soft">{r.proofs_all}</td>
+                <td className="px-3 py-2.5 text-right text-ink-soft">{r.open_now}</td>
+                <td className="px-3 py-2.5 text-right text-ink-mute">
+                  {r.returning_share_pct != null ? `${num(r.returning_share_pct)}%` : '—'}
+                </td>
+                <td className="px-3 py-2.5">
+                  <RateBar pct={r.new_mature_pct != null ? num(r.new_mature_pct) : null} sample={`${r.new_mature_approved}/${r.new_mature_n}`} colour="var(--c-in-stock)" />
+                </td>
+                <td className="px-3 py-2.5">
+                  <RateBar pct={r.cr_recovery_pct != null ? num(r.cr_recovery_pct) : null} sample={`${r.cr_recovered}/${r.cr_n}`} colour="var(--c-brand)" />
+                </td>
+                <td className="px-3 py-2.5 text-right text-ink-mute">
+                  {r.avg_days_to_approve != null ? `${num(r.avg_days_to_approve)}d` : '—'}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -578,6 +607,7 @@ function TeamSection({ rows }: { rows: DesignerRow[] }) {
 
 // ── 4. Products ──────────────────────────────────────────────────────────────
 const SEGMENT_PANELS: { key: string; title: string }[] = [
+  { key: 'returning', title: 'By returning vs new' },
   { key: 'material', title: 'By material' },
   { key: 'recipients', title: 'By recipients' },
   { key: 'shape', title: 'By proof type' },
@@ -593,7 +623,9 @@ function ProductsSection({ segments }: { segments: Record<string, SegmentRow[]> 
         </PanelShell>
       ))}
       <p className="text-xs text-ink-mute lg:col-span-2">
-        Rows with fewer than 8 proofs are greyed — the sample is too small to read much into.
+        Rows with fewer than 8 proofs are greyed — the sample is too small to read much into. Segments come from
+        structured fields (material, currency, proof type, recipients) plus the durable <code>repeat customer</code>
+        tag; lifecycle tags (priority, ready-to-order) are deliberately excluded — they track funnel stage, not value.
       </p>
     </div>
   )
@@ -654,6 +686,49 @@ function StatTile({
         {value}
       </div>
       {sub && <div className="mt-0.5 text-xs text-ink-mute">{sub}</div>}
+    </div>
+  )
+}
+
+interface TwoBarDatum {
+  label: string
+  pct: number
+  n: number
+  approved: number
+  colour: string
+}
+
+function TwoBar({ a, b }: { a: TwoBarDatum; b: TwoBarDatum }) {
+  return (
+    <div className="space-y-2">
+      {[a, b].map((d) => (
+        <div key={d.label} className="flex items-center gap-3 text-sm">
+          <div className="w-20 shrink-0 text-ink-soft">{d.label}</div>
+          <div className="relative h-6 flex-1 overflow-hidden rounded bg-canvas ring-1 ring-line-soft">
+            <div
+              className="h-full rounded"
+              style={{ width: `${Math.max(2, Math.min(100, d.pct))}%`, backgroundColor: `color-mix(in srgb, ${d.colour} 35%, transparent)` }}
+            />
+            <div className="absolute inset-0 flex items-center justify-between px-2">
+              <span className="text-xs text-ink-mute">{d.approved}/{d.n}</span>
+              <span className="text-xs font-semibold text-ink">{fmtPct(d.pct)}</span>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function RateBar({ pct: ratePct, sample, colour }: { pct: number | null; sample: string; colour: string }) {
+  if (ratePct == null) return <span className="text-ink-dim">—</span>
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-2 w-20 overflow-hidden rounded-full bg-canvas ring-1 ring-line-soft">
+        <div className="h-full rounded-full" style={{ width: `${Math.min(100, ratePct)}%`, backgroundColor: colour }} />
+      </div>
+      <span className="text-xs font-semibold text-ink">{fmtPct(ratePct)}</span>
+      <span className="text-[11px] text-ink-dim">{sample}</span>
     </div>
   )
 }
