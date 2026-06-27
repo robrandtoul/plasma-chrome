@@ -150,6 +150,21 @@ async function handle(req: Request): Promise<Response> {
     .single()
   if (insErr) return json({ error: 'insert failed', detail: insErr.message }, 500)
 
+  // Terminal reason → stop automated follow-up nudges for this proof. Reuses the
+  // existing per-proof opt-out the nudge pipeline already honours
+  // (compute_nudge_candidates exposes auto_nudge_disabled → nudgeDecision returns
+  // 'skipped_opted_out'), so no change to the nudge automation. Only set when not
+  // already opted out, so an existing opt-out timestamp isn't moved. Best-effort:
+  // the feedback is already recorded; a failure here is logged, not fatal.
+  if (reasonCode === 'going_elsewhere') {
+    const { error: stopErr } = await admin
+      .from('proofs')
+      .update({ auto_nudge_disabled_at: new Date().toISOString() })
+      .eq('id', proofId)
+      .is('auto_nudge_disabled_at', null)
+    if (stopErr) console.error('[proof-feedback] stop-nudges failed:', stopErr.message)
+  }
+
   // Best-effort Help Scout note so the designer sees the reason and can follow
   // up. Deferred so it never adds latency or fails the customer's submit.
   const conversationId = (proof as { helpscout_conversation_id: string | null }).helpscout_conversation_id
@@ -169,7 +184,7 @@ async function handle(req: Request): Promise<Response> {
           `Reason: ${REASON_LABELS[reasonCode]}.` +
           (note ? `\n“${note}”` : '') +
           offerSummary(recoveryOffer, currency) +
-          `\n\nWorth a personal follow-up.${link}`
+          `\n\n${reasonCode === 'going_elsewhere' ? 'Automated reminders for this proof have been stopped.' : 'Worth a personal follow-up.'}${link}`
         await createNote(token, conversationId, userId, noteText)
       } catch (err) {
         console.error('[proof-feedback] HS note failed:', (err as Error).message)
