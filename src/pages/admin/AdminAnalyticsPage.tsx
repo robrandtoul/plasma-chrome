@@ -6,6 +6,7 @@ import {
   Users,
   Boxes,
   ExternalLink,
+  MessageSquare,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { PanelShell, Pill, type PillColour } from '../../design'
@@ -99,6 +100,20 @@ interface HotLead {
   tier: 'hot' | 'reengaged' | 'stale' | 'warm'
 }
 
+interface LossReason {
+  reason_code: string
+  n: number
+  latest_at: string | null
+}
+
+const LOSS_LABELS: Record<string, string> = {
+  price_too_high: 'Price too high',
+  different_direction: 'Wanted a different direction',
+  timing: 'Timing not right',
+  going_elsewhere: 'Went elsewhere / not needed',
+  still_thinking: 'Still thinking',
+}
+
 type Tab = 'funnel' | 'hot' | 'team' | 'products'
 
 const num = (v: number | string | null | undefined): number => {
@@ -132,6 +147,7 @@ export default function AdminAnalyticsPage() {
   const [designers, setDesigners] = useState<DesignerRow[]>([])
   const [segments, setSegments] = useState<Record<string, SegmentRow[]>>({})
   const [hotLeads, setHotLeads] = useState<HotLead[]>([])
+  const [lossReasons, setLossReasons] = useState<LossReason[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -139,7 +155,7 @@ export default function AdminAnalyticsPage() {
       setLoading(true)
       setError(null)
       try {
-        const [f, w, d, sMat, sCur, sShape, sRec, sRet, h] = await Promise.all([
+        const [f, w, d, sMat, sCur, sShape, sRec, sRet, h, lr] = await Promise.all([
           supabase.rpc('analytics_funnel'),
           supabase.rpc('analytics_weekly'),
           supabase.rpc('analytics_by_designer'),
@@ -149,8 +165,9 @@ export default function AdminAnalyticsPage() {
           supabase.rpc('analytics_by_segment', { p_dimension: 'recipients' }),
           supabase.rpc('analytics_by_segment', { p_dimension: 'returning' }),
           supabase.rpc('analytics_hot_leads'),
+          supabase.rpc('analytics_loss_reasons'),
         ])
-        const firstErr = [f, w, d, sMat, sCur, sShape, sRec, sRet, h].find((r) => r.error)?.error
+        const firstErr = [f, w, d, sMat, sCur, sShape, sRec, sRet, h, lr].find((r) => r.error)?.error
         if (firstErr) throw firstErr
         if (cancelled) return
         setFunnel(f.data as Funnel)
@@ -164,6 +181,7 @@ export default function AdminAnalyticsPage() {
           recipients: (sRec.data ?? []) as SegmentRow[],
         })
         setHotLeads((h.data ?? []) as HotLead[])
+        setLossReasons((lr.data ?? []) as LossReason[])
       } catch (e) {
         if (!cancelled) setError((e as Error).message)
       } finally {
@@ -223,7 +241,7 @@ export default function AdminAnalyticsPage() {
         </div>
       ) : (
         <>
-          {tab === 'funnel' && funnel && <FunnelSection funnel={funnel} weekly={weekly} />}
+          {tab === 'funnel' && funnel && <FunnelSection funnel={funnel} weekly={weekly} lossReasons={lossReasons} />}
           {tab === 'hot' && <HotLeadsSection leads={hotLeads} />}
           {tab === 'team' && <TeamSection rows={designers} />}
           {tab === 'products' && <ProductsSection segments={segments} />}
@@ -234,7 +252,7 @@ export default function AdminAnalyticsPage() {
 }
 
 // ── 1. Funnel & trend ────────────────────────────────────────────────────────
-function FunnelSection({ funnel, weekly }: { funnel: Funnel; weekly: WeekRow[] }) {
+function FunnelSection({ funnel, weekly, lossReasons }: { funnel: Funnel; weekly: WeekRow[]; lossReasons: LossReason[] }) {
   const total = funnel.total_proofs || 1
   const stages: { key: string; label: string; value: number; colour: string; note?: string }[] = [
     { key: 'enq', label: 'Qualified enquiries (proofs)', value: funnel.total_proofs, colour: 'var(--c-ink-mute)' },
@@ -346,6 +364,11 @@ function FunnelSection({ funnel, weekly }: { funnel: Funnel; weekly: WeekRow[] }
           Bars = enquiries that week · line = % approved so far. Greyed bars are recent weeks still
           maturing (approvals land at a ~1-day median, so the latest week always reads low at first).
         </p>
+      </PanelShell>
+
+      {/* Why we lose — customer-stated decline reasons (the learning loop). */}
+      <PanelShell title="Why we lose" eyebrow="Customer-stated decline reasons" icon={MessageSquare} accent="var(--c-out)">
+        <LossReasons rows={lossReasons} />
       </PanelShell>
     </div>
   )
@@ -729,6 +752,37 @@ function RateBar({ pct: ratePct, sample, colour }: { pct: number | null; sample:
       </div>
       <span className="text-xs font-semibold text-ink">{fmtPct(ratePct)}</span>
       <span className="text-[11px] text-ink-dim">{sample}</span>
+    </div>
+  )
+}
+
+function LossReasons({ rows }: { rows: LossReason[] }) {
+  if (rows.length === 0) {
+    return (
+      <p className="text-sm text-ink-mute">
+        No decline feedback captured yet — this fills in as customers use the “Not ready to approve?” option on proofs.
+      </p>
+    )
+  }
+  const total = rows.reduce((s, r) => s + r.n, 0) || 1
+  const max = Math.max(...rows.map((r) => r.n), 1)
+  return (
+    <div className="space-y-1.5">
+      {rows.map((r) => (
+        <div key={r.reason_code} className="flex items-center gap-3 text-sm">
+          <div className="w-44 shrink-0 truncate text-ink-soft">{LOSS_LABELS[r.reason_code] ?? r.reason_code}</div>
+          <div className="relative h-6 flex-1 overflow-hidden rounded bg-canvas ring-1 ring-line-soft">
+            <div
+              className="h-full rounded"
+              style={{ width: `${Math.max(2, (r.n / max) * 100)}%`, backgroundColor: 'color-mix(in srgb, var(--c-out) 30%, transparent)' }}
+            />
+            <div className="absolute inset-0 flex items-center justify-between px-2">
+              <span className="text-xs text-ink-mute">{r.n}</span>
+              <span className="text-xs font-semibold text-ink">{Math.round((r.n / total) * 100)}%</span>
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

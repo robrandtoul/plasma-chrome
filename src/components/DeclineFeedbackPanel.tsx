@@ -1,0 +1,230 @@
+import { useState } from 'react'
+import { supabase } from '../lib/supabase'
+
+// Customer-facing "Not ready to approve?" panel on the proof page. Captures a
+// face-saving reason (the learning loop) and, for a price objection, shows
+// recovery offers — a cheaper same-category material (public_get_cheaper_alternatives
+// RPC), the smallest-run price, and an optional discount (admin-set, off by
+// default). Records via the anon proof-feedback edge function. NOT an approval
+// action — the proof stays open and the customer can still approve.
+//
+// Behavioural design (from the conversion analysis): people rarely admit "too
+// expensive" or "I don't like it" outright, so the options are worded to remove
+// the awkward admission — "more than I'd budgeted", "a different direction".
+
+type ReasonCode = 'price_too_high' | 'different_direction' | 'timing' | 'going_elsewhere' | 'still_thinking'
+
+const REASONS: { code: ReasonCode; label: string; followUp: string }[] = [
+  { code: 'price_too_high', label: 'The price is more than I’d budgeted', followUp: 'Let’s see if we can make it work for your budget.' },
+  { code: 'different_direction', label: 'I’d like to see a different design direction', followUp: 'No problem at all — we’ll put together a fresh take. Anything specific you’d like to see?' },
+  { code: 'timing', label: 'The timing isn’t right just now', followUp: 'Totally fine — we’ll keep everything on file and pick it up whenever you’re ready.' },
+  { code: 'going_elsewhere', label: 'I’m going a different route / no longer need these', followUp: 'Thanks for letting us know — we’ll close this off. If anything changes, just reply.' },
+  { code: 'still_thinking', label: 'I just need to think it over', followUp: 'Take your time. Is there anything we can help clarify?' },
+]
+
+interface Alt { display_name: string; code?: string; from_total: number | string }
+interface Recovery {
+  currency: string | null
+  current_from_total: number | string | null
+  alternatives: Alt[]
+  discount_percent: number | string
+}
+
+function money(currency: string | null, amount: number | string | null | undefined): string {
+  if (amount == null) return ''
+  const n = typeof amount === 'string' ? parseFloat(amount) : amount
+  if (!Number.isFinite(n)) return ''
+  const sym = currency === 'EUR' ? '€' : currency === 'USD' ? '$' : '£'
+  return `${sym}${n.toLocaleString('en-GB', { maximumFractionDigits: 0 })}`
+}
+
+export default function DeclineFeedbackPanel({
+  proofId,
+  proofVersionId,
+}: {
+  proofId: string
+  proofVersionId: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [reason, setReason] = useState<ReasonCode | null>(null)
+  const [note, setNote] = useState('')
+  const [name, setName] = useState('')
+  const [recovery, setRecovery] = useState<Recovery | null>(null)
+  const [recoveryLoading, setRecoveryLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [done, setDone] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function pickReason(code: ReasonCode) {
+    setReason(code)
+    setError(null)
+    if (code === 'price_too_high') {
+      setRecoveryLoading(true)
+      try {
+        const { data } = await supabase.rpc('public_get_cheaper_alternatives', { p_proof_id: proofId })
+        setRecovery((data ?? null) as Recovery | null)
+      } catch {
+        setRecovery(null) // recovery is a bonus; never block the feedback
+      } finally {
+        setRecoveryLoading(false)
+      }
+    }
+  }
+
+  async function submit() {
+    if (!reason || submitting) return
+    setSubmitting(true)
+    setError(null)
+    const discountPct = recovery ? Number(recovery.discount_percent) || 0 : 0
+    const recovery_offer = reason === 'price_too_high' && recovery
+      ? {
+          from_total: recovery.current_from_total != null ? Number(recovery.current_from_total) : null,
+          cheaper_materials: (recovery.alternatives ?? []).map((a) => ({ display_name: a.display_name, from_total: Number(a.from_total) })),
+          discount_percent: discountPct,
+        }
+      : null
+    try {
+      const { data, error: fnErr } = await supabase.functions.invoke<{ status?: string; error?: string }>('proof-feedback', {
+        body: {
+          proof_id: proofId,
+          proof_version_id: proofVersionId,
+          reason_code: reason,
+          note: note.trim() || undefined,
+          actor_name: name.trim() || undefined,
+          recovery_offer,
+        },
+      })
+      if (fnErr || data?.status !== 'ok') throw new Error(data?.error || fnErr?.message || 'Could not send')
+      setDone(true)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (done) {
+    return (
+      <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+        Thank you — that’s a real help. We’ll be in touch.
+      </div>
+    )
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-4 text-sm text-gray-500 underline underline-offset-2 hover:text-gray-700"
+      >
+        Not ready to approve just yet?
+      </button>
+    )
+  }
+
+  const selected = REASONS.find((r) => r.code === reason)
+  const alts = recovery?.alternatives ?? []
+  const discountPct = recovery ? Number(recovery.discount_percent) || 0 : 0
+
+  return (
+    <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-4">
+      {!reason ? (
+        <>
+          <p className="text-sm font-medium text-gray-800">No problem — what’s holding you back?</p>
+          <p className="mt-0.5 text-xs text-gray-500">This just helps us help you. Nothing here approves or cancels anything.</p>
+          <div className="mt-3 space-y-1.5">
+            {REASONS.map((r) => (
+              <button
+                key={r.code}
+                type="button"
+                onClick={() => pickReason(r.code)}
+                className="block w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-left text-sm text-gray-700 transition-colors hover:border-gray-300 hover:bg-gray-50"
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          <button type="button" onClick={() => setOpen(false)} className="mt-3 text-xs text-gray-400 hover:text-gray-600">
+            Never mind
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="text-sm text-gray-700">{selected?.followUp}</p>
+
+          {/* Price-objection recovery offers */}
+          {reason === 'price_too_high' && (
+            <div className="mt-3 rounded-lg border border-gray-200 bg-white p-3 text-sm">
+              {recoveryLoading ? (
+                <p className="text-gray-500">Finding some options…</p>
+              ) : (
+                <>
+                  <p className="font-medium text-gray-800">A few ways to bring the cost down:</p>
+                  <ul className="mt-2 space-y-1.5 text-gray-700">
+                    {recovery?.current_from_total != null && (
+                      <li>• Smaller runs of this design start from <strong>{money(recovery.currency, recovery.current_from_total)}</strong>.</li>
+                    )}
+                    {alts.length > 0 && (
+                      <li>
+                        • The same design also comes in{' '}
+                        {alts.map((a, i) => (
+                          <span key={a.display_name}>
+                            {i > 0 ? ', ' : ''}
+                            <strong>{a.display_name}</strong> from {money(recovery?.currency ?? null, a.from_total)}
+                          </span>
+                        ))}
+                        .
+                      </li>
+                    )}
+                    {discountPct > 0 && (
+                      <li>• We can offer <strong>{discountPct}% off</strong> if you order this week.</li>
+                    )}
+                  </ul>
+                  <p className="mt-2 text-xs text-gray-500">
+                    Send this and we’ll follow up with the exact figures — no obligation.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
+          <label className="mt-3 block text-xs text-gray-500">
+            Anything to add? (optional)
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+              className="mt-1 w-full resize-none rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm text-gray-800 focus:border-gray-400 focus:outline-none"
+              placeholder={reason === 'different_direction' ? 'e.g. simpler, bolder, different colour…' : ''}
+            />
+          </label>
+          <label className="mt-2 block text-xs text-gray-500">
+            Your name (optional)
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm text-gray-800 focus:border-gray-400 focus:outline-none"
+            />
+          </label>
+
+          {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+
+          <div className="mt-3 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={submit}
+              disabled={submitting}
+              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+            >
+              {submitting ? 'Sending…' : 'Send'}
+            </button>
+            <button type="button" onClick={() => { setReason(null); setRecovery(null); setError(null) }} className="text-xs text-gray-400 hover:text-gray-600">
+              ← Back
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}

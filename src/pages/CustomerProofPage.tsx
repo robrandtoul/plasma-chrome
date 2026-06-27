@@ -20,6 +20,7 @@ import { MetalThicknessPanel } from '../components/MetalThicknessPanel'
 import { DEFAULT_METAL_THICKNESS_NOTES, thicknessSetForMaterial } from '../lib/metalThicknessNotes'
 import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
 import { ActionPanel } from '../components/ActionPanel'
+import DeclineFeedbackPanel from '../components/DeclineFeedbackPanel'
 import { ProofDetailView } from '../components/ProofDetailView'
 import { firstName } from '../lib/firstName'
 import { BRAND_ORDER } from '../lib/theme'
@@ -3360,6 +3361,13 @@ export default function CustomerProofPage() {
               </section>
             )
           })()}
+
+          {/* "Not ready to approve?" — face-saving decline capture + price
+              recovery. Once per proof, only while it's still open on the current
+              version. See the proof-feedback edge function + migration 000279. */}
+          {activeVersion.is_current && !proofIsApproved && activeVersion.approvals_enabled && (
+            <DeclineFeedbackPanel proofId={id ?? ''} proofVersionId={activeVersion.id} />
+          )}
 
           {/* ───── QR codes (migrations 000168 / 000169) ─────
               Renders a dedicated verification panel for any QR

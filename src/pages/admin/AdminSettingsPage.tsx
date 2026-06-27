@@ -36,6 +36,11 @@ interface Settings {
    *  pay link was sent). Only consumed when auto_order_reminders_enabled is on. */
   order_reminders_max: number
   order_reminder_interval_days: number
+  /** Decline-recovery discount (migration 000279). When enabled, the proof page
+   *  offers this % off to a customer who flags price as the blocker. Off by
+   *  default — auto-discounting touches margin, so a human sets the size. */
+  decline_recovery_discount_enabled: boolean
+  decline_recovery_discount_percent: number
   /** Stripe payment mode (migration 000241): 'test' (sandbox) or 'live'. The
    *  checkout functions read this to pick which Stripe key set to use. */
   payment_mode: 'test' | 'live'
@@ -121,6 +126,8 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   auto_order_reminders_enabled:      'setting.auto_order_reminders_enabled_updated',
   order_reminders_max:               'setting.order_reminders_max_updated',
   order_reminder_interval_days:      'setting.order_reminder_interval_days_updated',
+  decline_recovery_discount_enabled: 'setting.decline_recovery_discount_enabled_updated',
+  decline_recovery_discount_percent: 'setting.decline_recovery_discount_percent_updated',
   payment_mode:                      'setting.payment_mode_updated',
   xero_stripe_account_code:          'setting.xero_stripe_account_code_updated',
   fedex_box_weight_grams:            'setting.fedex_box_weight_grams_updated',
@@ -231,7 +238,7 @@ export default function AdminSettingsPage() {
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, xero_stripe_account_code, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config')
+      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, xero_stripe_account_code, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -388,6 +395,21 @@ export default function AdminSettingsPage() {
     }
     if (errors[field]) setErrors((e) => ({ ...e, [field]: undefined }))
     void saveField(field, value)
+  }
+
+  // Blur handler for the decline-recovery discount percent (000279). Allows
+  // decimals 0–100; surfaces a pill rather than snapping back.
+  function onDiscountPercentBlur() {
+    if (!settings) return
+    const draft = drafts.decline_recovery_discount_percent
+    if (draft === undefined) return
+    const value = Number(draft)
+    if (!Number.isFinite(value) || value < 0 || value > 100) {
+      setErrors((e) => ({ ...e, decline_recovery_discount_percent: 'Between 0 and 100.' }))
+      return
+    }
+    if (errors.decline_recovery_discount_percent) setErrors((e) => ({ ...e, decline_recovery_discount_percent: undefined }))
+    void saveField('decline_recovery_discount_percent', value)
   }
 
   // Blur handler for the two unpaid-order reminder cadence inputs (000270).
@@ -594,6 +616,44 @@ export default function AdminSettingsPage() {
               value={drafts.order_reminder_interval_days ?? settings.order_reminder_interval_days}
               onChange={(e) => setDrafts((d) => ({ ...d, order_reminder_interval_days: e.target.value === '' ? 1 : Number(e.target.value) }))}
               onBlur={() => onReminderNumberBlur('order_reminder_interval_days')}
+              className={`w-32 ${inputClass}`}
+            />
+          </FieldRow>
+
+          {/* Decline-recovery discount (migration 000279). Off by default —
+              when on, the proof page offers this % off to a customer who flags
+              price as the blocker, and notes it to the designer. */}
+          <FieldRow
+            label="Decline-recovery discount"
+            help="When a customer says the price is too high on a proof, offer them this % off to win the order. Off by default. The discount is shown on the proof page and noted to the designer to apply at order time. Saves immediately."
+            saved={recentlySaved('decline_recovery_discount_enabled')}
+            working={working.decline_recovery_discount_enabled}
+            error={errors.decline_recovery_discount_enabled}
+          >
+            <Toggle
+              value={settings.decline_recovery_discount_enabled}
+              onChange={(v) => void saveField('decline_recovery_discount_enabled', v)}
+              disabled={!!working.decline_recovery_discount_enabled}
+              label="Offer a discount when price is the blocker"
+            />
+          </FieldRow>
+
+          <FieldRow
+            label="Discount offered (%)"
+            help="The percentage off shown to a customer who flags price (0–100). Only used when the toggle above is on."
+            saved={recentlySaved('decline_recovery_discount_percent')}
+            working={working.decline_recovery_discount_percent}
+            error={errors.decline_recovery_discount_percent}
+          >
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={0.5}
+              inputMode="decimal"
+              value={drafts.decline_recovery_discount_percent ?? settings.decline_recovery_discount_percent}
+              onChange={(e) => setDrafts((d) => ({ ...d, decline_recovery_discount_percent: e.target.value === '' ? 0 : Number(e.target.value) }))}
+              onBlur={onDiscountPercentBlur}
               className={`w-32 ${inputClass}`}
             />
           </FieldRow>
@@ -1323,6 +1383,8 @@ function humanFieldLabel(field: keyof Settings): string {
     auto_order_reminders_enabled: 'Send unpaid-order reminders automatically',
     order_reminders_max: 'Maximum reminders per order',
     order_reminder_interval_days: 'Days between reminders',
+    decline_recovery_discount_enabled: 'Decline-recovery discount enabled',
+    decline_recovery_discount_percent: 'Decline-recovery discount (%)',
     payment_mode: 'Stripe payment mode',
     xero_stripe_account_code: 'Xero Stripe clearing account',
     fedex_box_weight_grams: 'FedEx box weight (grams)',
