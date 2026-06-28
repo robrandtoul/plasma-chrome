@@ -2021,6 +2021,32 @@ function leadTimeTint(category: string): string {
   return LEAD_TIME_CATEGORY_TINT[category] ?? 'var(--c-ink-mute)'
 }
 
+// Human family name per `category`. The catalogue column is snake_case;
+// these are the names staff use. Carbon fibre + its CNC variant share a
+// label so both fall under one "Carbon fibre" heading.
+const LEAD_TIME_CATEGORY_LABEL: Record<string, string> = {
+  metal:            'Metal',
+  carbon_fibre:     'Carbon fibre',
+  carbon_fibre_cnc: 'Carbon fibre',
+  carbon_cnc:       'Carbon fibre',
+  paper:            'Paper',
+  plastic:          'Plastic',
+  acrylic:          'Acrylic',
+  wood:             'Wood',
+}
+
+// Curated heading order — flagship metal first, then roughly by how
+// often each family is quoted. Any label not listed sorts to the end
+// alphabetically.
+const LEAD_TIME_GROUP_ORDER = ['Metal', 'Carbon fibre', 'Paper', 'Plastic', 'Acrylic', 'Wood']
+
+function leadTimeCategoryLabel(category: string): string {
+  return (
+    LEAD_TIME_CATEGORY_LABEL[category] ??
+    category.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  )
+}
+
 // Horizontal range-bar chart of production lead times. Each row is one
 // material; the bar runs left→right with a solid core up to the *min*
 // business-day figure and a lighter tail extending to the *max*, so
@@ -2037,14 +2063,30 @@ function LeadTimesChart({
   // Longest max-days drives the scale. Guard against an all-zero /
   // empty set so the width maths never divides by zero.
   const scaleMax = leadTimes.reduce((m, lt) => Math.max(m, lt.lead_time_max_days), 0) || 1
-  // Longest-first reads as a descending skyline — the at-a-glance
-  // question this chart answers is "what takes longest to make".
-  const sorted = [...leadTimes].sort(
-    (a, b) =>
-      b.lead_time_max_days - a.lead_time_max_days ||
-      b.lead_time_min_days - a.lead_time_min_days ||
-      a.display_name.localeCompare(b.display_name),
-  )
+  // Grouped by material family with a heading per family, A→Z within —
+  // staff scan this to find a product, not to rank by wait time. Bar
+  // widths stay scaled to the single longest max across all families,
+  // so rows remain comparable across groups.
+  const grouped = new Map<string, LeadTime[]>()
+  for (const lt of leadTimes) {
+    const label = leadTimeCategoryLabel(lt.category)
+    const bucket = grouped.get(label)
+    if (bucket) bucket.push(lt)
+    else grouped.set(label, [lt])
+  }
+  const groups = [...grouped.entries()]
+    .map(([label, items]) => ({
+      label,
+      items: [...items].sort((a, b) => a.display_name.localeCompare(b.display_name)),
+    }))
+    .sort((a, b) => {
+      const ai = LEAD_TIME_GROUP_ORDER.indexOf(a.label)
+      const bi = LEAD_TIME_GROUP_ORDER.indexOf(b.label)
+      return (
+        (ai === -1 ? Infinity : ai) - (bi === -1 ? Infinity : bi) ||
+        a.label.localeCompare(b.label)
+      )
+    })
 
   return (
     <CollapsibleSidebarPanel
@@ -2054,7 +2096,7 @@ function LeadTimesChart({
       title="Lead times"
       storageKey="pv.sidebar.collapsed.lead-times"
     >
-      {sorted.length === 0 ? (
+      {groups.length === 0 ? (
         <p className="px-5 py-8 text-center text-sm text-ink-mute">
           No lead times set yet.{' '}
           <button
@@ -2068,52 +2110,62 @@ function LeadTimesChart({
         </p>
       ) : (
         <>
-          {/* Cap to roughly eight rows and scroll the rest, so a long
-              catalogue doesn't push the sidebar to an unwieldy height. */}
-          <ul className="max-h-[360px] overflow-y-auto px-5 py-4 space-y-3">
-            {sorted.map((lt) => {
-              const tint = leadTimeTint(lt.category)
-              const minPct = (lt.lead_time_min_days / scaleMax) * 100
-              const maxPct = (lt.lead_time_max_days / scaleMax) * 100
-              const rangeLabel =
-                lt.lead_time_min_days === lt.lead_time_max_days
-                  ? `${lt.lead_time_min_days}d`
-                  : `${lt.lead_time_min_days}–${lt.lead_time_max_days}d`
-              return (
-                <li key={lt.display_name}>
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="truncate text-[13px] font-medium text-ink">
-                      {lt.display_name}
-                    </span>
-                    <span className="shrink-0 font-mono font-tnum text-[11px] text-ink-mute">
-                      {rangeLabel}
-                    </span>
-                  </div>
-                  {/* Track: full-width rounded rail. The lighter tail is
-                      laid first (left-aligned, full length to max), then
-                      the solid core paints over its first `min` portion.
-                      Both rounded so the core reads as a pill resting on
-                      the tail. title carries the long-form for hover. */}
-                  <div
-                    className="relative mt-1.5 h-2.5 w-full rounded-full bg-line-soft"
-                    title={`${lt.display_name} — ${rangeLabel.replace('d', '')} business days`}
-                  >
-                    <div
-                      className="absolute inset-y-0 left-0 rounded-full"
-                      style={{
-                        width: `${maxPct}%`,
-                        backgroundColor: `color-mix(in srgb, ${tint} 28%, transparent)`,
-                      }}
-                    />
-                    <div
-                      className="absolute inset-y-0 left-0 rounded-full"
-                      style={{ width: `${minPct}%`, backgroundColor: tint }}
-                    />
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
+          {/* Grouped by family with a heading per family; the whole list
+              scrolls so a long catalogue doesn't push the sidebar to an
+              unwieldy height. */}
+          <div className="max-h-[360px] overflow-y-auto px-5 py-4 space-y-4">
+            {groups.map((group) => (
+              <div key={group.label}>
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-mute">
+                  {group.label}
+                </div>
+                <ul className="space-y-3">
+                  {group.items.map((lt) => {
+                    const tint = leadTimeTint(lt.category)
+                    const minPct = (lt.lead_time_min_days / scaleMax) * 100
+                    const maxPct = (lt.lead_time_max_days / scaleMax) * 100
+                    const rangeLabel =
+                      lt.lead_time_min_days === lt.lead_time_max_days
+                        ? `${lt.lead_time_min_days}d`
+                        : `${lt.lead_time_min_days}–${lt.lead_time_max_days}d`
+                    return (
+                      <li key={lt.display_name}>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="truncate text-[13px] font-medium text-ink">
+                            {lt.display_name}
+                          </span>
+                          <span className="shrink-0 font-mono font-tnum text-[11px] text-ink-mute">
+                            {rangeLabel}
+                          </span>
+                        </div>
+                        {/* Track: full-width rounded rail. The lighter tail is
+                            laid first (left-aligned, full length to max), then
+                            the solid core paints over its first `min` portion.
+                            Both rounded so the core reads as a pill resting on
+                            the tail. title carries the long-form for hover. */}
+                        <div
+                          className="relative mt-1.5 h-2.5 w-full rounded-full bg-line-soft"
+                          title={`${lt.display_name} — ${rangeLabel.replace('d', '')} business days`}
+                        >
+                          <div
+                            className="absolute inset-y-0 left-0 rounded-full"
+                            style={{
+                              width: `${maxPct}%`,
+                              backgroundColor: `color-mix(in srgb, ${tint} 28%, transparent)`,
+                            }}
+                          />
+                          <div
+                            className="absolute inset-y-0 left-0 rounded-full"
+                            style={{ width: `${minPct}%`, backgroundColor: tint }}
+                          />
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </div>
+            ))}
+          </div>
           {/* Legend: ties the solid/light split to its meaning. */}
           <div className="flex items-center gap-4 border-t border-line-soft px-5 py-3 text-[11px] text-ink-mute">
             <span className="inline-flex items-center gap-1.5">
