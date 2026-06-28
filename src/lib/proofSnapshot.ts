@@ -148,17 +148,25 @@ export function quantityRangeLabel(opts: {
 //
 // Each version is one send/respond lap of the proof's back-and-forth.
 // The engagement panel's rounds strip reads an outcome per version:
-//   'changes'  — the customer asked for changes on this version
-//   'approved' — the customer approved this version
+//   'changes'  — the customer asked for changes on this version (in-app)
+//   'approved' — the customer approved this version (in-app)
 //   'awaiting' — the current version, sent, no response yet
-//   'none'     — a superseded version the customer never responded to
-//                (a proactive designer revision)
-// A change request wins over a stray approval on the same version (a
-// split-name proof where one recipient approved and another didn't is
-// still a round that bounced). The current version reports its live
-// state; the funnel below it details the sub-state.
+//   'revised'  — a superseded version with no in-app approve/change row.
+//                A later version exists, so the round was closed out —
+//                usually by customer feedback that arrived by email or
+//                phone, which the in-app buttons don't record. Labelled
+//                'revised' (not 'no reply') because the round was
+//                actioned, even when the data can't show how.
+// hasChanges/hasApproved come only from in-app proof_name_approvals
+// rows, so they miss email/phone feedback entirely — which is exactly
+// why a superseded round defaults to 'revised' rather than asserting
+// the customer never replied. A change request wins over a stray
+// approval on the same version (a split-name proof where one recipient
+// approved and another didn't is still a round that bounced). The
+// current version reports its live state; the funnel below it details
+// the sub-state.
 
-export type RoundOutcome = 'approved' | 'changes' | 'awaiting' | 'none'
+export type RoundOutcome = 'approved' | 'changes' | 'awaiting' | 'revised'
 
 export function roundOutcome(opts: {
   isCurrent: boolean
@@ -170,7 +178,7 @@ export function roundOutcome(opts: {
     if (opts.proofApproved || (opts.hasApproved && !opts.hasChanges)) return 'approved'
     return opts.hasChanges ? 'changes' : 'awaiting'
   }
-  return opts.hasChanges ? 'changes' : opts.hasApproved ? 'approved' : 'none'
+  return opts.hasChanges ? 'changes' : opts.hasApproved ? 'approved' : 'revised'
 }
 
 // ── Header state summary ────────────────────────────────────────────────────────

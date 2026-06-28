@@ -250,10 +250,10 @@ test('roundOutcome: change request wins over a stray approval on the same versio
   )
 })
 
-test('roundOutcome: superseded version with no response reads none', () => {
+test('roundOutcome: superseded version with no in-app response reads revised', () => {
   assertEqual(
     roundOutcome({ isCurrent: false, proofApproved: false, hasChanges: false, hasApproved: false }),
-    'none',
+    'revised',
   )
 })
 

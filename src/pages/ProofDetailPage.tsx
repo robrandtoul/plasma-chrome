@@ -103,7 +103,7 @@ const ROUND_OUTCOME: Record<RoundOutcome, { color: string; bg: string; label: st
   approved: { color: 'var(--c-in-stock)',  bg: 'var(--c-in-stock-soft)',  label: 'approved' },
   changes:  { color: 'var(--c-low)',       bg: 'var(--c-low-soft)',       label: 'changes' },
   awaiting: { color: 'var(--c-allocated)', bg: 'var(--c-allocated-soft)', label: 'awaiting' },
-  none:     { color: 'var(--c-ink-mute)',  bg: 'var(--c-line-soft)',      label: 'no reply' },
+  revised:  { color: 'var(--c-ink-mute)',  bg: 'var(--c-line-soft)',      label: 'revised' },
 }
 
 // One row in the Approved artwork table. Assembled from the cross-
@@ -1839,9 +1839,10 @@ export default function ProofDetailPage() {
   // Per-version rounds for the engagement panel's strip — each version
   // is one send/respond lap of the back-and-forth. A superseded version
   // that drew a change request reads 'changes'; one the customer
-  // approved reads 'approved'; one we revised with no response reads
-  // 'none'. The current version reads its live state and the funnel
-  // below details its sub-state. See ROUND_OUTCOME for the palette.
+  // approved reads 'approved'; any other superseded version reads
+  // 'revised' (a later version exists, so the round was closed out —
+  // see roundOutcome). The current version reads its live state and the
+  // funnel below details its sub-state. See ROUND_OUTCOME for the palette.
   const rounds = [...versions]
     .sort((a, b) => a.version_number - b.version_number)
     .map((v) => {
