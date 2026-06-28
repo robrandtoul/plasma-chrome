@@ -271,17 +271,18 @@ const VIEW_TABS: { key: ViewKey; label: string }[] = [
   { key: 'recent', label: 'Recently ordered' },
 ]
 
-// A single figure in the summary bar: GBP total + order count, with optional
-// sub-detail (e.g. the expired slice of awaiting payment).
+// A single figure in the summary bar: a (pre-formatted) headline value + order
+// count, with optional sub-detail. The value is passed as a string so a bucket
+// with nothing priced yet can show "—" rather than a misleading £0.
 function SummaryStat({
   label,
-  totalGbp,
+  value,
   count,
   detail,
   tone = 'ink',
 }: {
   label: string
-  totalGbp: number
+  value: string
   count: number
   detail?: string | null
   tone?: 'ink' | 'out'
@@ -290,7 +291,7 @@ function SummaryStat({
     <div className="rounded-xl border border-line bg-surface px-4 py-3">
       <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">{label}</span>
       <span className={`mt-0.5 block text-lg font-semibold ${tone === 'out' ? 'text-out' : 'text-ink'}`}>
-        {formatPrice(Math.round(totalGbp), 'GBP')}
+        {value}
       </span>
       <span className="block text-[12px] text-ink-mute">
         {count} {count === 1 ? 'order' : 'orders'}
@@ -298,6 +299,11 @@ function SummaryStat({
       </span>
     </div>
   )
+}
+
+// A short GBP figure for the summary headline / section subtotals.
+function gbpLabel(amount: number): string {
+  return formatPrice(Math.round(amount), 'GBP')
 }
 
 export default function OrdersPage() {
@@ -537,8 +543,27 @@ export default function OrdersPage() {
     }
   }, [orders, search])
 
-  // GBP-converted slice of awaiting payment that has expired (the at-risk part).
-  const expiredAwaiting = awaitingPayment.filter(isExpired)
+  // Most awaiting-payment links are open-quantity — the customer picks the
+  // quantity (and so the value) at checkout, so orderTotal() is null until
+  // they pay. Only the fixed-price links have a knowable value; the open ones
+  // are counted but never summed as £0, which would understate the real figure.
+  const awaitingPriced = awaitingPayment.filter((o) => orderTotal(o) != null)
+  const awaitingOpenCount = awaitingPayment.length - awaitingPriced.length
+  const awaitingConfirmedGbp = sumGbp(awaitingPriced, rates)
+  // The at-risk slice: expired links that DO have a confirmed value.
+  const expiredPriced = awaitingPriced.filter(isExpired)
+  const expiredConfirmedGbp = sumGbp(expiredPriced, rates)
+
+  // The awaiting-payment sub-detail: how many are priced-at-checkout, plus any
+  // expired confirmed value, joined into one line.
+  const awaitingDetail =
+    [
+      awaitingOpenCount > 0 ? `${awaitingOpenCount} set at checkout` : null,
+      expiredPriced.length > 0 ? `${gbpLabel(expiredConfirmedGbp)} expired` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ') || null
+
   const showSection = (key: ViewKey) => view === 'all' || view === key
 
   return (
@@ -560,29 +585,26 @@ export default function OrdersPage() {
                 <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
                   <SummaryStat
                     label="Awaiting payment"
-                    totalGbp={sumGbp(awaitingPayment, rates)}
+                    value={awaitingPriced.length > 0 ? gbpLabel(awaitingConfirmedGbp) : '—'}
                     count={awaitingPayment.length}
-                    detail={
-                      expiredAwaiting.length > 0
-                        ? `${formatPrice(Math.round(sumGbp(expiredAwaiting, rates)), 'GBP')} expired`
-                        : null
-                    }
-                    tone={expiredAwaiting.length > 0 ? 'out' : 'ink'}
+                    detail={awaitingDetail}
+                    tone={expiredPriced.length > 0 ? 'out' : 'ink'}
                   />
                   <SummaryStat
                     label="To order"
-                    totalGbp={sumGbp(toOrder, rates)}
+                    value={gbpLabel(sumGbp(toOrder, rates))}
                     count={toOrder.length}
                   />
                   <SummaryStat
                     label="Being revised"
-                    totalGbp={sumGbp(beingRevised, rates)}
+                    value={gbpLabel(sumGbp(beingRevised, rates))}
                     count={beingRevised.length}
                   />
                 </div>
                 <p className="mt-1.5 text-[11px] text-ink-mute">
-                  Totals converted to GBP{rates?.rateDate ? ` at the ${rates.rateDate} ECB rate` : ''} — a rough
-                  guide only (GBP figures include VAT; EUR/USD don’t).
+                  Most awaiting-payment links are open-quantity, so their value is set when the customer checks
+                  out — the figure above is the confirmed (fixed-price) total only. Paid totals convert to GBP
+                  {rates?.rateDate ? ` at the ${rates.rateDate} ECB rate` : ''}; a rough guide (GBP includes VAT, EUR/USD don’t).
                 </p>
 
                 {/* Search + which section to show. */}
@@ -630,7 +652,8 @@ export default function OrdersPage() {
             {showSection('awaiting') && awaitingPayment.length > 0 && (
               <section className="mt-6">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">
-                  Awaiting payment · {awaitingPayment.length} · {formatPrice(Math.round(sumGbp(awaitingPayment, rates)), 'GBP')}
+                  Awaiting payment · {awaitingPayment.length}
+                  {awaitingPriced.length > 0 ? ` · ${gbpLabel(awaitingConfirmedGbp)} confirmed` : ''}
                 </h2>
                 <p className="mt-1 text-[13px] text-ink-mute">
                   Payment links that have been sent but not paid yet. Copy a link to re-send it, or reactivate an expired one (extends it {ORDER_EXPIRY_DAYS} days).
@@ -658,7 +681,7 @@ export default function OrdersPage() {
                 <div className="flex items-baseline justify-between gap-3">
                   <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">
                     To order · {toOrder.length}
-                    {toOrder.length > 0 ? ` · ${formatPrice(Math.round(sumGbp(toOrder, rates)), 'GBP')}` : ''}
+                    {toOrder.length > 0 ? ` · ${gbpLabel(sumGbp(toOrder, rates))}` : ''}
                   </h2>
                   {toOrder.length > 0 && <span className="text-[12px] text-ink-mute">Oldest paid first</span>}
                 </div>
@@ -697,7 +720,7 @@ export default function OrdersPage() {
             {showSection('revised') && beingRevised.length > 0 && (
               <section className="mt-10">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">
-                  Being revised · {beingRevised.length} · {formatPrice(Math.round(sumGbp(beingRevised, rates)), 'GBP')}
+                  Being revised · {beingRevised.length} · {gbpLabel(sumGbp(beingRevised, rates))}
                 </h2>
                 <p className="mt-1 text-[13px] text-ink-mute">
                   Paid orders held while the artwork is being changed. Re-approve the new proof and replace the files in the Dropbox order folder, then review &amp; place again.
