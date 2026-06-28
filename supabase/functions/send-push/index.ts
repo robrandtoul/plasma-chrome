@@ -20,8 +20,9 @@
 //   4. dedup via notification_outbox (unique index) so retries are no-ops.
 //   5. send to each of a recipient's devices; prune dead subscriptions (404/410).
 //
-// Required secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, VAPID_KEYS,
-// VAPID_SUBJECT.
+// Required secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and the namespaced
+// PROOFS_VAPID_* keys (read in _shared/push.ts — kept separate from Stock
+// Control's project-wide VAPID_* secrets).
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { sendPush, interpolate, clip, type PushPayload } from '../_shared/push.ts'
