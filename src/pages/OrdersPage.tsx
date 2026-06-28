@@ -11,6 +11,7 @@ import type { GridImage } from '../components/ImageGrid'
 import type { Currency } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import OrdersPipelineCard, { type PipelineApprovedItem } from '../components/OrdersPipelineCard'
+import { ChevronRight } from 'lucide-react'
 
 // Orders / "to order" surface (Ordering & checkout, Step 6 — overhauled).
 //
@@ -365,13 +366,24 @@ function FunnelStat({
   emphasis?: boolean
 }) {
   return (
-    <div className={`rounded-xl border px-4 py-3 ${emphasis ? 'border-line bg-surface' : 'border-line-soft bg-canvas'}`}>
+    <div className={`min-w-0 rounded-xl border px-4 py-3 sm:flex-1 ${emphasis ? 'border-line bg-surface' : 'border-line-soft bg-canvas'}`}>
       <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">{label}</span>
       <span className="mt-0.5 flex items-baseline gap-1.5">
         <span className={`text-xl font-semibold ${emphasis ? 'text-ink' : 'text-ink-soft'}`}>{count}</span>
         {money ? <span className="text-[12px] font-medium text-ink-soft">{money}</span> : null}
       </span>
       {detail ? <span className="mt-0.5 block text-[12px] text-ink-mute">{detail}</span> : null}
+    </div>
+  )
+}
+
+// A between-tiles flow chevron, signalling the header reads left-to-right as a
+// pipeline. Shown only at sm+ (single row); on the mobile 2×2 grid it's hidden
+// (display:none) so it doesn't consume a grid cell.
+function FlowArrow() {
+  return (
+    <div className="hidden shrink-0 items-center self-center text-ink-mute sm:flex" aria-hidden="true">
+      <ChevronRight size={18} />
     </div>
   )
 }
@@ -763,14 +775,23 @@ export default function OrdersPage() {
                     to place — are emphasised. Money shows only on To order,
                     where it's real (paid). Awaiting payment leads with a count
                     + at-risk rather than a value: most links are open-quantity,
-                    so the value isn't knowable until the customer checks out. */}
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    so the value isn't knowable until the customer checks out.
+                    Chevrons between tiles (sm+) read the row left-to-right as a
+                    flow; on mobile it falls back to a 2×2 grid in the same
+                    reading order. */}
+                <div className="mb-2 flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-ink-mute">
+                  Order pipeline
+                  <ChevronRight size={12} aria-hidden="true" />
+                </div>
+                <div className="grid grid-cols-2 gap-3 sm:flex sm:items-stretch sm:gap-1.5">
                   <FunnelStat label="Links to send" count={approvedNoOrder.length} detail="approved, no link" emphasis />
+                  <FlowArrow />
                   <FunnelStat
                     label="Awaiting payment"
                     count={sentAll.length}
                     detail={coldItems.length > 0 ? `${coldItems.length} need a chase` : 'out with customers'}
                   />
+                  <FlowArrow />
                   <FunnelStat
                     label="To order"
                     count={paidAll.length}
@@ -778,6 +799,7 @@ export default function OrdersPage() {
                     detail="paid, to place"
                     emphasis
                   />
+                  <FlowArrow />
                   <FunnelStat label="Being revised" count={revisionCount} detail="on hold" />
                 </div>
                 {conversion && conversion.sent > 0 && (
