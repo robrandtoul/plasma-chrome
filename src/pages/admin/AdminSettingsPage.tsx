@@ -72,6 +72,10 @@ interface Settings {
   /** Dashboard "Hot leads to chase" card (migration 000280). On by default —
    *  the panel ships shown; turning it off hides it for every designer. */
   hot_leads_panel_enabled: boolean
+  /** Push-notification master switch (migration 000283). Off pauses every staff
+   *  push for everyone; the per-person Notifications screen + the database
+   *  triggers all defer to it. */
+  push_enabled: boolean
 }
 
 type TrackingLevel = 'off' | 'broad' | 'granular'
@@ -147,6 +151,7 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   customer_tracking_enabled:         'setting.customer_tracking_enabled_updated',
   customer_tracking_config:          'setting.customer_tracking_config_updated',
   hot_leads_panel_enabled:           'setting.hot_leads_panel_enabled_updated',
+  push_enabled:                      'setting.push_enabled_updated',
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -243,7 +248,7 @@ export default function AdminSettingsPage() {
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, xero_stripe_account_code, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, hot_leads_panel_enabled')
+      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, xero_stripe_account_code, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, hot_leads_panel_enabled, push_enabled')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -1014,6 +1019,27 @@ export default function AdminSettingsPage() {
         </div>
       </section>
 
+      {/* ── Notifications (migration 000283) ──────────────────────── */}
+      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+        <h3 className="mb-4 text-sm font-semibold text-ink">Notifications</h3>
+        <div className="space-y-5">
+          <FieldRow
+            label="Staff push notifications"
+            help="Master switch for push notifications to staff devices (approvals, change requests, replies, orders). Off pauses every notification for everyone. Each person additionally chooses which events they receive on their own Notifications screen."
+            saved={recentlySaved('push_enabled')}
+            working={working.push_enabled}
+            error={errors.push_enabled}
+          >
+            <Toggle
+              value={settings.push_enabled}
+              onChange={(v) => void saveField('push_enabled', v)}
+              disabled={!!working.push_enabled}
+              label="Staff push notifications"
+            />
+          </FieldRow>
+        </div>
+      </section>
+
       {/* ── Integrations ─────────────────────────────────────────
           Help Scout panel — admin clicks Test connection to run the
           full OAuth + /v2/mailboxes round trip. Three indicator
@@ -1429,5 +1455,6 @@ function humanFieldLabel(field: keyof Settings): string {
     customer_tracking_enabled: 'Customer order tracking enabled',
     customer_tracking_config: 'Customer order tracking config',
     hot_leads_panel_enabled: 'Dashboard Hot-leads panel enabled',
+    push_enabled: 'Push notifications enabled',
   }[field]
 }

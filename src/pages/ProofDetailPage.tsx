@@ -261,6 +261,50 @@ export default function ProofDetailPage() {
   // through to the placeholder in the version card.
   const [versionThumbs, setVersionThumbs] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
+  // ── "Watch this project" push subscription (proof_watches, 000283) ──
+  // A designer can watch a specific project to receive its push notifications
+  // even when their account default wouldn't notify them. Empty events {} =
+  // watch every notifiable event on this proof; the watch wins over the
+  // account-level preference in send-push.
+  const watcherId = session?.user.id ?? null
+  const [watched, setWatched] = useState(false)
+  const [watchBusy, setWatchBusy] = useState(false)
+  useEffect(() => {
+    if (!id || !watcherId) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase
+        .from('proof_watches')
+        .select('id')
+        .eq('proof_id', id)
+        .eq('user_id', watcherId)
+        .maybeSingle()
+      if (!cancelled) setWatched(!!data)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [id, watcherId])
+  async function toggleWatch() {
+    if (!id || !watcherId || watchBusy) return
+    setWatchBusy(true)
+    const next = !watched
+    setWatched(next) // optimistic
+    if (next) {
+      const { error } = await supabase
+        .from('proof_watches')
+        .insert({ proof_id: id, user_id: watcherId, events: {}, created_by: watcherId })
+      if (error) setWatched(false)
+    } else {
+      const { error } = await supabase
+        .from('proof_watches')
+        .delete()
+        .eq('proof_id', id)
+        .eq('user_id', watcherId)
+      if (error) setWatched(true)
+    }
+    setWatchBusy(false)
+  }
   const [selectedVersion, setSelectedVersion] = useState<ModalVersion | null>(null)
   // Real (non-bot) view times per version id for the dot indicators
   // and the VersionDetailModal history panel.
@@ -2460,6 +2504,29 @@ export default function ProofDetailPage() {
                     Custom quote
                   </span>
                 )}
+                {/* Watch this project — opt in to its push notifications,
+                    regardless of your account-level preference (000283). */}
+                <button
+                  type="button"
+                  onClick={toggleWatch}
+                  disabled={watchBusy}
+                  title={
+                    watched
+                      ? 'Watching this project — you’ll get its notifications'
+                      : 'Watch this project to get its notifications'
+                  }
+                  aria-label={watched ? 'Stop watching this project' : 'Watch this project'}
+                  aria-pressed={watched}
+                  className={[
+                    'inline-flex h-6 items-center gap-1 rounded px-2 text-[12px] transition-colors disabled:opacity-50',
+                    watched
+                      ? 'bg-brand text-on-brand hover:opacity-90'
+                      : 'text-ink-mute hover:bg-canvas hover:text-ink',
+                  ].join(' ')}
+                >
+                  <Eye size={13} aria-hidden="true" />
+                  {watched ? 'Watching' : 'Watch'}
+                </button>
               </div>
               {/* Single action row: the two everyday actions stay
                   visible — Add new version (coral primary) + Open
