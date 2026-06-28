@@ -97,6 +97,9 @@ interface DesignerHeaderProps {
   /** Mobile-only bell button in the top bar (Dashboard activity rail).
    *  Hidden at md:+ where the activity aside is visible instead. */
   mobileBell?: { onClick: () => void; hasUnseen: boolean }
+  /** Count of the user's own feedback items resolved since they last
+   *  opened the board. Badges the Feedback icon / Account tab when > 0. */
+  feedbackUnread?: number
   onEditProfile?: () => void
   onSignOut?: () => void
 }
@@ -108,6 +111,7 @@ export function DesignerHeader({
   search,
   actions,
   mobileBell,
+  feedbackUnread = 0,
   onEditProfile,
   onSignOut,
 }: DesignerHeaderProps) {
@@ -208,17 +212,22 @@ export function DesignerHeader({
               the account sheet (below). */}
           <Link
             to="/feedback"
-            aria-label="Feedback"
+            aria-label={
+              feedbackUnread > 0
+                ? `Feedback — ${feedbackUnread} of your suggestions resolved`
+                : 'Feedback'
+            }
             title="Feedback"
             aria-current={active === 'feedback' ? 'page' : undefined}
             className={[
-              'hidden md:flex h-9 w-9 items-center justify-center rounded-full transition-colors',
+              'relative hidden md:flex h-9 w-9 items-center justify-center rounded-full transition-colors',
               active === 'feedback'
                 ? 'text-ink bg-canvas border border-line'
                 : 'text-ink-mute hover:text-ink hover:bg-canvas',
             ].join(' ')}
           >
             <MessageSquare size={18} aria-hidden="true" />
+            {feedbackUnread > 0 && <CountBadge count={feedbackUnread} />}
           </Link>
 
           <UserPill
@@ -239,6 +248,7 @@ export function DesignerHeader({
       <BottomTabBar
         active={active}
         orderingEnabled={orderingEnabled}
+        feedbackUnread={feedbackUnread}
         onAccount={() => setAccountOpen(true)}
       />
 
@@ -247,6 +257,7 @@ export function DesignerHeader({
         onClose={() => setAccountOpen(false)}
         user={user}
         role={role}
+        feedbackUnread={feedbackUnread}
         onEditProfile={onEditProfile}
         onSignOut={onSignOut}
       />
@@ -266,10 +277,12 @@ export function DesignerHeader({
 function BottomTabBar({
   active,
   orderingEnabled,
+  feedbackUnread,
   onAccount,
 }: {
   active: DesignerNavId | null
   orderingEnabled: boolean
+  feedbackUnread: number
   onAccount: () => void
 }) {
   const linkTabs: { id: DesignerNavId; label: string; to: string; Icon: LucideIcon }[] = [
@@ -304,21 +317,58 @@ function BottomTabBar({
         className="flex flex-1 items-center justify-center"
         aria-current={active === 'admin' || active === 'feedback' ? 'page' : undefined}
       >
-        <TabInner label="Account" Icon={UserCircle} active={active === 'admin' || active === 'feedback'} />
+        <TabInner
+          label="Account"
+          Icon={UserCircle}
+          active={active === 'admin' || active === 'feedback'}
+          showDot={feedbackUnread > 0}
+        />
       </button>
     </nav>
   )
 }
 
-function TabInner({ label, Icon, active }: { label: string; Icon: LucideIcon; active: boolean }) {
+// Small numeric badge that rides the top-right of the desktop Feedback icon.
+// Caps at "9+" so it never blows out the 9×9 button. The ring (box-shadow in
+// the page background colour) lifts it off the icon like the mobileBell dot.
+function CountBadge({ count }: { count: number }) {
+  return (
+    <span
+      className="absolute -right-1 -top-1 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-semibold leading-none text-white"
+      style={{ boxShadow: '0 0 0 2px var(--c-surface)' }}
+      aria-hidden="true"
+    >
+      {count > 9 ? '9+' : count}
+    </span>
+  )
+}
+
+function TabInner({
+  label,
+  Icon,
+  active,
+  showDot = false,
+}: {
+  label: string
+  Icon: LucideIcon
+  active: boolean
+  showDot?: boolean
+}) {
   return (
     <span
       className={[
-        'flex min-h-[52px] min-w-[60px] flex-col items-center justify-center gap-0.5 rounded-[12px] px-3 py-1.5 transition-colors',
+        'relative flex min-h-[52px] min-w-[60px] flex-col items-center justify-center gap-0.5 rounded-[12px] px-3 py-1.5 transition-colors',
         active ? 'text-brand bg-brand-50' : 'text-ink-mute',
       ].join(' ')}
     >
       <Icon size={22} aria-hidden="true" />
+      {showDot && (
+        <span
+          className="absolute right-[18px] top-[6px] h-2 w-2 rounded-full bg-brand"
+          style={{ boxShadow: '0 0 0 2px var(--c-bg)' }}
+          aria-hidden="true"
+        />
+      )}
       <span className="text-[11px] font-medium leading-none">{label}</span>
     </span>
   )
@@ -333,6 +383,7 @@ function AccountSheet({
   onClose,
   user,
   role,
+  feedbackUnread,
   onEditProfile,
   onSignOut,
 }: {
@@ -340,6 +391,7 @@ function AccountSheet({
   onClose: () => void
   user: UserProps
   role: 'admin' | 'designer' | null
+  feedbackUnread: number
   onEditProfile?: () => void
   onSignOut?: () => void
 }) {
@@ -370,6 +422,11 @@ function AccountSheet({
           >
             <MessageSquare size={18} aria-hidden="true" className="text-ink-mute" />
             Feedback
+            {feedbackUnread > 0 && (
+              <span className="ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-brand px-1.5 text-[11px] font-semibold leading-none text-white">
+                {feedbackUnread > 9 ? '9+' : feedbackUnread}
+              </span>
+            )}
           </Link>
           {role === 'admin' && (
             <Link

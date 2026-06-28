@@ -98,6 +98,60 @@ export const FEEDBACK_PRIORITY_META: Record<
   FEEDBACK_PRIORITIES.map((p) => [p.value, { label: p.label, colour: p.colour }]),
 ) as Record<FeedbackPriority, { label: string; colour: PillColour }>
 
+// The two terminal statuses. An item in either is "resolved" — done means
+// shipped, wont_do means considered-and-declined. Both are worth closing the
+// loop on with the submitter.
+export const FEEDBACK_RESOLVED_STATUSES: FeedbackStatus[] = ['done', 'wont_do']
+
+export function isResolvedStatus(status: FeedbackStatus): boolean {
+  return FEEDBACK_RESOLVED_STATUSES.includes(status)
+}
+
+// How many days back a "done" item still counts as recently shipped, for the
+// team-momentum band that surfaces in the board's default (Open) view.
+export const RECENTLY_SHIPPED_DAYS = 14
+
+// The single source of truth for "this resolved item is new to this user since
+// they last looked at the board". Used by both the header badge count
+// (src/design/DesignerChrome.tsx) and the on-board personal callout
+// (src/pages/FeedbackPage.tsx) so the two can never drift.
+//
+// seenAt is the user's profiles.feedback_seen_at *as captured before* this
+// visit's re-stamp. A null baseline (only possible on a profile that predates
+// the 000281 backfill, or one created without the column default) means the
+// user has never acknowledged the board, so every resolved item of theirs is
+// new.
+export function isUnseenResolved(
+  item: Pick<FeedbackItem, 'created_by' | 'status' | 'status_changed_at'>,
+  userId: string | null,
+  seenAt: string | null,
+): boolean {
+  if (!userId || item.created_by !== userId) return false
+  if (!isResolvedStatus(item.status)) return false
+  if (!item.status_changed_at) return false
+  if (!seenAt) return true
+  // Compare as instants, not strings: the baseline can arrive as the DB's
+  // `+00:00` form (backfill) while the item's timestamp is the `Z` form, so a
+  // lexical compare would depend on tail formatting. Parsing both sidesteps it
+  // and matches isRecentlyShipped's approach.
+  const changed = new Date(item.status_changed_at).getTime()
+  if (Number.isNaN(changed)) return false
+  return changed > new Date(seenAt).getTime()
+}
+
+// "Shipped recently enough to show in the team-momentum band." Pure date maths
+// against RECENTLY_SHIPPED_DAYS; only `done` (genuinely shipped) qualifies —
+// wont_do stays in the Parked section, it isn't momentum.
+export function isRecentlyShipped(
+  item: Pick<FeedbackItem, 'status' | 'status_changed_at'>,
+  now: number = Date.now(),
+): boolean {
+  if (item.status !== 'done' || !item.status_changed_at) return false
+  const changed = new Date(item.status_changed_at).getTime()
+  if (Number.isNaN(changed)) return false
+  return now - changed <= RECENTLY_SHIPPED_DAYS * 24 * 60 * 60 * 1000
+}
+
 // Map the four legacy designer-colour names onto a CSS colour for the small
 // author initials badge on each card. Mirrors DesignerHeader's COLOUR_BG so
 // a staffer's badge colour matches their header avatar.
