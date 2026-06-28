@@ -321,7 +321,7 @@ function StatTile({ label, count, active, tone, onClick, help, badge, badgeTitle
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative max-md:w-[140px] max-md:shrink-0 max-md:snap-start max-md:rounded-[12px] max-md:border max-md:border-line"
+      className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative xl:flex-1 xl:min-w-0 max-md:w-[140px] max-md:shrink-0 max-md:snap-start max-md:rounded-[12px] max-md:border max-md:border-line"
       style={{
         // Active state: a soft tint of the tile's tone fills the cell
         // background. Cleaner than an inset ring when each cell sits
@@ -2885,21 +2885,34 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* Tile row. Seven tiles in priority order, separated by
-                  vertical hairlines at xl widths via xl:divide-x. Below
-                  xl the tiles wrap into 2 / 3 column grids so they
-                  remain readable on narrow viewports; the hairlines
-                  drop on the wrapped layout since tiles no longer share
-                  a single row. The tile palette encodes the
-                  Alert/Workflow/On-hold grouping via colour
-                  (rose for Needs attention,
-                  amber→sky→turquoise→green for workflow,
-                  violet/neutral for on-hold). */}
+              {/* Tile row, structured as three zones so the workflow reads as a
+                  pipeline rather than ten equal peers — the Alert/Workflow/On-hold
+                  grouping that previously lived only in the colour palette:
+                    • Triage   — Needs attention, the cross-cutting alert, in a
+                      rose-tinted box set apart on the left (not pipeline stage 0).
+                    • Workflow — the five/seven stages a proof passes through,
+                      Not viewed → … → To order, boxed together with internal
+                      hairlines + a subtle baseline rail so they read left to right.
+                    • Parked   — Snoozed + Dormant, off-flow states, in a plain box
+                      set apart on the right (not the pipeline's finish line).
+                  Only the xl layout zones; below xl the zone wrappers are
+                  display:contents, so the tiles flow into the existing md 3-col
+                  grid and the mobile snap-scroll strip exactly as before. */}
               <div
                 ref={tilesStripRef}
                 onScroll={handleTilesScroll}
-                className={`flex gap-2.5 overflow-x-auto px-4 pb-3 [scroll-snap-type:x_mandatory] md:gap-0 md:overflow-x-visible md:px-0 md:pb-0 md:[scroll-snap-type:none] md:grid md:grid-cols-3 ${orderingOn ? 'xl:grid-cols-10' : 'xl:grid-cols-8'} xl:divide-x xl:divide-line`}
+                className="flex gap-2.5 overflow-x-auto px-4 pb-3 [scroll-snap-type:x_mandatory] md:gap-0 md:overflow-x-visible md:px-0 md:pb-0 md:[scroll-snap-type:none] md:grid md:grid-cols-3 xl:flex xl:items-stretch xl:gap-3"
               >
+                {/* Triage zone — the cross-cutting alert, set apart so it isn't
+                    read as pipeline stage zero. Rose tint matches its tile. */}
+                <div
+                  className="contents xl:flex xl:w-[150px] xl:shrink-0 xl:overflow-hidden"
+                  style={{
+                    borderRadius: '10px',
+                    border: '0.5px solid color-mix(in srgb, var(--c-out) 45%, transparent)',
+                    backgroundColor: 'color-mix(in srgb, var(--c-out) 6%, transparent)',
+                  }}
+                >
                   <StatTile
                     label="Needs attention"
                     help={tagHelp('tile', 'needs_attention')}
@@ -2908,6 +2921,22 @@ export default function DashboardPage() {
                     tone="rose"
                     onClick={() => toggleTile('needs_attention')}
                   />
+                </div>
+                {/* Workflow zone — the stages a proof passes through, left to
+                    right. Internal hairlines split the stages; the 2px baseline
+                    rail signals the band is a track. Awaiting payment / To order
+                    only when ordering is enabled. */}
+                <div
+                  className="contents xl:flex xl:flex-1 xl:min-w-0 xl:overflow-hidden xl:divide-x xl:divide-line"
+                  style={{
+                    borderRadius: '10px',
+                    borderWidth: '0.5px',
+                    borderStyle: 'solid',
+                    borderColor: 'var(--c-line)',
+                    borderBottomWidth: '2px',
+                    borderBottomColor: 'var(--c-ink-dim)',
+                  }}
+                >
                   <StatTile
                     label="Not viewed"
                     help={tagHelp('tile', 'not_viewed')}
@@ -2975,6 +3004,14 @@ export default function DashboardPage() {
                       />
                     </>
                   )}
+                </div>
+                {/* Parked zone — proofs deliberately on hold or gone cold.
+                    Off-flow, so a plain box set apart on the right rather than
+                    the pipeline's tail. */}
+                <div
+                  className="contents xl:flex xl:w-[224px] xl:shrink-0 xl:overflow-hidden xl:divide-x xl:divide-line"
+                  style={{ borderRadius: '10px', border: '0.5px solid var(--c-line)' }}
+                >
                   <StatTile
                     label="Snoozed"
                     help={tagHelp('tile', 'snoozed')}
@@ -2999,6 +3036,7 @@ export default function DashboardPage() {
                     tone="neutral"
                     onClick={() => toggleTile('dormant')}
                   />
+                </div>
               </div>
             </section>
 
