@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useNavigate } from 'react-router-dom'
 import { DesignerChrome, useDesignerProfile, useIsMobile, Sheet, ButtonCoral, ButtonInk, ProofStatusPill, HelpTip } from '../design'
-import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Link as LinkIcon } from 'lucide-react'
+import { Plus, X, Maximize2, Bell, MoreHorizontal, MessageSquare, Mail, Send, Eye, Check, Clock, CreditCard, Link as LinkIcon, ThumbsDown } from 'lucide-react'
 // react-virtuoso for the Older drawer's row virtualisation. Picked
 // over react-window because its useWindowScroll mode preserves the
 // existing UX where Older grows inline as part of the page rather
@@ -47,9 +47,11 @@ import {
   payLinkOpenEvents,
   payLinkSentEvents,
   orderReminderEvents,
+  proofFeedbackEvents,
   type PayLinkOpenRow,
   type PayLinkSentRow,
   type OrderReminderRow,
+  type ProofFeedbackFeedRow,
   type DashboardLatestEvent,
   type DashboardProject,
   type DesignerColour,
@@ -1821,6 +1823,11 @@ const ACTIVITY_VISUAL: Record<DashboardLatestEvent['event_type'], ActivityVisual
     tint: 'var(--c-responded)',
     verbCopy: (v) => `requested changes on v${v}`,
   },
+  declined: {
+    icon: ThumbsDown,
+    tint: 'var(--c-out)',
+    verbCopy: () => 'isn’t ready to approve',
+  },
   // Synthetic rows from the proof's Help Scout reply timestamps (000208).
   // A customer email reply shares the "responded" hue with request_changes
   // (both are the customer getting back to us); staff replies are muted.
@@ -2445,6 +2452,13 @@ export default function DashboardPage() {
     // projects fetch above.
     const countsPromise = supabase.rpc('dashboard_tile_counts')
 
+    // Decline feedback (proof_feedback, 000279) for the Latest-activity feed.
+    const feedbackPromise = supabase
+      .from('proof_feedback')
+      .select('id, proof_id, reason_code, actor_name, created_at')
+      .order('created_at', { ascending: false })
+      .limit(50)
+
     const [
       { data: projectRows },
       { data: events },
@@ -2454,7 +2468,8 @@ export default function DashboardPage() {
       { data: payLinkOpenRows },
       { data: payLinkSentRows },
       { data: orderReminderRows },
-    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise, payLinkOpensPromise, payLinkSentsPromise, orderRemindersPromise])
+      { data: feedbackRows },
+    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise, payLinkOpensPromise, payLinkSentsPromise, orderRemindersPromise, feedbackPromise])
 
     const typedProjects = (projectRows ?? []) as DashboardProject[]
     setProjects(typedProjects)
@@ -2476,7 +2491,7 @@ export default function DashboardPage() {
         return ord?.proof_id ? { id: r.id, created_at: r.created_at, proof_id: ord.proof_id } : null
       })
       .filter((r): r is OrderReminderRow => r !== null)
-    const mergedEvents = [...realEvents, ...helpscoutReplyEvents(typedProjects), ...payLinkOpenEvents((payLinkOpenRows ?? []) as PayLinkOpenRow[], typedProjects), ...payLinkSentEvents((payLinkSentRows ?? []) as PayLinkSentRow[], typedProjects), ...orderReminderEvents(orderReminders, typedProjects)]
+    const mergedEvents = [...realEvents, ...helpscoutReplyEvents(typedProjects), ...payLinkOpenEvents((payLinkOpenRows ?? []) as PayLinkOpenRow[], typedProjects), ...payLinkSentEvents((payLinkSentRows ?? []) as PayLinkSentRow[], typedProjects), ...orderReminderEvents(orderReminders, typedProjects), ...proofFeedbackEvents((feedbackRows ?? []) as ProofFeedbackFeedRow[], typedProjects)]
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
       .slice(0, 20)
     setLatestEvents(mergedEvents)

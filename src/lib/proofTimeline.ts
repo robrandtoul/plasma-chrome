@@ -22,6 +22,7 @@ export type TimelineEntryType =
   | 'terms_acknowledged'
   | 'proof_approved'
   | 'proof_abandoned'
+  | 'customer_declined'
 
 export interface TimelineEntry {
   /** Unique render key. Synthetic entries derive theirs from the source row. */
@@ -82,6 +83,17 @@ export interface TimelineReminderRow {
   sent_by?: string | null
 }
 
+// A "not ready to approve" decline-feedback row (proof_feedback, migration
+// 000279). Surfaced on the timeline so the designer sees the reason in-app, not
+// only as a Help Scout note.
+export interface TimelineFeedbackRow {
+  id: string
+  reason_code: string
+  note: string | null
+  actor_name: string | null
+  created_at: string
+}
+
 export interface TimelineSources {
   proof: {
     created_at: string
@@ -109,6 +121,8 @@ export interface TimelineSources {
     last_reply_sent_by?: string | null
   }>
   events: TimelineEventRow[]
+  /** Decline-feedback rows (proof_feedback). Optional — older tests omit it. */
+  feedback?: TimelineFeedbackRow[]
   /**
    * Sent reminders from the proof_nudges ledger (state='sent' only — the
    * caller filters skips out). Each becomes its own 'reminder_sent' entry,
@@ -140,6 +154,7 @@ const TIE_RANK: Record<TimelineEntryType, number> = {
   approve: 3,
   request_changes: 3,
   customer_email_reply: 3,
+  customer_declined: 3,
   terms_acknowledged: 4,
   view: 5,
   reply_sent: 6,
@@ -157,8 +172,17 @@ const TIE_RANK: Record<TimelineEntryType, number> = {
 // is a separate human reply".
 const REMINDER_REPLY_DEDUP_MS = 2 * 60 * 1000
 
+// Verb per decline-feedback reason, worded as the customer's own action.
+const DECLINE_VERBS: Record<string, string> = {
+  price_too_high: 'flagged the price',
+  different_direction: 'asked for a different design direction',
+  timing: 'said the timing isn’t right',
+  going_elsewhere: 'said they’re going elsewhere',
+  still_thinking: 'said they’re still thinking it over',
+}
+
 export function buildTimelineEntries(sources: TimelineSources): TimelineEntry[] {
-  const { proof, versions, events, reminders, viewsByVersion, designerNamesById } = sources
+  const { proof, versions, events, feedback, reminders, viewsByVersion, designerNamesById } = sources
   const entries: TimelineEntry[] = []
   const designerName = (id: string | null | undefined): string | null =>
     (id && designerNamesById?.get(id)) || null
@@ -315,6 +339,21 @@ export function buildTimelineEntries(sources: TimelineSources): TimelineEntry[] 
       recipientName: e.name,
       failedNotification:
         e.event_type !== 'designer_override_approve' && e.helpscout_thread_id == null,
+    })
+  }
+
+  // Decline feedback — the customer's "not ready to approve" reasons. The note
+  // (if any) shows as the comment, like a change-request message.
+  for (const f of feedback ?? []) {
+    entries.push({
+      id: `feedback:${f.id}`,
+      type: 'customer_declined',
+      at: f.created_at,
+      actor: f.actor_name || proof.contactName || 'Customer',
+      verb: DECLINE_VERBS[f.reason_code] ?? 'left feedback',
+      comment: f.note?.trim() ? f.note : null,
+      recipientName: null,
+      failedNotification: false,
     })
   }
 

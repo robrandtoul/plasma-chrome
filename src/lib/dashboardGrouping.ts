@@ -122,6 +122,7 @@ export interface DashboardLatestEvent {
     | 'pay_link_opened'
     | 'pay_link_sent'
     | 'order_reminder_sent'
+    | 'declined'
   actor_name: string
   recipient_name: string | null
   helpscout_thread_id: string | null
@@ -180,6 +181,44 @@ export function helpscoutReplyEvents(projects: DashboardProject[]): DashboardLat
         actor_name: 'You',
       })
     }
+  }
+  return out
+}
+
+// A decline-feedback row (proof_feedback, 000279). Like the reply rows above,
+// it's bridged into the Latest-activity feed shape; proof display info is looked
+// up from the loaded projects by proof_id. The reason itself shows on the proof
+// detail timeline; here it reads as a generic "declined" cue that links through.
+export interface ProofFeedbackFeedRow {
+  id: string
+  proof_id: string
+  reason_code: string
+  actor_name: string | null
+  created_at: string
+}
+
+export function proofFeedbackEvents(
+  rows: ProofFeedbackFeedRow[],
+  projects: DashboardProject[],
+): DashboardLatestEvent[] {
+  const byId = new Map(projects.map((p) => [p.proof_id, p]))
+  const cutoff = Date.now() - HELPSCOUT_REPLY_WINDOW_MS
+  const out: DashboardLatestEvent[] = []
+  for (const r of rows) {
+    if (new Date(r.created_at).getTime() < cutoff) continue
+    const p = byId.get(r.proof_id)
+    out.push({
+      id: `feedback-${r.id}`,
+      created_at: r.created_at,
+      event_type: 'declined',
+      actor_name: r.actor_name || p?.contact_name || p?.company_name || 'Customer',
+      recipient_name: null,
+      helpscout_thread_id: null,
+      proof_id: r.proof_id,
+      version_number: p?.current_version_number ?? 0,
+      contact_name: p?.contact_name ?? null,
+      company_name: p?.company_name ?? null,
+    })
   }
   return out
 }
