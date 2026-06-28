@@ -231,14 +231,21 @@ const DAY_MS = 24 * 60 * 60 * 1000
 
 // Per-order roll-up of the unpaid-order reminder ledger (order_nudges), used to
 // show the auto-chase progress on the awaiting-payment card.
+// The latest ledger row's meaning, when it was a skip / fail: a deliberate
+// 'pause' (grace window, follow-up tag — the chase is holding, fine) vs a
+// 'problem' (something is stopping it that may need a human).
+interface ReminderNote {
+  kind: 'pause' | 'problem'
+  text: string
+}
+
 interface ReminderSummary {
   sentCount: number
   lastSentAt: string | null
   /** Highest reminder stage actually sent (drives "next reminder is N+1"). */
   highestSentNo: number
-  /** The latest run's problem, when the most recent ledger row was a skip /
-   *  fail not since superseded by a send. Null when nothing's wrong. */
-  issue: string | null
+  /** The latest run's outcome when it wasn't a send (else null). */
+  note: ReminderNote | null
 }
 
 // Admin-set chase cadence (settings, migration 000270) + whether the auto-chase
@@ -249,19 +256,25 @@ interface ReminderCadence {
   autoEnabled: boolean
 }
 
-// Turn an order_nudges skip / fail outcome into one plain line for staff. A
-// successful / would-send outcome is not a problem, so returns null.
-function friendlyReminderIssue(outcome: string | null): string | null {
+// Turn an order_nudges skip / fail outcome into one plain line for staff,
+// tagged pause vs problem. A successful / would-send outcome isn't either, so
+// returns null.
+function classifyReminderOutcome(outcome: string | null): ReminderNote | null {
   if (!outcome) return null
   if (outcome.startsWith('would_send') || outcome === 'sent' || outcome === 'sending') return null
-  if (outcome.includes('no_conversation')) return 'No Help Scout conversation linked — the reminder can’t send.'
-  if (outcome.includes('followup_tag')) return 'Paused — the Help Scout conversation has the “follow up” tag.'
-  if (outcome.includes('recipient_mismatch')) return 'Contact email doesn’t match the Help Scout thread — not sent.'
-  if (outcome.includes('closed') || outcome.includes('conversation_missing')) return 'Help Scout conversation is closed or missing — not sent.'
-  if (outcome.includes('unconfigured') || outcome.includes('no_base_url')) return 'Reminder system isn’t fully configured — not sent.'
-  if (outcome.startsWith('render_failed')) return 'Reminder template problem — not sent.'
-  if (outcome.startsWith('failed')) return 'Help Scout rejected the last reminder — not sent.'
-  return 'The last reminder didn’t send.'
+  // Deliberate pauses — the chase is holding on purpose, not broken.
+  if (outcome.includes('grace_window') || outcome.includes('recent_reply'))
+    return { kind: 'pause', text: 'Paused — recent reply on the Help Scout thread.' }
+  if (outcome.includes('followup_tag'))
+    return { kind: 'pause', text: 'Paused — the “follow up” tag is set on the Help Scout thread.' }
+  // Problems — something is stopping the chase that may need a look.
+  if (outcome.includes('no_conversation')) return { kind: 'problem', text: 'No Help Scout conversation linked — the reminder can’t send.' }
+  if (outcome.includes('recipient_mismatch')) return { kind: 'problem', text: 'Contact email doesn’t match the Help Scout thread — not sent.' }
+  if (outcome.includes('closed') || outcome.includes('conversation_missing')) return { kind: 'problem', text: 'Help Scout conversation is closed or missing — not sent.' }
+  if (outcome.includes('unconfigured') || outcome.includes('no_base_url')) return { kind: 'problem', text: 'Reminder system isn’t fully configured — not sent.' }
+  if (outcome.startsWith('render_failed')) return { kind: 'problem', text: 'Reminder template problem — not sent.' }
+  if (outcome.startsWith('failed')) return { kind: 'problem', text: 'Help Scout rejected the last reminder — not sent.' }
+  return { kind: 'problem', text: 'The last reminder didn’t send.' }
 }
 
 // The order's charged total expressed in GBP, so mixed-currency buckets can be
@@ -422,15 +435,15 @@ export default function OrdersPage() {
             list.sort((a, b) => (a.created_at < b.created_at ? 1 : -1)) // newest first
             const sentRows = list.filter((r) => r.state === 'sent')
             const latest = list[0]
-            const issue =
+            const note =
               latest && (latest.state === 'failed' || latest.state === 'skipped')
-                ? friendlyReminderIssue(latest.outcome)
+                ? classifyReminderOutcome(latest.outcome)
                 : null
             map[orderId] = {
               sentCount: sentRows.length,
               lastSentAt: sentRows.length > 0 ? sentRows[0].created_at : null,
               highestSentNo: sentRows.reduce((m, r) => Math.max(m, r.reminder_no), 0),
-              issue,
+              note,
             }
           }
           setReminders(map)
@@ -1276,7 +1289,7 @@ function AwaitingPaymentCard({
   // intervals have passed since the link was sent, while it's still live.
   const sentCount = summary?.sentCount ?? 0
   const highestNo = summary?.highestSentNo ?? 0
-  const issue = summary?.issue ?? null
+  const note = summary?.note ?? null
   const allRemindersSent = highestNo >= cadence.max
   let nextDue: string | null = null
   if (!expired && !allRemindersSent && cadence.autoEnabled && order.sent_at) {
@@ -1327,8 +1340,10 @@ function AwaitingPaymentCard({
                 {summary?.lastSentAt ? ` · last ${formatDate(summary.lastSentAt)}` : ''}
               </span>
             )}
-            {issue ? (
-              <span className="block text-out">⚠ {issue}</span>
+            {note ? (
+              <span className={`block ${note.kind === 'problem' ? 'text-out' : 'text-ink-mute'}`}>
+                {note.kind === 'problem' ? '⚠ ' : ''}{note.text}
+              </span>
             ) : allRemindersSent ? (
               <span className="block text-ink-mute">All {cadence.max} reminders sent — no more scheduled.</span>
             ) : nextDue ? (
