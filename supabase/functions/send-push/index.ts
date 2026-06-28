@@ -80,10 +80,35 @@ Deno.serve(async (req) => {
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   if (!supabaseUrl || !serviceKey) return json({ error: 'server misconfigured' }, 500)
 
-  // Internal auth: the caller must present the service-role key.
+  const admin = createClient(supabaseUrl, serviceKey, {
+    db: { schema: 'proofs' },
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+
+  // ── 0. Settings + auth + master gate ───────────────────────────────────────
+  const { data: settings } = await admin
+    .from('settings')
+    .select(
+      'push_enabled, push_internal_secret, payment_mode, ordering_enabled, notification_role_defaults, fulfilment_user_ids, notification_copy',
+    )
+    .eq('id', 1)
+    .maybeSingle()
+
+  // Internal auth: the caller presents EITHER the service-role key (an edge-to-
+  // edge caller) OR the DB-stored internal secret (the proof_events / proofs
+  // triggers fire via pg_net and can't read the service-role key, but can read
+  // this column). Both are server-only secrets that never reach a browser.
   const authHeader = req.headers.get('Authorization') ?? ''
   const bearer = authHeader.replace(/^[Bb]earer\s+/, '').trim()
-  if (bearer !== serviceKey) return json({ error: 'Unauthorized' }, 401)
+  const internalSecret =
+    (settings as { push_internal_secret?: string | null } | null)?.push_internal_secret ?? null
+  if (bearer !== serviceKey && (!internalSecret || bearer !== internalSecret)) {
+    return json({ error: 'Unauthorized' }, 401)
+  }
+
+  if (!settings?.push_enabled) {
+    return json({ status: 'skipped', reason: 'killswitch' })
+  }
 
   let body: Body
   try {
@@ -93,23 +118,6 @@ Deno.serve(async (req) => {
   }
   const eventCode = body.event_code
   if (!eventCode) return json({ error: 'event_code required' }, 400)
-
-  const admin = createClient(supabaseUrl, serviceKey, {
-    db: { schema: 'proofs' },
-    auth: { persistSession: false, autoRefreshToken: false },
-  })
-
-  // ── 0. Settings + master gate ──────────────────────────────────────────────
-  const { data: settings } = await admin
-    .from('settings')
-    .select(
-      'push_enabled, payment_mode, ordering_enabled, notification_role_defaults, fulfilment_user_ids, notification_copy',
-    )
-    .eq('id', 1)
-    .maybeSingle()
-  if (!settings?.push_enabled) {
-    return json({ status: 'skipped', reason: 'killswitch' })
-  }
   const roleDefaults =
     (settings.notification_role_defaults as Record<string, Record<string, PrefValue>> | null) ?? {}
   const fulfilmentIds = new Set((settings.fulfilment_user_ids as string[] | null) ?? [])
