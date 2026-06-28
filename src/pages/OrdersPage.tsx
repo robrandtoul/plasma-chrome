@@ -227,6 +227,43 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
+// Per-order roll-up of the unpaid-order reminder ledger (order_nudges), used to
+// show the auto-chase progress on the awaiting-payment card.
+interface ReminderSummary {
+  sentCount: number
+  lastSentAt: string | null
+  /** Highest reminder stage actually sent (drives "next reminder is N+1"). */
+  highestSentNo: number
+  /** The latest run's problem, when the most recent ledger row was a skip /
+   *  fail not since superseded by a send. Null when nothing's wrong. */
+  issue: string | null
+}
+
+// Admin-set chase cadence (settings, migration 000270) + whether the auto-chase
+// is switched on. Defaults mirror the edge function's fallbacks.
+interface ReminderCadence {
+  max: number
+  intervalDays: number
+  autoEnabled: boolean
+}
+
+// Turn an order_nudges skip / fail outcome into one plain line for staff. A
+// successful / would-send outcome is not a problem, so returns null.
+function friendlyReminderIssue(outcome: string | null): string | null {
+  if (!outcome) return null
+  if (outcome.startsWith('would_send') || outcome === 'sent' || outcome === 'sending') return null
+  if (outcome.includes('no_conversation')) return 'No Help Scout conversation linked — the reminder can’t send.'
+  if (outcome.includes('followup_tag')) return 'Paused — the Help Scout conversation has the “follow up” tag.'
+  if (outcome.includes('recipient_mismatch')) return 'Contact email doesn’t match the Help Scout thread — not sent.'
+  if (outcome.includes('closed') || outcome.includes('conversation_missing')) return 'Help Scout conversation is closed or missing — not sent.'
+  if (outcome.includes('unconfigured') || outcome.includes('no_base_url')) return 'Reminder system isn’t fully configured — not sent.'
+  if (outcome.startsWith('render_failed')) return 'Reminder template problem — not sent.'
+  if (outcome.startsWith('failed')) return 'Help Scout rejected the last reminder — not sent.'
+  return 'The last reminder didn’t send.'
+}
+
 // The order's charged total expressed in GBP, so mixed-currency buckets can be
 // summed into one headline figure. EUR/USD convert at the live ECB rate; GBP
 // passes through. Null totals (custom quote with no priced parts) drop out of
@@ -316,8 +353,10 @@ export default function OrdersPage() {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const navigate = useNavigate()
-  // Sent reminders per order (the automated unpaid-order nudges, 000238).
-  const [reminders, setReminders] = useState<Record<string, { count: number; lastAt: string }>>({})
+  // Per-order reminder roll-up (the automated unpaid-order chase, 000238).
+  const [reminders, setReminders] = useState<Record<string, ReminderSummary>>({})
+  // Chase cadence + on/off, read once from settings. Defaults match the edge fn.
+  const [cadence, setCadence] = useState<ReminderCadence>({ max: 3, intervalDays: 3, autoEnabled: false })
   // Stock Control supplier id → name, for the supplier-route button labels
   // (the routing stores ids; names live in Stock Control). Best-effort.
   const [supplierNames, setSupplierNames] = useState<Record<string, string>>({})
@@ -348,21 +387,50 @@ export default function OrdersPage() {
       setCapped(rows.length >= 300)
       setLoading(false)
 
+      // Chase cadence + on/off, for the "next reminder due" line. Best-effort.
+      void supabase
+        .from('settings')
+        .select('order_reminders_max, order_reminder_interval_days, auto_order_reminders_enabled')
+        .eq('id', 1)
+        .maybeSingle()
+        .then(({ data: s }) => {
+          if (cancelled || !s) return
+          setCadence({
+            max: Math.min(5, Math.max(1, Number(s.order_reminders_max ?? 3))),
+            intervalDays: Math.min(30, Math.max(1, Number(s.order_reminder_interval_days ?? 3))),
+            autoEnabled: s.auto_order_reminders_enabled === true,
+          })
+        })
+
       const sentIds = rows.filter((r) => r.status === 'sent').map((r) => r.id)
       if (sentIds.length > 0) {
+        // Pull the full ledger (not just sends) so a skip / failure surfaces
+        // on the card rather than the chase just going quiet.
         const { data: nudgeData } = await supabase
           .from('order_nudges')
-          .select('order_id, created_at')
+          .select('order_id, reminder_no, state, outcome, created_at')
           .in('order_id', sentIds)
-          .eq('state', 'sent')
         if (!cancelled && nudgeData) {
-          const map: Record<string, { count: number; lastAt: string }> = {}
-          for (const n of nudgeData as { order_id: string; created_at: string }[]) {
-            const cur = map[n.order_id]
-            if (!cur) map[n.order_id] = { count: 1, lastAt: n.created_at }
-            else {
-              cur.count += 1
-              if (n.created_at > cur.lastAt) cur.lastAt = n.created_at
+          const byOrder = new Map<string, { reminder_no: number; state: string; outcome: string | null; created_at: string }[]>()
+          for (const n of nudgeData as { order_id: string; reminder_no: number; state: string; outcome: string | null; created_at: string }[]) {
+            const arr = byOrder.get(n.order_id) ?? []
+            arr.push(n)
+            byOrder.set(n.order_id, arr)
+          }
+          const map: Record<string, ReminderSummary> = {}
+          for (const [orderId, list] of byOrder) {
+            list.sort((a, b) => (a.created_at < b.created_at ? 1 : -1)) // newest first
+            const sentRows = list.filter((r) => r.state === 'sent')
+            const latest = list[0]
+            const issue =
+              latest && (latest.state === 'failed' || latest.state === 'skipped')
+                ? friendlyReminderIssue(latest.outcome)
+                : null
+            map[orderId] = {
+              sentCount: sentRows.length,
+              lastSentAt: sentRows.length > 0 ? sentRows[0].created_at : null,
+              highestSentNo: sentRows.reduce((m, r) => Math.max(m, r.reminder_no), 0),
+              issue,
             }
           }
           setReminders(map)
@@ -666,7 +734,8 @@ export default function OrdersPage() {
                       expired={isExpired(o)}
                       busy={busyId === o.id}
                       copied={copiedId === o.id}
-                      reminder={reminders[o.id] ?? null}
+                      summary={reminders[o.id] ?? null}
+                      cadence={cadence}
                       onCopy={() => void copyLink(o)}
                       onReactivate={() => void reactivate(o)}
                       onCancel={() => void cancelOrder(o)}
@@ -1184,7 +1253,8 @@ function AwaitingPaymentCard({
   expired,
   busy,
   copied,
-  reminder,
+  summary,
+  cadence,
   onCopy,
   onReactivate,
   onCancel,
@@ -1193,12 +1263,35 @@ function AwaitingPaymentCard({
   expired: boolean
   busy: boolean
   copied: boolean
-  reminder: { count: number; lastAt: string } | null
+  summary: ReminderSummary | null
+  cadence: ReminderCadence
   onCopy: () => void
   onReactivate: () => void
   onCancel: () => void
 }) {
   const total = orderTotal(order)
+
+  // Auto-chase progress for this order. "Next due" is computed the same way
+  // the edge function decides: reminder (highestSent+1) is due once that many
+  // intervals have passed since the link was sent, while it's still live.
+  const sentCount = summary?.sentCount ?? 0
+  const highestNo = summary?.highestSentNo ?? 0
+  const issue = summary?.issue ?? null
+  const allRemindersSent = highestNo >= cadence.max
+  let nextDue: string | null = null
+  if (!expired && !allRemindersSent && cadence.autoEnabled && order.sent_at) {
+    const nextNo = highestNo + 1
+    const dueAtMs = new Date(order.sent_at).getTime() + nextNo * cadence.intervalDays * DAY_MS
+    const expMs = order.expires_at ? new Date(order.expires_at).getTime() : null
+    if (expMs != null && dueAtMs >= expMs) {
+      nextDue = null // would fall after the link expires — the chase won't fire
+    } else if (dueAtMs <= Date.now()) {
+      nextDue = 'due on the next working-day run'
+    } else {
+      nextDue = `due ${formatDate(new Date(dueAtMs).toISOString())}`
+    }
+  }
+
   return (
     <PanelShell>
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -1225,13 +1318,25 @@ function AwaitingPaymentCard({
               ? <span title={formatAbsoluteDateTime(order.pay_link_opened_at)}>Pay link opened {relativeTime(order.pay_link_opened_at)}</span>
               : 'Pay link not opened yet'}
           </p>
-          {reminder && (
-            <p className="mt-1 text-[13px] text-ink-soft">
-              {reminder.count === 1
-                ? `Reminder sent ${formatDate(reminder.lastAt)}`
-                : `${reminder.count} reminders sent · last ${formatDate(reminder.lastAt)}`}
-            </p>
-          )}
+          {/* Auto-chase progress: how many reminders have gone, what's next,
+              and any problem stopping the chase. */}
+          <div className="mt-1 space-y-0.5 text-[13px]">
+            {sentCount > 0 && (
+              <span className="block text-ink-soft">
+                {sentCount} of {cadence.max} reminder{cadence.max === 1 ? '' : 's'} sent
+                {summary?.lastSentAt ? ` · last ${formatDate(summary.lastSentAt)}` : ''}
+              </span>
+            )}
+            {issue ? (
+              <span className="block text-out">⚠ {issue}</span>
+            ) : allRemindersSent ? (
+              <span className="block text-ink-mute">All {cadence.max} reminders sent — no more scheduled.</span>
+            ) : nextDue ? (
+              <span className="block text-ink-mute">Next reminder {nextDue}.</span>
+            ) : !cadence.autoEnabled && sentCount === 0 ? (
+              <span className="block text-ink-mute">Automatic reminders are off.</span>
+            ) : null}
+          </div>
         </div>
         <div className="flex shrink-0 flex-col gap-2 md:items-end">
           <ButtonGhost size="sm" onClick={onCopy} className="max-md:w-full max-md:h-11">{copied ? 'Copied' : 'Copy link'}</ButtonGhost>

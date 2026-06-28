@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  CreditCard,
   Eye,
   FileCheck2,
   FilePlus2,
@@ -42,6 +43,10 @@ const ENTRY_VISUAL: Record<TimelineEntryType, { icon: LucideIcon; tint: string }
   // our outbound touch) but a bell glyph marks it as a reminder rather than
   // a genuine reply — so the cadence reads at a glance.
   reminder_sent: { icon: BellRing, tint: tokens.brand },
+  // Unpaid-order payment reminder (send-order-reminders cron). A card glyph in
+  // the amber "awaiting" hue marks it as an outbound chase about money owed,
+  // distinct from the proof-approval reminder above.
+  order_reminder_sent: { icon: CreditCard, tint: tokens.low },
   // Customer's inbound email reply — shares the "responded" hue used on the
   // dashboard for the same signal; Mail glyph distinguishes it from the
   // outbound Send reply and the in-app request_changes.
@@ -262,7 +267,7 @@ export default function ProofTimeline(props: ProofTimelineProps) {
     () => buildTimelineEntries(props),
     // The page replaces these references wholesale on every loadProof,
     // so reference identity is the right memo key.
-    [props.proof, props.versions, props.events, props.reminders, props.viewsByVersion, props.designerNamesById],
+    [props.proof, props.versions, props.events, props.reminders, props.orderReminders, props.viewsByVersion, props.designerNamesById],
   )
   const [expanded, setExpanded] = useState(false)
 
