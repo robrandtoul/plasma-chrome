@@ -1,12 +1,14 @@
-// Generate a VAPID key pair for web push, in the two forms the system needs:
-//   * VITE_VAPID_PUBLIC_KEY — the raw P-256 public key (base64url), used by the
-//     frontend's pushManager.subscribe(applicationServerKey).
-//   * VAPID_KEYS            — the JWK pair { publicKey, privateKey } as JSON,
-//     used by the send-push edge function (@negrel/webpush importVapidKeys).
+// Generate a VAPID key pair for web push, in the forms the system needs. Uses
+// the npm `web-push` library convention (separate base64url public + private
+// keys), matching the proven pattern already running in this Supabase project.
 //
-// Both come from ONE key pair, so they correspond. Run once and store the
-// outputs (frontend env var + Supabase secret). The private half is a SECRET —
-// never commit it.
+// ⚠ The Supabase secrets are NAMESPACED (PROOFS_ prefix) because this project is
+// shared with the Stock Control app, which already owns VAPID_PUBLIC_KEY /
+// VAPID_PRIVATE_KEY / VAPID_SUBJECT for ITS push system. Never reuse or
+// overwrite those — the Proof Viewer uses its own PROOFS_ keys.
+//
+// All outputs come from ONE key pair, so they correspond. Run once and store
+// them. The private key is a SECRET — never commit it.
 //
 //   node scripts/generate-vapid-keys.mjs
 
@@ -17,15 +19,15 @@ const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' 
   'verify',
 ])
 
-const publicKey = await crypto.subtle.exportKey('jwk', kp.publicKey)
-const privateKey = await crypto.subtle.exportKey('jwk', kp.privateKey)
+const privateJwk = await crypto.subtle.exportKey('jwk', kp.privateKey)
 const rawPub = await crypto.subtle.exportKey('raw', kp.publicKey)
-const applicationServerKey = Buffer.from(rawPub).toString('base64url')
+const publicKey = Buffer.from(rawPub).toString('base64url') // uncompressed point
+const privateKey = privateJwk.d // the raw private scalar, already base64url
 
-console.log('\n=== VITE_VAPID_PUBLIC_KEY (Netlify env + .env, frontend) ===')
-console.log(applicationServerKey)
-console.log('\n=== VAPID_KEYS (Supabase secret, send-push) ===')
-console.log(JSON.stringify({ publicKey, privateKey }))
-console.log('\n=== VAPID_SUBJECT (Supabase secret) ===')
-console.log('mailto:rob@plasmadesign.co.uk')
+console.log('\n=== Netlify env (Proof Viewer site, frontend) ===')
+console.log('VITE_VAPID_PUBLIC_KEY =', publicKey)
+console.log('\n=== Supabase secrets (NAMESPACED — do NOT touch Stock Control\'s VAPID_*) ===')
+console.log('PROOFS_VAPID_PUBLIC_KEY  =', publicKey)
+console.log('PROOFS_VAPID_PRIVATE_KEY =', privateKey)
+console.log('PROOFS_VAPID_SUBJECT     =', 'mailto:rob@plasmadesign.co.uk')
 console.log('')
