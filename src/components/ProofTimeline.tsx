@@ -15,6 +15,7 @@ import {
   Mail,
   MessageSquare,
   Send,
+  ThumbsDown,
   type LucideIcon,
 } from 'lucide-react'
 import { PanelShell, tokens } from '../design'
@@ -58,6 +59,7 @@ const ENTRY_VISUAL: Record<TimelineEntryType, { icon: LucideIcon; tint: string }
   terms_acknowledged: { icon: FileCheck2, tint: tokens.allocated },
   proof_approved: { icon: CheckCircle2, tint: tokens.inStock },
   proof_abandoned: { icon: Archive, tint: tokens.inkMute },
+  customer_declined: { icon: ThumbsDown, tint: 'var(--c-out)' },
 }
 
 // Entries shown before the "Show full history" expander kicks in.

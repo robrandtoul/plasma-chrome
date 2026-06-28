@@ -29,7 +29,7 @@ import { customerProofPath, openDesignerPreview } from '../lib/customerProofUrl'
 import { formatPrice } from '../lib/currency'
 // QuoteLink now lives inside DesignerChrome (PR 31).
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
-import { ChevronRight, ChevronLeft, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, MessageSquare, Clock, Activity, Package, HelpCircle } from 'lucide-react'
+import { ChevronRight, ChevronLeft, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, MessageSquare, Clock, Activity, Package, HelpCircle, ThumbsDown } from 'lucide-react'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -51,7 +51,7 @@ import {
 } from '../lib/proofSnapshot'
 import { ResolvePopover } from '../components/ResolvePopover'
 import ProofTimeline from '../components/ProofTimeline'
-import type { TimelineEventRow, TimelineReminderRow, TimelineOrderReminderRow } from '../lib/proofTimeline'
+import type { TimelineEventRow, TimelineReminderRow, TimelineFeedbackRow, TimelineOrderReminderRow } from '../lib/proofTimeline'
 
 interface Proof {
   id: string
@@ -304,6 +304,7 @@ export default function ProofDetailPage() {
   // Every genuine outbound chase, manual or automatic — so the cadence
   // shows in full rather than collapsing into last_reply_sent_at.
   const [timelineReminders, setTimelineReminders] = useState<TimelineReminderRow[]>([])
+  const [timelineFeedback, setTimelineFeedback] = useState<TimelineFeedbackRow[]>([])
   // Sent unpaid-order payment reminders (order_nudges ledger) for the
   // Activity timeline — the unpaid-order chase, distinct from the proof
   // follow-up reminders above.
@@ -816,6 +817,16 @@ export default function ProofDetailPage() {
       setEventsByVersionAndName(new Map())
       setTimelineEvents([])
     }
+
+    // Decline feedback (proof_feedback, 000279) → timeline entries + the
+    // "going elsewhere" banner. Keyed on the proof, not the version.
+    const { data: feedbackRows } = await supabase
+      .from('proof_feedback')
+      .select('id, reason_code, note, actor_name, created_at')
+      .eq('proof_id', proofId)
+      .order('created_at', { ascending: false })
+    if (isStale()) return
+    setTimelineFeedback((feedbackRows ?? []) as TimelineFeedbackRow[])
 
     // Approved-artwork join. Only bothers with the fetch when the
     // project's roll-up status is 'approved' — same gate as the
@@ -2303,6 +2314,7 @@ export default function ProofDetailPage() {
       }}
       versions={versions}
       events={timelineEvents}
+      feedback={timelineFeedback}
       reminders={timelineReminders}
       orderReminders={timelineOrderReminders}
       viewsByVersion={viewsByVersion}
@@ -2533,6 +2545,35 @@ export default function ProofDetailPage() {
           {/* Hidden input for clipboard fallback. */}
           <input ref={fallbackInputRef} className="sr-only" readOnly aria-hidden="true" />
         </section>
+
+        {/* "Going elsewhere" banner — the customer self-reported they're not
+            proceeding (decline feedback, 000279). Surfaced prominently with a
+            one-click abandon; the human keeps the call (we don't auto-abandon).
+            Reminders are already stopped by the proof-feedback function. Hidden
+            once the proof is locked (already approved or abandoned). */}
+        {!isLocked && timelineFeedback.some((f) => f.reason_code === 'going_elsewhere') && (
+          <section className="mb-8 rounded-2xl border border-out bg-out-soft p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-start gap-2 text-[13px]">
+                <ThumbsDown aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-out" />
+                <div>
+                  <span className="font-semibold text-out">The customer said they’re going a different route.</span>
+                  <span className="text-ink-soft"> Automated reminders are already stopped — decide whether to keep it open or close it off.</span>
+                  {(() => {
+                    const fb = timelineFeedback.find((f) => f.reason_code === 'going_elsewhere')
+                    return fb?.note ? <span className="mt-1 block italic text-ink-mute">“{fb.note}”</span> : null
+                  })()}
+                </div>
+              </div>
+              <button
+                onClick={() => setStatusDialog('abandon')}
+                className="shrink-0 rounded-lg border border-out bg-surface px-3 py-1.5 text-[13px] font-medium text-out hover:bg-out-soft"
+              >
+                Mark abandoned
+              </button>
+            </div>
+          </section>
+        )}
 
         {/* Order-status strip — gives the approved proof in-context order state
             (none / pay link sent / paid / placed) so the designer doesn't have

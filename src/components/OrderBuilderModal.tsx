@@ -140,6 +140,28 @@ export default function OrderBuilderModal({
   const [cardDiscountType, setCardDiscountType] = useState<CardDiscountType>('none')
   const [cardDiscountValue, setCardDiscountValue] = useState('')
   const [cardDiscountReason, setCardDiscountReason] = useState('')
+
+  // Recovery discount the customer was offered on a price objection (proof_feedback,
+  // 000279). Surfaced here so the designer can apply it in one click at order time.
+  const [offeredDiscount, setOfferedDiscount] = useState<number | null>(null)
+  useEffect(() => {
+    if (!proofId) return
+    let cancelled = false
+    void supabase
+      .from('proof_feedback')
+      .select('recovery_offer')
+      .eq('proof_id', proofId)
+      .eq('reason_code', 'price_too_high')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled) return
+        const pct = Number((data?.recovery_offer as { discount_percent?: number } | null)?.discount_percent ?? 0)
+        setOfferedDiscount(Number.isFinite(pct) && pct > 0 ? pct : null)
+      })
+    return () => { cancelled = true }
+  }, [proofId])
   const [customQuoteTotal, setCustomQuoteTotal] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1266,6 +1288,22 @@ export default function OrderBuilderModal({
                 Skipped for offline (you invoice in Xero). */}
             {paymentMethod !== 'offline' && (
             <Field label="Card discount" htmlFor="order-card-discount" className="md:col-span-2" hint="Optional. Reduces only the cards subtotal — shows as its own discount line on the pay page and invoice. Shipping has its own subsidy above.">
+              {offeredDiscount != null && offeredDiscount > 0 && cardDiscountType === 'none' && (
+                <div
+                  className="mb-2 flex flex-wrap items-center gap-2 rounded-lg px-3 py-2 text-[13px]"
+                  style={{ backgroundColor: 'var(--c-in-stock-soft)', boxShadow: 'inset 0 0 0 1px var(--c-in-stock)' }}
+                >
+                  <span className="text-ink-soft">A <strong>{offeredDiscount}%</strong> recovery discount was offered to this customer.</span>
+                  <button
+                    type="button"
+                    onClick={() => { setCardDiscountType('percent'); setCardDiscountValue(String(offeredDiscount)); setCardDiscountReason('Price-recovery offer') }}
+                    className="rounded-md bg-surface px-2.5 py-1 text-[12px] font-medium"
+                    style={{ color: 'var(--c-in-stock)', boxShadow: 'inset 0 0 0 1px var(--c-in-stock)' }}
+                  >
+                    Apply {offeredDiscount}%
+                  </button>
+                </div>
+              )}
               <select
                 id="order-card-discount"
                 value={cardDiscountType}
