@@ -346,39 +346,54 @@ const VIEW_TABS: { key: ViewKey; label: string }[] = [
   { key: 'recent', label: 'Recently ordered' },
 ]
 
-// A single figure in the summary bar: a (pre-formatted) headline value + order
-// count, with optional sub-detail. The value is passed as a string so a bucket
-// with nothing priced yet can show "—" rather than a misleading £0.
-function SummaryStat({
+// One tile in the action-led pipeline header. The headline is a COUNT (the
+// useful figure for a pipeline stage — "how many", not a part-known "how
+// much"), with an optional money line shown only where the value is real
+// (paid orders awaiting placement). `emphasis` marks the stages that need the
+// team's action so they stand out from the passive waiting states.
+function FunnelStat({
   label,
-  value,
   count,
+  money,
   detail,
-  tone = 'ink',
+  emphasis = false,
 }: {
   label: string
-  value: string
   count: number
+  money?: string | null
   detail?: string | null
-  tone?: 'ink' | 'out'
+  emphasis?: boolean
 }) {
   return (
-    <div className="rounded-xl border border-line bg-surface px-4 py-3">
+    <div className={`rounded-xl border px-4 py-3 ${emphasis ? 'border-line bg-surface' : 'border-line-soft bg-canvas'}`}>
       <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">{label}</span>
-      <span className={`mt-0.5 block text-lg font-semibold ${tone === 'out' ? 'text-out' : 'text-ink'}`}>
-        {value}
+      <span className="mt-0.5 flex items-baseline gap-1.5">
+        <span className={`text-xl font-semibold ${emphasis ? 'text-ink' : 'text-ink-soft'}`}>{count}</span>
+        {money ? <span className="text-[12px] font-medium text-ink-soft">{money}</span> : null}
       </span>
-      <span className="block text-[12px] text-ink-mute">
-        {count} {count === 1 ? 'order' : 'orders'}
-        {detail ? ` · ${detail}` : ''}
-      </span>
+      {detail ? <span className="mt-0.5 block text-[12px] text-ink-mute">{detail}</span> : null}
     </div>
   )
 }
 
-// A short GBP figure for the summary headline / section subtotals.
+// A short GBP figure for the To-order value / section subtotals.
 function gbpLabel(amount: number): string {
   return formatPrice(Math.round(amount), 'GBP')
+}
+
+// Median of a numeric list (even length → mean of the two middles). Null when empty.
+function median(xs: number[]): number | null {
+  if (xs.length === 0) return null
+  const s = [...xs].sort((a, b) => a - b)
+  const mid = Math.floor(s.length / 2)
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
+}
+
+// Human label for a time-to-pay measured in days.
+function payDurationLabel(days: number): string {
+  if (days < 1) return 'a day'
+  const n = Math.round(days)
+  return `${n} day${n === 1 ? '' : 's'}`
 }
 
 export default function OrdersPage() {
@@ -408,6 +423,9 @@ export default function OrdersPage() {
   // Fetched separately because these have no order row, so they appear nowhere
   // else on this page.
   const [approvedNoOrder, setApprovedNoOrder] = useState<PipelineApprovedItem[]>([])
+  // Conversion health since launch: how many sent pay links were paid, and how
+  // quickly. Computed across all orders (the work-queue fetch is status-scoped).
+  const [conversion, setConversion] = useState<{ sent: number; paid: number; medianDays: number | null } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -419,11 +437,21 @@ export default function OrdersPage() {
       void (async () => {
         const [{ data: approvedRows }, { data: orderRows }] = await Promise.all([
           supabase.from('public_dashboard_projects').select('proof_id, company_name, contact_name, approved_at').eq('status', 'approved'),
-          supabase.from('orders').select('proof_id, created_at'),
+          supabase.from('orders').select('proof_id, created_at, sent_at, paid_at'),
         ])
         if (cancelled) return
-        const orderList = (orderRows ?? []) as { proof_id: string; created_at: string | null }[]
+        const orderList = (orderRows ?? []) as { proof_id: string; created_at: string | null; sent_at: string | null; paid_at: string | null }[]
         const withOrder = new Set(orderList.map((r) => r.proof_id))
+
+        // Conversion health (since launch): paid vs sent links, median time-to-pay.
+        const sentCount = orderList.filter((r) => r.sent_at).length
+        const paidCount = orderList.filter((r) => r.paid_at).length
+        const durations = orderList
+          .filter((r) => r.sent_at && r.paid_at)
+          .map((r) => new Date(r.paid_at!).getTime() - new Date(r.sent_at!).getTime())
+          .filter((ms) => Number.isFinite(ms) && ms >= 0)
+        const med = median(durations)
+        setConversion({ sent: sentCount, paid: paidCount, medianDays: med != null ? med / DAY_MS : null })
         // Ordering go-live = the first order ever created. Approvals from before
         // the payment system existed were billed the old way and will never
         // become an in-app order, so they're excluded — only post-go-live
@@ -690,28 +718,14 @@ export default function OrdersPage() {
     }
   }, [orders, search])
 
-  // Most awaiting-payment links are open-quantity — the customer picks the
-  // quantity (and so the value) at checkout, so orderTotal() is null until
-  // they pay. Only the fixed-price links have a knowable value; the open ones
-  // are counted but never summed as £0, which would understate the real figure.
-  const awaitingPriced = awaitingPayment.filter((o) => orderTotal(o) != null)
-  const awaitingOpenCount = awaitingPayment.length - awaitingPriced.length
-  const awaitingConfirmedGbp = sumGbp(awaitingPriced, rates)
-  // The at-risk slice: expired links that DO have a confirmed value.
-  const expiredPriced = awaitingPriced.filter(isExpired)
-  const expiredConfirmedGbp = sumGbp(expiredPriced, rates)
-
-  // The awaiting-payment sub-detail: how many are priced-at-checkout, plus any
-  // expired confirmed value, joined into one line.
-  const awaitingDetail =
-    [
-      awaitingOpenCount > 0 ? `${awaitingOpenCount} set at checkout` : null,
-      expiredPriced.length > 0 ? `${gbpLabel(expiredConfirmedGbp)} expired` : null,
-    ]
-      .filter(Boolean)
-      .join(' · ') || null
-
   const showSection = (key: ViewKey) => view === 'all' || view === key
+
+  // Whole-pipeline counts for the header tiles (unfiltered — the header is a
+  // status overview, independent of the queue's search/filter). The £ on To
+  // order is the one figure that's real: paid money awaiting placement.
+  const sentAll = orders.filter((o) => o.status === 'sent')
+  const paidAll = orders.filter((o) => o.status === 'paid')
+  const revisionCount = orders.filter((o) => o.status === 'revision').length
 
   // Pipeline sidebar buckets (computed from the full order set, independent of
   // the queue's search/filter — the sidebar is a whole-pipeline overview).
@@ -742,35 +756,42 @@ export default function OrdersPage() {
               <OrdersPipelineCard approvedNoOrder={approvedNoOrder} cold={coldItems} invoiceFailed={invoiceFailedItems} />
             </aside>
             <div className="min-w-0 lg:order-1 lg:flex-1">
+            {(orders.length > 0 || approvedNoOrder.length > 0) && (
+              <>
+                {/* Action-led pipeline header. Each tile counts a funnel stage;
+                    the two stages that need our action — links to send, orders
+                    to place — are emphasised. Money shows only on To order,
+                    where it's real (paid). Awaiting payment leads with a count
+                    + at-risk rather than a value: most links are open-quantity,
+                    so the value isn't knowable until the customer checks out. */}
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <FunnelStat label="Links to send" count={approvedNoOrder.length} detail="approved, no link" emphasis />
+                  <FunnelStat
+                    label="Awaiting payment"
+                    count={sentAll.length}
+                    detail={coldItems.length > 0 ? `${coldItems.length} need a chase` : 'out with customers'}
+                  />
+                  <FunnelStat
+                    label="To order"
+                    count={paidAll.length}
+                    money={paidAll.length > 0 ? gbpLabel(sumGbp(paidAll, rates)) : null}
+                    detail="paid, to place"
+                    emphasis
+                  />
+                  <FunnelStat label="Being revised" count={revisionCount} detail="on hold" />
+                </div>
+                {conversion && conversion.sent > 0 && (
+                  <p className="mt-1.5 text-[12px] text-ink-mute">
+                    Since launch: {Math.round((conversion.paid / conversion.sent) * 100)}% of pay links paid
+                    {conversion.medianDays != null ? `, usually within ${payDurationLabel(conversion.medianDays)}` : ''}
+                    {conversion.sent < 10 ? ' · still early days' : ''}
+                  </p>
+                )}
+              </>
+            )}
+
             {orders.length > 0 && (
               <>
-                {/* Value summary — every total converted to GBP so the
-                    mixed-currency queue reads as one figure at a glance. */}
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
-                  <SummaryStat
-                    label="Awaiting payment"
-                    value={awaitingPriced.length > 0 ? gbpLabel(awaitingConfirmedGbp) : '—'}
-                    count={awaitingPayment.length}
-                    detail={awaitingDetail}
-                    tone={expiredPriced.length > 0 ? 'out' : 'ink'}
-                  />
-                  <SummaryStat
-                    label="To order"
-                    value={gbpLabel(sumGbp(toOrder, rates))}
-                    count={toOrder.length}
-                  />
-                  <SummaryStat
-                    label="Being revised"
-                    value={gbpLabel(sumGbp(beingRevised, rates))}
-                    count={beingRevised.length}
-                  />
-                </div>
-                <p className="mt-1.5 text-[11px] text-ink-mute">
-                  Most awaiting-payment links are open-quantity, so their value is set when the customer checks
-                  out — the figure above is the confirmed (fixed-price) total only. Paid totals convert to GBP
-                  {rates?.rateDate ? ` at the ${rates.rateDate} ECB rate` : ''}; a rough guide (GBP includes VAT, EUR/USD don’t).
-                </p>
-
                 {/* Search + which section to show. */}
                 <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <input
@@ -817,7 +838,6 @@ export default function OrdersPage() {
               <section className="mt-6">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">
                   Awaiting payment · {awaitingPayment.length}
-                  {awaitingPriced.length > 0 ? ` · ${gbpLabel(awaitingConfirmedGbp)} confirmed` : ''}
                 </h2>
                 <p className="mt-1 text-[13px] text-ink-mute">
                   Payment links that have been sent but not paid yet. Copy a link to re-send it, or reactivate an expired one (extends it {ORDER_EXPIRY_DAYS} days).
