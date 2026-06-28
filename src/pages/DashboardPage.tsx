@@ -2904,13 +2904,14 @@ export default function DashboardPage() {
                 className="flex gap-2.5 overflow-x-auto px-4 pb-3 [scroll-snap-type:x_mandatory] md:gap-0 md:overflow-x-visible md:px-0 md:pb-0 md:[scroll-snap-type:none] md:grid md:grid-cols-3 xl:flex xl:items-stretch xl:gap-3"
               >
                 {/* Triage zone — the cross-cutting alert, set apart so it isn't
-                    read as pipeline stage zero. Rose tint matches its tile. */}
+                    read as pipeline stage zero. Rose border only, no fill: a fill
+                    would mimic the tile's active (filter-on) state, which is also
+                    a rose wash. The outline marks the zone without looking selected. */}
                 <div
                   className="contents xl:flex xl:w-[150px] xl:shrink-0 xl:overflow-hidden"
                   style={{
                     borderRadius: '10px',
-                    border: '0.5px solid color-mix(in srgb, var(--c-out) 45%, transparent)',
-                    backgroundColor: 'color-mix(in srgb, var(--c-out) 6%, transparent)',
+                    border: '0.5px solid color-mix(in srgb, var(--c-out) 55%, transparent)',
                   }}
                 >
                   <StatTile
