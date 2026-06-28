@@ -89,6 +89,16 @@ export function gbpToCurrency(target: 'GBP' | 'EUR' | 'USD', rates: ExchangeRate
   return target === 'EUR' ? rates.gbpToEur : rates.gbpToUsd
 }
 
+// Convert a figure in `currency` back to GBP — the inverse of gbpToCurrency.
+// EUR / USD divide by the GBP→target rate; GBP is the identity. Returns the
+// amount unchanged when rates are null or zero (fail-safe path) so a transient
+// outage doesn't blank or zero an aggregated total — better off by a percent
+// or two than showing nothing.
+export function currencyToGbp(amount: number, currency: 'GBP' | 'EUR' | 'USD', rates: ExchangeRates | null): number {
+  const rate = gbpToCurrency(currency, rates)
+  return rate ? amount / rate : amount
+}
+
 export function invalidateExchangeRates(): void {
   cache = null
 }

@@ -13,6 +13,7 @@ import { Virtuoso } from 'react-virtuoso'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
+import { getHotLeadsPanelEnabled } from '../lib/hotLeadsPanelEnabled'
 import type { ProofStatus } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import {
@@ -2170,6 +2171,10 @@ export default function DashboardPage() {
   // and lives under "Recently ordered" there. invoiceProblem = paid orders whose
   // Xero invoice failed (a books gap that's otherwise only visible on /orders).
   const [orderingOn, setOrderingOn]       = useState(false)
+  // Admin switch for the "Hot leads to chase" card (migration 000280). Starts
+  // true — the panel ships shown — so the card doesn't flicker out on first
+  // paint before the settings read resolves. An admin turning it off hides it.
+  const [hotLeadsOn, setHotLeadsOn]       = useState(true)
   const [orderCounts, setOrderCounts]     = useState<{ awaitingPayment: number; toOrder: number; invoiceProblem: number } | null>(null)
   // current_version_id → signed thumbnail URL. Populated in
   // loadDashboard after the projects fetch by batch-signing the
@@ -2369,6 +2374,18 @@ export default function DashboardPage() {
       ])
       if (cancelled) return
       setOrderCounts({ awaitingPayment: a.count ?? 0, toOrder: o.count ?? 0, invoiceProblem: p.count ?? 0 })
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  // Hot-leads panel switch: read the admin toggle once on mount. Independent of
+  // the proof load so it never blocks the list. Defaults on; an admin hiding it
+  // flips this off (HotLeadsCard still fails quiet on no leads / RPC error).
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const on = await getHotLeadsPanelEnabled()
+      if (!cancelled) setHotLeadsOn(on)
     })()
     return () => { cancelled = true }
   }, [])
@@ -2989,7 +3006,7 @@ export default function DashboardPage() {
                 tiles so it's the first actionable thing on the page, on every
                 viewport. Admin-only "Open in Analytics" deep-link (the page is
                 admin-gated); fails quiet if the RPC isn't available. */}
-            <HotLeadsCard isAdmin={role === 'admin'} currentUserId={userId} />
+            {hotLeadsOn && <HotLeadsCard isAdmin={role === 'admin'} currentUserId={userId} />}
 
             {/* 2-column grid for the rest of the page: list card on the
                 left, Latest activity sidebar on the right. Lives below

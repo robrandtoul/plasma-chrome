@@ -51,7 +51,7 @@ import {
 } from '../lib/proofSnapshot'
 import { ResolvePopover } from '../components/ResolvePopover'
 import ProofTimeline from '../components/ProofTimeline'
-import type { TimelineEventRow, TimelineReminderRow, TimelineFeedbackRow } from '../lib/proofTimeline'
+import type { TimelineEventRow, TimelineReminderRow, TimelineFeedbackRow, TimelineOrderReminderRow } from '../lib/proofTimeline'
 
 interface Proof {
   id: string
@@ -305,6 +305,10 @@ export default function ProofDetailPage() {
   // shows in full rather than collapsing into last_reply_sent_at.
   const [timelineReminders, setTimelineReminders] = useState<TimelineReminderRow[]>([])
   const [timelineFeedback, setTimelineFeedback] = useState<TimelineFeedbackRow[]>([])
+  // Sent unpaid-order payment reminders (order_nudges ledger) for the
+  // Activity timeline — the unpaid-order chase, distinct from the proof
+  // follow-up reminders above.
+  const [timelineOrderReminders, setTimelineOrderReminders] = useState<TimelineOrderReminderRow[]>([])
   // auth user id → designer full name, for the timeline's "Donna
   // created v2" / "Donna sent a reply for v2" attribution. Resolved
   // from profiles (open authenticated SELECT) because audit_log —
@@ -637,6 +641,28 @@ export default function ProofDetailPage() {
       if (isStale()) return
       loadedReminders = (nudgeRows ?? []) as TimelineReminderRow[]
       setTimelineReminders(loadedReminders)
+    }
+
+    // Sent unpaid-order payment reminders (order_nudges, 000238) for the
+    // Activity timeline. Filtered via an inner join on the parent order's
+    // proof_id, state='sent' (skips/dry-run dropped). Best-effort like the
+    // proof reminders above.
+    {
+      const { data: orderNudgeRows } = await supabase
+        .from('order_nudges')
+        .select('id, reminder_no, source, created_at, orders!inner(proof_id)')
+        .eq('orders.proof_id', proofId)
+        .eq('state', 'sent')
+        .order('created_at', { ascending: true })
+      if (isStale()) return
+      setTimelineOrderReminders(
+        (orderNudgeRows ?? []).map((r) => ({
+          id: r.id as string,
+          reminder_no: r.reminder_no as number,
+          source: r.source as 'auto' | 'manual',
+          created_at: r.created_at as string,
+        })),
+      )
     }
 
     // Resolve designer names for the timeline's attribution lines.
@@ -2290,6 +2316,7 @@ export default function ProofDetailPage() {
       events={timelineEvents}
       feedback={timelineFeedback}
       reminders={timelineReminders}
+      orderReminders={timelineOrderReminders}
       viewsByVersion={viewsByVersion}
       designerNamesById={designerNames}
       proofId={proof.id}

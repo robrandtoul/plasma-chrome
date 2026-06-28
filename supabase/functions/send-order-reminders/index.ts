@@ -171,6 +171,19 @@ async function run(admin: Admin): Promise<Response> {
   const maxReminders = Math.min(5, Math.max(1, Number(settings?.order_reminders_max ?? DEFAULT_REMINDERS_MAX)))
   const intervalDays = Math.min(30, Math.max(1, Number(settings?.order_reminder_interval_days ?? DEFAULT_INTERVAL_DAYS)))
 
+  // Comms grace — mirror the proof follow-up sender. If there's been a recent
+  // reply on the Help Scout thread (customer OR staff) within the grace window,
+  // pause the chase so an automated payment nag doesn't land mid-conversation.
+  // Same knob the proof chase uses (site_settings.needs_attention_rules
+  // .helpscout_reply_grace_days, calendar days, default 3); not duplicated onto
+  // a separate order-specific setting.
+  let graceDays = 3
+  {
+    const { data: site } = await admin.from('site_settings').select('needs_attention_rules').eq('id', 1).maybeSingle()
+    const rules = (site?.needs_attention_rules ?? {}) as Record<string, unknown>
+    graceDays = Number((rules['helpscout_reply_grace_days'] as number | undefined) ?? 3)
+  }
+
   const bankHolidays = await fetchBankHolidays()
 
   let mode: 'live' | 'dry_run' = 'dry_run'
@@ -220,20 +233,22 @@ async function run(admin: Admin): Promise<Response> {
 
   // ── Joined context (flat reads, joined in JS — volume is tiny) ─────────────
   const proofIds = [...new Set(candidates.map((o) => o.proof_id))]
-  const proofMap = new Map<string, { conversationId: string | null; tags: string[]; contactId: string | null }>()
+  const proofMap = new Map<string, { conversationId: string | null; tags: string[]; contactId: string | null; lastReplyAt: string | null; lastCustomerReplyAt: string | null }>()
   const contactMap = new Map<string, { fullName: string | null; email: string | null; companyId: string | null }>()
   const companyMap = new Map<string, string>()
 
   if (proofIds.length > 0) {
     const { data: proofs } = await admin
       .from('proofs')
-      .select('id, helpscout_conversation_id, helpscout_tags, contact_id')
+      .select('id, helpscout_conversation_id, helpscout_tags, contact_id, helpscout_last_reply_at, helpscout_last_customer_reply_at')
       .in('id', proofIds)
     for (const p of proofs ?? []) {
       proofMap.set(p.id as string, {
         conversationId: (p.helpscout_conversation_id as string | null) ?? null,
         tags: ((p.helpscout_tags as string[] | null) ?? []),
         contactId: (p.contact_id as string | null) ?? null,
+        lastReplyAt: (p.helpscout_last_reply_at as string | null) ?? null,
+        lastCustomerReplyAt: (p.helpscout_last_customer_reply_at as string | null) ?? null,
       })
     }
     const contactIds = [...new Set([...proofMap.values()].map((p) => p.contactId).filter((x): x is string => !!x))]
@@ -344,6 +359,18 @@ async function run(admin: Admin): Promise<Response> {
     if (!conversationId) { await logSkip(order, stage, 'skipped_no_conversation', null); continue }
     if (proof!.tags.some((t) => t.trim().toLowerCase() === 'follow up')) {
       await logSkip(order, stage, 'skipped_followup_tag', conversationId); continue
+    }
+    // Comms grace (mirror proof side): greatest(staff, customer) reply within
+    // the window pauses the chase. Calendar days, matching the 000208 guard.
+    // A skip row doesn't occupy the (order, reminder_no) claim slot (that's a
+    // partial index on sending/sent), so this stage still sends once the grace
+    // window lapses — the pause is transient, not terminal.
+    const lastReplyMs = Math.max(
+      proof!.lastReplyAt ? Date.parse(proof!.lastReplyAt) : -Infinity,
+      proof!.lastCustomerReplyAt ? Date.parse(proof!.lastCustomerReplyAt) : -Infinity,
+    )
+    if (lastReplyMs > -Infinity && now.getTime() - lastReplyMs < graceDays * DAY_MS) {
+      await logSkip(order, stage, 'skipped_grace_window', conversationId); continue
     }
     if (!baseUrl) { await logSkip(order, stage, 'skipped_no_base_url', conversationId); continue }
 

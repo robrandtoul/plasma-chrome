@@ -347,6 +347,24 @@ test('a genuine reply after the last reminder still renders its own reply_sent',
   assert(entries.some((e) => e.type === 'reminder_sent'), 'the reminder should also show')
 })
 
+test('unpaid-order payment reminders produce order_reminder_sent entries off reminder_no', () => {
+  const entries = buildTimelineEntries(
+    baseSources({
+      versions: [{ id: 'v1', version_number: 1, created_at: '2026-05-01T10:00:00Z', last_reply_sent_at: null }],
+      orderReminders: [
+        { id: 'o2', reminder_no: 2, source: 'auto', created_at: '2026-05-12T09:00:00Z' },
+        { id: 'o1', reminder_no: 1, source: 'auto', created_at: '2026-05-09T09:00:00Z' },
+      ],
+    }),
+  )
+  const orderReminders = entries.filter((e) => e.type === 'order_reminder_sent')
+  assert(orderReminders.length === 2, `expected 2 order-reminder entries, got ${orderReminders.length}`)
+  const first = entries.find((e) => e.id === 'order-reminder:o1')!
+  const second = entries.find((e) => e.id === 'order-reminder:o2')!
+  assert(first.actor === null && first.verb === 'Payment reminder 1 sent', `first: ${first.actor} / ${first.verb}`)
+  assert(second.verb === 'Payment reminder 2 sent', `second verb: ${second.verb}`)
+})
+
 // ── Result ────────────────────────────────────────────────────────────────────
 
 console.log(`\n${passed} passed, ${failed} failed`)

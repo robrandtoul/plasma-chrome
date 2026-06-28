@@ -14,6 +14,7 @@ export type TimelineEntryType =
   | 'version_created'
   | 'reply_sent'
   | 'reminder_sent'
+  | 'order_reminder_sent'
   | 'customer_email_reply'
   | 'view'
   | 'approve'
@@ -94,6 +95,21 @@ export interface TimelineFeedbackRow {
   created_at: string
 }
 
+// A sent unpaid-order payment reminder from the order_nudges ledger
+// (send-order-reminders cron, migration 000238). Order-level rather than
+// version-level — an order isn't tied to a proof version — so it carries
+// its own reminder_no for the "payment reminder N" ordinal rather than
+// being numbered per version like the proof-chase reminders above.
+export interface TimelineOrderReminderRow {
+  /** order_nudges.id — render key. */
+  id: string
+  /** 1-based stage from the ledger (reminder 1, 2, 3…). */
+  reminder_no: number
+  /** 'auto' = the send-order-reminders cron; 'manual' kept for symmetry. */
+  source: 'auto' | 'manual'
+  created_at: string
+}
+
 export interface TimelineSources {
   proof: {
     created_at: string
@@ -130,6 +146,12 @@ export interface TimelineSources {
    * (older tests, the preview harness) simply omit it.
    */
   reminders?: TimelineReminderRow[]
+  /**
+   * Sent unpaid-order payment reminders (order_nudges, state='sent' only).
+   * Each becomes its own 'order_reminder_sent' entry. Optional — callers
+   * that don't load the order ledger simply omit it.
+   */
+  orderReminders?: TimelineOrderReminderRow[]
   /** proof_version_id → non-bot view rows (any extra fields ignored). */
   viewsByVersion: ReadonlyMap<string, ReadonlyArray<{ viewed_at: string }>>
   /**
@@ -159,6 +181,7 @@ const TIE_RANK: Record<TimelineEntryType, number> = {
   view: 5,
   reply_sent: 6,
   reminder_sent: 6,
+  order_reminder_sent: 6,
   version_created: 7,
   project_created: 8,
 }
@@ -182,7 +205,7 @@ const DECLINE_VERBS: Record<string, string> = {
 }
 
 export function buildTimelineEntries(sources: TimelineSources): TimelineEntry[] {
-  const { proof, versions, events, feedback, reminders, viewsByVersion, designerNamesById } = sources
+  const { proof, versions, events, feedback, reminders, orderReminders, viewsByVersion, designerNamesById } = sources
   const entries: TimelineEntry[] = []
   const designerName = (id: string | null | undefined): string | null =>
     (id && designerNamesById?.get(id)) || null
@@ -310,6 +333,23 @@ export function buildTimelineEntries(sources: TimelineSources): TimelineEntry[] 
       verb: sender
         ? `sent reminder ${n} for ${vLabel}`
         : `${r.source === 'auto' ? 'Automatic reminder' : 'Reminder'} ${n} sent for ${vLabel}`,
+      comment: null,
+      recipientName: null,
+      failedNotification: false,
+    })
+  }
+
+  // Unpaid-order payment reminders. Order-level (no version), automatic, and
+  // already carrying their own stage number — so "Payment reminder N sent"
+  // reads straight off reminder_no. Actor is null (the bot), like the
+  // automatic proof reminders, so the verb renders on its own.
+  for (const r of orderReminders ?? []) {
+    entries.push({
+      id: `order-reminder:${r.id}`,
+      type: 'order_reminder_sent',
+      at: r.created_at,
+      actor: null,
+      verb: `Payment reminder ${r.reminder_no} sent`,
       comment: null,
       recipientName: null,
       failedNotification: false,
