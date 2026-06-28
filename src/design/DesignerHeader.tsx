@@ -416,6 +416,14 @@ function AccountSheet({
 
         <div className="mt-1 overflow-hidden rounded-[14px] border border-line bg-surface">
           <Link
+            to="/settings/notifications"
+            onClick={onClose}
+            className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
+          >
+            <Bell size={18} aria-hidden="true" className="text-ink-mute" />
+            Notifications
+          </Link>
+          <Link
             to="/feedback"
             onClick={onClose}
             className="flex min-h-[56px] items-center gap-3 border-b border-line-soft px-4 text-[15px] text-ink-soft hover:bg-canvas"
@@ -583,6 +591,15 @@ function UserPill({
           role="menu"
           className="absolute right-0 top-10 z-20 min-w-[10rem] rounded-[10px] bg-surface py-1 shadow-md border border-line"
         >
+          <Link
+            to="/settings/notifications"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="block w-full px-4 py-2 text-left text-[13px] text-ink-soft hover:bg-canvas"
+          >
+            Notifications
+          </Link>
+          <div className="mx-3 my-1 border-t border-line-soft" />
           {onEditProfile && (
             <button
               type="button"

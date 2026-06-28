@@ -13,6 +13,12 @@
          the installed app instead of letting the page colour reach
          the top edge the way Safari does. -->
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- Web App Manifest: makes the app installable as a PWA and is a
+         prerequisite for web-push on iOS. The Apple meta tags below still
+         drive the iOS Home Screen icon/title; the manifest adds the
+         standalone display + theme colour Chrome/Android read. -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#fbf7f0" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Proof Viewer" />

@@ -1259,6 +1259,91 @@ Deno.serve(async (req) => {
     })
   }
 
+  // ── Staff push notification (best-effort, fire-and-forget) ───────────────
+  // The customer's action is durable above. Hand it to the send-push edge
+  // function, which decides who hears it (preferences + watches + the master
+  // kill switch) and delivers to their devices. Fired via EdgeRuntime.waitUntil
+  // so a push failure adds no latency to the customer's request and can never
+  // break it. Wrapped in its own try/catch for the same reason. send-push is
+  // gated by settings.push_enabled, so until that's flipped on this is a no-op.
+  try {
+    const fireUrl = `${supabaseUrl}/functions/v1/send-push`
+    const firePush = async (pushBody: Record<string, unknown>) => {
+      try {
+        await fetch(fireUrl, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(pushBody),
+        })
+      } catch (e) {
+        console.warn('[proof-action] send-push dispatch failed', e)
+      }
+    }
+    const versionLabel = `v${v.version_number}`
+    const recipientLabel = recipientName === SHARED_APPROVAL_KEY ? '' : recipientName
+    let pushBody: Record<string, unknown> | null = null
+
+    if (eventType === 'request_changes') {
+      // Covers variant-round selections too (they travel as request_changes) —
+      // both are a customer response the designer needs to see.
+      pushBody = {
+        event_code: 'customer_requests_changes',
+        proof_id: v.proof_id,
+        proof_version_id: proofVersionId,
+        source_kind: 'proof_event',
+        source_event_id: eventId,
+        vars: { actor: actorName, comment: comment ?? '', recipient: recipientLabel, version: versionLabel },
+      }
+    } else {
+      // approve — re-read status (the 000126/000212 finalize trigger ran inside
+      // the upsert) to decide between a per-recipient ping and the whole-proof
+      // "fully approved" ping. The finalize ping supersedes the per-recipient
+      // one so a single sign-off that completes the proof isn't double-sent.
+      const { data: statusRow } = await admin
+        .from('proofs')
+        .select('status, approved_at')
+        .eq('id', v.proof_id)
+        .maybeSingle()
+      const st = statusRow as { status: string; approved_at: string | null } | null
+      const finalized = st?.status === 'approved'
+      // Mirror the collection HS policy: stay silent on intermediate layout
+      // approvals; only the final one (which finalizes) pings.
+      if (!(isCollection && !finalized)) {
+        if (finalized) {
+          const epoch = st?.approved_at ? Date.parse(st.approved_at) : 0
+          pushBody = {
+            event_code: 'project_reaches_approved_status',
+            proof_id: v.proof_id,
+            proof_version_id: proofVersionId,
+            source_kind: 'proof_finalize',
+            source_event_id: `${v.proof_id}:${epoch}`,
+            vars: { actor: actorName, version: versionLabel },
+          }
+        } else {
+          pushBody = {
+            event_code: 'proof_approve_per_recipient',
+            proof_id: v.proof_id,
+            proof_version_id: proofVersionId,
+            source_kind: 'proof_event',
+            source_event_id: eventId,
+            vars: { actor: actorName, recipient: recipientLabel, version: versionLabel },
+          }
+        }
+      }
+    }
+
+    if (pushBody) {
+      const g = globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }
+      if (g.EdgeRuntime?.waitUntil) {
+        g.EdgeRuntime.waitUntil(firePush(pushBody))
+      } else {
+        void firePush(pushBody)
+      }
+    }
+  } catch (pushErr) {
+    console.warn('[proof-action] push notification step failed', pushErr)
+  }
+
   // ── Set (collection) Help Scout policy (Phase 2) ─────────────────────────
   // A collection is approve-each across N layouts. Posting to the HS
   // thread + firing a confirmation reply on every single layout approval
