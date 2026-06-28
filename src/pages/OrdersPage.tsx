@@ -417,15 +417,31 @@ export default function OrdersPage() {
       // Approved-but-not-ordered proofs. Cross-reference every proof that has
       // any order (any status), then keep approved proofs past the threshold.
       void (async () => {
-        const [{ data: approvedRows }, { data: orderProofRows }] = await Promise.all([
+        const [{ data: approvedRows }, { data: orderRows }] = await Promise.all([
           supabase.from('public_dashboard_projects').select('proof_id, company_name, contact_name, approved_at').eq('status', 'approved'),
-          supabase.from('orders').select('proof_id'),
+          supabase.from('orders').select('proof_id, created_at'),
         ])
         if (cancelled) return
-        const withOrder = new Set((orderProofRows ?? []).map((r) => (r as { proof_id: string }).proof_id))
+        const orderList = (orderRows ?? []) as { proof_id: string; created_at: string | null }[]
+        const withOrder = new Set(orderList.map((r) => r.proof_id))
+        // Ordering go-live = the first order ever created. Approvals from before
+        // the payment system existed were billed the old way and will never
+        // become an in-app order, so they're excluded — only post-go-live
+        // approvals that still have no order surface. Derived from data, so
+        // there's no hardcoded launch date to maintain; an empty orders table
+        // (Infinity) shows nothing, which is correct (system not live yet).
+        const goLiveMs = orderList.reduce((min, r) => {
+          const t = r.created_at ? new Date(r.created_at).getTime() : NaN
+          return Number.isFinite(t) && t < min ? t : min
+        }, Infinity)
         const items = (approvedRows ?? [])
           .map((r) => r as { proof_id: string; company_name: string | null; contact_name: string | null; approved_at: string | null })
-          .filter((r) => !!r.approved_at && !withOrder.has(r.proof_id) && businessDaysSince(r.approved_at!) >= APPROVED_NO_ORDER_MIN_BUSINESS_DAYS)
+          .filter((r) =>
+            !!r.approved_at &&
+            !withOrder.has(r.proof_id) &&
+            new Date(r.approved_at!).getTime() >= goLiveMs &&
+            businessDaysSince(r.approved_at!) >= APPROVED_NO_ORDER_MIN_BUSINESS_DAYS,
+          )
           .map((r) => ({
             proofId: r.proof_id,
             label: customerLabelShared(r.company_name, r.contact_name),
