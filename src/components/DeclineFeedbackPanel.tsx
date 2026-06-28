@@ -132,7 +132,7 @@ export default function DeclineFeedbackPanel({
       {!reason ? (
         <>
           <p className="text-sm font-medium text-gray-800">No problem — what’s holding you back?</p>
-          <p className="mt-0.5 text-xs text-gray-500">This just helps us help you. Nothing here approves or cancels anything.</p>
+          <p className="mt-0.5 text-xs text-gray-500">This just helps us help you — choosing a reason won’t approve or change your proof on its own.</p>
           <div className="mt-3 space-y-1.5">
             {REASONS.map((r) => (
               <button
