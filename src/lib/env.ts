@@ -14,6 +14,17 @@ function required(name: string): string {
 export const SUPABASE_URL = required('VITE_SUPABASE_URL')
 export const SUPABASE_ANON_KEY = required('VITE_SUPABASE_ANON_KEY')
 
+// VAPID public key for web-push (notifications). OPTIONAL on purpose: the push
+// feature feature-detects and stays hidden until this is set in the Netlify env
+// (and .env for local dev), so a deploy without it simply shows no "Enable
+// notifications" control rather than throwing. Safe to ship in the bundle — the
+// public key is meant to be public; only the private half is a server secret.
+export const VAPID_PUBLIC_KEY: string | undefined =
+  typeof import.meta.env.VITE_VAPID_PUBLIC_KEY === 'string' &&
+  import.meta.env.VITE_VAPID_PUBLIC_KEY.length > 0
+    ? import.meta.env.VITE_VAPID_PUBLIC_KEY
+    : undefined
+
 // --- Cross-app session, added for the Supabase consolidation ---
 //
 // Proofs now lives in the `proofs` schema of the shared stock project,
