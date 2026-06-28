@@ -178,7 +178,7 @@ function TimelineRow({
         </div>
         {entry.comment && (
           <p
-            className="mt-2 rounded-md border border-line-soft border-l-2 bg-canvas px-3 py-2 text-[13px] leading-[1.55] text-ink-soft whitespace-pre-wrap"
+            className="mt-2 rounded-md border border-line-soft border-l-2 bg-canvas px-3 py-2 text-[13px] leading-[1.55] text-ink-soft whitespace-pre-wrap break-words"
             style={{ borderLeftColor: visual.tint }}
           >
             {entry.comment}
@@ -227,7 +227,7 @@ function TimelineRow({
                         {relativeTime(reveal.thread.createdAt)}
                       </span>
                     </div>
-                    <p className="text-[13px] leading-[1.55] text-ink-soft whitespace-pre-wrap">
+                    <p className="text-[13px] leading-[1.55] text-ink-soft whitespace-pre-wrap break-words">
                       {reveal.thread.bodyText}
                     </p>
                   </div>
