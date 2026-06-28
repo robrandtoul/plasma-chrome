@@ -2859,7 +2859,7 @@ export default function DashboardPage() {
                 than aligning with the hero, matching the mockup. */}
             <section className="mb-6 rounded-[14px] bg-surface border border-line overflow-hidden">
               {/* Hero header */}
-              <div className="px-6 py-5 flex flex-wrap items-end justify-between gap-4 border-b border-line-soft">
+              <div className="px-6 py-5 flex flex-wrap items-end justify-between gap-4 border-b border-line-soft xl:border-b-0">
                 <div>
                   <div className="eyebrow">Proofs at a glance</div>
                   <h1 className="mt-1 font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0" style={{ fontSize: 'clamp(22px, 3vw, 28px)' }}>
@@ -2901,13 +2901,13 @@ export default function DashboardPage() {
               <div
                 ref={tilesStripRef}
                 onScroll={handleTilesScroll}
-                className="flex gap-2.5 overflow-x-auto px-4 pb-3 [scroll-snap-type:x_mandatory] md:gap-0 md:overflow-x-visible md:px-0 md:pb-0 md:[scroll-snap-type:none] md:grid md:grid-cols-3 xl:flex xl:items-stretch xl:gap-3"
+                className="flex gap-2.5 overflow-x-auto px-4 pb-3 [scroll-snap-type:x_mandatory] md:gap-0 md:overflow-x-visible md:px-0 md:pb-0 md:[scroll-snap-type:none] md:grid md:grid-cols-3 xl:flex xl:items-stretch xl:gap-3 xl:px-6 xl:pt-3 xl:pb-5"
               >
                 {/* Triage zone — the cross-cutting alert, set apart so it isn't
                     read as pipeline stage zero. Eyebrow + a rose border (no fill,
                     which would mimic the tile's active filter-on rose wash). */}
-                <div className="contents xl:flex xl:w-[150px] xl:shrink-0 xl:flex-col">
-                  <span className="eyebrow hidden xl:block xl:mb-1.5 xl:pl-1">Triage</span>
+                <div className="contents xl:flex xl:flex-col xl:relative xl:w-[150px] xl:shrink-0">
+                  <span className="eyebrow hidden xl:block" style={{ position: 'absolute', top: '-7px', left: '11px', zIndex: 1, background: 'var(--c-bg-panel)', padding: '0 6px', color: 'var(--c-out)' }}>Triage</span>
                   <div
                     className="contents xl:flex xl:flex-1 xl:overflow-hidden"
                     style={{
@@ -2929,8 +2929,8 @@ export default function DashboardPage() {
                     right. Internal hairlines split the stages; the 2px baseline
                     rail signals the band is a track. Awaiting payment / To order
                     only when ordering is enabled. */}
-                <div className="contents xl:flex xl:flex-1 xl:min-w-0 xl:flex-col">
-                  <span className="eyebrow hidden xl:block xl:mb-1.5 xl:pl-1">Workflow</span>
+                <div className="contents xl:flex xl:flex-col xl:relative xl:flex-1 xl:min-w-0">
+                  <span className="eyebrow hidden xl:block" style={{ position: 'absolute', top: '-7px', left: '11px', zIndex: 1, background: 'var(--c-bg-panel)', padding: '0 6px' }}>Workflow</span>
                   <div
                     className="contents xl:flex xl:flex-1 xl:min-w-0 xl:overflow-hidden xl:divide-x xl:divide-line"
                     style={{
@@ -3014,8 +3014,8 @@ export default function DashboardPage() {
                 {/* Parked zone — proofs deliberately on hold or gone cold.
                     Off-flow, so a plain box set apart on the right rather than
                     the pipeline's tail. */}
-                <div className="contents xl:flex xl:w-[224px] xl:shrink-0 xl:flex-col">
-                  <span className="eyebrow hidden xl:block xl:mb-1.5 xl:pl-1">Parked</span>
+                <div className="contents xl:flex xl:flex-col xl:relative xl:w-[224px] xl:shrink-0">
+                  <span className="eyebrow hidden xl:block" style={{ position: 'absolute', top: '-7px', left: '11px', zIndex: 1, background: 'var(--c-bg-panel)', padding: '0 6px' }}>Parked</span>
                   <div
                     className="contents xl:flex xl:flex-1 xl:overflow-hidden xl:divide-x xl:divide-line"
                     style={{ borderRadius: '10px', border: '0.5px solid var(--c-line)' }}
