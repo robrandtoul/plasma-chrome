@@ -41,6 +41,27 @@ async function createNote(token: string, conversationId: number | string, userId
   if (!resp.ok) throw new Error(`HS note create (${resp.status}): ${await resp.text().catch(() => '')}`)
 }
 
+// PATCH the conversation to active so the feedback surfaces in the team queue —
+// a note alone never changes status, so it would sit unseen on a pending thread.
+async function setConversationActive(token: string, conversationId: number | string): Promise<void> {
+  const resp = await fetch(`https://api.helpscout.net/v2/conversations/${conversationId}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op: 'replace', path: '/status', value: 'active' }),
+  })
+  if (!resp.ok) throw new Error(`HS set-active (${resp.status}): ${await resp.text().catch(() => '')}`)
+}
+
+// Move the conversation to another mailbox (commercial feedback → Customer Support).
+async function moveConversation(token: string, conversationId: number | string, mailboxId: number): Promise<void> {
+  const resp = await fetch(`https://api.helpscout.net/v2/conversations/${conversationId}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op: 'move', path: '/mailboxId', value: mailboxId }),
+  })
+  if (!resp.ok) throw new Error(`HS move (${resp.status}): ${await resp.text().catch(() => '')}`)
+}
+
 const REASON_LABELS: Record<string, string> = {
   price_too_high: 'Price is more than budgeted',
   different_direction: 'Would like a different design direction',
@@ -48,6 +69,12 @@ const REASON_LABELS: Record<string, string> = {
   going_elsewhere: 'Going a different route / no longer needed',
   still_thinking: 'Still thinking / needs to check with others',
 }
+
+// Commercial reasons are routed to the Customer Support mailbox (id 33103, the
+// verified CS inbox); 'different_direction' is a design revision so it stays in
+// Graphics and is only marked active.
+const COMMERCIAL_REASONS = new Set(['price_too_high', 'timing', 'going_elsewhere', 'still_thinking'])
+const CUSTOMER_SUPPORT_MAILBOX_ID = 33103
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -169,29 +196,53 @@ async function handle(req: Request): Promise<Response> {
   // up. Deferred so it never adds latency or fails the customer's submit.
   const conversationId = (proof as { helpscout_conversation_id: string | null }).helpscout_conversation_id
   if (conversationId) {
-    const postNote = async () => {
+    const syncHs = async () => {
+      const appId = Deno.env.get('HELPSCOUT_APP_ID')?.trim()
+      const appSecret = Deno.env.get('HELPSCOUT_APP_SECRET')?.trim()
+      if (!appId || !appSecret) return
+      let token: string
       try {
-        const appId = Deno.env.get('HELPSCOUT_APP_ID')?.trim()
-        const appSecret = Deno.env.get('HELPSCOUT_APP_SECRET')?.trim()
-        const userId = Number(Deno.env.get('HELPSCOUT_DEFAULT_USER_ID') ?? '')
-        if (!appId || !appSecret || !Number.isFinite(userId)) return
-        const token = await getAccessToken(appId, appSecret)
-        const base = (Deno.env.get('PROOF_VIEWER_BASE_URL') ?? '').replace(/\/$/, '')
-        const link = base ? `\nProof: ${base}/proofs/${proofId}` : ''
-        const who = actorName ? ` from ${actorName}` : ''
-        const noteText =
-          `🔔 Customer feedback${who} — not ready to approve.\n` +
-          `Reason: ${REASON_LABELS[reasonCode]}.` +
-          (note ? `\n“${note}”` : '') +
-          offerSummary(recoveryOffer, currency) +
-          `\n\n${reasonCode === 'going_elsewhere' ? 'Automated reminders for this proof have been stopped.' : 'Worth a personal follow-up.'}${link}`
-        await createNote(token, conversationId, userId, noteText)
+        token = await getAccessToken(appId, appSecret)
       } catch (err) {
-        console.error('[proof-feedback] HS note failed:', (err as Error).message)
+        console.error('[proof-feedback] HS token failed:', (err as Error).message)
+        return
+      }
+      // 1. Internal note alerting the designer (needs a staff user id).
+      const userId = Number(Deno.env.get('HELPSCOUT_DEFAULT_USER_ID') ?? '')
+      if (Number.isFinite(userId)) {
+        try {
+          const base = (Deno.env.get('PROOF_VIEWER_BASE_URL') ?? '').replace(/\/$/, '')
+          const link = base ? `\nProof: ${base}/proofs/${proofId}` : ''
+          const who = actorName ? ` from ${actorName}` : ''
+          const noteText =
+            `🔔 Customer feedback${who} — not ready to approve.\n` +
+            `Reason: ${REASON_LABELS[reasonCode]}.` +
+            (note ? `\n“${note}”` : '') +
+            offerSummary(recoveryOffer, currency) +
+            `\n\n${reasonCode === 'going_elsewhere' ? 'Automated reminders for this proof have been stopped.' : 'Worth a personal follow-up.'}${link}`
+          await createNote(token, conversationId, userId, noteText)
+        } catch (err) {
+          console.error('[proof-feedback] HS note failed:', (err as Error).message)
+        }
+      }
+      // 2. Mark active so it surfaces in the team queue (a note never reactivates).
+      try {
+        await setConversationActive(token, conversationId)
+      } catch (err) {
+        console.error('[proof-feedback] HS set-active failed:', (err as Error).message)
+      }
+      // 3. Commercial feedback → Customer Support; 'different_direction' stays in
+      //    Graphics as a design revision.
+      if (COMMERCIAL_REASONS.has(reasonCode)) {
+        try {
+          await moveConversation(token, conversationId, CUSTOMER_SUPPORT_MAILBOX_ID)
+        } catch (err) {
+          console.error('[proof-feedback] HS move failed:', (err as Error).message)
+        }
       }
     }
-    if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(postNote())
-    else await postNote()
+    if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(syncHs())
+    else await syncHs()
   }
 
   return json({ status: 'ok', id: (inserted as { id: string }).id })
