@@ -321,7 +321,7 @@ function StatTile({ label, count, active, tone, onClick, help, badge, badgeTitle
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative max-md:w-[140px] max-md:shrink-0 max-md:snap-start max-md:rounded-[12px] max-md:border max-md:border-line"
+      className="flex flex-col items-start gap-2 px-5 py-5 text-left transition-colors hover:bg-canvas focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--c-brand)] relative xl:flex-1 xl:min-w-0 max-md:w-[140px] max-md:shrink-0 max-md:snap-start max-md:rounded-[12px] max-md:border max-md:border-line"
       style={{
         // Active state: a soft tint of the tile's tone fills the cell
         // background. Cleaner than an inset ring when each cell sits
@@ -2859,7 +2859,7 @@ export default function DashboardPage() {
                 than aligning with the hero, matching the mockup. */}
             <section className="mb-6 rounded-[14px] bg-surface border border-line overflow-hidden">
               {/* Hero header */}
-              <div className="px-6 py-5 flex flex-wrap items-end justify-between gap-4 border-b border-line-soft">
+              <div className="px-6 py-5 flex flex-wrap items-end justify-between gap-4 border-b border-line-soft xl:border-b-0">
                 <div>
                   <div className="eyebrow">Proofs at a glance</div>
                   <h1 className="mt-1 font-display font-medium tracking-[-0.02em] text-ink leading-tight m-0" style={{ fontSize: 'clamp(22px, 3vw, 28px)' }}>
@@ -2885,120 +2885,167 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* Tile row. Seven tiles in priority order, separated by
-                  vertical hairlines at xl widths via xl:divide-x. Below
-                  xl the tiles wrap into 2 / 3 column grids so they
-                  remain readable on narrow viewports; the hairlines
-                  drop on the wrapped layout since tiles no longer share
-                  a single row. The tile palette encodes the
-                  Alert/Workflow/On-hold grouping via colour
-                  (rose for Needs attention,
-                  amber→sky→turquoise→green for workflow,
-                  violet/neutral for on-hold). */}
+              {/* Tile row, structured as three zones so the workflow reads as a
+                  pipeline rather than ten equal peers — the Alert/Workflow/On-hold
+                  grouping that previously lived only in the colour palette:
+                    • Triage   — Needs attention, the cross-cutting alert, in a
+                      rose-tinted box set apart on the left (not pipeline stage 0).
+                    • Workflow — the five/seven stages a proof passes through,
+                      Not viewed → … → To order, boxed together with internal
+                      hairlines + a subtle baseline rail so they read left to right.
+                    • Parked   — Snoozed + Dormant, off-flow states, in a plain box
+                      set apart on the right (not the pipeline's finish line).
+                  Only the xl layout zones; below xl the zone wrappers are
+                  display:contents, so the tiles flow into the existing md 3-col
+                  grid and the mobile snap-scroll strip exactly as before. */}
               <div
                 ref={tilesStripRef}
                 onScroll={handleTilesScroll}
-                className={`flex gap-2.5 overflow-x-auto px-4 pb-3 [scroll-snap-type:x_mandatory] md:gap-0 md:overflow-x-visible md:px-0 md:pb-0 md:[scroll-snap-type:none] md:grid md:grid-cols-3 ${orderingOn ? 'xl:grid-cols-10' : 'xl:grid-cols-8'} xl:divide-x xl:divide-line`}
+                className="flex gap-2.5 overflow-x-auto px-4 pb-3 [scroll-snap-type:x_mandatory] md:gap-0 md:overflow-x-visible md:px-0 md:pb-0 md:[scroll-snap-type:none] md:grid md:grid-cols-3 xl:flex xl:items-stretch xl:gap-3 xl:px-6 xl:pt-3 xl:pb-5"
               >
-                  <StatTile
-                    label="Needs attention"
-                    help={tagHelp('tile', 'needs_attention')}
-                    count={needsAttentionCount}
-                    active={tileFilter === 'needs_attention'}
-                    tone="rose"
-                    onClick={() => toggleTile('needs_attention')}
-                  />
-                  <StatTile
-                    label="Not viewed"
-                    help={tagHelp('tile', 'not_viewed')}
-                    count={notViewedCount}
-                    active={tileFilter === 'not_viewed'}
-                    tone="amber"
-                    onClick={() => toggleTile('not_viewed')}
-                  />
-                  <StatTile
-                    label="Awaiting customer"
-                    help={tagHelp('tile', 'awaiting_customer')}
-                    count={awaitingCustomerCount}
-                    active={tileFilter === 'awaiting_customer'}
-                    tone="sky"
-                    onClick={() => toggleTile('awaiting_customer')}
-                  />
-                  <StatTile
-                    label="In auto follow-up"
-                    help={tagHelp('tile', 'in_follow_up')}
-                    count={inFollowUpCount}
-                    active={tileFilter === 'in_follow_up'}
-                    tone="indigo"
-                    onClick={() => toggleTile('in_follow_up')}
-                  />
-                  <StatTile
-                    label="Customer responded"
-                    help={tagHelp('tile', 'customer_responded')}
-                    count={customerRespondedCount}
-                    active={tileFilter === 'customer_responded'}
-                    tone="turquoise"
-                    onClick={() => toggleTile('customer_responded')}
-                  />
-                  <StatTile
-                    label="Approved this week"
-                    help={tagHelp('tile', 'approved_this_week')}
-                    count={approvedThisWeekCount}
-                    active={tileFilter === 'approved_this_week'}
-                    tone="green"
-                    onClick={() => toggleTile('approved_this_week')}
-                  />
-                  {/* Order-stage tiles — only when ordering is enabled. These
-                      navigate to the Orders page (orders aren't in the proof
-                      list), so they never set tileFilter / show as active. */}
-                  {orderingOn && (
-                    <>
-                      <StatTile
-                        label="Awaiting payment"
-                        count={orderCounts?.awaitingPayment ?? 0}
-                        active={false}
-                        tone="gold"
-                        onClick={() => navigate('/orders')}
-                      />
-                      <StatTile
-                        label="To order"
-                        count={orderCounts?.toOrder ?? 0}
-                        badge={orderCounts?.invoiceProblem ?? 0}
-                        badgeTitle={
-                          orderCounts?.invoiceProblem
-                            ? `${orderCounts.invoiceProblem} paid order${orderCounts.invoiceProblem === 1 ? '' : 's'} with a failed Xero invoice — open Orders to retry`
-                            : undefined
-                        }
-                        active={false}
-                        tone="blue"
-                        onClick={() => navigate('/orders')}
-                      />
-                    </>
-                  )}
-                  <StatTile
-                    label="Snoozed"
-                    help={tagHelp('tile', 'snoozed')}
-                    count={snoozedSections[0]?.projects.length ?? 0}
-                    active={showSnoozed}
-                    tone="violet"
-                    onClick={() => {
-                      setShowSnoozed((v) => {
-                        const next = !v
-                        setSnoozedOnly(next)
-                        if (next) setTileFilter(null)
-                        try { localStorage.setItem(SNOOZED_KEY, String(next)) } catch { /* */ }
-                        return next
-                      })
+                {/* Triage zone — the cross-cutting alert, set apart so it isn't
+                    read as pipeline stage zero. Eyebrow + a rose border (no fill,
+                    which would mimic the tile's active filter-on rose wash). */}
+                <div className="contents xl:flex xl:flex-col xl:relative xl:w-[150px] xl:shrink-0">
+                  <span className="eyebrow hidden xl:block" style={{ position: 'absolute', top: '-7px', left: '11px', zIndex: 1, background: 'var(--c-bg-panel)', padding: '0 6px', color: 'var(--c-out)' }}>Triage</span>
+                  <div
+                    className="contents xl:flex xl:flex-1 xl:overflow-hidden"
+                    style={{
+                      borderRadius: '10px',
+                      border: '0.5px solid color-mix(in srgb, var(--c-out) 55%, transparent)',
                     }}
-                  />
-                  <StatTile
-                    label="Dormant"
-                    help={tagHelp('tile', 'dormant')}
-                    count={dormantCount}
-                    active={tileFilter === 'dormant'}
-                    tone="neutral"
-                    onClick={() => toggleTile('dormant')}
-                  />
+                  >
+                    <StatTile
+                      label="Needs attention"
+                      help={tagHelp('tile', 'needs_attention')}
+                      count={needsAttentionCount}
+                      active={tileFilter === 'needs_attention'}
+                      tone="rose"
+                      onClick={() => toggleTile('needs_attention')}
+                    />
+                  </div>
+                </div>
+                {/* Workflow zone — the stages a proof passes through, left to
+                    right. Internal hairlines split the stages; the 2px baseline
+                    rail signals the band is a track. Awaiting payment / To order
+                    only when ordering is enabled. */}
+                <div className="contents xl:flex xl:flex-col xl:relative xl:flex-1 xl:min-w-0">
+                  <span className="eyebrow hidden xl:block" style={{ position: 'absolute', top: '-7px', left: '11px', zIndex: 1, background: 'var(--c-bg-panel)', padding: '0 6px' }}>Workflow</span>
+                  <div
+                    className="contents xl:flex xl:flex-1 xl:min-w-0 xl:overflow-hidden xl:divide-x xl:divide-line"
+                    style={{
+                      borderRadius: '10px',
+                      borderWidth: '0.5px',
+                      borderStyle: 'solid',
+                      borderColor: 'var(--c-line)',
+                      borderBottomWidth: '2px',
+                      borderBottomColor: 'var(--c-ink-dim)',
+                    }}
+                  >
+                    <StatTile
+                      label="Not viewed"
+                      help={tagHelp('tile', 'not_viewed')}
+                      count={notViewedCount}
+                      active={tileFilter === 'not_viewed'}
+                      tone="amber"
+                      onClick={() => toggleTile('not_viewed')}
+                    />
+                    <StatTile
+                      label="Awaiting customer"
+                      help={tagHelp('tile', 'awaiting_customer')}
+                      count={awaitingCustomerCount}
+                      active={tileFilter === 'awaiting_customer'}
+                      tone="sky"
+                      onClick={() => toggleTile('awaiting_customer')}
+                    />
+                    <StatTile
+                      label="In auto follow-up"
+                      help={tagHelp('tile', 'in_follow_up')}
+                      count={inFollowUpCount}
+                      active={tileFilter === 'in_follow_up'}
+                      tone="indigo"
+                      onClick={() => toggleTile('in_follow_up')}
+                    />
+                    <StatTile
+                      label="Customer responded"
+                      help={tagHelp('tile', 'customer_responded')}
+                      count={customerRespondedCount}
+                      active={tileFilter === 'customer_responded'}
+                      tone="turquoise"
+                      onClick={() => toggleTile('customer_responded')}
+                    />
+                    <StatTile
+                      label="Approved this week"
+                      help={tagHelp('tile', 'approved_this_week')}
+                      count={approvedThisWeekCount}
+                      active={tileFilter === 'approved_this_week'}
+                      tone="green"
+                      onClick={() => toggleTile('approved_this_week')}
+                    />
+                    {/* Order-stage tiles — only when ordering is enabled. These
+                        navigate to the Orders page (orders aren't in the proof
+                        list), so they never set tileFilter / show as active. */}
+                    {orderingOn && (
+                      <>
+                        <StatTile
+                          label="Awaiting payment"
+                          count={orderCounts?.awaitingPayment ?? 0}
+                          active={false}
+                          tone="gold"
+                          onClick={() => navigate('/orders')}
+                        />
+                        <StatTile
+                          label="To order"
+                          count={orderCounts?.toOrder ?? 0}
+                          badge={orderCounts?.invoiceProblem ?? 0}
+                          badgeTitle={
+                            orderCounts?.invoiceProblem
+                              ? `${orderCounts.invoiceProblem} paid order${orderCounts.invoiceProblem === 1 ? '' : 's'} with a failed Xero invoice — open Orders to retry`
+                              : undefined
+                          }
+                          active={false}
+                          tone="blue"
+                          onClick={() => navigate('/orders')}
+                        />
+                      </>
+                    )}
+                  </div>
+                </div>
+                {/* Parked zone — proofs deliberately on hold or gone cold.
+                    Off-flow, so a plain box set apart on the right rather than
+                    the pipeline's tail. */}
+                <div className="contents xl:flex xl:flex-col xl:relative xl:w-[224px] xl:shrink-0">
+                  <span className="eyebrow hidden xl:block" style={{ position: 'absolute', top: '-7px', left: '11px', zIndex: 1, background: 'var(--c-bg-panel)', padding: '0 6px' }}>Parked</span>
+                  <div
+                    className="contents xl:flex xl:flex-1 xl:overflow-hidden xl:divide-x xl:divide-line"
+                    style={{ borderRadius: '10px', border: '0.5px solid var(--c-line)' }}
+                  >
+                    <StatTile
+                      label="Snoozed"
+                      help={tagHelp('tile', 'snoozed')}
+                      count={snoozedSections[0]?.projects.length ?? 0}
+                      active={showSnoozed}
+                      tone="violet"
+                      onClick={() => {
+                        setShowSnoozed((v) => {
+                          const next = !v
+                          setSnoozedOnly(next)
+                          if (next) setTileFilter(null)
+                          try { localStorage.setItem(SNOOZED_KEY, String(next)) } catch { /* */ }
+                          return next
+                        })
+                      }}
+                    />
+                    <StatTile
+                      label="Dormant"
+                      help={tagHelp('tile', 'dormant')}
+                      count={dormantCount}
+                      active={tileFilter === 'dormant'}
+                      tone="neutral"
+                      onClick={() => toggleTile('dormant')}
+                    />
+                  </div>
+                </div>
               </div>
             </section>
 
