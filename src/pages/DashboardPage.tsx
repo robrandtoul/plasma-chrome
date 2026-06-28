@@ -2892,9 +2892,12 @@ export default function DashboardPage() {
                       rose-tinted box set apart on the left (not pipeline stage 0).
                     • Workflow — the five/seven stages a proof passes through,
                       Not viewed → … → To order, boxed together with internal
-                      hairlines + a subtle baseline rail so they read left to right.
+                      hairlines so they read left to right.
                     • Parked   — Snoozed + Dormant, off-flow states, in a plain box
                       set apart on the right (not the pipeline's finish line).
+                  Each zone box carries a 2px top bracket bar tied to its legend
+                  (rose for Triage, ink-dim for Workflow/Parked); sides + bottom
+                  stay hairline so the label+bracket reads as the section header.
                   Only the xl layout zones; below xl the zone wrappers are
                   display:contents, so the tiles flow into the existing md 3-col
                   grid and the mobile snap-scroll strip exactly as before. */}
@@ -2904,15 +2907,20 @@ export default function DashboardPage() {
                 className="flex gap-2.5 overflow-x-auto px-4 pb-3 [scroll-snap-type:x_mandatory] md:gap-0 md:overflow-x-visible md:px-0 md:pb-0 md:[scroll-snap-type:none] md:grid md:grid-cols-3 xl:flex xl:items-stretch xl:gap-3 xl:px-6 xl:pt-3 xl:pb-5"
               >
                 {/* Triage zone — the cross-cutting alert, set apart so it isn't
-                    read as pipeline stage zero. Eyebrow + a rose border (no fill,
-                    which would mimic the tile's active filter-on rose wash). */}
+                    read as pipeline stage zero. Rose top bracket + rose legend (no
+                    fill, which would mimic the tile's active filter-on wash; the
+                    sides/bottom stay hairline so the red isn't all-round). */}
                 <div className="contents xl:flex xl:flex-col xl:relative xl:w-[150px] xl:shrink-0">
                   <span className="eyebrow hidden xl:block" style={{ position: 'absolute', top: '-7px', left: '11px', zIndex: 1, background: 'var(--c-bg-panel)', padding: '0 6px', color: 'var(--c-out)' }}>Triage</span>
                   <div
                     className="contents xl:flex xl:flex-1 xl:overflow-hidden"
                     style={{
                       borderRadius: '10px',
-                      border: '0.5px solid color-mix(in srgb, var(--c-out) 55%, transparent)',
+                      borderWidth: '0.5px',
+                      borderStyle: 'solid',
+                      borderColor: 'var(--c-line)',
+                      borderTopWidth: '2px',
+                      borderTopColor: 'var(--c-out)',
                     }}
                   >
                     <StatTile
@@ -2926,8 +2934,8 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 {/* Workflow zone — the stages a proof passes through, left to
-                    right. Internal hairlines split the stages; the 2px baseline
-                    rail signals the band is a track. Awaiting payment / To order
+                    right. Internal hairlines split the stages; the 2px top bracket
+                    bar ties the band to its legend. Awaiting payment / To order
                     only when ordering is enabled. */}
                 <div className="contents xl:flex xl:flex-col xl:relative xl:flex-1 xl:min-w-0">
                   <span className="eyebrow hidden xl:block" style={{ position: 'absolute', top: '-7px', left: '11px', zIndex: 1, background: 'var(--c-bg-panel)', padding: '0 6px' }}>Workflow</span>
@@ -2938,8 +2946,8 @@ export default function DashboardPage() {
                       borderWidth: '0.5px',
                       borderStyle: 'solid',
                       borderColor: 'var(--c-line)',
-                      borderBottomWidth: '2px',
-                      borderBottomColor: 'var(--c-ink-dim)',
+                      borderTopWidth: '2px',
+                      borderTopColor: 'var(--c-ink-dim)',
                     }}
                   >
                     <StatTile
@@ -3018,7 +3026,14 @@ export default function DashboardPage() {
                   <span className="eyebrow hidden xl:block" style={{ position: 'absolute', top: '-7px', left: '11px', zIndex: 1, background: 'var(--c-bg-panel)', padding: '0 6px' }}>Parked</span>
                   <div
                     className="contents xl:flex xl:flex-1 xl:overflow-hidden xl:divide-x xl:divide-line"
-                    style={{ borderRadius: '10px', border: '0.5px solid var(--c-line)' }}
+                    style={{
+                      borderRadius: '10px',
+                      borderWidth: '0.5px',
+                      borderStyle: 'solid',
+                      borderColor: 'var(--c-line)',
+                      borderTopWidth: '2px',
+                      borderTopColor: 'var(--c-ink-dim)',
+                    }}
                   >
                     <StatTile
                       label="Snoozed"
