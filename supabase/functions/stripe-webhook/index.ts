@@ -18,7 +18,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { getAccessContext, createSalesInvoice, recordInvoicePayment, emailSalesInvoice, ensureInvoiceEmailRecipient } from '../_shared/xero.ts'
 import { buildOrderInvoiceLines } from '../_shared/invoiceBuild.ts'
-import { getAccessToken, fetchConversation, postStaffReply, hideThread, HsError } from '../_shared/helpscout.ts'
+import { getAccessToken, fetchConversation, postStaffReply, HsError } from '../_shared/helpscout.ts'
 import { renderTemplate, ORDER_CONFIRMATION_DEFAULT_BODY } from '../_shared/replyTemplates.ts'
 
 const encoder = new TextEncoder()
@@ -445,10 +445,10 @@ Deno.serve(async (req) => {
   }
 
   // Branded order-paid confirmation, emailed to the customer via Help Scout
-  // (the same channel the pay-link went out on). Mirrors proof-action's
-  // confirmation-reply path: post a staff reply on the linked conversation —
-  // Help Scout emails it to the customer at creation time — then hide it so the
-  // team's view stays tidy. One-shot on confirmation_sent_at; skipped silently
+  // (the same channel the pay-link went out on): post a staff reply on the
+  // linked conversation — Help Scout emails it to the customer at creation
+  // time — and leave it expanded in the thread so the team can see the
+  // confirmation went out. One-shot on confirmation_sent_at; skipped silently
   // when the proof has no linked conversation; never fails the webhook. (The
   // VAT invoice goes to the customer as its own email — the Xero invoice email
   // above — plus a pay-page download link, so this warm note doesn't carry it.)
@@ -540,17 +540,9 @@ Deno.serve(async (req) => {
               customerId: primaryCustomerId,
               // No status flip — a confirmation, not a designer asking for input.
             })
-            // Stamp before the (cosmetic) hide so a hide failure can't cause a
-            // resend on a Stripe retry.
+            // Stamp once the reply is sent so a Stripe retry can't resend it.
             await admin.from('orders').update({ confirmation_sent_at: new Date().toISOString() }).eq('id', orderId)
             console.log('[stripe-webhook] confirmation reply sent', { orderId, senderId, replyThreadId })
-            if (replyThreadId > 0) {
-              try {
-                await hideThread(token, conversationId, replyThreadId)
-              } catch (hideErr) {
-                console.warn('[stripe-webhook] confirmation hide failed', hideErr)
-              }
-            }
           }
         }
       }
