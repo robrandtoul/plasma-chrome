@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { DesignerChrome, PanelShell, Pill, ButtonInk, ButtonGhost } from '../design'
 import { formatPrice } from '../lib/currency'
+import { getExchangeRates, currencyToGbp, type ExchangeRates } from '../lib/exchangeRates'
 import { customerOrderUrl } from '../lib/customerOrderUrl'
 import { orderTotal, specLabel as specLabelShared, customerLabel as customerLabelShared } from '../lib/orderDisplay'
 import { logAudit } from '../lib/audit'
@@ -226,9 +227,85 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+// The order's charged total expressed in GBP, so mixed-currency buckets can be
+// summed into one headline figure. EUR/USD convert at the live ECB rate; GBP
+// passes through. Null totals (custom quote with no priced parts) drop out of
+// the sum. NB GBP order totals are VAT-inclusive while EUR/USD are VAT-free —
+// the converted figure mixes the two, so the summary labels it a rough guide.
+function gbpValueOf(o: OrderRow, rates: ExchangeRates | null): number {
+  const total = orderTotal(o)
+  if (total == null) return 0
+  return currencyToGbp(total, o.currency, rates)
+}
+
+function sumGbp(orders: OrderRow[], rates: ExchangeRates | null): number {
+  return orders.reduce((acc, o) => acc + gbpValueOf(o, rates), 0)
+}
+
+// Free-text match across the fields a designer would search by: customer /
+// company, payment + stock order references, project name, and the spec label.
+function matchesSearch(o: OrderRow, q: string): boolean {
+  if (!q) return true
+  const haystack = [
+    customerLabel(o),
+    o.payment_reference,
+    o.stock_order_number,
+    o.project_name,
+    specLabel(o),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes(q)
+}
+
+// Which work-queue section is shown. 'all' shows every section; the others
+// narrow to one so a busy queue can be focused.
+type ViewKey = 'all' | 'awaiting' | 'to_order' | 'revised' | 'recent'
+
+const VIEW_TABS: { key: ViewKey; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'awaiting', label: 'Awaiting payment' },
+  { key: 'to_order', label: 'To order' },
+  { key: 'revised', label: 'Being revised' },
+  { key: 'recent', label: 'Recently ordered' },
+]
+
+// A single figure in the summary bar: GBP total + order count, with optional
+// sub-detail (e.g. the expired slice of awaiting payment).
+function SummaryStat({
+  label,
+  totalGbp,
+  count,
+  detail,
+  tone = 'ink',
+}: {
+  label: string
+  totalGbp: number
+  count: number
+  detail?: string | null
+  tone?: 'ink' | 'out'
+}) {
+  return (
+    <div className="rounded-xl border border-line bg-surface px-4 py-3">
+      <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">{label}</span>
+      <span className={`mt-0.5 block text-lg font-semibold ${tone === 'out' ? 'text-out' : 'text-ink'}`}>
+        {formatPrice(Math.round(totalGbp), 'GBP')}
+      </span>
+      <span className="block text-[12px] text-ink-mute">
+        {count} {count === 1 ? 'order' : 'orders'}
+        {detail ? ` · ${detail}` : ''}
+      </span>
+    </div>
+  )
+}
+
 export default function OrdersPage() {
   const [loading, setLoading] = useState(true)
   const [orders, setOrders] = useState<OrderRow[]>([])
+  // True when the 300-row fetch ceiling was hit, so the page can say so rather
+  // than silently dropping older orders (the full history lives in the log).
+  const [capped, setCapped] = useState(false)
   const [thumbs, setThumbs] = useState<Record<string, GridImage | null>>({})
   const [busyId, setBusyId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -238,10 +315,17 @@ export default function OrdersPage() {
   // Stock Control supplier id → name, for the supplier-route button labels
   // (the routing stores ids; names live in Stock Control). Best-effort.
   const [supplierNames, setSupplierNames] = useState<Record<string, string>>({})
+  // Live GBP→EUR/USD rates so mixed-currency totals collapse to one GBP figure
+  // in the summary bar + section subtotals (null until the first fetch lands).
+  const [rates, setRates] = useState<ExchangeRates | null>(null)
+  // Work-queue search + which section is shown.
+  const [search, setSearch] = useState('')
+  const [view, setView] = useState<ViewKey>('all')
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
+      void getExchangeRates().then((r) => { if (!cancelled) setRates(r) })
       void supabase.schema('public').from('outsourced_suppliers').select('id, name').then(({ data }) => {
         if (cancelled || !data) return
         setSupplierNames(Object.fromEntries((data as { id: string; name: string }[]).map((s) => [s.id, s.name])))
@@ -255,6 +339,7 @@ export default function OrdersPage() {
       if (cancelled) return
       const rows = (data ?? []) as unknown as OrderRow[]
       setOrders(rows)
+      setCapped(rows.length >= 300)
       setLoading(false)
 
       const sentIds = rows.filter((r) => r.status === 'sent').map((r) => r.id)
@@ -419,21 +504,42 @@ export default function OrdersPage() {
     }
   }
 
-  const awaitingPayment = orders.filter((o) => o.status === 'sent')
-  // To order: paid, not yet placed. A blocking problem (failed invoice) floats
-  // to the top; otherwise oldest-paid-first so nothing sits in the queue.
+  // The search box narrows every section at once; the view tabs pick which
+  // section(s) render. Buckets recompute only when the orders or query change.
   const hasInvoiceProblem = (o: OrderRow) => !o.xero_invoice_id && !!o.xero_invoice_error
-  const toOrder = orders
-    .filter((o) => o.status === 'paid')
-    .sort((a, b) => {
-      const ap = hasInvoiceProblem(a) ? 0 : 1
-      const bp = hasInvoiceProblem(b) ? 0 : 1
-      if (ap !== bp) return ap - bp
-      return new Date(a.paid_at ?? a.sent_at ?? 0).getTime() - new Date(b.paid_at ?? b.sent_at ?? 0).getTime()
-    })
-  const recentlyOrdered = orders.filter((o) => o.status === 'fulfilled').slice(0, 30)
-  // Paid/placed orders held while the proof is being redesigned (revision).
-  const beingRevised = orders.filter((o) => o.status === 'revision')
+  const { awaitingPayment, toOrder, recentlyOrdered, beingRevised } = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const filtered = orders.filter((o) => matchesSearch(o, q))
+    return {
+      // Awaiting payment: expired links (need reactivating) float up, then the
+      // longest-outstanding first so the oldest chases surface at the top.
+      awaitingPayment: filtered
+        .filter((o) => o.status === 'sent')
+        .sort((a, b) => {
+          const ae = isExpired(a) ? 0 : 1
+          const be = isExpired(b) ? 0 : 1
+          if (ae !== be) return ae - be
+          return new Date(a.sent_at ?? 0).getTime() - new Date(b.sent_at ?? 0).getTime()
+        }),
+      // To order: paid, not yet placed. A blocking problem (failed invoice)
+      // floats to the top; otherwise oldest-paid-first so nothing sits.
+      toOrder: filtered
+        .filter((o) => o.status === 'paid')
+        .sort((a, b) => {
+          const ap = hasInvoiceProblem(a) ? 0 : 1
+          const bp = hasInvoiceProblem(b) ? 0 : 1
+          if (ap !== bp) return ap - bp
+          return new Date(a.paid_at ?? a.sent_at ?? 0).getTime() - new Date(b.paid_at ?? b.sent_at ?? 0).getTime()
+        }),
+      recentlyOrdered: filtered.filter((o) => o.status === 'fulfilled').slice(0, 30),
+      // Paid/placed orders held while the proof is being redesigned (revision).
+      beingRevised: filtered.filter((o) => o.status === 'revision'),
+    }
+  }, [orders, search])
+
+  // GBP-converted slice of awaiting payment that has expired (the at-risk part).
+  const expiredAwaiting = awaitingPayment.filter(isExpired)
+  const showSection = (key: ViewKey) => view === 'all' || view === key
 
   return (
     <DesignerChrome active="orders">
@@ -447,9 +553,85 @@ export default function OrdersPage() {
           <p className="mt-8 text-sm text-ink-mute">Loading orders…</p>
         ) : (
           <>
-            {awaitingPayment.length > 0 && (
+            {orders.length > 0 && (
+              <>
+                {/* Value summary — every total converted to GBP so the
+                    mixed-currency queue reads as one figure at a glance. */}
+                <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
+                  <SummaryStat
+                    label="Awaiting payment"
+                    totalGbp={sumGbp(awaitingPayment, rates)}
+                    count={awaitingPayment.length}
+                    detail={
+                      expiredAwaiting.length > 0
+                        ? `${formatPrice(Math.round(sumGbp(expiredAwaiting, rates)), 'GBP')} expired`
+                        : null
+                    }
+                    tone={expiredAwaiting.length > 0 ? 'out' : 'ink'}
+                  />
+                  <SummaryStat
+                    label="To order"
+                    totalGbp={sumGbp(toOrder, rates)}
+                    count={toOrder.length}
+                  />
+                  <SummaryStat
+                    label="Being revised"
+                    totalGbp={sumGbp(beingRevised, rates)}
+                    count={beingRevised.length}
+                  />
+                </div>
+                <p className="mt-1.5 text-[11px] text-ink-mute">
+                  Totals converted to GBP{rates?.rateDate ? ` at the ${rates.rateDate} ECB rate` : ''} — a rough
+                  guide only (GBP figures include VAT; EUR/USD don’t).
+                </p>
+
+                {/* Search + which section to show. */}
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <input
+                    type="search"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search customer, reference or project…"
+                    className="h-10 w-full rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)] sm:max-w-xs"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    {VIEW_TABS.map((t) => (
+                      <button
+                        key={t.key}
+                        type="button"
+                        onClick={() => setView(t.key)}
+                        className={`rounded-full px-3 py-1.5 text-[12px] font-medium ring-1 transition-colors ${
+                          view === t.key
+                            ? 'bg-ink text-surface ring-ink'
+                            : 'text-ink-soft ring-line hover:bg-canvas'
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {capped && (
+                  <p className="mt-3 text-[12px] text-ink-mute">
+                    Showing the 300 most recent orders. Older orders are in Admin → Order log.
+                  </p>
+                )}
+              </>
+            )}
+
+            {search.trim() &&
+              awaitingPayment.length + toOrder.length + beingRevised.length + recentlyOrdered.length === 0 && (
+                <PanelShell className="mt-6 text-center">
+                  <p className="text-sm text-ink-soft">No orders match “{search.trim()}”.</p>
+                </PanelShell>
+              )}
+
+            {showSection('awaiting') && awaitingPayment.length > 0 && (
               <section className="mt-6">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Awaiting payment · {awaitingPayment.length}</h2>
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">
+                  Awaiting payment · {awaitingPayment.length} · {formatPrice(Math.round(sumGbp(awaitingPayment, rates)), 'GBP')}
+                </h2>
                 <p className="mt-1 text-[13px] text-ink-mute">
                   Payment links that have been sent but not paid yet. Copy a link to re-send it, or reactivate an expired one (extends it {ORDER_EXPIRY_DAYS} days).
                 </p>
@@ -471,43 +653,52 @@ export default function OrdersPage() {
               </section>
             )}
 
-            <section className="mt-10">
-              <div className="flex items-baseline justify-between gap-3">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">To order · {toOrder.length}</h2>
-                {toOrder.length > 0 && <span className="text-[12px] text-ink-mute">Oldest paid first</span>}
-              </div>
-              <div className="mt-3">
-                {toOrder.length === 0 ? (
-                  <PanelShell className="text-center">
-                    <p className="text-sm text-ink-soft">Nothing waiting to be ordered right now.</p>
-                  </PanelShell>
-                ) : (
-                  <div className="space-y-4">
-                    {toOrder.map((o) => (
-                      <OrderCard
-                        key={o.id}
-                        order={o}
-                        thumb={thumbs[o.proof_id] ?? null}
-                        route={routeOf(o)}
-                        supplierLabels={allowedSupplierLabels(o, supplierNames)}
-                        supplierCount={o.material_variants?.materials?.outsourced_supplier_ids?.length ?? 0}
-                        suggested={suggestedDate(o)}
-                        busy={busyId === o.id}
-                        copied={copiedId === o.id}
-                        onReview={() => navigate(`/orders/${o.id}/place`)}
-                        onCopy={() => void copyLink(o)}
-                        onSaveField={(patch) => saveOrderField(o.id, patch)}
-                        onRetryInvoice={() => void retryInvoice(o)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </section>
-
-            {beingRevised.length > 0 && (
+            {showSection('to_order') && (
               <section className="mt-10">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Being revised · {beingRevised.length}</h2>
+                <div className="flex items-baseline justify-between gap-3">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">
+                    To order · {toOrder.length}
+                    {toOrder.length > 0 ? ` · ${formatPrice(Math.round(sumGbp(toOrder, rates)), 'GBP')}` : ''}
+                  </h2>
+                  {toOrder.length > 0 && <span className="text-[12px] text-ink-mute">Oldest paid first</span>}
+                </div>
+                <div className="mt-3">
+                  {toOrder.length === 0 ? (
+                    !search.trim() && (
+                      <PanelShell className="text-center">
+                        <p className="text-sm text-ink-soft">Nothing waiting to be ordered right now.</p>
+                      </PanelShell>
+                    )
+                  ) : (
+                    <div className="space-y-4">
+                      {toOrder.map((o) => (
+                        <OrderCard
+                          key={o.id}
+                          order={o}
+                          thumb={thumbs[o.proof_id] ?? null}
+                          route={routeOf(o)}
+                          supplierLabels={allowedSupplierLabels(o, supplierNames)}
+                          supplierCount={o.material_variants?.materials?.outsourced_supplier_ids?.length ?? 0}
+                          suggested={suggestedDate(o)}
+                          busy={busyId === o.id}
+                          copied={copiedId === o.id}
+                          onReview={() => navigate(`/orders/${o.id}/place`)}
+                          onCopy={() => void copyLink(o)}
+                          onSaveField={(patch) => saveOrderField(o.id, patch)}
+                          onRetryInvoice={() => void retryInvoice(o)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {showSection('revised') && beingRevised.length > 0 && (
+              <section className="mt-10">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">
+                  Being revised · {beingRevised.length} · {formatPrice(Math.round(sumGbp(beingRevised, rates)), 'GBP')}
+                </h2>
                 <p className="mt-1 text-[13px] text-ink-mute">
                   Paid orders held while the artwork is being changed. Re-approve the new proof and replace the files in the Dropbox order folder, then review &amp; place again.
                 </p>
@@ -526,7 +717,7 @@ export default function OrdersPage() {
               </section>
             )}
 
-            {recentlyOrdered.length > 0 && (
+            {showSection('recent') && recentlyOrdered.length > 0 && (
               <section className="mt-10">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">Recently ordered</h2>
                 <div className="mt-3 divide-y divide-line-soft rounded-xl border border-line bg-surface">
