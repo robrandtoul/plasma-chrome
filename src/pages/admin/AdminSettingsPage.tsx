@@ -5,6 +5,7 @@ import { invalidatePublicSettings } from '../../lib/publicSettings'
 import { invalidateApprovalSettings } from '../../lib/approvalSettings'
 import { invalidateShippingSettings } from '../../lib/shippingSettings'
 import { invalidateOrderingEnabled } from '../../lib/orderingEnabled'
+import { invalidateHotLeadsPanelEnabled } from '../../lib/hotLeadsPanelEnabled'
 import { FieldRow, inputClass } from './settingsControls'
 
 // /admin/settings — the operational cards only: Customer approvals,
@@ -68,6 +69,9 @@ interface Settings {
    *  how much is disclosed. */
   customer_tracking_enabled: boolean
   customer_tracking_config: CustomerTrackingConfig
+  /** Dashboard "Hot leads to chase" card (migration 000280). On by default —
+   *  the panel ships shown; turning it off hides it for every designer. */
+  hot_leads_panel_enabled: boolean
 }
 
 type TrackingLevel = 'off' | 'broad' | 'granular'
@@ -142,6 +146,7 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   us_tariff_optout_warning:          'setting.us_tariff_optout_warning_updated',
   customer_tracking_enabled:         'setting.customer_tracking_enabled_updated',
   customer_tracking_config:          'setting.customer_tracking_config_updated',
+  hot_leads_panel_enabled:           'setting.hot_leads_panel_enabled_updated',
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -238,7 +243,7 @@ export default function AdminSettingsPage() {
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, xero_stripe_account_code, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent')
+      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, xero_stripe_account_code, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, hot_leads_panel_enabled')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -307,6 +312,9 @@ export default function AdminSettingsPage() {
     }
     if (field === 'ordering_enabled') {
       invalidateOrderingEnabled()
+    }
+    if (field === 'hot_leads_panel_enabled') {
+      invalidateHotLeadsPanelEnabled()
     }
     if (
       field === 'fedex_box_weight_grams'
@@ -985,6 +993,27 @@ export default function AdminSettingsPage() {
         </div>
       </section>
 
+      {/* ── Dashboard (migration 000280) ──────────────────────────── */}
+      <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+        <h3 className="mb-4 text-sm font-semibold text-ink">Dashboard</h3>
+        <div className="space-y-5">
+          <FieldRow
+            label={'"Hot leads to chase" panel'}
+            help="The card on the dashboard that lists opened-but-not-decided proofs ranked by buying signal. On by default; turn off to hide it for every designer."
+            saved={recentlySaved('hot_leads_panel_enabled')}
+            working={working.hot_leads_panel_enabled}
+            error={errors.hot_leads_panel_enabled}
+          >
+            <Toggle
+              value={settings.hot_leads_panel_enabled}
+              onChange={(v) => void saveField('hot_leads_panel_enabled', v)}
+              disabled={!!working.hot_leads_panel_enabled}
+              label={'"Hot leads to chase" panel'}
+            />
+          </FieldRow>
+        </div>
+      </section>
+
       {/* ── Integrations ─────────────────────────────────────────
           Help Scout panel — admin clicks Test connection to run the
           full OAuth + /v2/mailboxes round trip. Three indicator
@@ -1399,5 +1428,6 @@ function humanFieldLabel(field: keyof Settings): string {
     us_tariff_optout_warning: 'US tariff opt-out warning',
     customer_tracking_enabled: 'Customer order tracking enabled',
     customer_tracking_config: 'Customer order tracking config',
+    hot_leads_panel_enabled: 'Dashboard Hot-leads panel enabled',
   }[field]
 }
