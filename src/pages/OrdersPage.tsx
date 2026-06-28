@@ -10,6 +10,7 @@ import { logAudit } from '../lib/audit'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
+import OrdersPipelineCard, { type PipelineApprovedItem } from '../components/OrdersPipelineCard'
 
 // Orders / "to order" surface (Ordering & checkout, Step 6 — overhauled).
 //
@@ -229,6 +230,30 @@ function formatDate(iso: string | null): string {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
+// The funnel's invisible first leg: a proof approved but never turned into an
+// order. The (disabled) approved_no_order needs-attention rule uses 2 working
+// days; reuse it so the sidebar and that rule stay in lockstep.
+const APPROVED_NO_ORDER_MIN_BUSINESS_DAYS = 2
+
+// Working days (Mon–Fri) strictly after `iso` up to today inclusive — same
+// inclusive-at-end shape as the DB's business_days_between (000160). Bank
+// holidays aren't subtracted (a display cutoff, not a billing figure).
+function businessDaysSince(iso: string): number {
+  const start = new Date(iso)
+  if (Number.isNaN(start.getTime())) return 0
+  start.setHours(0, 0, 0, 0)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  let count = 0
+  const d = new Date(start)
+  while (d < today) {
+    d.setDate(d.getDate() + 1)
+    const day = d.getDay()
+    if (day !== 0 && day !== 6) count++
+  }
+  return count
+}
+
 // Per-order roll-up of the unpaid-order reminder ledger (order_nudges), used to
 // show the auto-chase progress on the awaiting-payment card.
 // The latest ledger row's meaning, when it was a skip / fail: a deliberate
@@ -379,11 +404,52 @@ export default function OrdersPage() {
   // Work-queue search + which section is shown.
   const [search, setSearch] = useState('')
   const [view, setView] = useState<ViewKey>('all')
+  // Approved proofs with no order yet (the pipeline sidebar's first bucket).
+  // Fetched separately because these have no order row, so they appear nowhere
+  // else on this page.
+  const [approvedNoOrder, setApprovedNoOrder] = useState<PipelineApprovedItem[]>([])
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
       void getExchangeRates().then((r) => { if (!cancelled) setRates(r) })
+
+      // Approved-but-not-ordered proofs. Cross-reference every proof that has
+      // any order (any status), then keep approved proofs past the threshold.
+      void (async () => {
+        const [{ data: approvedRows }, { data: orderRows }] = await Promise.all([
+          supabase.from('public_dashboard_projects').select('proof_id, company_name, contact_name, approved_at').eq('status', 'approved'),
+          supabase.from('orders').select('proof_id, created_at'),
+        ])
+        if (cancelled) return
+        const orderList = (orderRows ?? []) as { proof_id: string; created_at: string | null }[]
+        const withOrder = new Set(orderList.map((r) => r.proof_id))
+        // Ordering go-live = the first order ever created. Approvals from before
+        // the payment system existed were billed the old way and will never
+        // become an in-app order, so they're excluded — only post-go-live
+        // approvals that still have no order surface. Derived from data, so
+        // there's no hardcoded launch date to maintain; an empty orders table
+        // (Infinity) shows nothing, which is correct (system not live yet).
+        const goLiveMs = orderList.reduce((min, r) => {
+          const t = r.created_at ? new Date(r.created_at).getTime() : NaN
+          return Number.isFinite(t) && t < min ? t : min
+        }, Infinity)
+        const items = (approvedRows ?? [])
+          .map((r) => r as { proof_id: string; company_name: string | null; contact_name: string | null; approved_at: string | null })
+          .filter((r) =>
+            !!r.approved_at &&
+            !withOrder.has(r.proof_id) &&
+            new Date(r.approved_at!).getTime() >= goLiveMs &&
+            businessDaysSince(r.approved_at!) >= APPROVED_NO_ORDER_MIN_BUSINESS_DAYS,
+          )
+          .map((r) => ({
+            proofId: r.proof_id,
+            label: customerLabelShared(r.company_name, r.contact_name),
+            approvedAt: r.approved_at as string,
+          }))
+          .sort((a, b) => new Date(a.approvedAt).getTime() - new Date(b.approvedAt).getTime())
+        setApprovedNoOrder(items)
+      })()
       void supabase.schema('public').from('outsourced_suppliers').select('id, name').then(({ data }) => {
         if (cancelled || !data) return
         setSupplierNames(Object.fromEntries((data as { id: string; name: string }[]).map((s) => [s.id, s.name])))
@@ -647,9 +713,22 @@ export default function OrdersPage() {
 
   const showSection = (key: ViewKey) => view === 'all' || view === key
 
+  // Pipeline sidebar buckets (computed from the full order set, independent of
+  // the queue's search/filter — the sidebar is a whole-pipeline overview).
+  const coldItems = orders
+    .filter((o) => o.status === 'sent' && (isExpired(o) || (reminders[o.id]?.highestSentNo ?? 0) >= cadence.max))
+    .map((o) => ({
+      proofId: o.proof_id,
+      label: customerLabel(o),
+      reason: isExpired(o) ? 'Link expired' : 'Reminders done, unpaid',
+    }))
+  const invoiceFailedItems = orders
+    .filter((o) => o.status === 'paid' && hasInvoiceProblem(o))
+    .map((o) => ({ proofId: o.proof_id, label: customerLabel(o) }))
+
   return (
     <DesignerChrome active="orders">
-      <main className="mx-auto max-w-[1100px] px-4 py-8 sm:px-7">
+      <div className="mx-auto max-w-[1320px] px-4 py-8 sm:px-7">
         <h1 className="text-xl font-semibold text-ink">Orders</h1>
         <p className="mt-1 text-sm text-ink-soft">
           From payment link to production. Paid orders waiting to be compiled and placed — into production or with a supplier — then handed to Stock Control.
@@ -658,12 +737,16 @@ export default function OrdersPage() {
         {loading ? (
           <p className="mt-8 text-sm text-ink-mute">Loading orders…</p>
         ) : (
-          <>
+          <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start">
+            <aside className="lg:order-2 lg:w-[320px] lg:shrink-0">
+              <OrdersPipelineCard approvedNoOrder={approvedNoOrder} cold={coldItems} invoiceFailed={invoiceFailedItems} />
+            </aside>
+            <div className="min-w-0 lg:order-1 lg:flex-1">
             {orders.length > 0 && (
               <>
                 {/* Value summary — every total converted to GBP so the
                     mixed-currency queue reads as one figure at a glance. */}
-                <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
                   <SummaryStat
                     label="Awaiting payment"
                     value={awaitingPriced.length > 0 ? gbpLabel(awaitingConfirmedGbp) : '—'}
@@ -851,9 +934,10 @@ export default function OrdersPage() {
                 </div>
               </section>
             )}
-          </>
+            </div>
+          </div>
         )}
-      </main>
+      </div>
     </DesignerChrome>
   )
 }
