@@ -33,7 +33,11 @@ import {
   FEEDBACK_TYPES,
   FEEDBACK_TYPE_META,
   FEEDBACK_PRIORITIES,
+  FEEDBACK_RESOLVED_STATUSES,
+  RECENTLY_SHIPPED_DAYS,
   authorBadgeColour,
+  isUnseenResolved,
+  isRecentlyShipped,
   type FeedbackItem,
   type FeedbackStatus,
   type FeedbackType,
@@ -134,6 +138,18 @@ export default function FeedbackPage() {
   // Card expansion lives on the page (not per-card) so a card stays open after
   // an admin status change re-groups it into a different section.
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  // The user's feedback_seen_at as it stood when this visit began — the
+  // baseline for "new to you" highlighting. Captured before we re-stamp it,
+  // so the highlights persist for the whole visit even as the header badge
+  // clears for next time.
+  const [seenBaseline, setSeenBaseline] = useState<string | null>(null)
+  const [seenLoaded, setSeenLoaded] = useState(false)
+  // The current user's OWN resolved items, fetched with the same scoped,
+  // uncapped query the header badge uses (DesignerChrome) — so the "Resolved
+  // for you" callout is built from the identical set the badge counts and the
+  // two can never disagree, even if the 500-row board load drops an old-but-
+  // recently-resolved item out of `items`.
+  const [myResolved, setMyResolved] = useState<FeedbackItem[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -157,6 +173,40 @@ export default function FeedbackPage() {
     }
   }, [])
 
+  // Capture the seen baseline, then advance the stored marker to now(). Order
+  // matters: we read the old value into state for this visit's highlighting,
+  // then stamp so the header badge (computed in DesignerChrome) clears next
+  // time. A failed stamp only means the badge lingers — harmless.
+  useEffect(() => {
+    if (!userId) return
+    let cancelled = false
+    void (async () => {
+      const [{ data: prof }, { data: mine }] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('feedback_seen_at')
+          .eq('id', userId)
+          .maybeSingle(),
+        supabase
+          .from('feedback_items')
+          .select('*')
+          .eq('created_by', userId)
+          .in('status', FEEDBACK_RESOLVED_STATUSES),
+      ])
+      if (cancelled) return
+      setSeenBaseline((prof?.feedback_seen_at as string | null) ?? null)
+      setMyResolved((mine ?? []) as FeedbackItem[])
+      setSeenLoaded(true)
+      void supabase
+        .from('profiles')
+        .update({ feedback_seen_at: new Date().toISOString() })
+        .eq('id', userId)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+
   // Type / priority / mine filters (status scope is applied separately so the
   // section list and the "N showing" count share one predicate).
   function matchesFilters(it: FeedbackItem): boolean {
@@ -167,6 +217,25 @@ export default function FeedbackPage() {
   }
 
   const inScope = items.filter((it) => matchesFilters(it) && sectionInScope(SECTION_OF[it.status], scope))
+
+  // Personal: the user's own items resolved since they last looked. Drives the
+  // "resolved for you" callout + per-card "New" markers. Built from myResolved
+  // (the scoped, uncapped fetch) — not the 500-row board load — so it always
+  // matches the header badge. Gated on seenLoaded so nothing flashes before we
+  // know the baseline. Newest-resolved first.
+  const newToYou = seenLoaded
+    ? myResolved
+        .filter((it) => isUnseenResolved(it, userId, seenBaseline))
+        .sort((a, b) => (b.status_changed_at ?? '').localeCompare(a.status_changed_at ?? ''))
+    : []
+  const newToYouIds = new Set(newToYou.map((it) => it.id))
+
+  // Team momentum: anything shipped in the last RECENTLY_SHIPPED_DAYS, shown as
+  // a band in the default Open view so shipped work isn't invisible there.
+  // Respects the type/priority/mine filters; newest-shipped first.
+  const recentlyShipped = items
+    .filter((it) => matchesFilters(it) && isRecentlyShipped(it))
+    .sort((a, b) => (b.status_changed_at ?? '').localeCompare(a.status_changed_at ?? ''))
 
   function defaultExpanded(section: FeedbackSection): boolean {
     if (section === 'open') return true
@@ -256,6 +325,7 @@ export default function FeedbackPage() {
         isAdmin={isAdmin}
         canDelete={isAdmin || it.created_by === userId}
         showStatus={showStatus}
+        isNew={newToYouIds.has(it.id)}
         expanded={expandedIds.has(it.id)}
         onToggleExpand={() => toggleExpand(it.id)}
         onSaveTriage={saveTriage}
@@ -337,6 +407,11 @@ export default function FeedbackPage() {
           </ButtonCoral>
         </div>
 
+        {/* Personal loop-closer: the things YOU raised that have since been
+            resolved, shown the moment you open the board (then cleared for
+            next visit). Always visible regardless of the filters below. */}
+        {newToYou.length > 0 && <ResolvedForYouCallout items={newToYou} />}
+
         {/* Filters — the primary axis is now the lifecycle scope (Open / All /
             Resolved) as ink pills; status itself drives the sections below, so
             it's no longer a per-card pill. Secondary axes stay as dropdowns. */}
@@ -399,7 +474,7 @@ export default function FeedbackPage() {
             <div className="rounded-[14px] border border-dashed border-line bg-canvas px-6 py-12 text-center">
               <p className="text-sm text-out">Couldn’t load feedback — please reload the page.</p>
             </div>
-          ) : inScope.length === 0 ? (
+          ) : inScope.length === 0 && !(scope === 'open' && recentlyShipped.length > 0) ? (
             <div className="rounded-[14px] border border-dashed border-line bg-canvas px-6 py-12 text-center">
               <MessageSquarePlus size={28} className="mx-auto text-ink-dim" aria-hidden="true" />
               <p className="mt-3 text-sm text-ink-soft">
@@ -408,16 +483,122 @@ export default function FeedbackPage() {
                   : 'Nothing matches these filters.'}
               </p>
             </div>
-          ) : sort === 'newest' ? (
-            flatBody
           ) : (
-            <div className="space-y-6">{groupedBody}</div>
+            <div className="space-y-6">
+              {inScope.length > 0 &&
+                (sort === 'newest' ? flatBody : <>{groupedBody}</>)}
+              {/* Piece 1 — keep recently-shipped work visible in the default
+                  Open view instead of burying it behind the Resolved filter. */}
+              {scope === 'open' && recentlyShipped.length > 0 && (
+                <RecentlyShippedBand
+                  items={recentlyShipped}
+                  renderCard={renderCard}
+                  onSeeAll={() => setScope('resolved')}
+                />
+              )}
+            </div>
           )}
         </div>
       </main>
 
       {modalOpen && <FeedbackModal onClose={() => setModalOpen(false)} onCreated={handleCreated} />}
     </DesignerChrome>
+  )
+}
+
+// Per-status past-tense verb for the "resolved for you" callout meta line.
+const RESOLVED_VERB: Partial<Record<FeedbackStatus, string>> = {
+  done: 'Shipped',
+  wont_do: 'Closed',
+}
+
+// Piece 2 — the personal loop-closer. The items THIS user raised that have
+// been resolved (shipped or declined) since they last opened the board, with
+// the outcome + triage note inline so they get the full picture without
+// hunting. Shown expanded the moment they arrive, then cleared next visit.
+function ResolvedForYouCallout({ items }: { items: FeedbackItem[] }) {
+  return (
+    <div className="mt-6 overflow-hidden rounded-[14px] border border-line bg-surface">
+      <div className="flex items-center gap-2 border-b border-line-soft px-4 py-3">
+        <CheckCircle2
+          size={16}
+          className="shrink-0"
+          style={{ color: 'var(--c-in-stock)' }}
+          aria-hidden="true"
+        />
+        <span className="text-[13px] font-semibold text-ink">Resolved since you last looked</span>
+        <span className="font-mono text-[12px] tabular-nums text-ink-mute">· {items.length}</span>
+      </div>
+      <ul className="divide-y divide-line-soft">
+        {items.map((it) => (
+          <li key={it.id} className="px-4 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <FeedbackStatusPill status={it.status} />
+              <span className="text-[14px] font-medium text-ink">{it.title}</span>
+            </div>
+            {it.admin_note && (
+              <p className="mt-1.5 whitespace-pre-wrap text-[13px] leading-relaxed text-ink-soft">
+                {it.admin_note}
+              </p>
+            )}
+            <p className="mt-1 text-[12px] text-ink-mute">
+              {RESOLVED_VERB[it.status] ?? 'Updated'} {relativeTime(it.status_changed_at)}
+              {it.status_changed_by_name ? ` by ${it.status_changed_by_name}` : ''}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+// Piece 1 — recently-shipped momentum band for the default Open view.
+// Collapsed by default (it's secondary to open work) but the header keeps the
+// count visible, so shipped work is never fully hidden. "See all shipped"
+// jumps to the Resolved scope for the full history.
+function RecentlyShippedBand({
+  items,
+  renderCard,
+  onSeeAll,
+}: {
+  items: FeedbackItem[]
+  renderCard: (it: FeedbackItem, showStatus: boolean) => React.ReactNode
+  onSeeAll: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const Chevron = open ? ChevronDown : ChevronRight
+  return (
+    <section>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 rounded-[8px] px-1 py-1.5 text-left hover:bg-canvas"
+      >
+        <Chevron size={16} className="shrink-0 text-ink-mute" aria-hidden="true" />
+        <CheckCircle2
+          size={15}
+          className="shrink-0"
+          style={{ color: 'var(--c-in-stock)' }}
+          aria-hidden="true"
+        />
+        <span className="text-[13px] font-medium text-ink">Recently shipped</span>
+        <span className="font-mono text-[12px] tabular-nums text-ink-mute">· {items.length}</span>
+        <span className="ml-1 text-[11px] text-ink-dim">last {RECENTLY_SHIPPED_DAYS} days</span>
+      </button>
+      {open && (
+        <div className="mt-2 space-y-3">
+          {items.map((it) => renderCard(it, false))}
+          <button
+            type="button"
+            onClick={onSeeAll}
+            className="text-[12px] font-medium text-brand hover:underline"
+          >
+            See all shipped →
+          </button>
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -607,6 +788,7 @@ function FeedbackCard({
   isAdmin,
   canDelete,
   showStatus,
+  isNew,
   expanded,
   onToggleExpand,
   onSaveTriage,
@@ -616,6 +798,7 @@ function FeedbackCard({
   isAdmin: boolean
   canDelete: boolean
   showStatus: boolean
+  isNew: boolean
   expanded: boolean
   onToggleExpand: () => void
   onSaveTriage: (
@@ -702,6 +885,11 @@ function FeedbackCard({
           <div className="flex flex-wrap items-center gap-2">
             <TypeIcon type={item.type} />
             {showStatus && <FeedbackStatusPill status={item.status} />}
+            {isNew && (
+              <span className="inline-flex items-center rounded-full bg-brand px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                New
+              </span>
+            )}
             <span className="text-[15px] font-medium text-ink">{item.title}</span>
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[12px] text-ink-mute">

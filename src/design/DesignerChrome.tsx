@@ -9,6 +9,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import EditProfileModal, { type EditProfileSavedPayload } from '../components/EditProfileModal'
+import { FEEDBACK_RESOLVED_STATUSES, isUnseenResolved } from '../lib/feedback'
 import { DesignerHeader, type DesignerNavId, type DesignerHeaderColour } from './DesignerHeader'
 
 // Shared chrome wrapper for every designer-facing page. Owns the
@@ -67,29 +68,53 @@ export function DesignerChrome({
   const userId = session?.user.id ?? null
   const [profile, setProfile] = useState<DesignerProfile | null>(null)
   const [editProfileOpen, setEditProfileOpen] = useState(false)
+  // Count of the signed-in user's own feedback items resolved (done/wont_do)
+  // since they last opened the board — drives the header's Feedback badge.
+  const [feedbackUnread, setFeedbackUnread] = useState(0)
 
   // Fetch the signed-in designer's profile for the header avatar +
-  // any consumer that reads via useDesignerProfile().
+  // any consumer that reads via useDesignerProfile(); the same fetch
+  // also pulls feedback_seen_at so we can compute the Feedback badge in
+  // one round trip.
   useEffect(() => {
     if (!userId) return
-    supabase
-      .from('profiles')
-      .select('designer_initials, designer_colour, full_name, avatar_url')
-      .eq('id', userId)
-      .single()
-      .then(({ data }) => {
-        if (!data) return
-        setProfile({
-          initials: (
-            data.designer_initials ??
-            data.full_name?.split(' ').map((n: string) => n[0]).join('') ??
-            '?'
-          ).slice(0, 2),
-          colour: (data.designer_colour ?? 'blue') as DesignerHeaderColour,
-          avatarUrl: data.avatar_url ?? null,
-          firstName: data.full_name?.split(' ')[0] ?? null,
-        })
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase
+        .from('profiles')
+        .select('designer_initials, designer_colour, full_name, avatar_url, feedback_seen_at')
+        .eq('id', userId)
+        .single()
+      if (cancelled || !data) return
+      setProfile({
+        initials: (
+          data.designer_initials ??
+          data.full_name?.split(' ').map((n: string) => n[0]).join('') ??
+          '?'
+        ).slice(0, 2),
+        colour: (data.designer_colour ?? 'blue') as DesignerHeaderColour,
+        avatarUrl: data.avatar_url ?? null,
+        firstName: data.full_name?.split(' ')[0] ?? null,
       })
+
+      // The user's own resolved items, compared client-side against the
+      // seen baseline via the same predicate the board uses, so the badge
+      // and the on-board "new to you" highlight can never disagree.
+      const seenAt = (data.feedback_seen_at as string | null) ?? null
+      const { data: resolved } = await supabase
+        .from('feedback_items')
+        .select('created_by, status, status_changed_at')
+        .eq('created_by', userId)
+        .in('status', FEEDBACK_RESOLVED_STATUSES)
+      if (cancelled) return
+      const count = (resolved ?? []).filter((it) =>
+        isUnseenResolved(it as Parameters<typeof isUnseenResolved>[0], userId, seenAt),
+      ).length
+      setFeedbackUnread(count)
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [userId])
 
   async function handleSignOut() {
@@ -117,6 +142,9 @@ export function DesignerChrome({
         search={search}
         actions={headerActions}
         mobileBell={mobileBell}
+        // No badge while the user is already on the board — they're looking
+        // at it; the board itself re-stamps feedback_seen_at on open.
+        feedbackUnread={active === 'feedback' ? 0 : feedbackUnread}
         onEditProfile={() => setEditProfileOpen(true)}
         onSignOut={handleSignOut}
       />
