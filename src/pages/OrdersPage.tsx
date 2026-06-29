@@ -8,6 +8,7 @@ import { customerOrderUrl } from '../lib/customerOrderUrl'
 import { orderTotal, specLabel as specLabelShared, customerLabel as customerLabelShared } from '../lib/orderDisplay'
 import { logAudit } from '../lib/audit'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
+import { keepApprovedNoOrder, invalidateApprovedNoOrderCount } from '../lib/approvedNoOrder'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
@@ -525,8 +526,6 @@ export default function OrdersPage() {
         ])
         if (cancelled) return
         const orderList = (orderRows ?? []) as { proof_id: string; created_at: string | null; sent_at: string | null; paid_at: string | null }[]
-        const withOrder = new Set(orderList.map((r) => r.proof_id))
-
         // Conversion health (since launch): paid vs sent links, median time-to-pay.
         const sentCount = orderList.filter((r) => r.sent_at).length
         const paidCount = orderList.filter((r) => r.paid_at).length
@@ -536,22 +535,14 @@ export default function OrdersPage() {
           .filter((ms) => Number.isFinite(ms) && ms >= 0)
         const med = median(durations)
         setConversion({ sent: sentCount, paid: paidCount, medianDays: med != null ? med / DAY_MS : null })
-        // Ordering go-live = the first order ever created. Approvals from before
-        // the payment system existed were billed the old way and will never
-        // become an in-app order, so they're excluded — only post-go-live
-        // approvals that still have no order surface. Derived from data, so
-        // there's no hardcoded launch date to maintain; an empty orders table
-        // (Infinity) shows nothing, which is correct (system not live yet).
-        const goLiveMs = orderList.reduce((min, r) => {
-          const t = r.created_at ? new Date(r.created_at).getTime() : NaN
-          return Number.isFinite(t) && t < min ? t : min
-        }, Infinity)
         // The worklist shows every approved proof with no order link sent —
-        // immediately, so it's a live to-do, not a delayed nag. The 2-working-day
-        // mark only flags a row as "overdue" (the longest-waiting ones stand out);
-        // it no longer gates whether the row appears at all.
-        const items: ApprovedNoOrderItem[] = (approvedRows ?? [])
-          .map((r) => r as {
+        // immediately, so it's a live to-do, not a delayed nag. The shared
+        // keepApprovedNoOrder filter (no order of any status, approved on/after
+        // go-live) is the SAME predicate the nav-pill count uses, so the badge
+        // can't drift from this list. The 2-working-day mark only flags a row as
+        // "overdue"; it no longer gates whether the row appears.
+        const items: ApprovedNoOrderItem[] = keepApprovedNoOrder(
+          (approvedRows ?? []) as {
             proof_id: string
             current_version_id: string | null
             current_version_number: number | null
@@ -569,12 +560,9 @@ export default function OrdersPage() {
             helpscout_conversation_id: string | null
             helpscout_last_reply_at: string | null
             helpscout_last_customer_reply_at: string | null
-          })
-          .filter((r) =>
-            !!r.approved_at &&
-            !withOrder.has(r.proof_id) &&
-            new Date(r.approved_at!).getTime() >= goLiveMs,
-          )
+          }[],
+          orderList,
+        )
           .map((r) => {
             const businessDays = businessDaysSince(r.approved_at!)
             // Only surface "customer replied" when it's a genuinely unanswered,
@@ -1214,7 +1202,7 @@ export default function OrdersPage() {
         {orderBuilder && (
           <OrderBuilderModal
             {...orderBuilder}
-            onClose={() => { setOrderBuilder(null); setReloadKey((k) => k + 1) }}
+            onClose={() => { setOrderBuilder(null); setReloadKey((k) => k + 1); invalidateApprovedNoOrderCount() }}
           />
         )}
       </div>

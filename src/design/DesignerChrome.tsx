@@ -10,6 +10,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import EditProfileModal, { type EditProfileSavedPayload } from '../components/EditProfileModal'
 import { FEEDBACK_RESOLVED_STATUSES, isUnseenResolved } from '../lib/feedback'
+import { getApprovedNoOrderCount } from '../lib/approvedNoOrder'
 import { DesignerHeader, type DesignerNavId, type DesignerHeaderColour } from './DesignerHeader'
 
 // Shared chrome wrapper for every designer-facing page. Owns the
@@ -71,6 +72,10 @@ export function DesignerChrome({
   // Count of the signed-in user's own feedback items resolved (done/wont_do)
   // since they last opened the board — drives the header's Feedback badge.
   const [feedbackUnread, setFeedbackUnread] = useState(0)
+  // Count of approved proofs with no order link sent yet — badges the Orders
+  // nav pill so the "Links to send" worklist is reachable from any page. Cached
+  // (60s) in the helper so it doesn't re-query on every navigation.
+  const [ordersUnread, setOrdersUnread] = useState(0)
 
   // Fetch the signed-in designer's profile for the header avatar +
   // any consumer that reads via useDesignerProfile(); the same fetch
@@ -117,6 +122,15 @@ export function DesignerChrome({
     }
   }, [userId])
 
+  // The Orders badge count is independent of the profile fetch (no userId
+  // dependency), so it gets its own effect. Runs once per chrome mount (i.e.
+  // per navigation); the helper's 60s cache absorbs the repeats.
+  useEffect(() => {
+    let cancelled = false
+    void getApprovedNoOrderCount().then((n) => { if (!cancelled) setOrdersUnread(n) })
+    return () => { cancelled = true }
+  }, [])
+
   async function handleSignOut() {
     await supabase.auth.signOut()
     navigate('/login')
@@ -145,6 +159,9 @@ export function DesignerChrome({
         // No badge while the user is already on the board — they're looking
         // at it; the board itself re-stamps feedback_seen_at on open.
         feedbackUnread={active === 'feedback' ? 0 : feedbackUnread}
+        // Likewise no Orders badge while already on the Orders page — the list
+        // is right there.
+        ordersUnread={active === 'orders' ? 0 : ordersUnread}
         onEditProfile={() => setEditProfileOpen(true)}
         onSignOut={handleSignOut}
       />
