@@ -928,6 +928,12 @@ function ThumbnailPopover({ anchor, imageUrl, projectName }: ThumbnailPopoverPro
 // designer can rest the cursor on the image without dismissing the
 // modal accidentally.
 
+// Signed-URL renditions for one project's first front image, produced by the
+// dashboard-thumbnails edge function: thumb_url (small row thumbnail),
+// preview_url (medium, for the hover popover) and full_url (the untransformed
+// original, for the click-through lightbox where detail matters).
+type ThumbInfo = { thumb_url: string; preview_url: string; full_url: string }
+
 interface ThumbnailLightboxProps {
   imageUrl: string
   projectName: string
@@ -1000,10 +1006,11 @@ interface ProjectRowProps {
   project: DashboardProject
   minePinned: boolean
   teamPinned: boolean
-  /** Signed URL for the project's first front image. Undefined while
-   *  loadThumbnails is in flight or when the version has no images;
-   *  the row falls through to the dark-plate initials placeholder. */
-  thumbnailUrl?: string
+  /** Signed-URL renditions for the project's first front image (small /
+   *  medium / full). Undefined while loadThumbnails is in flight or when the
+   *  version has no images; the row falls through to the dark-plate initials
+   *  placeholder. */
+  thumb?: ThumbInfo
   onToggleMinePin: (proofId: string) => void
   onToggleTeamPin: (proofId: string) => void
   onSnooze: (proofId: string, ruleCode: NeedsAttentionRule, hours: number, note: string) => Promise<void>
@@ -1017,7 +1024,7 @@ function ProjectRow({
   project,
   minePinned,
   teamPinned,
-  thumbnailUrl,
+  thumb,
   onToggleMinePin,
   onToggleTeamPin,
   onSnooze,
@@ -1025,7 +1032,7 @@ function ProjectRow({
   onAfterResolve,
 }: ProjectRowProps) {
   // Hover popover + click lightbox state. Both gate on a real
-  // thumbnailUrl — when no image is available (placeholder rendering)
+  // thumb — when no image is available (placeholder rendering)
   // the thumb is non-interactive and shows nothing on hover/click.
   const [previewOpen, setPreviewOpen] = useState(false)
   const [lightboxOpen, setLightboxOpen] = useState(false)
@@ -1033,7 +1040,7 @@ function ProjectRow({
   const thumbRef = useRef<HTMLDivElement>(null)
 
   function handleThumbMouseEnter() {
-    if (!thumbnailUrl) return
+    if (!thumb) return
     // Hover preview is a mouse-only affordance: gate it behind a real
     // fine+hover pointer so it never half-fires on touch (where tap
     // already opens the lightbox). matchMedia is cheap to read here.
@@ -1053,7 +1060,7 @@ function ProjectRow({
   }
   function handleThumbClick(e: React.MouseEvent) {
     e.stopPropagation()
-    if (!thumbnailUrl) return
+    if (!thumb) return
     setLightboxOpen(true)
     // Close the hover popover when the click takes over.
     setPreviewOpen(false)
@@ -1090,9 +1097,8 @@ function ProjectRow({
   const subline = sublineParts.join(' · ')
   // 2-3 character thumbnail placeholder derived from the project
   // name. First letter of each word, capped at 3, uppercased.
-  // Real thumbnails are wired in PR 25 via a public_dashboard_projects
-  // column + signed-URL fetch — until then every row shows this
-  // dark-plate placeholder per the handoff brief.
+  // Shown when no thumbnail is available (no version yet, no images,
+  // or the thumbnail fetch is still in flight / failed).
   const thumbInitials = projectName
     .split(/\s+/)
     .filter(Boolean)
@@ -1140,18 +1146,18 @@ function ProjectRow({
             onClick={handleThumbClick}
             className={[
               'relative flex shrink-0 items-center justify-center w-14 h-11 rounded-[4px] bg-ink text-on-ink font-mono font-medium text-[10px] tracking-wider overflow-hidden',
-              thumbnailUrl ? 'cursor-zoom-in' : '',
+              thumb ? 'cursor-zoom-in' : '',
             ].join(' ')}
           >
-            {thumbnailUrl ? (
-              <img src={thumbnailUrl} alt="" loading="lazy" className="w-full h-full object-contain" />
+            {thumb ? (
+              <img src={thumb.thumb_url} alt="" loading="lazy" className="w-full h-full object-contain" />
             ) : (
               thumbInitials
             )}
           </div>
-          {lightboxOpen && thumbnailUrl && (
+          {lightboxOpen && thumb && (
             <ThumbnailLightbox
-              imageUrl={thumbnailUrl}
+              imageUrl={thumb.full_url}
               projectName={projectName}
               onClose={() => setLightboxOpen(false)}
               onOpenProject={() => navigate(`/proofs/${project.proof_id}`)}
@@ -1274,13 +1280,13 @@ function ProjectRow({
           onMouseLeave={handleThumbMouseLeave}
           className={[
             'relative flex items-center justify-center w-[72px] h-[52px] rounded-[4px] bg-ink text-on-ink font-mono font-medium text-[10px] tracking-wider overflow-hidden',
-            thumbnailUrl ? 'cursor-zoom-in' : '',
+            thumb ? 'cursor-zoom-in' : '',
           ].join(' ')}
         >
-          {thumbnailUrl ? (
+          {thumb ? (
             <>
               <img
-                src={thumbnailUrl}
+                src={thumb.thumb_url}
                 alt=""
                 loading="lazy"
                 className="w-full h-full object-contain"
@@ -1304,19 +1310,19 @@ function ProjectRow({
         {/* Hover popover — portal-rendered so it can escape the row's
             overflow-hidden and the section's stacking context. Anchored
             to the thumb's bounding rect via the helper below. */}
-        {previewOpen && thumbnailUrl && thumbRef.current && (
+        {previewOpen && thumb && thumbRef.current && (
           <ThumbnailPopover
             anchor={thumbRef.current}
-            imageUrl={thumbnailUrl}
+            imageUrl={thumb.preview_url}
             projectName={projectName}
           />
         )}
         {/* Click lightbox — fullscreen modal with the same image at
             max viewport size. Click backdrop or ESC to close; the
             Open project button navigates to the proof detail page. */}
-        {lightboxOpen && thumbnailUrl && (
+        {lightboxOpen && thumb && (
           <ThumbnailLightbox
-            imageUrl={thumbnailUrl}
+            imageUrl={thumb.full_url}
             projectName={projectName}
             onClose={() => setLightboxOpen(false)}
             onOpenProject={() => navigate(`/proofs/${project.proof_id}`)}
@@ -2205,12 +2211,12 @@ export default function DashboardPage() {
   // paint before the settings read resolves. An admin turning it off hides it.
   const [hotLeadsOn, setHotLeadsOn]       = useState(true)
   const [orderCounts, setOrderCounts]     = useState<{ awaitingPayment: number; toOrder: number; invoiceProblem: number } | null>(null)
-  // current_version_id → signed thumbnail URL. Populated in
-  // loadDashboard after the projects fetch by batch-signing the
-  // first front image of each version. Empty entries (no version
-  // yet, or no images uploaded) fall through to the dark-plate
-  // placeholder rendered inside ProjectRow.
-  const [thumbnailUrls, setThumbnailUrls] = useState<Map<string, string>>(new Map())
+  // current_version_id → thumbnail renditions (thumb / preview / full).
+  // Populated in loadDashboard after the projects fetch via the
+  // dashboard-thumbnails edge function (which signs each version's first
+  // front image server-side). Empty entries (no version yet, or no images
+  // uploaded) fall through to the dark-plate placeholder in ProjectRow.
+  const [thumbnailUrls, setThumbnailUrls] = useState<Map<string, ThumbInfo>>(new Map())
   const [latestEvents, setLatestEvents]   = useState<DashboardLatestEvent[]>([])
   // Production lead times for the sidebar chart under Latest activity.
   // Sourced from materials (same table the admin Lead times tab edits);
@@ -2335,52 +2341,28 @@ export default function DashboardPage() {
   // does the batch in one round-trip with a 1-hour expiry (long
   // enough that a normally-engaged designer never sees stale URLs
   // since the next visibility tick refetches the dashboard).
-  async function loadThumbnails(rows: DashboardProject[]): Promise<Map<string, string>> {
+  async function loadThumbnails(rows: DashboardProject[]): Promise<Map<string, ThumbInfo>> {
     const versionIds = rows
       .map((p) => p.current_version_id)
       .filter((id): id is string => id != null)
     if (versionIds.length === 0) return new Map()
 
-    const { data: imageRows, error } = await supabase
-      .from('proof_version_images')
-      .select('proof_version_id, image_path, sort_order, side')
-      .in('proof_version_id', versionIds)
-      .eq('is_qr_code', false)
-      .order('sort_order', { ascending: true })
-    if (error || !imageRows) return new Map()
+    // The dashboard-thumbnails edge function picks each version's first front
+    // image and signs three renditions (small thumb / medium preview / full
+    // original) server-side. It replaces the old client-side createSignedUrls()
+    // batch because the Storage SDK only supports image transforms on the
+    // single-URL sign call — so the row thumbnail can now be a ~200px rendition
+    // instead of the full ~200 KB original shrunk into a 72px box.
+    const { data, error } = await supabase.functions.invoke('dashboard-thumbnails', {
+      body: { versionIds },
+    })
+    if (error || !data?.thumbs) return new Map()
 
-    // First image per version, preferring front / null side over back.
-    const pathByVersion = new Map<string, string>()
-    for (const r of imageRows as Array<{ proof_version_id: string; image_path: string; side: string | null }>) {
-      if (pathByVersion.has(r.proof_version_id)) continue
-      if (r.side === 'back') continue // skip backs; pick a front below
-      pathByVersion.set(r.proof_version_id, r.image_path)
+    const byVersion = new Map<string, ThumbInfo>()
+    for (const [versionId, urls] of Object.entries(data.thumbs as Record<string, ThumbInfo>)) {
+      if (urls?.thumb_url) byVersion.set(versionId, urls)
     }
-    // Fill any versions with only back-side images so they get
-    // something rather than nothing.
-    for (const r of imageRows as Array<{ proof_version_id: string; image_path: string }>) {
-      if (!pathByVersion.has(r.proof_version_id)) {
-        pathByVersion.set(r.proof_version_id, r.image_path)
-      }
-    }
-    if (pathByVersion.size === 0) return new Map()
-
-    const paths = Array.from(pathByVersion.values())
-    const { data: signedData } = await supabase.storage
-      .from('proof-images')
-      .createSignedUrls(paths, 3600)
-    if (!signedData) return new Map()
-
-    const urlByPath = new Map<string, string>()
-    for (const r of signedData) {
-      if (r.path && r.signedUrl) urlByPath.set(r.path, r.signedUrl)
-    }
-    const urlByVersion = new Map<string, string>()
-    for (const [versionId, path] of pathByVersion) {
-      const url = urlByPath.get(path)
-      if (url) urlByVersion.set(versionId, url)
-    }
-    return urlByVersion
+    return byVersion
   }
 
   // Ordering tiles: read the ordering master switch + order counts once on
@@ -2544,12 +2526,13 @@ export default function DashboardPage() {
     setLeadTimes((leadTimeRows ?? []) as LeadTime[])
 
     // ── Per-row thumbnails ──────────────────────────────────────
-    // Fetch the first front (or side=null) image for each project's
-    // current_version_id, then batch-sign their paths through
-    // Supabase Storage in a single round-trip. QR-code rows are
-    // excluded so a vCard row doesn't masquerade as the proof
-    // thumbnail. Errors are tolerated silently — missing thumbnails
-    // fall through to the dark-plate placeholder in ProjectRow.
+    // Resolve each project's current-version thumbnail via the
+    // dashboard-thumbnails edge function, which picks the first front
+    // (or side=null) image and signs small/medium/full renditions
+    // server-side. QR-code rows are excluded so a vCard row doesn't
+    // masquerade as the proof thumbnail. Fire-and-forget: errors are
+    // tolerated silently — missing thumbnails fall through to the
+    // dark-plate placeholder in ProjectRow.
     void loadThumbnails(typedProjects).then(setThumbnailUrls)
 
     // Split pins into the two scope-specific maps. Mine pins are
@@ -3265,7 +3248,7 @@ export default function DashboardPage() {
                                         project={p}
                                         minePinned={minePinAt.has(p.proof_id)}
                                         teamPinned={teamPinAt.has(p.proof_id)}
-                                        thumbnailUrl={p.current_version_id ? thumbnailUrls.get(p.current_version_id) : undefined}
+                                        thumb={p.current_version_id ? thumbnailUrls.get(p.current_version_id) : undefined}
                                         onToggleMinePin={toggleMinePin}
                                         onToggleTeamPin={toggleTeamPin}
                                         onSnooze={handleSnooze}
@@ -3282,7 +3265,7 @@ export default function DashboardPage() {
                                     project={p}
                                     minePinned={minePinAt.has(p.proof_id)}
                                     teamPinned={teamPinAt.has(p.proof_id)}
-                                    thumbnailUrl={p.current_version_id ? thumbnailUrls.get(p.current_version_id) : undefined}
+                                    thumb={p.current_version_id ? thumbnailUrls.get(p.current_version_id) : undefined}
                                     onToggleMinePin={toggleMinePin}
                                     onToggleTeamPin={toggleTeamPin}
                                     onSnooze={handleSnooze}
