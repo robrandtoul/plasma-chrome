@@ -20,12 +20,15 @@ export interface OrderAmounts {
 }
 
 // The order's charged total, matching the Stripe charge + Xero invoice:
-// the cards discount nets off either branch; the US tariff rides on top as
-// its own charged line. Null when there are no priced parts at all.
+// the cards discount nets off either branch; shipping + the US tariff ride on
+// top as their own charged lines. Null when there are no priced parts at all.
+// Shipping is added in BOTH branches — a custom-quote order (incl. a prototype)
+// still has carriage stamped at checkout and invoiced as its own line, so the
+// displayed total must include it to match the Stripe charge.
 export function orderTotal(o: OrderAmounts): number | null {
   const discount = Number(o.amount_card_discount ?? 0)
   const tariff = Number(o.amount_us_tariff ?? 0)
-  if (o.custom_quote_total != null) return round2(Number(o.custom_quote_total) - discount + tariff)
+  if (o.custom_quote_total != null) return round2(Number(o.custom_quote_total) - discount + Number(o.amount_shipping ?? 0) + tariff)
   const parts = [o.amount_cards, o.amount_tooling, o.amount_personalisation, o.amount_shipping]
   if (parts.every((p) => p == null) && tariff === 0) return null
   return round2(parts.reduce((acc: number, p) => acc + Number(p ?? 0), 0) - discount + tariff)

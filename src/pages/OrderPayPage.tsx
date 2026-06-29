@@ -36,6 +36,9 @@ interface OrderPayload {
   names_count: number
   has_personalisation: boolean
   custom_quote_total: number | null
+  // 'production' (default) | 'prototype' — labels the cost row as a prototype
+  // sample rather than the generic "Agreed price".
+  order_kind: string | null
   shipping_treatment: 'full_cost' | 'goodwill' | 'free' | 'manual'
   shipping_charged: number | null
   ship_dest_country: string | null
@@ -1196,7 +1199,7 @@ export default function OrderPayPage() {
                 {order.has_personalisation && <Row label="Personalisation" value="Included" />}
                 {checkout ? (
                   <>
-                    <Row label={order.custom_quote_total != null ? 'Agreed price' : 'Cards'} value={formatPrice(checkout.breakdown.cards, checkout.currency)} />
+                    <Row label={order.order_kind === 'prototype' ? 'Prototype sample' : order.custom_quote_total != null ? 'Agreed price' : 'Cards'} value={formatPrice(checkout.breakdown.cards, checkout.currency)} />
                     {checkout.breakdown.card_discount > 0 && <Row label="Discount" value={formatPrice(-checkout.breakdown.card_discount, checkout.currency)} />}
                     {checkout.breakdown.tooling > 0 && <Row label="Tooling" value={formatPrice(checkout.breakdown.tooling, checkout.currency)} />}
                     {checkout.breakdown.personalisation > 0 && <Row label="Personalisation" value={formatPrice(checkout.breakdown.personalisation, checkout.currency)} />}
@@ -1206,7 +1209,7 @@ export default function OrderPayPage() {
                 ) : (
                   <>
                     {previewCardsBase != null && (
-                      <Row label={order.custom_quote_total != null ? 'Agreed price' : 'Cards'} value={formatPrice(previewCardsBase, order.currency)} />
+                      <Row label={order.order_kind === 'prototype' ? 'Prototype sample' : order.custom_quote_total != null ? 'Agreed price' : 'Cards'} value={formatPrice(previewCardsBase, order.currency)} />
                     )}
                     {previewDiscount > 0 && <Row label="Discount" value={formatPrice(-previewDiscount, order.currency)} />}
                     {previewTooling > 0 && <Row label="Tooling" value={formatPrice(previewTooling, order.currency)} />}
