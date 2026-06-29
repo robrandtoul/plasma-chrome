@@ -12,11 +12,6 @@ import { supabase } from './supabase'
 interface OrderXref {
   proof_id: string
   created_at: string | null
-  // 'production' | 'prototype' (000287). A prototype is a sample before the
-  // real order, so it must NOT clear the "needs a production order" signal —
-  // only a production order does. Older rows have no value → treated as
-  // production (the safe default: they clear the rule, as before).
-  order_kind?: string | null
 }
 
 // Ordering go-live = the first order ever created. Approvals from before the
@@ -39,11 +34,7 @@ export function keepApprovedNoOrder<T extends { proof_id: string; approved_at: s
   approvedRows: T[],
   orderRows: OrderXref[],
 ): T[] {
-  // Only a PRODUCTION order clears the signal — a prototype is a sample before
-  // the real order, so an approved proof whose only order is a prototype still
-  // needs its production link sent. go-live still keys off the first order of
-  // ANY kind (the ordering system was live then, regardless of order kind).
-  const withOrder = new Set(orderRows.filter((r) => r.order_kind !== 'prototype').map((r) => r.proof_id))
+  const withOrder = new Set(orderRows.map((r) => r.proof_id))
   const goLiveMs = goLiveMsOf(orderRows)
   return approvedRows.filter(
     (r) =>
@@ -72,7 +63,7 @@ export async function getApprovedNoOrderCount(): Promise<number> {
     try {
       const [{ data: approvedRows }, { data: orderRows }] = await Promise.all([
         supabase.from('public_dashboard_projects').select('proof_id, approved_at').eq('status', 'approved'),
-        supabase.from('orders').select('proof_id, created_at, order_kind'),
+        supabase.from('orders').select('proof_id, created_at'),
       ])
       const value = keepApprovedNoOrder(
         (approvedRows ?? []) as { proof_id: string; approved_at: string | null }[],

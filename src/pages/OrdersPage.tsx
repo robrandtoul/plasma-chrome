@@ -559,10 +559,10 @@ export default function OrdersPage() {
       void (async () => {
         const [{ data: approvedRows }, { data: orderRows }] = await Promise.all([
           supabase.from('public_dashboard_projects').select('proof_id, current_version_id, current_version_number, version_created_at, company_name, contact_name, contact_email, approved_at, material_display, designer_name, designer_initials, designer_colour, designer_avatar_url, helpscout_conversation_url, helpscout_conversation_id, helpscout_last_reply_at, helpscout_last_customer_reply_at').eq('status', 'approved'),
-          supabase.from('orders').select('proof_id, created_at, sent_at, paid_at, order_kind'),
+          supabase.from('orders').select('proof_id, created_at, sent_at, paid_at'),
         ])
         if (cancelled) return
-        const orderList = (orderRows ?? []) as { proof_id: string; created_at: string | null; sent_at: string | null; paid_at: string | null; order_kind: string | null }[]
+        const orderList = (orderRows ?? []) as { proof_id: string; created_at: string | null; sent_at: string | null; paid_at: string | null }[]
         // Conversion health (since launch): paid vs sent links, median time-to-pay.
         const sentCount = orderList.filter((r) => r.sent_at).length
         const paidCount = orderList.filter((r) => r.paid_at).length
