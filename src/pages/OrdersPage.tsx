@@ -517,6 +517,37 @@ export default function OrdersPage() {
       void getExchangeRates().then((r) => { if (!cancelled) setRates(r) })
       void getOrderingEnabled().then((v) => { if (!cancelled) setOrderingEnabled(v) })
 
+      // Representative thumbnail per proof — a recognition aid so a card can be
+      // identified at a glance; the card links to the proof for the authoritative
+      // approved artwork. customer-proof-images returns EVERY version's images
+      // (the customer page has a version switcher), so scope the thumbnail to the
+      // CURRENT version — otherwise an earlier version's artwork shows (e.g. a v1
+      // plastic card for a proof now approved in wood). Falls back to the first
+      // non-QR image when the current version can't be resolved. Shared by every
+      // card type that shows a thumbnail: To order, Being revised, Awaiting
+      // payment, and the Links-to-send worklist.
+      const loadThumbs = async (proofIds: string[]) => {
+        await Promise.all(
+          proofIds.map(async (proofId) => {
+            try {
+              const [{ data: curV }, { data: imgData }] = await Promise.all([
+                supabase.from('proof_versions').select('id').eq('proof_id', proofId).eq('is_current', true).maybeSingle(),
+                supabase.functions.invoke<{ images: GridImage[] }>('customer-proof-images', { body: { proofId } }),
+              ])
+              const currentVersionId = (curV as { id?: string } | null)?.id ?? null
+              const nonQr = (imgData?.images ?? []).filter((img) => img.is_qr_code !== true)
+              const scoped = currentVersionId
+                ? nonQr.filter((img) => (img as unknown as { proof_version_id?: string }).proof_version_id === currentVersionId)
+                : []
+              const first = (scoped.length > 0 ? scoped : nonQr)[0] ?? null
+              if (!cancelled) setThumbs((prev) => ({ ...prev, [proofId]: first }))
+            } catch {
+              // ignore — card renders without a thumbnail
+            }
+          }),
+        )
+      }
+
       // Approved-but-not-ordered proofs. Cross-reference every proof that has
       // any order (any status), then keep approved proofs past the threshold.
       void (async () => {
@@ -604,6 +635,7 @@ export default function OrdersPage() {
           })
           .sort((a, b) => new Date(a.approvedAt).getTime() - new Date(b.approvedAt).getTime())
         setApprovedNoOrder(items)
+        void loadThumbs(items.map((i) => i.proofId))
       })()
       void supabase.schema('public').from('outsourced_suppliers').select('id, name').then(({ data }) => {
         if (cancelled || !data) return
@@ -671,33 +703,15 @@ export default function OrdersPage() {
         }
       }
 
-      // Representative thumbnail per proof — a recognition aid; the card links
-      // to the proof for the authoritative approved artwork.
-      const proofIds = Array.from(new Set(rows.filter((r) => r.status === 'paid' || r.status === 'revision').map((r) => r.proof_id)))
-      await Promise.all(
-        proofIds.map(async (proofId) => {
-          try {
-            // customer-proof-images returns EVERY version's images (the customer
-            // page has a version switcher), so scope the thumbnail to the CURRENT
-            // version — otherwise an earlier version's artwork shows (e.g. a v1
-            // plastic card for a proof now approved in wood). Mirrors the
-            // OrderReviewPage gallery; falls back to the first non-QR image only
-            // when the current version can't be resolved.
-            const [{ data: curV }, { data: imgData }] = await Promise.all([
-              supabase.from('proof_versions').select('id').eq('proof_id', proofId).eq('is_current', true).maybeSingle(),
-              supabase.functions.invoke<{ images: GridImage[] }>('customer-proof-images', { body: { proofId } }),
-            ])
-            const currentVersionId = (curV as { id?: string } | null)?.id ?? null
-            const nonQr = (imgData?.images ?? []).filter((img) => img.is_qr_code !== true)
-            const scoped = currentVersionId
-              ? nonQr.filter((img) => (img as unknown as { proof_version_id?: string }).proof_version_id === currentVersionId)
-              : []
-            const first = (scoped.length > 0 ? scoped : nonQr)[0] ?? null
-            if (!cancelled) setThumbs((prev) => ({ ...prev, [proofId]: first }))
-          } catch {
-            // ignore — card renders without a thumbnail
-          }
-        }),
+      // Thumbnails for every order card that shows one: paid (To order),
+      // revision (Being revised), and sent (Awaiting payment). The Links-to-send
+      // worklist's thumbnails are loaded in the approved-no-order block above.
+      await loadThumbs(
+        Array.from(new Set(
+          rows
+            .filter((r) => r.status === 'paid' || r.status === 'revision' || r.status === 'sent')
+            .map((r) => r.proof_id),
+        )),
       )
     })()
     return () => { cancelled = true }
@@ -1066,6 +1080,7 @@ export default function OrdersPage() {
                     <LinkToSendCard
                       key={item.proofId}
                       item={item}
+                      thumb={thumbs[item.proofId] ?? null}
                       preparing={preparingProofId === item.proofId}
                       canCreateOrder={orderingEnabled === true}
                       onCreate={() => void openOrderBuilder(item)}
@@ -1088,6 +1103,7 @@ export default function OrdersPage() {
                     <AwaitingPaymentCard
                       key={o.id}
                       order={o}
+                      thumb={thumbs[o.proof_id] ?? null}
                       expired={isExpired(o)}
                       busy={busyId === o.id}
                       copied={copiedId === o.id}
@@ -1615,6 +1631,7 @@ function OrderCard({
 
 function AwaitingPaymentCard({
   order,
+  thumb,
   expired,
   busy,
   copied,
@@ -1625,6 +1642,7 @@ function AwaitingPaymentCard({
   onCancel,
 }: {
   order: OrderRow
+  thumb: GridImage | null
   expired: boolean
   busy: boolean
   copied: boolean
@@ -1660,6 +1678,13 @@ function AwaitingPaymentCard({
   return (
     <PanelShell>
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        {thumb && (
+          <img
+            src={thumb.signed_url}
+            alt="Proof artwork"
+            className="h-20 w-20 shrink-0 rounded-lg object-cover ring-1 ring-line"
+          />
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Link to={`/proofs/${order.proof_id}`} className="text-base font-semibold text-ink hover:underline">
@@ -1726,11 +1751,13 @@ function AwaitingPaymentCard({
 // marks proofs waiting beyond the working-day threshold.
 function LinkToSendCard({
   item,
+  thumb,
   preparing,
   canCreateOrder,
   onCreate,
 }: {
   item: ApprovedNoOrderItem
+  thumb: GridImage | null
   preparing: boolean
   canCreateOrder: boolean
   onCreate: () => void
@@ -1747,6 +1774,13 @@ function LinkToSendCard({
   return (
     <PanelShell>
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        {thumb && (
+          <img
+            src={thumb.signed_url}
+            alt="Proof artwork"
+            className="h-20 w-20 shrink-0 rounded-lg object-cover ring-1 ring-line"
+          />
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Link to={`/proofs/${item.proofId}`} className="text-base font-semibold text-ink hover:underline">
