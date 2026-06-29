@@ -316,6 +316,15 @@ export default function ProofDetailPage() {
   // after any approval-writing action (Mark as approved shortcut,
   // modal approve/changes/clear).
   const [approvals, setApprovals] = useState<ProofNameApproval[]>([])
+  // Set (collection) only: layout_id → title across ALL versions of
+  // this proof. A collection's per-layout approval row is keyed
+  // name = layout_id (000212), and layout ids are regenerated for
+  // each version. This map lets the "approved an earlier version"
+  // banner render design titles instead of raw layout UUIDs, and
+  // match designs across versions by their (stable) title so a design
+  // already re-approved on the current version isn't reported as
+  // stranded. Empty for every non-collection proof (fetch skipped).
+  const [layoutTitlesById, setLayoutTitlesById] = useState<Map<string, string>>(new Map())
   // Set of version IDs that have at least one shared image
   // (proof_version_images.associated_name IS NULL). Populated
   // alongside approvals in loadProof. Drives whether the Names
@@ -779,6 +788,25 @@ export default function ProofDetailPage() {
       setApprovals(approvalRowsLoaded)
     } else {
       setApprovals([])
+    }
+
+    // Set (collection) layout titles for the stale-approval banner.
+    // Only collections key approvals by layout id, so skip the fetch
+    // for every other shape. Pulls every layout across the proof's
+    // versions in one round-trip (id → title).
+    if (versionIds.length > 0 && loadedVersions.some((v) => v.shape === 'set_collection')) {
+      const { data: layoutRows } = await supabase
+        .from('proof_layouts')
+        .select('id, title')
+        .in('proof_version_id', versionIds)
+      if (isStale()) return
+      const titles = new Map<string, string>()
+      for (const l of (layoutRows ?? []) as { id: string; title: string }[]) {
+        titles.set(l.id, l.title)
+      }
+      setLayoutTitlesById(titles)
+    } else {
+      setLayoutTitlesById(new Map())
     }
 
     // Phase 2 Prompt 8 — proof_events audit detail for the Names
@@ -1803,18 +1831,27 @@ export default function ProofDetailPage() {
   // approved state wins) or when there's no current version.
   const staleApprovalSummary = (() => {
     if (isApproved || !currentVersion) return null
-    // Names already approved on the current version (carried forward
+    // A collection (set_collection) keys each approval by a per-version
+    // layout id, so the same design has a different `name` on every
+    // version. The stable cross-version identity is the layout TITLE;
+    // for every other shape the key (recipient name / shared) is
+    // already stable across versions. Reduce both to a "slot key" so
+    // the exclusion + grouping below compare like with like.
+    const isCollection = currentVersion.shape === 'set_collection'
+    const slotKey = (a: ProofNameApproval) =>
+      isCollection ? (layoutTitlesById.get(a.name) ?? a.name) : a.name
+    // Slots already approved on the current version (carried forward
     // or re-approved) aren't stranded — exclude them.
     const approvedOnCurrent = new Set(
       approvals
         .filter((a) => a.proof_version_id === currentVersion.id && a.state === 'approved')
-        .map((a) => a.name),
+        .map(slotKey),
     )
     const stranded = approvals.filter(
       (a) =>
         a.state === 'approved' &&
         a.proof_version_id !== currentVersion.id &&
-        !approvedOnCurrent.has(a.name),
+        !approvedOnCurrent.has(slotKey(a)),
     )
     if (stranded.length === 0) return null
     const byVersion = new Map<
@@ -1829,7 +1866,12 @@ export default function ProofDetailPage() {
         material: v.material_display || null,
         names: [],
       }
-      const label = a.name === SHARED_APPROVAL_KEY ? 'Shared artwork' : a.name
+      const label =
+        a.name === SHARED_APPROVAL_KEY
+          ? 'Shared artwork'
+          : isCollection
+            ? (layoutTitlesById.get(a.name) ?? 'Untitled design')
+            : a.name
       if (!entry.names.includes(label)) entry.names.push(label)
       byVersion.set(v.id, entry)
     }
