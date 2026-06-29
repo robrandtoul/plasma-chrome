@@ -11,6 +11,7 @@ import MessageSendPanel from '../components/MessageSendPanel'
 import { firstName } from '../lib/firstName'
 import { getRepliesEnabled } from '../lib/repliesEnabled'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
+import { invalidateApprovedNoOrderCount } from '../lib/approvedNoOrder'
 import OrderBuilderModal from '../components/OrderBuilderModal'
 import { logAudit } from '../lib/audit'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
@@ -3651,7 +3652,7 @@ export default function ProofDetailPage() {
             hasPersonalisation={!!currentVersion.has_personalisation}
             isCustomQuote={!!currentVersion.custom_quote}
             hasHelpScoutConversation={!!proof.helpscout_conversation_id}
-            onClose={() => { setShowOrderBuilder(false); if (id) void loadProof(id) }}
+            onClose={() => { setShowOrderBuilder(false); invalidateApprovedNoOrderCount(); if (id) void loadProof(id) }}
           />
         )
       })()}

@@ -28,6 +28,7 @@ import { ResolvePopover } from '../components/ResolvePopover'
 import { NudgeOutboxPanel } from '../components/NudgeOutboxPanel'
 import CollapsibleSidebarPanel from '../components/CollapsibleSidebarPanel'
 import HotLeadsCard from '../components/HotLeadsCard'
+import SharedDesignerAvatar from '../components/DesignerAvatar'
 // QuoteLink imported + rendered inside DesignerChrome (PR 31) so
 // every designer page surfaces the same new-tab "phone rings"
 // affordance without re-importing.
@@ -55,13 +56,12 @@ import {
   type ProofFeedbackFeedRow,
   type DashboardLatestEvent,
   type DashboardProject,
-  type DesignerColour,
   type NeedsAttentionRule,
   type ProjectSection,
 } from '../lib/dashboardGrouping'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-// DashboardProject, NeedsAttentionRule, DesignerColour, and ProjectSection are
+// DashboardProject, NeedsAttentionRule, and ProjectSection are
 // imported from ../lib/dashboardGrouping so they can be unit-tested
 // independently of this React component tree.
 
@@ -205,46 +205,23 @@ function viewedStateFor(p: DashboardProject): ViewedState {
 
 // ── Designer avatar ──────────────────────────────────────────────────────────
 //
-// Per-designer colour bg / text. Soft 14% tint background with a solid
-// text colour matches the readability you want at 24px — solid bg +
-// white text (the DesignerHeader UserPill pattern) reads too heavy
-// when 20+ avatars stack in a dashboard list. Same four-colour palette
-// as DesignerHeader's COLOUR_BG so the header pill and row avatars
-// share the same designer-identity register.
-
-const AVATAR_COLOUR: Record<DesignerColour, string> = {
-  blue:   'var(--c-allocated)',
-  teal:   'var(--c-in-stock)',
-  coral:  'var(--c-brand)',
-  purple: '#7b3ff2',
-}
+// Thin adapter from a DashboardProject onto the shared DesignerAvatar chip
+// (src/components/DesignerAvatar.tsx) — so the dashboard rows and the Orders
+// "Links to send" worklist render the identical designer-identity register from
+// one source of truth. The tooltip stays here because it's dashboard-specific
+// (the current version + when it was created).
 
 function DesignerAvatar({ p }: { p: DashboardProject }) {
-  const initials = (p.designer_initials ?? '').slice(0, 2) || '—'
-  const colour = (p.designer_colour ?? 'teal') as DesignerColour
-  const tint = AVATAR_COLOUR[colour]
   const tooltip = p.designer_name && p.current_version_number != null && p.version_created_at
     ? `${p.designer_name} — v${p.current_version_number} created ${formatAbsoluteDateTime(p.version_created_at)}`
     : p.designer_name ?? ''
-  const tintedStyle = p.designer_avatar_url
-    ? undefined
-    : {
-        backgroundColor: `color-mix(in srgb, ${tint} 14%, transparent)`,
-        color: tint,
-        boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${tint} 30%, transparent)`,
-      }
   return (
-    <span
-      title={tooltip}
-      aria-label={tooltip}
-      className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold"
-      style={tintedStyle}
-    >
-      {p.designer_avatar_url
-        ? <img src={p.designer_avatar_url} alt="" className="h-full w-full object-cover" />
-        : initials
-      }
-    </span>
+    <SharedDesignerAvatar
+      initials={p.designer_initials}
+      colour={p.designer_colour}
+      avatarUrl={p.designer_avatar_url}
+      tooltip={tooltip}
+    />
   )
 }
 

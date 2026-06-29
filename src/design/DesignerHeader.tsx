@@ -100,6 +100,9 @@ interface DesignerHeaderProps {
   /** Count of the user's own feedback items resolved since they last
    *  opened the board. Badges the Feedback icon / Account tab when > 0. */
   feedbackUnread?: number
+  /** Count of approved proofs with no order link sent yet. Badges the Orders
+   *  nav pill (desktop) and the Orders bottom tab (mobile) when > 0. */
+  ordersUnread?: number
   onEditProfile?: () => void
   onSignOut?: () => void
 }
@@ -112,6 +115,7 @@ export function DesignerHeader({
   actions,
   mobileBell,
   feedbackUnread = 0,
+  ordersUnread = 0,
   onEditProfile,
   onSignOut,
 }: DesignerHeaderProps) {
@@ -150,6 +154,7 @@ export function DesignerHeader({
           >
             {visibleNav.map((n) => {
               const isActive = n.id === active
+              const badge = n.id === 'orders' ? ordersUnread : 0
               const cls = [
                 'inline-flex items-center h-8 px-3 rounded-full text-[13px] transition-colors',
                 isActive
@@ -157,8 +162,21 @@ export function DesignerHeader({
                   : 'text-ink-mute border border-transparent hover:text-ink hover:bg-canvas',
               ].join(' ')
               return (
-                <Link key={n.id} to={n.to} className={cls}>
+                <Link
+                  key={n.id}
+                  to={n.to}
+                  className={cls}
+                  aria-label={badge > 0 ? `${n.label} — ${badge} approved, no order link sent` : undefined}
+                >
                   {n.label}
+                  {badge > 0 && (
+                    <span
+                      className="ml-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-semibold leading-none text-white"
+                      aria-hidden="true"
+                    >
+                      {badge > 9 ? '9+' : badge}
+                    </span>
+                  )}
                 </Link>
               )
             })}
@@ -249,6 +267,7 @@ export function DesignerHeader({
         active={active}
         orderingEnabled={orderingEnabled}
         feedbackUnread={feedbackUnread}
+        ordersUnread={ordersUnread}
         onAccount={() => setAccountOpen(true)}
       />
 
@@ -278,11 +297,13 @@ function BottomTabBar({
   active,
   orderingEnabled,
   feedbackUnread,
+  ordersUnread,
   onAccount,
 }: {
   active: DesignerNavId | null
   orderingEnabled: boolean
   feedbackUnread: number
+  ordersUnread: number
   onAccount: () => void
 }) {
   const linkTabs: { id: DesignerNavId; label: string; to: string; Icon: LucideIcon }[] = [
@@ -308,7 +329,7 @@ function BottomTabBar({
           className="flex flex-1 items-center justify-center"
           aria-current={active === id ? 'page' : undefined}
         >
-          <TabInner label={label} Icon={Icon} active={active === id} />
+          <TabInner label={label} Icon={Icon} active={active === id} showDot={id === 'orders' && ordersUnread > 0} />
         </Link>
       ))}
       <button
