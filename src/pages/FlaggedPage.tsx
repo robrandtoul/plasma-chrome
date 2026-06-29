@@ -11,6 +11,7 @@ import {
   Package,
   Calendar,
   Mail,
+  Printer,
   X,
 } from 'lucide-react'
 import { DesignerChrome, ButtonCoral, ButtonGhost, Pill } from '../design'
@@ -18,6 +19,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { logAudit } from '../lib/audit'
 import FlagProjectModal from '../components/FlagProjectModal'
+import ReprintModal from '../components/ReprintModal'
 import {
   WATCH_CATEGORY_META,
   WATCH_STATUS_META,
@@ -37,6 +39,16 @@ import {
 
 type ThumbInfo = { thumb_url: string; preview_url: string; full_url: string }
 type HsActivity = { custReplyAt: string | null; replyAt: string | null }
+// Minimal order shape for the reprint chain on a card (Original → Reprint).
+type FlagOrder = {
+  id: string
+  proof_id: string
+  stock_order_number: string | null
+  order_kind: string
+  status: string
+  reprint_of_order_id: string | null
+  created_at: string
+}
 type Scope = 'active' | 'resolved' | 'all'
 
 const SCOPES: { value: Scope; label: string }[] = [
@@ -128,6 +140,8 @@ export default function FlaggedPage() {
   const [updatesByItem, setUpdatesByItem] = useState<Record<string, WatchUpdate[]>>({})
   const [thumbByProof, setThumbByProof] = useState<Record<string, ThumbInfo>>({})
   const [hsByProof, setHsByProof] = useState<Record<string, HsActivity>>({})
+  const [ordersByProof, setOrdersByProof] = useState<Record<string, FlagOrder[]>>({})
+  const [reprintItem, setReprintItem] = useState<WatchItem | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -183,8 +197,8 @@ export default function FlaggedPage() {
       helpscout_last_reply_at: string | null
     }
 
-    // Thread + project context load in parallel; both are best-effort.
-    const [updatesRes, projectsRes] = await Promise.all([
+    // Thread + project + order context load in parallel; all best-effort.
+    const [updatesRes, projectsRes, ordersRes] = await Promise.all([
       itemIds.length
         ? supabase
             .from('watch_updates')
@@ -198,6 +212,13 @@ export default function FlaggedPage() {
             .select('proof_id, current_version_id, helpscout_last_customer_reply_at, helpscout_last_reply_at')
             .in('proof_id', proofIds)
         : Promise.resolve({ data: [] as ProjRow[] }),
+      proofIds.length
+        ? supabase
+            .from('orders')
+            .select('id, proof_id, stock_order_number, order_kind, status, reprint_of_order_id, created_at')
+            .in('proof_id', proofIds)
+            .order('created_at', { ascending: true })
+        : Promise.resolve({ data: [] as FlagOrder[] }),
     ])
 
     const grouped: Record<string, WatchUpdate[]> = {}
@@ -205,6 +226,14 @@ export default function FlaggedPage() {
       ;(grouped[u.watch_item_id] ??= []).push(u)
     }
     setUpdatesByItem(grouped)
+
+    // Orders per proof for the reprint chain. Best-effort: if the reprint column
+    // isn't applied yet the query errors and we simply show no chain.
+    const ordersByP: Record<string, FlagOrder[]> = {}
+    for (const o of (ordersRes.data ?? []) as FlagOrder[]) {
+      ;(ordersByP[o.proof_id] ??= []).push(o)
+    }
+    setOrdersByProof(ordersByP)
 
     const projects = (projectsRes.data ?? []) as ProjRow[]
     const hs: Record<string, HsActivity> = {}
@@ -369,6 +398,8 @@ export default function FlaggedPage() {
     const canDelete = item.created_by === userId || isAdmin
     const overdue = isOverdue(item.due_on, item.status)
     const replied = replySinceFlag(hsByProof[item.proof_id], item)
+    const reprints = (ordersByProof[item.proof_id] ?? []).filter((o) => o.order_kind === 'reprint')
+    const latestReprint = reprints[reprints.length - 1] ?? null
     const meta = [item.contact_name, item.designer_name, ordered && `Ordered ${ordered}`, item.stock_order_number && `#${item.stock_order_number}`]
       .filter(Boolean)
       .join(' · ')
@@ -418,6 +449,16 @@ export default function FlaggedPage() {
                 <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-1.5 py-0.5 text-[11px] font-medium text-brand">
                   <Mail size={11} aria-hidden="true" />
                   Customer replied · {relativeTime(replied)}
+                </span>
+              )}
+              {latestReprint && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-in-stock-soft px-1.5 py-0.5 text-[11px] font-medium text-in-stock">
+                  <Printer size={11} aria-hidden="true" />
+                  {reprints.length > 1
+                    ? `Reprints ×${reprints.length}`
+                    : latestReprint.stock_order_number
+                      ? `Reprint #${latestReprint.stock_order_number}`
+                      : 'Reprint raised'}
                 </span>
               )}
             </span>
@@ -581,6 +622,7 @@ export default function FlaggedPage() {
               <Link to={`/proofs/${item.proof_id}`}>
                 <ButtonGhost size="sm" icon={Package}>Project</ButtonGhost>
               </Link>
+              <ButtonGhost size="sm" icon={Printer} onClick={() => setReprintItem(item)}>Start reprint</ButtonGhost>
               {item.helpscout_conversation_url && (
                 <a href={item.helpscout_conversation_url} target="_blank" rel="noopener noreferrer">
                   <ButtonGhost size="sm" icon={ExternalLink}>Help Scout</ButtonGhost>
@@ -757,6 +799,14 @@ export default function FlaggedPage() {
             // Pull the freshly-stamped thread + thumbnail in.
             void load()
           }}
+        />
+      )}
+
+      {reprintItem && (
+        <ReprintModal
+          item={reprintItem}
+          onClose={() => setReprintItem(null)}
+          onDone={() => void load()}
         />
       )}
 

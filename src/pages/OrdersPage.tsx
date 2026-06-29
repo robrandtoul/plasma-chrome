@@ -167,8 +167,11 @@ function specLabel(o: OrderRow): string {
   )
   // A prototype keeps its material/variant, so the base reads as the material
   // it samples; mark it so the work queue distinguishes a flat-fee sample run
-  // from a full production order at the same material.
-  return o.order_kind === 'prototype' ? `${base} · Prototype sample` : base
+  // from a full production order at the same material. A reprint reads the same
+  // way (free remake of that material) and is marked too.
+  if (o.order_kind === 'prototype') return `${base} · Prototype sample`
+  if (o.order_kind === 'reprint') return `${base} · Free reprint`
+  return base
 }
 
 // Add N working days to a date (skips Sat/Sun). Used to suggest the date
@@ -1544,8 +1547,13 @@ function OrderCard({
             {order.order_kind === 'prototype' && (
               <Pill colour="brand" title="Prototyping service — a flat-fee sample run (up to 3 copies of the approved design).">Prototype</Pill>
             )}
+            {order.order_kind === 'reprint' && (
+              <Pill colour="allocated" title="A free remake after a complaint or damage — £0, no payment or invoice. Link a new Dropbox folder (next order number) and place it like any job.">Free reprint</Pill>
+            )}
             <Pill colour="in-stock">Paid</Pill>
-            {order.payment_method === 'offline' && (
+            {/* A reprint is offline too, but "Free reprint" already says so — and it
+                must NOT prompt the manual-invoice path (there's nothing to invoice). */}
+            {order.payment_method === 'offline' && order.order_kind !== 'reprint' && (
               <Pill colour="low" title="Recorded as paid offline (bank transfer etc.) — no Stripe/Xero record; raise the invoice manually.">Offline</Pill>
             )}
             {order.xero_invoice_id && (

@@ -78,12 +78,12 @@ Deno.serve(async (req) => {
   const proofId = typeof body.proof_id === 'string' ? body.proof_id : null
   if (!proofId) return json({ error: 'Missing proof_id' }, 400)
 
-  const currency = body.currency as Currency
+  let currency = body.currency as Currency
   if (!CURRENCIES.includes(currency)) {
     return json({ error: 'Missing or invalid currency' }, 400)
   }
 
-  const shippingTreatment = (body.shipping_treatment as ShippingTreatment) ?? 'full_cost'
+  let shippingTreatment = (body.shipping_treatment as ShippingTreatment) ?? 'full_cost'
   if (!SHIPPING_TREATMENTS.includes(shippingTreatment)) {
     return json({ error: 'Invalid shipping_treatment' }, 400)
   }
@@ -120,12 +120,13 @@ Deno.serve(async (req) => {
   let hasPersonalisation = body.has_personalisation === true
 
   // material_variant_id is optional in v1 — the pay-page (Step 4)
-  // resolves the precise variant/price. Pass through when supplied.
-  const materialVariantId = typeof body.material_variant_id === 'string' ? body.material_variant_id : null
+  // resolves the precise variant/price. Pass through when supplied. A reprint
+  // inherits the original order's variant (set in the reprint block below).
+  let materialVariantId = typeof body.material_variant_id === 'string' ? body.material_variant_id : null
 
   // Chosen material option — e.g. metal finish (Natural/Brushed/Mirror). The
   // checkout applies the matching option surcharge; null = base / no finish.
-  const materialOptionId = typeof body.material_option_id === 'string' ? body.material_option_id : null
+  let materialOptionId = typeof body.material_option_id === 'string' ? body.material_option_id : null
 
   // Chosen Xero customer — the EXISTING Xero contact this order's invoice should
   // file under, so paid invoices consolidate under the customer's Xero record
@@ -224,7 +225,8 @@ Deno.serve(async (req) => {
   // server-authoritative, never trusted from the client — and overrides
   // custom_quote_total. quantity carries the copies (1–3): it drives shipping
   // weight + the production instruction, but the fee is flat regardless.
-  const orderKind: 'production' | 'prototype' = body.order_kind === 'prototype' ? 'prototype' : 'production'
+  const orderKind: 'production' | 'prototype' | 'reprint' =
+    body.order_kind === 'prototype' ? 'prototype' : body.order_kind === 'reprint' ? 'reprint' : 'production'
   if (orderKind === 'prototype') {
     if (quantity == null || quantity < 1 || quantity > 3) {
       return json({ error: 'A prototype order needs a copies count between 1 and 3.' }, 400)
@@ -260,10 +262,58 @@ Deno.serve(async (req) => {
     hasPersonalisation = false
   }
 
+  // ── Reprint (000295) ────────────────────────────────────────────
+  // A reprint is a FREE remake after a complaint/damage, raised off an existing
+  // proof. It is a NEW order on the SAME proof (the original stays an untouched
+  // record), inheriting the original order's commercial spec server-side so the
+  // Stock Control hand-off is complete and the client can't drift it. Forced
+  // free + offline so it skips Stripe/Xero and lands 'paid' in the To-order
+  // queue. reprint_of_order_id links it back to the order it replaces. quantity
+  // defaults to the original's; an explicit body.quantity (e.g. only some were
+  // faulty) overrides it.
+  let reprintOfOrderId: string | null = null
+  if (orderKind === 'reprint') {
+    reprintOfOrderId = typeof body.reprint_of_order_id === 'string' ? body.reprint_of_order_id : null
+    if (!reprintOfOrderId) {
+      return json({ error: 'A reprint needs the original order it is replacing.' }, 400)
+    }
+    const { data: original } = await admin
+      .from('orders')
+      .select('id, proof_id, material_variant_id, material_option_id, quantity, names_count, person_quantities, has_personalisation, currency, ship_dest_country')
+      .eq('id', reprintOfOrderId)
+      .maybeSingle()
+    if (!original || original.proof_id !== proofId) {
+      return json({ error: 'The original order for this reprint was not found on this proof.' }, 404)
+    }
+    // Inherit the original's commercial spec (server-authoritative).
+    currency = (original.currency as Currency) ?? currency
+    materialVariantId = (original.material_variant_id as string | null) ?? materialVariantId
+    materialOptionId = (original.material_option_id as string | null) ?? materialOptionId
+    namesCount = Number.isInteger(original.names_count) && (original.names_count as number) >= 1 ? (original.names_count as number) : 1
+    personQuantities =
+      Array.isArray(original.person_quantities) && (original.person_quantities as unknown[]).length > 0
+        ? (original.person_quantities as { name: string; quantity: number }[])
+        : null
+    hasPersonalisation = original.has_personalisation === true
+    shipDestCountry = (original.ship_dest_country as string | null) ?? shipDestCountry
+    // quantity: an explicit body override (a partial reprint) wins; else inherit.
+    if (quantity == null) {
+      quantity = Number.isInteger(original.quantity) && (original.quantity as number) > 0 ? (original.quantity as number) : null
+    }
+    if (quantity == null) {
+      return json({ error: 'A reprint needs a quantity — the original order had none recorded.' }, 422)
+    }
+    // FREE: zero total, free shipping. The offline path then stamps all amounts 0.
+    shippingTreatment = 'free'
+    customQuoteTotal = 0
+  }
+
   // payment_method — 'online' (default; pay link) or 'offline' (bank transfer
   // etc.). Offline is created already paid, so it needs a fixed quantity and a
   // shipping figure we can settle without the online pay page (free / manual).
-  const paymentMethod: PaymentMethod = body.payment_method === 'offline' ? 'offline' : 'online'
+  // A reprint is always offline (it's free — nothing to pay).
+  const paymentMethod: PaymentMethod =
+    orderKind === 'reprint' ? 'offline' : body.payment_method === 'offline' ? 'offline' : 'online'
   if (paymentMethod === 'offline') {
     if (quantity == null) {
       return json({ error: 'An offline order needs a fixed quantity (the customer can’t pick one without the pay page).' }, 400)
@@ -499,6 +549,7 @@ Deno.serve(async (req) => {
       sent_at: nowIso,
       payment_method: paymentMethod,
       order_kind: orderKind,
+      reprint_of_order_id: reprintOfOrderId,
       // Offline → created already paid, with the breakdown stamped so the
       // To-order queue + records have a total (no Stripe, no Xero here).
       ...(isOffline
@@ -532,6 +583,7 @@ Deno.serve(async (req) => {
       status: order.status,
       payment_method: paymentMethod,
       order_kind: orderKind,
+      reprint_of_order_id: reprintOfOrderId,
       currency,
       quantity,
       shipping_treatment: shippingTreatment,
