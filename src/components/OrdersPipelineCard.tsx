@@ -10,13 +10,6 @@ import { PanelShell } from '../design'
 //
 // Presentational only: the page computes each bucket and passes shaped rows.
 
-export interface PipelineApprovedItem {
-  proofId: string
-  label: string
-  /** ISO approved_at — rendered as a short date. */
-  approvedAt: string
-}
-
 export interface PipelineColdItem {
   proofId: string
   label: string
@@ -31,11 +24,6 @@ export interface PipelineInvoiceItem {
 
 // Cap per bucket so the card stays scannable; the overflow is summarised.
 const CAP = 6
-
-function shortDate(iso: string): string {
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
-}
 
 function Row({ to, label, meta }: { to: string; label: string; meta: string }) {
   return (
@@ -79,40 +67,25 @@ function Bucket({
 }
 
 export default function OrdersPipelineCard({
-  approvedNoOrder,
   cold,
   invoiceFailed,
 }: {
-  approvedNoOrder: PipelineApprovedItem[]
   cold: PipelineColdItem[]
   invoiceFailed: PipelineInvoiceItem[]
 }) {
-  const total = approvedNoOrder.length + cold.length + invoiceFailed.length
+  const total = cold.length + invoiceFailed.length
 
   return (
     <PanelShell>
       <h2 className="text-sm font-semibold text-ink">Needs action</h2>
       <p className="mt-0.5 text-[12px] text-ink-mute">
-        Approved → ordered — what’s stalled before payment.
+        Sent → paid — what’s stalled on the way to payment.
       </p>
 
       {total === 0 ? (
-        <p className="mt-4 text-[13px] text-ink-soft">Nothing stalled — every approved project is moving.</p>
+        <p className="mt-4 text-[13px] text-ink-soft">Nothing stalled — every sent order is moving.</p>
       ) : (
         <div className="mt-4 space-y-4">
-          {approvedNoOrder.length > 0 && (
-            <Bucket
-              dotVar="var(--c-low)"
-              title="Approved, no order yet"
-              count={approvedNoOrder.length}
-              overflow={approvedNoOrder.length - CAP}
-            >
-              {approvedNoOrder.slice(0, CAP).map((i) => (
-                <Row key={i.proofId} to={`/proofs/${i.proofId}`} label={i.label} meta={`approved ${shortDate(i.approvedAt)}`} />
-              ))}
-            </Bucket>
-          )}
-
           {cold.length > 0 && (
             <Bucket
               dotVar="var(--c-out)"

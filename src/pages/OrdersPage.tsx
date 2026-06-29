@@ -7,10 +7,13 @@ import { getExchangeRates, currencyToGbp, type ExchangeRates } from '../lib/exch
 import { customerOrderUrl } from '../lib/customerOrderUrl'
 import { orderTotal, specLabel as specLabelShared, customerLabel as customerLabelShared } from '../lib/orderDisplay'
 import { logAudit } from '../lib/audit'
+import { getOrderingEnabled } from '../lib/orderingEnabled'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
-import OrdersPipelineCard, { type PipelineApprovedItem } from '../components/OrdersPipelineCard'
+import OrdersPipelineCard from '../components/OrdersPipelineCard'
+import OrderBuilderModal from '../components/OrderBuilderModal'
+import DesignerAvatar from '../components/DesignerAvatar'
 import { ChevronRight } from 'lucide-react'
 
 // Orders / "to order" surface (Ordering & checkout, Step 6 — overhauled).
@@ -255,6 +258,56 @@ function businessDaysSince(iso: string): number {
   return count
 }
 
+// One approved proof with no order link sent yet — a row in the "Links to send"
+// worklist. Mirrors the dashboard row's info (customer, designer, material,
+// approved-when) plus the Help Scout thread, so the designer can work down the
+// list and create each order link without leaving the page. `currentVersionId`
+// + `hasHelpscoutConversation` come straight from the dashboard view; the rest
+// the order builder needs (variant/option/currency/names) is fetched on click.
+interface ApprovedNoOrderItem {
+  proofId: string
+  currentVersionId: string | null
+  label: string
+  contactName: string | null
+  contactEmail: string | null
+  companyName: string | null
+  approvedAt: string
+  /** Working days since approval; drives the "Overdue" flag + "approved today". */
+  businessDays: number
+  overdue: boolean
+  materialDisplay: string | null
+  versionNumber: number | null
+  versionCreatedAt: string | null
+  designerName: string | null
+  designerInitials: string | null
+  designerColour: string | null
+  designerAvatarUrl: string | null
+  helpscoutUrl: string | null
+  hasHelpscoutConversation: boolean
+  /** An unanswered customer reply newer than both our last reply and the current
+   *  version (the dashboard's isCustomerReplied gate) — drives the "customer
+   *  replied" chip. Null when there's no fresh, unanswered reply. */
+  customerRepliedAt: string | null
+}
+
+// The hydrated props the OrderBuilderModal needs, gathered from a worklist row
+// plus a single proof_versions fetch on click. Mirrors the subset of
+// OrderBuilderModalProps the modal can't fetch for itself.
+interface OrderBuilderArgs {
+  proofId: string
+  currentVersionId: string
+  materialId: string | null
+  displayedVariantIds: string[]
+  materialOptionCodes: string[]
+  customerLabel: string | null
+  materialDisplay: string | null
+  currency: Currency | null
+  namesCount: number
+  hasPersonalisation: boolean
+  isCustomQuote: boolean
+  hasHelpScoutConversation: boolean
+}
+
 // Per-order roll-up of the unpaid-order reminder ledger (order_nudges), used to
 // show the auto-chase progress on the awaiting-payment card.
 // The latest ledger row's meaning, when it was a skip / fail: a deliberate
@@ -337,10 +390,11 @@ function matchesSearch(o: OrderRow, q: string): boolean {
 
 // Which work-queue section is shown. 'all' shows every section; the others
 // narrow to one so a busy queue can be focused.
-type ViewKey = 'all' | 'awaiting' | 'to_order' | 'revised' | 'recent'
+type ViewKey = 'all' | 'links' | 'awaiting' | 'to_order' | 'revised' | 'recent'
 
 const VIEW_TABS: { key: ViewKey; label: string }[] = [
   { key: 'all', label: 'All' },
+  { key: 'links', label: 'Links to send' },
   { key: 'awaiting', label: 'Awaiting payment' },
   { key: 'to_order', label: 'To order' },
   { key: 'revised', label: 'Being revised' },
@@ -431,10 +485,27 @@ export default function OrdersPage() {
   // Work-queue search + which section is shown.
   const [search, setSearch] = useState('')
   const [view, setView] = useState<ViewKey>('all')
-  // Approved proofs with no order yet (the pipeline sidebar's first bucket).
+  // Approved proofs with no order link sent yet — the "Links to send" worklist.
   // Fetched separately because these have no order row, so they appear nowhere
   // else on this page.
-  const [approvedNoOrder, setApprovedNoOrder] = useState<PipelineApprovedItem[]>([])
+  const [approvedNoOrder, setApprovedNoOrder] = useState<ApprovedNoOrderItem[]>([])
+  // Worklist sort: oldest-approved first by default so the longest-waiting
+  // customers lead the list.
+  const [linksSort, setLinksSort] = useState<'oldest' | 'newest'>('oldest')
+  // The order builder, opened inline from a worklist row. Null = closed; set to
+  // the hydrated props once the proof's current version has been fetched.
+  const [orderBuilder, setOrderBuilder] = useState<OrderBuilderArgs | null>(null)
+  // The worklist row whose "Create order link" is currently loading its version.
+  const [preparingProofId, setPreparingProofId] = useState<string | null>(null)
+  // The ordering master switch (settings.ordering_enabled). The worklist's
+  // create-order path is hidden unless this is true — same fail-safe gate the
+  // proof page uses, so turning ordering off makes the whole surface inert.
+  // null = not yet read; only `=== true` reveals the create affordance.
+  const [orderingEnabled, setOrderingEnabled] = useState<boolean | null>(null)
+  // Bumped to re-run the page's data fetch (e.g. after an order is created, so a
+  // just-ordered proof drops out of the worklist and its link appears under
+  // Awaiting payment).
+  const [reloadKey, setReloadKey] = useState(0)
   // Conversion health since launch: how many sent pay links were paid, and how
   // quickly. Computed across all orders (the work-queue fetch is status-scoped).
   const [conversion, setConversion] = useState<{ sent: number; paid: number; medianDays: number | null } | null>(null)
@@ -443,12 +514,13 @@ export default function OrdersPage() {
     let cancelled = false
     void (async () => {
       void getExchangeRates().then((r) => { if (!cancelled) setRates(r) })
+      void getOrderingEnabled().then((v) => { if (!cancelled) setOrderingEnabled(v) })
 
       // Approved-but-not-ordered proofs. Cross-reference every proof that has
       // any order (any status), then keep approved proofs past the threshold.
       void (async () => {
         const [{ data: approvedRows }, { data: orderRows }] = await Promise.all([
-          supabase.from('public_dashboard_projects').select('proof_id, company_name, contact_name, approved_at').eq('status', 'approved'),
+          supabase.from('public_dashboard_projects').select('proof_id, current_version_id, current_version_number, version_created_at, company_name, contact_name, contact_email, approved_at, material_display, designer_name, designer_initials, designer_colour, designer_avatar_url, helpscout_conversation_url, helpscout_conversation_id, helpscout_last_reply_at, helpscout_last_customer_reply_at').eq('status', 'approved'),
           supabase.from('orders').select('proof_id, created_at, sent_at, paid_at'),
         ])
         if (cancelled) return
@@ -474,19 +546,74 @@ export default function OrdersPage() {
           const t = r.created_at ? new Date(r.created_at).getTime() : NaN
           return Number.isFinite(t) && t < min ? t : min
         }, Infinity)
-        const items = (approvedRows ?? [])
-          .map((r) => r as { proof_id: string; company_name: string | null; contact_name: string | null; approved_at: string | null })
+        // The worklist shows every approved proof with no order link sent —
+        // immediately, so it's a live to-do, not a delayed nag. The 2-working-day
+        // mark only flags a row as "overdue" (the longest-waiting ones stand out);
+        // it no longer gates whether the row appears at all.
+        const items: ApprovedNoOrderItem[] = (approvedRows ?? [])
+          .map((r) => r as {
+            proof_id: string
+            current_version_id: string | null
+            current_version_number: number | null
+            version_created_at: string | null
+            company_name: string | null
+            contact_name: string | null
+            contact_email: string | null
+            approved_at: string | null
+            material_display: string | null
+            designer_name: string | null
+            designer_initials: string | null
+            designer_colour: string | null
+            designer_avatar_url: string | null
+            helpscout_conversation_url: string | null
+            helpscout_conversation_id: string | null
+            helpscout_last_reply_at: string | null
+            helpscout_last_customer_reply_at: string | null
+          })
           .filter((r) =>
             !!r.approved_at &&
             !withOrder.has(r.proof_id) &&
-            new Date(r.approved_at!).getTime() >= goLiveMs &&
-            businessDaysSince(r.approved_at!) >= APPROVED_NO_ORDER_MIN_BUSINESS_DAYS,
+            new Date(r.approved_at!).getTime() >= goLiveMs,
           )
-          .map((r) => ({
-            proofId: r.proof_id,
-            label: customerLabelShared(r.company_name, r.contact_name),
-            approvedAt: r.approved_at as string,
-          }))
+          .map((r) => {
+            const businessDays = businessDaysSince(r.approved_at!)
+            // Only surface "customer replied" when it's a genuinely unanswered,
+            // post-version reply — the same gate the dashboard's isCustomerReplied
+            // uses: newer than our last staff reply AND newer than the current
+            // version. helpscout_last_customer_reply_at is thread-wide, so without
+            // this it would fire on ordinary pre-approval back-and-forth we've
+            // already handled and read as a false "customer is chasing" signal.
+            const replyAt = r.helpscout_last_customer_reply_at
+            const ourReplyAt = r.helpscout_last_reply_at
+            const versionAt = r.version_created_at
+            const unansweredReplyAt =
+              replyAt &&
+              (!ourReplyAt || new Date(replyAt).getTime() > new Date(ourReplyAt).getTime()) &&
+              (!versionAt || new Date(replyAt).getTime() > new Date(versionAt).getTime())
+                ? replyAt
+                : null
+            return {
+              proofId: r.proof_id,
+              currentVersionId: r.current_version_id,
+              label: customerLabelShared(r.company_name, r.contact_name),
+              contactName: r.contact_name,
+              contactEmail: r.contact_email,
+              companyName: r.company_name,
+              approvedAt: r.approved_at as string,
+              businessDays,
+              overdue: businessDays >= APPROVED_NO_ORDER_MIN_BUSINESS_DAYS,
+              materialDisplay: r.material_display,
+              versionNumber: r.current_version_number,
+              versionCreatedAt: r.version_created_at,
+              designerName: r.designer_name,
+              designerInitials: r.designer_initials,
+              designerColour: r.designer_colour,
+              designerAvatarUrl: r.designer_avatar_url,
+              helpscoutUrl: r.helpscout_conversation_url,
+              hasHelpscoutConversation: !!r.helpscout_conversation_id,
+              customerRepliedAt: unansweredReplyAt,
+            }
+          })
           .sort((a, b) => new Date(a.approvedAt).getTime() - new Date(b.approvedAt).getTime())
         setApprovedNoOrder(items)
       })()
@@ -586,7 +713,7 @@ export default function OrdersPage() {
       )
     })()
     return () => { cancelled = true }
-  }, [])
+  }, [reloadKey])
 
   // Persist a single order field (the date / Dropbox folder edits), merging into
   // local state so the gate + UI reflect it immediately. Returns whether the
@@ -697,6 +824,53 @@ export default function OrdersPage() {
     }
   }
 
+  // Open the order builder inline for an approved-but-unordered proof. The
+  // worklist row already carries the proof-level fields; the one thing it lacks
+  // is the current version's variant / option / currency / names, so fetch that,
+  // then hand the modal fully-hydrated props (it doesn't self-fetch these). On a
+  // missing version we bail to the proof page rather than open a broken modal.
+  async function openOrderBuilder(item: ApprovedNoOrderItem) {
+    setPreparingProofId(item.proofId)
+    try {
+      const { data: v, error } = await supabase
+        .from('proof_versions')
+        .select('id, material_id, displayed_variant_ids, material_options, currency, has_personalisation, custom_quote, names')
+        .eq('proof_id', item.proofId)
+        .eq('is_current', true)
+        .maybeSingle()
+      if (error || !v) {
+        window.alert('Could not load this proof to start an order. Open the proof and use Create order there.')
+        return
+      }
+      const ver = v as {
+        id: string
+        material_id: string | null
+        displayed_variant_ids: string[] | null
+        material_options: string[] | null
+        currency: string | null
+        has_personalisation: boolean | null
+        custom_quote: boolean | null
+        names: string[] | null
+      }
+      setOrderBuilder({
+        proofId: item.proofId,
+        currentVersionId: ver.id,
+        materialId: ver.material_id ?? null,
+        displayedVariantIds: ver.displayed_variant_ids ?? [],
+        materialOptionCodes: ver.material_options ?? [],
+        customerLabel: item.label,
+        materialDisplay: item.materialDisplay,
+        currency: (ver.currency as Currency | null) ?? null,
+        namesCount: ver.names?.length ?? 0,
+        hasPersonalisation: !!ver.has_personalisation,
+        isCustomQuote: !!ver.custom_quote,
+        hasHelpScoutConversation: item.hasHelpscoutConversation,
+      })
+    } finally {
+      setPreparingProofId(null)
+    }
+  }
+
   // The search box narrows every section at once; the view tabs pick which
   // section(s) render. Buckets recompute only when the orders or query change.
   const hasInvoiceProblem = (o: OrderRow) => !o.xero_invoice_id && !!o.xero_invoice_error
@@ -730,6 +904,27 @@ export default function OrdersPage() {
       beingRevised: filtered.filter((o) => o.status === 'revision'),
     }
   }, [orders, search])
+
+  // The "Links to send" worklist, filtered by the shared search box and sorted
+  // oldest- or newest-approved. approvedNoOrder is already oldest-first from the
+  // fetch; the memo re-sorts so the toggle is instant.
+  const filteredLinks = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const matched = q
+      ? approvedNoOrder.filter((i) =>
+          [i.label, i.contactName, i.contactEmail, i.materialDisplay]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+            .includes(q),
+        )
+      : approvedNoOrder
+    return [...matched].sort((a, b) => {
+      const at = new Date(a.approvedAt).getTime()
+      const bt = new Date(b.approvedAt).getTime()
+      return linksSort === 'oldest' ? at - bt : bt - at
+    })
+  }, [approvedNoOrder, search, linksSort])
 
   const showSection = (key: ViewKey) => view === 'all' || view === key
 
@@ -766,7 +961,7 @@ export default function OrdersPage() {
         ) : (
           <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start">
             <aside className="lg:order-2 lg:w-[320px] lg:shrink-0">
-              <OrdersPipelineCard approvedNoOrder={approvedNoOrder} cold={coldItems} invoiceFailed={invoiceFailedItems} />
+              <OrdersPipelineCard cold={coldItems} invoiceFailed={invoiceFailedItems} />
             </aside>
             <div className="min-w-0 lg:order-1 lg:flex-1">
             {(orders.length > 0 || approvedNoOrder.length > 0) && (
@@ -813,7 +1008,7 @@ export default function OrdersPage() {
               </>
             )}
 
-            {orders.length > 0 && (
+            {(orders.length > 0 || approvedNoOrder.length > 0) && (
               <>
                 {/* Search + which section to show. */}
                 <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -851,11 +1046,46 @@ export default function OrdersPage() {
             )}
 
             {search.trim() &&
-              awaitingPayment.length + toOrder.length + beingRevised.length + recentlyOrdered.length === 0 && (
+              filteredLinks.length + awaitingPayment.length + toOrder.length + beingRevised.length + recentlyOrdered.length === 0 && (
                 <PanelShell className="mt-6 text-center">
                   <p className="text-sm text-ink-soft">No orders match “{search.trim()}”.</p>
                 </PanelShell>
               )}
+
+            {showSection('links') && filteredLinks.length > 0 && (
+              <section className="mt-6">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">
+                    Links to send · {filteredLinks.length}
+                  </h2>
+                  <label className="flex items-center gap-2">
+                    <span className="text-[12px] text-ink-mute">Sort</span>
+                    <select
+                      value={linksSort}
+                      onChange={(e) => setLinksSort(e.target.value as 'oldest' | 'newest')}
+                      className="h-8 rounded-lg border border-line bg-surface px-2 text-[12px] text-ink-soft focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                    >
+                      <option value="oldest">Oldest approved first</option>
+                      <option value="newest">Newest approved first</option>
+                    </select>
+                  </label>
+                </div>
+                <p className="mt-1 text-[13px] text-ink-mute">
+                  Approved proofs with no order link sent yet. Work down the list and send each customer their link.
+                </p>
+                <div className="mt-3 space-y-3">
+                  {filteredLinks.map((item) => (
+                    <LinkToSendCard
+                      key={item.proofId}
+                      item={item}
+                      preparing={preparingProofId === item.proofId}
+                      canCreateOrder={orderingEnabled === true}
+                      onCreate={() => void openOrderBuilder(item)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
 
             {showSection('awaiting') && awaitingPayment.length > 0 && (
               <section className="mt-6">
@@ -979,6 +1209,13 @@ export default function OrdersPage() {
             )}
             </div>
           </div>
+        )}
+
+        {orderBuilder && (
+          <OrderBuilderModal
+            {...orderBuilder}
+            onClose={() => { setOrderBuilder(null); setReloadKey((k) => k + 1) }}
+          />
         )}
       </div>
     </DesignerChrome>
@@ -1488,6 +1725,92 @@ function AwaitingPaymentCard({
             </ButtonInk>
           )}
           <ButtonGhost size="sm" onClick={onCancel} disabled={busy} className="max-md:w-full max-md:h-11">Cancel order</ButtonGhost>
+        </div>
+      </div>
+    </PanelShell>
+  )
+}
+
+// One row in the "Links to send" worklist: an approved proof with no order link
+// sent yet. Mirrors the dashboard row (customer, designer, material, approved-
+// when) and adds the actions a designer needs here — create the order link
+// inline, open the Help Scout thread, or view the proof. The "Overdue" flag
+// marks proofs waiting beyond the working-day threshold.
+function LinkToSendCard({
+  item,
+  preparing,
+  canCreateOrder,
+  onCreate,
+}: {
+  item: ApprovedNoOrderItem
+  preparing: boolean
+  canCreateOrder: boolean
+  onCreate: () => void
+}) {
+  // Sub-line: the contact (only when a company is the headline, else it'd repeat
+  // the title) plus their email.
+  const sub = [item.companyName ? item.contactName : null, item.contactEmail].filter(Boolean).join(' · ')
+  const approvedAgo = item.businessDays <= 0 ? 'approved today' : `approved ${formatDate(item.approvedAt)}`
+  const designerTooltip = item.designerName
+    ? (item.versionNumber != null && item.versionCreatedAt
+        ? `${item.designerName} — v${item.versionNumber} created ${formatAbsoluteDateTime(item.versionCreatedAt)}`
+        : item.designerName)
+    : undefined
+  return (
+    <PanelShell>
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to={`/proofs/${item.proofId}`} className="text-base font-semibold text-ink hover:underline">
+              {item.label}
+            </Link>
+            <Pill colour="in-stock">Approved</Pill>
+            {item.overdue && (
+              <Pill colour="low" title={`No order link ${item.businessDays} working days after approval`}>
+                Overdue · {item.businessDays} working days
+              </Pill>
+            )}
+            {item.customerRepliedAt && (
+              <Pill colour="allocated" title={formatAbsoluteDateTime(item.customerRepliedAt)}>
+                Customer replied {relativeTime(item.customerRepliedAt)}
+              </Pill>
+            )}
+          </div>
+          {sub && <p className="mt-0.5 text-sm text-ink-soft">{sub}</p>}
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-ink-mute">
+            {item.materialDisplay && <span>{item.materialDisplay}</span>}
+            {item.versionNumber != null && <span>v{item.versionNumber}</span>}
+            <span>{approvedAgo}</span>
+            {item.designerName && (
+              <span className="inline-flex items-center gap-1.5">
+                <DesignerAvatar
+                  initials={item.designerInitials}
+                  colour={item.designerColour}
+                  avatarUrl={item.designerAvatarUrl}
+                  tooltip={designerTooltip}
+                />
+                {item.designerName}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-col gap-2 md:items-end">
+          {canCreateOrder && (
+            <ButtonInk onClick={onCreate} busy={preparing} className="max-md:w-full max-md:h-[50px] max-md:text-[15px]">
+              Create order link
+            </ButtonInk>
+          )}
+          {/* Secondary actions: a side column on desktop, a single 44px row on mobile. */}
+          <div className="flex gap-2 md:contents">
+            {item.helpscoutUrl && (
+              <a href={item.helpscoutUrl} target="_blank" rel="noopener noreferrer" className="max-md:flex-1">
+                <ButtonGhost size="sm" className="max-md:w-full max-md:h-11">Help Scout ↗</ButtonGhost>
+              </a>
+            )}
+            <Link to={`/proofs/${item.proofId}`} className="max-md:flex-1">
+              <ButtonGhost size="sm" className="max-md:w-full max-md:h-11">View proof</ButtonGhost>
+            </Link>
+          </div>
         </div>
       </div>
     </PanelShell>
