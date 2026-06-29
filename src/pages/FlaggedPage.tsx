@@ -132,6 +132,7 @@ export default function FlaggedPage() {
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const [scope, setScope] = useState<Scope>('active')
+  const [sortMode, setSortMode] = useState<'status' | 'newest'>('status')
   const [search, setSearch] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [flagOpen, setFlagOpen] = useState(false)
@@ -612,7 +613,7 @@ export default function FlaggedPage() {
           return (
             <section key={sv}>
               <div className="mb-2 flex items-center gap-2">
-                <span className="text-[13px] font-semibold text-ink">{sm.label}</span>
+                <Pill colour={sm.colour}>{sm.label}</Pill>
                 <span className="rounded-full bg-line-soft px-2 py-0.5 text-[11px] text-ink-soft">{group.length}</span>
                 <span className="text-[12px] text-ink-dim">{WATCH_STATUS_HINT[sv]}</span>
               </div>
@@ -657,8 +658,14 @@ export default function FlaggedPage() {
         </div>
       )
     }
-    if (scope === 'resolved') {
-      return <div className="space-y-3">{inScope.map(renderCard)}</div>
+    // Flat, newest-first — for the Resolved scope and the "Newest" sort. The
+    // default "By status" sort keeps the grouped view (Open section on top).
+    if (scope === 'resolved' || sortMode === 'newest') {
+      return (
+        <div className="space-y-3">
+          {[...inScope].sort((a, b) => b.created_at.localeCompare(a.created_at)).map(renderCard)}
+        </div>
+      )
     }
     return renderSections(scope === 'all' ? ['open', 'monitoring', 'resolved'] : ACTIVE_STATUSES)
   })()
@@ -686,8 +693,8 @@ export default function FlaggedPage() {
           Problem projects everyone can see and update — lost in transit, reprints, complaints, delays.
         </p>
 
-        {/* Scope chips */}
-        <div className="mb-4 flex flex-wrap gap-1.5">
+        {/* Scope chips + sort */}
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
           {SCOPES.map((s) => {
             const active = scope === s.value
             return (
@@ -705,6 +712,36 @@ export default function FlaggedPage() {
               </button>
             )
           })}
+          <div className="ml-auto flex items-center gap-1">
+            <span className="text-[12px] text-ink-mute">Sort</span>
+            {([['status', 'By status'], ['newest', 'Newest']] as const).map(([val, label]) => {
+              const active = sortMode === val
+              return (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setSortMode(val)}
+                  title={val === 'status' ? 'Open at the top, then Monitoring' : 'Most recently flagged first'}
+                  className={[
+                    'rounded-full px-2.5 py-1 text-[12px] font-medium transition-colors',
+                    active ? 'bg-ink text-on-ink' : 'border border-line text-ink-mute hover:bg-canvas',
+                  ].join(' ')}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Status legend — what each status means + the colour key. */}
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-[10px] border border-line bg-canvas px-3 py-2 text-[12px]">
+          {WATCH_STATUSES.map((s) => (
+            <span key={s.value} className="inline-flex items-center gap-1.5">
+              <Pill colour={s.colour}>{s.label}</Pill>
+              <span className="text-ink-mute">{WATCH_STATUS_HINT[s.value]}</span>
+            </span>
+          ))}
         </div>
 
         {body}

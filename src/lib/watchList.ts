@@ -99,8 +99,10 @@ export const WATCH_STATUSES: {
   label: string
   colour: PillColour
 }[] = [
+  // Colour-coded: open = red (needs us), monitoring = blue (waiting), resolved
+  // = green. The legend on the board ties each colour to its meaning.
   { value: 'open', label: 'Open', colour: 'out' },
-  { value: 'monitoring', label: 'Monitoring', colour: 'low' },
+  { value: 'monitoring', label: 'Monitoring', colour: 'allocated' },
   { value: 'resolved', label: 'Resolved', colour: 'in-stock' },
 ]
 
@@ -125,9 +127,9 @@ export function isResolvedWatch(status: WatchStatus): boolean {
 // Plain-English meaning for each status, shown as a hint so the labels explain
 // themselves (Open vs Monitoring was unclear without it).
 export const WATCH_STATUS_HINT: Record<WatchStatus, string> = {
-  open: 'Needs action',
-  monitoring: 'In hand — keeping an eye',
-  resolved: 'Done',
+  open: 'On us to act',
+  monitoring: 'Done our bit — waiting on someone else',
+  resolved: 'Sorted, nothing left to do',
 }
 
 // True when a card's target date has passed and it isn't resolved yet. Compares
