@@ -11,17 +11,28 @@
 // NULL with a supplied display name and renders as a "Help Scout · customer"
 // entry (same shape the webhook's reply ingest produces).
 //
-// Auth: verify_jwt = true — accepts a designer's session JWT (manual flag) or
-// the webhook's service-role key (auto-flag).
+// Auth: verify_jwt = false so the browser's CORS preflight isn't blocked at the
+// gateway (the FlagProjectModal calls this directly). Low-risk: it only writes a
+// customer message — which staff can already see — onto an existing card, deduped.
+// The webhook auto-flag path calls it with the service-role key.
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, HELPSCOUT_APP_ID, HELPSCOUT_APP_SECRET.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
+// CORS so the browser (FlagProjectModal) can call this directly. Matches the
+// pattern used by the other browser-invoked functions (e.g. dashboard-thumbnails);
+// paired with verify_jwt = false so the gateway lets the OPTIONS preflight through.
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
   })
 }
 
@@ -77,6 +88,7 @@ async function fetchThreads(token: string, conversationId: string): Promise<HsTh
 }
 
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS_HEADERS })
   try {
     if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
