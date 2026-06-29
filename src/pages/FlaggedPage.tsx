@@ -9,6 +9,9 @@ import {
   ExternalLink,
   Trash2,
   Package,
+  Calendar,
+  Mail,
+  X,
 } from 'lucide-react'
 import { DesignerChrome, ButtonCoral, ButtonGhost, Pill } from '../design'
 import { supabase } from '../lib/supabase'
@@ -19,9 +22,12 @@ import {
   WATCH_CATEGORY_META,
   WATCH_STATUS_META,
   WATCH_STATUSES,
+  WATCH_STATUS_HINT,
   WATCH_UPDATE_KINDS,
   authorBadgeColour,
   relativeTime,
+  formatDue,
+  isOverdue,
   type WatchItem,
   type WatchUpdate,
   type WatchStatus,
@@ -29,14 +35,17 @@ import {
 } from '../lib/watchList'
 
 type ThumbInfo = { thumb_url: string; preview_url: string; full_url: string }
-type Scope = 'open' | 'monitoring' | 'resolved' | 'all'
+type HsActivity = { custReplyAt: string | null; replyAt: string | null }
+type Scope = 'active' | 'resolved' | 'all'
 
 const SCOPES: { value: Scope; label: string }[] = [
-  { value: 'open', label: 'Open' },
-  { value: 'monitoring', label: 'Monitoring' },
+  { value: 'active', label: 'Active' },
   { value: 'resolved', label: 'Resolved' },
   { value: 'all', label: 'All' },
 ]
+
+// Active = the working board: open + monitoring. Resolved drops off it.
+const ACTIVE_STATUSES: WatchStatus[] = ['open', 'monitoring']
 
 function projectLabel(item: WatchItem): string {
   return item.company_name?.trim() || item.contact_name?.trim() || 'Untitled project'
@@ -66,6 +75,15 @@ function formatStamp(iso: string): string {
     d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
+// The customer's last Help Scout reply, but only if it landed AFTER the project
+// was flagged — i.e. genuinely new activity the board should surface.
+function replySinceFlag(hs: HsActivity | undefined, item: WatchItem): string | null {
+  if (!hs?.custReplyAt) return null
+  return new Date(hs.custReplyAt).getTime() > new Date(item.created_at).getTime()
+    ? hs.custReplyAt
+    : null
+}
+
 // Small round initials badge, coloured to match the author's header avatar.
 function AuthorBadge({ initials, colour }: { initials: string | null; colour: string | null }) {
   return (
@@ -88,13 +106,15 @@ export default function FlaggedPage() {
   const [items, setItems] = useState<WatchItem[]>([])
   const [updatesByItem, setUpdatesByItem] = useState<Record<string, WatchUpdate[]>>({})
   const [thumbByProof, setThumbByProof] = useState<Record<string, ThumbInfo>>({})
+  const [hsByProof, setHsByProof] = useState<Record<string, HsActivity>>({})
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  const [scope, setScope] = useState<Scope>('open')
+  const [scope, setScope] = useState<Scope>('active')
   const [search, setSearch] = useState('')
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [flagOpen, setFlagOpen] = useState(false)
+  const [lightbox, setLightbox] = useState<ThumbInfo | null>(null)
 
   // Per-card "add an update" drafts.
   const [draftBody, setDraftBody] = useState<Record<string, string>>({})
@@ -134,8 +154,14 @@ export default function FlaggedPage() {
     const itemIds = rows.map((r) => r.id)
     const proofIds = Array.from(new Set(rows.map((r) => r.proof_id)))
 
-    // Thread + artwork load in parallel; both are best-effort (a failure leaves
-    // the board usable, just without previews / thumbnails).
+    type ProjRow = {
+      proof_id: string
+      current_version_id: string | null
+      helpscout_last_customer_reply_at: string | null
+      helpscout_last_reply_at: string | null
+    }
+
+    // Thread + project context load in parallel; both are best-effort.
     const [updatesRes, projectsRes] = await Promise.all([
       itemIds.length
         ? supabase
@@ -147,9 +173,9 @@ export default function FlaggedPage() {
       proofIds.length
         ? supabase
             .from('public_dashboard_projects')
-            .select('proof_id, current_version_id')
+            .select('proof_id, current_version_id, helpscout_last_customer_reply_at, helpscout_last_reply_at')
             .in('proof_id', proofIds)
-        : Promise.resolve({ data: [] as { proof_id: string; current_version_id: string | null }[] }),
+        : Promise.resolve({ data: [] as ProjRow[] }),
     ])
 
     const grouped: Record<string, WatchUpdate[]> = {}
@@ -158,11 +184,18 @@ export default function FlaggedPage() {
     }
     setUpdatesByItem(grouped)
 
-    const projects = (projectsRes.data ?? []) as { proof_id: string; current_version_id: string | null }[]
+    const projects = (projectsRes.data ?? []) as ProjRow[]
+    const hs: Record<string, HsActivity> = {}
     const versionToProof = new Map<string, string>()
     for (const p of projects) {
+      hs[p.proof_id] = {
+        custReplyAt: p.helpscout_last_customer_reply_at,
+        replyAt: p.helpscout_last_reply_at,
+      }
       if (p.current_version_id) versionToProof.set(p.current_version_id, p.proof_id)
     }
+    setHsByProof(hs)
+
     const versionIds = Array.from(versionToProof.keys())
     if (versionIds.length > 0) {
       const { data: thumbData } = await supabase.functions.invoke('dashboard-thumbnails', {
@@ -182,6 +215,16 @@ export default function FlaggedPage() {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Close the lightbox on Escape.
+  useEffect(() => {
+    if (!lightbox) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setLightbox(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [lightbox])
 
   function toggleExpand(id: string) {
     setExpanded((prev) => {
@@ -249,6 +292,19 @@ export default function FlaggedPage() {
     })
   }
 
+  // Set / clear the expected-resolution date. Silent no-op if the 000291 column
+  // isn't applied yet (the update errors and we just don't reflect it).
+  async function updateDue(item: WatchItem, value: string | null) {
+    setBusyId(item.id)
+    const { error } = await supabase
+      .from('watch_items')
+      .update({ due_on: value, updated_at: new Date().toISOString() })
+      .eq('id', item.id)
+    setBusyId(null)
+    if (error) return
+    setItems((prev) => prev.map((it) => (it.id === item.id ? { ...it, due_on: value } : it)))
+  }
+
   async function removeItem(item: WatchItem) {
     if (!window.confirm('Remove this project from the flagged board? Its update thread will be deleted too.')) return
     setBusyId(item.id)
@@ -281,7 +337,7 @@ export default function FlaggedPage() {
   }, [items])
 
   function renderCard(item: WatchItem) {
-    const isOpen = expanded.has(item.id)
+    const isExpanded = expanded.has(item.id)
     const thread = updatesByItem[item.id] ?? []
     const last = thread[thread.length - 1] ?? null
     const thumb = thumbByProof[item.proof_id] ?? null
@@ -289,30 +345,59 @@ export default function FlaggedPage() {
     const st = WATCH_STATUS_META[item.status]
     const ordered = formatOrdered(item.ordered_on)
     const canDelete = item.created_by === userId || isAdmin
+    const overdue = isOverdue(item.due_on, item.status)
+    const replied = replySinceFlag(hsByProof[item.proof_id], item)
     const meta = [item.contact_name, item.designer_name, ordered && `Ordered ${ordered}`, item.stock_order_number && `#${item.stock_order_number}`]
       .filter(Boolean)
       .join(' · ')
 
     return (
       <div key={item.id} className="overflow-hidden rounded-[14px] border border-line bg-surface">
-        <button
-          type="button"
-          onClick={() => toggleExpand(item.id)}
-          aria-expanded={isOpen}
-          className="flex w-full items-center gap-3 px-3 py-3 text-left hover:bg-canvas"
-        >
-          <span className="flex h-12 w-16 shrink-0 items-center justify-center overflow-hidden rounded-[6px] bg-ink font-mono text-[11px] font-medium tracking-wider text-on-ink">
+        <div className="flex items-stretch gap-3 p-3 hover:bg-canvas">
+          {/* Thumbnail — click to enlarge (falls back to expand when there's no art). */}
+          <button
+            type="button"
+            onClick={() => (thumb ? setLightbox(thumb) : toggleExpand(item.id))}
+            aria-label={thumb ? 'Enlarge artwork' : 'Expand'}
+            className={[
+              'flex h-20 w-28 shrink-0 items-center justify-center overflow-hidden rounded-[8px] bg-ink font-mono text-[13px] font-medium tracking-wider text-on-ink',
+              thumb ? 'cursor-zoom-in' : '',
+            ].join(' ')}
+          >
             {thumb ? (
               <img src={thumb.thumb_url} alt="" loading="lazy" className="h-full w-full object-contain" />
             ) : (
               initialsFor(item)
             )}
-          </span>
-          <span className="min-w-0 flex-1">
+          </button>
+
+          <button
+            type="button"
+            onClick={() => toggleExpand(item.id)}
+            aria-expanded={isExpanded}
+            className="min-w-0 flex-1 text-left"
+          >
             <span className="flex flex-wrap items-center gap-1.5">
               <span className="truncate text-[14px] font-semibold text-ink">{projectLabel(item)}</span>
               <Pill colour={cat.colour}>{cat.label}</Pill>
               <Pill colour={st.colour}>{st.label}</Pill>
+              {item.due_on && (
+                <span
+                  className={[
+                    'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium',
+                    overdue ? 'bg-out-soft text-out' : 'bg-line-soft text-ink-soft',
+                  ].join(' ')}
+                >
+                  <Calendar size={11} aria-hidden="true" />
+                  {formatDue(item.due_on, item.status)}
+                </span>
+              )}
+              {replied && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-1.5 py-0.5 text-[11px] font-medium text-brand">
+                  <Mail size={11} aria-hidden="true" />
+                  Customer replied · {relativeTime(replied)}
+                </span>
+              )}
             </span>
             {meta && <span className="mt-0.5 block truncate text-[12px] text-ink-mute">{meta}</span>}
             <span className="mt-1 flex items-center gap-1.5 text-[12px] text-ink-soft">
@@ -329,13 +414,19 @@ export default function FlaggedPage() {
                 <span className="text-ink-dim">No updates yet</span>
               )}
             </span>
-          </span>
-          <span className="shrink-0 text-ink-mute">
-            {isOpen ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
-          </span>
-        </button>
+          </button>
 
-        {isOpen && (
+          <button
+            type="button"
+            onClick={() => toggleExpand(item.id)}
+            aria-label={isExpanded ? 'Collapse' : 'Expand'}
+            className="flex shrink-0 items-start pt-0.5 text-ink-mute"
+          >
+            {isExpanded ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
+          </button>
+        </div>
+
+        {isExpanded && (
           <div className="border-t border-line-soft px-3 py-3">
             {/* Thread */}
             <div className="space-y-3">
@@ -403,8 +494,8 @@ export default function FlaggedPage() {
               </div>
             </div>
 
-            {/* Status controls + links */}
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            {/* Status + expected resolution */}
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
               <div className="flex items-center gap-1.5">
                 <span className="text-[12px] text-ink-mute">Status</span>
                 <div className="flex gap-1">
@@ -414,6 +505,7 @@ export default function FlaggedPage() {
                       <button
                         key={s.value}
                         type="button"
+                        title={WATCH_STATUS_HINT[s.value]}
                         disabled={busyId === item.id || active}
                         onClick={() => void changeStatus(item, s.value)}
                         className={[
@@ -429,19 +521,41 @@ export default function FlaggedPage() {
                   })}
                 </div>
               </div>
-              <div className="flex items-center gap-1">
-                <Link to={`/proofs/${item.proof_id}`}>
-                  <ButtonGhost size="sm" icon={Package}>Project</ButtonGhost>
-                </Link>
-                {item.helpscout_conversation_url && (
-                  <a href={item.helpscout_conversation_url} target="_blank" rel="noopener noreferrer">
-                    <ButtonGhost size="sm" icon={ExternalLink}>Help Scout</ButtonGhost>
-                  </a>
+              <label className="flex items-center gap-1.5 text-[12px] text-ink-mute">
+                <Calendar size={13} aria-hidden="true" />
+                Resolve by
+                <input
+                  type="date"
+                  value={item.due_on ?? ''}
+                  onChange={(e) => void updateDue(item, e.target.value || null)}
+                  className="rounded-[6px] border border-line bg-surface px-1.5 py-1 text-[12px] text-ink outline-none focus:border-brand"
+                />
+                {item.due_on && (
+                  <button
+                    type="button"
+                    onClick={() => void updateDue(item, null)}
+                    className="text-ink-dim hover:text-ink"
+                    aria-label="Clear date"
+                  >
+                    <X size={13} aria-hidden="true" />
+                  </button>
                 )}
-                {canDelete && (
-                  <ButtonGhost size="sm" icon={Trash2} onClick={() => void removeItem(item)}>Remove</ButtonGhost>
-                )}
-              </div>
+              </label>
+            </div>
+
+            {/* Links */}
+            <div className="mt-2 flex items-center gap-1">
+              <Link to={`/proofs/${item.proof_id}`}>
+                <ButtonGhost size="sm" icon={Package}>Project</ButtonGhost>
+              </Link>
+              {item.helpscout_conversation_url && (
+                <a href={item.helpscout_conversation_url} target="_blank" rel="noopener noreferrer">
+                  <ButtonGhost size="sm" icon={ExternalLink}>Help Scout</ButtonGhost>
+                </a>
+              )}
+              {canDelete && (
+                <ButtonGhost size="sm" icon={Trash2} onClick={() => void removeItem(item)}>Remove</ButtonGhost>
+              )}
             </div>
 
             {item.status === 'resolved' && item.status_changed_by_name && (
@@ -456,14 +570,41 @@ export default function FlaggedPage() {
     )
   }
 
-  const visible = scope === 'all' ? filtered : filtered.filter((it) => it.status === scope)
+  function renderSections(statuses: WatchStatus[]) {
+    return (
+      <div className="space-y-6">
+        {statuses.map((sv) => {
+          const group = filtered.filter((it) => it.status === sv)
+          if (group.length === 0) return null
+          const sm = WATCH_STATUS_META[sv]
+          return (
+            <section key={sv}>
+              <div className="mb-2 flex items-center gap-2">
+                <span className="text-[13px] font-semibold text-ink">{sm.label}</span>
+                <span className="rounded-full bg-line-soft px-2 py-0.5 text-[11px] text-ink-soft">{group.length}</span>
+                <span className="text-[12px] text-ink-dim">{WATCH_STATUS_HINT[sv]}</span>
+              </div>
+              <div className="space-y-3">{group.map(renderCard)}</div>
+            </section>
+          )
+        })}
+      </div>
+    )
+  }
+
+  const inScope =
+    scope === 'resolved'
+      ? filtered.filter((it) => it.status === 'resolved')
+      : scope === 'active'
+        ? filtered.filter((it) => it.status !== 'resolved')
+        : filtered
 
   const body = (() => {
     if (loading) {
       return (
         <div className="space-y-3">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-20 animate-pulse rounded-[14px] bg-line-soft" />
+            <div key={i} className="h-24 animate-pulse rounded-[14px] bg-line-soft" />
           ))}
         </div>
       )
@@ -471,12 +612,12 @@ export default function FlaggedPage() {
     if (loadError) {
       return <p className="rounded-lg bg-out-soft px-3 py-2 text-[13px] text-out">{loadError}</p>
     }
-    if (visible.length === 0) {
+    if (inScope.length === 0) {
       return (
         <div className="rounded-[14px] border border-dashed border-line px-4 py-10 text-center">
           <Flag size={22} aria-hidden="true" className="mx-auto text-ink-dim" />
           <p className="mt-2 text-[14px] font-medium text-ink">
-            {scope === 'open' ? 'Nothing flagged' : 'Nothing here'}
+            {scope === 'active' ? 'Nothing flagged' : 'Nothing here'}
           </p>
           <p className="mt-1 text-[13px] text-ink-mute">
             Flag a project to start tracking a problem order.
@@ -484,27 +625,14 @@ export default function FlaggedPage() {
         </div>
       )
     }
-    if (scope === 'all') {
-      return (
-        <div className="space-y-6">
-          {WATCH_STATUSES.map((s) => {
-            const group = visible.filter((it) => it.status === s.value)
-            if (group.length === 0) return null
-            return (
-              <section key={s.value}>
-                <div className="mb-2 flex items-center gap-2">
-                  <span className="text-[13px] font-semibold text-ink">{s.label}</span>
-                  <span className="rounded-full bg-line-soft px-2 py-0.5 text-[11px] text-ink-soft">{group.length}</span>
-                </div>
-                <div className="space-y-3">{group.map(renderCard)}</div>
-              </section>
-            )
-          })}
-        </div>
-      )
+    if (scope === 'resolved') {
+      return <div className="space-y-3">{inScope.map(renderCard)}</div>
     }
-    return <div className="space-y-3">{visible.map(renderCard)}</div>
+    return renderSections(scope === 'all' ? ['open', 'monitoring', 'resolved'] : ACTIVE_STATUSES)
   })()
+
+  const scopeCount = (s: Scope): number =>
+    s === 'all' ? items.length : s === 'resolved' ? counts.resolved : counts.open + counts.monitoring
 
   return (
     <DesignerChrome
@@ -530,7 +658,6 @@ export default function FlaggedPage() {
         <div className="mb-4 flex flex-wrap gap-1.5">
           {SCOPES.map((s) => {
             const active = scope === s.value
-            const count = s.value === 'all' ? items.length : counts[s.value]
             return (
               <button
                 key={s.value}
@@ -542,7 +669,7 @@ export default function FlaggedPage() {
                 ].join(' ')}
               >
                 {s.label}
-                <span className={['text-[11px]', active ? 'text-on-ink/70' : 'text-ink-dim'].join(' ')}>{count}</span>
+                <span className={['text-[11px]', active ? 'text-on-ink/70' : 'text-ink-dim'].join(' ')}>{scopeCount(s.value)}</span>
               </button>
             )
           })}
@@ -562,6 +689,32 @@ export default function FlaggedPage() {
             void load()
           }}
         />
+      )}
+
+      {/* Artwork lightbox */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Artwork preview"
+          onClick={() => setLightbox(null)}
+        >
+          <img
+            src={lightbox.full_url || lightbox.preview_url}
+            alt="Proof artwork"
+            className="max-h-[85vh] max-w-[90vw] rounded-lg bg-white object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            type="button"
+            onClick={() => setLightbox(null)}
+            aria-label="Close"
+            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-ink hover:bg-white"
+          >
+            <X size={22} aria-hidden="true" />
+          </button>
+        </div>
       )}
     </DesignerChrome>
   )

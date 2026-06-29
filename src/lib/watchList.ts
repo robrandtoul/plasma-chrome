@@ -32,6 +32,8 @@ export interface WatchItem {
   category: WatchCategory
   status: WatchStatus
   ordered_on: string | null
+  // Optional target/expected-resolution date (migration 000291). YYYY-MM-DD.
+  due_on: string | null
   company_name: string | null
   contact_name: string | null
   designer_name: string | null
@@ -109,6 +111,36 @@ export const WATCH_UPDATE_KINDS: { value: WatchUpdateKind; label: string }[] = [
 // but stays searchable under the Resolved / All scopes.
 export function isResolvedWatch(status: WatchStatus): boolean {
   return status === 'resolved'
+}
+
+// Plain-English meaning for each status, shown as a hint so the labels explain
+// themselves (Open vs Monitoring was unclear without it).
+export const WATCH_STATUS_HINT: Record<WatchStatus, string> = {
+  open: 'Needs action',
+  monitoring: 'In hand — keeping an eye',
+  resolved: 'Done',
+}
+
+// True when a card's target date has passed and it isn't resolved yet. Compares
+// YYYY-MM-DD strings (lexical compare is date-correct for that format).
+export function isOverdue(
+  dueOn: string | null,
+  status: WatchStatus,
+  now: Date = new Date(),
+): boolean {
+  if (!dueOn || status === 'resolved') return false
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  return dueOn < today
+}
+
+// Short label for a due date on a card ("Due 4 Jul" / "Overdue" / "Due today").
+export function formatDue(dueOn: string, status: WatchStatus, now: Date = new Date()): string {
+  const d = new Date(dueOn + 'T00:00:00')
+  if (Number.isNaN(d.getTime())) return ''
+  if (isOverdue(dueOn, status, now)) return 'Overdue'
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  if (dueOn === today) return 'Due today'
+  return `Due ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`
 }
 
 // Short, human relative time for the "last update 2h ago" line on a card.

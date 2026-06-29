@@ -46,6 +46,7 @@ export default function FlagProjectModal({ proof, onClose, onCreated }: FlagProj
   const userId = session?.user.id ?? null
 
   const [category, setCategory] = useState<WatchCategory>('lost_in_transit')
+  const [dueOn, setDueOn] = useState('')
   const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -109,9 +110,18 @@ export default function FlagProjectModal({ proof, onClose, onCreated }: FlagProj
 
     setSubmitting(true)
 
+    // Only include due_on when the user set one — keeps flagging working even if
+    // the 000291 column hasn't been applied yet (the key is simply omitted).
+    const payload: Record<string, unknown> = {
+      proof_id: resolvedProofId,
+      category,
+      created_by: userId,
+    }
+    if (dueOn) payload.due_on = dueOn
+
     const { data: row, error: insErr } = await supabase
       .from('watch_items')
-      .insert({ proof_id: resolvedProofId, category, created_by: userId })
+      .insert(payload)
       .select('*')
       .single()
 
@@ -256,6 +266,16 @@ export default function FlagProjectModal({ proof, onClose, onCreated }: FlagProj
             ))}
           </div>
         </div>
+
+        <Field label="Expected resolution by (optional)" htmlFor={`${titleId}-due`}>
+          <input
+            id={`${titleId}-due`}
+            type="date"
+            value={dueOn}
+            onChange={(e) => setDueOn(e.target.value)}
+            className="h-10 w-full rounded-[8px] border border-line bg-surface px-2.5 text-[14px] text-ink outline-none focus:border-brand"
+          />
+        </Field>
 
         <Field
           label="First update"
