@@ -2234,6 +2234,8 @@ export default function DashboardPage() {
   // sections can sort by recency.
   const [minePinAt, setMinePinAt]         = useState<Map<string, string>>(new Map())
   const [teamPinAt, setTeamPinAt]         = useState<Map<string, string>>(new Map())
+  // Count of un-resolved cards on the Flagged board — drives the Flagged tile.
+  const [flaggedOpenCount, setFlaggedOpenCount] = useState(0)
   const [loading, setLoading]             = useState(true)
   const [search, setSearch]               = useState('')
   // statusFilter state was wired through the now-removed Status
@@ -2465,6 +2467,13 @@ export default function DashboardPage() {
       .from('proof_pins')
       .select('proof_id, scope, user_id, pinned_at')
 
+    // Open flagged-board count for the Flagged tile. Standalone (watch_items
+    // isn't in the projects view); head+count so no rows transfer.
+    const flaggedCountPromise = supabase
+      .from('watch_items')
+      .select('id', { count: 'exact', head: true })
+      .neq('status', 'resolved')
+
     // Lead times for the sidebar chart. Only active materials with a
     // complete min/max pair (the 000175 CHECK means min is non-null iff
     // max is) — `.not(..., 'is', null)` on the min column is enough to
@@ -2497,12 +2506,14 @@ export default function DashboardPage() {
       { data: payLinkSentRows },
       { data: orderReminderRows },
       { data: feedbackRows },
-    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise, payLinkOpensPromise, payLinkSentsPromise, orderRemindersPromise, feedbackPromise])
+      { count: flaggedCount },
+    ] = await Promise.all([projectsPromise, eventsPromise, pinsPromise, leadTimesPromise, countsPromise, payLinkOpensPromise, payLinkSentsPromise, orderRemindersPromise, feedbackPromise, flaggedCountPromise])
 
     const typedProjects = (projectRows ?? []) as DashboardProject[]
     setProjects(typedProjects)
 
     if (counts) setTileCounts(counts as TileCounts)
+    setFlaggedOpenCount(flaggedCount ?? 0)
 
     // Merge the real customer-activity events with synthetic rows built from the
     // proofs' Help Scout reply timestamps (email replies are timestamps on the
@@ -3029,6 +3040,16 @@ export default function DashboardPage() {
                         />
                       </>
                     )}
+                    {/* Flagged board shortcut — navigates to /flagged (the cards
+                        aren't in the proof list), so it never sets tileFilter. */}
+                    <StatTile
+                      label="Flagged"
+                      help="Problem projects on the Flagged board (open or monitoring). Opens the board."
+                      count={flaggedOpenCount}
+                      active={false}
+                      tone="rose"
+                      onClick={() => navigate('/flagged')}
+                    />
                   </div>
                 </div>
                 {/* Parked zone — proofs deliberately on hold or gone cold.

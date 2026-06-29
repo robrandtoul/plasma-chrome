@@ -48,22 +48,14 @@ if (PUBLIC_KEY && PRIVATE_KEY && SUBJECT) {
     webpush.setVapidDetails(SUBJECT, PUBLIC_KEY, PRIVATE_KEY)
     configured = true
   } catch (err) {
-    // Surfaced in logs so the next deploy/secret fix is obvious; pushIsConfigured
-    // stays false so send-push degrades cleanly rather than throwing per call.
     console.error('[push] setVapidDetails failed:', err)
   }
 }
 
-/** Whether the PROOFS_ VAPID secrets are present + valid in this deploy. */
 export function pushIsConfigured(): boolean {
   return configured
 }
 
-/**
- * Encrypt + deliver one notification to one device subscription. Returns a
- * structured outcome (never throws) so the caller can prune dead subscriptions
- * on 404/410 and log the rest.
- */
 export async function sendPush(target: PushTarget, payload: PushPayload): Promise<SendOutcome> {
   if (!configured) return { ok: false, status: null, error: 'VAPID not configured' }
   const subscription = {
@@ -72,12 +64,10 @@ export async function sendPush(target: PushTarget, payload: PushPayload): Promis
   }
   try {
     await webpush.sendNotification(subscription, JSON.stringify(payload), {
-      TTL: 60 * 60 * 24, // 24h; the push service drops the message after that
+      TTL: 60 * 60 * 24,
     })
     return { ok: true }
   } catch (err) {
-    // web-push throws a WebPushError carrying the push service's statusCode;
-    // 404/410 there means the subscription is dead and should be deleted.
     const status = (err as { statusCode?: number })?.statusCode ?? null
     const error =
       (err as { body?: string })?.body ??
@@ -86,7 +76,6 @@ export async function sendPush(target: PushTarget, payload: PushPayload): Promis
   }
 }
 
-/** Replace {key} placeholders from vars; unknown/missing keys become ''. */
 export function interpolate(template: string, vars: Record<string, string | null | undefined>): string {
   return template.replace(/\{(\w+)\}/g, (_m, key: string) => {
     const v = vars[key]
@@ -94,8 +83,6 @@ export function interpolate(template: string, vars: Record<string, string | null
   })
 }
 
-/** Clip to a max length with an ellipsis — keeps the lock-screen copy within
- *  the iOS title/body limits and the payload small. */
 export function clip(s: string, max: number): string {
   const trimmed = s.trim()
   if (trimmed.length <= max) return trimmed
