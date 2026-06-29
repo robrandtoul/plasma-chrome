@@ -90,7 +90,12 @@ interface OrderRow {
     display_name: string | null
     materials: { code: string | null; display_name: string | null; production_route: string | null; lead_time_max_days: number | null; outsourced_supplier_ids: string[] | null } | null
   } | null
-  proofs: { contacts: { full_name: string | null; companies: { name: string | null } | null } | null } | null
+  proofs: {
+    // Thread-wide reply stamps (000208) — drive the specific grace-pause label.
+    helpscout_last_reply_at: string | null
+    helpscout_last_customer_reply_at: string | null
+    contacts: { full_name: string | null; companies: { name: string | null } | null } | null
+  } | null
 }
 
 const SELECT = `
@@ -101,7 +106,7 @@ const SELECT = `
   date_required, dropbox_folder_url, stock_order_number, project_name, stock_colour, person_quantities,
   ship_to_name, ship_to_email, ship_to_address, proof_id,
   material_variants(display_name, materials(code, display_name, production_route, lead_time_max_days, outsourced_supplier_ids)),
-  proofs(contacts(full_name, companies(name)))
+  proofs(helpscout_last_reply_at, helpscout_last_customer_reply_at, contacts(full_name, companies(name)))
 `
 
 // The dropbox-folder edge function response (uniform { ok } shape).
@@ -333,27 +338,41 @@ interface ReminderSummary {
   lastSentAt: string | null
   /** Highest reminder stage actually sent (drives "next reminder is N+1"). */
   highestSentNo: number
-  /** The latest run's outcome when it wasn't a send (else null). */
-  note: ReminderNote | null
+  /** Raw outcome of the latest run when it wasn't a send (else null). The card
+   *  turns this into a note, since the friendly text for a grace pause needs the
+   *  proof's reply stamps + grace-days, which only the card has to hand. */
+  latestOutcome: string | null
 }
 
 // Admin-set chase cadence (settings, migration 000270) + whether the auto-chase
-// is switched on. Defaults mirror the edge function's fallbacks.
+// is switched on. Defaults mirror the edge function's fallbacks. graceDays is the
+// shared comms-grace knob (site_settings.needs_attention_rules
+// .helpscout_reply_grace_days) the order sender re-uses to pause after a reply.
 interface ReminderCadence {
   max: number
   intervalDays: number
   autoEnabled: boolean
+  graceDays: number
+}
+
+// The reply stamps + grace days needed to explain a grace pause in full: which
+// reply (staff vs customer) paused the chase, when, and when it lifts.
+interface GraceContext {
+  lastReplyAt: string | null
+  lastCustomerReplyAt: string | null
+  graceDays: number
 }
 
 // Turn an order_nudges skip / fail outcome into one plain line for staff,
 // tagged pause vs problem. A successful / would-send outcome isn't either, so
-// returns null.
-function classifyReminderOutcome(outcome: string | null): ReminderNote | null {
+// returns null. For a grace pause, `grace` (when supplied) lets us name the
+// reply and date instead of the vague generic line.
+function classifyReminderOutcome(outcome: string | null, grace?: GraceContext): ReminderNote | null {
   if (!outcome) return null
   if (outcome.startsWith('would_send') || outcome === 'sent' || outcome === 'sending') return null
   // Deliberate pauses — the chase is holding on purpose, not broken.
   if (outcome.includes('grace_window') || outcome.includes('recent_reply'))
-    return { kind: 'pause', text: 'Paused — recent reply on the Help Scout thread.' }
+    return graceNote(grace)
   if (outcome.includes('followup_tag'))
     return { kind: 'pause', text: 'Paused — the “follow up” tag is set on the Help Scout thread.' }
   // Problems — something is stopping the chase that may need a look.
@@ -364,6 +383,30 @@ function classifyReminderOutcome(outcome: string | null): ReminderNote | null {
   if (outcome.startsWith('render_failed')) return { kind: 'problem', text: 'Reminder template problem — not sent.' }
   if (outcome.startsWith('failed')) return { kind: 'problem', text: 'Help Scout rejected the last reminder — not sent.' }
   return { kind: 'problem', text: 'The last reminder didn’t send.' }
+}
+
+// Build the friendly grace-pause line. The chase pauses whenever EITHER stamp
+// (staff OR customer reply) lands within the grace window — same `Math.max` the
+// sender uses — so name whichever is newest and show when the pause lifts.
+// Returns null when the window has already cleared (so the card shows its normal
+// next-due line instead of a stale pause), falling back to the vague line only
+// when the stamps are missing.
+function graceNote(grace?: GraceContext): ReminderNote | null {
+  const FALLBACK: ReminderNote = { kind: 'pause', text: 'Paused — recent reply on the Help Scout thread.' }
+  if (!grace) return FALLBACK
+  const staffMs = grace.lastReplyAt ? Date.parse(grace.lastReplyAt) : -Infinity
+  const customerMs = grace.lastCustomerReplyAt ? Date.parse(grace.lastCustomerReplyAt) : -Infinity
+  const newest = Math.max(staffMs, customerMs)
+  if (!Number.isFinite(newest)) return FALLBACK
+  const clearsMs = newest + grace.graceDays * DAY_MS
+  if (clearsMs <= Date.now()) return null // window cleared — no longer paused
+  // customer wins ties: a customer reply is the more meaningful signal to show.
+  const fromCustomer = customerMs >= staffMs
+  const who = fromCustomer ? 'the customer replied' : 'a reply was sent'
+  return {
+    kind: 'pause',
+    text: `Paused — ${who} on the thread on ${formatDate(new Date(newest).toISOString())}. Resumes ${formatDate(new Date(clearsMs).toISOString())}.`,
+  }
 }
 
 // The order's charged total expressed in GBP, so mixed-currency buckets can be
@@ -485,7 +528,7 @@ export default function OrdersPage() {
   // Per-order reminder roll-up (the automated unpaid-order chase, 000238).
   const [reminders, setReminders] = useState<Record<string, ReminderSummary>>({})
   // Chase cadence + on/off, read once from settings. Defaults match the edge fn.
-  const [cadence, setCadence] = useState<ReminderCadence>({ max: 3, intervalDays: 3, autoEnabled: false })
+  const [cadence, setCadence] = useState<ReminderCadence>({ max: 3, intervalDays: 3, autoEnabled: false, graceDays: 3 })
   // Stock Control supplier id → name, for the supplier-route button labels
   // (the routing stores ids; names live in Stock Control). Best-effort.
   const [supplierNames, setSupplierNames] = useState<Record<string, string>>({})
@@ -662,20 +705,31 @@ export default function OrdersPage() {
       setCapped(rows.length >= 300)
       setLoading(false)
 
-      // Chase cadence + on/off, for the "next reminder due" line. Best-effort.
-      void supabase
-        .from('settings')
-        .select('order_reminders_max, order_reminder_interval_days, auto_order_reminders_enabled')
-        .eq('id', 1)
-        .maybeSingle()
-        .then(({ data: s }) => {
-          if (cancelled || !s) return
-          setCadence({
-            max: Math.min(5, Math.max(1, Number(s.order_reminders_max ?? 3))),
-            intervalDays: Math.min(30, Math.max(1, Number(s.order_reminder_interval_days ?? 3))),
-            autoEnabled: s.auto_order_reminders_enabled === true,
-          })
+      // Chase cadence + on/off, for the "next reminder due" line, plus the comms
+      // grace window (shared with the proof chase) so a grace pause can name when
+      // it lifts. Best-effort; both reads run in parallel.
+      void Promise.all([
+        supabase
+          .from('settings')
+          .select('order_reminders_max, order_reminder_interval_days, auto_order_reminders_enabled')
+          .eq('id', 1)
+          .maybeSingle(),
+        supabase
+          .from('site_settings')
+          .select('needs_attention_rules')
+          .eq('id', 1)
+          .maybeSingle(),
+      ]).then(([{ data: s }, { data: site }]) => {
+        if (cancelled || !s) return
+        const rules = (site?.needs_attention_rules ?? {}) as Record<string, unknown>
+        const graceDays = Math.max(0, Number(rules['helpscout_reply_grace_days'] ?? 3))
+        setCadence({
+          max: Math.min(5, Math.max(1, Number(s.order_reminders_max ?? 3))),
+          intervalDays: Math.min(30, Math.max(1, Number(s.order_reminder_interval_days ?? 3))),
+          autoEnabled: s.auto_order_reminders_enabled === true,
+          graceDays: Number.isFinite(graceDays) ? graceDays : 3,
         })
+      })
 
       const sentIds = rows.filter((r) => r.status === 'sent').map((r) => r.id)
       if (sentIds.length > 0) {
@@ -697,15 +751,15 @@ export default function OrdersPage() {
             list.sort((a, b) => (a.created_at < b.created_at ? 1 : -1)) // newest first
             const sentRows = list.filter((r) => r.state === 'sent')
             const latest = list[0]
-            const note =
+            const latestOutcome =
               latest && (latest.state === 'failed' || latest.state === 'skipped')
-                ? classifyReminderOutcome(latest.outcome)
+                ? latest.outcome
                 : null
             map[orderId] = {
               sentCount: sentRows.length,
               lastSentAt: sentRows.length > 0 ? sentRows[0].created_at : null,
               highestSentNo: sentRows.reduce((m, r) => Math.max(m, r.reminder_no), 0),
-              note,
+              latestOutcome,
             }
           }
           setReminders(map)
@@ -1773,7 +1827,14 @@ function AwaitingPaymentCard({
   // intervals have passed since the link was sent, while it's still live.
   const sentCount = summary?.sentCount ?? 0
   const highestNo = summary?.highestSentNo ?? 0
-  const note = summary?.note ?? null
+  // Build the note here (not at fetch time): the friendly grace-pause line needs
+  // the proof's reply stamps + grace-days, which live on the order + cadence. A
+  // since-cleared grace pause comes back null → the next-due line shows instead.
+  const note = classifyReminderOutcome(summary?.latestOutcome ?? null, {
+    lastReplyAt: order.proofs?.helpscout_last_reply_at ?? null,
+    lastCustomerReplyAt: order.proofs?.helpscout_last_customer_reply_at ?? null,
+    graceDays: cadence.graceDays,
+  })
   const allRemindersSent = highestNo >= cadence.max
   let nextDue: string | null = null
   if (!expired && !allRemindersSent && cadence.autoEnabled && order.sent_at) {
