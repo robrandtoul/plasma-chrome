@@ -59,6 +59,8 @@ interface OrderRow {
   card_discount_value: number | null
   amount_card_discount: number | null
   payment_method: string | null
+  // 'production' (default) | 'prototype' — the flat-fee prototyping service.
+  order_kind: string | null
   payment_reference: string | null
   xero_invoice_id: string | null
   xero_invoice_error: string | null
@@ -94,7 +96,7 @@ interface OrderRow {
 const SELECT = `
   id, status, token, expires_at, sent_at, pay_link_opened_at, currency, quantity, names_count, has_personalisation,
   custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff,
-  card_discount_type, card_discount_value, amount_card_discount, payment_method,
+  card_discount_type, card_discount_value, amount_card_discount, payment_method, order_kind,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, stock_colour, person_quantities,
   ship_to_name, ship_to_email, ship_to_address, proof_id,
@@ -153,11 +155,15 @@ function customerLabel(o: OrderRow): string {
 }
 
 function specLabel(o: OrderRow): string {
-  return specLabelShared(
+  const base = specLabelShared(
     o.material_variants?.materials?.display_name,
     o.material_variants?.display_name,
     o.custom_quote_total,
   )
+  // A prototype keeps its material/variant, so the base reads as the material
+  // it samples; mark it so the work queue distinguishes a flat-fee sample run
+  // from a full production order at the same material.
+  return o.order_kind === 'prototype' ? `${base} · Prototype sample` : base
 }
 
 // Add N working days to a date (skips Sat/Sun). Used to suggest the date
@@ -1481,6 +1487,9 @@ function OrderCard({
             <Link to={`/proofs/${order.proof_id}`} className="text-base font-semibold text-ink hover:underline">
               {customerLabel(order)}
             </Link>
+            {order.order_kind === 'prototype' && (
+              <Pill colour="brand" title="Prototyping service — a flat-fee sample run (up to 3 copies of the approved design).">Prototype</Pill>
+            )}
             <Pill colour="in-stock">Paid</Pill>
             {order.payment_method === 'offline' && (
               <Pill colour="low" title="Recorded as paid offline (bank transfer etc.) — no Stripe/Xero record; raise the invoice manually.">Offline</Pill>

@@ -37,6 +37,7 @@ import AdminCoreColoursPage from './pages/admin/AdminCoreColoursPage'
 import AdminNeedsAttentionPage from './pages/admin/AdminNeedsAttentionPage'
 import AdminLeadTimesPage from './pages/admin/AdminLeadTimesPage'
 import AdminCardWeightsPage from './pages/admin/AdminCardWeightsPage'
+import AdminPrototypePricesPage from './pages/admin/AdminPrototypePricesPage'
 import AdminXeroItemCodesPage from './pages/admin/AdminXeroItemCodesPage'
 import AdminMaterialOptionsPage from './pages/admin/AdminMaterialOptionsPage'
 import AdminXeroSelfTestPage from './pages/admin/AdminXeroSelfTestPage'
@@ -99,6 +100,7 @@ function AppShell() {
         <Route path="pricing" element={<AdminPricingPage />} />
         <Route path="lead-times" element={<AdminLeadTimesPage />} />
         <Route path="card-weights" element={<AdminCardWeightsPage />} />
+        <Route path="prototype-prices" element={<AdminPrototypePricesPage />} />
         <Route path="outsourcing" element={<AdminOutsourcingPage />} />
         <Route path="xero-item-codes" element={<AdminXeroItemCodesPage />} />
         <Route path="xero-self-test" element={<AdminXeroSelfTestPage />} />

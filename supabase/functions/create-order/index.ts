@@ -96,7 +96,7 @@ Deno.serve(async (req) => {
     quantity = q
   }
 
-  const namesCount = (() => {
+  let namesCount = (() => {
     const n = Number(body.names_count ?? 1)
     return Number.isInteger(n) && n >= 1 ? n : 1
   })()
@@ -117,7 +117,7 @@ Deno.serve(async (req) => {
     if (pq.length > 0) personQuantities = pq
   }
 
-  const hasPersonalisation = body.has_personalisation === true
+  let hasPersonalisation = body.has_personalisation === true
 
   // material_variant_id is optional in v1 — the pay-page (Step 4)
   // resolves the precise variant/price. Pass through when supplied.
@@ -213,6 +213,51 @@ Deno.serve(async (req) => {
     const c = Number(body.custom_quote_total)
     if (!Number.isFinite(c) || c < 0) return json({ error: 'custom_quote_total must be zero or greater' }, 400)
     customQuoteTotal = Math.round(c * 100) / 100
+  }
+
+  // ── Prototype service (000287) ──────────────────────────────────
+  // A prototype is the flat per-material-family prototyping fee (up to three
+  // exact copies of the approved design), NOT a grid-priced order. We model it
+  // as a custom-quote order that KEEPS its material_variant_id, so the existing
+  // Xero item-code resolution books it to the right material (Rob's call: reuse
+  // the material's own codes). The fee is resolved here from prototype_prices —
+  // server-authoritative, never trusted from the client — and overrides
+  // custom_quote_total. quantity carries the copies (1–3): it drives shipping
+  // weight + the production instruction, but the fee is flat regardless.
+  const orderKind: 'production' | 'prototype' = body.order_kind === 'prototype' ? 'prototype' : 'production'
+  if (orderKind === 'prototype') {
+    if (quantity == null || quantity < 1 || quantity > 3) {
+      return json({ error: 'A prototype order needs a copies count between 1 and 3.' }, 400)
+    }
+    if (!materialVariantId) {
+      return json({ error: 'A prototype order needs a material variant (for the invoice item code and shipping weight).' }, 400)
+    }
+    const { data: variantRow } = await admin
+      .from('material_variants')
+      .select('materials(category)')
+      .eq('id', materialVariantId)
+      .single()
+    const family = (variantRow?.materials as { category?: string } | null)?.category ?? null
+    if (!family) {
+      return json({ error: 'Could not resolve the material family for this prototype.' }, 422)
+    }
+    // A family is orderable only when there's an active, priced row for this
+    // currency (paper / plastic ship inactive until an admin sets a price).
+    const { data: feeRow } = await admin
+      .from('prototype_prices')
+      .select('amount, is_active')
+      .eq('family', family)
+      .eq('currency', currency)
+      .maybeSingle()
+    if (!feeRow?.is_active || feeRow.amount == null) {
+      return json({ error: 'Prototyping isn’t available for this material yet — set its price under Admin → Prototype prices first.' }, 422)
+    }
+    // Override into the custom-quote shape: the fee is the order total, and a
+    // prototype is never split-name / personalised.
+    customQuoteTotal = Math.round(Number(feeRow.amount) * 100) / 100
+    namesCount = 1
+    personQuantities = null
+    hasPersonalisation = false
   }
 
   // payment_method — 'online' (default; pay link) or 'offline' (bank transfer
@@ -453,6 +498,7 @@ Deno.serve(async (req) => {
       created_by: callerId,
       sent_at: nowIso,
       payment_method: paymentMethod,
+      order_kind: orderKind,
       // Offline → created already paid, with the breakdown stamped so the
       // To-order queue + records have a total (no Stripe, no Xero here).
       ...(isOffline
@@ -485,6 +531,7 @@ Deno.serve(async (req) => {
     afterValue: {
       status: order.status,
       payment_method: paymentMethod,
+      order_kind: orderKind,
       currency,
       quantity,
       shipping_treatment: shippingTreatment,

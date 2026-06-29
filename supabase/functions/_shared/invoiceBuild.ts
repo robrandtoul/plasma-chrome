@@ -37,6 +37,10 @@ export interface OrderForInvoice {
   // Booked as a separate negative line carrying the product's own item code so
   // it inherits the correct VAT rate; null / 0 → no discount line.
   amount_card_discount: number | null
+  // 'production' (default) | 'prototype'. A prototype is a custom-quote order
+  // (custom_quote_total = the flat prototyping fee) that kept its variant, so
+  // it's labelled as the material it samples rather than the generic "Order".
+  order_kind?: string | null
 }
 
 export interface InvoiceBuildContext {
@@ -148,8 +152,17 @@ export async function buildOrderInvoiceLines(
   let productItemCode: string | null = null
 
   if (order.custom_quote_total != null) {
-    // Custom quote: one product line for the agreed figure.
-    lines.push({ description: `Order ${reference}`, amount: Number(order.custom_quote_total), itemCode })
+    // Custom quote: one product line for the agreed figure. A prototype is a
+    // custom quote whose figure is the flat per-family fee; it kept its variant
+    // so the resolved item code is correct — label it as the material it
+    // samples rather than the generic "Order <ref>".
+    let description = `Order ${reference}`
+    if (order.order_kind === 'prototype') {
+      const variantSuffix = variantName && variantName !== materialName ? ` ${variantName}` : ''
+      const optionSuffix = optionName ? ` — ${optionName}` : ''
+      description = `${materialName || 'Cards'}${variantSuffix}${optionSuffix} — prototype sample`.trim()
+    }
+    lines.push({ description, amount: Number(order.custom_quote_total), itemCode })
     productItemCode = itemCode
   } else if (order.amount_cards != null) {
     // Grid order: product line (cards + personalisation folded in),

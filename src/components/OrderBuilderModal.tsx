@@ -163,6 +163,21 @@ export default function OrderBuilderModal({
     return () => { cancelled = true }
   }, [proofId])
   const [customQuoteTotal, setCustomQuoteTotal] = useState('')
+
+  // Order type: a normal production order, or the flat-fee prototyping service
+  // (up to three exact copies of the approved design). Prototype is modelled
+  // as a custom-quote order whose total is the per-family fee, keeping the
+  // material variant for the Xero item code + shipping weight. Eligibility +
+  // the fee come from prototype_prices (000287), resolved below.
+  const [orderType, setOrderType] = useState<'production' | 'prototype'>('production')
+  const [prototypeFee, setPrototypeFee] = useState<number | null>(null)
+  // null = still loading; true/false once the material's family + fee resolve.
+  const [prototypeEligible, setPrototypeEligible] = useState<boolean | null>(null)
+  // The variant the prototype attaches to (proof's displayed variant, else the
+  // material's first active variant) — carries the Xero item code + weight.
+  const [prototypeVariantId, setPrototypeVariantId] = useState<string | null>(null)
+  const [copies, setCopies] = useState<'1' | '2' | '3'>('1')
+
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<{ id: string; token: string; payment_reference: string } | null>(null)
@@ -284,6 +299,54 @@ export default function OrderBuilderModal({
     return () => { cancelled = true }
   }, [isCustomQuote, materialId, currency, displayedVariantIds])
 
+  // Prototype data: resolve the material family (= materials.category), its
+  // flat prototyping fee for this currency, and an attach-variant for the Xero
+  // item code + shipping weight. Runs regardless of the chosen order type so
+  // the "Prototype" toggle knows whether to enable. Eligibility = an active,
+  // priced prototype_prices row for the family + currency.
+  useEffect(() => {
+    if (!materialId || !currency) { setPrototypeEligible(false); setPrototypeFee(null); setPrototypeVariantId(null); return }
+    let cancelled = false
+    void (async () => {
+      const matRes = await supabase.from('materials').select('category').eq('id', materialId).maybeSingle()
+      const family = (matRes.data?.category as string | null) ?? null
+      let fee: number | null = null
+      let eligible = false
+      if (family) {
+        const { data: feeRow } = await supabase
+          .from('prototype_prices')
+          .select('amount, is_active')
+          .eq('family', family)
+          .eq('currency', currency)
+          .maybeSingle()
+        if (feeRow?.is_active && feeRow.amount != null) {
+          fee = Number(feeRow.amount)
+          eligible = true
+        }
+      }
+      // Attach-variant: the proof's displayed variant, else the material's
+      // first active variant. A prototype doesn't need price tiers — only a
+      // variant to carry the Xero item code + per-card weight.
+      let attachVariant: string | null = displayedVariantIds[0] ?? null
+      if (!attachVariant) {
+        const { data: v } = await supabase
+          .from('material_variants')
+          .select('id')
+          .eq('material_id', materialId)
+          .eq('is_active', true)
+          .order('sort_order')
+          .limit(1)
+          .maybeSingle()
+        attachVariant = (v?.id as string | null) ?? null
+      }
+      if (cancelled) return
+      setPrototypeFee(fee)
+      setPrototypeEligible(eligible)
+      setPrototypeVariantId(attachVariant)
+    })()
+    return () => { cancelled = true }
+  }, [materialId, currency, displayedVariantIds])
+
   // Material options (the finish dimension). Fetched alongside the material's
   // option_label so the picker reads "Finish" / "Species" etc. Default: the
   // version's single offered option when it offered exactly one, else the base
@@ -403,6 +466,7 @@ export default function OrderBuilderModal({
     const qty = parseInt(estimateBasisQty, 10)
     if (
       isCustomQuote ||
+      orderType === 'prototype' ||
       !needsEstimate ||
       !shipDestCountry ||
       !currency ||
@@ -487,6 +551,7 @@ export default function OrderBuilderModal({
     shippingSettings,
     exchangeRates,
     isCustomQuote,
+    orderType,
   ])
 
   // Load the admin-editable order message template once on mount, so it's
@@ -553,6 +618,7 @@ export default function OrderBuilderModal({
   // round) can't be ordered through this v1 flow — block with a clear
   // message rather than sending a null currency the edge function rejects.
   const currencyMissing = currency == null
+  const isPrototype = orderType === 'prototype'
 
   async function submit() {
     setError(null)
@@ -560,13 +626,29 @@ export default function OrderBuilderModal({
       setError('This proof has no single currency, so it can’t be ordered here yet.')
       return
     }
-    if (!isCustomQuote && variants.length > 0 && !variantId) {
+    if (!isPrototype && !isCustomQuote && variants.length > 0 && !variantId) {
       setError('Please choose which option this order is for.')
       return
     }
     let quantityValue: number | null = null
     let personQuantitiesPayload: { name: string; quantity: number }[] | null = null
-    if (quantityMode === 'locked') {
+    if (isPrototype) {
+      // A prototype is the flat per-family fee (server-resolved) for 1–3 copies.
+      if (!prototypeEligible || prototypeFee == null) {
+        setError('Prototyping isn’t available for this material — an admin can enable it under Admin → Prototype prices.')
+        return
+      }
+      if (!prototypeVariantId) {
+        setError('Couldn’t resolve the material for this prototype — close and reopen the order.')
+        return
+      }
+      const c = parseInt(copies, 10)
+      if (!Number.isInteger(c) || c < 1 || c > 3) {
+        setError('Choose how many copies (1–3) for this prototype.')
+        return
+      }
+      quantityValue = c
+    } else if (quantityMode === 'locked') {
       if (namesCount > 1) {
         // Multi-name proof: a per-person split is REQUIRED so production knows
         // how many of each name to make — a locked total alone is ambiguous.
@@ -616,7 +698,7 @@ export default function OrderBuilderModal({
       shippingDiscountPercentValue = d
     }
     let customQuoteValue: number | null = null
-    if (isCustomQuote) {
+    if (!isPrototype && isCustomQuote) {
       const c = Number(customQuoteTotal)
       if (!Number.isFinite(c) || c < 0) {
         setError('This is a custom-quote proof — enter the agreed total.')
@@ -625,7 +707,7 @@ export default function OrderBuilderModal({
       customQuoteValue = c
     }
     let cardDiscountValueParsed: number | null = null
-    if (cardDiscountType !== 'none') {
+    if (!isPrototype && cardDiscountType !== 'none') {
       const v = Number(cardDiscountValue)
       if (!Number.isFinite(v) || v <= 0) {
         setError(cardDiscountType === 'percent' ? 'Enter a card discount percentage above 0.' : 'Enter a card discount amount above 0.')
@@ -681,26 +763,35 @@ export default function OrderBuilderModal({
       >('create-order', {
         body: {
           proof_id: proofId,
+          // 'production' (default) | 'prototype'. For a prototype, create-order
+          // resolves the flat per-family fee itself and sets custom_quote_total
+          // — so the client never sends a price here.
+          order_kind: isPrototype ? 'prototype' : 'production',
           currency,
           payment_method: paymentMethod,
+          // Prototype: the copies count (1–3) drives shipping weight + the
+          // production instruction; the fee is flat regardless.
           quantity: quantityValue,
-          person_quantities: personQuantitiesPayload,
-          names_count: namesCount,
-          has_personalisation: hasPersonalisation,
+          person_quantities: isPrototype ? null : personQuantitiesPayload,
+          names_count: isPrototype ? 1 : namesCount,
+          has_personalisation: isPrototype ? false : hasPersonalisation,
           shipping_treatment: shippingTreatment,
           shipping_charged: shippingChargedValue,
           shipping_discount_percent: shippingDiscountPercentValue,
-          card_discount_type: cardDiscountType,
-          card_discount_value: cardDiscountValueParsed,
-          card_discount_reason: cardDiscountReason.trim() || undefined,
+          // A prototype is a flat fee — no card discount.
+          card_discount_type: isPrototype ? 'none' : cardDiscountType,
+          card_discount_value: isPrototype ? null : cardDiscountValueParsed,
+          card_discount_reason: isPrototype ? undefined : (cardDiscountReason.trim() || undefined),
           ship_dest_country: shipDestCountryValue,
-          custom_quote_total: customQuoteValue,
+          // Prototype: server resolves + sets the fee, so don't send a total.
+          custom_quote_total: isPrototype ? null : customQuoteValue,
           // Persist the chosen thickness + finish even on a custom quote: they're
           // the production spec (what the supplier makes), not pricing. The custom
           // total still drives the charge; dropping these used to leave the supplier
           // hand-off with no Thickness/Finish line. Null when none was picked (e.g. a
-          // mixed-material variant round), which stays harmless.
-          material_variant_id: variantId,
+          // mixed-material variant round), which stays harmless. A prototype attaches
+          // the resolved prototype variant (its Xero item code + weight).
+          material_variant_id: isPrototype ? prototypeVariantId : variantId,
           material_option_id: optionId ?? undefined,
           // Online only — an offline order is invoiced manually in Xero.
           // Existing → bind to the chosen contact (id + name). New → no id (the
@@ -876,9 +967,86 @@ export default function OrderBuilderModal({
             )}
 
             <div className="grid grid-cols-1 gap-x-5 gap-y-5 md:grid-cols-2">
+            {/* Order type — a normal production order, or the flat-fee
+                prototyping service (up to three copies of the approved design).
+                Internal-only; never shown to customers except on their private
+                pay link. */}
+            <Field
+              label="Order type"
+              asLabel={false}
+              className="md:col-span-2"
+              hint="A normal card order, or a prototype: up to three exact copies of the approved design at a flat fee, shipping on top."
+            >
+              <div className="flex flex-wrap gap-2">
+                {([['production', 'Production order'], ['prototype', 'Prototype sample']] as const).map(([t, label]) => {
+                  const blocked = t === 'prototype' && prototypeEligible === false
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      disabled={blocked}
+                      title={blocked ? 'Prototyping isn’t set up for this material — enable it under Admin → Prototype prices' : undefined}
+                      onClick={() => { setDirty(true); setOrderType(t); if (t === 'prototype') setCardDiscountType('none') }}
+                      className={[
+                        'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                        orderType === t ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
+                        blocked ? 'cursor-not-allowed opacity-40' : '',
+                      ].join(' ')}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+              {orderType === 'prototype' && prototypeEligible === false && (
+                <p className="mt-2 text-[13px] text-ink-soft">Prototyping isn’t available for this material yet.</p>
+              )}
+            </Field>
+
+            {/* Prototype fee + copies — replaces the variant/quantity/pricing
+                fields when the order type is a prototype. */}
+            {isPrototype && (
+              <Field
+                label="Prototype sample"
+                asLabel={false}
+                className="md:col-span-2"
+                hint="Flat fee for up to three exact copies of the approved design. Shipping is added on top at checkout."
+              >
+                <div className="rounded-lg border border-line bg-canvas p-3">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="text-ink-soft">{materialDisplay ?? 'Material'} prototype</span>
+                    <span className="text-base font-semibold text-ink">
+                      {prototypeFee != null ? formatPrice(prototypeFee, currency ?? 'GBP') : '—'}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-[12px] text-ink-mute">
+                    Flat fee for 1–3 copies. {currency === 'GBP' ? 'Includes VAT.' : 'VAT-free.'} Shipping calculated at checkout.
+                  </p>
+                </div>
+                <div className="mt-3">
+                  <p className="text-[13px] text-ink-soft">Copies</p>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {(['1', '2', '3'] as const).map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => { setCopies(n); setDirty(true) }}
+                        className={[
+                          'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                          copies === n ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
+                        ].join(' ')}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </Field>
+            )}
+
             {/* Variant — grid orders only; sets the price tiers the
                 server prices against. */}
-            {!isCustomQuote && (
+            {!isPrototype && !isCustomQuote && (
               <Field label="Option" htmlFor="order-variant" hint="Which variant this order is for — sets the price used at checkout.">
                 {variantsLoading ? (
                   <p className="text-sm text-ink-mute">Loading options…</p>
@@ -911,8 +1079,9 @@ export default function OrderBuilderModal({
 
             {/* Finish (material option) — metals etc. The customer can change
                 the finish at order time, so the designer picks it here; the
-                price includes any finish surcharge at checkout. */}
-            {!isCustomQuote && materialOptions.length > 0 && (
+                price includes any finish surcharge at checkout. Hidden for a
+                prototype — the finish is the approved design's, auto-applied. */}
+            {!isPrototype && !isCustomQuote && materialOptions.length > 0 && (
               <Field
                 label={optionLabel}
                 asLabel={false}
@@ -1043,7 +1212,9 @@ export default function OrderBuilderModal({
               </Field>
             )}
 
-            {/* Quantity */}
+            {/* Quantity — production orders only; a prototype uses the copies
+                picker above. */}
+            {!isPrototype && (
             <Field label="Quantity" asLabel={false} hint="Let the customer choose on the pay-page, or lock a specific quantity now.">
               <div className="flex flex-wrap gap-2">
                 {([['open', 'Customer chooses'], ['locked', 'Lock a quantity']] as const).map(([mode, label]) => {
@@ -1109,6 +1280,7 @@ export default function OrderBuilderModal({
                 )
               )}
             </Field>
+            )}
 
             {/* Offline: only the destination matters here (it sets the
                 Domestic/International packaging line for production). Shipping
@@ -1201,7 +1373,7 @@ export default function OrderBuilderModal({
               {/* Indicative shipping estimate — full_cost / goodwill, once a
                   country is chosen. Gives the designer a ballpark to inform the
                   goodwill decision; the real rate is computed at checkout. */}
-              {(shippingTreatment === 'full_cost' || shippingTreatment === 'goodwill') && shipDestCountry && (
+              {!isPrototype && (shippingTreatment === 'full_cost' || shippingTreatment === 'goodwill') && shipDestCountry && (
                 <div className="mt-3 rounded-lg border border-line bg-canvas p-3 text-[13px]">
                   <div className="flex items-center justify-between gap-3">
                     <span className="font-medium text-ink">Estimated shipping</span>
@@ -1285,8 +1457,9 @@ export default function OrderBuilderModal({
 
             {/* Card discount — online only; designer-set, reduces only the cards
                 line, shown as its own negative line on the pay page + invoice.
-                Skipped for offline (you invoice in Xero). */}
-            {paymentMethod !== 'offline' && (
+                Skipped for offline (you invoice in Xero) and for prototypes
+                (the flat fee is the price). */}
+            {!isPrototype && paymentMethod !== 'offline' && (
             <Field label="Card discount" htmlFor="order-card-discount" className="md:col-span-2" hint="Optional. Reduces only the cards subtotal — shows as its own discount line on the pay page and invoice. Shipping has its own subsidy above.">
               {offeredDiscount != null && offeredDiscount > 0 && cardDiscountType === 'none' && (
                 <div
@@ -1341,8 +1514,8 @@ export default function OrderBuilderModal({
             </Field>
             )}
 
-            {/* Custom quote total — only for custom-quote proofs */}
-            {isCustomQuote && (
+            {/* Custom quote total — only for custom-quote proofs (not prototypes) */}
+            {!isPrototype && isCustomQuote && (
               <Field label="Custom quote total" htmlFor="order-custom-total" hint="This proof is a custom quote, so enter the agreed total.">
                 <Input
                   id="order-custom-total"
