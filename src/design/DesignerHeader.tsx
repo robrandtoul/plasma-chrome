@@ -34,7 +34,7 @@ import { getOrderingEnabled } from '../lib/orderingEnabled'
 // field as a controlled input so the parent can both read the value
 // (to drive filtering) and clear it from elsewhere if needed.
 
-export type DesignerNavId = 'proofs' | 'quote' | 'orders' | 'watchlist' | 'feedback' | 'admin'
+export type DesignerNavId = 'proofs' | 'quote' | 'orders' | 'flagged' | 'feedback' | 'admin'
 export type DesignerHeaderColour = 'blue' | 'teal' | 'coral' | 'purple'
 
 interface NavItem {
@@ -53,9 +53,10 @@ const NAV: NavItem[] = [
   // Orders is shown only when the ordering feature is switched on
   // (settings.ordering_enabled) — see the gate in DesignerHeader.
   { id: 'orders', label: 'Orders', to: '/orders' },
-  // Watch list — the shared board of problem projects. All-staff (no gate), so
-  // it falls through the visibleNav filter below like Proofs / Quote.
-  { id: 'watchlist', label: 'Watch list', to: '/watch-list' },
+  // Flagged — the shared board of problem projects. All-staff (no gate), so
+  // it falls through the visibleNav filter below like Proofs / Quote. (Distinct
+  // from the per-proof "Watch" button, which is push-notification opt-in.)
+  { id: 'flagged', label: 'Flagged', to: '/flagged' },
   // Feedback deliberately omitted here — it's a right-aligned icon button
   // next to the account pill (see the header) rather than a text nav pill.
   { id: 'admin',  label: 'Admin',  to: '/admin/users' },
@@ -316,7 +317,7 @@ function BottomTabBar({
       ? [{ id: 'orders' as DesignerNavId, label: 'Orders', to: '/orders', Icon: Package }]
       : []),
     { id: 'quote', label: 'Quote', to: '/quote', Icon: FileText },
-    { id: 'watchlist', label: 'Watch', to: '/watch-list', Icon: Flag },
+    { id: 'flagged', label: 'Flagged', to: '/flagged', Icon: Flag },
   ]
   return (
     <nav

@@ -7,7 +7,7 @@ import { logAudit } from '../lib/audit'
 import { Field, Textarea, ButtonInk, ButtonGhost } from '../design'
 import { WATCH_CATEGORIES, type WatchCategory, type WatchItem } from '../lib/watchList'
 
-// Flag a project onto the Watch list. Two modes:
+// Flag a project onto the Flagged board. Two modes:
 //   • fixed  — a `proof` is passed (from a proof / order page); the project is
 //     locked and we just pick a category + write the first note.
 //   • search — no `proof`; the board opens this and the user searches for the
@@ -119,7 +119,7 @@ export default function FlagProjectModal({ proof, onClose, onCreated }: FlagProj
       setSubmitting(false)
       // 23505 = the partial unique index: this project already has an open card.
       if (insErr?.code === '23505') {
-        setError('This project is already on the watch list. Open the board to add an update.')
+        setError('This project is already flagged. Open the board to add an update.')
         return
       }
       setError(insErr?.message || 'Could not flag this project. Please try again.')
@@ -170,7 +170,7 @@ export default function FlagProjectModal({ proof, onClose, onCreated }: FlagProj
             Flag a project
           </h3>
           <p className="mt-1 text-[13px] text-ink-mute">
-            Add this project to the shared watch list so anyone can see the latest and log updates.
+            Flag this project so anyone can see the latest and log updates on the shared board.
           </p>
         </div>
 
@@ -280,7 +280,7 @@ export default function FlagProjectModal({ proof, onClose, onCreated }: FlagProj
         <div className="flex justify-end gap-2 pt-1">
           <ButtonGhost onClick={onClose} disabled={submitting}>Cancel</ButtonGhost>
           <ButtonInk type="submit" busy={submitting} disabled={!resolvedProofId}>
-            Add to watch list
+            Flag project
           </ButtonInk>
         </div>
       </form>

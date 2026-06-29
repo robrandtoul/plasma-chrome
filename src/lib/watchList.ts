@@ -1,4 +1,7 @@
-// Shared types + display metadata for the Watch list board (problem projects).
+// Shared types + display metadata for the "Flagged" board (problem projects).
+// NB: the user-facing board is called "Flagged"; the storage tables keep their
+// original names (watch_items / watch_updates) — these types deliberately mirror
+// the DB, so "Watch*" type names = the storage layer, "Flagged" = the UI.
 // Kept in lockstep with the CHECK constraints on proofs.watch_items /
 // proofs.watch_updates (migration 000290): if you add a category, status, or
 // update kind here, widen the DB constraint in a migration too.

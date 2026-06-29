@@ -79,7 +79,7 @@ function AuthorBadge({ initials, colour }: { initials: string | null; colour: st
   )
 }
 
-export default function WatchListPage() {
+export default function FlaggedPage() {
   const { session, role } = useAuth()
   const userId = session?.user.id ?? null
   const isAdmin = role === 'admin'
@@ -123,7 +123,7 @@ export default function WatchListPage() {
       .order('created_at', { ascending: false })
       .limit(500)
     if (error) {
-      setLoadError('Could not load the watch list. Please reload.')
+      setLoadError('Could not load the flagged board. Please reload.')
       setLoading(false)
       return
     }
@@ -250,7 +250,7 @@ export default function WatchListPage() {
   }
 
   async function removeItem(item: WatchItem) {
-    if (!window.confirm('Remove this project from the watch list? Its update thread will be deleted too.')) return
+    if (!window.confirm('Remove this project from the flagged board? Its update thread will be deleted too.')) return
     setBusyId(item.id)
     const { error } = await supabase.from('watch_items').delete().eq('id', item.id)
     setBusyId(null)
@@ -476,7 +476,7 @@ export default function WatchListPage() {
         <div className="rounded-[14px] border border-dashed border-line px-4 py-10 text-center">
           <Flag size={22} aria-hidden="true" className="mx-auto text-ink-dim" />
           <p className="mt-2 text-[14px] font-medium text-ink">
-            {scope === 'open' ? 'Nothing on the watch list' : 'Nothing here'}
+            {scope === 'open' ? 'Nothing flagged' : 'Nothing here'}
           </p>
           <p className="mt-1 text-[13px] text-ink-mute">
             Flag a project to start tracking a problem order.
@@ -508,7 +508,7 @@ export default function WatchListPage() {
 
   return (
     <DesignerChrome
-      active="watchlist"
+      active="flagged"
       search={{ value: search, onChange: setSearch, placeholder: 'Search by company, contact, designer, order #…' }}
       actions={
         <ButtonCoral icon={Flag} onClick={() => setFlagOpen(true)}>
@@ -520,7 +520,7 @@ export default function WatchListPage() {
       <main className="mx-auto max-w-[920px] px-4 py-6 sm:px-7">
         <div className="mb-1 flex items-center gap-2">
           <Flag size={20} aria-hidden="true" className="text-brand" />
-          <h1 className="text-[20px] font-semibold text-ink">Watch list</h1>
+          <h1 className="text-[20px] font-semibold text-ink">Flagged</h1>
         </div>
         <p className="mb-4 text-[13px] text-ink-mute">
           Problem projects everyone can see and update — lost in transit, reprints, complaints, delays.

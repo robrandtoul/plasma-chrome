@@ -416,8 +416,8 @@ export default function ProofDetailPage() {
   // the cached fetch resolves so the button never flashes when off.
   const [orderingEnabled, setOrderingEnabled] = useState<boolean | null>(null)
   const [showOrderBuilder, setShowOrderBuilder] = useState(false)
-  // Watch list (000290): is this project already on the shared board with an
-  // un-resolved card? Drives the header Flag button (flag vs "On watch list").
+  // Flagged board (000290): is this project already on the shared board with an
+  // un-resolved card? Drives the header Flag button (flag vs "Flagged").
   const [showFlagModal, setShowFlagModal] = useState(false)
   const [watchItemId, setWatchItemId] = useState<string | null>(null)
   // Latest order(s) for this proof. Drives the inline order-status panel and the
@@ -449,8 +449,8 @@ export default function ProofDetailPage() {
     if (id) loadProof(id)
   }, [id])
 
-  // Is this project on the watch list with an un-resolved card? (proof_id = the
-  // route id.) A live card flips the header Flag button to "On watch list".
+  // Is this project flagged with an un-resolved card? (proof_id = the route id.)
+  // A live card flips the header Flag button to "Flagged".
   useEffect(() => {
     if (!id) return
     let cancelled = false
@@ -2593,23 +2593,23 @@ export default function ProofDetailPage() {
                   <Eye size={13} aria-hidden="true" />
                   {watched ? 'Watching' : 'Watch'}
                 </button>
-                {/* Flag onto the shared Watch list board (000290). Distinct from
+                {/* Flag onto the shared Flagged board (000290). Distinct from
                     the Watch button above (which is push-notification opt-in). */}
                 {watchItemId ? (
                   <Link
-                    to="/watch-list"
-                    title="This project is on the watch list"
+                    to="/flagged"
+                    title="This project is flagged — open the board"
                     className="inline-flex h-6 items-center gap-1 rounded px-2 text-[12px] text-brand transition-colors hover:bg-canvas"
                   >
                     <Flag size={13} aria-hidden="true" />
-                    On watch list
+                    Flagged
                   </Link>
                 ) : (
                   <button
                     type="button"
                     onClick={() => setShowFlagModal(true)}
-                    title="Flag this project onto the shared watch list"
-                    aria-label="Flag this project onto the watch list"
+                    title="Flag this project onto the shared board"
+                    aria-label="Flag this project onto the shared board"
                     className="inline-flex h-6 items-center gap-1 rounded px-2 text-[12px] text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
                   >
                     <Flag size={13} aria-hidden="true" />
@@ -3745,7 +3745,7 @@ export default function ProofDetailPage() {
         )
       })()}
 
-      {/* Flag onto the Watch list board (000290). Fixed to this proof. */}
+      {/* Flag onto the Flagged board (000290). Fixed to this proof. */}
       {showFlagModal && (
         <FlagProjectModal
           proof={{
