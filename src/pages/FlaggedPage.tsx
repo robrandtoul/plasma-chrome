@@ -28,6 +28,7 @@ import {
   relativeTime,
   formatDue,
   isOverdue,
+  isHelpScoutKind,
   type WatchItem,
   type WatchUpdate,
   type WatchStatus,
@@ -95,6 +96,26 @@ function AuthorBadge({ initials, colour }: { initials: string | null; colour: st
       {(initials ?? '?').slice(0, 2)}
     </span>
   )
+}
+
+// Avatar for a Help Scout-ingested thread entry (no staff profile behind it).
+function HsBadge({ customer }: { customer: boolean }) {
+  return (
+    <span
+      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white"
+      style={{ backgroundColor: customer ? '#7b3ff2' : 'var(--c-allocated)' }}
+      aria-hidden="true"
+    >
+      <Mail size={13} />
+    </span>
+  )
+}
+
+// The leading icon for an update by kind (HS / phone call / note).
+function UpdateIcon({ kind, size = 12 }: { kind: WatchUpdateKind; size?: number }) {
+  if (isHelpScoutKind(kind)) return <Mail size={size} aria-hidden="true" />
+  if (kind === 'phone_call') return <Phone size={size} aria-hidden="true" />
+  return <StickyNote size={size} aria-hidden="true" />
 }
 
 export default function FlaggedPage() {
@@ -403,7 +424,7 @@ export default function FlaggedPage() {
             <span className="mt-1 flex items-center gap-1.5 text-[12px] text-ink-soft">
               {last ? (
                 <>
-                  {last.kind === 'phone_call' ? <Phone size={12} aria-hidden="true" /> : <StickyNote size={12} aria-hidden="true" />}
+                  <UpdateIcon kind={last.kind} />
                   <span className="truncate">
                     <span className="font-medium text-ink">{last.created_by_name ?? 'Someone'}</span>{' '}
                     {last.body}
@@ -433,23 +454,34 @@ export default function FlaggedPage() {
               {thread.length === 0 && (
                 <p className="text-[13px] text-ink-mute">No updates yet — add the first below.</p>
               )}
-              {thread.map((u) => (
-                <div key={u.id} className="flex gap-2.5">
-                  <AuthorBadge initials={u.created_by_initials} colour={u.created_by_colour} />
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
-                      <span className="font-medium text-ink">{u.created_by_name ?? 'Someone'}</span>
-                      {u.kind === 'phone_call' && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-line-soft px-1.5 py-0.5 text-[11px] text-ink-soft">
-                          <Phone size={11} aria-hidden="true" /> Phone call
-                        </span>
-                      )}
-                      <span className="text-ink-dim">· {formatStamp(u.created_at)}</span>
+              {thread.map((u) => {
+                const hs = isHelpScoutKind(u.kind)
+                return (
+                  <div key={u.id} className="flex gap-2.5">
+                    {hs ? (
+                      <HsBadge customer={u.kind === 'helpscout_customer'} />
+                    ) : (
+                      <AuthorBadge initials={u.created_by_initials} colour={u.created_by_colour} />
+                    )}
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+                        <span className="font-medium text-ink">{u.created_by_name ?? 'Someone'}</span>
+                        {hs ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-1.5 py-0.5 text-[11px] text-brand">
+                            <Mail size={11} aria-hidden="true" /> Help Scout · {u.kind === 'helpscout_customer' ? 'customer' : 'staff'}
+                          </span>
+                        ) : u.kind === 'phone_call' ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-line-soft px-1.5 py-0.5 text-[11px] text-ink-soft">
+                            <Phone size={11} aria-hidden="true" /> Phone call
+                          </span>
+                        ) : null}
+                        <span className="text-ink-dim">· {formatStamp(u.created_at)}</span>
+                      </div>
+                      <p className="mt-0.5 whitespace-pre-wrap text-[13px] leading-relaxed text-ink">{u.body}</p>
                     </div>
-                    <p className="mt-0.5 whitespace-pre-wrap text-[13px] leading-relaxed text-ink">{u.body}</p>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
 
             {/* Add an update */}

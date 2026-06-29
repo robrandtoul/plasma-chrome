@@ -22,7 +22,14 @@ export type WatchCategory =
 
 export type WatchStatus = 'open' | 'monitoring' | 'resolved'
 
-export type WatchUpdateKind = 'note' | 'phone_call'
+// note / phone_call are the manual kinds (the in-app picker). The helpscout_*
+// kinds are ingested from the Help Scout webhook (000292) and render distinctly;
+// they never appear in the manual picker (WATCH_UPDATE_KINDS stays the two).
+export type WatchUpdateKind = 'note' | 'phone_call' | 'helpscout_customer' | 'helpscout_staff'
+
+export function isHelpScoutKind(kind: WatchUpdateKind): boolean {
+  return kind === 'helpscout_customer' || kind === 'helpscout_staff'
+}
 
 // One flagged project (the card). Proof + author context are denormalised on
 // the row and stamped server-side (profiles is self-read-only; see 000290).
@@ -60,6 +67,8 @@ export interface WatchUpdate {
   created_by_name: string | null
   created_by_initials: string | null
   created_by_colour: string | null
+  // Set on Help Scout-ingested rows (the HS thread id); null for manual entries.
+  helpscout_thread_id: string | null
   created_at: string
 }
 
