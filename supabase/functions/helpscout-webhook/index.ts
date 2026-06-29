@@ -194,8 +194,13 @@ function stripHtml(html: string): string {
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'")
+    // Tidy whitespace: trim each line (kills Outlook's empty spacer paragraphs,
+    // which arrive as a lone-space line), then allow at most one blank line
+    // between paragraphs — otherwise the message renders with huge gaps.
+    .split('\n')
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .join('\n')
     .replace(/\n{3,}/g, '\n\n')
-    .replace(/[ \t]{2,}/g, ' ')
     .trim()
 }
 
