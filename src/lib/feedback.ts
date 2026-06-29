@@ -32,6 +32,10 @@ export interface FeedbackItem {
   area: string | null
   status: FeedbackStatus
   admin_note: string | null
+  // The "what I did & how it works" completion explanation, written when an
+  // item is resolved (done/wont_do) and surfaced prominently to the team.
+  // Distinct from admin_note (the lightweight running triage note). See 000286.
+  resolution_note: string | null
   attachment_paths: string[]
   status_changed_at: string | null
   status_changed_by: string | null
@@ -105,6 +109,11 @@ export const FEEDBACK_RESOLVED_STATUSES: FeedbackStatus[] = ['done', 'wont_do']
 
 export function isResolvedStatus(status: FeedbackStatus): boolean {
   return FEEDBACK_RESOLVED_STATUSES.includes(status)
+}
+
+// Heading for the resolution-note panel — frames the explanation by outcome.
+export function resolutionHeading(status: FeedbackStatus): string {
+  return status === 'wont_do' ? 'Why we closed this' : 'What we did'
 }
 
 // How many days back a "done" item still counts as recently shipped, for the
