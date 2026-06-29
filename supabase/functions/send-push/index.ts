@@ -1,15 +1,13 @@
 // send-push: the single fan-out point for staff push notifications.
 //
-// Called server-to-server (never from a browser) by the functions that already
-// detect an event — proof-action today; stripe-webhook / helpscout-webhook /
-// the pay-link setter / a condition sweep later. The caller fires it
-// fire-and-forget via EdgeRuntime.waitUntil, so a push failure can never slow or
-// break the customer's action.
+// Called server-to-server (never from a browser) by the proof_events / proofs
+// database triggers (via pg_net), and reusable by edge functions later. The
+// trigger fires after the customer's action is durable, so a push failure can
+// never slow or break the customer's action.
 //
-// Deploy with verify_jwt = false: there is no end-user JWT here. The caller
-// authenticates with the service-role key in the Authorization header, which we
-// compare directly (the platform JWT check would otherwise pass the service-role
-// key but give us no useful identity).
+// Deploy with verify_jwt = false. The caller authenticates with EITHER the
+// service-role key OR the DB-stored internal secret (settings.push_internal_secret)
+// — both server-only.
 //
 // Responsibilities:
 //   0. master kill switch (settings.push_enabled) + test-mode gate for money
@@ -47,6 +45,7 @@ const PROOF_EVENTS = new Set([
   'proof_approve_per_recipient',
   'project_reaches_approved_status',
   'customer_replies_by_email',
+  'project_flagged',
 ])
 const FULFILMENT_EVENTS = new Set([
   'order_paid',
@@ -85,7 +84,7 @@ Deno.serve(async (req) => {
     auth: { persistSession: false, autoRefreshToken: false },
   })
 
-  // ── 0. Settings + auth + master gate ───────────────────────────────────────
+  // ── 0. Settings + auth + master gate ──
   const { data: settings } = await admin
     .from('settings')
     .select(
@@ -131,13 +130,13 @@ Deno.serve(async (req) => {
     }
   }
 
-  // ── 1. Resolve context: proof id, owners, company label ────────────────────
+  // ── 1. Resolve context: proof id, owners, company label ──
   const ctx = await resolveContext(admin, body)
   const proofId = ctx.proofId
   const ownerIds = ctx.ownerIds
   const company = ctx.company
 
-  // ── 2. Candidate staff = every active profile (the team is small) ──────────
+  // ── 2. Candidate staff = every active profile (the team is small) ──
   const { data: profilesData } = await admin
     .from('profiles')
     .select('id, role')
@@ -170,7 +169,7 @@ Deno.serve(async (req) => {
     return shouldNotify(eventCode, p, ownerIds, prefsByUser.get(p.id), watchByUser.get(p.id), roleDefaults, fulfilmentIds)
   })
 
-  // ── Build the (recipient-agnostic) copy once ───────────────────────────────
+  // ── Build the (recipient-agnostic) copy once ──
   const copy = copyMap[eventCode] ?? { title: 'Proof Viewer', body: 'You have a new update.' }
   const vars = { company, ...(body.vars ?? {}) }
   const payload: PushPayload = {
@@ -180,7 +179,7 @@ Deno.serve(async (req) => {
     tag: proofId ? `proof:${proofId}` : `order:${body.order_id ?? eventCode}`,
   }
 
-  // ── 3–5. Per recipient: dedup, fetch devices, send, prune ──────────────────
+  // ── 3–5. Per recipient: dedup, fetch devices, send, prune ──
   let sent = 0
   let skipped = 0
   for (const r of recipients) {
@@ -241,7 +240,7 @@ Deno.serve(async (req) => {
   return json({ status: 'ok', recipients: recipients.length, sent, skipped })
 })
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers ──
 
 function shouldNotify(
   event: string,
@@ -282,6 +281,7 @@ function shouldNotify(
 
 function deepLink(event: string, proofId: string | null): string {
   if (FULFILMENT_EVENTS.has(event)) return '/orders'
+  if (event === 'project_flagged') return '/flagged'
   return proofId ? `/proofs/${proofId}` : '/'
 }
 

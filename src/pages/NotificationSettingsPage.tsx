@@ -21,6 +21,7 @@ const PROOF_EVENTS: { code: string; label: string; hint: string }[] = [
   { code: 'proof_approve_per_recipient', label: 'Proof approved', hint: 'A customer approves (per recipient).' },
   { code: 'project_reaches_approved_status', label: 'Fully approved', hint: 'A whole proof is signed off.' },
   { code: 'customer_replies_by_email', label: 'Customer replied by email', hint: 'A customer replies on the Help Scout thread.' },
+  { code: 'project_flagged', label: 'Project flagged', hint: 'A project is flagged onto the board, including auto-flagged complaints.' },
 ]
 
 const ORDER_EVENTS: { code: string; label: string; hint: string }[] = [
