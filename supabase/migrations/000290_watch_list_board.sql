@@ -4,7 +4,8 @@
 -- schema. Apply via the dashboard SQL editor / an MCP apply_migration. Do NOT
 -- use `supabase db push`.
 --
--- AUTHORED, NOT YET APPLIED — for Rob's review before applying.
+-- APPLIED to live (bjvinrzbdrwebylkmbwy, proofs schema) via MCP apply_migration
+-- on 2026-06-29.
 --
 -- A shared, all-staff board for problem projects: cards lost in transit, awaiting
 -- a reprint, complained about, running late, etc. Anyone signed in can flag a
