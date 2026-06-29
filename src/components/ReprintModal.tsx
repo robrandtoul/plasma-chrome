@@ -34,6 +34,8 @@ type OrderRow = {
   currency: string
   created_at: string
   fulfilled_at: string | null
+  dropbox_folder_url: string | null
+  project_name: string | null
 }
 
 function projectLabel(item: WatchItem): string {
@@ -58,7 +60,14 @@ export default function ReprintModal({
   const [orders, setOrders] = useState<OrderRow[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [created, setCreated] = useState<{ reference: string | null } | null>(null)
+  const [created, setCreated] = useState<{ orderId: string; reference: string | null } | null>(null)
+
+  // Folder-clone (after the reprint order is raised): copy the original artwork
+  // into a fresh folder named with the next order number, and link it.
+  const [cloneNumber, setCloneNumber] = useState('')
+  const [cloning, setCloning] = useState(false)
+  const [cloneError, setCloneError] = useState<string | null>(null)
+  const [cloneLinked, setCloneLinked] = useState<{ number: string; fileCount: number | null } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -68,7 +77,7 @@ export default function ReprintModal({
         supabase.from('proofs').select('status').eq('id', item.proof_id).maybeSingle(),
         supabase
           .from('orders')
-          .select('id, stock_order_number, order_kind, status, reprint_of_order_id, currency, created_at, fulfilled_at')
+          .select('id, stock_order_number, order_kind, status, reprint_of_order_id, currency, created_at, fulfilled_at, dropbox_folder_url, project_name')
           .eq('proof_id', item.proof_id)
           .order('created_at', { ascending: false }),
       ])
@@ -128,12 +137,66 @@ export default function ReprintModal({
         targetLabel: projectLabel(item),
         metadata: { reprint_of_order_id: original.id, order_id: data.id },
       })
-      setCreated({ reference: data.payment_reference })
+      setCreated({ orderId: data.id, reference: data.payment_reference })
       onDone()
     } catch {
       setError('Could not raise the reprint order. Please try again.')
     } finally {
       setBusy(false)
+    }
+  }
+
+  // Copy the original order's Dropbox artwork into a new folder (named with the
+  // designer's next order number) and link it to the reprint order — saving the
+  // by-hand file copy. Best-effort: on any failure the designer just sets the
+  // folder up manually in Orders.
+  async function cloneAndLink() {
+    if (!created || !original?.dropbox_folder_url) return
+    const number = cloneNumber.trim()
+    if (!/^\d{3,}$/.test(number)) {
+      setCloneError('Enter the new order number (digits only).')
+      return
+    }
+    const projectName = (original.project_name || projectLabel(item)).trim()
+    const newName = `${number} - ${projectName}`
+    setCloning(true)
+    setCloneError(null)
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke<
+        | { ok: true; shared_url: string; order_number: string; project_name: string; file_count: number | null }
+        | { ok: false; error: string }
+      >('clone-order-folder', {
+        body: { source_url: original.dropbox_folder_url, new_name: newName },
+      })
+      if (fnError || !data || data.ok !== true) {
+        setCloneError((data as { error?: string } | null)?.error ?? 'Could not copy the folder — set it up manually in Orders.')
+        return
+      }
+      // Link the new folder to the reprint order (mirrors the Orders page link flow).
+      const { error: updErr } = await supabase
+        .from('orders')
+        .update({
+          dropbox_folder_url: data.shared_url,
+          stock_order_number: data.order_number,
+          project_name: data.project_name,
+        })
+        .eq('id', created.orderId)
+      if (updErr) {
+        setCloneError('Copied the folder, but couldn’t link it — link it in Orders.')
+        return
+      }
+      await supabase.from('watch_updates').insert({
+        watch_item_id: item.id,
+        kind: 'note',
+        body: `Reprint artwork copied into new folder #${data.order_number}${data.file_count != null ? ` (${data.file_count} file${data.file_count === 1 ? '' : 's'})` : ''}. Ready to place from Orders.`,
+        created_by: userId,
+      })
+      setCloneLinked({ number: data.order_number, fileCount: data.file_count })
+      onDone()
+    } catch {
+      setCloneError('Could not copy the folder — set it up manually in Orders.')
+    } finally {
+      setCloning(false)
     }
   }
 
@@ -206,10 +269,45 @@ export default function ReprintModal({
                 <Check size={20} aria-hidden="true" />
               </div>
               <p className="text-[15px] font-semibold text-ink">Free reprint order raised</p>
-              <p className="mx-auto mt-1 max-w-[40ch] text-[13px] text-ink-mute">
-                It’s a £0 order — no payment, no invoice. In Orders, link a fresh Dropbox folder (named with the
-                next order number) and place it to production like any job.
-              </p>
+
+              {cloneLinked ? (
+                <p className="mx-auto mt-1 max-w-[42ch] text-[13px] text-ink-mute">
+                  Artwork copied into folder <span className="font-medium text-ink">#{cloneLinked.number}</span>
+                  {cloneLinked.fileCount != null ? ` (${cloneLinked.fileCount} file${cloneLinked.fileCount === 1 ? '' : 's'})` : ''} and
+                  linked. Go to Orders to place it.
+                </p>
+              ) : original?.dropbox_folder_url ? (
+                <div className="mt-3 rounded-[10px] border border-line bg-canvas p-3 text-left">
+                  <p className="text-[13px] font-medium text-ink">Copy the artwork into a new folder</p>
+                  <p className="mt-0.5 text-[12px] text-ink-mute">
+                    Enter the next order number — I’ll copy the original artwork into a fresh folder
+                    {original.project_name ? (
+                      <> named <span className="font-medium text-ink">“{cloneNumber.trim() || '…'} - {original.project_name}”</span></>
+                    ) : null}{' '}
+                    and link it to this reprint.
+                  </p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      value={cloneNumber}
+                      onChange={(e) => setCloneNumber(e.target.value)}
+                      inputMode="numeric"
+                      placeholder="e.g. 404015"
+                      className="h-[34px] w-32 rounded-[8px] border border-line bg-surface px-2.5 text-[13px] text-ink outline-none focus:border-brand"
+                    />
+                    <ButtonCoral size="sm" busy={cloning} disabled={!cloneNumber.trim()} onClick={() => void cloneAndLink()}>
+                      Copy &amp; link
+                    </ButtonCoral>
+                  </div>
+                  {cloneError && <p className="mt-1.5 text-[12px] text-out">{cloneError}</p>}
+                  <p className="mt-1.5 text-[12px] text-ink-dim">Or skip and set the folder up yourself in Orders.</p>
+                </div>
+              ) : (
+                <p className="mx-auto mt-1 max-w-[40ch] text-[13px] text-ink-mute">
+                  It’s a £0 order — no payment, no invoice. In Orders, link a fresh Dropbox folder (next order
+                  number) and place it like any job.
+                </p>
+              )}
+
               <div className="mt-4 flex items-center justify-center gap-2">
                 <Link to="/orders">
                   <ButtonCoral icon={Package}>Go to Orders</ButtonCoral>
