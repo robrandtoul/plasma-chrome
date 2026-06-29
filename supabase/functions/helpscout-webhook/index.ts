@@ -236,6 +236,56 @@ async function ingestReplyIntoFlagged(
   return inserted
 }
 
+// Auto-flag onto the Flagged board when a 'complaint' tag is NEWLY added to a
+// conversation: open a Quality-complaint card for each linked proof that doesn't
+// already have an open one, so a complaint can't slip by unflagged. Idempotent —
+// the watch_items partial unique index makes a duplicate a no-op, and the
+// prior-tag check fires only on the absent→present transition (so a resolved
+// complaint isn't re-flagged on a later unrelated tag edit).
+function hasComplaint(tags: Array<string | null> | null | undefined): boolean {
+  return Array.isArray(tags)
+    && tags.some((t) => typeof t === 'string' && t.toLowerCase().includes('complaint'))
+}
+
+async function autoFlagOnComplaint(
+  admin: SupabaseClient,
+  priorRows: Array<{ id: string; helpscout_tags: string[] | null }>,
+  newTags: string[],
+): Promise<number> {
+  if (!hasComplaint(newTags)) return 0
+  let flagged = 0
+  for (const p of priorRows) {
+    if (hasComplaint(p.helpscout_tags)) continue // already had complaint → not new
+    const { data: card, error } = await admin
+      .from('watch_items')
+      .insert({
+        proof_id: p.id,
+        category: 'quality_complaint',
+        status: 'open',
+        created_by: null,
+        created_by_name: 'Help Scout (complaint tag)',
+      })
+      .select('id')
+      .single()
+    if (error) {
+      // 23505 = the proof already has an open card — leave it as is.
+      if (error.code !== '23505') {
+        console.error('[helpscout-webhook] auto-flag insert failed', error.message)
+      }
+      continue
+    }
+    await admin.from('watch_updates').insert({
+      watch_item_id: (card as { id: string }).id,
+      kind: 'note',
+      body: "Auto-flagged: a 'complaint' tag was added to the Help Scout conversation.",
+      created_by: null,
+      created_by_name: 'Help Scout (complaint tag)',
+    })
+    flagged++
+  }
+  return flagged
+}
+
 // GET /v2/conversations/{id}/threads and pull the merged-in source conversation
 // ids from the `merged` line-items. Help Scout records a merge on the surviving
 // (target) conversation; each thread moved in from a deleted source keeps a
@@ -453,6 +503,14 @@ async function handle(req: Request): Promise<Response> {
         typeof t === 'string' ? t : ((t as { tag?: unknown } | null)?.tag ?? null))
       .filter((t): t is string => typeof t === 'string' && t.trim() !== '')
       .map((t) => t.trim().toLowerCase())
+
+    // Read prior tags before the replace so the complaint auto-flag can fire
+    // only on the 'complaint' tag's absent→present transition.
+    const { data: priorRows } = await admin
+      .from('proofs')
+      .select('id, helpscout_tags')
+      .eq('helpscout_conversation_id', String(conversationId))
+
     const { data, error } = await admin
       .from('proofs')
       .update({ helpscout_tags: tagNames })
@@ -467,6 +525,19 @@ async function handle(req: Request): Promise<Response> {
       tags: tagNames,
       matched: data?.length ?? 0,
     })
+
+    // Auto-flag onto the board when a 'complaint' tag is newly added. Additive
+    // and best-effort: a failure here must not break the tag-sync contract.
+    let autoFlagged = 0
+    try {
+      autoFlagged = await autoFlagOnComplaint(
+        admin,
+        (priorRows ?? []) as Array<{ id: string; helpscout_tags: string[] | null }>,
+        tagNames,
+      )
+    } catch (err) {
+      console.error('[helpscout-webhook] complaint auto-flag crashed', (err as Error).message)
+    }
     // Kick the drafter on the tag change too — this is how a workflow handoff
     // into Customer Support reaches the pipeline. Fire-and-forget; the worker
     // gates on mailbox = Customer Support + mode + a waiting customer message +
@@ -474,7 +545,7 @@ async function handle(req: Request): Promise<Response> {
     // CS, with no customer message, or already-drafted is a cheap no-op.
     const trigger = triggerAiDraft(supabaseUrl, serviceKey, conversationId, eventHeader)
     if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(trigger)
-    return json({ ok: true, tags: tagNames, matched: data?.length ?? 0 })
+    return json({ ok: true, tags: tagNames, matched: data?.length ?? 0, auto_flagged: autoFlagged })
   }
 
   // AI draft worker: created / moved / customer-reply → drafting;

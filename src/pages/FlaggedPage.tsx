@@ -381,7 +381,7 @@ export default function FlaggedPage() {
             onClick={() => (thumb ? setLightbox(thumb) : toggleExpand(item.id))}
             aria-label={thumb ? 'Enlarge artwork' : 'Expand'}
             className={[
-              'flex h-20 w-28 shrink-0 items-center justify-center overflow-hidden rounded-[8px] bg-ink font-mono text-[13px] font-medium tracking-wider text-on-ink',
+              'flex h-24 w-36 shrink-0 items-center justify-center overflow-hidden rounded-[8px] bg-ink font-mono text-[14px] font-medium tracking-wider text-on-ink',
               thumb ? 'cursor-zoom-in' : '',
             ].join(' ')}
           >
@@ -450,14 +450,14 @@ export default function FlaggedPage() {
         {isExpanded && (
           <div className="border-t border-line-soft px-3 py-3">
             {/* Thread */}
-            <div className="space-y-3">
+            <div className="divide-y divide-line-soft">
               {thread.length === 0 && (
                 <p className="text-[13px] text-ink-mute">No updates yet — add the first below.</p>
               )}
               {thread.map((u) => {
                 const hs = isHelpScoutKind(u.kind)
                 return (
-                  <div key={u.id} className="flex gap-2.5">
+                  <div key={u.id} className="flex gap-3 py-4 first:pt-0">
                     {hs ? (
                       <HsBadge customer={u.kind === 'helpscout_customer'} />
                     ) : (
@@ -485,7 +485,7 @@ export default function FlaggedPage() {
             </div>
 
             {/* Add an update */}
-            <div className="mt-3 rounded-[10px] border border-line bg-canvas p-2.5">
+            <div className="mt-4 rounded-[10px] border border-line bg-canvas p-2.5">
               <div className="mb-2 flex gap-1.5" role="radiogroup" aria-label="Update type">
                 {WATCH_UPDATE_KINDS.map((k) => {
                   const active = (draftKind[item.id] ?? 'note') === k.value
