@@ -134,7 +134,7 @@ function titleCaseCode(code: string): string {
 }
 
 // In-house Card line for Stock Control's forgiving material match.
-function buildCardLine(code: string, materialDisplay: string | null, options: unknown, front: string | null, core: string | null, back: string | null): string {
+function buildCardLine(code: string, materialDisplay: string | null, options: unknown, front: string | null, core: string | null, back: string | null, stockColour: string | null): string {
   if (code === 'paper_letterpress' || code === 'paper_letterpress_gilded') {
     // Gilding rides on the Card line, NOT a "Finish:" line — Stock Control's
     // in-house parser has no Finish field, so it preserves the Card value
@@ -161,6 +161,11 @@ function buildCardLine(code: string, materialDisplay: string | null, options: un
     return species ? titleCaseCode(species) : (materialDisplay || 'Wood')
   }
   if (code === 'plastic_translucent') return 'Translucent Plastic'
+  // Satin / tinted / acrylic carry no colour on the proof (it isn't a price
+  // factor), so the specific stock colour is captured at order time and emitted
+  // here verbatim — the exact Stock Control material name its in-house parser
+  // resolves against. Falls back to the generic material name when unset.
+  if (stockColour && stockColour.trim()) return stockColour.trim()
   return materialDisplay || code
 }
 
@@ -368,7 +373,7 @@ Deno.serve(async (req) => {
   // ── Load order + proof + current version ──────────────────────────────────
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, status, quantity, person_quantities, has_personalisation, custom_quote_total, order_kind, date_required, stock_order_number, project_name, proof_id, ship_dest_country, ship_to_address, material_variant_id, material_option_id, dropbox_folder_url, payment_reference, currency, fulfilled_at')
+    .select('id, status, quantity, person_quantities, has_personalisation, custom_quote_total, order_kind, date_required, stock_order_number, project_name, stock_colour, proof_id, ship_dest_country, ship_to_address, material_variant_id, material_option_id, dropbox_folder_url, payment_reference, currency, fulfilled_at')
     .eq('id', orderId)
     .maybeSingle()
   if (orderErr) return json({ ok: false, error: `Order lookup failed: ${orderErr.message}` }, 500)
@@ -510,7 +515,7 @@ Deno.serve(async (req) => {
 
   // ── IN-HOUSE ──────────────────────────────────────────────────────────────
   if (route === 'in_house') {
-    const card = buildCardLine(mat.code, pv.material_display, pv.material_options, front, core, back)
+    const card = buildCardLine(mat.code, pv.material_display, pv.material_options, front, core, back, (order.stock_colour as string | null) ?? null)
     const lines: string[] = []
     if (isPrototype) lines.push(prototypeMarker)
     lines.push(`Qty: ${qty}`, `Card: ${card}`)

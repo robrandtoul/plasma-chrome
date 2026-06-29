@@ -9,6 +9,7 @@ import { orderTotal, specLabel as specLabelShared, customerLabel as customerLabe
 import { logAudit } from '../lib/audit'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
 import { keepApprovedNoOrder, invalidateApprovedNoOrderCount } from '../lib/approvedNoOrder'
+import { materialNeedsStockColour, fetchStockColours, type StockColour } from '../lib/stockColours'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
@@ -71,6 +72,8 @@ interface OrderRow {
   dropbox_folder_url: string | null
   stock_order_number: string | null
   project_name: string | null
+  // Specific Stock Control colour for plastic/acrylic cards (000289).
+  stock_colour: string | null
   person_quantities: { name: string; quantity: number }[] | null
   ship_to_name: string | null
   ship_to_email: string | null
@@ -95,7 +98,7 @@ const SELECT = `
   custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff,
   card_discount_type, card_discount_value, amount_card_discount, payment_method, order_kind,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
-  date_required, dropbox_folder_url, stock_order_number, project_name, person_quantities,
+  date_required, dropbox_folder_url, stock_order_number, project_name, stock_colour, person_quantities,
   ship_to_name, ship_to_email, ship_to_address, proof_id,
   material_variants(display_name, materials(code, display_name, production_route, lead_time_max_days, outsourced_supplier_ids)),
   proofs(contacts(full_name, companies(name)))
@@ -1400,16 +1403,74 @@ function OrderCard({
     setLookup({ status: 'ok', orderNumber, projectName, fileCount: data.file_count ?? null })
   }
 
+  // Stock colour (satin / tinted / acrylic). Proof-viewer only records the
+  // generic material, but Stock Control stocks each colour separately and must
+  // be told which one to allocate. Captured here, sourced live from Stock
+  // Control's own catalogue so the saved name resolves exactly.
+  const materialCode = order.material_variants?.materials?.code ?? null
+  const needsColour = materialNeedsStockColour(materialCode)
+  const [colourOptions, setColourOptions] = useState<StockColour[]>([])
+  const [colourValue, setColourValue] = useState<string>(order.stock_colour ?? '')
+  const [otherMode, setOtherMode] = useState(false)
+  const [colourSaving, setColourSaving] = useState(false)
+  const [colourError, setColourError] = useState(false)
+  const [colourSaved, setColourSaved] = useState(false)
+
+  useEffect(() => {
+    if (!needsColour) return
+    let cancelled = false
+    void fetchStockColours(materialCode).then((opts) => {
+      if (cancelled) return
+      setColourOptions(opts)
+      // A saved colour that isn't a stocked option is a free-typed "Other".
+      if (order.stock_colour && !opts.some((o) => o.name === order.stock_colour)) setOtherMode(true)
+    })
+    return () => { cancelled = true }
+  }, [needsColour, materialCode, order.stock_colour])
+
+  async function persistColour(name: string) {
+    setColourError(false)
+    setColourSaved(false)
+    setColourSaving(true)
+    const ok = await onSaveField({ stock_colour: name || null })
+    setColourSaving(false)
+    if (ok) {
+      if (name) { setColourSaved(true); window.setTimeout(() => setColourSaved(false), 2000) }
+    } else {
+      setColourError(true)
+    }
+  }
+
+  // The <select> shows the stocked colours plus an "Other" escape. Its value is
+  // derived from the saved colour: a known name selects that option; any other
+  // non-empty value (or an explicit Other pick) selects "__other__" and reveals
+  // the free-text field.
+  const colourIsKnown = colourOptions.some((o) => o.name === colourValue)
+  const colourSelectValue = otherMode || (colourValue && !colourIsKnown) ? '__other__' : colourValue
+  const showColourOther = colourSelectValue === '__other__'
+
+  function handleColourSelect(v: string) {
+    if (v === '__other__') { setOtherMode(true); return }
+    setOtherMode(false)
+    setColourValue(v)
+    void persistColour(v)
+  }
+
   // The folder is usable for the hand-off only once it's verified AND its name
   // yields an order number (which becomes the Help Scout subject Stock Control
   // matches on). Artwork presence is informational, not a gate.
   const folderVerified = lookup.status === 'ok' && !!lookup.orderNumber
+  // A colour-bearing material can't be placed until its specific stock colour is
+  // saved (we gate on the persisted value, not the local draft, so a failed save
+  // can't leave the gate open). Materials without a colour picker pass straight
+  // through.
+  const colourReady = !needsColour || !!order.stock_colour
   // Both routes need a verified folder (its name = the order number) + a SAVED
   // date before the order can be reviewed & placed; the review page picks the
   // route (in-house note vs supplier email) and confirms. The date must be
   // persisted (not just a pre-filled suggestion) so the place-order edge fn,
   // which reads the DB, doesn't reject an order whose gate looked green.
-  const canOrder = folderVerified && datePersisted
+  const canOrder = folderVerified && datePersisted && colourReady
 
   return (
     <PanelShell>
@@ -1569,6 +1630,50 @@ function OrderCard({
             </label>
           </div>
 
+          {/* Stock colour: which specific colour Stock Control should pull, for
+              materials proof-viewer only records generically (satin/tinted/acrylic). */}
+          {needsColour && (
+            <div className="mt-3">
+              <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Stock colour</span>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <select
+                  value={colourSelectValue}
+                  onChange={(e) => handleColourSelect(e.target.value)}
+                  className="h-[38px] max-md:h-12 min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                >
+                  <option value="">Select the colour…</option>
+                  {colourOptions.map((o) => (
+                    <option key={o.name} value={o.name}>
+                      {o.name}{o.quantityOnShelf != null ? ` — ${o.quantityOnShelf.toLocaleString()} in stock` : ''}
+                    </option>
+                  ))}
+                  <option value="__other__">Other (not listed)…</option>
+                </select>
+                {showColourOther && (
+                  <input
+                    type="text"
+                    value={colourValue}
+                    onChange={(e) => setColourValue(e.target.value)}
+                    onBlur={() => { if (colourValue.trim() !== (order.stock_colour ?? '')) void persistColour(colourValue.trim()) }}
+                    placeholder="Type the colour name…"
+                    className="h-[38px] max-md:h-12 min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                  />
+                )}
+              </div>
+              <div className="mt-1 space-y-0.5 text-[11px]">
+                {colourSaving && <span className="block text-ink-mute">Saving…</span>}
+                {colourError && <span className="block text-out">Couldn’t save — try again</span>}
+                {colourSaved && !colourError && <span className="block text-in-stock">✓ Saved</span>}
+                {!colourSaving && !colourError && !colourSaved && !order.stock_colour && (
+                  <span className="block text-low">Stock Control needs this to allocate the right material</span>
+                )}
+                {!colourSaving && !colourError && !colourSaved && showColourOther && !!order.stock_colour && (
+                  <span className="block text-ink-mute">Not a stocked colour — Stock Control will be asked to source it</span>
+                )}
+              </div>
+            </div>
+          )}
+
           {addrLines.length > 0 ? (
             <>
               {/* Desktop: full address block. */}
@@ -1611,9 +1716,9 @@ function OrderCard({
             <span className="text-right text-[11px] text-ink-mute max-md:text-center">
               {!folderVerified
                 ? 'Link & check the order folder to enable'
-                : dateValue
-                  ? 'Confirm the date required to enable'
-                  : 'Set a date required to enable'}
+                : !datePersisted
+                  ? (dateValue ? 'Confirm the date required to enable' : 'Set a date required to enable')
+                  : 'Choose the stock colour to enable'}
             </span>
           )}
           {/* Secondary actions: a side column on desktop (md:contents lets each
