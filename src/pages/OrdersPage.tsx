@@ -715,14 +715,15 @@ export default function OrdersPage() {
           return new Date(a.sent_at ?? 0).getTime() - new Date(b.sent_at ?? 0).getTime()
         }),
       // To order: paid, not yet placed. A blocking problem (failed invoice)
-      // floats to the top; otherwise oldest-paid-first so nothing sits.
+      // floats to the top; otherwise newest-paid-first so the most recently
+      // paid order sits at the top.
       toOrder: filtered
         .filter((o) => o.status === 'paid')
         .sort((a, b) => {
           const ap = hasInvoiceProblem(a) ? 0 : 1
           const bp = hasInvoiceProblem(b) ? 0 : 1
           if (ap !== bp) return ap - bp
-          return new Date(a.paid_at ?? a.sent_at ?? 0).getTime() - new Date(b.paid_at ?? b.sent_at ?? 0).getTime()
+          return new Date(b.paid_at ?? b.sent_at ?? 0).getTime() - new Date(a.paid_at ?? a.sent_at ?? 0).getTime()
         }),
       recentlyOrdered: filtered.filter((o) => o.status === 'fulfilled').slice(0, 30),
       // Paid/placed orders held while the proof is being redesigned (revision).
@@ -890,7 +891,7 @@ export default function OrdersPage() {
                     To order · {toOrder.length}
                     {toOrder.length > 0 ? ` · ${gbpLabel(sumGbp(toOrder, rates))}` : ''}
                   </h2>
-                  {toOrder.length > 0 && <span className="text-[12px] text-ink-mute">Oldest paid first</span>}
+                  {toOrder.length > 0 && <span className="text-[12px] text-ink-mute">Newest paid first</span>}
                 </div>
                 <div className="mt-3">
                   {toOrder.length === 0 ? (
