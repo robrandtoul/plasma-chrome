@@ -289,20 +289,32 @@ Deno.serve(async (req) => {
     currency = (original.currency as Currency) ?? currency
     materialVariantId = (original.material_variant_id as string | null) ?? materialVariantId
     materialOptionId = (original.material_option_id as string | null) ?? materialOptionId
-    namesCount = Number.isInteger(original.names_count) && (original.names_count as number) >= 1 ? (original.names_count as number) : 1
-    personQuantities =
-      Array.isArray(original.person_quantities) && (original.person_quantities as unknown[]).length > 0
-        ? (original.person_quantities as { name: string; quantity: number }[])
-        : null
     hasPersonalisation = original.has_personalisation === true
     shipDestCountry = (original.ship_dest_country as string | null) ?? shipDestCountry
-    // quantity: an explicit body override (a partial reprint) wins; else inherit.
-    if (quantity == null) {
-      quantity = Number.isInteger(original.quantity) && (original.quantity as number) > 0 ? (original.quantity as number) : null
-    }
+
+    // quantity: an explicit body override is a PARTIAL reprint (only some were
+    // faulty); otherwise reprint the original's full quantity.
+    const originalQty = Number.isInteger(original.quantity) && (original.quantity as number) > 0 ? (original.quantity as number) : null
+    const isPartial = quantity != null && quantity !== originalQty
+    if (quantity == null) quantity = originalQty
     if (quantity == null) {
       return json({ error: 'A reprint needs a quantity — the original order had none recorded.' }, 422)
     }
+
+    // A FULL reprint inherits the original's per-name split; a PARTIAL reprint is
+    // a plain batch of N (the inherited split no longer sums to the new total),
+    // so the designer notes whose cards in the Stock Control hand-off.
+    if (isPartial) {
+      namesCount = 1
+      personQuantities = null
+    } else {
+      namesCount = Number.isInteger(original.names_count) && (original.names_count as number) >= 1 ? (original.names_count as number) : 1
+      personQuantities =
+        Array.isArray(original.person_quantities) && (original.person_quantities as unknown[]).length > 0
+          ? (original.person_quantities as { name: string; quantity: number }[])
+          : null
+    }
+
     // FREE: zero total, free shipping. The offline path then stamps all amounts 0.
     shippingTreatment = 'free'
     customQuoteTotal = 0

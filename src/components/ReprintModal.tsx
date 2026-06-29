@@ -32,6 +32,7 @@ type OrderRow = {
   status: string
   reprint_of_order_id: string | null
   currency: string
+  quantity: number | null
   created_at: string
   fulfilled_at: string | null
   dropbox_folder_url: string | null
@@ -69,6 +70,10 @@ export default function ReprintModal({
   const [cloneError, setCloneError] = useState<string | null>(null)
   const [cloneLinked, setCloneLinked] = useState<{ number: string; fileCount: number | null } | null>(null)
 
+  // Reprint quantity — defaults to the original order's; lower it for a partial
+  // reprint (only some were faulty). Sent to create-order on the artwork path.
+  const [qtyInput, setQtyInput] = useState('')
+
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -77,13 +82,17 @@ export default function ReprintModal({
         supabase.from('proofs').select('status').eq('id', item.proof_id).maybeSingle(),
         supabase
           .from('orders')
-          .select('id, stock_order_number, order_kind, status, reprint_of_order_id, currency, created_at, fulfilled_at, dropbox_folder_url, project_name')
+          .select('id, stock_order_number, order_kind, status, reprint_of_order_id, currency, quantity, created_at, fulfilled_at, dropbox_folder_url, project_name')
           .eq('proof_id', item.proof_id)
           .order('created_at', { ascending: false }),
       ])
       if (cancelled) return
       setProofStatus((proofRes.data?.status as string | null) ?? null)
-      setOrders((ordersRes.data ?? []) as OrderRow[])
+      const ords = (ordersRes.data ?? []) as OrderRow[]
+      setOrders(ords)
+      // Default the reprint quantity to the original order's (full reprint).
+      const orig = ords.find((o) => o.order_kind !== 'reprint' && (o.status === 'fulfilled' || o.status === 'paid')) ?? null
+      setQtyInput(orig?.quantity != null ? String(orig.quantity) : '')
       setLoading(false)
     })()
     return () => {
@@ -102,6 +111,11 @@ export default function ReprintModal({
       setError('There’s no produced order on this project to reprint.')
       return
     }
+    // Reprint quantity: a valid figure that differs from the original is a
+    // partial reprint; send it through. Blank/invalid → omit (full reprint).
+    const qty = parseInt(qtyInput.trim(), 10)
+    const quantityBody = Number.isInteger(qty) && qty > 0 ? qty : undefined
+    const isPartial = quantityBody != null && original.quantity != null && quantityBody !== original.quantity
     setBusy(true)
     setError(null)
     try {
@@ -113,6 +127,7 @@ export default function ReprintModal({
           order_kind: 'reprint',
           reprint_of_order_id: original.id,
           currency: original.currency,
+          ...(quantityBody != null ? { quantity: quantityBody } : {}),
         },
       })
       if (fnError) {
@@ -124,10 +139,11 @@ export default function ReprintModal({
         return
       }
       // Keep the story on the card: log a note so the thread records the remake.
+      const qtyLabel = quantityBody != null ? ` — ${quantityBody} card${quantityBody === 1 ? '' : 's'}${isPartial ? ' (partial)' : ''}` : ''
       await supabase.from('watch_updates').insert({
         watch_item_id: item.id,
         kind: 'note',
-        body: `Free reprint order raised (replacing ${original.stock_order_number ? `#${original.stock_order_number}` : 'the original order'}). Next: link a new Dropbox folder with the next order number and place it from Orders.`,
+        body: `Free reprint order raised${qtyLabel} (replacing ${original.stock_order_number ? `#${original.stock_order_number}` : 'the original order'}). Next: link a new Dropbox folder with the next order number and place it from Orders.`,
         created_by: userId,
       })
       void logAudit({
@@ -356,29 +372,46 @@ export default function ReprintModal({
               )}
 
               <div className="mt-4 space-y-2.5">
-                {/* Artwork correct → raise the reprint now */}
-                <button
-                  type="button"
-                  disabled={busy || !isApproved}
-                  onClick={() => void createReprint()}
-                  className="group flex w-full items-start gap-3 rounded-[12px] border border-line bg-canvas px-4 py-3 text-left transition-colors hover:border-brand hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-line disabled:hover:bg-canvas"
-                >
-                  <Printer size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-brand" />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5 text-[14px] font-semibold text-ink">
-                      The artwork is correct
-                      <ArrowRight size={14} aria-hidden="true" className="text-ink-dim transition-transform group-hover:translate-x-0.5" />
-                    </span>
-                    <span className="mt-0.5 block text-[12px] text-ink-mute">
-                      Damaged, lost, or wrong stock — remake the same approved design.
-                    </span>
-                    {!isApproved && (
-                      <span className="mt-1 block text-[12px] font-medium text-out">
-                        This project isn’t approved right now — finish the correction and re-approval first.
-                      </span>
-                    )}
-                  </span>
-                </button>
+                {/* Artwork correct → raise the reprint now, optionally a partial qty */}
+                <div className="rounded-[12px] border border-line bg-canvas px-4 py-3">
+                  <div className="flex items-start gap-3">
+                    <Printer size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-brand" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[14px] font-semibold text-ink">The artwork is correct</div>
+                      <div className="mt-0.5 text-[12px] text-ink-mute">
+                        Damaged, lost, or wrong stock — remake the same approved design.
+                      </div>
+                    </div>
+                  </div>
+                  {isApproved ? (
+                    <>
+                      <div className="mt-3 flex items-center justify-between gap-2">
+                        <label className="flex items-center gap-1.5 text-[12px] text-ink-soft">
+                          Reprint
+                          <input
+                            type="number"
+                            min={1}
+                            inputMode="numeric"
+                            value={qtyInput}
+                            onChange={(e) => setQtyInput(e.target.value)}
+                            className="h-[32px] w-20 rounded-[8px] border border-line bg-surface px-2 text-[13px] text-ink outline-none focus:border-brand"
+                          />
+                          {original.quantity != null && <span className="text-ink-dim">of {original.quantity}</span>}
+                        </label>
+                        <ButtonCoral size="sm" busy={busy} onClick={() => void createReprint()}>
+                          Raise free reprint
+                        </ButtonCoral>
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-ink-dim">
+                        Lower the quantity for a partial reprint (only some were faulty).
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-2.5 text-[12px] font-medium text-out">
+                      This project isn’t approved right now — finish the correction and re-approval first.
+                    </p>
+                  )}
+                </div>
 
                 {/* Design needs fixing → reopen */}
                 <button
