@@ -38,6 +38,8 @@ import {
   authorBadgeColour,
   isUnseenResolved,
   isRecentlyShipped,
+  isResolvedStatus,
+  resolutionHeading,
   type FeedbackItem,
   type FeedbackStatus,
   type FeedbackType,
@@ -267,6 +269,7 @@ export default function FeedbackPage() {
     status: FeedbackStatus,
     priority: FeedbackPriority,
     adminNote: string,
+    resolutionNote: string,
   ) {
     const { data: prof } = await supabase
       .from('profiles')
@@ -279,6 +282,7 @@ export default function FeedbackPage() {
       status,
       priority,
       admin_note: adminNote.trim() || null,
+      resolution_note: resolutionNote.trim() || null,
       status_changed_at: nowIso,
       status_changed_by: userId,
       status_changed_by_name: changerName,
@@ -317,7 +321,11 @@ export default function FeedbackPage() {
     })
   }
 
-  function renderCard(it: FeedbackItem, showStatus: boolean) {
+  function renderCard(
+    it: FeedbackItem,
+    showStatus: boolean,
+    opts?: { resolutionInline?: boolean },
+  ) {
     return (
       <FeedbackCard
         key={it.id}
@@ -326,6 +334,7 @@ export default function FeedbackPage() {
         canDelete={isAdmin || it.created_by === userId}
         showStatus={showStatus}
         isNew={newToYouIds.has(it.id)}
+        resolutionInline={opts?.resolutionInline ?? false}
         expanded={expandedIds.has(it.id)}
         onToggleExpand={() => toggleExpand(it.id)}
         onSaveTriage={saveTriage}
@@ -506,6 +515,30 @@ export default function FeedbackPage() {
   )
 }
 
+// The prominent "What we did / Why we closed this" panel for a resolved item's
+// resolution_note — the admin's explanation, surfaced to the whole team. The
+// wrapper span is muted by default; a `done` item overrides to the in-stock
+// green via inline style (icon + heading inherit currentColor).
+function ResolutionPanel({ item }: { item: FeedbackItem }) {
+  if (!isResolvedStatus(item.status) || !item.resolution_note) return null
+  const isDone = item.status === 'done'
+  const Icon = isDone ? CheckCircle2 : Archive
+  return (
+    <div className="rounded-lg border border-line bg-canvas px-3 py-2.5">
+      <span
+        className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-mute"
+        style={isDone ? { color: 'var(--c-in-stock)' } : undefined}
+      >
+        <Icon size={13} className="shrink-0" aria-hidden="true" />
+        {resolutionHeading(item.status)}
+      </span>
+      <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-ink-soft">
+        {item.resolution_note}
+      </p>
+    </div>
+  )
+}
+
 // Per-status past-tense verb for the "resolved for you" callout meta line.
 const RESOLVED_VERB: Partial<Record<FeedbackStatus, string>> = {
   done: 'Shipped',
@@ -536,9 +569,10 @@ function ResolvedForYouCallout({ items }: { items: FeedbackItem[] }) {
               <FeedbackStatusPill status={it.status} />
               <span className="text-[14px] font-medium text-ink">{it.title}</span>
             </div>
-            {it.admin_note && (
+            {/* Prefer the resolution explanation; fall back to the running note. */}
+            {(it.resolution_note || it.admin_note) && (
               <p className="mt-1.5 whitespace-pre-wrap text-[13px] leading-relaxed text-ink-soft">
-                {it.admin_note}
+                {it.resolution_note || it.admin_note}
               </p>
             )}
             <p className="mt-1 text-[12px] text-ink-mute">
@@ -562,7 +596,11 @@ function RecentlyShippedBand({
   onSeeAll,
 }: {
   items: FeedbackItem[]
-  renderCard: (it: FeedbackItem, showStatus: boolean) => React.ReactNode
+  renderCard: (
+    it: FeedbackItem,
+    showStatus: boolean,
+    opts?: { resolutionInline?: boolean },
+  ) => React.ReactNode
   onSeeAll: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -588,7 +626,9 @@ function RecentlyShippedBand({
       </button>
       {open && (
         <div className="mt-2 space-y-3">
-          {items.map((it) => renderCard(it, false))}
+          {/* resolutionInline shows each item's "What we did" explanation on the
+              collapsed card, so the team reads what shipped without expanding. */}
+          {items.map((it) => renderCard(it, false, { resolutionInline: true }))}
           <button
             type="button"
             onClick={onSeeAll}
@@ -789,6 +829,7 @@ function FeedbackCard({
   canDelete,
   showStatus,
   isNew,
+  resolutionInline,
   expanded,
   onToggleExpand,
   onSaveTriage,
@@ -799,6 +840,8 @@ function FeedbackCard({
   canDelete: boolean
   showStatus: boolean
   isNew: boolean
+  /** Show the "What we did" panel on the collapsed card (used by the band). */
+  resolutionInline: boolean
   expanded: boolean
   onToggleExpand: () => void
   onSaveTriage: (
@@ -806,6 +849,7 @@ function FeedbackCard({
     status: FeedbackStatus,
     priority: FeedbackPriority,
     note: string,
+    resolutionNote: string,
   ) => Promise<boolean>
   onDelete: (item: FeedbackItem) => void
 }) {
@@ -813,6 +857,7 @@ function FeedbackCard({
   const [statusDraft, setStatusDraft] = useState<FeedbackStatus>(item.status)
   const [priorityDraft, setPriorityDraft] = useState<FeedbackPriority>(item.priority)
   const [noteDraft, setNoteDraft] = useState(item.admin_note ?? '')
+  const [resolutionDraft, setResolutionDraft] = useState(item.resolution_note ?? '')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState(false)
@@ -822,7 +867,8 @@ function FeedbackCard({
     setStatusDraft(item.status)
     setPriorityDraft(item.priority)
     setNoteDraft(item.admin_note ?? '')
-  }, [item.status, item.priority, item.admin_note])
+    setResolutionDraft(item.resolution_note ?? '')
+  }, [item.status, item.priority, item.admin_note, item.resolution_note])
 
   // Generate signed URLs for the screenshots the first time the card opens.
   useEffect(() => {
@@ -843,7 +889,8 @@ function FeedbackCard({
   const dirty =
     statusDraft !== item.status ||
     priorityDraft !== item.priority ||
-    (noteDraft.trim() || null) !== (item.admin_note ?? null)
+    (noteDraft.trim() || null) !== (item.admin_note ?? null) ||
+    (resolutionDraft.trim() || null) !== (item.resolution_note ?? null)
 
   // Priority is the only signal allowed loud colour: a left edge-stripe, with a
   // small word on the meta line as a backstop (a 3px stripe alone is too easy to
@@ -856,7 +903,7 @@ function FeedbackCard({
     setSaving(true)
     setSaved(false)
     setSaveError(false)
-    const ok = await onSaveTriage(item, statusDraft, priorityDraft, noteDraft)
+    const ok = await onSaveTriage(item, statusDraft, priorityDraft, noteDraft, resolutionDraft)
     setSaving(false)
     if (ok) {
       setSaved(true)
@@ -924,6 +971,15 @@ function FeedbackCard({
         </div>
       </button>
 
+      {/* Collapsed-card explanation for the Recently-shipped band, so the team
+          reads what shipped without expanding. Hidden once expanded (the body
+          shows the same panel). */}
+      {resolutionInline && !expanded && isResolvedStatus(item.status) && item.resolution_note && (
+        <div className="border-t border-line-soft px-4 py-3">
+          <ResolutionPanel item={item} />
+        </div>
+      )}
+
       {expanded && (
         <div className="border-t border-line-soft px-4 py-4">
           {item.body && (
@@ -950,13 +1006,24 @@ function FeedbackCard({
             </div>
           )}
 
-          {/* Triage note — shown to everyone once Rob's written one. */}
-          {item.admin_note && !isAdmin && (
-            <div className="mt-3 rounded-lg border border-line bg-canvas px-3 py-2 text-[13px] text-ink-soft">
-              <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Note</span>
-              {item.admin_note}
+          {/* Resolution explanation — the prominent "What we did / Why we closed
+              this" panel for resolved items, shown to everyone. */}
+          {isResolvedStatus(item.status) && item.resolution_note && (
+            <div className="mt-3">
+              <ResolutionPanel item={item} />
             </div>
           )}
+
+          {/* Running triage note — shown to everyone once written, but suppressed
+              on resolved items where the resolution panel supersedes it. */}
+          {item.admin_note &&
+            !isAdmin &&
+            !(isResolvedStatus(item.status) && item.resolution_note) && (
+              <div className="mt-3 rounded-lg border border-line bg-canvas px-3 py-2 text-[13px] text-ink-soft">
+                <span className="block text-[11px] font-medium uppercase tracking-wide text-ink-mute">Note</span>
+                {item.admin_note}
+              </div>
+            )}
 
           {item.status_changed_at && (
             <p className="mt-3 text-[12px] text-ink-mute">
@@ -1008,6 +1075,38 @@ function FeedbackCard({
                   className="flex-1"
                 />
               </div>
+
+              {/* Done-time explanation. Revealed only when resolving, so the
+                  admin is prompted to close the loop with the team. */}
+              {(statusDraft === 'done' || statusDraft === 'wont_do') && (
+                <div className="mt-3 rounded-lg border border-line bg-surface p-3">
+                  <label className="block">
+                    <span className="block text-[12px] font-semibold text-ink">
+                      {statusDraft === 'wont_do'
+                        ? 'Why are you closing this?'
+                        : 'What changed & how it works'}
+                      <span className="font-normal text-ink-mute"> — shown to the whole team</span>
+                    </span>
+                    <Textarea
+                      value={resolutionDraft}
+                      onChange={(e) => setResolutionDraft(e.target.value)}
+                      rows={4}
+                      placeholder={
+                        statusDraft === 'wont_do'
+                          ? 'Explain why, so the person who raised it understands.'
+                          : "Explain what you did and how to use it, so the team knows what's new."
+                      }
+                      className="mt-1.5"
+                    />
+                  </label>
+                  {!resolutionDraft.trim() && (
+                    <p className="mt-1.5 text-[11px] text-ink-mute">
+                      Tip: this is what the team sees on the board when the item ships.
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div className="mt-2 flex items-center justify-end gap-2">
                 {saveError && (
                   <span role="alert" className="text-[12px] text-out">
