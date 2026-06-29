@@ -96,6 +96,27 @@ async function triggerAiDraft(
   }
 }
 
+// Fire-and-forget trigger of flag-helpscout-context, to pull a just-auto-flagged
+// card's preceding customer message (the complaint) into its thread. Best-effort.
+async function triggerFlagContext(
+  supabaseUrl: string,
+  serviceKey: string,
+  watchItemId: string,
+): Promise<void> {
+  try {
+    const resp = await fetch(`${supabaseUrl}/functions/v1/flag-helpscout-context`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceKey}` },
+      body: JSON.stringify({ watchItemId }),
+    })
+    if (!resp.ok) {
+      console.error('[helpscout-webhook] flag-context trigger failed:', resp.status, await resp.text())
+    }
+  } catch (err) {
+    console.error('[helpscout-webhook] flag-context trigger crashed:', (err as Error).message)
+  }
+}
+
 function json(body: unknown, status = 200, extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -153,6 +174,145 @@ function replyDirection(eventHeader: string | null, payload: Record<string, unkn
     if (t === 'user') return 'staff'
   }
   return 'staff'
+}
+
+// ── Flagged-board ingest (000292) ────────────────────────────────────────────
+// When a reply lands on a conversation whose proof has an un-resolved flagged
+// card, drop the reply into that card's update thread, so the board reads as one
+// timeline of manual notes + logged calls + real Help Scout comms. Additive and
+// best-effort: it runs AFTER the reply-stamp contract and can never fail the
+// webhook (wrapped in try/catch at the call site).
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    // Tidy whitespace: trim each line (kills Outlook's empty spacer paragraphs,
+    // which arrive as a lone-space line), then allow at most one blank line
+    // between paragraphs — otherwise the message renders with huge gaps.
+    .split('\n')
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+// Pull the just-created reply (newest embedded thread) — its plain-text body,
+// the sender's display name, and the HS thread id used as the dedup key.
+function extractReply(
+  payload: Record<string, unknown>,
+): { body: string; author: string; threadId: string } | null {
+  const threads = (payload?._embedded as { threads?: Array<Record<string, unknown>> } | undefined)?.threads
+  if (!Array.isArray(threads) || threads.length === 0) return null
+  const newest = [...threads].sort((a, b) =>
+    String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')),
+  )[0]
+  const threadId = newest?.id != null ? String(newest.id) : null
+  if (!threadId) return null // no id → no dedup key; skip rather than risk dupes
+  const rawBody = typeof newest.body === 'string' ? newest.body : ''
+  const body = stripHtml(rawBody).slice(0, 800) || '(reply on Help Scout — open the thread to read)'
+  const cb = newest.createdBy as { first?: string; last?: string; email?: string } | undefined
+  const author = [cb?.first, cb?.last].filter(Boolean).join(' ').trim() || cb?.email || 'Help Scout'
+  return { body, author, threadId }
+}
+
+async function ingestReplyIntoFlagged(
+  admin: SupabaseClient,
+  proofIds: string[],
+  payload: Record<string, unknown>,
+  direction: 'customer' | 'staff',
+): Promise<number> {
+  if (proofIds.length === 0) return 0
+  const { data: cards } = await admin
+    .from('watch_items')
+    .select('id')
+    .in('proof_id', proofIds)
+    .neq('status', 'resolved')
+  const cardIds = ((cards ?? []) as Array<{ id: string }>).map((c) => c.id)
+  if (cardIds.length === 0) return 0
+  const reply = extractReply(payload)
+  if (!reply) return 0
+  const kind = direction === 'customer' ? 'helpscout_customer' : 'helpscout_staff'
+  let inserted = 0
+  for (const watchItemId of cardIds) {
+    const { error } = await admin.from('watch_updates').insert({
+      watch_item_id: watchItemId,
+      kind,
+      body: reply.body,
+      created_by: null,
+      created_by_name: reply.author,
+      helpscout_thread_id: reply.threadId,
+    })
+    if (error) {
+      // 23505 = already ingested (webhook redelivery) — a clean no-op.
+      if (error.code !== '23505') {
+        console.error('[helpscout-webhook] flagged ingest insert failed', error.message)
+      }
+      continue
+    }
+    inserted++
+  }
+  return inserted
+}
+
+// Auto-flag onto the Flagged board when a 'complaint' tag is NEWLY added to a
+// conversation: open a Quality-complaint card for each linked proof that doesn't
+// already have an open one, so a complaint can't slip by unflagged. Idempotent —
+// the watch_items partial unique index makes a duplicate a no-op, and the
+// prior-tag check fires only on the absent→present transition (so a resolved
+// complaint isn't re-flagged on a later unrelated tag edit).
+function hasComplaint(tags: Array<string | null> | null | undefined): boolean {
+  return Array.isArray(tags)
+    && tags.some((t) => typeof t === 'string' && t.toLowerCase().includes('complaint'))
+}
+
+// Returns the ids of the cards it newly created, so the caller can pull each
+// one's preceding customer message (the complaint) in.
+async function autoFlagOnComplaint(
+  admin: SupabaseClient,
+  priorRows: Array<{ id: string; helpscout_tags: string[] | null }>,
+  newTags: string[],
+): Promise<string[]> {
+  if (!hasComplaint(newTags)) return []
+  const created: string[] = []
+  for (const p of priorRows) {
+    if (hasComplaint(p.helpscout_tags)) continue // already had complaint → not new
+    const { data: card, error } = await admin
+      .from('watch_items')
+      .insert({
+        proof_id: p.id,
+        category: 'quality_complaint',
+        status: 'open',
+        created_by: null,
+        created_by_name: 'Help Scout (complaint tag)',
+      })
+      .select('id')
+      .single()
+    if (error) {
+      // 23505 = the proof already has an open card — leave it as is.
+      if (error.code !== '23505') {
+        console.error('[helpscout-webhook] auto-flag insert failed', error.message)
+      }
+      continue
+    }
+    const cardId = (card as { id: string }).id
+    await admin.from('watch_updates').insert({
+      watch_item_id: cardId,
+      kind: 'note',
+      body: "Auto-flagged: a 'complaint' tag was added to the Help Scout conversation.",
+      created_by: null,
+      created_by_name: 'Help Scout (complaint tag)',
+    })
+    created.push(cardId)
+  }
+  return created
 }
 
 // GET /v2/conversations/{id}/threads and pull the merged-in source conversation
@@ -372,6 +532,14 @@ async function handle(req: Request): Promise<Response> {
         typeof t === 'string' ? t : ((t as { tag?: unknown } | null)?.tag ?? null))
       .filter((t): t is string => typeof t === 'string' && t.trim() !== '')
       .map((t) => t.trim().toLowerCase())
+
+    // Read prior tags before the replace so the complaint auto-flag can fire
+    // only on the 'complaint' tag's absent→present transition.
+    const { data: priorRows } = await admin
+      .from('proofs')
+      .select('id, helpscout_tags')
+      .eq('helpscout_conversation_id', String(conversationId))
+
     const { data, error } = await admin
       .from('proofs')
       .update({ helpscout_tags: tagNames })
@@ -386,6 +554,26 @@ async function handle(req: Request): Promise<Response> {
       tags: tagNames,
       matched: data?.length ?? 0,
     })
+
+    // Auto-flag onto the board when a 'complaint' tag is newly added. Additive
+    // and best-effort: a failure here must not break the tag-sync contract.
+    let autoFlagged = 0
+    try {
+      const newCardIds = await autoFlagOnComplaint(
+        admin,
+        (priorRows ?? []) as Array<{ id: string; helpscout_tags: string[] | null }>,
+        tagNames,
+      )
+      autoFlagged = newCardIds.length
+      // Pull each newly-flagged card's preceding customer message (the complaint)
+      // into its thread. Fire-and-forget so the webhook ack stays fast.
+      for (const cardId of newCardIds) {
+        const t = triggerFlagContext(supabaseUrl, serviceKey, cardId)
+        if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(t)
+      }
+    } catch (err) {
+      console.error('[helpscout-webhook] complaint auto-flag crashed', (err as Error).message)
+    }
     // Kick the drafter on the tag change too — this is how a workflow handoff
     // into Customer Support reaches the pipeline. Fire-and-forget; the worker
     // gates on mailbox = Customer Support + mode + a waiting customer message +
@@ -393,7 +581,7 @@ async function handle(req: Request): Promise<Response> {
     // CS, with no customer message, or already-drafted is a cheap no-op.
     const trigger = triggerAiDraft(supabaseUrl, serviceKey, conversationId, eventHeader)
     if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(trigger)
-    return json({ ok: true, tags: tagNames, matched: data?.length ?? 0 })
+    return json({ ok: true, tags: tagNames, matched: data?.length ?? 0, auto_flagged: autoFlagged })
   }
 
   // AI draft worker: created / moved / customer-reply → drafting;
@@ -457,6 +645,7 @@ async function handle(req: Request): Promise<Response> {
   // grace suppression would go blind to exactly the replies the fresh
   // conversation exists to win.
   let matched = data?.length ?? 0
+  const matchedProofIds: string[] = ((data ?? []) as Array<{ id: string }>).map((r) => r.id)
   if (matched === 0) {
     const { data: nudgeRows } = await admin
       .from('proof_nudges')
@@ -476,12 +665,22 @@ async function handle(req: Request): Promise<Response> {
         return json({ error: 'update failed', detail: nudgeErr.message }, 500)
       }
       matched = viaNudge?.length ?? 0
+      matchedProofIds.push(...((viaNudge ?? []) as Array<{ id: string }>).map((r) => r.id))
     }
+  }
+
+  // Weave the reply into any flagged card's thread (000292). Best-effort: a
+  // failure here must never break the reply-stamp contract above.
+  let flaggedIngested = 0
+  try {
+    flaggedIngested = await ingestReplyIntoFlagged(admin, matchedProofIds, payload, direction)
+  } catch (err) {
+    console.error('[helpscout-webhook] flagged ingest crashed', (err as Error).message)
   }
 
   // 200 whether or not a proof matched (most HS conversations aren't proofs);
   // a matched-but-empty result is a normal no-op, not an error.
-  return json({ ok: true, matched, direction })
+  return json({ ok: true, matched, direction, flagged_ingested: flaggedIngested })
 }
 
 Deno.serve(async (req) => {

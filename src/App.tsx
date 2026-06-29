@@ -31,6 +31,7 @@ const QuotePage = lazyWithRetry(() => import('./pages/QuotePage'), 'QuotePage')
 const OrdersPage = lazyWithRetry(() => import('./pages/OrdersPage'), 'OrdersPage')
 const OrderReviewPage = lazyWithRetry(() => import('./pages/OrderReviewPage'), 'OrderReviewPage')
 const FeedbackPage = lazyWithRetry(() => import('./pages/FeedbackPage'), 'FeedbackPage')
+const FlaggedPage = lazyWithRetry(() => import('./pages/FlaggedPage'), 'FlaggedPage')
 const NotificationSettingsPage = lazyWithRetry(() => import('./pages/NotificationSettingsPage'), 'NotificationSettingsPage')
 const AdminLayout = lazyWithRetry(() => import('./pages/admin/AdminLayout'), 'AdminLayout')
 const AdminUsersPage = lazyWithRetry(() => import('./pages/admin/AdminUsersPage'), 'AdminUsersPage')
@@ -109,6 +110,7 @@ function AppShell() {
         <Route path="/orders" element={<RequireAuth><OrdersPage /></RequireAuth>} />
         <Route path="/orders/:id/place" element={<RequireAuth><OrderReviewPage /></RequireAuth>} />
         <Route path="/feedback" element={<RequireAuth><FeedbackPage /></RequireAuth>} />
+        <Route path="/flagged" element={<RequireAuth><FlaggedPage /></RequireAuth>} />
         <Route path="/settings/notifications" element={<RequireAuth><NotificationSettingsPage /></RequireAuth>} />
         <Route path="/proofs/new" element={<RequireAuth><NewProofPage /></RequireAuth>} />
         <Route path="/proofs/:id" element={<RequireAuth><ProofDetailPage /></RequireAuth>} />

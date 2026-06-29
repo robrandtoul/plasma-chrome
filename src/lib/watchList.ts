@@ -1,0 +1,172 @@
+// Shared types + display metadata for the "Flagged" board (problem projects).
+// NB: the user-facing board is called "Flagged"; the storage tables keep their
+// original names (watch_items / watch_updates) — these types deliberately mirror
+// the DB, so "Watch*" type names = the storage layer, "Flagged" = the UI.
+// Kept in lockstep with the CHECK constraints on proofs.watch_items /
+// proofs.watch_updates (migration 000290): if you add a category, status, or
+// update kind here, widen the DB constraint in a migration too.
+
+import type { PillColour } from '../design'
+
+// Re-exported so the board's author badge matches the header avatar colour
+// without each call site importing from two lib modules.
+export { authorBadgeColour } from './feedback'
+
+export type WatchCategory =
+  | 'lost_in_transit'
+  | 'reprint'
+  | 'quality_complaint'
+  | 'delayed'
+  | 'payment_issue'
+  | 'general'
+
+export type WatchStatus = 'open' | 'monitoring' | 'resolved'
+
+// note / phone_call are the manual kinds (the in-app picker). The helpscout_*
+// kinds are ingested from the Help Scout webhook (000292) and render distinctly;
+// they never appear in the manual picker (WATCH_UPDATE_KINDS stays the two).
+export type WatchUpdateKind = 'note' | 'phone_call' | 'helpscout_customer' | 'helpscout_staff'
+
+export function isHelpScoutKind(kind: WatchUpdateKind): boolean {
+  return kind === 'helpscout_customer' || kind === 'helpscout_staff'
+}
+
+// One flagged project (the card). Proof + author context are denormalised on
+// the row and stamped server-side (profiles is self-read-only; see 000290).
+export interface WatchItem {
+  id: string
+  proof_id: string
+  category: WatchCategory
+  status: WatchStatus
+  ordered_on: string | null
+  // Optional target/expected-resolution date (migration 000291). YYYY-MM-DD.
+  due_on: string | null
+  company_name: string | null
+  contact_name: string | null
+  designer_name: string | null
+  stock_order_number: string | null
+  helpscout_conversation_url: string | null
+  created_by: string | null
+  created_by_name: string | null
+  created_by_initials: string | null
+  created_by_colour: string | null
+  status_changed_at: string | null
+  status_changed_by: string | null
+  status_changed_by_name: string | null
+  created_at: string
+  updated_at: string
+}
+
+// One entry in a card's shared thread — a note or a logged phone call.
+export interface WatchUpdate {
+  id: string
+  watch_item_id: string
+  kind: WatchUpdateKind
+  body: string
+  created_by: string | null
+  created_by_name: string | null
+  created_by_initials: string | null
+  created_by_colour: string | null
+  // Set on Help Scout-ingested rows (the HS thread id); null for manual entries.
+  helpscout_thread_id: string | null
+  created_at: string
+}
+
+// Ordered for the flag form's category picker + card pills.
+export const WATCH_CATEGORIES: {
+  value: WatchCategory
+  label: string
+  colour: PillColour
+}[] = [
+  { value: 'lost_in_transit', label: 'Lost in transit', colour: 'critical' },
+  { value: 'reprint', label: 'Reprint', colour: 'allocated' },
+  { value: 'quality_complaint', label: 'Quality complaint', colour: 'brand' },
+  { value: 'delayed', label: 'Delayed', colour: 'low' },
+  { value: 'payment_issue', label: 'Payment issue', colour: 'neutral' },
+  { value: 'general', label: 'General', colour: 'mute' },
+]
+
+export const WATCH_CATEGORY_META: Record<
+  WatchCategory,
+  { label: string; colour: PillColour }
+> = Object.fromEntries(
+  WATCH_CATEGORIES.map((c) => [c.value, { label: c.label, colour: c.colour }]),
+) as Record<WatchCategory, { label: string; colour: PillColour }>
+
+// Pipeline order: open → monitoring → resolved.
+export const WATCH_STATUSES: {
+  value: WatchStatus
+  label: string
+  colour: PillColour
+}[] = [
+  // Colour-coded: open = red (needs us), monitoring = blue (waiting), resolved
+  // = green. The legend on the board ties each colour to its meaning.
+  { value: 'open', label: 'Open', colour: 'out' },
+  { value: 'monitoring', label: 'Monitoring', colour: 'allocated' },
+  { value: 'resolved', label: 'Resolved', colour: 'in-stock' },
+]
+
+export const WATCH_STATUS_META: Record<
+  WatchStatus,
+  { label: string; colour: PillColour }
+> = Object.fromEntries(
+  WATCH_STATUSES.map((s) => [s.value, { label: s.label, colour: s.colour }]),
+) as Record<WatchStatus, { label: string; colour: PillColour }>
+
+export const WATCH_UPDATE_KINDS: { value: WatchUpdateKind; label: string }[] = [
+  { value: 'note', label: 'Note' },
+  { value: 'phone_call', label: 'Phone call' },
+]
+
+// "resolved" is the single terminal status — drops off the default board view
+// but stays searchable under the Resolved / All scopes.
+export function isResolvedWatch(status: WatchStatus): boolean {
+  return status === 'resolved'
+}
+
+// Plain-English meaning for each status, shown as a hint so the labels explain
+// themselves (Open vs Monitoring was unclear without it).
+export const WATCH_STATUS_HINT: Record<WatchStatus, string> = {
+  open: 'On us to act',
+  monitoring: 'Done our bit — waiting on someone else',
+  resolved: 'Sorted, nothing left to do',
+}
+
+// True when a card's target date has passed and it isn't resolved yet. Compares
+// YYYY-MM-DD strings (lexical compare is date-correct for that format).
+export function isOverdue(
+  dueOn: string | null,
+  status: WatchStatus,
+  now: Date = new Date(),
+): boolean {
+  if (!dueOn || status === 'resolved') return false
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  return dueOn < today
+}
+
+// Short label for a due date on a card ("Due 4 Jul" / "Overdue" / "Due today").
+export function formatDue(dueOn: string, status: WatchStatus, now: Date = new Date()): string {
+  const d = new Date(dueOn + 'T00:00:00')
+  if (Number.isNaN(d.getTime())) return ''
+  if (isOverdue(dueOn, status, now)) return 'Overdue'
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  if (dueOn === today) return 'Due today'
+  return `Due ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`
+}
+
+// Short, human relative time for the "last update 2h ago" line on a card.
+export function relativeTime(iso: string, now: number = Date.now()): string {
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return ''
+  const secs = Math.max(0, Math.round((now - then) / 1000))
+  if (secs < 60) return 'just now'
+  const mins = Math.round(secs / 60)
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.round(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.round(hours / 24)
+  if (days < 30) return `${days}d ago`
+  const months = Math.round(days / 30)
+  if (months < 12) return `${months}mo ago`
+  return `${Math.round(months / 12)}y ago`
+}
