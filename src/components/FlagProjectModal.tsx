@@ -162,6 +162,14 @@ export default function FlagProjectModal({ proof, onClose, onCreated }: FlagProj
       metadata: { category, proof_id: resolvedProofId },
     })
 
+    // Pull the customer's preceding Help Scout message (often the complaint) into
+    // the card's thread before the board loads it. Capped so a slow/unreachable
+    // Help Scout never hangs the flag — the function still finishes server-side.
+    await Promise.race([
+      supabase.functions.invoke('flag-helpscout-context', { body: { watchItemId: item.id } }),
+      new Promise((resolve) => setTimeout(resolve, 4000)),
+    ]).catch(() => {})
+
     setSubmitting(false)
     onCreated(item)
   }

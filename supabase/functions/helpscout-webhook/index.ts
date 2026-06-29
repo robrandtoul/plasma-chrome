@@ -96,6 +96,27 @@ async function triggerAiDraft(
   }
 }
 
+// Fire-and-forget trigger of flag-helpscout-context, to pull a just-auto-flagged
+// card's preceding customer message (the complaint) into its thread. Best-effort.
+async function triggerFlagContext(
+  supabaseUrl: string,
+  serviceKey: string,
+  watchItemId: string,
+): Promise<void> {
+  try {
+    const resp = await fetch(`${supabaseUrl}/functions/v1/flag-helpscout-context`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceKey}` },
+      body: JSON.stringify({ watchItemId }),
+    })
+    if (!resp.ok) {
+      console.error('[helpscout-webhook] flag-context trigger failed:', resp.status, await resp.text())
+    }
+  } catch (err) {
+    console.error('[helpscout-webhook] flag-context trigger crashed:', (err as Error).message)
+  }
+}
+
 function json(body: unknown, status = 200, extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -247,13 +268,15 @@ function hasComplaint(tags: Array<string | null> | null | undefined): boolean {
     && tags.some((t) => typeof t === 'string' && t.toLowerCase().includes('complaint'))
 }
 
+// Returns the ids of the cards it newly created, so the caller can pull each
+// one's preceding customer message (the complaint) in.
 async function autoFlagOnComplaint(
   admin: SupabaseClient,
   priorRows: Array<{ id: string; helpscout_tags: string[] | null }>,
   newTags: string[],
-): Promise<number> {
-  if (!hasComplaint(newTags)) return 0
-  let flagged = 0
+): Promise<string[]> {
+  if (!hasComplaint(newTags)) return []
+  const created: string[] = []
   for (const p of priorRows) {
     if (hasComplaint(p.helpscout_tags)) continue // already had complaint → not new
     const { data: card, error } = await admin
@@ -274,16 +297,17 @@ async function autoFlagOnComplaint(
       }
       continue
     }
+    const cardId = (card as { id: string }).id
     await admin.from('watch_updates').insert({
-      watch_item_id: (card as { id: string }).id,
+      watch_item_id: cardId,
       kind: 'note',
       body: "Auto-flagged: a 'complaint' tag was added to the Help Scout conversation.",
       created_by: null,
       created_by_name: 'Help Scout (complaint tag)',
     })
-    flagged++
+    created.push(cardId)
   }
-  return flagged
+  return created
 }
 
 // GET /v2/conversations/{id}/threads and pull the merged-in source conversation
@@ -530,11 +554,18 @@ async function handle(req: Request): Promise<Response> {
     // and best-effort: a failure here must not break the tag-sync contract.
     let autoFlagged = 0
     try {
-      autoFlagged = await autoFlagOnComplaint(
+      const newCardIds = await autoFlagOnComplaint(
         admin,
         (priorRows ?? []) as Array<{ id: string; helpscout_tags: string[] | null }>,
         tagNames,
       )
+      autoFlagged = newCardIds.length
+      // Pull each newly-flagged card's preceding customer message (the complaint)
+      // into its thread. Fire-and-forget so the webhook ack stays fast.
+      for (const cardId of newCardIds) {
+        const t = triggerFlagContext(supabaseUrl, serviceKey, cardId)
+        if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(t)
+      }
     } catch (err) {
       console.error('[helpscout-webhook] complaint auto-flag crashed', (err as Error).message)
     }
