@@ -13,6 +13,7 @@ import { getRepliesEnabled } from '../lib/repliesEnabled'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
 import { invalidateApprovedNoOrderCount } from '../lib/approvedNoOrder'
 import OrderBuilderModal from '../components/OrderBuilderModal'
+import FlagProjectModal from '../components/FlagProjectModal'
 import { logAudit } from '../lib/audit'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import type {
@@ -30,7 +31,7 @@ import { customerProofPath, openDesignerPreview } from '../lib/customerProofUrl'
 import { formatPrice } from '../lib/currency'
 // QuoteLink now lives inside DesignerChrome (PR 31).
 import { DesignerChrome, ButtonCoral, ButtonGhost, ProofStatusPill, PanelShell, tokens } from '../design'
-import { ChevronRight, ChevronLeft, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, MessageSquare, Clock, Activity, Package, HelpCircle, ThumbsDown } from 'lucide-react'
+import { ChevronRight, ChevronLeft, Plus, ExternalLink, Copy, Check as CheckIcon, FileText, Pencil, Layers, MoreHorizontal, AlertTriangle, Send, Eye, Flag, MessageSquare, Clock, Activity, Package, HelpCircle, ThumbsDown } from 'lucide-react'
 import {
   computeViewedState,
   viewedStateDotClass,
@@ -415,6 +416,10 @@ export default function ProofDetailPage() {
   // the cached fetch resolves so the button never flashes when off.
   const [orderingEnabled, setOrderingEnabled] = useState<boolean | null>(null)
   const [showOrderBuilder, setShowOrderBuilder] = useState(false)
+  // Watch list (000290): is this project already on the shared board with an
+  // un-resolved card? Drives the header Flag button (flag vs "On watch list").
+  const [showFlagModal, setShowFlagModal] = useState(false)
+  const [watchItemId, setWatchItemId] = useState<string | null>(null)
   // Latest order(s) for this proof. Drives the inline order-status panel and the
   // duplicate-order guard (don't offer a plain "Create order" when one's already
   // in flight). Null until loaded; orders only exist for approved proofs.
@@ -442,6 +447,24 @@ export default function ProofDetailPage() {
 
   useEffect(() => {
     if (id) loadProof(id)
+  }, [id])
+
+  // Is this project on the watch list with an un-resolved card? (proof_id = the
+  // route id.) A live card flips the header Flag button to "On watch list".
+  useEffect(() => {
+    if (!id) return
+    let cancelled = false
+    void (async () => {
+      const { data } = await supabase
+        .from('watch_items')
+        .select('id')
+        .eq('proof_id', id)
+        .neq('status', 'resolved')
+        .limit(1)
+        .maybeSingle()
+      if (!cancelled) setWatchItemId((data?.id as string | null) ?? null)
+    })()
+    return () => { cancelled = true }
   }, [id])
 
   // Mount-time fetch of the global replies-enabled flag. Cached
@@ -2570,6 +2593,29 @@ export default function ProofDetailPage() {
                   <Eye size={13} aria-hidden="true" />
                   {watched ? 'Watching' : 'Watch'}
                 </button>
+                {/* Flag onto the shared Watch list board (000290). Distinct from
+                    the Watch button above (which is push-notification opt-in). */}
+                {watchItemId ? (
+                  <Link
+                    to="/watch-list"
+                    title="This project is on the watch list"
+                    className="inline-flex h-6 items-center gap-1 rounded px-2 text-[12px] text-brand transition-colors hover:bg-canvas"
+                  >
+                    <Flag size={13} aria-hidden="true" />
+                    On watch list
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowFlagModal(true)}
+                    title="Flag this project onto the shared watch list"
+                    aria-label="Flag this project onto the watch list"
+                    className="inline-flex h-6 items-center gap-1 rounded px-2 text-[12px] text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+                  >
+                    <Flag size={13} aria-hidden="true" />
+                    Flag
+                  </button>
+                )}
               </div>
               {/* Single action row: the two everyday actions stay
                   visible — Add new version (coral primary) + Open
@@ -3698,6 +3744,19 @@ export default function ProofDetailPage() {
           />
         )
       })()}
+
+      {/* Flag onto the Watch list board (000290). Fixed to this proof. */}
+      {showFlagModal && (
+        <FlagProjectModal
+          proof={{
+            id: proof.id,
+            companyName: proof.contacts.companies?.name ?? null,
+            contactName: proof.contacts.full_name ?? null,
+          }}
+          onClose={() => setShowFlagModal(false)}
+          onCreated={(item) => { setShowFlagModal(false); setWatchItemId(item.id) }}
+        />
+      )}
 
       {/* Version detail modal */}
       {selectedVersion && (
