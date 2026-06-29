@@ -192,7 +192,7 @@ Deno.serve(async (req) => {
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, card_discount_type, card_discount_value, ship_dest_country, ship_dest_postcode, payment_reference, expires_at, material_variant_id, material_option_id, quantity, names_count, has_personalisation, proof_id')
+    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, card_discount_type, card_discount_value, ship_dest_country, ship_dest_postcode, payment_reference, expires_at, material_variant_id, material_option_id, quantity, names_count, has_personalisation, order_kind, proof_id')
     .eq('id', orderId)
     .eq('token', token)
     .single()
@@ -229,7 +229,22 @@ Deno.serve(async (req) => {
   let productLabel = ''
   if (order.custom_quote_total != null) {
     goods = Number(order.custom_quote_total)
-    productLabel = 'Plasma cards (bespoke quote)'
+    productLabel = order.order_kind === 'prototype' ? 'Plasma prototype sample' : 'Plasma cards (bespoke quote)'
+    // A prototype (and any custom-quote order that kept its variant) carries a
+    // material_variant_id + a fixed quantity (the prototype's 1–3 copies). Read
+    // the per-card weight + copies so international shipping can be rated below;
+    // without these, only domestic-UK (flat-rate) shipping would work. A truly
+    // bespoke custom quote with no variant/quantity leaves both null → the same
+    // "we'll confirm shipping" fallback as before (no behaviour change there).
+    if (order.material_variant_id) {
+      const { data: variant } = await admin
+        .from('material_variants')
+        .select('weight_grams')
+        .eq('id', order.material_variant_id)
+        .maybeSingle()
+      if (variant?.weight_grams != null) variantWeightGrams = Number(variant.weight_grams)
+    }
+    if (order.quantity != null) resolvedQuantity = order.quantity
   } else {
     if (!order.material_variant_id) {
       return json({

@@ -368,7 +368,7 @@ Deno.serve(async (req) => {
   // ── Load order + proof + current version ──────────────────────────────────
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, status, quantity, person_quantities, has_personalisation, custom_quote_total, date_required, stock_order_number, project_name, proof_id, ship_dest_country, ship_to_address, material_variant_id, material_option_id, dropbox_folder_url, payment_reference, currency, fulfilled_at')
+    .select('id, status, quantity, person_quantities, has_personalisation, custom_quote_total, order_kind, date_required, stock_order_number, project_name, proof_id, ship_dest_country, ship_to_address, material_variant_id, material_option_id, dropbox_folder_url, payment_reference, currency, fulfilled_at')
     .eq('id', orderId)
     .maybeSingle()
   if (orderErr) return json({ ok: false, error: `Order lookup failed: ${orderErr.message}` }, 500)
@@ -452,6 +452,12 @@ Deno.serve(async (req) => {
   }
   if (!Number.isFinite(qty) || qty <= 0) return json({ ok: false, error: 'This order has no fixed quantity to place.' }, 400)
 
+  // A prototype is a flat-fee sample run (up to three exact copies of the
+  // approved design), not a production run — flag it loudly on the hand-off so
+  // production makes the samples, not the full quantity.
+  const isPrototype = order.order_kind === 'prototype'
+  const prototypeMarker = `PROTOTYPE SAMPLE — up to ${qty} exact ${qty === 1 ? 'copy' : 'copies'}, NOT a production run.`
+
   const inks = buildInks(pv.ink_names)
 
   // Durable spec snapshot (Order log Phase 2). Rebuilt from the spec we just
@@ -499,12 +505,15 @@ Deno.serve(async (req) => {
     dateRequired: dateRequiredStr,
     dropboxFolderUrl: order.dropbox_folder_url ?? null,
     route,
+    prototype: isPrototype,
   }
 
   // ── IN-HOUSE ──────────────────────────────────────────────────────────────
   if (route === 'in_house') {
     const card = buildCardLine(mat.code, pv.material_display, pv.material_options, front, core, back)
-    const lines: string[] = [`Qty: ${qty}`, `Card: ${card}`]
+    const lines: string[] = []
+    if (isPrototype) lines.push(prototypeMarker)
+    lines.push(`Qty: ${qty}`, `Card: ${card}`)
     if (dateRequiredStr) lines.push(`Date required: ${dateRequiredStr}`)
     if (inks.front) lines.push(`Ink on front: ${inks.front}`)
     if (inks.back) lines.push(`Ink on back: ${inks.back}`)
@@ -629,7 +638,9 @@ Deno.serve(async (req) => {
 
   // Machine-generated, parser-critical spec block. Injected into the editable
   // supplier-email template as {order_details}; never freely edited.
-  const detailLines: string[] = [`Qty: ${qty}`]
+  const detailLines: string[] = []
+  if (isPrototype) detailLines.push(prototypeMarker)
+  detailLines.push(`Qty: ${qty}`)
   if (splitLines.length) {
     detailLines.push('Per person:')
     for (const sl of splitLines) detailLines.push(sl)
