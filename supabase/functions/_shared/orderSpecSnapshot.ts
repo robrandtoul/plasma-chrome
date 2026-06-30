@@ -50,8 +50,9 @@ export interface OrderSpecSnapshotInput {
   contactEmail: string | null
   contactName: string | null
   companyName: string | null
-  /** Provenance — which writer stamped it and when. */
-  stage: 'create' | 'place'
+  /** Provenance — which writer stamped it and when. ('edit' = update-order,
+   *  re-stamping after a designer edits an unpaid order link.) */
+  stage: 'create' | 'place' | 'edit'
   capturedBy: string | null
   capturedAt: string
 }
@@ -69,7 +70,7 @@ export interface OrderSpecSnapshot {
   custom_quote_total: number | null
   contact: { email: string | null; full_name: string | null } | null
   company: { name: string | null } | null
-  stage: 'create' | 'place'
+  stage: 'create' | 'place' | 'edit'
   captured_by: string | null
   captured_at: string
 }

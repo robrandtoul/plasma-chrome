@@ -18,6 +18,7 @@ import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import OrdersPipelineCard from '../components/OrdersPipelineCard'
 import OrderBuilderModal from '../components/OrderBuilderModal'
 import RecordOfflinePaymentModal from '../components/RecordOfflinePaymentModal'
+import EditOrderModal from '../components/EditOrderModal'
 import DesignerAvatar from '../components/DesignerAvatar'
 import { ChevronRight, StickyNote } from 'lucide-react'
 
@@ -549,6 +550,8 @@ export default function OrdersPage() {
   // The awaiting-payment order being recorded as paid offline (bank transfer),
   // or null when the modal is closed.
   const [recordOffline, setRecordOffline] = useState<OrderRow | null>(null)
+  // The unpaid order being edited in place (thickness/quantity/etc.), if any.
+  const [editingOrder, setEditingOrder] = useState<OrderRow | null>(null)
   const navigate = useNavigate()
   // Per-order reminder roll-up (the automated unpaid-order chase, 000238).
   const [reminders, setReminders] = useState<Record<string, ReminderSummary>>({})
@@ -1320,6 +1323,7 @@ export default function OrdersPage() {
                       cadence={cadence}
                       onCopy={() => void copyLink(o)}
                       onReactivate={() => void reactivate(o)}
+                      onEdit={() => setEditingOrder(o)}
                       onCancel={() => void cancelOrder(o)}
                       onRecordOffline={() => setRecordOffline(o)}
                     />
@@ -1440,6 +1444,16 @@ export default function OrdersPage() {
             spec={specLabel(recordOffline)}
             onClose={() => setRecordOffline(null)}
             onRecorded={(orderId) => void refetchOrder(orderId)}
+          />
+        )}
+
+        {editingOrder && (
+          <EditOrderModal
+            orderId={editingOrder.id}
+            customerLabel={customerLabel(editingOrder)}
+            materialDisplay={specLabel(editingOrder)}
+            onClose={() => setEditingOrder(null)}
+            onUpdated={() => void refetchOrder(editingOrder.id)}
           />
         )}
       </div>
@@ -2016,6 +2030,7 @@ function AwaitingPaymentCard({
   cadence,
   onCopy,
   onReactivate,
+  onEdit,
   onCancel,
   onRecordOffline,
 }: {
@@ -2028,6 +2043,7 @@ function AwaitingPaymentCard({
   cadence: ReminderCadence
   onCopy: () => void
   onReactivate: () => void
+  onEdit: () => void
   onCancel: () => void
   onRecordOffline: () => void
 }) {
@@ -2124,6 +2140,9 @@ function AwaitingPaymentCard({
             </ButtonInk>
           )}
           <ButtonGhost size="sm" onClick={onRecordOffline} disabled={busy} className="max-md:w-full max-md:h-11">Record offline payment</ButtonGhost>
+          {(order.order_kind ?? 'production') === 'production' && (
+            <ButtonGhost size="sm" onClick={onEdit} disabled={busy} className="max-md:w-full max-md:h-11">Edit order</ButtonGhost>
+          )}
           <ButtonGhost size="sm" onClick={onCancel} disabled={busy} className="max-md:w-full max-md:h-11">Cancel order</ButtonGhost>
         </div>
       </div>
