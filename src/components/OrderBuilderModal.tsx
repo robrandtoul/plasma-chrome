@@ -1247,17 +1247,24 @@ export default function OrderBuilderModal({
                     {personNames.map((name) => (
                       <div key={name} className="flex w-full items-center justify-between gap-3">
                         <label htmlFor={`bq-${name}`} title={name} className="min-w-0 flex-1 truncate text-sm text-ink">{name}</label>
-                        <Input
-                          id={`bq-${name}`}
-                          type="number"
-                          min={1}
-                          step={1}
-                          inputMode="numeric"
-                          value={personQty[name] ?? ''}
-                          onChange={(e) => setPersonQty((p) => ({ ...p, [name]: e.target.value }))}
-                          placeholder="0"
-                          className="w-24 shrink-0 text-right"
-                        />
+                        {/* Fixed-width wrapper: the design-system Input is `w-full`
+                            by default, which (in Tailwind v4) beats a `w-24` passed
+                            on the element and would stretch the box across the whole
+                            row, collapsing the name label to nothing. Constrain the
+                            width on the wrapper instead so the name stays visible. */}
+                        <div className="w-24 shrink-0">
+                          <Input
+                            id={`bq-${name}`}
+                            type="number"
+                            min={1}
+                            step={1}
+                            inputMode="numeric"
+                            value={personQty[name] ?? ''}
+                            onChange={(e) => setPersonQty((p) => ({ ...p, [name]: e.target.value }))}
+                            placeholder="0"
+                            className="text-right"
+                          />
+                        </div>
                       </div>
                     ))}
                     <div className="flex w-full items-center justify-between gap-3 border-t border-line-soft pt-2 text-sm">
