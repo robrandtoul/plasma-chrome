@@ -318,11 +318,18 @@ function StatTile({ label, count, active, tone, onClick, help, badge, badgeTitle
       )}
       {/* Dot + label row. Dot picks up the tile's tone; label uses the
           eyebrow class (inline whitespace-normal so long labels wrap —
-          see PR 17c for why the override has to be inline). Fixed two-line
-          height + slightly tighter tracking so every tile's number sits on
-          the same baseline and three-word labels ("Approved this week") fit
-          two lines rather than spilling to three in the narrow cells. */}
-      <div className="flex items-center gap-2 h-[26px]">
+          see PR 17c for why the override has to be inline). The label is
+          top-anchored (items-start so the dot sits by its first line) and
+          free to take as many lines as it needs — "In auto follow-up" and
+          "Approved this week" hit three lines in a narrow workflow cell.
+          overflow-wrap:anywhere lets a long token break rather than spill
+          sideways into the neighbouring tile / divider. The number below is
+          pushed to the bottom of the tile with mt-auto; because every tile
+          in the strip stretches to a common height (xl:items-stretch on the
+          strip, grid/flex stretch elsewhere), bottom-anchoring the numbers
+          keeps them on one baseline without a fixed label height that a
+          long label would overrun into the number. */}
+      <div className="flex items-start gap-2">
         <span
           aria-hidden="true"
           className="inline-block w-4 h-4 rounded shrink-0"
@@ -331,14 +338,14 @@ function StatTile({ label, count, active, tone, onClick, help, badge, badgeTitle
         <HelpTip body={help} affordance="none" focusable={false}>
           <span
             className="eyebrow text-ink-mute"
-            style={{ whiteSpace: 'normal', lineHeight: 1.2, letterSpacing: '0.02em' }}
+            style={{ whiteSpace: 'normal', lineHeight: 1.2, letterSpacing: '0.02em', overflowWrap: 'anywhere' }}
           >
             {label}
           </span>
         </HelpTip>
       </div>
       <span
-        className="text-[32px] leading-none font-medium tabular-nums font-mono text-ink"
+        className="mt-auto text-[32px] leading-none font-medium tabular-nums font-mono text-ink"
         style={{ fontFeatureSettings: 'var(--num-features)' }}
       >
         {String(count).padStart(2, '0')}
