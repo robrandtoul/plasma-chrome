@@ -15,6 +15,7 @@ import type { Currency } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import OrdersPipelineCard from '../components/OrdersPipelineCard'
 import OrderBuilderModal from '../components/OrderBuilderModal'
+import RecordOfflinePaymentModal from '../components/RecordOfflinePaymentModal'
 import DesignerAvatar from '../components/DesignerAvatar'
 import { ChevronRight } from 'lucide-react'
 
@@ -527,6 +528,9 @@ export default function OrdersPage() {
   const [thumbs, setThumbs] = useState<Record<string, GridImage | null>>({})
   const [busyId, setBusyId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  // The awaiting-payment order being recorded as paid offline (bank transfer),
+  // or null when the modal is closed.
+  const [recordOffline, setRecordOffline] = useState<OrderRow | null>(null)
   const navigate = useNavigate()
   // Per-order reminder roll-up (the automated unpaid-order chase, 000238).
   const [reminders, setReminders] = useState<Record<string, ReminderSummary>>({})
@@ -892,6 +896,18 @@ export default function OrdersPage() {
     }
   }
 
+  // After the record-offline-payment edge function flips a sent order to
+  // paid/offline, refetch that single row so its newly-stamped amounts
+  // (cards / tooling / shipping) are accurate. The useMemo re-buckets it from
+  // Awaiting payment into To order automatically.
+  async function refetchOrder(orderId: string) {
+    const { data } = await supabase.from('orders').select(SELECT).eq('id', orderId).maybeSingle()
+    if (data) {
+      const row = data as unknown as OrderRow
+      setOrders((prev) => prev.map((r) => (r.id === orderId ? row : r)))
+    }
+  }
+
   // Open the order builder inline for an approved-but-unordered proof. The
   // worklist row already carries the proof-level fields; the one thing it lacks
   // is the current version's variant / option / currency / names, so fetch that,
@@ -1178,6 +1194,7 @@ export default function OrdersPage() {
                       onCopy={() => void copyLink(o)}
                       onReactivate={() => void reactivate(o)}
                       onCancel={() => void cancelOrder(o)}
+                      onRecordOffline={() => setRecordOffline(o)}
                     />
                   ))}
                 </div>
@@ -1285,6 +1302,16 @@ export default function OrdersPage() {
           <OrderBuilderModal
             {...orderBuilder}
             onClose={() => { setOrderBuilder(null); setReloadKey((k) => k + 1); invalidateApprovedNoOrderCount() }}
+          />
+        )}
+
+        {recordOffline && (
+          <RecordOfflinePaymentModal
+            order={recordOffline}
+            title={customerLabel(recordOffline)}
+            spec={specLabel(recordOffline)}
+            onClose={() => setRecordOffline(null)}
+            onRecorded={(orderId) => void refetchOrder(orderId)}
           />
         )}
       </div>
@@ -1816,6 +1843,7 @@ function AwaitingPaymentCard({
   onCopy,
   onReactivate,
   onCancel,
+  onRecordOffline,
 }: {
   order: OrderRow
   thumb: GridImage | null
@@ -1827,6 +1855,7 @@ function AwaitingPaymentCard({
   onCopy: () => void
   onReactivate: () => void
   onCancel: () => void
+  onRecordOffline: () => void
 }) {
   const total = orderTotal(order)
 
@@ -1920,6 +1949,7 @@ function AwaitingPaymentCard({
               {busy ? 'Reactivating…' : 'Reactivate link'}
             </ButtonInk>
           )}
+          <ButtonGhost size="sm" onClick={onRecordOffline} disabled={busy} className="max-md:w-full max-md:h-11">Record offline payment</ButtonGhost>
           <ButtonGhost size="sm" onClick={onCancel} disabled={busy} className="max-md:w-full max-md:h-11">Cancel order</ButtonGhost>
         </div>
       </div>
