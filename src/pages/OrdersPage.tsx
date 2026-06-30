@@ -2316,17 +2316,15 @@ function LinkNoteSection({
   if (note) {
     const meta = [note.byName, relativeTime(note.updatedAt)].filter(Boolean).join(' · ')
     return (
-      <div className="mt-3 flex items-start gap-2 rounded-lg border border-line border-l-4 border-l-[var(--c-low)] bg-[var(--c-low-soft)] px-3 py-2">
-        <StickyNote size={15} className="mt-0.5 shrink-0 text-[var(--c-low)]" aria-hidden="true" />
-        <div className="min-w-0 flex-1">
-          <p className="whitespace-pre-wrap break-words text-sm text-ink">{note.note}</p>
-          {meta && <p className="mt-0.5 text-[12px] text-ink-mute">{meta}</p>}
+      <div className="mt-3 rounded-lg border border-line border-l-4 border-l-[var(--c-low)] bg-[var(--c-low-soft)] px-3 py-2">
+        <div className="flex items-start gap-2">
+          <StickyNote size={15} className="mt-0.5 shrink-0 text-[var(--c-low)]" aria-hidden="true" />
+          <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm text-ink">{note.note}</p>
+          {canEdit && <ButtonGhost size="sm" onClick={startEdit} className="shrink-0">Edit</ButtonGhost>}
         </div>
-        {canEdit && (
-          <div className="flex shrink-0 gap-1">
-            <ButtonGhost size="sm" onClick={startEdit}>Edit</ButtonGhost>
-          </div>
-        )}
+        {/* Author + time on its own line, indented to sit under the note text
+            (icon 15px + gap 8px) so the Edit button stays cleanly top-right. */}
+        {meta && <p className="mt-1 pl-[23px] text-[12px] text-ink-mute">{meta}</p>}
       </div>
     )
   }
