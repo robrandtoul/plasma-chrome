@@ -133,6 +133,46 @@ function titleCaseCode(code: string): string {
   return String(code).split(/[_\s]+/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
 }
 
+// Turn a plain-text message into the Help Scout body. Help Scout treats the
+// note/reply `text` as HTML, so newlines become <br>. Stray angle brackets in
+// the (now freely-editable) message are escaped so "< 2mm" renders literally
+// rather than being eaten as a tag; `&` is left alone so the Dropbox link's
+// query string (?rlkey=…&dl=0) keeps working exactly as the generated text did.
+// The spec-line safety check below runs on the raw text, but that's sound: the
+// machine-read lines never contain <,> or & (Qty/dates/catalogue names/URLs), so
+// htmlify can't alter the bytes a Stock Control ingester actually parses.
+function htmlifyMessage(text: string): string {
+  return text.replace(/</g, '&lt;').replace(/>/g, '&gt;').replaceAll('\n', '<br>')
+}
+
+// Lines a Stock Control ingester reads off the hand-off. Used to vet a freely-
+// edited message before it's sent. The ingester is first-wins per key and
+// ignores unknown lines, so two failure modes must be caught: a genuine spec
+// line was DROPPED, or an extra line was ADDED that the parser could mistake for
+// one (a conflicting duplicate key it would read FIRST, or a stray "name — 50"
+// split line that breaks the per-person sum). Substring matching is unsound
+// here (deleting "Qty: 50" passes if "Qty: 500" appears anywhere), so this works
+// on whole, trimmed lines. KEEP IN LOCKSTEP with the same helper + regexes in
+// src/pages/OrderReviewPage.tsx (client mirror for instant feedback).
+const SPEC_KEY_RE = /^(Qty|Card|Material|Type|Thickness|Finish|Date required|Must ship by|Packaging|Per person|Ink on front|Ink on back|Artwork)\s*:/i
+const SPLIT_SHAPE_RE = /^.+?\s*[—–:-]\s*\d{1,6}$/
+function checkEditedMessage(customMessage: string, criticalLines: string[]): string[] {
+  const problems: string[] = []
+  const msgLines = customMessage.split('\n').map((l) => l.trim())
+  const present = new Set(msgLines)
+  const critical = new Set(criticalLines.map((l) => l.trim()))
+  // 1. Every machine-read spec line must still be present, whole and verbatim.
+  for (const l of criticalLines) {
+    if (!present.has(l.trim())) problems.push(`Missing required line: "${l.trim()}"`)
+  }
+  // 2. No ADDED line may look like a spec line the parser would act on.
+  for (const l of msgLines) {
+    if (!l || critical.has(l)) continue
+    if (SPEC_KEY_RE.test(l) || SPLIT_SHAPE_RE.test(l)) problems.push(`Stock Control may misread this line: "${l}"`)
+  }
+  return problems
+}
+
 // In-house Card line for Stock Control's forgiving material match.
 function buildCardLine(code: string, materialDisplay: string | null, options: unknown, front: string | null, core: string | null, back: string | null, stockColour: string | null): string {
   if (code === 'paper_letterpress' || code === 'paper_letterpress_gilded') {
@@ -364,11 +404,25 @@ Deno.serve(async (req) => {
   // outsourced parser (which first-wins on Qty/Material/… and ignores unknown
   // lines) can't be thrown off by it.
   const note = typeof body.note === 'string' ? body.note.trim().slice(0, 2000) : ''
+  // Optional fully-edited message from the review page (confirm only). When set,
+  // it REPLACES the composed hand-off verbatim — the reviewer owns the text. The
+  // machine-read spec lines are re-derived below and checked against it before
+  // anything is sent, so an edit can't silently break the Stock Control import.
+  // Trimmed (so leading/trailing whitespace can't reach the wire or skew the
+  // line check) and capped. A present-but-blank value is an explicit error on
+  // confirm (below), NOT a silent fall-back to the composed text.
+  const customMessageRaw = typeof body.custom_message === 'string' ? body.custom_message : null
+  const customMessage = customMessageRaw && customMessageRaw.trim() ? customMessageRaw.trim().slice(0, 10000) : null
   // Re-place attestation (revision flow): when a previously-PLACED order is
   // re-placed after a redesign, the OLD Stock Control job must be cancelled by a
   // human first — proof-viewer can't do it. The review page sends this ack.
   const oldJobCancelled = body.old_job_cancelled === true
   if (!orderId) return json({ ok: false, error: 'order_id is required' }, 400)
+  // Present-but-blank edited message = the reviewer cleared it; that's an error,
+  // not a request to send the composed text they can no longer see.
+  if (mode === 'confirm' && customMessageRaw != null && !customMessage) {
+    return json({ ok: false, code: 'spec_check_failed', error: 'The hand-off message is empty — type the message or reset it.' }, 400)
+  }
 
   // ── Load order + proof + current version ──────────────────────────────────
   const { data: order, error: orderErr } = await admin
@@ -527,10 +581,14 @@ Deno.serve(async (req) => {
     // Belt-and-braces: the link is in the note too, so anything not attached
     // (too big / not artwork) is still reachable from the job card.
     if (order.dropbox_folder_url) lines.push(`Artwork: ${order.dropbox_folder_url}`)
+    // The machine-read spec block, captured before the free-text note is appended
+    // — this is what a fully-edited message must still contain (see customMessage).
+    const criticalLines = lines.filter((l) => l.trim().length > 0)
     // Optional per-order note for the production team, AFTER the spec (so the
     // parser's first-wins fields aren't affected) and split-sanitised so a
-    // "name — 50"-shaped note line can't fold into / break the real split.
-    if (note) {
+    // "name — 50"-shaped note line can't fold into / break the real split. Skipped
+    // when a custom message is supplied (the note is then typed inline instead).
+    if (note && !customMessage) {
       lines.push('')
       for (const nl of sanitiseInhouseNote(note).split('\n')) lines.push(nl)
     }
@@ -553,10 +611,17 @@ Deno.serve(async (req) => {
     }
 
     if (mode === 'preview') {
-      return json({ ok: true, route, subject, note_lines: lines, summary, helpscout_linked: !!conversationId, artwork_plan: artworkPlan })
+      return json({ ok: true, route, subject, note_lines: lines, critical_lines: criticalLines, summary, helpscout_linked: !!conversationId, artwork_plan: artworkPlan })
     }
 
     // confirm
+    // A fully-edited message must still carry every machine-read spec line and
+    // add none the parser could misread, or Stock Control's ingester can't read
+    // the job. Reject before posting anything.
+    if (customMessage) {
+      const problems = checkEditedMessage(customMessage, criticalLines)
+      if (problems.length) return json({ ok: false, code: 'spec_check_failed', error: `${problems.join(' | ')} — fix the flagged ${problems.length === 1 ? 'line' : 'lines'} or reset the message.` }, 400)
+    }
     if (!conversationId) return json({ ok: false, error: 'This proof has no linked Help Scout conversation, so the production note can’t be posted.' }, 400)
     const appId = Deno.env.get('HELPSCOUT_APP_ID')?.trim()
     const appSecret = Deno.env.get('HELPSCOUT_APP_SECRET')?.trim()
@@ -574,7 +639,7 @@ Deno.serve(async (req) => {
           attachments = await buildArtworkAttachments(dbxToken, order.dropbox_folder_url, toFetch)
         } catch { /* best-effort: post the note without attachments */ }
       }
-      await createNote(token, conversationId, userId, lines.join('<br>'), attachments)
+      await createNote(token, conversationId, userId, customMessage ? htmlifyMessage(customMessage) : lines.join('<br>'), attachments)
     } catch (e) {
       if (e instanceof HsError) return json({ ok: false, error: `Help Scout: ${e.message}` }, 502)
       return json({ ok: false, error: `Hand-off failed: ${(e as Error)?.message ?? 'unknown'}` }, 502)
@@ -642,7 +707,9 @@ Deno.serve(async (req) => {
   const specificType = (mat.display_name ?? '').trim() || null
 
   // Machine-generated, parser-critical spec block. Injected into the editable
-  // supplier-email template as {order_details}; never freely edited.
+  // supplier-email template as {order_details}. The reviewer may edit the whole
+  // composed message, but the safety check (see customMessage) refuses a send
+  // that dropped any of these lines, so the Stock Control import can't break.
   const detailLines: string[] = []
   if (isPrototype) detailLines.push(prototypeMarker)
   detailLines.push(`Qty: ${qty}`)
@@ -657,9 +724,13 @@ Deno.serve(async (req) => {
   if (shipByStr) detailLines.push(`Must ship by: ${shipByStr}`)
   if (order.dropbox_folder_url) detailLines.push('', `Artwork: ${order.dropbox_folder_url}`)
 
+  // The machine-read spec block, captured before the free-text note — this is
+  // what a fully-edited message must still contain (see customMessage).
+  const criticalLines = detailLines.filter((l) => l.trim().length > 0)
   // Append the optional per-order note after the spec block (before the
-  // template's sign-off, since it's part of {order_details}).
-  const orderDetails = detailLines.join('\n') + (note ? `\n\n${note}` : '')
+  // template's sign-off, since it's part of {order_details}). Skipped when a
+  // custom message is supplied (the note is then typed inline instead).
+  const orderDetails = detailLines.join('\n') + (note && !customMessage ? `\n\n${note}` : '')
   const emailLines = (await renderSupplierEmail(admin, chosen?.id ?? null, { customer: customerName, order_details: orderDetails })).split('\n')
   const subject = `Order ${String(order.stock_order_number).trim()} - ${customerName}`
 
@@ -686,6 +757,7 @@ Deno.serve(async (req) => {
       route,
       subject,
       email_lines: emailLines,
+      critical_lines: criticalLines,
       supplier: chosen,
       suppliers,
       ship_by: shipByStr,
@@ -695,6 +767,13 @@ Deno.serve(async (req) => {
   }
 
   // confirm
+  // A fully-edited message must still carry every machine-read spec line and add
+  // none the parser could misread, or Stock Control's ingester can't read the
+  // job. Reject before emailing anyone.
+  if (customMessage) {
+    const problems = checkEditedMessage(customMessage, criticalLines)
+    if (problems.length) return json({ ok: false, code: 'spec_check_failed', error: `${problems.join(' | ')} — fix the flagged ${problems.length === 1 ? 'line' : 'lines'} or reset the message.` }, 400)
+  }
   if (!chosen) return json({ ok: false, error: 'Choose a supplier to order from.' }, 400)
   if (!chosen.email) return json({ ok: false, error: `${chosen.name} has no email address configured in Stock Control.` }, 400)
   const appId = Deno.env.get('HELPSCOUT_APP_ID')?.trim()
@@ -726,7 +805,7 @@ Deno.serve(async (req) => {
       subject,
       supplierEmail: chosen.email,
       userId,
-      text: emailLines.join('<br>'),
+      text: customMessage ? htmlifyMessage(customMessage) : emailLines.join('<br>'),
       attachments,
     })
   } catch (e) {

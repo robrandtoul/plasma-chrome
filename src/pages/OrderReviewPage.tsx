@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { DesignerChrome, PanelShell, ButtonCoral, ButtonGhost } from '../design'
 import { ImageCard, type GridImage } from '../components/ImageGrid'
 import Modal from '../components/Modal'
+import { checkEditedMessage } from '../lib/handoffMessageCheck'
 
 // OrderReviewPage (/orders/:id/place) — the review-and-confirm screen for placing
 // a PAID order into production. Shows the artwork, spec, quantities, destination
@@ -41,6 +42,9 @@ interface PreviewResponse {
   subject?: string
   note_lines?: string[]
   email_lines?: string[]
+  // The machine-read spec lines (Qty/Material/…) that a fully-edited message
+  // must still contain — used to warn before sending and re-checked server-side.
+  critical_lines?: string[]
   supplier?: SupplierOpt
   suppliers?: SupplierOpt[]
   ship_by?: string
@@ -83,6 +87,10 @@ export default function OrderReviewPage() {
 
   const [preview, setPreview] = useState<PreviewResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  // True while a preview round-trip is in flight (incl. a note re-preview on
+  // blur). The message box is locked during it so a keystroke can't seed the
+  // edit from text that doesn't yet reflect the just-typed note.
+  const [previewBusy, setPreviewBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [supplierId, setSupplierId] = useState<string | null>(null)
   // The full set of approved artwork for the order's CURRENT version (every
@@ -103,6 +111,11 @@ export default function OrderReviewPage() {
   // Optional project-specific note appended to the supplier email (supplier
   // route). Re-previewed on blur so the reviewer sees exactly what's sent.
   const [note, setNote] = useState('')
+  // The reviewer can edit the whole hand-off message before sending. null = not
+  // edited (the box mirrors the generated preview, incl. supplier/note changes);
+  // a string = the reviewer owns the text and it's sent verbatim. Reset on
+  // supplier change so a stale ship-by date can't slip through.
+  const [editedMessage, setEditedMessage] = useState<string | null>(null)
   // A revision order that was ALREADY placed (fulfilled_at set) is being
   // re-placed — place-order requires confirmation the old Stock Control job was
   // cancelled first (docs/order-cancel-and-revision-spec.md §3b). Resolved from
@@ -117,17 +130,22 @@ export default function OrderReviewPage() {
   const loadPreview = useCallback(async (chosenSupplierId?: string | null, noteArg?: string) => {
     if (!id) return
     setError(null)
-    const { data, error: fnErr } = await supabase.functions.invoke<PreviewResponse>('place-order', {
-      body: { order_id: id, mode: 'preview', ...(chosenSupplierId ? { supplier_id: chosenSupplierId } : {}), ...(noteArg ? { note: noteArg } : {}) },
-    })
-    if (fnErr || !data?.ok) {
-      const body = data ?? await readFnErrorBody(fnErr)
-      setError(body?.error ?? fnErr?.message ?? 'Could not load this order for review.')
-      setPreview(null)
-      return
+    setPreviewBusy(true)
+    try {
+      const { data, error: fnErr } = await supabase.functions.invoke<PreviewResponse>('place-order', {
+        body: { order_id: id, mode: 'preview', ...(chosenSupplierId ? { supplier_id: chosenSupplierId } : {}), ...(noteArg ? { note: noteArg } : {}) },
+      })
+      if (fnErr || !data?.ok) {
+        const body = data ?? await readFnErrorBody(fnErr)
+        setError(body?.error ?? fnErr?.message ?? 'Could not load this order for review.')
+        setPreview(null)
+        return
+      }
+      setPreview(data)
+      if (data.supplier && !chosenSupplierId) setSupplierId(data.supplier.id)
+    } finally {
+      setPreviewBusy(false)
     }
-    setPreview(data)
-    if (data.supplier && !chosenSupplierId) setSupplierId(data.supplier.id)
   }, [id])
 
   useEffect(() => {
@@ -207,6 +225,7 @@ export default function OrderReviewPage() {
     setSupplierId(newId)
     setArmed(false) // changing supplier disarms — re-confirm the new recipient
     setConfirmError(null) // a prior failure was about the previous supplier
+    setEditedMessage(null) // ship-by + template change — re-seed from the new preview
     setSupplierLoading(true)
     try {
       await loadPreview(newId, note)
@@ -221,7 +240,9 @@ export default function OrderReviewPage() {
     setConfirmError(null)
     try {
       const { data, error: fnErr } = await supabase.functions.invoke<{ ok: boolean; error?: string; code?: string; placed?: boolean }>('place-order', {
-        body: { order_id: id, mode: 'confirm', ...(supplierId ? { supplier_id: supplierId } : {}), ...(note ? { note } : {}), ...(revisionReplace ? { old_job_cancelled: oldJobCancelled } : {}) },
+        // When the message has been edited it's sent verbatim (custom_message) and
+        // the separate note is folded in there, so don't send both.
+        body: { order_id: id, mode: 'confirm', ...(supplierId ? { supplier_id: supplierId } : {}), ...(editedMessage !== null ? { custom_message: editedMessage } : (note ? { note } : {})), ...(revisionReplace ? { old_job_cancelled: oldJobCancelled } : {}) },
       })
       // On a non-2xx (which is how place-order returns sent_not_recorded AND its
       // other failures) supabase-js gives data:null + the body on error.context.
@@ -245,6 +266,18 @@ export default function OrderReviewPage() {
 
   const s = preview?.summary
   const isSupplier = preview?.route === 'supplier'
+  // The generated hand-off text; the box shows this until the reviewer edits it,
+  // then their text wins. `messageDirty` = they've taken ownership of the message.
+  const generatedMessage = (isSupplier ? preview?.email_lines : preview?.note_lines)?.join('\n') ?? ''
+  const messageValue = editedMessage ?? generatedMessage
+  const messageDirty = editedMessage !== null
+  // Problems an edit introduced (dropped a machine-read line, or added one the
+  // parser could misread) — block the send and show them, so a broken hand-off
+  // never reaches production. Authoritatively re-checked server-side too.
+  const messageProblems = messageDirty ? checkEditedMessage(messageValue, preview?.critical_lines ?? []) : []
+  const machineHint = isSupplier
+    ? 'Stock Control reads the Qty / Material / Type / Thickness / Finish / Must-ship-by lines — keep them.'
+    : 'Stock Control reads the Qty / Card / Date-required lines — keep them.'
   // Hand-off preconditions the page already knows about — disable Confirm when
   // it provably can't succeed, rather than letting the doomed round-trip run.
   const noSuppliers = isSupplier && (preview?.suppliers ?? []).length === 0
@@ -254,7 +287,14 @@ export default function OrderReviewPage() {
   // Only meaningful once a supplier is resolved (picked or the lone one).
   const supplierEmailMissing = isSupplier && !!preview?.supplier && !preview.supplier.email
   const hsMissing = !isSupplier && preview?.helpscout_linked === false
-  const blockReason = revisionNeedsApproval
+  // An edit that would break the Stock Control import takes precedence over the
+  // other reasons — it's the thing the reviewer can fix right here, right now.
+  const messageBroken = messageProblems.length > 0
+    ? 'Your edit may break the Stock Control import — fix the flagged lines, or reset the message.'
+    : null
+  const blockReason = messageBroken
+    ? messageBroken
+    : revisionNeedsApproval
     ? 'Re-approve the new proof before placing this revision.'
     : (revisionReplace && !oldJobCancelled)
     ? 'Confirm you’ve cancelled the old Stock Control job to place this revision.'
@@ -268,6 +308,37 @@ export default function OrderReviewPage() {
           ? 'This proof has no linked Help Scout conversation, so the production note can’t be posted.'
           : null
   const canConfirm = !blockReason
+
+  // The editable hand-off message — identical control for both routes (only the
+  // heading above it differs). Mirrors the generated preview until edited, then
+  // the reviewer's text is sent verbatim (with the spec-line safety check above).
+  const messageEditor = (
+    <>
+      <textarea
+        value={messageValue}
+        onChange={(e) => setEditedMessage(e.target.value)}
+        spellCheck={false}
+        rows={isSupplier ? 14 : 12}
+        disabled={previewBusy && !messageDirty}
+        className="mt-1 w-full rounded-lg border border-line bg-canvas p-3 font-mono text-[12.5px] leading-relaxed text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)] disabled:opacity-50"
+      />
+      <div className="mt-1 flex items-start justify-between gap-3">
+        <span className="text-[12px] text-ink-mute">You can edit this before sending. {machineHint}</span>
+        {messageDirty && (
+          <button type="button" onClick={() => setEditedMessage(null)} className="shrink-0 text-[12px] font-medium text-brand hover:underline">Reset</button>
+        )}
+      </div>
+      {messageProblems.length > 0 && (
+        <div className="mt-2 rounded-lg bg-out-soft px-3 py-2 text-[12px] text-out ring-1 ring-out">
+          <p className="font-medium">This edit may break the Stock Control import:</p>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+            {messageProblems.map((p, i) => <li key={i} className="break-words">{p}</li>)}
+          </ul>
+          <p className="mt-1">Fix the line{messageProblems.length === 1 ? '' : 's'} above, or use Reset.</p>
+        </div>
+      )}
+    </>
+  )
 
   return (
     <DesignerChrome active="orders">
@@ -378,7 +449,7 @@ export default function OrderReviewPage() {
                     <p className="mt-3 text-[12px] text-ink-mute">Subject</p>
                     <p className="text-sm font-medium text-ink">{preview.subject}</p>
                     <p className="mt-3 text-[12px] text-ink-mute">Message</p>
-                    <pre className="mt-1 whitespace-pre-wrap break-words rounded-lg border border-line bg-canvas p-3 text-[13px] text-ink">{(preview.email_lines ?? []).join('\n')}</pre>
+                    {messageEditor}
                     {preview.artwork_plan && (
                       <div className="mt-3 rounded-lg border border-line-soft bg-canvas/60 p-3 text-[12px]">
                         {preview.artwork_plan.attach.length > 0 ? (
@@ -408,7 +479,7 @@ export default function OrderReviewPage() {
                     <p className="mt-3 text-[12px] text-ink-mute">Help Scout subject will be set to</p>
                     <p className="text-sm font-medium text-ink">{preview.subject}</p>
                     <p className="mt-3 text-[12px] text-ink-mute">Note posted to the customer’s thread</p>
-                    <pre className="mt-1 whitespace-pre-wrap break-words rounded-lg border border-line bg-canvas p-3 text-[13px] text-ink">{(preview.note_lines ?? []).join('\n')}</pre>
+                    {messageEditor}
                     {preview.helpscout_linked === false && (
                       <p className="mt-2 text-[12px] text-out">This proof has no linked Help Scout conversation — the note can’t be posted until one is linked.</p>
                     )}
@@ -449,10 +520,15 @@ export default function OrderReviewPage() {
                     onChange={(e) => setNote(e.target.value)}
                     onBlur={() => { void loadPreview(supplierId, note) }}
                     rows={3}
+                    disabled={messageDirty}
                     placeholder="Project-specific instructions for this order."
-                    className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px] text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                    className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px] text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)] disabled:cursor-not-allowed disabled:opacity-50"
                   />
-                  <span className="mt-1 block text-[12px] text-ink-mute">Added after the order details (which Stock Control reads). Click out to see it in the message above.</span>
+                  <span className="mt-1 block text-[12px] text-ink-mute">
+                    {messageDirty
+                      ? 'You’re editing the message directly — type any notes straight into it, or Reset to use this field.'
+                      : 'Added after the order details (which Stock Control reads). Click out to see it in the message above.'}
+                  </span>
                 </label>
               </PanelShell>
             </div>
@@ -485,9 +561,18 @@ export default function OrderReviewPage() {
                   </div>
                 )}
 
+                {/* An edit broke the spec lines after the button was armed/enabled
+                    — say so beside the button, not just in the disabled tooltip. */}
+                {messageBroken && (
+                  <p className="mt-4 rounded-lg bg-out-soft px-3 py-2 text-[13px] text-out ring-1 ring-out">
+                    <span className="font-medium">Can’t send this edit.</span> {messageBroken}
+                  </p>
+                )}
+
                 {/* Supplier sends a real, immediate email — arm it with an explicit
-                    second click so a misclick can't fire an external order. */}
-                {isSupplier && armed && (
+                    second click so a misclick can't fire an external order.
+                    Suppressed when the edit is broken (the button is disabled). */}
+                {isSupplier && armed && !messageBroken && (
                   <p className="mt-4 rounded-lg bg-low-soft px-3 py-2 text-[13px] text-ink ring-1 ring-low">
                     This emails <span className="font-medium">{preview.supplier?.name}</span>
                     {preview.supplier?.email ? ` (${preview.supplier.email})` : ''} right now — they’ll receive the order immediately. Send it?
