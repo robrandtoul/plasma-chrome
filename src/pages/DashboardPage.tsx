@@ -261,6 +261,10 @@ function todayLabel(d: Date): string {
 
 interface StatTileProps {
   label: string
+  // Full phrase for screen readers when `label` is a shortened display form
+  // (e.g. label "Follow-up" / srLabel "In auto follow-up"). Omit when the
+  // visible label is already the full wording.
+  srLabel?: string
   count: number
   active: boolean
   tone: 'rose' | 'amber' | 'sky' | 'neutral' | 'violet' | 'green' | 'turquoise' | 'gold' | 'blue' | 'indigo'
@@ -291,7 +295,7 @@ const TILE_COLOUR: Record<StatTileProps['tone'], string> = {
   indigo:    '#6366f1',
 }
 
-function StatTile({ label, count, active, tone, onClick, help, badge, badgeTitle }: StatTileProps) {
+function StatTile({ label, srLabel, count, active, tone, onClick, help, badge, badgeTitle }: StatTileProps) {
   const tint = TILE_COLOUR[tone]
   return (
     <button
@@ -316,29 +320,35 @@ function StatTile({ label, count, active, tone, onClick, help, badge, badgeTitle
           {badge}
         </span>
       )}
-      {/* Dot + label row. Dot picks up the tile's tone; label uses the
-          eyebrow class (inline whitespace-normal so long labels wrap —
-          see PR 17c for why the override has to be inline). The label is
-          top-anchored (items-start so the dot sits by its first line) and
-          free to take as many lines as it needs — "In auto follow-up" and
-          "Approved this week" hit three lines in a narrow workflow cell.
-          overflow-wrap:anywhere lets a long token break rather than spill
-          sideways into the neighbouring tile / divider. The number below is
-          pushed to the bottom of the tile with mt-auto; because every tile
-          in the strip stretches to a common height (xl:items-stretch on the
-          strip, grid/flex stretch elsewhere), bottom-anchoring the numbers
-          keeps them on one baseline without a fixed label height that a
-          long label would overrun into the number. */}
-      <div className="flex items-start gap-2">
+      {/* Dot + label, stacked. The colour dot sits ABOVE the label, not
+          beside it: at the xl breakpoint the eight Workflow tiles share a
+          hard-capped ~96px each, and an inline dot + gap stole ~24px of the
+          ~55px content box — too little for even a single word like
+          "CUSTOMER", so labels either spilled into the divider or broke
+          mid-letter. Stacking the dot hands the label the full content
+          width, so it wraps cleanly at spaces to ≤2 lines. (The two
+          three-word labels that still couldn't fit two lines — "In auto
+          follow-up", "Approved this week" — are shortened at the call site
+          to "Follow-up" / "Approved", with the full wording kept on the
+          HelpTip and an srLabel for screen readers.) overflow-wrap:break-word
+          is now a last-resort guard only; whiteSpace:'normal' + the tight
+          tracking remain load-bearing inline overrides of the .eyebrow
+          nowrap default. The number is pushed to the tile bottom with
+          mt-auto; every tile stretches to a common height (xl:items-stretch
+          on the strip, grid/flex stretch elsewhere), so bottom-anchoring the
+          numbers keeps them on one baseline no matter how many lines the
+          label takes. */}
+      <div className="flex flex-col items-start gap-1.5">
         <span
           aria-hidden="true"
-          className="inline-block w-4 h-4 rounded shrink-0"
+          className="inline-block w-3 h-3 rounded shrink-0"
           style={{ backgroundColor: tint }}
         />
         <HelpTip body={help} affordance="none" focusable={false}>
           <span
             className="eyebrow text-ink-mute"
-            style={{ whiteSpace: 'normal', lineHeight: 1.2, letterSpacing: '0.02em', overflowWrap: 'anywhere' }}
+            aria-label={srLabel}
+            style={{ whiteSpace: 'normal', lineHeight: 1.2, letterSpacing: '0.02em', overflowWrap: 'break-word' }}
           >
             {label}
           </span>
@@ -2997,7 +3007,8 @@ export default function DashboardPage() {
                       onClick={() => toggleTile('awaiting_customer')}
                     />
                     <StatTile
-                      label="In auto follow-up"
+                      label="Follow-up"
+                      srLabel="In auto follow-up"
                       help={tagHelp('tile', 'in_follow_up')}
                       count={inFollowUpCount}
                       active={tileFilter === 'in_follow_up'}
@@ -3013,7 +3024,8 @@ export default function DashboardPage() {
                       onClick={() => toggleTile('customer_responded')}
                     />
                     <StatTile
-                      label="Approved this week"
+                      label="Approved"
+                      srLabel="Approved this week"
                       help={tagHelp('tile', 'approved_this_week')}
                       count={approvedThisWeekCount}
                       active={tileFilter === 'approved_this_week'}
