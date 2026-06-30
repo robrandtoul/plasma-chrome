@@ -10,6 +10,7 @@ import { logAudit } from '../lib/audit'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
 import { keepApprovedNoOrder, invalidateApprovedNoOrderCount } from '../lib/approvedNoOrder'
 import { materialNeedsStockColour, fetchStockColours, type StockColour } from '../lib/stockColours'
+import { downloadBlob } from '../lib/downloadFile'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
@@ -1482,6 +1483,35 @@ function OrderCard({
     }
   }
 
+  // Download the Xero invoice as a PDF. There's no public PDF URL, so the
+  // order-invoice-pdf edge function fetches it from Xero with the org's token
+  // and streams it back; we save the returned blob via the shared helper.
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const [pdfError, setPdfError] = useState(false)
+
+  async function handleDownloadInvoice() {
+    setPdfBusy(true)
+    setPdfError(false)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Not signed in')
+      const supabaseUrl = (supabase as unknown as { supabaseUrl: string }).supabaseUrl
+      const resp = await fetch(`${supabaseUrl}/functions/v1/order-invoice-pdf?order_id=${encodeURIComponent(order.id)}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      if (!resp.ok) throw new Error(`Download failed (${resp.status})`)
+      const blob = await resp.blob()
+      const header = resp.headers.get('Content-Disposition') ?? ''
+      const filename = header.match(/filename="([^"]+)"/)?.[1] ?? `Invoice ${order.payment_reference ?? order.id}.pdf`
+      downloadBlob(blob, filename)
+    } catch {
+      setPdfError(true)
+      window.setTimeout(() => setPdfError(false), 4000)
+    } finally {
+      setPdfBusy(false)
+    }
+  }
+
   // Folder lookup: pasting the order-folder link verifies it against Dropbox and
   // pulls the order number + project from its name (the values the Stock Control
   // hand-off needs). Seeds from saved values so a revisit shows the confirmation
@@ -1852,6 +1882,18 @@ function OrderCard({
               <ButtonGhost size="sm" className="max-md:w-full max-md:h-11">View proof &amp; artwork</ButtonGhost>
             </Link>
             <ButtonGhost size="sm" onClick={onCopy} className="max-md:flex-1 max-md:h-11">{copied ? 'Copied' : 'Copy order link'}</ButtonGhost>
+            {/* Download the Xero invoice as a PDF (only once an invoice exists). */}
+            {order.xero_invoice_id && (
+              <ButtonGhost
+                size="sm"
+                onClick={() => void handleDownloadInvoice()}
+                disabled={pdfBusy}
+                className="max-md:flex-1 max-md:h-11"
+                title="Download this order's Xero invoice as a PDF"
+              >
+                {pdfBusy ? 'Downloading…' : pdfError ? 'Try again' : 'Download invoice'}
+              </ButtonGhost>
+            )}
             {/* Retry invoice is for orders whose AUTO Xero invoice failed. Offline
                 orders deliberately have no auto-invoice (raised manually in Xero),
                 so retrying would create a DUPLICATE — never offer it for offline. */}
