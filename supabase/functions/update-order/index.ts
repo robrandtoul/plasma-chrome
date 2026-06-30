@@ -28,34 +28,114 @@
 // fix (store + cancel the live PaymentIntent on edit) is a deliberate follow-up
 // because it touches the live checkout path + needs a new column.
 //
-// Editable: material_variant_id (thickness), material_option_id (finish),
-// quantity (+ per-person split), custom_quote_total (custom orders), and the
-// per-order card discount. Everything else — currency, payment method, shipping
-// treatment, Xero binding, order kind, personalisation, names count — is kept
-// from the existing row (shipping recomputes from the new variant's weight at
-// checkout under the unchanged treatment).
-//
-// Auth: requireDesigner (admin or designer; anon/customers rejected). Deploy via
-// the supabase CLI (`supabase functions deploy update-order --project-ref
-// bjvinrzbdrwebylkmbwy`) so the _shared imports bundle, exactly as create-order.
+// Self-contained for the MCP deploy (auth + snapshot builder inlined), the same
+// pattern order-lifecycle / place-order use — keeps the deploy to a single file.
+// The inlined requireDesigner + buildOrderSpecSnapshot are byte-mirrors of
+// _shared/admin.ts and _shared/orderSpecSnapshot.ts; if you change either shared
+// helper, mirror it here too.
 
-import { json, requireDesigner } from '../_shared/admin.ts'
-import { logAudit } from '../_shared/audit.ts'
-import { buildOrderSpecSnapshot } from '../_shared/orderSpecSnapshot.ts'
+import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
+}
+
+// ── Auth: active admin/designer; returns the proofs-schema service client +
+// caller attribution (inline mirror of _shared/admin.ts requireDesigner) ────
+async function requireDesigner(
+  req: Request,
+): Promise<{ admin: SupabaseClient; callerId: string; callerEmail: string; callerLabel: string } | Response> {
+  const authHeader = req.headers.get('Authorization') ?? ''
+  if (!authHeader.toLowerCase().startsWith('bearer ')) return json({ error: 'Unauthorized' }, 401)
+  const jwt = authHeader.replace(/^[Bb]earer\s+/, '').trim()
+  const url = Deno.env.get('SUPABASE_URL') ?? ''
+  const anon = createClient(url, Deno.env.get('SUPABASE_ANON_KEY') ?? '')
+  const { data: userData, error: userErr } = await anon.auth.getUser(jwt)
+  if (userErr || !userData?.user) return json({ error: 'Unauthorized' }, 401)
+  const admin = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', {
+    db: { schema: 'proofs' },
+    auth: { persistSession: false, autoRefreshToken: false },
+  })
+  const { data: profile } = await admin
+    .from('profiles')
+    .select('role, deactivated_at, full_name')
+    .eq('id', userData.user.id)
+    .single()
+  if (!profile || profile.deactivated_at) return json({ error: 'Forbidden' }, 403)
+  if (profile.role !== 'admin' && profile.role !== 'designer') return json({ error: 'Forbidden' }, 403)
+  return {
+    admin,
+    callerId: userData.user.id,
+    callerEmail: userData.user.email ?? '',
+    callerLabel: (profile.full_name as string | null) ?? (userData.user.email ?? ''),
+  }
+}
+
+// ── Order spec snapshot (inline mirror of _shared/orderSpecSnapshot.ts) ──────
+interface OrderSpecSnapshotInput {
+  materialCode: string | null
+  materialDisplay: string | null
+  variantDisplay: string | null
+  variantType: string | null
+  optionDisplay: string | null
+  inkNames: string[] | null
+  letterpressFront: string | null
+  letterpressCore: string | null
+  letterpressBack: string | null
+  quantity: number | null
+  personQuantities: { name: string; quantity: number }[] | null
+  hasPersonalisation: boolean
+  customQuoteTotal: number | null
+  contactEmail: string | null
+  contactName: string | null
+  companyName: string | null
+  stage: 'create' | 'place' | 'edit'
+  capturedBy: string | null
+  capturedAt: string
+}
+
+function resolveFinishDisplay(optionDisplay: string | null, variantType: string | null, variantDisplay: string | null): string | null {
+  if (optionDisplay) return optionDisplay
+  if (variantType === 'finish' && variantDisplay) return variantDisplay
+  return null
+}
+
+function buildOrderSpecSnapshot(input: OrderSpecSnapshotInput) {
+  const inks = (Array.isArray(input.inkNames) ? input.inkNames : []).map((s) => String(s).trim()).filter(Boolean)
+  const finish = resolveFinishDisplay(input.optionDisplay, input.variantType, input.variantDisplay)
+  const hasLetterpress = !!(input.letterpressFront || input.letterpressCore || input.letterpressBack)
+  return {
+    material: input.materialCode ? { code: input.materialCode, display_name: input.materialDisplay ?? null } : null,
+    variant: input.variantDisplay ? { display_name: input.variantDisplay } : null,
+    finish: finish ? { display_name: finish } : null,
+    ink_names: inks,
+    letterpress: hasLetterpress
+      ? { front: input.letterpressFront ?? null, core: input.letterpressCore ?? null, back: input.letterpressBack ?? null }
+      : null,
+    quantity: input.quantity ?? null,
+    person_quantities:
+      Array.isArray(input.personQuantities) && input.personQuantities.length > 0 ? input.personQuantities : null,
+    has_personalisation: !!input.hasPersonalisation,
+    custom_quote: input.customQuoteTotal != null,
+    custom_quote_total: input.customQuoteTotal ?? null,
+    contact: { email: input.contactEmail ?? null, full_name: input.contactName ?? null },
+    company: input.companyName ? { name: input.companyName } : null,
+    stage: input.stage,
+    captured_by: input.capturedBy ?? null,
+    captured_at: input.capturedAt,
+  }
+}
 
 type CardDiscountType = 'none' | 'percent' | 'fixed'
 const CARD_DISCOUNT_TYPES: CardDiscountType[] = ['none', 'percent', 'fixed']
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', {
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      },
-    })
-  }
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
   const check = await requireDesigner(req)
@@ -278,20 +358,21 @@ Deno.serve(async (req) => {
     return json({ error: 'Order is no longer editable (it may have just been paid or cancelled).' }, 409)
   }
 
-  await logAudit(admin, {
-    actorId: callerId,
-    actorEmail: callerEmail,
-    actorLabel: callerLabel,
+  // ── Audit (caller-attributed; before/after carry the spec change) ──
+  await admin.from('audit_log').insert({
+    actor_id: callerId,
+    actor_email: callerEmail,
+    actor_label: callerLabel,
     action: 'order.updated',
-    targetType: 'order',
-    targetId: orderId,
-    targetLabel: `Order ${order.payment_reference ?? orderId}`,
-    beforeValue: {
+    target_type: 'order',
+    target_id: orderId,
+    target_label: `Order ${order.payment_reference ?? orderId}`,
+    before_value: {
       material_variant_id: order.material_variant_id,
       quantity: order.quantity,
       custom_quote_total: order.custom_quote_total,
     },
-    afterValue: {
+    after_value: {
       material_variant_id: materialVariantId,
       material_option_id: materialOptionId,
       quantity,
@@ -301,7 +382,7 @@ Deno.serve(async (req) => {
       card_discount_value: cardDiscountValue,
       card_discount_reason: cardDiscountReason,
     },
-  })
+  }).then(undefined, () => {})
 
   return json({ ok: true, id: orderId, currency })
 })
