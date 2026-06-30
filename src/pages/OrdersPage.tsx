@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { DesignerChrome, PanelShell, Pill, ButtonInk, ButtonGhost } from '../design'
+import { DesignerChrome, PanelShell, Pill, ButtonInk, ButtonGhost, Textarea } from '../design'
+import { useAuth } from '../lib/auth'
 import { formatPrice } from '../lib/currency'
 import { getExchangeRates, currencyToGbp, type ExchangeRates } from '../lib/exchangeRates'
 import { customerOrderUrl } from '../lib/customerOrderUrl'
@@ -18,7 +19,7 @@ import OrdersPipelineCard from '../components/OrdersPipelineCard'
 import OrderBuilderModal from '../components/OrderBuilderModal'
 import RecordOfflinePaymentModal from '../components/RecordOfflinePaymentModal'
 import DesignerAvatar from '../components/DesignerAvatar'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, StickyNote } from 'lucide-react'
 
 // Orders / "to order" surface (Ordering & checkout, Step 6 — overhauled).
 //
@@ -310,6 +311,18 @@ interface ApprovedNoOrderItem {
   customerRepliedAt: string | null
 }
 
+// A short shared note pinned to a Links-to-send card — "why is this still here"
+// (usually waiting on the customer). One per proof, editable by anyone, stamped
+// with the last editor's identity. Discarded when the order link is sent
+// (create-order deletes the row; migration 000296).
+interface LinkNote {
+  note: string
+  byName: string | null
+  byInitials: string | null
+  byColour: string | null
+  updatedAt: string
+}
+
 // The hydrated props the OrderBuilderModal needs, gathered from a worklist row
 // plus a single proof_versions fetch on click. Mirrors the subset of
 // OrderBuilderModalProps the modal can't fetch for itself.
@@ -521,6 +534,10 @@ function payDurationLabel(days: number): string {
 }
 
 export default function OrdersPage() {
+  const { session } = useAuth()
+  // The signed-in staffer's id — stamped as the author when they write a
+  // Links-to-send note (the table's RLS requires created_by = auth.uid()).
+  const userId = session?.user.id ?? null
   const [loading, setLoading] = useState(true)
   const [orders, setOrders] = useState<OrderRow[]>([])
   // True when the 300-row fetch ceiling was hit, so the page can say so rather
@@ -555,6 +572,10 @@ export default function OrdersPage() {
   // Fetched separately because these have no order row, so they appear nowhere
   // else on this page.
   const [approvedNoOrder, setApprovedNoOrder] = useState<ApprovedNoOrderItem[]>([])
+  // The shared "why is this still here" note per Links-to-send proof, keyed by
+  // proofId (migration 000296). Fetched alongside the worklist and merged into
+  // each card; edits update this map in place so a save doesn't refetch the page.
+  const [notesByProof, setNotesByProof] = useState<Record<string, LinkNote>>({})
   // Worklist sort: oldest-approved first by default so the longest-waiting
   // customers lead the list.
   const [linksSort, setLinksSort] = useState<'oldest' | 'newest'>('oldest')
@@ -701,6 +722,36 @@ export default function OrdersPage() {
           .sort((a, b) => new Date(a.approvedAt).getTime() - new Date(b.approvedAt).getTime())
         setApprovedNoOrder(items)
         void loadThumbs(items.map((i) => i.proofId))
+        // The shared "why is this still here" notes for the visible worklist
+        // (migration 000296). Bounded — the table only holds notes for proofs
+        // still awaiting a link. Replaces the whole map so a refetch (e.g. after
+        // a link is sent) drops notes whose proofs have left the worklist.
+        const noteProofIds = items.map((i) => i.proofId)
+        if (noteProofIds.length > 0) {
+          const { data: noteRows } = await supabase
+            .from('order_link_notes')
+            .select('proof_id, note, created_by_name, created_by_initials, created_by_colour, updated_at')
+            .in('proof_id', noteProofIds)
+          if (!cancelled) {
+            setNotesByProof(
+              Object.fromEntries(
+                ((noteRows ?? []) as {
+                  proof_id: string
+                  note: string
+                  created_by_name: string | null
+                  created_by_initials: string | null
+                  created_by_colour: string | null
+                  updated_at: string
+                }[]).map((r) => [
+                  r.proof_id,
+                  { note: r.note, byName: r.created_by_name, byInitials: r.created_by_initials, byColour: r.created_by_colour, updatedAt: r.updated_at },
+                ]),
+              ),
+            )
+          }
+        } else if (!cancelled) {
+          setNotesByProof({})
+        }
       })()
       void supabase.schema('public').from('outsourced_suppliers').select('id, name').then(({ data }) => {
         if (cancelled || !data) return
@@ -938,6 +989,46 @@ export default function OrdersPage() {
     }
   }
 
+  // Add or replace the shared note on a Links-to-send card. Upsert keyed on
+  // proof_id (one note per proof); the DB trigger stamps the editor's identity +
+  // updated_at, which we read back so the card updates without a refetch. RLS
+  // requires created_by = auth.uid(), so a missing session / blank note is a
+  // no-op. Returns false on failure so the editor can keep its draft open.
+  async function saveLinkNote(proofId: string, text: string): Promise<boolean> {
+    const body = text.trim()
+    if (!userId || body.length === 0) return false
+    const { data, error } = await supabase
+      .from('order_link_notes')
+      .upsert({ proof_id: proofId, note: body, created_by: userId }, { onConflict: 'proof_id' })
+      .select('note, created_by_name, created_by_initials, created_by_colour, updated_at')
+      .single()
+    if (error || !data) return false
+    const row = data as {
+      note: string
+      created_by_name: string | null
+      created_by_initials: string | null
+      created_by_colour: string | null
+      updated_at: string
+    }
+    setNotesByProof((prev) => ({
+      ...prev,
+      [proofId]: { note: row.note, byName: row.created_by_name, byInitials: row.created_by_initials, byColour: row.created_by_colour, updatedAt: row.updated_at },
+    }))
+    return true
+  }
+
+  // Clear a note — anyone can, it's a shared transient annotation.
+  async function clearLinkNote(proofId: string): Promise<boolean> {
+    const { error } = await supabase.from('order_link_notes').delete().eq('proof_id', proofId)
+    if (error) return false
+    setNotesByProof((prev) => {
+      const next = { ...prev }
+      delete next[proofId]
+      return next
+    })
+    return true
+  }
+
   // Open the order builder inline for an approved-but-unordered proof. The
   // worklist row already carries the proof-level fields; the one thing it lacks
   // is the current version's variant / option / currency / names, so fetch that,
@@ -1026,7 +1117,9 @@ export default function OrdersPage() {
     const q = search.trim().toLowerCase()
     const matched = q
       ? approvedNoOrder.filter((i) =>
-          [i.label, i.contactName, i.contactEmail, i.materialDisplay]
+          // The shared note is the most distinctive free text on a card ("waiting
+          // on metal thickness"), so let staff find a card by what they jotted.
+          [i.label, i.contactName, i.contactEmail, i.materialDisplay, notesByProof[i.proofId]?.note]
             .filter(Boolean)
             .join(' ')
             .toLowerCase()
@@ -1038,7 +1131,7 @@ export default function OrdersPage() {
       const bt = new Date(b.approvedAt).getTime()
       return linksSort === 'oldest' ? at - bt : bt - at
     })
-  }, [approvedNoOrder, search, linksSort])
+  }, [approvedNoOrder, search, linksSort, notesByProof])
 
   const showSection = (key: ViewKey) => view === 'all' || view === key
 
@@ -1196,6 +1289,10 @@ export default function OrdersPage() {
                       preparing={preparingProofId === item.proofId}
                       canCreateOrder={orderingEnabled === true}
                       onCreate={() => void openOrderBuilder(item)}
+                      note={notesByProof[item.proofId] ?? null}
+                      canEditNote={userId != null}
+                      onSaveNote={(text) => saveLinkNote(item.proofId, text)}
+                      onClearNote={() => clearLinkNote(item.proofId)}
                     />
                   ))}
                 </div>
@@ -2045,12 +2142,20 @@ function LinkToSendCard({
   preparing,
   canCreateOrder,
   onCreate,
+  note,
+  canEditNote,
+  onSaveNote,
+  onClearNote,
 }: {
   item: ApprovedNoOrderItem
   thumb: GridImage | null
   preparing: boolean
   canCreateOrder: boolean
   onCreate: () => void
+  note: LinkNote | null
+  canEditNote: boolean
+  onSaveNote: (text: string) => Promise<boolean>
+  onClearNote: () => Promise<boolean>
 }) {
   // Sub-line: the contact (only when a company is the headline, else it'd repeat
   // the title) plus their email.
@@ -2125,6 +2230,115 @@ function LinkToSendCard({
           </div>
         </div>
       </div>
+      <LinkNoteSection note={note} canEdit={canEditNote} onSave={onSaveNote} onClear={onClearNote} />
     </PanelShell>
+  )
+}
+
+// The shared "why is this still here" note on a Links-to-send card. Three states:
+// an empty "Add a note" prompt, the note shown as a small amber callout (with who
+// wrote it + when), and an edit mode with a textarea. Editing is collaborative —
+// anyone signed in can add, change, or clear the note; saving stamps them as the
+// author server-side. Local state only; the parent owns the persisted note.
+function LinkNoteSection({
+  note,
+  canEdit,
+  onSave,
+  onClear,
+}: {
+  note: LinkNote | null
+  canEdit: boolean
+  onSave: (text: string) => Promise<boolean>
+  onClear: () => Promise<boolean>
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  function startEdit() {
+    setDraft(note?.note ?? '')
+    setErr(null)
+    setEditing(true)
+  }
+
+  async function handleSave() {
+    if (draft.trim().length === 0) {
+      // An empty save on an existing note means "clear it"; on no note it's a no-op.
+      if (note) await handleClear()
+      else setEditing(false)
+      return
+    }
+    setBusy(true)
+    setErr(null)
+    const ok = await onSave(draft)
+    setBusy(false)
+    if (ok) setEditing(false)
+    else setErr('Could not save the note. Please try again.')
+  }
+
+  async function handleClear() {
+    setBusy(true)
+    setErr(null)
+    const ok = await onClear()
+    setBusy(false)
+    if (ok) setEditing(false)
+    else setErr('Could not remove the note. Please try again.')
+  }
+
+  if (editing) {
+    return (
+      <div className="mt-3 border-t border-line pt-3">
+        <Textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={2}
+          maxLength={500}
+          autoFocus
+          placeholder="Why is this still here? e.g. waiting on metal thickness — chased today"
+          aria-label="Note for this project"
+        />
+        <p className="mt-1 text-[12px] text-ink-mute">
+          Shared with the team · cleared automatically once the order link is sent.
+        </p>
+        {err && <p className="mt-1 text-[13px] text-out">{err}</p>}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <ButtonInk size="sm" onClick={() => void handleSave()} busy={busy}>Save note</ButtonInk>
+          <ButtonGhost size="sm" onClick={() => { setEditing(false); setErr(null) }} disabled={busy}>Cancel</ButtonGhost>
+          {note && (
+            <ButtonGhost size="sm" onClick={() => void handleClear()} disabled={busy} className="text-out">Remove note</ButtonGhost>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  if (note) {
+    const meta = [note.byName, relativeTime(note.updatedAt)].filter(Boolean).join(' · ')
+    return (
+      <div className="mt-3 flex items-start gap-2 rounded-lg border border-line border-l-4 border-l-[var(--c-low)] bg-[var(--c-low-soft)] px-3 py-2">
+        <StickyNote size={15} className="mt-0.5 shrink-0 text-[var(--c-low)]" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="whitespace-pre-wrap break-words text-sm text-ink">{note.note}</p>
+          {meta && <p className="mt-0.5 text-[12px] text-ink-mute">{meta}</p>}
+        </div>
+        {canEdit && (
+          <div className="flex shrink-0 gap-1">
+            <ButtonGhost size="sm" onClick={startEdit}>Edit</ButtonGhost>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (!canEdit) return null
+  return (
+    <div className="mt-3">
+      <ButtonGhost size="sm" onClick={startEdit}>
+        <span className="inline-flex items-center gap-1.5">
+          <StickyNote size={14} aria-hidden="true" /> Add a note
+        </span>
+      </ButtonGhost>
+    </div>
   )
 }
