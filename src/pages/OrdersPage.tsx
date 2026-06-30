@@ -539,6 +539,11 @@ export default function OrdersPage() {
   // Stock Control supplier id → name, for the supplier-route button labels
   // (the routing stores ids; names live in Stock Control). Best-effort.
   const [supplierNames, setSupplierNames] = useState<Record<string, string>>({})
+  // Current-version material code per proof, so the Stock colour picker keys off
+  // the PROOF's material (always set) rather than the order's priced variant —
+  // a custom-quote order carries no variant, so the picker would otherwise never
+  // show for it. Best-effort.
+  const [proofMaterialCodes, setProofMaterialCodes] = useState<Record<string, string | null>>({})
   // Live GBP→EUR/USD rates so mixed-currency totals collapse to one GBP figure
   // in the summary bar + section subtotals (null until the first fetch lands).
   const [rates, setRates] = useState<ExchangeRates | null>(null)
@@ -711,6 +716,30 @@ export default function OrdersPage() {
       setOrders(rows)
       setCapped(rows.length >= 300)
       setLoading(false)
+
+      // Current-version material per proof — the Stock colour picker keys off
+      // this (not the order's priced variant, which is null on a custom quote),
+      // matching the material place-order reads when it composes the hand-off.
+      const orderProofIds = Array.from(new Set(rows.map((r) => r.proof_id)))
+      if (orderProofIds.length) {
+        void supabase
+          .from('proof_versions')
+          .select('proof_id, materials(code)')
+          .in('proof_id', orderProofIds)
+          .eq('is_current', true)
+          .then(({ data: pvm }) => {
+            if (cancelled || !pvm) return
+            // supabase-js types the embedded `materials` as possibly an array;
+            // it's a to-one FK so at runtime it's a single object — normalise both.
+            const pvRows = pvm as unknown as { proof_id: string; materials: { code: string | null } | { code: string | null }[] | null }[]
+            setProofMaterialCodes(Object.fromEntries(
+              pvRows.map((r) => {
+                const m = Array.isArray(r.materials) ? r.materials[0] : r.materials
+                return [r.proof_id, m?.code ?? null]
+              }),
+            ))
+          })
+      }
 
       // Chase cadence + on/off, for the "next reminder due" line, plus the comms
       // grace window (shared with the proof chase) so a grace pause can name when
@@ -1228,6 +1257,7 @@ export default function OrdersPage() {
                           supplierLabels={allowedSupplierLabels(o, supplierNames)}
                           supplierCount={o.material_variants?.materials?.outsourced_supplier_ids?.length ?? 0}
                           suggested={suggestedDate(o)}
+                          proofMaterialCode={proofMaterialCodes[o.proof_id] ?? null}
                           busy={busyId === o.id}
                           copied={copiedId === o.id}
                           onReview={() => navigate(`/orders/${o.id}/place`)}
@@ -1396,6 +1426,7 @@ function OrderCard({
   onCopy,
   onSaveField,
   onRetryInvoice,
+  proofMaterialCode,
 }: {
   order: OrderRow
   thumb: GridImage | null
@@ -1409,6 +1440,7 @@ function OrderCard({
   onCopy: () => void
   onSaveField: (patch: Partial<OrderRow>) => Promise<boolean>
   onRetryInvoice: () => void
+  proofMaterialCode: string | null
 }) {
   const total = orderTotal(order)
   const invoiceError = !order.xero_invoice_id ? friendlyInvoiceError(order.xero_invoice_error) : null
@@ -1491,7 +1523,10 @@ function OrderCard({
   // generic material, but Stock Control stocks each colour separately and must
   // be told which one to allocate. Captured here, sourced live from Stock
   // Control's own catalogue so the saved name resolves exactly.
-  const materialCode = order.material_variants?.materials?.code ?? null
+  // Prefer the PROOF's current-version material (always set — incl. custom
+  // quotes, which carry no priced variant on the order); fall back to the
+  // order's variant material. Matches the material place-order reads.
+  const materialCode = proofMaterialCode ?? order.material_variants?.materials?.code ?? null
   const needsColour = materialNeedsStockColour(materialCode)
   const [colourOptions, setColourOptions] = useState<StockColour[]>([])
   const [colourValue, setColourValue] = useState<string>(order.stock_colour ?? '')
