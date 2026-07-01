@@ -5,7 +5,7 @@ import { formatPrice } from '../lib/currency'
 import type { Currency } from '../lib/types'
 import type { QuoteMaterial, QuoteVariant } from '../lib/quote/types'
 import { calculate, splitNameSurchargeFor } from '../lib/quote/calculate'
-import { interpolateScheduleAt } from '../lib/quote/interpolation'
+import { interpolateScheduleAt, pricesFlatAboveTopTier } from '../lib/quote/interpolation'
 import { usePricing } from '../lib/quote/usePricing'
 import { usePersonalisationPricing } from '../lib/quote/usePersonalisationPricing'
 import { personalisationSurchargeForQty, personalisationBreakeven } from '../lib/personalisation'
@@ -420,28 +420,28 @@ export default function QuotePage() {
   const tiersFresh =
     pricing.loadedCurrency === currency && pricing.loadedMaterialId === selectedMaterialId
 
-  // Metal prices flat above its top listed tier (no volume discount past
-  // 1000), so a metal quantity above the range is a real, priceable figure
-  // rather than a custom quote. Detected by the material code, the same
-  // signal the customer page + order checkout use.
-  const isMetalFlat = (selectedMaterial?.code ?? '').startsWith('metal_')
+  // Metal + carbon fibre price flat above their top listed tier (no volume
+  // discount past 1000), so a quantity above the range is a real, priceable
+  // figure rather than a custom quote. Uses the shared pricesFlatAboveTopTier
+  // predicate — the same signal the customer page + order checkout use.
+  const isFlatAboveTop = pricesFlatAboveTopTier(selectedMaterial?.code)
 
   // Above-max custom-quote trigger. Returns the typed quantity +
   // the variant's largest priced tier when the designer has typed
   // a quantity above the priced range; null otherwise. Composed
   // with the user-driven flags below to drive the bailout.
   // Below-min stays in snap-suggestion territory (snap to the
-  // minimum tier) — only above-max bails out. Metal is exempt: it
-  // prices flat above the top tier (handled in calculate), so it never
-  // needs the custom-quote bailout for a large quantity.
+  // minimum tier) — only above-max bails out. Flat-above-top materials
+  // (metal, carbon fibre) are exempt: they price flat above the top tier
+  // (handled in calculate), so they never need the custom-quote bailout.
   const aboveMax = useMemo(() => {
     if (!tiersFresh || quantity == null || variantTiers.length === 0) return null
-    if (isMetalFlat) return null
+    if (isFlatAboveTop) return null
     let maxQty = -Infinity
     for (const t of variantTiers) if (t.quantity > maxQty) maxQty = t.quantity
     if (quantity <= maxQty) return null
     return { typedQuantity: quantity, maxQuantity: maxQty }
-  }, [tiersFresh, quantity, variantTiers, isMetalFlat])
+  }, [tiersFresh, quantity, variantTiers, isFlatAboveTop])
 
   // Composite custom-quote flag. Multiple triggers can stack —
   // the panel renders one Why bullet per active reason.
@@ -732,11 +732,11 @@ export default function QuotePage() {
         finishSurcharge: finishSurchargeAtCurrent,
         personalisationSurcharge: personalisationSurchargeAtCurrent,
         discountPercent,
-        flatAboveTop: isMetalFlat,
+        flatAboveTop: isFlatAboveTop,
       },
       variantTiers,
     )
-  }, [selectedVariantId, quantity, currency, names, perExtraNameSurcharge, finishSurchargeAtCurrent, personalisationSurchargeAtCurrent, discountPercent, variantTiers, tiersFresh, isMetalFlat])
+  }, [selectedVariantId, quantity, currency, names, perExtraNameSurcharge, finishSurchargeAtCurrent, personalisationSurchargeAtCurrent, discountPercent, variantTiers, tiersFresh, isFlatAboveTop])
 
   return (
     <DesignerChrome

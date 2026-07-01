@@ -7,6 +7,7 @@ import {
   interpolateScheduleAt,
   flatTopTierTotal,
   flatUnitTotal,
+  pricesFlatAboveTopTier,
   type InterpolationConfig,
 } from './interpolation'
 
@@ -131,6 +132,15 @@ test('flatTopTierTotal: at/below the top tier returns null (not its job)', () =>
 
 test('flatTopTierTotal: empty tiers returns null', () => {
   assertEqual(flatTopTierTotal([], 100), null)
+})
+
+test('pricesFlatAboveTopTier: metal + carbon fibre true, others false', () => {
+  assertEqual(pricesFlatAboveTopTier('metal_gold'), true)
+  assertEqual(pricesFlatAboveTopTier('carbon_fibre'), true)
+  assertEqual(pricesFlatAboveTopTier('carbon_fibre_cnc'), true)
+  assertEqual(pricesFlatAboveTopTier('plastic_satin'), false)
+  assertEqual(pricesFlatAboveTopTier(null), false)
+  assertEqual(pricesFlatAboveTopTier(undefined), false)
 })
 
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`)

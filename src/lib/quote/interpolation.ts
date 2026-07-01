@@ -55,17 +55,27 @@ export function roundUpTo(value: number, increment: number): number {
   return Math.ceil(value / increment) * increment
 }
 
-// ── Flat pricing above the top listed tier (metal only) ─────────────
-// Metal card prices stop dropping at the top listed quantity (1000):
-// there's no further volume discount past it. So above the top tier we
-// hold that tier's per-card rate flat — the price for 1500 is simply the
-// 1000 per-card rate × 1500. This is a deliberate metal-only rule; every
-// other material keeps returning "no price" above its top tier (its price
-// is still curving down there, so extrapolating would mis-charge).
+// ── Flat pricing above the top listed tier ──────────────────────────
+// Some materials' card prices stop dropping at their top listed quantity
+// (metal + carbon fibre at 1000): there's no further volume discount past
+// it. So above the top tier we hold that tier's per-card rate flat — the
+// price for 1500 is simply the 1000 per-card rate × 1500. Materials whose
+// price is still curving down at the top keep returning "no price" above
+// it (extrapolating those would mis-charge), so this is opt-in per material
+// via pricesFlatAboveTopTier below.
 //
 // Mirrored verbatim in supabase/functions/_shared/orderPricing.ts (Vite
 // and Deno can't share a module) so the pay-page figure equals the server
 // charge. If you change one, change both.
+
+// Which materials price flat above their top listed tier. Rob confirmed the
+// per-card price holds at the top-tier rate for metal (all finishes) and
+// carbon fibre (plain + CNC). Detected by material code so no migration is
+// needed. Add a code here (and in orderPricing.ts) to enable another.
+export function pricesFlatAboveTopTier(code: string | null | undefined): boolean {
+  const c = code ?? ''
+  return c.startsWith('metal_') || c === 'carbon_fibre' || c === 'carbon_fibre_cnc'
+}
 
 // Customer-facing sanity cap: a designer can lock any quantity, but a
 // customer typing their own number on the pay page is bounded so a

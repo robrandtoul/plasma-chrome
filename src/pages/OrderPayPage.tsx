@@ -7,7 +7,7 @@ import { Lock } from 'lucide-react'
 import { Pill, PanelShell } from '../design'
 import { CustomerHeader } from '../components/CustomerHeader'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
-import { interpolateValue, flatTopTierTotal, flatUnitTotal, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
+import { interpolateValue, flatTopTierTotal, flatUnitTotal, pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency, CustomerProofGraph } from '../lib/types'
@@ -205,9 +205,9 @@ export default function OrderPayPage() {
   // client total is for display only and (because the selector is locked
   // to exact listed tiers) is byte-equal to what the server charges.
   const [tiers, setTiers] = useState<{ quantity: number; total_price: number }[]>([])
-  // Metal only: above the top listed tier, hold the top per-card rate flat
-  // (no volume discount past 1000) instead of blocking the quantity. Set from
-  // the material code so the pay-page figure matches the server charge.
+  // Metal + carbon fibre: above the top listed tier, hold the top per-card
+  // rate flat (no volume discount past 1000) instead of blocking the quantity.
+  // Set from the material code so the pay-page figure matches the server charge.
   const [flatAboveTop, setFlatAboveTop] = useState(false)
   const [perExtraName, setPerExtraName] = useState<number | null>(null)
   const [personalisation, setPersonalisation] = useState<{ perCardRate: number; minCharge: number } | null>(null)
@@ -512,7 +512,7 @@ export default function OrderPayPage() {
               approvedAt: g.proof?.approved_at ?? null,
               inks: current.ink_names ?? [],
             })
-            setFlatAboveTop((current.material_code ?? '').startsWith('metal_'))
+            setFlatAboveTop(pricesFlatAboveTopTier(current.material_code))
 
             // Open-quantity inputs (only meaningful when order.quantity is
             // null on a grid order, but harmless to capture either way):

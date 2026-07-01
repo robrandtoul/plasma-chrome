@@ -52,12 +52,21 @@ export interface Tier {
   total_price: number
 }
 
-// ── Flat pricing above the top listed tier (metal only) ─────────────
+// ── Flat pricing above the top listed tier ──────────────────────────
 // Mirror of src/lib/quote/interpolation.ts (Vite and Deno can't share a
-// module). Metal has no volume discount past its top listed quantity
-// (1000), so above the top tier we hold that tier's per-card rate flat:
-// 1500 = the 1000 per-card rate × 1500. Metal-only; every other material
+// module). Some materials have no volume discount past their top listed
+// quantity (metal + carbon fibre at 1000), so above the top tier we hold
+// that tier's per-card rate flat: 1500 = the 1000 per-card rate × 1500.
+// Opt-in per material via pricesFlatAboveTopTier; every other material
 // keeps returning null above its top tier. If you change one, change both.
+
+// Which materials price flat above their top listed tier (metal all
+// finishes + carbon fibre plain/CNC). Detected by material code. Mirror of
+// interpolation.ts pricesFlatAboveTopTier — add a code in both places.
+export function pricesFlatAboveTopTier(code: string | null | undefined): boolean {
+  const c = code ?? ''
+  return c.startsWith('metal_') || c === 'carbon_fibre' || c === 'carbon_fibre_cnc'
+}
 
 // Customer-facing sanity cap on a self-chosen quantity (a designer can
 // lock any quantity; a customer typing their own number is bounded).
