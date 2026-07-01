@@ -12,6 +12,7 @@ import {
   resolveUsTariff,
   flatTopTierTotal,
   flatUnitTotal,
+  pricesFlatAboveTopTier,
   type Tier,
   type PricingConfig,
 } from './orderPricing.ts'
@@ -83,6 +84,18 @@ test('cardTotalForQuantity: above highest tier is null (no price)', () => {
 test('flatUnitTotal: holds the per-unit rate flat, rounded to the penny', () => {
   // 2299 / 1000 = 2.299 per card × 1500 = 3448.5 (World Youth Bank example)
   assertEqual(flatUnitTotal(1000, 2299, 1500), 3448.5)
+})
+
+test('pricesFlatAboveTopTier: true for metal + carbon fibre, false otherwise', () => {
+  assertEqual(pricesFlatAboveTopTier('metal_gold'), true)
+  assertEqual(pricesFlatAboveTopTier('metal_steel'), true)
+  assertEqual(pricesFlatAboveTopTier('carbon_fibre'), true)
+  assertEqual(pricesFlatAboveTopTier('carbon_fibre_cnc'), true)
+  assertEqual(pricesFlatAboveTopTier('plastic_satin'), false)
+  assertEqual(pricesFlatAboveTopTier('paper_standard'), false)
+  assertEqual(pricesFlatAboveTopTier('acrylic'), false)
+  assertEqual(pricesFlatAboveTopTier(null), false)
+  assertEqual(pricesFlatAboveTopTier(undefined), false)
 })
 
 test('flatTopTierTotal: above the top tier uses the top per-card rate', () => {

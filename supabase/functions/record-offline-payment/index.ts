@@ -30,7 +30,7 @@
 
 import { json, requireDesigner } from '../_shared/admin.ts'
 import { logAudit } from '../_shared/audit.ts'
-import { cardTotalForQuantity, computeOrderTotal, resolveCardDiscount, type Tier } from '../_shared/orderPricing.ts'
+import { cardTotalForQuantity, computeOrderTotal, resolveCardDiscount, pricesFlatAboveTopTier, type Tier } from '../_shared/orderPricing.ts'
 
 type Currency = 'GBP' | 'EUR' | 'USD'
 type OfflineShipping = 'free' | 'manual'
@@ -139,9 +139,9 @@ Deno.serve(async (req) => {
       .eq('id', materialVariantId)
       .single()
     let perExtraName: number | null = null
-    // Metal: price a locked quantity above the top tier flat at the top
-    // per-card rate (no volume discount past 1000), matching the online
-    // checkout and the create-order offline branch.
+    // Metal + carbon fibre: price a locked quantity above the top tier flat
+    // at the top per-card rate (no volume discount past 1000), matching the
+    // online checkout and the create-order offline branch.
     let flatAboveTop = false
     if (variant?.material_id) {
       const { data: material } = await admin
@@ -150,7 +150,7 @@ Deno.serve(async (req) => {
         .eq('id', variant.material_id)
         .single()
       perExtraName = splitNameForCurrency(material, currency)
-      flatAboveTop = ((material?.code as string | null) ?? '').startsWith('metal_')
+      flatAboveTop = pricesFlatAboveTopTier(material?.code as string | null)
     }
 
     let personalisation: { perCardRate: number; minCharge: number } | null = null

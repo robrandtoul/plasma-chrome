@@ -25,7 +25,7 @@
 // is a test key (sk_test_…).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { cardTotalForQuantity, computeOrderTotal, resolveCardDiscount, resolveUsTariff, MAX_ONLINE_FLAT_QUANTITY, type Tier } from '../_shared/orderPricing.ts'
+import { cardTotalForQuantity, computeOrderTotal, resolveCardDiscount, resolveUsTariff, pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY, type Tier } from '../_shared/orderPricing.ts'
 import {
   applyIntlAdjustment,
   fetchGbpRates,
@@ -294,10 +294,10 @@ Deno.serve(async (req) => {
       .single()
     if (variant?.weight_grams != null) variantWeightGrams = Number(variant.weight_grams)
     let perExtraName: number | null = null
-    // Metal has no volume discount past its top listed tier (1000), so a
-    // metal order above the top tier is priced flat at the top per-card rate
-    // rather than rejected. Detected by the material code, same as the metal
-    // thickness guide on the customer page.
+    // Some materials have no volume discount past their top listed tier
+    // (metal + carbon fibre at 1000), so an order above the top tier is
+    // priced flat at the top per-card rate rather than rejected. Detected by
+    // the material code via the shared pricesFlatAboveTopTier predicate.
     let flatAboveTop = false
     if (variant?.material_id) {
       const { data: material } = await admin
@@ -306,7 +306,7 @@ Deno.serve(async (req) => {
         .eq('id', variant.material_id)
         .single()
       perExtraName = splitNameForCurrency(material, order.currency)
-      flatAboveTop = ((material?.code as string | null) ?? '').startsWith('metal_')
+      flatAboveTop = pricesFlatAboveTopTier(material?.code as string | null)
     }
 
     // Sanity cap on a customer-CHOSEN quantity (open order): a designer can
