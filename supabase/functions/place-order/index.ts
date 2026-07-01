@@ -245,7 +245,11 @@ function sanitiseInhouseNote(note: string): string {
 // via the Dropbox link in the note.
 const HS_ATTACH_MAX_BYTES = 10 * 1024 * 1024
 const ARTWORK_TOTAL_MAX_BYTES = 20 * 1024 * 1024
-const ARTWORK_MAX_FILES = 10
+// 30 (not 10) so a multi-material Set order — one subfolder per material, easily
+// 20+ files across them — doesn't fill the quota inside the first subfolder and
+// silently drop whole materials (see Order 403822 / OpusApeiro). ARTWORK_TOTAL_MAX_BYTES
+// is still the backstop for very large folders.
+const ARTWORK_MAX_FILES = 30
 
 // Map an artwork filename to a mime type, or null if it's not a file Stock
 // Control would surface on the job card (mirrors its classifyAttachment).
