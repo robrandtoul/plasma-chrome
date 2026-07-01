@@ -104,6 +104,44 @@ test('above the highest tier returns no price (snap down only)', () => {
   assertEqual(r.snap.upper, null)
 })
 
+// ── Flat-above-top (metal) ──────────────────────────────────────────
+
+test('flatAboveTop prices above the top tier at the top per-card rate', () => {
+  // top tier 75 @ 127.5 → 1.7 per card × 100 = 170
+  const r = calculate(sel({ quantity: 100, flatAboveTop: true }), TIERS)
+  assertEqual(r.total, 170)
+  assertEqual(r.baseTotal, 170)
+  assertEqual(r.validTier, false)
+  assertEqual(r.interpolated, false)
+  assertEqual(r.unitPrice, 1.7)
+  assertEqual(r.snap.lower, null)
+  assertEqual(r.snap.upper, null)
+})
+
+test('flatAboveTop still adds surcharges above the top tier', () => {
+  // 170 base + (2-1)×39 split-name + 10 finish = 219
+  const r = calculate(
+    sel({ quantity: 100, flatAboveTop: true, names: 2, perExtraNameSurcharge: 39, finishSurcharge: 10 }),
+    TIERS,
+  )
+  assertEqual(r.baseTotal, 170)
+  assertEqual(r.splitNameSurcharge, 39)
+  assertEqual(r.finishSurcharge, 10)
+  assertEqual(r.total, 219)
+})
+
+test('flatAboveTop does not extrapolate below the minimum tier', () => {
+  const r = calculate(sel({ quantity: 25, flatAboveTop: true }), TIERS)
+  assertEqual(r.total, null)
+  assertEqual(r.snap.upper?.quantity, 50)
+})
+
+test('flatAboveTop leaves in-range interpolation untouched', () => {
+  const r = calculate(sel({ quantity: 60, flatAboveTop: true }), TIERS, NO_WEIGHT)
+  assertEqual(r.total, 111)
+  assertEqual(r.interpolated, true)
+})
+
 // ── Surcharges + discount ride interpolation ────────────────────────
 
 test('interpolation adds split-name + finish surcharges to the base', () => {
