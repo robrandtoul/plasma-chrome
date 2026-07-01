@@ -503,28 +503,34 @@ export default function EditOrderModal({
                       <div className="mt-3 space-y-2">
                         <p className="text-[13px] text-ink-soft">How many cards for each person:</p>
                         {personNames.map((n) => (
-                          <div key={n} className="flex items-center gap-3">
-                            <span className="min-w-0 flex-1 truncate text-sm text-ink">{n}</span>
-                            <Input
-                              aria-label={`Quantity for ${n}`}
-                              type="number"
-                              min="1"
-                              step="1"
-                              className="w-28"
-                              value={personQty[n] ?? ''}
-                              onChange={(e) => { setPersonQty((prev) => ({ ...prev, [n]: e.target.value })); setDirty(true) }}
-                            />
+                          <div key={n} className="flex w-full items-center justify-between gap-3">
+                            <span title={n} className="min-w-0 flex-1 truncate text-sm text-ink">{n}</span>
+                            {/* Fixed-width wrapper: the design-system Input is `w-full`
+                                by default, which (in Tailwind v4) beats a `w-28` passed
+                                on the element and would stretch the box across the whole
+                                row, collapsing the name to nothing. Constrain the width
+                                on the wrapper instead so the name stays visible. */}
+                            <div className="w-28 shrink-0">
+                              <Input
+                                aria-label={`Quantity for ${n}`}
+                                type="number"
+                                min="1"
+                                step="1"
+                                className="text-right"
+                                value={personQty[n] ?? ''}
+                                onChange={(e) => { setPersonQty((prev) => ({ ...prev, [n]: e.target.value })); setDirty(true) }}
+                              />
+                            </div>
                           </div>
                         ))}
                       </div>
                     ) : (
-                      <div className="mt-3">
+                      <div className="mt-3 w-40">
                         <Input
                           aria-label="Quantity"
                           type="number"
                           min="1"
                           step="1"
-                          className="w-40"
                           value={quantity}
                           onChange={(e) => { setQuantity(e.target.value); setDirty(true) }}
                         />
