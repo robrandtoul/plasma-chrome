@@ -7,7 +7,7 @@ import { Lock } from 'lucide-react'
 import { Pill, PanelShell } from '../design'
 import { CustomerHeader } from '../components/CustomerHeader'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
-import { interpolateValue } from '../lib/quote/interpolation'
+import { interpolateValue, flatTopTierTotal, flatUnitTotal, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency, CustomerProofGraph } from '../lib/types'
@@ -205,6 +205,10 @@ export default function OrderPayPage() {
   // client total is for display only and (because the selector is locked
   // to exact listed tiers) is byte-equal to what the server charges.
   const [tiers, setTiers] = useState<{ quantity: number; total_price: number }[]>([])
+  // Metal only: above the top listed tier, hold the top per-card rate flat
+  // (no volume discount past 1000) instead of blocking the quantity. Set from
+  // the material code so the pay-page figure matches the server charge.
+  const [flatAboveTop, setFlatAboveTop] = useState(false)
   const [perExtraName, setPerExtraName] = useState<number | null>(null)
   const [personalisation, setPersonalisation] = useState<{ perCardRate: number; minCharge: number } | null>(null)
   // Per-quantity finish (material-option) surcharge schedule, set when the
@@ -508,6 +512,7 @@ export default function OrderPayPage() {
               approvedAt: g.proof?.approved_at ?? null,
               inks: current.ink_names ?? [],
             })
+            setFlatAboveTop((current.material_code ?? '').startsWith('metal_'))
 
             // Open-quantity inputs (only meaningful when order.quantity is
             // null on a grid order, but harmless to capture either way):
@@ -999,6 +1004,8 @@ export default function OrderPayPage() {
     if (lower && upper) {
       return interpolateValue(lower.quantity, lower.total_price, upper.quantity, upper.total_price, qty)
     }
+    // Metal only: above the top listed tier, hold the top per-card rate flat.
+    if (flatAboveTop) return flatTopTierTotal(tiers, qty)
     return null
   }
 
@@ -1018,6 +1025,12 @@ export default function OrderPayPage() {
     }
     if (lower && upper) {
       return interpolateValue(lower.quantity, lower.surcharge, upper.quantity, upper.surcharge, qty)
+    }
+    // Metal only: the finish surcharge is per-card and flat, so above the top
+    // tier hold that per-card rate (mirrors the server's flatAboveTop path).
+    if (flatAboveTop) {
+      const top = finishTiers[finishTiers.length - 1]
+      if (top && qty > top.quantity) return flatUnitTotal(top.quantity, top.surcharge, qty)
     }
     return 0
   }
@@ -1062,7 +1075,10 @@ export default function OrderPayPage() {
   })
   const splitSum = personParsed.reduce((a, b) => a + b, 0)
   const splitComplete = isSplitOpen && personParsed.every((q) => q >= 1)
-  const splitTotal = splitComplete ? payTotalForQty(splitSum) : null
+  // Metal extends flat above the top tier only up to the online sanity cap; a
+  // combined split above it can't be self-served and routes to "reply to us".
+  const splitOverCap = flatAboveTop && splitSum > MAX_ONLINE_FLAT_QUANTITY
+  const splitTotal = splitComplete && !splitOverCap ? payTotalForQty(splitSum) : null
   // When every person has a quantity but the combined total can't be priced,
   // explain why (below the minimum / above the online maximum) rather than
   // just disabling the button silently.
@@ -1070,7 +1086,7 @@ export default function OrderPayPage() {
     isSplitOpen && splitComplete && splitTotal == null
       ? (() => {
           const min = tiers[0]?.quantity
-          const max = tiers[tiers.length - 1]?.quantity
+          const max = flatAboveTop ? MAX_ONLINE_FLAT_QUANTITY : tiers[tiers.length - 1]?.quantity
           if (min != null && splitSum < min) return `Our minimum order is ${min.toLocaleString()} cards in total.`
           if (max != null && splitSum > max)
             return `For more than ${max.toLocaleString()} cards, please reply to the email you received and we’ll sort it.`
@@ -1081,11 +1097,15 @@ export default function OrderPayPage() {
   // Single-person open order: the customer types any quantity within the
   // listed range and the price interpolates (matching the split path + the
   // Quote compiler). min/max bound the type-in; an out-of-range entry shows a
-  // hint and blocks checkout rather than silently failing server-side.
+  // hint and blocks checkout rather than silently failing server-side. For
+  // metal the max is the online sanity cap, since it prices flat above the
+  // top listed tier up to there.
   const singleMin = tiers[0]?.quantity ?? null
-  const singleMax = tiers[tiers.length - 1]?.quantity ?? null
+  const singleMax = flatAboveTop ? MAX_ONLINE_FLAT_QUANTITY : (tiers[tiers.length - 1]?.quantity ?? null)
   const singleCardTotal =
-    isSingleOpen && chosenQuantity != null ? cardTotalForQty(chosenQuantity) : null
+    isSingleOpen && chosenQuantity != null && (singleMax == null || chosenQuantity <= singleMax)
+      ? cardTotalForQty(chosenQuantity)
+      : null
   const singleRangeHint =
     isSingleOpen && chosenQuantity != null && singleCardTotal == null
       ? singleMin != null && chosenQuantity < singleMin

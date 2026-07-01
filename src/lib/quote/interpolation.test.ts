@@ -5,6 +5,8 @@ import {
   roundUpTo,
   interpolateValue,
   interpolateScheduleAt,
+  flatTopTierTotal,
+  flatUnitTotal,
   type InterpolationConfig,
 } from './interpolation'
 
@@ -107,6 +109,28 @@ test('interpolateScheduleAt: empty schedule returns 0', () => {
 test('interpolateScheduleAt: null/undefined schedule returns 0', () => {
   assertEqual(interpolateScheduleAt(null, 60), 0)
   assertEqual(interpolateScheduleAt(undefined, 60), 0)
+})
+
+// ── flat-above-top (metal) — mirrors orderPricing.test.ts ───────────
+
+test('flatUnitTotal: holds the per-unit rate flat, rounded to the penny', () => {
+  // 2299 / 1000 = 2.299 per card × 1500 = 3448.5 (World Youth Bank example)
+  assertEqual(flatUnitTotal(1000, 2299, 1500), 3448.5)
+})
+
+test('flatTopTierTotal: above the top tier uses the top per-card rate', () => {
+  // top tier 75 @ 127.5 → 1.7 per card × 100 = 170
+  assertEqual(flatTopTierTotal([{ quantity: 50, total_price: 100 }, { quantity: 75, total_price: 127.5 }], 100), 170)
+})
+
+test('flatTopTierTotal: at/below the top tier returns null (not its job)', () => {
+  const tiers = [{ quantity: 50, total_price: 100 }, { quantity: 75, total_price: 127.5 }]
+  assertEqual(flatTopTierTotal(tiers, 75), null)
+  assertEqual(flatTopTierTotal(tiers, 25), null)
+})
+
+test('flatTopTierTotal: empty tiers returns null', () => {
+  assertEqual(flatTopTierTotal([], 100), null)
 })
 
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`)

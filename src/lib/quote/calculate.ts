@@ -1,6 +1,7 @@
 import type { Currency } from '../types'
 import {
   interpolateValue,
+  flatUnitTotal,
   DEFAULT_INTERPOLATION_CONFIG,
   type InterpolationConfig,
 } from './interpolation'
@@ -51,6 +52,12 @@ export interface QuoteSelection {
   // identical to its pre-discount behaviour. Designer-set in the
   // compiler form; resets on material change in the page.
   discountPercent: number
+  // Metal only: price a quantity above the top listed tier flat at the
+  // top tier's per-card rate (no volume discount past 1000) instead of
+  // bailing to a custom quote. Mirrors the order checkout's flatAboveTop
+  // path so the designer's quote equals what the customer is charged.
+  // The page sets this from the material code (starts with 'metal_').
+  flatAboveTop?: boolean
 }
 
 // Two tier hints surfaced when the typed quantity doesn't match a
@@ -251,6 +258,38 @@ export function calculate(
       interpolated: true,
       currency,
       snap: { lower, upper },
+    }
+  }
+
+  // Metal only: above the top listed tier there's no bracketing upper tier,
+  // so instead of bailing to a custom quote we hold the top tier's per-card
+  // rate flat (no volume discount past 1000). `lower` is the top tier here
+  // (the quantity exceeds every tier) and `upper` is null. Same maths as the
+  // order checkout's flatAboveTop path (flatUnitTotal), so a designer's quote
+  // equals what the customer is charged. Below-minimum (no `lower`) still
+  // falls through to the null-total + snap path.
+  if (selection.flatAboveTop && lower && !upper) {
+    const flatBase = flatUnitTotal(lower.quantity, lower.totalPrice, quantity)
+    const splitName = splitNameSurchargeFor(names, perExtraNameSurcharge)
+    const finishSurcharge = selection.finishSurcharge
+    const personalisationSurcharge = selection.personalisationSurcharge
+    const subtotal = flatBase + splitName + finishSurcharge + personalisationSurcharge
+    const discountAmount = subtotal * (discountPercent / 100)
+    const total = subtotal - discountAmount
+    return {
+      total,
+      baseTotal: flatBase,
+      splitNameSurcharge: splitName,
+      finishSurcharge,
+      personalisationSurcharge,
+      subtotal,
+      discountPercent,
+      discountAmount,
+      unitPrice: total / quantity,
+      validTier: false,
+      interpolated: false,
+      currency,
+      snap: EMPTY_SNAP,
     }
   }
 
