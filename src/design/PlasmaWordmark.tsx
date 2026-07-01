@@ -7,6 +7,10 @@ interface PlasmaWordmarkProps {
   /** Mono-uppercase label under the wordmark. Pass null to hide.
       Default null. */
   tagline?: string | null
+  /** Animate the tagline away (height + opacity) rather than removing it.
+      Used by the designer header's condense-on-scroll. Default false — every
+      other caller (customer page, login) renders the tagline at full height. */
+  collapsed?: boolean
   className?: string
 }
 
@@ -23,7 +27,7 @@ const DIM: Record<WordmarkSize, { box: number; icon: number; font: number; tag: 
 // in display sans next to it. Tagline (when set) sits below in
 // monospace, uppercase, 0.2em tracking. Used on the customer page
 // header, login brand panel, and designer chrome.
-export function PlasmaWordmark({ size = 'md', tagline = null, className = '' }: PlasmaWordmarkProps) {
+export function PlasmaWordmark({ size = 'md', tagline = null, collapsed = false, className = '' }: PlasmaWordmarkProps) {
   const d = DIM[size]
   return (
     <div className={['inline-flex items-center gap-2.5', className].filter(Boolean).join(' ')}>
@@ -42,8 +46,18 @@ export function PlasmaWordmark({ size = 'md', tagline = null, className = '' }: 
         </div>
         {tagline !== null && (
           <div
-            className="font-mono font-medium text-ink-mute uppercase mt-0.5"
-            style={{ fontSize: d.tag, letterSpacing: '0.2em' }}
+            className={[
+              'overflow-hidden font-mono font-medium text-ink-mute uppercase transition-all duration-200',
+              collapsed ? 'opacity-0' : 'opacity-100 mt-0.5',
+            ].join(' ')}
+            style={{
+              fontSize: d.tag,
+              letterSpacing: '0.2em',
+              // Fixed heights so the tuck animates (auto→0 can't). The expanded
+              // box uses the tagline's natural 1.5 line-height so the uppercase
+              // caps aren't clipped by overflow-hidden.
+              height: collapsed ? 0 : d.tag * 1.5,
+            }}
           >
             {tagline}
           </div>

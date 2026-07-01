@@ -11,6 +11,7 @@ import { useAuth } from '../lib/auth'
 import EditProfileModal, { type EditProfileSavedPayload } from '../components/EditProfileModal'
 import { FEEDBACK_RESOLVED_STATUSES, isUnseenResolved } from '../lib/feedback'
 import { getApprovedNoOrderCount } from '../lib/approvedNoOrder'
+import { getFlaggedCount } from '../lib/flaggedCount'
 import { DesignerHeader, type DesignerNavId, type DesignerHeaderColour } from './DesignerHeader'
 
 // Shared chrome wrapper for every designer-facing page. Owns the
@@ -76,6 +77,9 @@ export function DesignerChrome({
   // nav pill so the "Links to send" worklist is reachable from any page. Cached
   // (60s) in the helper so it doesn't re-query on every navigation.
   const [ordersUnread, setOrdersUnread] = useState(0)
+  // Count of open items on the Flagged board — badges the Flagged nav pill from
+  // any page. Same cached-helper pattern as ordersUnread.
+  const [flaggedUnread, setFlaggedUnread] = useState(0)
 
   // Fetch the signed-in designer's profile for the header avatar +
   // any consumer that reads via useDesignerProfile(); the same fetch
@@ -131,6 +135,14 @@ export function DesignerChrome({
     return () => { cancelled = true }
   }, [])
 
+  // Flagged-board open count for the nav badge. Independent of the profile
+  // fetch; the helper's 60s cache absorbs per-navigation repeats.
+  useEffect(() => {
+    let cancelled = false
+    void getFlaggedCount().then((n) => { if (!cancelled) setFlaggedUnread(n) })
+    return () => { cancelled = true }
+  }, [])
+
   async function handleSignOut() {
     await supabase.auth.signOut()
     navigate('/login')
@@ -159,9 +171,12 @@ export function DesignerChrome({
         // No badge while the user is already on the board — they're looking
         // at it; the board itself re-stamps feedback_seen_at on open.
         feedbackUnread={active === 'feedback' ? 0 : feedbackUnread}
-        // Likewise no Orders badge while already on the Orders page — the list
-        // is right there.
-        ordersUnread={active === 'orders' ? 0 : ordersUnread}
+        // Both counts stay visible when their own tab is active — they simply
+        // invert on the coral pill (see DesignerHeader). Hiding a badge on
+        // navigation would shrink that pill and shove the pills to its right
+        // sideways, so the count persists rather than clearing on arrival.
+        ordersUnread={ordersUnread}
+        flaggedCount={flaggedUnread}
         onEditProfile={() => setEditProfileOpen(true)}
         onSignOut={handleSignOut}
       />
