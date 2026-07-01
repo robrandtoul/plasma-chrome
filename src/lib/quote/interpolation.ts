@@ -55,6 +55,48 @@ export function roundUpTo(value: number, increment: number): number {
   return Math.ceil(value / increment) * increment
 }
 
+// ── Flat pricing above the top listed tier (metal only) ─────────────
+// Metal card prices stop dropping at the top listed quantity (1000):
+// there's no further volume discount past it. So above the top tier we
+// hold that tier's per-card rate flat — the price for 1500 is simply the
+// 1000 per-card rate × 1500. This is a deliberate metal-only rule; every
+// other material keeps returning "no price" above its top tier (its price
+// is still curving down there, so extrapolating would mis-charge).
+//
+// Mirrored verbatim in supabase/functions/_shared/orderPricing.ts (Vite
+// and Deno can't share a module) so the pay-page figure equals the server
+// charge. If you change one, change both.
+
+// Customer-facing sanity cap: a designer can lock any quantity, but a
+// customer typing their own number on the pay page is bounded so a
+// fat-finger 50,000 can't auto-price. Above this the pay page shows the
+// "reply to us" hint and the server refuses a customer-chosen quantity.
+// PROVISIONAL — Rob's commercial call.
+export const MAX_ONLINE_FLAT_QUANTITY = 5000
+
+// Flat total at a fixed per-unit rate: (topValue / topQuantity) × quantity,
+// rounded to the penny. Used for both the base cards and the (per-card,
+// flat) metal finish surcharge above the top tier.
+export function flatUnitTotal(topQuantity: number, topValue: number, quantity: number): number {
+  if (topQuantity <= 0) return 0
+  return Math.round((topValue / topQuantity) * quantity * 100) / 100
+}
+
+// Flat card total above the top listed tier: the top tier's per-card rate
+// held flat. Returns null when there are no tiers, or when the quantity is
+// at/below the top tier (in-range quantities are the interpolator's job,
+// and below-minimum stays unpriceable).
+export function flatTopTierTotal(
+  tiers: readonly { quantity: number; total_price: number }[],
+  quantity: number,
+): number | null {
+  if (tiers.length === 0) return null
+  let top = tiers[0]
+  for (const t of tiers) if (t.quantity > top.quantity) top = t
+  if (quantity <= top.quantity) return null
+  return flatUnitTotal(top.quantity, top.total_price, quantity)
+}
+
 // Interpolate a value for `q` strictly between two anchor points
 // (qLow, vLow) and (qHigh, vHigh): straight-line interpolation, with the
 // upward weighting applied to the increment above vLow, rounded up, then

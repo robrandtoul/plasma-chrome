@@ -25,7 +25,7 @@
 // is a test key (sk_test_…).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { cardTotalForQuantity, computeOrderTotal, resolveCardDiscount, resolveUsTariff, type Tier } from '../_shared/orderPricing.ts'
+import { cardTotalForQuantity, computeOrderTotal, resolveCardDiscount, resolveUsTariff, MAX_ONLINE_FLAT_QUANTITY, type Tier } from '../_shared/orderPricing.ts'
 import {
   applyIntlAdjustment,
   fetchGbpRates,
@@ -294,13 +294,30 @@ Deno.serve(async (req) => {
       .single()
     if (variant?.weight_grams != null) variantWeightGrams = Number(variant.weight_grams)
     let perExtraName: number | null = null
+    // Metal has no volume discount past its top listed tier (1000), so a
+    // metal order above the top tier is priced flat at the top per-card rate
+    // rather than rejected. Detected by the material code, same as the metal
+    // thickness guide on the customer page.
+    let flatAboveTop = false
     if (variant?.material_id) {
       const { data: material } = await admin
         .from('materials')
-        .select('split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd')
+        .select('code, split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd')
         .eq('id', variant.material_id)
         .single()
       perExtraName = splitNameForCurrency(material, order.currency)
+      flatAboveTop = ((material?.code as string | null) ?? '').startsWith('metal_')
+    }
+
+    // Sanity cap on a customer-CHOSEN quantity (open order): a designer can
+    // lock any quantity, but a customer typing their own number is bounded so
+    // a fat-finger can't auto-price a huge run. Locked orders (order.quantity
+    // set) skip the cap — the designer chose it deliberately.
+    if (order.quantity == null && flatAboveTop && resolvedQuantity > MAX_ONLINE_FLAT_QUANTITY) {
+      return json({
+        error: 'pricing_not_supported',
+        message: 'For an order this large, please reply to the email you received and we’ll confirm the price and send a payment link.',
+      }, 422)
     }
 
     // Personalisation rates for the currency, when the order has it.
@@ -330,7 +347,7 @@ Deno.serve(async (req) => {
         quantity: s.quantity as number,
         total_price: Number(s.surcharge),
       }))
-      if (surTiers.length > 0) optionSurcharge = cardTotalForQuantity(surTiers, resolvedQuantity) ?? 0
+      if (surTiers.length > 0) optionSurcharge = cardTotalForQuantity(surTiers, resolvedQuantity, undefined, { flatAboveTop }) ?? 0
     }
 
     const priced = computeOrderTotal({
@@ -340,6 +357,7 @@ Deno.serve(async (req) => {
       namesCount: order.names_count ?? 1,
       personalisation,
       optionSurcharge,
+      flatAboveTop,
       shipping: 0, // shipping is computed + added separately below
     })
     if (!priced.ok) {

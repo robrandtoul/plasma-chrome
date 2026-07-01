@@ -52,14 +52,41 @@ export interface Tier {
   total_price: number
 }
 
+// ── Flat pricing above the top listed tier (metal only) ─────────────
+// Mirror of src/lib/quote/interpolation.ts (Vite and Deno can't share a
+// module). Metal has no volume discount past its top listed quantity
+// (1000), so above the top tier we hold that tier's per-card rate flat:
+// 1500 = the 1000 per-card rate × 1500. Metal-only; every other material
+// keeps returning null above its top tier. If you change one, change both.
+
+// Customer-facing sanity cap on a self-chosen quantity (a designer can
+// lock any quantity; a customer typing their own number is bounded).
+export const MAX_ONLINE_FLAT_QUANTITY = 5000
+
+export function flatUnitTotal(topQuantity: number, topValue: number, quantity: number): number {
+  if (topQuantity <= 0) return 0
+  return Math.round((topValue / topQuantity) * quantity * 100) / 100
+}
+
+export function flatTopTierTotal(tiers: readonly Tier[], quantity: number): number | null {
+  if (tiers.length === 0) return null
+  let top = tiers[0]
+  for (const t of tiers) if (t.quantity > top.quantity) top = t
+  if (quantity <= top.quantity) return null
+  return flatUnitTotal(top.quantity, top.total_price, quantity)
+}
+
 // Base card total for a quantity from a variant's tiers: exact tier, or
 // interpolated between the two bracketing tiers. Returns null below the
-// lowest tier or above the highest (no extrapolation) — the caller
-// treats that as "can't price online".
+// lowest tier or above the highest — the caller treats that as "can't
+// price online". EXCEPTION: when opts.flatAboveTop is set (metal), a
+// quantity above the top tier is priced flat at the top tier's per-card
+// rate rather than returning null.
 export function cardTotalForQuantity(
   tiers: readonly Tier[],
   quantity: number,
   config: PricingConfig = DEFAULT_PRICING_CONFIG,
+  opts?: { flatAboveTop?: boolean },
 ): number | null {
   if (tiers.length === 0) return null
   const sorted = [...tiers].sort((a, b) => a.quantity - b.quantity)
@@ -74,6 +101,7 @@ export function cardTotalForQuantity(
   if (lower && upper) {
     return interpolateValue(lower.quantity, lower.total_price, upper.quantity, upper.total_price, quantity, config)
   }
+  if (opts?.flatAboveTop) return flatTopTierTotal(sorted, quantity)
   return null
 }
 
@@ -94,6 +122,9 @@ export interface OrderPriceInputs {
   // Resolved shipping figure (free = 0, manual = the set amount). The
   // address-dependent treatments are rejected before we get here.
   shipping: number
+  // Metal only: price a quantity above the top listed tier flat at the top
+  // tier's per-card rate instead of returning no_card_price.
+  flatAboveTop?: boolean
   config?: PricingConfig
 }
 
@@ -115,7 +146,7 @@ export type OrderPriceResult =
 // tooling + personalisation + finish surcharge, then shipping on top.
 export function computeOrderTotal(inp: OrderPriceInputs): OrderPriceResult {
   const config = inp.config ?? DEFAULT_PRICING_CONFIG
-  const cards = cardTotalForQuantity(inp.tiers, inp.quantity, config)
+  const cards = cardTotalForQuantity(inp.tiers, inp.quantity, config, { flatAboveTop: inp.flatAboveTop })
   if (cards == null) return { ok: false, reason: 'no_card_price' }
 
   const splitName =

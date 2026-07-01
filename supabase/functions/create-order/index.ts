@@ -395,13 +395,18 @@ Deno.serve(async (req) => {
         .eq('id', materialVariantId)
         .single()
       let perExtraName: number | null = null
+      // Metal: price a locked quantity above the top tier flat at the top
+      // per-card rate (no volume discount past 1000). Mirrors the online
+      // checkout so an offline order matches what the pay page would charge.
+      let flatAboveTop = false
       if (variant?.material_id) {
         const { data: material } = await admin
           .from('materials')
-          .select('split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd')
+          .select('code, split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd')
           .eq('id', variant.material_id)
           .single()
         perExtraName = splitNameForCurrency(material, currency)
+        flatAboveTop = ((material?.code as string | null) ?? '').startsWith('metal_')
       }
 
       let personalisation: { perCardRate: number; minCharge: number } | null = null
@@ -422,7 +427,7 @@ Deno.serve(async (req) => {
           .eq('material_option_id', materialOptionId)
           .eq('currency', currency)
         const surTiers: Tier[] = (surRows ?? []).map((s) => ({ quantity: s.quantity as number, total_price: Number(s.surcharge) }))
-        if (surTiers.length > 0) optionSurcharge = cardTotalForQuantity(surTiers, quantity as number) ?? 0
+        if (surTiers.length > 0) optionSurcharge = cardTotalForQuantity(surTiers, quantity as number, undefined, { flatAboveTop }) ?? 0
       }
 
       const priced = computeOrderTotal({
@@ -432,6 +437,7 @@ Deno.serve(async (req) => {
         namesCount,
         personalisation,
         optionSurcharge,
+        flatAboveTop,
         shipping: 0,
       })
       if (!priced.ok) {

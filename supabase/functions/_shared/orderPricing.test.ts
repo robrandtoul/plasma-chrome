@@ -10,6 +10,8 @@ import {
   interpolateValue,
   resolveCardDiscount,
   resolveUsTariff,
+  flatTopTierTotal,
+  flatUnitTotal,
   type Tier,
   type PricingConfig,
 } from './orderPricing.ts'
@@ -74,6 +76,64 @@ test('cardTotalForQuantity: below lowest tier is null (no price)', () => {
 
 test('cardTotalForQuantity: above highest tier is null (no price)', () => {
   assertEqual(cardTotalForQuantity(TIERS, 200, W5_R1), null)
+})
+
+// ── flat-above-top (metal) ──────────────────────────────────────────
+
+test('flatUnitTotal: holds the per-unit rate flat, rounded to the penny', () => {
+  // 2299 / 1000 = 2.299 per card × 1500 = 3448.5 (World Youth Bank example)
+  assertEqual(flatUnitTotal(1000, 2299, 1500), 3448.5)
+})
+
+test('flatTopTierTotal: above the top tier uses the top per-card rate', () => {
+  // top tier 75 @ 127.5 → 1.7 per card × 100 = 170
+  assertEqual(flatTopTierTotal(TIERS, 100), 170)
+})
+
+test('flatTopTierTotal: at/below the top tier returns null (not its job)', () => {
+  assertEqual(flatTopTierTotal(TIERS, 75), null)
+  assertEqual(flatTopTierTotal(TIERS, 25), null)
+})
+
+test('cardTotalForQuantity: flatAboveTop prices above the top tier flat', () => {
+  assertEqual(cardTotalForQuantity(TIERS, 100, W5_R1, { flatAboveTop: true }), 170)
+})
+
+test('cardTotalForQuantity: flatAboveTop still null below the minimum', () => {
+  assertEqual(cardTotalForQuantity(TIERS, 25, W5_R1, { flatAboveTop: true }), null)
+})
+
+test('cardTotalForQuantity: flatAboveTop leaves in-range interpolation untouched', () => {
+  assertEqual(cardTotalForQuantity(TIERS, 60, NO_WEIGHT, { flatAboveTop: true }), 111)
+})
+
+test('computeOrderTotal: flatAboveTop lets a metal order price above the top tier', () => {
+  const tiers: Tier[] = [{ quantity: 1000, total_price: 2299 }]
+  const r = computeOrderTotal({
+    tiers,
+    quantity: 1500,
+    perExtraNameSurcharge: null,
+    namesCount: 1,
+    personalisation: null,
+    flatAboveTop: true,
+    shipping: 0,
+  })
+  if (!r.ok) throw new Error('expected ok')
+  assertEqual(r.cards, 3448.5)
+  assertEqual(r.total, 3448.5)
+})
+
+test('computeOrderTotal: without flatAboveTop, above the top tier is unpriceable', () => {
+  const tiers: Tier[] = [{ quantity: 1000, total_price: 2299 }]
+  const r = computeOrderTotal({
+    tiers,
+    quantity: 1500,
+    perExtraNameSurcharge: null,
+    namesCount: 1,
+    personalisation: null,
+    shipping: 0,
+  })
+  assertEqual(r.ok, false)
 })
 
 // ── computeOrderTotal ───────────────────────────────────────────────
