@@ -171,12 +171,11 @@ export function DesignerChrome({
         // No badge while the user is already on the board — they're looking
         // at it; the board itself re-stamps feedback_seen_at on open.
         feedbackUnread={active === 'feedback' ? 0 : feedbackUnread}
-        // Likewise no Orders badge while already on the Orders page — the list
-        // is right there.
-        ordersUnread={active === 'orders' ? 0 : ordersUnread}
-        // Flagged is a live status count (open flags on the board), meaningful
-        // even while viewing it — so it stays visible when active and simply
-        // inverts on the coral pill (unlike the clear-on-arrival Orders badge).
+        // Both counts stay visible when their own tab is active — they simply
+        // invert on the coral pill (see DesignerHeader). Hiding a badge on
+        // navigation would shrink that pill and shove the pills to its right
+        // sideways, so the count persists rather than clearing on arrival.
+        ordersUnread={ordersUnread}
         flaggedCount={flaggedUnread}
         onEditProfile={() => setEditProfileOpen(true)}
         onSignOut={handleSignOut}
