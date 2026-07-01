@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { PlasmaWordmark } from './PlasmaWordmark'
 import { Sheet } from './Sheet'
+import { useScrolled } from './useScrolled'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
 
 // Shared chrome for every designer-facing page. Sticky top bar with
@@ -108,6 +109,9 @@ interface DesignerHeaderProps {
   /** Count of approved proofs with no order link sent yet. Badges the Orders
    *  nav pill (desktop) and the Orders bottom tab (mobile) when > 0. */
   ordersUnread?: number
+  /** Count of open items on the Flagged board. Badges the Flagged nav pill
+   *  when > 0, inverting on the active (coral) pill so it stays legible. */
+  flaggedCount?: number
   onEditProfile?: () => void
   onSignOut?: () => void
 }
@@ -121,6 +125,7 @@ export function DesignerHeader({
   mobileBell,
   feedbackUnread = 0,
   ordersUnread = 0,
+  flaggedCount = 0,
   onEditProfile,
   onSignOut,
 }: DesignerHeaderProps) {
@@ -133,6 +138,10 @@ export function DesignerHeader({
   // state has any effect at md:+ where the desktop chrome is rendered.
   const [searchOpen, setSearchOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
+  // Condense-on-scroll: past a small threshold the bar tightens its vertical
+  // padding, tucks the wordmark tagline, and drops a soft shadow. Window-scroll
+  // driven (see useScrolled) — the same scroll context `sticky top-0` binds to.
+  const condensed = useScrolled()
   useEffect(() => {
     let cancelled = false
     void getOrderingEnabled().then((on) => { if (!cancelled) setOrderingEnabled(on) })
@@ -148,35 +157,69 @@ export function DesignerHeader({
       {/* The mobile-only cream/blur top bar is layered behind max-md:
           variants so the desktop bar (bg-surface, no blur) is byte-for-byte
           unchanged at md:+. */}
-      <header className="sticky top-0 z-[5] bg-surface border-b border-line max-md:bg-[rgba(251,247,240,0.92)] max-md:backdrop-blur-[8px]">
-        <div className="mx-auto max-w-[1280px] flex items-center gap-4 px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3 sm:gap-5 sm:px-7">
+      <header
+        className={[
+          'sticky top-0 z-[5] bg-surface border-b border-line transition-shadow duration-[250ms]',
+          'max-md:bg-[rgba(251,247,240,0.92)] max-md:backdrop-blur-[8px]',
+          condensed ? 'shadow-[0_6px_16px_-8px_rgba(22,19,17,0.20)]' : '',
+        ].join(' ')}
+      >
+        <div
+          className={[
+            'mx-auto max-w-[1280px] flex items-center gap-4 px-4 sm:gap-5 sm:px-7',
+            'transition-[padding] duration-[220ms]',
+            // Tighten top/bottom padding when condensed (12px → 9px). The
+            // safe-area-inset-top stays in both states so the bar never tucks
+            // under a phone notch.
+            condensed
+              ? 'pt-[calc(env(safe-area-inset-top)+9px)] pb-[9px]'
+              : 'pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3',
+          ].join(' ')}
+        >
           <Link to="/" className="flex-shrink-0">
-            <PlasmaWordmark tagline="Proofs" />
+            <PlasmaWordmark tagline="Proofs" collapsed={condensed} />
           </Link>
           <nav
             aria-label="Designer navigation"
-            className="hidden md:flex items-center gap-1 ml-3"
+            className="hidden md:flex items-center gap-[5px] ml-3"
           >
             {visibleNav.map((n) => {
               const isActive = n.id === active
-              const badge = n.id === 'orders' ? ordersUnread : 0
+              // Orders and Flagged both carry a count badge; every other pill
+              // has none. Per-nav aria copy so the number is announced in
+              // context.
+              const badge =
+                n.id === 'orders' ? ordersUnread : n.id === 'flagged' ? flaggedCount : 0
+              const badgeAria =
+                badge > 0
+                  ? n.id === 'orders'
+                    ? `${n.label} — ${badge} approved, no order link sent`
+                    : `${n.label} — ${badge} open`
+                  : undefined
               const cls = [
-                'inline-flex items-center h-8 px-3 rounded-full text-[13px] transition-colors',
+                'inline-flex items-center gap-1.5 h-9 px-[15px] rounded-full text-[14px] font-medium transition-colors',
                 isActive
-                  ? 'text-ink bg-canvas border border-line'
-                  : 'text-ink-mute border border-transparent hover:text-ink hover:bg-canvas',
+                  ? 'bg-brand text-on-brand'
+                  : 'text-ink-mute hover:text-ink hover:bg-canvas',
               ].join(' ')
               return (
                 <Link
                   key={n.id}
                   to={n.to}
                   className={cls}
-                  aria-label={badge > 0 ? `${n.label} — ${badge} approved, no order link sent` : undefined}
+                  aria-current={isActive ? 'page' : undefined}
+                  aria-label={badgeAria}
                 >
                   {n.label}
                   {badge > 0 && (
                     <span
-                      className="ml-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-semibold leading-none text-white"
+                      className={[
+                        'inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1',
+                        'font-mono text-[10px] font-semibold leading-none',
+                        // Invert on the active coral pill so the badge stays
+                        // legible; brand-fill on inactive pills as before.
+                        isActive ? 'bg-white/25 text-white' : 'bg-brand text-white',
+                      ].join(' ')}
                       aria-hidden="true"
                     >
                       {badge > 9 ? '9+' : badge}
