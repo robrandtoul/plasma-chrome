@@ -800,14 +800,36 @@ Deno.serve(async (req) => {
         attachments = await buildArtworkAttachments(dbxToken, order.dropbox_folder_url, toFetch)
       } catch { /* best-effort: send the email without attachments */ }
     }
+    // The exact body emailed to the supplier — reused verbatim for the customer-
+    // thread copy below so the two can't drift.
+    const handoffBody = customMessage ? htmlifyMessage(customMessage) : emailLines.join('<br>')
     newConvId = await createSupplierConversation(token, {
       mailboxId,
       subject,
       supplierEmail: chosen.email,
       userId,
-      text: customMessage ? htmlifyMessage(customMessage) : emailLines.join('<br>'),
+      text: handoffBody,
       attachments,
     })
+    // Best-effort: file a copy of exactly what was sent to the supplier as an
+    // internal note on the customer's proof thread. Help Scout notes are never
+    // emailed or shown to the customer, so this just gives the project thread a
+    // record of the outsourced hand-off. No attachments — the artwork already rode
+    // on the supplier email, and the Dropbox link is in the copied body. A failure
+    // here must NOT fail the placement: the supplier email has already gone out, so
+    // a throw that reached the outer catch would wrongly report failure and invite
+    // a retry that re-sends the whole order. Guarded on a linked thread (a supplier
+    // order can be placed without one, in which case there's nothing to copy onto).
+    if (conversationId) {
+      try {
+        await createNote(
+          token,
+          conversationId,
+          userId,
+          `<strong>COPY OF ORDER SENT TO SUPPLIER</strong><br><br>${handoffBody}`,
+        )
+      } catch { /* best-effort copy; the supplier email is the hand-off that matters */ }
+    }
   } catch (e) {
     if (e instanceof HsError) return json({ ok: false, error: `Help Scout: ${e.message}` }, 502)
     return json({ ok: false, error: `Hand-off failed: ${(e as Error)?.message ?? 'unknown'}` }, 502)
