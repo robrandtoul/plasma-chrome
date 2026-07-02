@@ -38,7 +38,8 @@ import {
   viewedStateTitle,
   type ViewedState,
 } from '../lib/viewedState'
-import { proofBucket, isCustomerReplied, type BucketInput } from '../lib/dashboardGrouping'
+import { proofBucket, isCustomerReplied, type BucketInput, type NeedsAttentionRule } from '../lib/dashboardGrouping'
+import SnoozeControl from '../components/SnoozeControl'
 import {
   sentEvidenceAt,
   buildFunnel,
@@ -246,6 +247,12 @@ export default function ProofDetailPage() {
   // (same proofBucket logic). Null until loaded / if the row can't be read —
   // the pill falls back to the raw status in that case.
   const [bucketRow, setBucketRow] = useState<BucketInput | null>(null)
+  // Active snooze details for this proof (the two columns beyond BucketInput's
+  // snoozed_until that the unsnooze path needs: which rule the snooze is on, and
+  // any note). Read alongside bucketRow from public_dashboard_projects and fed
+  // to the SnoozeControl next to the status pill.
+  const [snoozeRuleCode, setSnoozeRuleCode] = useState<NeedsAttentionRule | null>(null)
+  const [snoozeNote, setSnoozeNote] = useState<string | null>(null)
   // Canonical last-activity timestamp from public_dashboard_projects —
   // the same value the dashboard buckets on. Fetched alongside bucketRow
   // (one column on the same row) to power the "Last activity" stat card
@@ -624,13 +631,16 @@ export default function ProofDetailPage() {
     // status fallback rather than breaking the page load.
     void supabase
       .from('public_dashboard_projects')
-      .select('status, current_version_id, current_version_viewed_at, latest_non_view_event_type, latest_non_view_event_at, version_created_at, rule_code, rule_meta, snoozed_until, helpscout_last_reply_at, helpscout_last_customer_reply_at, last_activity_at, follow_up_rule_code, has_open_change_request')
+      .select('status, current_version_id, current_version_viewed_at, latest_non_view_event_type, latest_non_view_event_at, version_created_at, rule_code, rule_meta, snoozed_until, snooze_rule_code, snooze_note, helpscout_last_reply_at, helpscout_last_customer_reply_at, last_activity_at, follow_up_rule_code, has_open_change_request')
       .eq('proof_id', proofId)
       .maybeSingle()
       .then(({ data }) => {
         if (isStale() || !data) return
         setBucketRow(data as unknown as BucketInput)
         setLastActivityAt((data as { last_activity_at: string | null }).last_activity_at ?? null)
+        const snooze = data as { snooze_rule_code: NeedsAttentionRule | null; snooze_note: string | null }
+        setSnoozeRuleCode(snooze.snooze_rule_code ?? null)
+        setSnoozeNote(snooze.snooze_note ?? null)
       })
 
     // Orders for this proof — drives the inline order-status panel + the
@@ -2559,6 +2569,17 @@ export default function ProofDetailPage() {
                       )
                       : <ProofStatusPill label={statusBucket.label} colour={statusBucket.colour} />)
                   : <ProofStatusPill status={proof.status} />}
+                {/* Snooze / unsnooze — same needs-attention snooze the dashboard
+                    offers, surfaced here too. Renders nothing unless the proof
+                    is snoozed or a needs-attention rule is currently firing. */}
+                <SnoozeControl
+                  proofId={proof.id}
+                  ruleCode={bucketRow?.rule_code ?? null}
+                  snoozedUntil={bucketRow?.snoozed_until ?? null}
+                  snoozeRuleCode={snoozeRuleCode}
+                  snoozeNote={snoozeNote}
+                  onChange={() => { if (id) loadProof(id) }}
+                />
                 {currentIsCustomQuote && (
                   <span
                     className="pill"
