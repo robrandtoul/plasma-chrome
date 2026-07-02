@@ -46,6 +46,7 @@
 
 import { requireDesigner } from '../_shared/admin.ts'
 import { fetchConversation, getAccessToken, HsError, postStaffReply } from '../_shared/helpscout.ts'
+import { messageBodyToHtml } from '../_shared/messageHtml.ts'
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -286,7 +287,13 @@ Deno.serve(async (req) => {
       const token = await getAccessToken(appId, appSecret)
       console.log('[send-helpscout-reply] got access token')
       const customerId = await fetchPrimaryCustomerId(token, conversationId)
-      result = await postReply(token, conversationId, body, userIdNum, customerId)
+      // Hand Help Scout finished HTML (escaped, URLs wrapped in <a> tags,
+      // newlines as <br>) rather than a plain-text body. Help Scout's own
+      // nl2br + auto-linking runs in an order that folds a "<br><br>…"
+      // following a bare URL into the link's href — the iPhone-404 bug on
+      // the first-proof / revision templates, whose copy sits after {url}.
+      // See _shared/messageHtml.ts.
+      result = await postReply(token, conversationId, messageBodyToHtml(body), userIdNum, customerId)
     } catch (hsErr) {
       if (hsErr instanceof HsError) {
         const upstream = hsErr.status === 404 ? 404 : 502

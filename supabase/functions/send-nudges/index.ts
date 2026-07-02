@@ -42,6 +42,7 @@ import {
   postStaffReply,
   type HsConversationWithThreads,
 } from '../_shared/helpscout.ts'
+import { messageBodyToHtml } from '../_shared/messageHtml.ts'
 import {
   NUDGE_DEFAULT_BODIES,
   renderTemplate,
@@ -654,6 +655,13 @@ async function run(admin: Admin): Promise<Response> {
             continue
           }
           const rendered = renderTemplate(templateBody, ctx)
+          // HTML form for the actual Help Scout send — escaped, {url}
+          // wrapped in an <a> tag, newlines as <br>. Keeps the bare URL
+          // from being auto-linked by Help Scout in a way that folds
+          // trailing copy into the href (the iPhone-404 bug). The plain
+          // `rendered` is still what we store on the ledger for display.
+          // See _shared/messageHtml.ts.
+          const renderedHtml = messageBodyToHtml(rendered)
 
           // Reminder #2+ opens a NEW conversation with a fresh subject
           // (spec section 6) — the deliverability lever, and the nudge-1
@@ -742,11 +750,11 @@ async function run(admin: Admin): Promise<Response> {
               subject: rule.freshSubject,
               customerId,
               userId: senderId,
-              text: rendered,
+              text: renderedHtml,
             })
           } else {
             threadId = await postStaffReply(token, c.conversationId!, {
-              text: rendered,
+              text: renderedHtml,
               userId: senderId,
               customerId,
               // A chase asks the customer to act, so the conversation belongs in
