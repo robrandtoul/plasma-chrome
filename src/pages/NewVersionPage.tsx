@@ -3566,6 +3566,31 @@ export default function NewVersionPage() {
           .map((img) => ({ v1Img: img, file: replacementByV1RowId[img.v1RowId]!.file }))
       : []
 
+    // Authoritative allocation guard (runs before any upload/insert so
+    // nothing partial is written). Carried and replacement rows were
+    // already slot-filtered above via carrySlotStillValid, but FRESH
+    // entries are written straight from entry.associated_name (see
+    // freshInserts below) with no slot check — so a card left as
+    // "shared" (associated_name null) while the shape has no shared
+    // slot would silently persist and reach the customer as shared-
+    // across-everyone instead of under a recipient's name. That is the
+    // exact v1 mis-allocation this guards against. slotStillValid still
+    // returns true for the legitimate shared cases (membership single-
+    // design, two-sided shared front), so this only blocks a genuine
+    // orphan. The reactive `imagesAllocated` validation disables the
+    // Save button for the same condition; this is the belt-and-braces
+    // catch for any state desync that slips past the button gate.
+    const strandedFresh = allEntries.filter(
+      ({ entry }) => !slotStillValid(entry.associated_name, entry.side ?? 'front'),
+    )
+    if (strandedFresh.length > 0) {
+      setError(
+        'One or more images are allocated to “shared / everyone” but this proof has named recipients. Every card must be assigned to a recipient before saving — check the image allocation and try again.',
+      )
+      setSubmitting(false)
+      return
+    }
+
     // Upload replacement + fresh files in parallel. Carried rows
     // are not in this batch — they reuse v1's file_path.
     const freshUploadBatch = [
@@ -4311,6 +4336,25 @@ export default function NewVersionPage() {
       ),
     )
 
+  // Companion to everySlotHasImage. everySlotHasImage guarantees each
+  // slot is *filled*; this guarantees each uploaded image *belongs to*
+  // a slot in the current shape — no image is stranded. The case it
+  // catches: a card left as "shared" (associated_name null) when the
+  // shape exposes no shared slot (e.g. a one-sided Recipients proof),
+  // which would otherwise persist and reach the customer as shared-
+  // across-everyone instead of under a recipient's name. A shared
+  // image is still legitimate where the shape has a shared slot
+  // (membership single-design, or a two-sided card with a shared
+  // front), so this only fires when the null has nowhere valid to sit.
+  const validSlotKeysForImages = new Set(
+    slotTuplesForValidation.map((t) => `${t.identity ?? '__shared__'}|${t.side}`),
+  )
+  const everyImageInValidSlot = Object.values(imagesByOption).every((list) =>
+    list.every((e) =>
+      validSlotKeysForImages.has(`${e.associated_name ?? '__shared__'}|${e.side ?? 'front'}`),
+    ),
+  )
+
   // Names required in Business mode — every Business project has
   // at least one per-name dimension (one-sided: all sides per-
   // name; two-sided + shared: back is per-name; two-sided +
@@ -4381,6 +4425,9 @@ export default function NewVersionPage() {
     // Standard per-slot image grid is replaced by the per-layout editor
     // on a collection, so it short-circuits here (layouts* keys cover it).
     images:         (isVariantRound || isSetCollectionShape) ? true : everySlotHasImage,
+    // Every uploaded image must be assigned to a valid slot — no card
+    // silently left as "shared" when there are named recipients.
+    imagesAllocated:(isVariantRound || isSetCollectionShape) ? true : everyImageInValidSlot,
     pricingDisplay: isPerDirectionRound ? true : pricingDisplay !== null,
     material:       isPerDirectionRound ? true : !!selectedMaterialId,
     variant:        isPerDirectionRound ? true : (!variantRequired || selectedVariantIds.length > 0),
@@ -6563,6 +6610,7 @@ function missingFieldItems(
   if (!validations.inkNames) items.push('Add ink names')
   if (!validations.names) items.push('Add at least one name')
   if (!validations.images) items.push('Add at least one image')
+  if (!validations.imagesAllocated) items.push('Assign every image to a recipient (none left as “shared”)')
   if (!validations.variantsCount) items.push('Add two or more variant directions')
   if (!validations.variantsLabels) items.push('Name each variant direction')
   if (!validations.variantsImages) items.push('Add at least one image per variant direction')

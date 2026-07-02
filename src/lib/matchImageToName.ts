@@ -12,9 +12,14 @@
 //        * Further split each primary token on CamelCase
 //          boundaries (insert a break between a lowercase and a
 //          following uppercase letter).
-//   4. Name match: the first chip whose lowercased value equals
-//      any lowercased token wins. Full-token equality only, so
-//      "Mark" doesn't match "Markus".
+//   4. Name match: a chip matches when EVERY token of the chip is
+//      present among the file's tokens (each compared as a whole
+//      token, so "Mark" still doesn't match "Markus"). Full "First
+//      Last" roster names therefore match "Proof02_JoshWakeman.jpg"
+//      because both "josh" and "wakeman" appear. When several chips
+//      match, the most specific one wins (most tokens matched), with
+//      roster order breaking ties — so a roster of ["Josh", "Josh
+//      Wakeman"] resolves "JoshWakeman.jpg" to "Josh Wakeman".
 //   5. Side match:
 //        * Full-word "front" / "back" in any token → that side.
 //        * Single-letter "f" / "b" only if it's a standalone
@@ -53,10 +58,32 @@
 //     → { associatedName: "Jeremy", side: null }
 //       (single-letter "B" is NOT a primary token here — it came
 //        from CamelCase splitting, so it can't carry side.)
+//
+//   Proof02_JoshWakeman_Bamboo.jpg, [Lee Bowtell, Josh Wakeman]
+//     cleaned = "JoshWakeman_Bamboo"
+//     primary = ["JoshWakeman", "Bamboo"]
+//     all     = ["Josh", "Wakeman", "Bamboo"]
+//     name tokens: "Lee Bowtell" → [lee, bowtell] (not all present)
+//                  "Josh Wakeman" → [josh, wakeman] (both present)
+//     → { associatedName: "Josh Wakeman", side: null }
+//       (the whole-string equality this replaced never matched a
+//        full "First Last" name, so both cards defaulted to shared.)
 
 export interface ImageMatchResult {
   associatedName: string | null
   side: 'front' | 'back' | null
+}
+
+// Tokenise a roster name the same way the filename stem is tokenised
+// (primary split on `_`, `-`, whitespace, then CamelCase boundaries),
+// lowercased. "Josh Wakeman" → ["josh", "wakeman"]; "Josh" → ["josh"].
+function nameTokens(name: string): string[] {
+  return name
+    .split(/[_\-\s]+/)
+    .filter(Boolean)
+    .flatMap((t) => t.split(/(?<=[a-z])(?=[A-Z])/))
+    .filter(Boolean)
+    .map((t) => t.toLowerCase())
 }
 
 export function matchImageToName(filename: string, names: string[]): ImageMatchResult {
@@ -74,12 +101,22 @@ export function matchImageToName(filename: string, names: string[]): ImageMatchR
   const lowerAll = allTokens.map((t) => t.toLowerCase())
   const lowerPrimary = primaryTokens.map((t) => t.toLowerCase())
 
-  // 4. Name match: first chip that equals any token (case-insensitive).
+  // 4. Name match: a chip matches when every one of its tokens is
+  //    present among the file's tokens. This lets a full "First Last"
+  //    roster name match a filename that contains both parts, while
+  //    per-token equality keeps "Mark" from matching "Markus". The
+  //    most specific matching chip wins (most tokens), roster order
+  //    breaking ties, so "Josh Wakeman" beats a bare "Josh" chip.
+  const fileTokens = new Set(lowerAll)
   let associatedName: string | null = null
+  let bestTokenCount = 0
   for (const chip of names) {
-    if (lowerAll.includes(chip.toLowerCase())) {
+    const chipTokens = nameTokens(chip)
+    if (chipTokens.length === 0) continue
+    const allPresent = chipTokens.every((t) => fileTokens.has(t))
+    if (allPresent && chipTokens.length > bestTokenCount) {
       associatedName = chip
-      break
+      bestTokenCount = chipTokens.length
     }
   }
 

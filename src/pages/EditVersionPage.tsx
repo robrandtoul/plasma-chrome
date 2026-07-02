@@ -649,8 +649,31 @@ export default function EditVersionPage() {
   const layoutsTitlesValid = !isSetCollection || layoutEditRows.every((r) => r.title.trim().length > 0)
   const layoutsImagesValid = !isSetCollection || layoutEditRows.every((r) => layoutRowImageCount(r) > 0)
 
+  // Every named recipient must have at least one image of their own —
+  // no card left as "Shared" while a named person has none. This is the
+  // edit-side counterpart of the NewVersionPage allocation guard, and
+  // enforces "N names ⇒ N allocated cards". No-name shapes (single
+  // shared design / Set single) are vacuously fine; variant-round and
+  // set-collection use their own image models, so they short-circuit.
+  // Checked as a union across option tabs (a name covered on any tab
+  // passes) so legacy per-tab unevenness doesn't block an edit — the
+  // case it catches is a recipient with zero cards anywhere.
+  const trimmedRecipientNames = names.map((n) => n.trim()).filter(Boolean)
+  const allAllocatedNames = new Set(
+    Object.values(editImagesByOption)
+      .flat()
+      .map((img) => img.associated_name)
+      .filter((n): n is string => n != null),
+  )
+  const everyNameAllocated =
+    isVariantRound || isSetCollection || trimmedRecipientNames.length === 0
+      ? true
+      : trimmedRecipientNames.every((n) => allAllocatedNames.has(n))
+
   const validations = {
     images:      isSetCollection ? true : imagesFinishKeys.every(fk => (editImagesByOption[fk] ?? []).length > 0),
+    // Coverage guard: no named recipient left without a card of their own.
+    imagesAllocated: everyNameAllocated,
     material:    materialDisplay.trim() !== '',
     inkNames:    !requiresInkNames || (editInkCount > 0 && inkNameValidities.every(Boolean)),
     frontColour: !requiresLayerColours || selectedFrontColourId !== null,
@@ -669,6 +692,15 @@ export default function EditVersionPage() {
   const imagesHint = invalidOptionKey !== undefined && invalidOptionKey !== ''
     ? `At least one image required for ${availableOptions.find(f => f.code === invalidOptionKey)?.display_name ?? invalidOptionKey}.`
     : 'At least one proof image required.'
+
+  // Names with no image of their own — surfaced under the image
+  // section so the designer sees exactly who is unallocated.
+  const missingAllocationNames = everyNameAllocated
+    ? []
+    : trimmedRecipientNames.filter((n) => !allAllocatedNames.has(n))
+  const allocationHint = missingAllocationNames.length > 0
+    ? `Assign an image to ${missingAllocationNames.join(' and ')} — a recipient can't be left as “Shared”.`
+    : ''
 
   function toggleOption(code: string) {
     setSelectedOptions(prev => {
@@ -1317,6 +1349,7 @@ export default function EditVersionPage() {
         { key: 'backColour',  ref: backColourRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'inkNames',    ref: inkNamesRef as unknown as React.RefObject<HTMLElement | null> },
         { key: 'images',      ref: imageSectionRef },
+        { key: 'imagesAllocated', ref: imageSectionRef },
       ]
       const first = order.find(o => !validations[o.key])
       first?.ref.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -2229,6 +2262,9 @@ export default function EditVersionPage() {
             {fileNote && <p className="mt-2 text-sm text-ink-mute">{fileNote}</p>}
             {shouldHighlight('images') && (
               <p className="mt-2 text-xs font-medium text-out">{imagesHint}</p>
+            )}
+            {shouldHighlight('imagesAllocated') && allocationHint && (
+              <p className="mt-2 text-xs font-medium text-out">{allocationHint}</p>
             )}
           </section>
           )}
