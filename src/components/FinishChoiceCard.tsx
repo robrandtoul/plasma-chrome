@@ -21,8 +21,9 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, ZoomIn, ZoomOut } from 'lucide-react'
 
-const LOUPE_SIZE = 132 // px diameter of the hover loupe
-const LOUPE_ZOOM = 2.6 // hover magnification
+const LOUPE_SIZE = 200 // px diameter of the hover loupe
+const LOUPE_ZOOM = 5 // hover magnification — texture-inspection strength; how
+// crisp it looks at this level depends on the resolution of the uploaded photo
 const OVERLAY_ZOOM = 2.5 // full-screen "zoomed in" width multiplier
 
 interface FinishChoiceCardProps {
