@@ -1026,10 +1026,10 @@ export default function OrderPayPage() {
                   <p className="text-[12px] text-ink-mute">Approved {formatApprovedDate(spec.approvedAt)}</p>
                 )}
               </div>
-              {thumbs.length > 0 && (
-                <div className={`mt-3 grid gap-3 ${thumbs.length > 1 ? 'sm:grid-cols-2' : ''}`}>
-                  {thumbs.map((img) => (
-                    <img key={img.id} src={img.signed_url} alt="Approved proof artwork" className="w-full rounded-lg bg-surface ring-1 ring-line" />
+              {recapTiles.length > 0 && (
+                <div className={`mt-3 grid gap-3 ${recapTiles.length > 1 ? 'sm:grid-cols-2' : ''}`}>
+                  {recapTiles.map((tile) => (
+                    <ArtworkFade key={tile.active.side ?? tile.active.id} layers={tile.layers} activeId={tile.active.id} />
                   ))}
                 </div>
               )}
@@ -1156,6 +1156,32 @@ export default function OrderPayPage() {
   const recapBack = recapPool.find((i) => i.side === 'back')
   const recapBySide = [recapFront, recapBack].filter((i): i is GridImage => !!i)
   const thumbs = recapBySide.length > 0 ? recapBySide : recapPool.slice(0, 2)
+
+  // Cross-fade stacks for the recap: while the customer can switch finishes,
+  // mount EVERY finish's front/back as layers in one tile and toggle opacity
+  // to the active one. Mounting all the layers IS the preload — switching
+  // finishes never shows a loading pop, just a smooth fade. One image per
+  // finish tab (plus any shared image) per side, first by sort order.
+  // Single-finish / locked recaps render the plain active image as before.
+  const finishCodesForStack = specFinishes.map((f) => f.code)
+  const stackForSide = (side: string | null | undefined): GridImage[] => {
+    const seen = new Set<string>()
+    return versionImages.filter((i) => {
+      if (i.side !== side) return false
+      if (i.material_option != null && !finishCodesForStack.includes(i.material_option)) return false
+      const group = i.material_option ?? '__shared__'
+      if (seen.has(group)) return false
+      seen.add(group)
+      return true
+    })
+  }
+  const recapTiles =
+    order.finish_open === true && specFinishes.length > 1 && recapBySide.length > 0
+      ? recapBySide.map((active) => {
+          const layers = stackForSide(active.side)
+          return { active, layers: layers.some((l) => l.id === active.id) ? layers : [active] }
+        })
+      : thumbs.map((t) => ({ active: t, layers: [t] }))
 
   if (order.status === 'paid' || order.status === 'fulfilled') {
     return renderConfirmation(true, order)
@@ -1493,10 +1519,10 @@ export default function OrderPayPage() {
                   <p className="text-[12px] text-ink-mute">Approved {formatApprovedDate(spec.approvedAt)}</p>
                 )}
               </div>
-              {thumbs.length > 0 && (
-                <div className={`mt-3 grid gap-3 ${thumbs.length > 1 ? 'sm:grid-cols-2' : ''}`}>
-                  {thumbs.map((img) => (
-                    <img key={img.id} src={img.signed_url} alt="Approved proof artwork" className="w-full rounded-lg bg-surface ring-1 ring-line" />
+              {recapTiles.length > 0 && (
+                <div className={`mt-3 grid gap-3 ${recapTiles.length > 1 ? 'sm:grid-cols-2' : ''}`}>
+                  {recapTiles.map((tile) => (
+                    <ArtworkFade key={tile.active.side ?? tile.active.id} layers={tile.layers} activeId={tile.active.id} />
                   ))}
                 </div>
               )}
@@ -1875,6 +1901,37 @@ function formatApprovedDate(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+// Layered artwork tile: every candidate finish's image mounted at once (the
+// mount IS the preload), with opacity cross-fading to the active layer.
+// Layer 0 stays in normal flow to size the tile; the rest stack absolutely —
+// the layers are the same design in different finishes, so dimensions match
+// in practice, with object-cover guarding any drift. Hidden layers are
+// aria-hidden so screen readers see exactly one artwork image.
+function ArtworkFade({ layers, activeId }: { layers: GridImage[]; activeId: string }) {
+  if (layers.length <= 1) {
+    const img = layers[0]
+    if (!img) return null
+    return <img src={img.signed_url} alt="Approved proof artwork" className="w-full rounded-lg bg-surface ring-1 ring-line" />
+  }
+  return (
+    <span className="relative block">
+      {layers.map((im, i) => (
+        <img
+          key={im.id}
+          src={im.signed_url}
+          alt={im.id === activeId ? 'Approved proof artwork' : ''}
+          aria-hidden={im.id !== activeId}
+          className={[
+            i === 0 ? 'relative' : 'absolute inset-0 h-full w-full object-cover',
+            'block w-full rounded-lg bg-surface ring-1 ring-line transition-opacity duration-300',
+            im.id === activeId ? 'opacity-100' : 'opacity-0',
+          ].join(' ')}
+        />
+      ))}
+    </span>
+  )
 }
 
 function Row({ label, value, bold = false }: { label: string; value: string; bold?: boolean }) {
