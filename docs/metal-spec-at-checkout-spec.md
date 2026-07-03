@@ -80,19 +80,15 @@ Deploy `proof-action` first (a template that doesn't reference the new variable 
 
 ### 5.1 Data model
 
-Two columns on `proofs.orders` (columns added to an existing proofs-schema table inherit its grants — no grant statements needed; both auto-flow to the pay page because `public_get_order` returns `to_jsonb(o) - 'token'`):
+> **As built (migration 000298):** thickness openness got its own explicit flag, `thickness_open`, rather than being inferred from a null `material_variant_id` as first drafted. Reason found during the build: create-checkout-session *persists* the customer's choice onto the order at PaymentIntent time (so the webhook/Xero/fulfilment read it), which would destroy a null-column openness marker and freeze the first pick — breaking "Edit order details". A durable flag lets the body choice win on every checkout call while the order is open (the same request-wins pattern the rating destination uses).
 
-- `material_id uuid references proofs.materials(id)` — stamped by `create-order` on **every** new order from the builder's chosen material. Open-spec orders need it because there is no variant to derive the material from; locked orders get it too for free (useful generally, e.g. filtering the proof payload's variants).
-- `finish_open boolean not null default false` — explicit, because `material_option_id = null` already means "base / no finish" and cannot double as "customer chooses".
+Four columns on `proofs.orders` (columns added to an existing table inherit its grants — no grant statements needed; all auto-flow to the pay page because `public_get_order` returns `to_jsonb(o) - 'token'`):
 
-Openness is then defined as:
+- `material_id uuid references proofs.materials(id)` — stamped by `create-order` on **every** new order (derived server-side from the variant when one is locked, from the builder's material when open). The pay-page chooser and the checkout validation key off it.
+- `thickness_open boolean not null default false` / `finish_open boolean not null default false` — the explicit "customer chooses at checkout" flags. Finish needed one anyway (`material_option_id = null` already means "base / no finish"); thickness gets the symmetric treatment per the note above. Both stay true after a choice is persisted — openness is a property of the order, resolvedness is a property of the columns.
+- `help_requested_at timestamptz` — stamped by the `order-question` edge fn (§5.5a); drives the Orders-page "Asked for help" chip.
 
-| Field | Open when |
-| --- | --- |
-| Thickness | `material_variant_id IS NULL AND custom_quote_total IS NULL AND material_id IS NOT NULL` (and `order_kind` is a standard order — prototypes and reprints always carry a variant) |
-| Finish | `finish_open = true AND material_option_id IS NULL` |
-
-No new tables, so the proofs-schema "explicit grants for new tables" footgun doesn't bite. ⚠ Migration numbering: run `ls supabase/migrations/0002* 0003*` before picking a number (highest at authoring time is 000297 — do not trust this doc).
+No new tables, so the proofs-schema "explicit grants for new tables" footgun doesn't bite.
 
 ### 5.2 Order builder (`OrderBuilderModal`)
 
