@@ -396,7 +396,7 @@ export default function AdminOrderLogPage() {
                           <div className="text-xs text-ink-dim">{o.contact_name}</div>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-ink-soft">{specLabel(o.material, o.variant, o.custom_quote_total)}</td>
+                      <td className="px-4 py-3 text-ink-soft">{specLabel(o.material, o.variant, o.custom_quote_total, o.finish)}</td>
                       <td className="px-4 py-3 text-right whitespace-nowrap text-ink-soft">
                         {o.quantity != null ? o.quantity.toLocaleString() : '—'}
                       </td>
@@ -488,7 +488,7 @@ function OrderDetailModal({ order: o, onClose }: { order: OrderLogRow; onClose: 
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h3 className="text-lg font-bold text-ink">{customerLabel(o.company_name, o.contact_name)}</h3>
-            <p className="mt-0.5 text-sm text-ink-soft">{specLabel(o.material, o.variant, o.custom_quote_total)}</p>
+            <p className="mt-0.5 text-sm text-ink-soft">{specLabel(o.material, o.variant, o.custom_quote_total, o.finish)}</p>
             <p className="mt-1 font-mono text-[12px] text-ink-mute">{o.payment_reference ?? '—'}</p>
           </div>
           <div className="flex flex-col items-end gap-2">
