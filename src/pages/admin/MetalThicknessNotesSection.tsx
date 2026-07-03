@@ -15,11 +15,13 @@ import {
 // because the value is one JSONB blob and doesn't fit AdminSettingsPage's
 // per-scalar-field save flow.
 //
-// Two sets are edited: "Standard metals" (steel, gold, gun metal, copper,
-// …, all at 300/500/800µm) and "Mini Steel" (200/300/500µm). The copy is
-// shared across the metal family by design, so a single edit updates every
-// metal proof of that family. Saved as a whole; the public_settings cache
-// is invalidated so a customer preview picks the change up quickly.
+// Three sets are edited: "Standard metals" (steel, gold, gun metal, copper,
+// …, all at 300/500/800µm), "Mini Steel" (200/300/500µm) and "Full Colour
+// Plastic" (420/680/760µm, with its own intro since the shared intro line is
+// worded for metal). The copy is shared across each material family by
+// design, so a single edit updates every proof of that family. Saved as a
+// whole; the public_settings cache is invalidated so a customer preview
+// picks the change up quickly.
 
 const inputClass =
   'w-full rounded border border-line px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none'
@@ -58,13 +60,13 @@ export default function MetalThicknessNotesSection() {
     [draft, loaded],
   )
 
-  function patchIntro(intro: string) {
-    setDraft((d) => (d ? { ...d, intro } : d))
+  function patchIntro(field: 'intro' | 'full_colour_plastic_intro', value: string) {
+    setDraft((d) => (d ? { ...d, [field]: value } : d))
     if (savedAt != null) setSavedAt(null)
   }
 
   function patchRow(
-    setKey: 'standard' | 'mini_steel',
+    setKey: 'standard' | 'mini_steel' | 'full_colour_plastic',
     index: number,
     field: keyof ThicknessOption,
     value: string,
@@ -110,7 +112,7 @@ export default function MetalThicknessNotesSection() {
   return (
     <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
       <div className="mb-1 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-ink">Metal thickness notes</h3>
+        <h3 className="text-sm font-semibold text-ink">Thickness notes</h3>
         <button
           type="button"
           onClick={resetToDefaults}
@@ -120,7 +122,7 @@ export default function MetalThicknessNotesSection() {
         </button>
       </div>
       <p className="mb-5 text-sm text-ink-mute">
-        The "Thickness" card shown on customer proof pages for metal cards. The copy is shared across all standard metals (steel, gold, gun metal, copper, etc.); Mini Steel has its own set. Changes apply to every metal proof.
+        The "Thickness" card shown on customer proof pages, and the thickness chooser on open-spec order pages. The copy is shared across all standard metals (steel, gold, gun metal, copper, etc.); Mini Steel and Full Colour Plastic each have their own set. Changes apply to every proof of that family.
       </p>
 
       {loadError && (
@@ -137,15 +139,15 @@ export default function MetalThicknessNotesSection() {
         )
       ) : (
         <div className="space-y-6">
-          {/* Intro paragraph */}
+          {/* Intro paragraph (metal sets) */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-ink">Intro line</label>
+            <label className="mb-1.5 block text-sm font-medium text-ink">Intro line (metals)</label>
             <p className="mb-2 text-xs text-ink-mute">
-              Sits above the thickness list, in the left column.
+              Sits above the thickness list, in the left column. Shared by the two metal sets below.
             </p>
             <textarea
               value={draft.intro}
-              onChange={(e) => patchIntro(e.target.value)}
+              onChange={(e) => patchIntro('intro', e.target.value)}
               rows={3}
               className={inputClass}
             />
@@ -163,6 +165,28 @@ export default function MetalThicknessNotesSection() {
             subtitle="The smaller card — 200 / 300 / 500µm."
             rows={draft.mini_steel}
             onChange={(i, field, value) => patchRow('mini_steel', i, field, value)}
+          />
+
+          {/* Full Colour Plastic — its own intro (the shared intro line is
+              worded for metal) plus the 420/680/760µm set. */}
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-ink">Intro line (Full Colour Plastic)</label>
+            <p className="mb-2 text-xs text-ink-mute">
+              Sits above the Full Colour Plastic thickness list.
+            </p>
+            <textarea
+              value={draft.full_colour_plastic_intro}
+              onChange={(e) => patchIntro('full_colour_plastic_intro', e.target.value)}
+              rows={3}
+              className={inputClass}
+            />
+          </div>
+
+          <ThicknessSetEditor
+            heading="Full Colour Plastic"
+            subtitle="760 / 680 / 420µm — shown thickest first, in this order."
+            rows={draft.full_colour_plastic}
+            onChange={(i, field, value) => patchRow('full_colour_plastic', i, field, value)}
           />
 
           {saveError && (

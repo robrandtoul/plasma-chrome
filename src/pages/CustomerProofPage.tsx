@@ -17,7 +17,12 @@ import { MaterialOptionTabs } from '../components/MaterialOptionTabs'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LayeredConstructionPanel } from '../components/LayeredConstructionPanel'
 import { MetalThicknessPanel } from '../components/MetalThicknessPanel'
-import { DEFAULT_METAL_THICKNESS_NOTES, thicknessSetForMaterial } from '../lib/metalThicknessNotes'
+import {
+  DEFAULT_METAL_THICKNESS_NOTES,
+  hasThicknessGuide,
+  thicknessIntroForMaterial,
+  thicknessSetForMaterial,
+} from '../lib/metalThicknessNotes'
 import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
 import { ActionPanel } from '../components/ActionPanel'
 import DeclineFeedbackPanel from '../components/DeclineFeedbackPanel'
@@ -3386,14 +3391,14 @@ export default function CustomerProofPage() {
             vcardCopy={publicSettings?.qr_panel_vcard_copy}
           />
 
-          {/* Metal thickness guide (migration 000177). Contextual
-              section explaining the three metal card thickness
-              options (300μm / 500μm / 800μm). Renders only on
-              metal proofs (material_code starts with 'metal_').
-              Metal proofs never carry the letterpress Construction
-              panel, so the two never stack — each material gets at
-              most one contextual panel in this slot. */}
-          {activeVersion.material_code?.startsWith('metal_') && (
+          {/* Thickness guide (migration 000177). Contextual section
+              explaining the material's thickness options — the metal
+              family (300/500/800μm, Mini Steel's 200/300/500μm) and
+              Full Colour Plastic (420/680/760μm), via hasThicknessGuide.
+              None of these materials carries the letterpress
+              Construction panel, so the two never stack — each material
+              gets at most one contextual panel in this slot. */}
+          {hasThicknessGuide(activeVersion.material_code) && (
             <PanelShell
               eyebrow="About this material"
               title="Thickness"
@@ -3407,7 +3412,7 @@ export default function CustomerProofPage() {
                   in reading order (intro → list). */}
               <div className="grid gap-8 md:grid-cols-[1fr_2fr] md:items-start">
                 <p className="max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.7] text-ink-soft">
-                  {thicknessNotes.intro}
+                  {thicknessIntroForMaterial(thicknessNotes, activeVersion.material_code)}
                 </p>
                 <MetalThicknessPanel
                   options={thicknessSetForMaterial(thicknessNotes, activeVersion.material_code)}
