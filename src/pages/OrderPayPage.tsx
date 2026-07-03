@@ -9,7 +9,7 @@ import { CustomerHeader } from '../components/CustomerHeader'
 import { FinishChoiceCard } from '../components/FinishChoiceCard'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 import { interpolateValue, flatTopTierTotal, flatUnitTotal, pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
-import { thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
+import { hasThicknessGuide, thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency, CustomerProofGraph } from '../lib/types'
@@ -715,9 +715,10 @@ export default function OrderPayPage() {
               if (o.material_variant_id && offerable.some((v) => v.id === o.material_variant_id)) {
                 setChosenVariantId(o.material_variant_id)
               }
-              // Thickness education copy — metal only (the notes are written
-              // for the metal family; other materials render name-only cards).
-              if (current.material_code?.startsWith('metal_')) {
+              // Thickness education copy — the materials with a written set
+              // (the metal family + Full Colour Plastic); anything else
+              // renders name-only cards.
+              if (hasThicknessGuide(current.material_code)) {
                 try {
                   const s = await getPublicSettings()
                   if (!cancelled) {

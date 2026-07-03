@@ -8,12 +8,14 @@
 // when the column is null / the RPC is unreachable, so the panel always
 // renders readable copy. Keep this in lockstep with the migration seed.
 //
-// Shape: a single intro line plus two thickness sets — one shared by
+// Shape: a single intro line plus three thickness sets — one shared by
 // every standard metal (steel, gold, gun metal, copper, …) at
-// 300/500/800µm, and a separate set for Mini Steel at 200/300/500µm.
-// The copy is deliberately shared across the metal family rather than
-// stored per material, because the physical feel of a given thickness
-// is the same whichever metal it is cut from.
+// 300/500/800µm, a separate set for Mini Steel at 200/300/500µm, and a
+// set for Full Colour Plastic at 420/680/760µm (with its own intro,
+// since the shared intro line reads "Metal cards are…"). The copy is
+// deliberately shared across each material family rather than stored
+// per material, because the physical feel of a given thickness is the
+// same whichever metal it is cut from.
 
 export interface ThicknessOption {
   /** Display label, e.g. "300µm". Customer-facing only. */
@@ -32,12 +34,16 @@ export interface ThicknessOption {
 }
 
 export interface MetalThicknessNotes {
-  /** Intro paragraph above the thickness list. */
+  /** Intro paragraph above the thickness list (metal sets). */
   intro: string
   /** Standard metals: 300 / 500 / 800µm. */
   standard: ThicknessOption[]
   /** Mini Steel: 200 / 300 / 500µm. */
   mini_steel: ThicknessOption[]
+  /** Full Colour Plastic: 420 / 680 / 760µm. */
+  full_colour_plastic: ThicknessOption[]
+  /** Intro paragraph for the Full Colour Plastic set (the shared intro is metal-worded). */
+  full_colour_plastic_intro: string
 }
 
 export const DEFAULT_METAL_THICKNESS_NOTES: MetalThicknessNotes = {
@@ -84,15 +90,56 @@ export const DEFAULT_METAL_THICKNESS_NOTES: MetalThicknessNotes = {
         'The thickest option — it commands attention the moment it is handed over. Rigid and reassuringly weighty.',
     },
   ],
+  full_colour_plastic: [
+    {
+      label: '420µm',
+      name: 'Lightweight',
+      description:
+        'Considerably thinner and much more flexible — ideal where weight is a critical factor, such as postal promotional campaigns.',
+    },
+    {
+      label: '680µm',
+      name: 'Mid-weight',
+      description:
+        'Slightly thinner and more flexible than a credit card. The difference is subtle, and usually only noticeable when comparing the two side by side.',
+    },
+    {
+      label: '760µm',
+      name: 'Credit card',
+      description:
+        'Our thickest plastic card — the same thickness as a standard credit card.',
+    },
+  ],
+  full_colour_plastic_intro:
+    'Full colour plastic cards are available in three thicknesses. A micron is one-thousandth of a millimetre — choose the weight that suits your application best.',
+}
+
+// Which materials get a thickness guide (the proof-page panel and the
+// pay-page chooser copy). Kept here so the two gates can't drift apart:
+// the metal family plus Full Colour Plastic, the one non-metal material
+// with a real thickness choice (420/680/760µm variants).
+export function hasThicknessGuide(materialCode: string | null | undefined): boolean {
+  return !!materialCode && (materialCode.startsWith('metal_') || materialCode === 'plastic_full_colour')
 }
 
 // Pick the right thickness set for a material. Mini Steel has its own
-// thinner schedule; every other metal uses the standard set.
+// thinner schedule and Full Colour Plastic its own; every other metal
+// uses the standard set.
 export function thicknessSetForMaterial(
   notes: MetalThicknessNotes,
   materialCode: string | null | undefined,
 ): ThicknessOption[] {
+  if (materialCode === 'plastic_full_colour') return notes.full_colour_plastic
   return materialCode === 'metal_mini_steel' ? notes.mini_steel : notes.standard
+}
+
+// Matching intro paragraph — the shared intro line is worded for metal,
+// so Full Colour Plastic carries its own.
+export function thicknessIntroForMaterial(
+  notes: MetalThicknessNotes,
+  materialCode: string | null | undefined,
+): string {
+  return materialCode === 'plastic_full_colour' ? notes.full_colour_plastic_intro : notes.intro
 }
 
 // Defensive normaliser for whatever the RPC returns. Falls back to the
@@ -106,10 +153,19 @@ export function normaliseMetalThicknessNotes(raw: unknown): MetalThicknessNotes 
     typeof obj.intro === 'string' && obj.intro.trim().length > 0
       ? obj.intro
       : DEFAULT_METAL_THICKNESS_NOTES.intro
+  const plasticIntro =
+    typeof obj.full_colour_plastic_intro === 'string' && obj.full_colour_plastic_intro.trim().length > 0
+      ? obj.full_colour_plastic_intro
+      : DEFAULT_METAL_THICKNESS_NOTES.full_colour_plastic_intro
   return {
     intro,
     standard: normaliseSet(obj.standard, DEFAULT_METAL_THICKNESS_NOTES.standard),
     mini_steel: normaliseSet(obj.mini_steel, DEFAULT_METAL_THICKNESS_NOTES.mini_steel),
+    full_colour_plastic: normaliseSet(
+      obj.full_colour_plastic,
+      DEFAULT_METAL_THICKNESS_NOTES.full_colour_plastic,
+    ),
+    full_colour_plastic_intro: plasticIntro,
   }
 }
 

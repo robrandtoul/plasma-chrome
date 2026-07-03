@@ -224,8 +224,8 @@ export interface PublicProofVersion {
   // (same condition as material_id — the left join to materials returns
   // null when material_id is null). Customer page uses this to gate
   // material-specific contextual panels: the letterpress Construction
-  // section (gated on colour data presence) and the metal Thickness
-  // guide (gated on material_code?.startsWith('metal_')).
+  // section (gated on colour data presence) and the Thickness guide
+  // (gated on hasThicknessGuide — the metal family + Full Colour Plastic).
   material_code: string | null
   // ── Proof shape + layouts (migration 000210, Phase 2) ────────────────
   // shape is the first-class proof-type-wizard resolution. Nullable —
