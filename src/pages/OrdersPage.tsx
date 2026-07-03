@@ -48,6 +48,13 @@ interface OrderRow {
   expires_at: string | null
   sent_at: string | null
   pay_link_opened_at: string | null
+  // Open-spec (000298): the customer picks these at checkout; help_requested_at
+  // is the pay page's "Not sure? Ask us" stamp for the amber chip below.
+  help_requested_at: string | null
+  thickness_open: boolean
+  finish_open: boolean
+  material_variant_id: string | null
+  material_option_id: string | null
   currency: Currency
   quantity: number | null
   names_count: number
@@ -103,7 +110,7 @@ interface OrderRow {
 }
 
 const SELECT = `
-  id, status, token, expires_at, sent_at, pay_link_opened_at, currency, quantity, names_count, has_personalisation,
+  id, status, token, expires_at, sent_at, pay_link_opened_at, help_requested_at, thickness_open, finish_open, material_variant_id, material_option_id, currency, quantity, names_count, has_personalisation,
   custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff,
   card_discount_type, card_discount_value, amount_card_discount, payment_method, order_kind,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
@@ -2093,9 +2100,16 @@ function AwaitingPaymentCard({
               {customerLabel(order)}
             </Link>
             {expired ? <Pill colour="out">Expired</Pill> : <Pill colour="low">Awaiting payment</Pill>}
+            {order.help_requested_at && (
+              <Pill colour="brand" title={`Asked from the pay page ${relativeTime(order.help_requested_at)} — reply on the Help Scout thread.`}>
+                Asked for help
+              </Pill>
+            )}
           </div>
           <p className="mt-0.5 text-sm text-ink-soft">
             {specLabel(order)}
+            {order.thickness_open && order.material_variant_id == null ? ' · customer picks thickness' : ''}
+            {order.finish_open && order.material_option_id == null ? ' · customer picks finish' : ''}
             {' · '}
             {order.quantity != null ? `${order.quantity.toLocaleString()} cards` : 'Customer picks quantity'}
             {total != null ? ` · ${formatPrice(total, order.currency)}` : ''}

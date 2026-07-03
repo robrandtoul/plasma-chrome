@@ -128,6 +128,20 @@ Deno.serve(async (req) => {
   // checkout applies the matching option surcharge; null = base / no finish.
   let materialOptionId = typeof body.material_option_id === 'string' ? body.material_option_id : null
 
+  // Open-spec orders (000298): the designer leaves thickness and/or finish for
+  // the customer to choose on the pay page, with guided copy + live prices —
+  // instead of settling them by email after approval. thickness_open rides with
+  // a null material_variant_id; finish_open is an explicit flag because a null
+  // material_option_id already means "base / no finish". Both are online-only
+  // production-order concepts (offline orders never reach the pay page;
+  // prototypes/reprints carry a fixed variant) — validated below once the
+  // order kind + payment method are resolved. material_id is stamped on EVERY
+  // order: derived from the variant when one is locked (so old clients that
+  // don't send it stay correct), else taken from the body for open-spec.
+  let thicknessOpen = body.thickness_open === true
+  let finishOpen = body.finish_open === true
+  const bodyMaterialId = typeof body.material_id === 'string' ? body.material_id : null
+
   // Chosen Xero customer — the EXISTING Xero contact this order's invoice should
   // file under, so paid invoices consolidate under the customer's Xero record
   // (rather than spawning a fresh contact from the payer). Designer-picked in
@@ -338,6 +352,58 @@ Deno.serve(async (req) => {
     }
   }
 
+  // ── Open-spec resolution (000298) ───────────────────────────────
+  // Only a plain online production grid order can leave thickness/finish open:
+  // prototypes and reprints resolve their variant above, a custom quote has an
+  // agreed price, and an offline order never reaches the pay page. Force the
+  // flags off for those kinds rather than erroring — a stale client flag must
+  // not block the classic flows.
+  if (orderKind !== 'production' || paymentMethod === 'offline' || customQuoteTotal != null) {
+    thicknessOpen = false
+    finishOpen = false
+  }
+  if (thicknessOpen) {
+    // The customer picks the variant later, so any variant the client sent is
+    // ignored — the null column + flag are what the pay page keys off.
+    materialVariantId = null
+  }
+  if (finishOpen) {
+    materialOptionId = null
+  }
+
+  // material_id: derived from the locked variant when there is one (keeps old
+  // clients + reprints/prototypes correct without sending it), else the body's
+  // material for open-spec orders. An open thickness with no resolvable
+  // material can't be priced or chosen on the pay page, so it's rejected.
+  let materialId: string | null = null
+  if (materialVariantId) {
+    const { data: variantRow } = await admin
+      .from('material_variants')
+      .select('material_id')
+      .eq('id', materialVariantId)
+      .maybeSingle()
+    materialId = (variantRow?.material_id as string | null) ?? null
+    if (!materialId) {
+      return json({ error: 'The chosen variant was not found.' }, 422)
+    }
+  } else if (bodyMaterialId) {
+    const { data: materialRow } = await admin
+      .from('materials')
+      .select('id')
+      .eq('id', bodyMaterialId)
+      .maybeSingle()
+    materialId = (materialRow?.id as string | null) ?? null
+    if (!materialId) {
+      return json({ error: 'The order material was not found.' }, 422)
+    }
+  }
+  if (thicknessOpen && !materialId) {
+    return json({ error: 'An order with the thickness left open needs its material (material_id).' }, 400)
+  }
+  if (finishOpen && !materialId) {
+    return json({ error: 'An order with the finish left open needs its material (material_id).' }, 400)
+  }
+
   // Offline orders are invoiced manually in Xero, so a Xero-contact binding is
   // meaningless there. Null it regardless of what the client sent, so an offline
   // row never carries an irrelevant (never-used) binding even if a direct API
@@ -544,6 +610,9 @@ Deno.serve(async (req) => {
       order_spec_snapshot: orderSpecSnapshot,
       material_variant_id: materialVariantId,
       material_option_id: materialOptionId,
+      material_id: materialId,
+      thickness_open: thicknessOpen,
+      finish_open: finishOpen,
       xero_contact_id: effectiveXeroContactId,
       xero_contact_name: effectiveXeroContactName,
       quantity,
@@ -614,6 +683,9 @@ Deno.serve(async (req) => {
       has_personalisation: hasPersonalisation,
       custom_quote_total: customQuoteTotal,
       material_option_id: materialOptionId,
+      material_id: materialId,
+      thickness_open: thicknessOpen,
+      finish_open: finishOpen,
       xero_contact_id: effectiveXeroContactId,
       xero_contact_name: effectiveXeroContactName,
       ...(isOffline ? { amount_cards: amountCards, amount_shipping: amountShipping, amount_card_discount: amountCardDiscount } : {}),

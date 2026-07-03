@@ -6,8 +6,10 @@ import { getPublicSettings } from '../lib/publicSettings'
 import { Lock } from 'lucide-react'
 import { Pill, PanelShell } from '../design'
 import { CustomerHeader } from '../components/CustomerHeader'
+import { FinishChoiceCard } from '../components/FinishChoiceCard'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 import { interpolateValue, flatTopTierTotal, flatUnitTotal, pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
+import { thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency, CustomerProofGraph } from '../lib/types'
@@ -32,6 +34,13 @@ interface OrderPayload {
   status: 'draft' | 'sent' | 'paid' | 'fulfilled' | 'expired' | 'cancelled' | 'revision'
   material_variant_id: string | null
   material_option_id: string | null
+  // Open-spec (000298): the designer left the thickness / finish for the
+  // customer to choose here. material_id scopes the chooser to the order's
+  // material; the *_open flags stay true even after a choice is persisted at
+  // checkout, so "Edit order details" can change the pick pre-payment.
+  material_id: string | null
+  thickness_open: boolean
+  finish_open: boolean
   quantity: number | null
   names_count: number
   has_personalisation: boolean
@@ -118,6 +127,86 @@ function variantLabel(variant: string): string {
   return /micron|µm|\bum\b/i.test(variant) ? 'Thickness' : 'Option'
 }
 
+// Pure tier maths shared by the locked-path calculators below and the
+// open-spec thickness/finish cards (which price CANDIDATE variants the
+// customer hasn't picked yet). Mirrors the server's cardTotalForQuantity:
+// exact tier, else interpolated between the bracketing tiers; flat at the
+// top per-card rate above the top tier for metal-style materials.
+function totalFromTiers(
+  tiers: { quantity: number; total_price: number }[],
+  qty: number,
+  flatAboveTop: boolean,
+): number | null {
+  if (tiers.length === 0 || qty <= 0) return null
+  const exact = tiers.find((t) => t.quantity === qty)
+  if (exact) return exact.total_price
+  let lower: { quantity: number; total_price: number } | null = null
+  let upper: { quantity: number; total_price: number } | null = null
+  for (const t of tiers) {
+    if (t.quantity < qty) lower = t
+    else if (t.quantity > qty) { upper = t; break }
+  }
+  if (lower && upper) {
+    return interpolateValue(lower.quantity, lower.total_price, upper.quantity, upper.total_price, qty)
+  }
+  if (flatAboveTop) return flatTopTierTotal(tiers, qty)
+  return null
+}
+
+// Same shape over a finish-surcharge schedule; out of range → 0 (matching the
+// server's treatment of an unpriceable surcharge).
+function surchargeFromTiers(
+  surTiers: { quantity: number; surcharge: number }[],
+  qty: number,
+  flatAboveTop: boolean,
+): number {
+  if (surTiers.length === 0 || qty <= 0) return 0
+  const exact = surTiers.find((t) => t.quantity === qty)
+  if (exact) return exact.surcharge
+  let lower: { quantity: number; surcharge: number } | null = null
+  let upper: { quantity: number; surcharge: number } | null = null
+  for (const t of surTiers) {
+    if (t.quantity < qty) lower = t
+    else if (t.quantity > qty) { upper = t; break }
+  }
+  if (lower && upper) {
+    return interpolateValue(lower.quantity, lower.surcharge, upper.quantity, upper.surcharge, qty)
+  }
+  if (flatAboveTop) {
+    const top = surTiers[surTiers.length - 1]
+    if (top && qty > top.quantity) return flatUnitTotal(top.quantity, top.surcharge, qty)
+  }
+  return 0
+}
+
+// Match an open-spec variant ("300 micron" / "300µm") to its admin-editable
+// thickness note row ("300µm — Slim, …") by the leading number. Null when the
+// material has no notes (non-metal open-spec) — the card renders name-only.
+function thicknessNoteFor(notes: ThicknessOption[], variantName: string): ThicknessOption | null {
+  const n = parseInt(variantName, 10)
+  if (!Number.isFinite(n)) return null
+  return notes.find((o) => parseInt(o.label, 10) === n) ?? null
+}
+
+// Chooser card shapes (open-spec orders).
+interface SpecVariantChoice {
+  id: string
+  display_name: string
+  tiers: { quantity: number; total_price: number }[]
+}
+interface SpecFinishChoice {
+  id: string
+  code: string
+  display_name: string
+  is_base: boolean
+  surTiers: { quantity: number; surcharge: number }[]
+  // Visual, in preference order: the admin's studio photo of the finish
+  // (material_options.photo_url, 000299), else the customer's own artwork
+  // from that finish's proof tab, else a text-only card.
+  photoUrl: string | null
+  swatchUrl: string | null
+}
+
 const SHIPPING_LABEL: Record<OrderPayload['shipping_treatment'], string> = {
   full_cost: 'Standard shipping',
   goodwill: 'Shipping (partly covered by us)',
@@ -185,11 +274,16 @@ export default function OrderPayPage() {
   const [loading, setLoading] = useState(true)
   const [order, setOrder] = useState<OrderPayload | null>(null)
   const [company, setCompany] = useState<string | null>(null)
-  // Recap (trust anchor): a few thumbnails of the approved artwork +
-  // a one-line spec (material + locked variant). Pulled best-effort
-  // from the same proof graph + customer-proof-images edge function the
-  // proof page uses; failure leaves the recap off without blocking pay.
-  const [thumbs, setThumbs] = useState<GridImage[]>([])
+  // Recap (trust anchor): thumbnails of the approved artwork + a one-line
+  // spec. Pulled best-effort from the same proof graph + customer-proof-images
+  // edge function the proof page uses; failure leaves the recap off without
+  // blocking pay. ALL current-version images are kept (not just one
+  // front/back) so the preview can re-filter to the finish the customer picks
+  // in the open-spec chooser — choose Mirror, see the mirror artwork.
+  const [versionImages, setVersionImages] = useState<GridImage[]>([])
+  // Finish code locked on the order (or persisted from an earlier checkout
+  // call), so the recap shows the right finish tab even without a live pick.
+  const [lockedFinishCode, setLockedFinishCode] = useState<string | null>(null)
   const [spec, setSpec] = useState<{
     material: string
     variant: string | null
@@ -218,6 +312,24 @@ export default function OrderPayPage() {
   // `spec.finish` for the recap.
   const [finishTiers, setFinishTiers] = useState<{ quantity: number; surcharge: number }[]>([])
   const [chosenQuantity, setChosenQuantity] = useState<number | null>(null)
+  // Open-spec chooser (000298): the offerable thicknesses (with their tiers)
+  // and finishes (with surcharge schedules + a per-finish artwork swatch),
+  // scoped to the order's material from the same proof graph. The customer's
+  // picks feed `tiers` / `finishTiers` above so every downstream calculation
+  // works unchanged, and ride the create-checkout-session call for
+  // server-side validation + persistence.
+  const [specVariants, setSpecVariants] = useState<SpecVariantChoice[]>([])
+  const [chosenVariantId, setChosenVariantId] = useState<string | null>(null)
+  const [specFinishes, setSpecFinishes] = useState<SpecFinishChoice[]>([])
+  const [chosenOptionId, setChosenOptionId] = useState<string | null>(null)
+  // Admin-editable thickness education copy (settings.metal_thickness_notes),
+  // resolved for this material. Empty for non-metal open-spec orders — the
+  // cards then show the variant name + price without a description.
+  const [thicknessNotes, setThicknessNotes] = useState<ThicknessOption[]>([])
+  // "Not sure? Ask us" escape hatch → the order-question edge fn.
+  const [askOpen, setAskOpen] = useState(false)
+  const [askText, setAskText] = useState('')
+  const [askState, setAskState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
   // Per-person quantities (split-name orders). The people come from the
   // proof's current version; the customer enters a quantity for each, and
   // the combined total drives the price. Empty for single-person orders.
@@ -274,6 +386,40 @@ export default function OrderPayPage() {
   // paid state from the DB.
   const justPaid = params.get('paid') === '1'
 
+  // Open-spec picks: feed the same `tiers` / `finishTiers` state the locked
+  // path uses, so every downstream price calculation works unchanged.
+  function chooseThickness(variantId: string) {
+    setChosenVariantId(variantId)
+    const v = specVariants.find((s) => s.id === variantId)
+    setTiers(v?.tiers ?? [])
+  }
+  function chooseFinish(optionId: string) {
+    setChosenOptionId(optionId)
+    const f = specFinishes.find((s) => s.id === optionId)
+    setFinishTiers(f && !f.is_base ? f.surTiers : [])
+  }
+
+  // "Not sure? Ask us" — posts the question to the team's Help Scout thread
+  // via the order-question edge fn (token-scoped) and flags the order for
+  // staff. Never blocks or navigates; the customer can still pay after.
+  async function sendQuestion() {
+    if (!id || !token || !askText.trim() || askState === 'sending') return
+    setAskState('sending')
+    try {
+      const { data, error } = await supabase.functions.invoke<{ status?: string; error?: string }>(
+        'order-question',
+        { body: { order_id: id, token, question: askText.trim() } },
+      )
+      if (error || !data || data.error) {
+        setAskState('error')
+        return
+      }
+      setAskState('sent')
+    } catch {
+      setAskState('error')
+    }
+  }
+
   async function startCheckout() {
     if (!order || !id || !token) return
     setPayError(null)
@@ -298,6 +444,10 @@ export default function OrderPayPage() {
             origin: window.location.origin,
             quantity: chosenQuantity ?? undefined,
             person_quantities: personPayload.length > 0 ? personPayload : undefined,
+            // Open-spec picks (000298) — validated server-side against the
+            // order's material and persisted onto the order before pricing.
+            material_variant_id: order.thickness_open && chosenVariantId ? chosenVariantId : undefined,
+            material_option_id: order.finish_open && chosenOptionId ? chosenOptionId : undefined,
             ship_dest_country: destCountry || undefined,
             ship_dest_postcode: destPostcode.trim() || undefined,
             us_tariff_opted_out: tariffOptedOut,
@@ -494,6 +644,7 @@ export default function OrderPayPage() {
               const opt = (g.material_options ?? []).find((mo) => mo.id === o.material_option_id) ?? null
               if (opt) {
                 finishName = opt.display_name
+                setLockedFinishCode(opt.code)
                 if (!opt.is_base && o.currency) {
                   setFinishTiers(
                     (g.material_option_surcharges ?? [])
@@ -525,6 +676,70 @@ export default function OrderPayPage() {
                 .sort((a, b) => a.quantity - b.quantity)
               setTiers(variantTiers)
             }
+
+            // Open-spec chooser data (000298). Thickness: every priced variant
+            // of the order's material, in catalogue order — the same set the
+            // proof's pricing grid showed. A choice persisted by an earlier
+            // checkout call (returning customer) pre-selects; its tiers were
+            // already captured by the block above.
+            if (o.thickness_open && o.material_id && o.currency) {
+              const offerable: SpecVariantChoice[] = (g.material_variants ?? [])
+                .filter((mv) => mv.material_id === o.material_id)
+                .sort((a, b) => a.sort_order - b.sort_order)
+                .map((mv) => ({
+                  id: mv.id,
+                  display_name: mv.display_name,
+                  tiers: (g.price_tiers ?? [])
+                    .filter((t) => t.material_variant_id === mv.id && t.currency === o.currency)
+                    .map((t) => ({ quantity: t.quantity, total_price: Number(t.total_price) }))
+                    .sort((a, b) => a.quantity - b.quantity),
+                }))
+                .filter((mv) => mv.tiers.length > 0)
+              setSpecVariants(offerable)
+              if (o.material_variant_id && offerable.some((v) => v.id === o.material_variant_id)) {
+                setChosenVariantId(o.material_variant_id)
+              }
+              // Thickness education copy — metal only (the notes are written
+              // for the metal family; other materials render name-only cards).
+              if (current.material_code?.startsWith('metal_')) {
+                try {
+                  const s = await getPublicSettings()
+                  if (!cancelled) {
+                    setThicknessNotes(thicknessSetForMaterial(s.metal_thickness_notes, current.material_code))
+                  }
+                } catch {
+                  // copy stays empty — cards render without descriptions
+                }
+              }
+            }
+
+            // Finish chooser: the options the approved version actually
+            // offered (its 2+ finish tabs), with each one's surcharge
+            // schedule. A persisted earlier pick pre-selects; its surcharge
+            // tiers were captured by the block further up.
+            if (o.finish_open && o.material_id && o.currency) {
+              const offeredCodes = new Set(current.material_options ?? [])
+              const finishes: SpecFinishChoice[] = (g.material_options ?? [])
+                .filter((mo) => mo.material_id === o.material_id)
+                .filter((mo) => offeredCodes.size === 0 || offeredCodes.has(mo.code))
+                .sort((a, b) => a.sort_order - b.sort_order)
+                .map((mo) => ({
+                  id: mo.id,
+                  code: mo.code,
+                  display_name: mo.display_name,
+                  is_base: mo.is_base,
+                  surTiers: (g.material_option_surcharges ?? [])
+                    .filter((s) => s.material_option_id === mo.id && s.currency === o.currency)
+                    .map((s) => ({ quantity: s.quantity, surcharge: Number(s.surcharge) }))
+                    .sort((a, b) => a.quantity - b.quantity),
+                  photoUrl: mo.photo_url ?? null,
+                  swatchUrl: null,
+                }))
+              setSpecFinishes(finishes)
+              if (o.material_option_id && finishes.some((f) => f.id === o.material_option_id)) {
+                setChosenOptionId(o.material_option_id)
+              }
+            }
             setPerExtraName(current.split_name_surcharge_snapshot ?? null)
             setPersonNames(current.names ?? [])
             if (o.has_personalisation) {
@@ -553,10 +768,24 @@ export default function OrderPayPage() {
                 // first-two-by-sort-order approach picked when a version has
                 // several images per side, e.g. per ink/option). Fall back to
                 // the first two distinct images when there's no side data.
-                const front = versionImgs.find((img) => img.side === 'front')
-                const back = versionImgs.find((img) => img.side === 'back')
-                const bySide = [front, back].filter((img): img is GridImage => !!img)
-                setThumbs(bySide.length > 0 ? bySide : versionImgs.slice(0, 2))
+                // Keep the whole set; the render derives one front + one
+                // back for the ACTIVE finish (see the thumbs derivation).
+                setVersionImages(versionImgs)
+                // Finish swatches for the open-spec chooser: one representative
+                // (front-preferred) artwork image per finish tab, so the card
+                // shows the customer's own design in that finish — honest
+                // visuals, not stock imagery. Missing tab images → text card.
+                if (o.finish_open) {
+                  const byOption = new Map<string, string>()
+                  for (const img of versionImgs) {
+                    const code = img.material_option
+                    if (!code || !img.signed_url) continue
+                    if (!byOption.has(code) || img.side === 'front') byOption.set(code, img.signed_url)
+                  }
+                  setSpecFinishes((prev) =>
+                    prev.map((f) => ({ ...f, swatchUrl: byOption.get(f.code) ?? null })),
+                  )
+                }
               }
             } catch {
               // ignore — recap shows the spec text without thumbnails
@@ -579,6 +808,14 @@ export default function OrderPayPage() {
   // (deps: order); checkout/paying are read via closure to avoid re-firing.
   useEffect(() => {
     if (!order || checkout || paying) return
+    // An open-spec order with no persisted choice always shows the inputs
+    // panel — the chooser IS the step. A returning customer whose earlier
+    // choice was persisted at checkout can auto-advance as usual (their pick
+    // pre-selects, and "Edit order details" reopens the chooser).
+    const needsSpec =
+      order.custom_quote_total == null &&
+      ((order.thickness_open && order.material_variant_id == null) ||
+        (order.finish_open && order.material_option_id == null))
     const needsQty = order.custom_quote_total == null && order.material_variant_id != null && order.quantity == null
     const needsDest = order.shipping_treatment === 'full_cost' || order.shipping_treatment === 'goodwill'
     // A US destination always shows the inputs panel (don't auto-advance), so the
@@ -587,7 +824,7 @@ export default function OrderPayPage() {
     // this; this covers free/manual US orders with a designer-set US destination.
     const isUsDest = (order.ship_dest_country ?? '').toUpperCase() === 'US'
     const canPay = order.custom_quote_total != null || (order.material_variant_id != null && order.quantity != null)
-    if (canPay && !needsQty && !needsDest && !isUsDest) void startCheckout()
+    if (canPay && !needsSpec && !needsQty && !needsDest && !isUsDest) void startCheckout()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order])
 
@@ -789,10 +1026,10 @@ export default function OrderPayPage() {
                   <p className="text-[12px] text-ink-mute">Approved {formatApprovedDate(spec.approvedAt)}</p>
                 )}
               </div>
-              {thumbs.length > 0 && (
-                <div className={`mt-3 grid gap-3 ${thumbs.length > 1 ? 'sm:grid-cols-2' : ''}`}>
-                  {thumbs.map((img) => (
-                    <img key={img.id} src={img.signed_url} alt="Approved proof artwork" className="w-full rounded-lg bg-surface ring-1 ring-line" />
+              {recapTiles.length > 0 && (
+                <div className={`mt-3 grid gap-3 ${recapTiles.length > 1 ? 'sm:grid-cols-2' : ''}`}>
+                  {recapTiles.map((tile) => (
+                    <ArtworkFade key={tile.active.side ?? tile.active.id} layers={tile.layers} activeId={tile.active.id} />
                   ))}
                 </div>
               )}
@@ -900,6 +1137,52 @@ export default function OrderPayPage() {
     order.status === 'expired' ||
     (order.status === 'sent' && order.expires_at != null && new Date(order.expires_at).getTime() < Date.now())
 
+  // Recap thumbnails, finish-aware: one front + one back from the current
+  // version, filtered to the ACTIVE finish — the live pick on an open-spec
+  // order (falling back to a persisted/locked finish), so choosing Mirror
+  // swaps the big preview to the mirror artwork and the paid screen shows
+  // the finish they actually bought. Images with no finish tab (null
+  // material_option = shared across finishes) always qualify; a proof with
+  // no per-finish tabs, or no match, falls back to the whole set exactly as
+  // before.
+  const activeFinishCode =
+    (order.finish_open === true ? specFinishes.find((f) => f.id === chosenOptionId)?.code ?? null : null) ??
+    lockedFinishCode
+  const recapPool =
+    activeFinishCode && versionImages.some((i) => i.material_option === activeFinishCode)
+      ? versionImages.filter((i) => i.material_option === activeFinishCode || i.material_option == null)
+      : versionImages
+  const recapFront = recapPool.find((i) => i.side === 'front')
+  const recapBack = recapPool.find((i) => i.side === 'back')
+  const recapBySide = [recapFront, recapBack].filter((i): i is GridImage => !!i)
+  const thumbs = recapBySide.length > 0 ? recapBySide : recapPool.slice(0, 2)
+
+  // Cross-fade stacks for the recap: while the customer can switch finishes,
+  // mount EVERY finish's front/back as layers in one tile and toggle opacity
+  // to the active one. Mounting all the layers IS the preload — switching
+  // finishes never shows a loading pop, just a smooth fade. One image per
+  // finish tab (plus any shared image) per side, first by sort order.
+  // Single-finish / locked recaps render the plain active image as before.
+  const finishCodesForStack = specFinishes.map((f) => f.code)
+  const stackForSide = (side: string | null | undefined): GridImage[] => {
+    const seen = new Set<string>()
+    return versionImages.filter((i) => {
+      if (i.side !== side) return false
+      if (i.material_option != null && !finishCodesForStack.includes(i.material_option)) return false
+      const group = i.material_option ?? '__shared__'
+      if (seen.has(group)) return false
+      seen.add(group)
+      return true
+    })
+  }
+  const recapTiles =
+    order.finish_open === true && specFinishes.length > 1 && recapBySide.length > 0
+      ? recapBySide.map((active) => {
+          const layers = stackForSide(active.side)
+          return { active, layers: layers.some((l) => l.id === active.id) ? layers : [active] }
+        })
+      : thumbs.map((t) => ({ active: t, layers: [t] }))
+
   if (order.status === 'paid' || order.status === 'fulfilled') {
     return renderConfirmation(true, order)
   }
@@ -976,37 +1259,38 @@ export default function OrderPayPage() {
   const tariffFee = tariff ? tariff.fees[order.currency] ?? 0 : 0
   const tariffApplies = effectiveDestCountry === 'US' && tariffFee > 0
   const tariffAmount = tariffApplies && !tariffOptedOut ? tariffFee : 0
-  // Open-quantity grid order: the designer left quantity for the customer
-  // and the variant has listed tiers. Split = a quantity per person; single
-  // = one tier selector.
-  const isOpenGrid =
+  // Open-spec (000298): the customer confirms thickness / finish here before
+  // the payment form unlocks. Resolved = every open field has a pick.
+  const thicknessOpen = order.thickness_open === true && order.custom_quote_total == null
+  const finishOpen = order.finish_open === true && order.custom_quote_total == null
+  const specResolved =
+    (!thicknessOpen || chosenVariantId != null) && (!finishOpen || chosenOptionId != null)
+  const chosenVariantName = thicknessOpen
+    ? specVariants.find((v) => v.id === chosenVariantId)?.display_name ?? null
+    : null
+  const chosenFinishName = finishOpen
+    ? specFinishes.find((f) => f.id === chosenOptionId)?.display_name ?? null
+    : null
+
+  // Open-quantity grid order: the designer left quantity for the customer.
+  // Quantity LEADS the form (before thickness/finish) so every option card
+  // shows the true price for the customer's actual quantity — so for an
+  // open-thickness order the input renders before any variant is chosen,
+  // with pricing showing "from …" until tiers land on the thickness pick.
+  const openQuantity =
     order.custom_quote_total == null &&
-    order.material_variant_id != null &&
     order.quantity == null &&
-    tiers.length > 0
-  const isSplitOpen = isOpenGrid && personNames.length > 1
-  const isSingleOpen = isOpenGrid && personNames.length <= 1
+    (order.material_variant_id != null || (thicknessOpen && specVariants.length > 0))
+  const isOpenGrid = openQuantity && tiers.length > 0
+  const isSplitOpen = openQuantity && personNames.length > 1
+  const isSingleOpen = openQuantity && personNames.length <= 1
 
   // Base card total for a quantity: exact listed tier, or interpolated
   // between the two bracketing tiers (combined-total basis). Mirrors the
   // server's cardTotalForQuantity so the shown figure equals the charge;
   // null below the lowest / above the highest tier.
   function cardTotalForQty(qty: number): number | null {
-    if (tiers.length === 0) return null
-    const exact = tiers.find((t) => t.quantity === qty)
-    if (exact) return exact.total_price
-    let lower: { quantity: number; total_price: number } | null = null
-    let upper: { quantity: number; total_price: number } | null = null
-    for (const t of tiers) {
-      if (t.quantity < qty) lower = t
-      else if (t.quantity > qty) { upper = t; break }
-    }
-    if (lower && upper) {
-      return interpolateValue(lower.quantity, lower.total_price, upper.quantity, upper.total_price, qty)
-    }
-    // Metal only: above the top listed tier, hold the top per-card rate flat.
-    if (flatAboveTop) return flatTopTierTotal(tiers, qty)
-    return null
+    return totalFromTiers(tiers, qty, flatAboveTop)
   }
 
   // Finish (material-option) surcharge for a quantity: exact tier or
@@ -1014,25 +1298,7 @@ export default function OrderPayPage() {
   // surcharge schedule. 0 when there's no non-base finish. Out of range → 0
   // (the server treats an unpriceable surcharge as 0 too).
   function finishSurchargeForQty(qty: number): number {
-    if (finishTiers.length === 0) return 0
-    const exact = finishTiers.find((t) => t.quantity === qty)
-    if (exact) return exact.surcharge
-    let lower: { quantity: number; surcharge: number } | null = null
-    let upper: { quantity: number; surcharge: number } | null = null
-    for (const t of finishTiers) {
-      if (t.quantity < qty) lower = t
-      else if (t.quantity > qty) { upper = t; break }
-    }
-    if (lower && upper) {
-      return interpolateValue(lower.quantity, lower.surcharge, upper.quantity, upper.surcharge, qty)
-    }
-    // Metal only: the finish surcharge is per-card and flat, so above the top
-    // tier hold that per-card rate (mirrors the server's flatAboveTop path).
-    if (flatAboveTop) {
-      const top = finishTiers[finishTiers.length - 1]
-      if (top && qty > top.quantity) return flatUnitTotal(top.quantity, top.surcharge, qty)
-    }
-    return 0
+    return surchargeFromTiers(finishTiers, qty, flatAboveTop)
   }
 
   // Cards discount for a given cards-base, mirroring the server's
@@ -1067,6 +1333,15 @@ export default function OrderPayPage() {
     return round2(round2(cards + splitName + pers + finish) - discount + shippingAmount + tariffAmount)
   }
 
+  // Quantity bounds: the chosen variant's tiers when known; before a
+  // thickness is picked, the union across the offerable variants (the metal
+  // family shares one quantity grid, so this is exact in practice).
+  const boundsTiers = tiers.length > 0 ? tiers : specVariants.flatMap((v) => v.tiers)
+  const singleMin = boundsTiers.length > 0 ? Math.min(...boundsTiers.map((t) => t.quantity)) : null
+  const singleMax = boundsTiers.length > 0
+    ? (flatAboveTop ? MAX_ONLINE_FLAT_QUANTITY : Math.max(...boundsTiers.map((t) => t.quantity)))
+    : null
+
   // Per-person entries → combined sum. Complete only when every person has a
   // quantity of at least one.
   const personParsed = personNames.map((n) => {
@@ -1083,13 +1358,11 @@ export default function OrderPayPage() {
   // explain why (below the minimum / above the online maximum) rather than
   // just disabling the button silently.
   const splitRangeHint =
-    isSplitOpen && splitComplete && splitTotal == null
+    isSplitOpen && tiers.length > 0 && splitComplete && splitTotal == null
       ? (() => {
-          const min = tiers[0]?.quantity
-          const max = flatAboveTop ? MAX_ONLINE_FLAT_QUANTITY : tiers[tiers.length - 1]?.quantity
-          if (min != null && splitSum < min) return `Our minimum order is ${min.toLocaleString()} cards in total.`
-          if (max != null && splitSum > max)
-            return `For more than ${max.toLocaleString()} cards, please reply to the email you received and we’ll sort it.`
+          if (singleMin != null && splitSum < singleMin) return `Our minimum order is ${singleMin.toLocaleString()} cards in total.`
+          if (singleMax != null && splitSum > singleMax)
+            return `For more than ${singleMax.toLocaleString()} cards, please reply to the email you received and we’ll sort it.`
           return 'We couldn’t price this quantity — please reply to the email you received.'
         })()
       : null
@@ -1100,14 +1373,12 @@ export default function OrderPayPage() {
   // hint and blocks checkout rather than silently failing server-side. For
   // metal the max is the online sanity cap, since it prices flat above the
   // top listed tier up to there.
-  const singleMin = tiers[0]?.quantity ?? null
-  const singleMax = flatAboveTop ? MAX_ONLINE_FLAT_QUANTITY : (tiers[tiers.length - 1]?.quantity ?? null)
   const singleCardTotal =
     isSingleOpen && chosenQuantity != null && (singleMax == null || chosenQuantity <= singleMax)
       ? cardTotalForQty(chosenQuantity)
       : null
   const singleRangeHint =
-    isSingleOpen && chosenQuantity != null && singleCardTotal == null
+    isSingleOpen && tiers.length > 0 && chosenQuantity != null && singleCardTotal == null
       ? singleMin != null && chosenQuantity < singleMin
         ? `Our minimum order is ${singleMin.toLocaleString()} cards.`
         : singleMax != null && chosenQuantity > singleMax
@@ -1115,16 +1386,25 @@ export default function OrderPayPage() {
           : 'We couldn’t price this quantity — please reply to the email you received.'
       : null
 
+  // "Quantity step incomplete" — price-validity only counts once a thickness
+  // has landed tiers (before that, an entered quantity is provisionally fine;
+  // the server re-validates at checkout regardless).
   const awaitingQuantity = isSplitOpen
-    ? splitTotal == null
+    ? !splitComplete || splitOverCap || (tiers.length > 0 && splitTotal == null)
     : isSingleOpen
-      ? chosenQuantity == null || singleCardTotal == null
+      ? chosenQuantity == null || (tiers.length > 0 && singleCardTotal == null)
       : false
   const canCheckout =
     shippingResolvable &&
     (order.custom_quote_total != null ||
       (order.material_variant_id != null && order.quantity != null) ||
-      isOpenGrid)
+      isOpenGrid ||
+      // Open-spec order still awaiting its choices: the chooser is the step,
+      // so the payable screen renders. No offerable variants (e.g. the proof
+      // moved to a different material after the order was created) falls
+      // through to the "reply to us" screen instead of a dead chooser.
+      (thicknessOpen && specVariants.length > 0) ||
+      (finishOpen && specFinishes.length > 0))
   // full_cost / goodwill orders need the customer's delivery country + postcode
   // before we can rate the carriage at checkout.
   const destinationComplete =
@@ -1163,6 +1443,51 @@ export default function OrderPayPage() {
   const previewDiscount = previewCardsBase != null ? cardDiscountForBase(previewCardsBase) : 0
   const previewTooling = perExtraName && order.names_count > 1 ? round2((order.names_count - 1) * perExtraName) : 0
 
+  // Quantity inputs (open-quantity orders). One JSX block, two homes: inside
+  // the "Confirm your card" section ABOVE the thickness/finish cards for
+  // open-spec orders (quantity first, so every option shows its true price
+  // for the customer's quantity — Rob, 2026-07-03), else standalone in the
+  // inputs panel exactly as before.
+  const quantityInputs = isSplitOpen ? (
+    <div className="rounded-xl border border-line bg-canvas p-4">
+      <p className="font-medium text-ink">How many cards for each person?</p>
+      <div className="mt-3 space-y-2.5">
+        {personNames.map((name) => (
+          <div key={name} className="flex items-center justify-between gap-4">
+            <label htmlFor={`q-${name}`} className="truncate text-ink">{name}</label>
+            <input id={`q-${name}`} type="number" min={1} step={1} inputMode="numeric"
+              value={personQty[name] ?? ''}
+              onChange={(e) => setPersonQty((prev) => ({ ...prev, [name]: e.target.value }))}
+              placeholder="0"
+              className="h-11 w-28 rounded-lg border border-line bg-surface px-3 text-right text-base font-semibold text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
+          </div>
+        ))}
+      </div>
+      <div className="mt-2.5 flex items-center justify-between gap-4 border-t border-line-soft pt-2.5">
+        <span className="text-ink-soft">Total</span>
+        <span className="text-base font-semibold text-ink">{splitSum > 0 ? `${splitSum.toLocaleString()} cards` : '—'}</span>
+      </div>
+      {splitRangeHint && <p className="mt-1.5 text-[13px] text-low">{splitRangeHint}</p>}
+    </div>
+  ) : isSingleOpen ? (
+    <div className="rounded-xl border border-line bg-canvas p-4">
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <label htmlFor="order-quantity" className="block font-medium text-ink">How many cards?</label>
+          {singleMin != null && singleMax != null && (
+            <p className="mt-0.5 text-[12px] text-ink-mute">Any quantity from {singleMin.toLocaleString()} to {singleMax.toLocaleString()}.</p>
+          )}
+        </div>
+        <input id="order-quantity" type="number" min={singleMin ?? 1} max={singleMax ?? undefined} step={1} inputMode="numeric"
+          value={chosenQuantity ?? ''}
+          onChange={(e) => { const n = parseInt(e.target.value, 10); setChosenQuantity(Number.isFinite(n) && n > 0 ? n : null) }}
+          placeholder={singleMin != null ? `${singleMin.toLocaleString()}+` : 'e.g. 250'}
+          className="h-12 w-32 shrink-0 rounded-lg border border-line bg-surface px-3 text-right text-base font-semibold text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
+      </div>
+      {singleRangeHint && <p className="mt-1.5 text-[13px] text-low">{singleRangeHint}</p>}
+    </div>
+  ) : null
+
   // ── Single-screen checkout ────────────────────────────────────────
   // One page: order recap + cost summary on the left; on the right either the
   // inputs we still need (quantity / shipping destination) or — once those are
@@ -1194,10 +1519,10 @@ export default function OrderPayPage() {
                   <p className="text-[12px] text-ink-mute">Approved {formatApprovedDate(spec.approvedAt)}</p>
                 )}
               </div>
-              {thumbs.length > 0 && (
-                <div className={`mt-3 grid gap-3 ${thumbs.length > 1 ? 'sm:grid-cols-2' : ''}`}>
-                  {thumbs.map((img) => (
-                    <img key={img.id} src={img.signed_url} alt="Approved proof artwork" className="w-full rounded-lg bg-surface ring-1 ring-line" />
+              {recapTiles.length > 0 && (
+                <div className={`mt-3 grid gap-3 ${recapTiles.length > 1 ? 'sm:grid-cols-2' : ''}`}>
+                  {recapTiles.map((tile) => (
+                    <ArtworkFade key={tile.active.side ?? tile.active.id} layers={tile.layers} activeId={tile.active.id} />
                   ))}
                 </div>
               )}
@@ -1205,8 +1530,8 @@ export default function OrderPayPage() {
                 <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
                   <dt className="text-ink-mute">Material</dt>
                   <dd className="text-ink">{spec.material}</dd>
-                  {spec.variant && (<><dt className="text-ink-mute">{variantLabel(spec.variant)}</dt><dd className="text-ink">{spec.variant}</dd></>)}
-                  {spec.finish && (<><dt className="text-ink-mute">Finish</dt><dd className="text-ink">{spec.finish}</dd></>)}
+                  {(chosenVariantName ?? spec.variant) && (<><dt className="text-ink-mute">{variantLabel((chosenVariantName ?? spec.variant) as string)}</dt><dd className="text-ink">{chosenVariantName ?? spec.variant}</dd></>)}
+                  {(chosenFinishName ?? spec.finish) && (<><dt className="text-ink-mute">Finish</dt><dd className="text-ink">{chosenFinishName ?? spec.finish}</dd></>)}
                   {spec.inks.length > 0 && (<><dt className="text-ink-mute">Ink</dt><dd className="text-ink">{spec.inks.join(', ')}</dd></>)}
                 </dl>
               )}
@@ -1258,41 +1583,159 @@ export default function OrderPayPage() {
             <PanelShell className="relative min-h-[300px]">
               {!checkout ? (
                 <div className="space-y-4 text-sm">
-                  {isSplitOpen ? (
-                    <div className="space-y-2.5">
-                      <p className="text-ink-soft">Quantity for each person</p>
-                      {personNames.map((name) => (
-                        <div key={name} className="flex items-center justify-between gap-4">
-                          <label htmlFor={`q-${name}`} className="truncate text-ink">{name}</label>
-                          <input id={`q-${name}`} type="number" min={1} step={1} inputMode="numeric"
-                            value={personQty[name] ?? ''}
-                            onChange={(e) => setPersonQty((prev) => ({ ...prev, [name]: e.target.value }))}
-                            placeholder="0"
-                            className="h-[38px] w-24 rounded-lg border border-line bg-surface px-3 text-right text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
+                  {/* Open-spec chooser (000298): confirm thickness / finish
+                      before quantity, destination and payment. Explicit tap
+                      required — no pre-selection — with a "Most popular"
+                      badge doing the guidance instead. */}
+                  {(thicknessOpen || finishOpen) && (
+                    <div className="space-y-4">
+                      <p className="font-medium text-ink">Confirm your card</p>
+
+                      {/* Quantity FIRST, so the thickness prices and finish
+                          premiums below are for the customer's real quantity
+                          rather than "from" figures. */}
+                      {quantityInputs}
+
+                      {thicknessOpen && specVariants.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[13px] text-ink-soft">
+                            Choose your thickness — the price updates as you pick.
+                          </p>
+                          {specVariants.map((v) => {
+                            const note = thicknessNoteFor(thicknessNotes, v.display_name)
+                            const price =
+                              displayQty != null
+                                ? totalFromTiers(v.tiers, displayQty, flatAboveTop)
+                                : v.tiers[0]?.total_price ?? null
+                            const priceLabel =
+                              price != null
+                                ? displayQty != null
+                                  ? formatPrice(price, order.currency)
+                                  : `from ${formatPrice(price, order.currency)}`
+                                : null
+                            const selected = chosenVariantId === v.id
+                            return (
+                              <button
+                                key={v.id}
+                                type="button"
+                                aria-pressed={selected}
+                                onClick={() => chooseThickness(v.id)}
+                                className={[
+                                  'block w-full rounded-xl border p-3 text-left transition-colors',
+                                  selected
+                                    ? 'border-[var(--c-brand)] bg-canvas ring-1 ring-[var(--c-brand)]'
+                                    : 'border-line bg-surface hover:bg-canvas',
+                                ].join(' ')}
+                              >
+                                <span className="flex items-baseline justify-between gap-3">
+                                  <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                                    <span className="num text-[15px] font-medium text-brand">{note?.label ?? v.display_name}</span>
+                                    {note?.name && <span className="text-sm font-medium text-ink">{note.name}</span>}
+                                    {note?.badge && (
+                                      <span className="rounded-full bg-in-stock-soft px-2 py-0.5 text-[11px] font-medium text-[var(--c-in-stock)]">
+                                        {note.badge}
+                                      </span>
+                                    )}
+                                  </span>
+                                  {priceLabel && <span className="shrink-0 text-sm font-medium text-ink">{priceLabel}</span>}
+                                </span>
+                                {note?.description && (
+                                  <span className="mt-1 block text-[12px] leading-[1.5] text-ink-soft">{note.description}</span>
+                                )}
+                              </button>
+                            )
+                          })}
                         </div>
-                      ))}
-                      <div className="flex items-center justify-between gap-4 border-t border-line-soft pt-2.5">
-                        <span className="text-ink-soft">Total</span>
-                        <span className="font-medium text-ink">{splitSum > 0 ? `${splitSum.toLocaleString()} cards` : '—'}</span>
-                      </div>
-                      {splitRangeHint && <p className="text-[13px] text-low">{splitRangeHint}</p>}
-                    </div>
-                  ) : isSingleOpen ? (
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-4">
-                        <label htmlFor="order-quantity" className="text-ink-soft">Quantity</label>
-                        <input id="order-quantity" type="number" min={singleMin ?? 1} max={singleMax ?? undefined} step={1} inputMode="numeric"
-                          value={chosenQuantity ?? ''}
-                          onChange={(e) => { const n = parseInt(e.target.value, 10); setChosenQuantity(Number.isFinite(n) && n > 0 ? n : null) }}
-                          placeholder={singleMin != null ? `${singleMin.toLocaleString()}+` : 'e.g. 250'}
-                          className="h-[38px] w-28 rounded-lg border border-line bg-surface px-3 text-right text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
-                      </div>
-                      {singleMin != null && singleMax != null && (
-                        <p className="text-right text-[12px] text-ink-mute">Any quantity from {singleMin.toLocaleString()} to {singleMax.toLocaleString()}.</p>
                       )}
-                      {singleRangeHint && <p className="text-[13px] text-low">{singleRangeHint}</p>}
+
+                      {finishOpen && specFinishes.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[13px] text-ink-soft">
+                            {thicknessOpen ? 'And your finish:' : 'Choose your finish:'}
+                          </p>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {specFinishes.map((f) => {
+                              const qtyBasis =
+                                displayQty ?? tiers[0]?.quantity ?? specVariants[0]?.tiers[0]?.quantity ?? 0
+                              const delta =
+                                f.is_base || f.surTiers.length === 0
+                                  ? 0
+                                  : surchargeFromTiers(f.surTiers, qtyBasis, flatAboveTop)
+                              return (
+                                <FinishChoiceCard
+                                  key={f.id}
+                                  name={f.display_name}
+                                  priceLabel={delta > 0 ? `+${formatPrice(delta, order.currency)}` : 'Included'}
+                                  imageSrc={f.photoUrl ?? f.swatchUrl}
+                                  imageAlt={f.photoUrl ? `${f.display_name} finish` : `Your design in ${f.display_name}`}
+                                  selected={chosenOptionId === f.id}
+                                  onChoose={() => chooseFinish(f.id)}
+                                />
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Escape hatch: hesitation becomes a tracked question on
+                          the team's thread, not a closed tab. */}
+                      <div className="border-t border-line-soft pt-3">
+                        {askState === 'sent' ? (
+                          <p className="text-[13px] text-ink-soft">
+                            Thanks — we&rsquo;ve got your question and we&rsquo;ll reply by email shortly. You can also come back and pay here any time.
+                          </p>
+                        ) : !askOpen ? (
+                          <button
+                            type="button"
+                            onClick={() => setAskOpen(true)}
+                            className="text-[13px] font-medium text-ink-soft underline underline-offset-2 hover:text-ink"
+                          >
+                            Not sure which to pick? Ask us
+                          </button>
+                        ) : (
+                          <div className="space-y-2">
+                            <textarea
+                              aria-label="Your question"
+                              value={askText}
+                              onChange={(e) => setAskText(e.target.value)}
+                              rows={3}
+                              maxLength={2000}
+                              placeholder="e.g. Which thickness feels closest to a normal business card?"
+                              className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                            />
+                            {askState === 'error' && (
+                              <p className="text-[13px] text-out">
+                                We couldn&rsquo;t send that just now — please reply to the email you received instead.
+                              </p>
+                            )}
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void sendQuestion()}
+                                disabled={askState === 'sending' || !askText.trim()}
+                                className="rounded-lg bg-ink px-3 py-1.5 text-[13px] font-semibold text-on-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {askState === 'sending' ? 'Sending…' : 'Send question'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setAskOpen(false); setAskState('idle') }}
+                                className="rounded-lg px-3 py-1.5 text-[13px] font-medium text-ink-soft ring-1 ring-line transition-colors hover:bg-surface"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  ) : null}
+                  )}
+
+                  {/* Standalone quantity inputs for orders with no open spec
+                      (locked thickness/finish, open quantity) — unchanged
+                      position; open-spec orders render them inside the
+                      Confirm-your-card section above instead. */}
+                  {!(thicknessOpen || finishOpen) && quantityInputs}
 
                   {shippingComputedAtCheckout && (
                     <div className="space-y-2.5">
@@ -1359,18 +1802,21 @@ export default function OrderPayPage() {
                     <div role="alert" className="rounded-lg border border-out bg-out-soft px-3 py-2 text-[13px] text-out">{payError}</div>
                   )}
 
-                  <button type="button" onClick={() => void startCheckout()} disabled={paying || awaitingQuantity || !destinationComplete}
+                  <button type="button" onClick={() => void startCheckout()} disabled={paying || !specResolved || awaitingQuantity || !destinationComplete}
                     className="inline-flex w-full items-center justify-center rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-on-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
                     {paying ? 'Loading secure payment…'
                       : awaitingQuantity ? 'Choose a quantity to continue'
-                        : !destinationComplete ? 'Enter delivery country & postcode'
-                          : payTotal != null ? `Continue to payment — ${formatPrice(payTotal, order.currency)}`
-                            : 'Continue to payment'}
+                        : thicknessOpen && chosenVariantId == null ? 'Choose a thickness to continue'
+                          : finishOpen && chosenOptionId == null ? 'Choose a finish to continue'
+                            : !destinationComplete ? 'Enter delivery country & postcode'
+                              : payTotal != null ? `Continue to payment — ${formatPrice(payTotal, order.currency)}`
+                                : 'Continue to payment'}
                   </button>
                   <p className="text-center text-[12px] text-ink-mute" aria-live="polite">
-                    {awaitingQuantity ? 'Select a quantity to see your total.'
-                      : !destinationComplete ? 'Enter where we’re shipping to so we can calculate shipping.'
-                        : 'Secured by Stripe.'}
+                    {awaitingQuantity ? 'Select a quantity to see exact prices for each option.'
+                      : !specResolved ? 'Confirm your card above to see your total.'
+                        : !destinationComplete ? 'Enter where we’re shipping to so we can calculate shipping.'
+                          : 'Secured by Stripe.'}
                   </p>
                 </div>
               ) : (
@@ -1405,7 +1851,7 @@ export default function OrderPayPage() {
                   <p className="mt-2 text-center text-[12px] text-ink-mute">
                     Secured by Stripe.{checkout.currency === 'GBP' ? ' Includes VAT.' : ''}
                   </p>
-                  {(isOpenGrid || shippingComputedAtCheckout || tariffApplies) && (
+                  {(isOpenGrid || thicknessOpen || finishOpen || shippingComputedAtCheckout || tariffApplies) && (
                     <button type="button" onClick={() => { setCheckout(null); setFormError(null) }}
                       className="mt-3 block w-full text-center text-[12px] text-ink-mute underline hover:text-ink">
                       Edit order details
@@ -1455,6 +1901,37 @@ function formatApprovedDate(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+// Layered artwork tile: every candidate finish's image mounted at once (the
+// mount IS the preload), with opacity cross-fading to the active layer.
+// Layer 0 stays in normal flow to size the tile; the rest stack absolutely —
+// the layers are the same design in different finishes, so dimensions match
+// in practice, with object-cover guarding any drift. Hidden layers are
+// aria-hidden so screen readers see exactly one artwork image.
+function ArtworkFade({ layers, activeId }: { layers: GridImage[]; activeId: string }) {
+  if (layers.length <= 1) {
+    const img = layers[0]
+    if (!img) return null
+    return <img src={img.signed_url} alt="Approved proof artwork" className="w-full rounded-lg bg-surface ring-1 ring-line" />
+  }
+  return (
+    <span className="relative block">
+      {layers.map((im, i) => (
+        <img
+          key={im.id}
+          src={im.signed_url}
+          alt={im.id === activeId ? 'Approved proof artwork' : ''}
+          aria-hidden={im.id !== activeId}
+          className={[
+            i === 0 ? 'relative' : 'absolute inset-0 h-full w-full object-cover',
+            'block w-full rounded-lg bg-surface ring-1 ring-line transition-opacity duration-300',
+            im.id === activeId ? 'opacity-100' : 'opacity-0',
+          ].join(' ')}
+        />
+      ))}
+    </span>
+  )
 }
 
 function Row({ label, value, bold = false }: { label: string; value: string; bold?: boolean }) {

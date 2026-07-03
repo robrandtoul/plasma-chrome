@@ -3,6 +3,7 @@ import Modal from '../../components/Modal'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { logAudit } from '../../lib/audit'
+import AdminFinishPhotosSection from './AdminFinishPhotosSection'
 import type { KeyFeature } from '../../lib/types'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -1205,6 +1206,11 @@ export default function AdminMaterialContentModal({ material, onClose, onSaved }
                 PNG, JPG or SVG, up to 2 MB. Square or roughly square, at least 480px wide works best. Transparent backgrounds render cleanly.
               </p>
             </section>
+
+            {/* Finish photos (000299) — one studio photo per finish, shown on
+                the pay page's open-spec finish chooser. Renders nothing for
+                materials with no option dimension. */}
+            <AdminFinishPhotosSection materialId={material.id} materialLabel={material.display_name} />
 
             {/* Publish status */}
             <section className={isArchived ? 'opacity-60' : ''}>
