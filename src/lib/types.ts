@@ -304,6 +304,10 @@ export interface PublicMaterialOption {
   display_name: string
   is_base: boolean
   sort_order: number
+  // Studio photo of this finish on this material (000299) — shown on the
+  // pay page's open-spec finish chooser. Admin-managed (material editor),
+  // stored in the public material-icons bucket under finish-photos/.
+  photo_url: string | null
 }
 
 export interface PublicMaterialOptionSurcharge {

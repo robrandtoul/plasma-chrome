@@ -199,6 +199,10 @@ interface SpecFinishChoice {
   display_name: string
   is_base: boolean
   surTiers: { quantity: number; surcharge: number }[]
+  // Visual, in preference order: the admin's studio photo of the finish
+  // (material_options.photo_url, 000299), else the customer's own artwork
+  // from that finish's proof tab, else a text-only card.
+  photoUrl: string | null
   swatchUrl: string | null
 }
 
@@ -721,6 +725,7 @@ export default function OrderPayPage() {
                     .filter((s) => s.material_option_id === mo.id && s.currency === o.currency)
                     .map((s) => ({ quantity: s.quantity, surcharge: Number(s.surcharge) }))
                     .sort((a, b) => a.quantity - b.quantity),
+                  photoUrl: mo.photo_url ?? null,
                   swatchUrl: null,
                 }))
               setSpecFinishes(finishes)
@@ -1559,11 +1564,11 @@ export default function OrderPayPage() {
                                       : 'border-line bg-surface hover:bg-canvas',
                                   ].join(' ')}
                                 >
-                                  {f.swatchUrl && (
+                                  {(f.photoUrl ?? f.swatchUrl) && (
                                     <img
-                                      src={f.swatchUrl}
-                                      alt={`Your design in ${f.display_name}`}
-                                      className="mb-2 w-full rounded-lg bg-canvas ring-1 ring-line"
+                                      src={(f.photoUrl ?? f.swatchUrl) as string}
+                                      alt={f.photoUrl ? `${f.display_name} finish` : `Your design in ${f.display_name}`}
+                                      className="mb-2 w-full rounded-lg bg-canvas object-cover ring-1 ring-line"
                                     />
                                   )}
                                   <span className="flex items-baseline justify-between gap-2">
