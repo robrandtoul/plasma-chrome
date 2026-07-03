@@ -99,7 +99,7 @@ No new tables, so the proofs-schema "explicit grants for new tables" footgun doe
 
 ### 5.3 Pay page — the *Confirm your card* step
 
-The chooser lives inside the existing inputs panel (the one open-quantity and shipping-destination orders already get), **above** quantity and destination, so the input order is: thickness → finish → quantity → destination → Continue. The auto-advance gate gains `needsSpec` / `needsFinish` alongside `needsQty` / `needsDest` — an open-spec order never skips the panel, and the payment form stays collapsed until every open field is resolved (same enforcement as `quantity_required` today).
+The chooser lives inside the existing inputs panel (the one open-quantity and shipping-destination orders already get). Input order — **revised during Rob's preview testing (2026-07-03)**: **quantity → thickness → finish** → destination → Continue. Quantity leads because it's the question the customer already knows the answer to, and with it set every thickness card and finish premium shows the true figure for *their* quantity rather than a lowest-tier "from" price — the expensive decisions get exact numbers. (First build had thickness first; the quantity input also had to stop waiting for a thickness pick — its bounds now come from the union of the offerable variants' tiers until one is chosen.) Everything stays live-editable, so changing quantity later re-prices the cards instantly. The auto-advance gate gains `needsSpec` / `needsFinish` alongside `needsQty` / `needsDest` — an open-spec order never skips the panel, and the payment form stays collapsed until every open field is resolved (same enforcement as `quantity_required` today).
 
 Design rules — this is the part Rob flagged as make-or-break:
 
