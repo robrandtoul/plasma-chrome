@@ -274,11 +274,16 @@ export default function OrderPayPage() {
   const [loading, setLoading] = useState(true)
   const [order, setOrder] = useState<OrderPayload | null>(null)
   const [company, setCompany] = useState<string | null>(null)
-  // Recap (trust anchor): a few thumbnails of the approved artwork +
-  // a one-line spec (material + locked variant). Pulled best-effort
-  // from the same proof graph + customer-proof-images edge function the
-  // proof page uses; failure leaves the recap off without blocking pay.
-  const [thumbs, setThumbs] = useState<GridImage[]>([])
+  // Recap (trust anchor): thumbnails of the approved artwork + a one-line
+  // spec. Pulled best-effort from the same proof graph + customer-proof-images
+  // edge function the proof page uses; failure leaves the recap off without
+  // blocking pay. ALL current-version images are kept (not just one
+  // front/back) so the preview can re-filter to the finish the customer picks
+  // in the open-spec chooser — choose Mirror, see the mirror artwork.
+  const [versionImages, setVersionImages] = useState<GridImage[]>([])
+  // Finish code locked on the order (or persisted from an earlier checkout
+  // call), so the recap shows the right finish tab even without a live pick.
+  const [lockedFinishCode, setLockedFinishCode] = useState<string | null>(null)
   const [spec, setSpec] = useState<{
     material: string
     variant: string | null
@@ -639,6 +644,7 @@ export default function OrderPayPage() {
               const opt = (g.material_options ?? []).find((mo) => mo.id === o.material_option_id) ?? null
               if (opt) {
                 finishName = opt.display_name
+                setLockedFinishCode(opt.code)
                 if (!opt.is_base && o.currency) {
                   setFinishTiers(
                     (g.material_option_surcharges ?? [])
@@ -762,10 +768,9 @@ export default function OrderPayPage() {
                 // first-two-by-sort-order approach picked when a version has
                 // several images per side, e.g. per ink/option). Fall back to
                 // the first two distinct images when there's no side data.
-                const front = versionImgs.find((img) => img.side === 'front')
-                const back = versionImgs.find((img) => img.side === 'back')
-                const bySide = [front, back].filter((img): img is GridImage => !!img)
-                setThumbs(bySide.length > 0 ? bySide : versionImgs.slice(0, 2))
+                // Keep the whole set; the render derives one front + one
+                // back for the ACTIVE finish (see the thumbs derivation).
+                setVersionImages(versionImgs)
                 // Finish swatches for the open-spec chooser: one representative
                 // (front-preferred) artwork image per finish tab, so the card
                 // shows the customer's own design in that finish — honest
@@ -1131,6 +1136,26 @@ export default function OrderPayPage() {
   const isExpired =
     order.status === 'expired' ||
     (order.status === 'sent' && order.expires_at != null && new Date(order.expires_at).getTime() < Date.now())
+
+  // Recap thumbnails, finish-aware: one front + one back from the current
+  // version, filtered to the ACTIVE finish — the live pick on an open-spec
+  // order (falling back to a persisted/locked finish), so choosing Mirror
+  // swaps the big preview to the mirror artwork and the paid screen shows
+  // the finish they actually bought. Images with no finish tab (null
+  // material_option = shared across finishes) always qualify; a proof with
+  // no per-finish tabs, or no match, falls back to the whole set exactly as
+  // before.
+  const activeFinishCode =
+    (order.finish_open === true ? specFinishes.find((f) => f.id === chosenOptionId)?.code ?? null : null) ??
+    lockedFinishCode
+  const recapPool =
+    activeFinishCode && versionImages.some((i) => i.material_option === activeFinishCode)
+      ? versionImages.filter((i) => i.material_option === activeFinishCode || i.material_option == null)
+      : versionImages
+  const recapFront = recapPool.find((i) => i.side === 'front')
+  const recapBack = recapPool.find((i) => i.side === 'back')
+  const recapBySide = [recapFront, recapBack].filter((i): i is GridImage => !!i)
+  const thumbs = recapBySide.length > 0 ? recapBySide : recapPool.slice(0, 2)
 
   if (order.status === 'paid' || order.status === 'fulfilled') {
     return renderConfirmation(true, order)
