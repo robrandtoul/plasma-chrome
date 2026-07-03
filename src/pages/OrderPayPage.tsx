@@ -6,6 +6,7 @@ import { getPublicSettings } from '../lib/publicSettings'
 import { Lock } from 'lucide-react'
 import { Pill, PanelShell } from '../design'
 import { CustomerHeader } from '../components/CustomerHeader'
+import { FinishChoiceCard } from '../components/FinishChoiceCard'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 import { interpolateValue, flatTopTierTotal, flatUnitTotal, pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
 import { thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
@@ -1550,34 +1551,16 @@ export default function OrderPayPage() {
                                 f.is_base || f.surTiers.length === 0
                                   ? 0
                                   : surchargeFromTiers(f.surTiers, qtyBasis, flatAboveTop)
-                              const selected = chosenOptionId === f.id
                               return (
-                                <button
+                                <FinishChoiceCard
                                   key={f.id}
-                                  type="button"
-                                  aria-pressed={selected}
-                                  onClick={() => chooseFinish(f.id)}
-                                  className={[
-                                    'rounded-xl border p-3 text-left transition-colors',
-                                    selected
-                                      ? 'border-[var(--c-brand)] bg-canvas ring-1 ring-[var(--c-brand)]'
-                                      : 'border-line bg-surface hover:bg-canvas',
-                                  ].join(' ')}
-                                >
-                                  {(f.photoUrl ?? f.swatchUrl) && (
-                                    <img
-                                      src={(f.photoUrl ?? f.swatchUrl) as string}
-                                      alt={f.photoUrl ? `${f.display_name} finish` : `Your design in ${f.display_name}`}
-                                      className="mb-2 w-full rounded-lg bg-canvas object-cover ring-1 ring-line"
-                                    />
-                                  )}
-                                  <span className="flex items-baseline justify-between gap-2">
-                                    <span className="text-sm font-medium text-ink">{f.display_name}</span>
-                                    <span className="shrink-0 text-[12px] text-ink-soft">
-                                      {delta > 0 ? `+${formatPrice(delta, order.currency)}` : 'Included'}
-                                    </span>
-                                  </span>
-                                </button>
+                                  name={f.display_name}
+                                  priceLabel={delta > 0 ? `+${formatPrice(delta, order.currency)}` : 'Included'}
+                                  imageSrc={f.photoUrl ?? f.swatchUrl}
+                                  imageAlt={f.photoUrl ? `${f.display_name} finish` : `Your design in ${f.display_name}`}
+                                  selected={chosenOptionId === f.id}
+                                  onChoose={() => chooseFinish(f.id)}
+                                />
                               )
                             })}
                           </div>
