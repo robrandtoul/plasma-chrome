@@ -34,18 +34,25 @@ export function orderTotal(o: OrderAmounts): number | null {
   return round2(parts.reduce((acc: number, p) => acc + Number(p ?? 0), 0) - discount + tariff)
 }
 
-// "Material · Variant", collapsing to just the material when the variant adds
-// nothing, and to "Custom quote" when there's no material (custom-quote order).
+// "Material · Variant · Finish", collapsing to just the material when the
+// variant adds nothing, and to "Custom quote" when there's no material
+// (custom-quote order). The finish (the order's material_option — metal
+// Natural/Brushed/Mirror, plastic Gloss/Matte) is appended when pinned or
+// picked; an open-spec order the customer hasn't resolved yet simply omits
+// it, same as an unpicked thickness.
 export function specLabel(
   materialDisplay: string | null | undefined,
   variantDisplay: string | null | undefined,
   customQuoteTotal: number | null,
+  optionDisplay?: string | null,
 ): string {
   const material = (materialDisplay ?? '').trim()
   const variant = (variantDisplay ?? '').trim()
+  const option = (optionDisplay ?? '').trim()
+  const optionSuffix = option ? ` · ${option}` : ''
   if (customQuoteTotal != null && !material) return 'Custom quote'
-  if (variant && variant !== material) return `${material} · ${variant}`.replace(/^ · /, '')
-  return material || 'Custom quote'
+  if (variant && variant !== material) return `${material} · ${variant}${optionSuffix}`.replace(/^ · /, '')
+  return material ? `${material}${optionSuffix}` : 'Custom quote'
 }
 
 // Company name first, falling back to the contact name, then an em dash.

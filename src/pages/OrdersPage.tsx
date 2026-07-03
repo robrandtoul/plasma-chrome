@@ -101,6 +101,10 @@ interface OrderRow {
     display_name: string | null
     materials: { code: string | null; display_name: string | null; production_route: string | null; lead_time_max_days: number | null; outsourced_supplier_ids: string[] | null } | null
   } | null
+  // The order's finish (material_option) — pinned by the designer or picked by
+  // the customer on an open-spec order. Null until picked / for option-less
+  // materials.
+  material_options: { display_name: string | null } | null
   proofs: {
     // Thread-wide reply stamps (000208) — drive the specific grace-pause label.
     helpscout_last_reply_at: string | null
@@ -117,6 +121,7 @@ const SELECT = `
   date_required, dropbox_folder_url, stock_order_number, project_name, stock_colour, person_quantities,
   ship_to_name, ship_to_email, ship_to_address, proof_id,
   material_variants(display_name, materials(code, display_name, production_route, lead_time_max_days, outsourced_supplier_ids)),
+  material_options(display_name),
   proofs(helpscout_last_reply_at, helpscout_last_customer_reply_at, contacts(full_name, companies(name)))
 `
 
@@ -175,6 +180,7 @@ function specLabel(o: OrderRow): string {
     o.material_variants?.materials?.display_name,
     o.material_variants?.display_name,
     o.custom_quote_total,
+    o.material_options?.display_name,
   )
   // A prototype keeps its material/variant, so the base reads as the material
   // it samples; mark it so the work queue distinguishes a flat-fee sample run
