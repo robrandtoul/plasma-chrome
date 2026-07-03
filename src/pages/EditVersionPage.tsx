@@ -12,6 +12,7 @@ import { DesignerChrome } from '../design'
 import { PageDropOverlay } from '../components/PageDropOverlay'
 import NameChipInput from '../components/NameChipInput'
 import { matchImageToName } from '../lib/matchImageToName'
+import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { safeRemoveImagePaths } from '../lib/imageStorage'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { VariantDropZone } from '../components/VariantDropZone'
@@ -396,13 +397,18 @@ export default function EditVersionPage() {
     const versionOptions = (v.material_options as string[]) ?? []
     const materialId = v.material_id as string
 
-    // Load available options for this material
+    // Load available options for this material. Preference-only finishes
+    // (full-colour plastic gloss/matte, 000303) are invisible on the
+    // artwork so the version form treats the material as option-less —
+    // the customer settles the finish at checkout instead.
     const { data: optionData } = await supabase
       .from('material_options')
       .select('id, code, display_name, is_base, sort_order')
       .eq('material_id', materialId)
       .order('sort_order')
-    const options = (optionData ?? []) as MaterialOption[]
+    const options = finishIsPreferenceOnly(v.materials?.code as string | undefined)
+      ? []
+      : ((optionData ?? []) as MaterialOption[])
     setAvailableOptions(options)
     setSelectedOptions(versionOptions)
     setActiveImageOption(versionOptions[0] ?? '')

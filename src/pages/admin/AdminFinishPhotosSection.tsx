@@ -20,6 +20,8 @@ interface OptionRow {
   display_name: string
   is_base: boolean
   photo_url: string | null
+  // Customer-facing education line on the pay-page finish card (000303).
+  description: string | null
 }
 
 const ACCEPTED = ['image/png', 'image/jpeg']
@@ -50,7 +52,7 @@ export default function AdminFinishPhotosSection({ materialId, materialLabel }: 
       const [optsRes, matRes] = await Promise.all([
         supabase
           .from('material_options')
-          .select('id, code, display_name, is_base, photo_url')
+          .select('id, code, display_name, is_base, photo_url, description')
           .eq('material_id', materialId)
           .order('sort_order'),
         supabase.from('materials').select('option_label').eq('id', materialId).maybeSingle(),
@@ -63,6 +65,7 @@ export default function AdminFinishPhotosSection({ materialId, materialLabel }: 
           display_name: (o.display_name as string) ?? 'Option',
           is_base: !!o.is_base,
           photo_url: (o.photo_url as string | null) ?? null,
+          description: (o.description as string | null) ?? null,
         })),
       )
       if (matRes.data?.option_label) setOptionLabel(matRes.data.option_label as string)
@@ -114,6 +117,28 @@ export default function AdminFinishPhotosSection({ materialId, materialLabel }: 
     })
   }
 
+  // Saved on blur: a description edit is one field, not a form — the same
+  // quiet-save shape the photo actions use. Empty string clears to null so
+  // cards without copy simply omit the line.
+  async function handleDescriptionBlur(option: OptionRow, raw: string) {
+    const next = raw.trim() === '' ? null : raw.trim()
+    if (next === option.description) return
+    setError(null)
+    const { error: err } = await supabase
+      .from('material_options')
+      .update({ description: next })
+      .eq('id', option.id)
+    if (err) { setError(`Failed to save the description: ${err.message}`); return }
+    setOptions((prev) => prev.map((o) => (o.id === option.id ? { ...o, description: next } : o)))
+    void logAudit({
+      action: 'material.finish_description_updated',
+      targetType: 'material_option',
+      targetId: option.id,
+      targetLabel: `${materialLabel} — ${option.display_name}`,
+      metadata: { description: next },
+    })
+  }
+
   async function handleRemove(option: OptionRow) {
     if (!option.photo_url) return
     setBusyId(option.id)
@@ -148,42 +173,54 @@ export default function AdminFinishPhotosSection({ materialId, materialLabel }: 
       <label className="mb-1.5 block text-sm font-medium text-ink-soft">{optionLabel} photos</label>
       <div className="space-y-2">
         {options.map((o) => (
-          <div key={o.id} className="flex items-center gap-4 rounded-lg bg-canvas px-4 py-3 ring-1 ring-line">
-            {o.photo_url ? (
-              <img
-                src={o.photo_url}
-                alt={`${o.display_name} ${noun} photo`}
-                className="h-14 w-20 shrink-0 rounded-md object-cover ring-1 ring-line"
-              />
-            ) : (
-              <div className="flex h-14 w-20 shrink-0 items-center justify-center rounded-md bg-surface text-[11px] text-ink-dim ring-1 ring-line">
-                No photo
+          <div key={o.id} className="rounded-lg bg-canvas px-4 py-3 ring-1 ring-line">
+            <div className="flex items-center gap-4">
+              {o.photo_url ? (
+                <img
+                  src={o.photo_url}
+                  alt={`${o.display_name} ${noun} photo`}
+                  className="h-14 w-20 shrink-0 rounded-md object-cover ring-1 ring-line"
+                />
+              ) : (
+                <div className="flex h-14 w-20 shrink-0 items-center justify-center rounded-md bg-surface text-[11px] text-ink-dim ring-1 ring-line">
+                  No photo
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-ink">{o.display_name}</p>
+                <p className="text-[12px] text-ink-mute">{o.is_base ? `Base ${noun}` : `Surcharged ${noun}`}</p>
               </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-ink">{o.display_name}</p>
-              <p className="text-[12px] text-ink-mute">{o.is_base ? `Base ${noun}` : `Surcharged ${noun}`}</p>
-            </div>
-            <div className="flex shrink-0 gap-2">
-              <button
-                type="button"
-                disabled={busyId === o.id}
-                onClick={() => { pickingForRef.current = o; fileInputRef.current?.click() }}
-                className="rounded px-3 py-1.5 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-surface disabled:opacity-50"
-              >
-                {busyId === o.id ? 'Saving…' : o.photo_url ? 'Replace' : 'Upload'}
-              </button>
-              {o.photo_url && (
+              <div className="flex shrink-0 gap-2">
                 <button
                   type="button"
                   disabled={busyId === o.id}
-                  onClick={() => void handleRemove(o)}
-                  className="rounded px-3 py-1.5 text-sm font-medium text-out ring-1 ring-out hover:bg-out-soft disabled:opacity-50"
+                  onClick={() => { pickingForRef.current = o; fileInputRef.current?.click() }}
+                  className="rounded px-3 py-1.5 text-sm font-medium text-ink-soft ring-1 ring-line hover:bg-surface disabled:opacity-50"
                 >
-                  Remove
+                  {busyId === o.id ? 'Saving…' : o.photo_url ? 'Replace' : 'Upload'}
                 </button>
-              )}
+                {o.photo_url && (
+                  <button
+                    type="button"
+                    disabled={busyId === o.id}
+                    onClick={() => void handleRemove(o)}
+                    className="rounded px-3 py-1.5 text-sm font-medium text-out ring-1 ring-out hover:bg-out-soft disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
             </div>
+            {/* Customer-facing description (000303) — shown under the name on
+                the pay-page finish card. Saves quietly on blur. */}
+            <textarea
+              aria-label={`${o.display_name} customer description`}
+              defaultValue={o.description ?? ''}
+              onBlur={(e) => void handleDescriptionBlur(o, e.target.value)}
+              rows={2}
+              placeholder={`Customer-facing line about the ${o.display_name.toLowerCase()} ${noun} (optional)`}
+              className="mt-2 w-full rounded border border-line bg-surface px-3 py-2 text-[17px] sm:text-sm focus:border-[var(--c-brand)] focus:bg-[var(--c-brand-50)] focus:outline-none"
+            />
           </div>
         ))}
       </div>
@@ -201,7 +238,7 @@ export default function AdminFinishPhotosSection({ materialId, materialLabel }: 
       />
       {error && <p className="mt-1.5 text-sm text-out">{error}</p>}
       <p className="mt-1.5 text-xs text-ink-mute">
-        Shown on the order page when the customer picks their {noun} at checkout. PNG or JPG, up to 5 MB — landscape photos of the actual surface work best. Without a photo, the customer sees their own artwork from that {noun}&rsquo;s proof tab instead.
+        Shown on the order page when the customer picks their {noun} at checkout. PNG or JPG, up to 5 MB — landscape photos of the actual surface work best. Without a photo, the customer sees their own artwork from that {noun}&rsquo;s proof tab instead. The description appears under the {noun}&rsquo;s name on its card — useful where a photo can&rsquo;t tell the story (e.g. gloss vs matte).
       </p>
     </section>
   )

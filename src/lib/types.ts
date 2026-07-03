@@ -308,6 +308,11 @@ export interface PublicMaterialOption {
   // pay page's open-spec finish chooser. Admin-managed (material editor),
   // stored in the public material-icons bucket under finish-photos/.
   photo_url: string | null
+  // Short customer-facing line for the finish chooser card (000303) —
+  // carries the education for preference-only finishes (full-colour
+  // plastic gloss/matte) where no photo/artwork story exists. Null on
+  // rows without copy; the card simply omits the line.
+  description: string | null
 }
 
 export interface PublicMaterialOptionSurcharge {
