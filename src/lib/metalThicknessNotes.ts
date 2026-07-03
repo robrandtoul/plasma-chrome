@@ -108,6 +108,7 @@ export const DEFAULT_METAL_THICKNESS_NOTES: MetalThicknessNotes = {
       name: 'Credit card',
       description:
         'Our thickest plastic card — the same thickness as a standard credit card.',
+      badge: 'Most popular',
     },
   ],
   full_colour_plastic_intro:
