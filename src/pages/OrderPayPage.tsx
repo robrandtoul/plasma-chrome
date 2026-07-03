@@ -1398,38 +1398,42 @@ export default function OrderPayPage() {
   // for the customer's quantity — Rob, 2026-07-03), else standalone in the
   // inputs panel exactly as before.
   const quantityInputs = isSplitOpen ? (
-    <div className="space-y-2.5">
-      <p className="text-ink-soft">Quantity for each person</p>
-      {personNames.map((name) => (
-        <div key={name} className="flex items-center justify-between gap-4">
-          <label htmlFor={`q-${name}`} className="truncate text-ink">{name}</label>
-          <input id={`q-${name}`} type="number" min={1} step={1} inputMode="numeric"
-            value={personQty[name] ?? ''}
-            onChange={(e) => setPersonQty((prev) => ({ ...prev, [name]: e.target.value }))}
-            placeholder="0"
-            className="h-[38px] w-24 rounded-lg border border-line bg-surface px-3 text-right text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
-        </div>
-      ))}
-      <div className="flex items-center justify-between gap-4 border-t border-line-soft pt-2.5">
-        <span className="text-ink-soft">Total</span>
-        <span className="font-medium text-ink">{splitSum > 0 ? `${splitSum.toLocaleString()} cards` : '—'}</span>
+    <div className="rounded-xl border border-line bg-canvas p-4">
+      <p className="font-medium text-ink">How many cards for each person?</p>
+      <div className="mt-3 space-y-2.5">
+        {personNames.map((name) => (
+          <div key={name} className="flex items-center justify-between gap-4">
+            <label htmlFor={`q-${name}`} className="truncate text-ink">{name}</label>
+            <input id={`q-${name}`} type="number" min={1} step={1} inputMode="numeric"
+              value={personQty[name] ?? ''}
+              onChange={(e) => setPersonQty((prev) => ({ ...prev, [name]: e.target.value }))}
+              placeholder="0"
+              className="h-11 w-28 rounded-lg border border-line bg-surface px-3 text-right text-base font-semibold text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
+          </div>
+        ))}
       </div>
-      {splitRangeHint && <p className="text-[13px] text-low">{splitRangeHint}</p>}
+      <div className="mt-2.5 flex items-center justify-between gap-4 border-t border-line-soft pt-2.5">
+        <span className="text-ink-soft">Total</span>
+        <span className="text-base font-semibold text-ink">{splitSum > 0 ? `${splitSum.toLocaleString()} cards` : '—'}</span>
+      </div>
+      {splitRangeHint && <p className="mt-1.5 text-[13px] text-low">{splitRangeHint}</p>}
     </div>
   ) : isSingleOpen ? (
-    <div className="space-y-1.5">
+    <div className="rounded-xl border border-line bg-canvas p-4">
       <div className="flex items-center justify-between gap-4">
-        <label htmlFor="order-quantity" className="text-ink-soft">Quantity</label>
+        <div className="min-w-0">
+          <label htmlFor="order-quantity" className="block font-medium text-ink">How many cards?</label>
+          {singleMin != null && singleMax != null && (
+            <p className="mt-0.5 text-[12px] text-ink-mute">Any quantity from {singleMin.toLocaleString()} to {singleMax.toLocaleString()}.</p>
+          )}
+        </div>
         <input id="order-quantity" type="number" min={singleMin ?? 1} max={singleMax ?? undefined} step={1} inputMode="numeric"
           value={chosenQuantity ?? ''}
           onChange={(e) => { const n = parseInt(e.target.value, 10); setChosenQuantity(Number.isFinite(n) && n > 0 ? n : null) }}
           placeholder={singleMin != null ? `${singleMin.toLocaleString()}+` : 'e.g. 250'}
-          className="h-[38px] w-28 rounded-lg border border-line bg-surface px-3 text-right text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
+          className="h-12 w-32 shrink-0 rounded-lg border border-line bg-surface px-3 text-right text-base font-semibold text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
       </div>
-      {singleMin != null && singleMax != null && (
-        <p className="text-right text-[12px] text-ink-mute">Any quantity from {singleMin.toLocaleString()} to {singleMax.toLocaleString()}.</p>
-      )}
-      {singleRangeHint && <p className="text-[13px] text-low">{singleRangeHint}</p>}
+      {singleRangeHint && <p className="mt-1.5 text-[13px] text-low">{singleRangeHint}</p>}
     </div>
   ) : null
 
