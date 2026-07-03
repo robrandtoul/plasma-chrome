@@ -14,12 +14,20 @@
 // phrased by the customer's RELATIONSHIP to the artwork rather than by
 // counting it:
 //   Q1  Which best describes this proof?
-//       • A batch of cards for one or more people → Recipients (one question)
-//       • Cards with no personal contact details  → Set branch (Q2…)
-//       • Alternatives to choose from             → Selection branch (QS)
+//       • Cards showing each person's own contact details → Recipients (one question)
+//       • Cards with no personal contact details          → Set branch (Q2…)
+//       • Alternatives to choose from                     → Selection branch (QS)
 // Counting only happens on the Set branch (Q2 "how many layouts"), with
 // "layout" defined on the spot so a finish variant of one design can't
 // be miscounted as several.
+//
+// On the Selection branch, alternatives on DIFFERENT materials get a
+// customer-intent guard (QS2, July 2026): only "they'll pick one and
+// prices can wait" keeps the single per-direction page (which cannot
+// show pricing). An explicit ask for a price on each, a possible
+// order-both, or plain uncertainty all route to split guidance — a
+// project per material is correct whichever way it goes. The intent
+// answer is UI-only (like multiMaterialChoice) and never persisted.
 //
 // The wizard is a CONTROLLED component. It owns no business state —
 // the host page passes the current `answers`, gets `onChange` back,
@@ -40,6 +48,7 @@
 
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { Link } from 'react-router-dom'
 import { Info } from 'lucide-react'
 
 // ── Answer model ────────────────────────────────────────────────────────────
@@ -68,6 +77,14 @@ export type WizardAnswers = {
   personalised: 'yes' | 'no' | null
   // Selection QS: same material or different.
   selectionMaterial: 'same' | 'different' | null
+  // Selection QS2 (only when selectionMaterial = 'different'): the
+  // customer-intent guard. 'pick' = they'll choose one direction and
+  // prices can wait → the single per-direction page is right. 'prices' =
+  // they've explicitly asked for a price on each → split guidance.
+  // 'unsure' = they might order both, or the designer doesn't know →
+  // split guidance (a project per material is correct either way).
+  // UI-only, like multiMaterialChoice: never persisted.
+  selectionIntent: 'pick' | 'prices' | 'unsure' | null
 }
 
 export const EMPTY_ANSWERS: WizardAnswers = {
@@ -77,6 +94,7 @@ export const EMPTY_ANSWERS: WizardAnswers = {
   multiMaterialChoice: null,
   personalised: null,
   selectionMaterial: null,
+  selectionIntent: null,
 }
 
 // ── Resolved shape ────────────────────────────────────────────────────────────
@@ -101,7 +119,16 @@ export function resolveShape(
 
   if (a.family === 'selection') {
     if (a.selectionMaterial === 'same') return { kind: 'selection', perDirection: false }
-    if (a.selectionMaterial === 'different') return { kind: 'selection', perDirection: true }
+    if (a.selectionMaterial === 'different') {
+      // The customer-intent guard. Only "they'll pick one, prices can
+      // wait" keeps the single per-direction page; an explicit ask for
+      // prices, a possible order-both, or plain uncertainty all route
+      // to the (non-saveable) split guidance. Reuses the existing
+      // split-guard kind so nothing downstream needs a new case.
+      if (a.selectionIntent === 'pick') return { kind: 'selection', perDirection: true }
+      if (a.selectionIntent === 'prices' || a.selectionIntent === 'unsure') return { kind: 'split-guard' }
+      return null
+    }
     return null
   }
 
@@ -246,7 +273,16 @@ export function deriveAnswersFromShape(input: {
 }): WizardAnswers {
   const base = { ...EMPTY_ANSWERS }
   if (input.isVariantRound) {
-    return { ...base, family: 'selection', selectionMaterial: input.isPerDirectionPricing ? 'different' : 'same' }
+    // A per-direction round must seed selectionIntent: 'pick' — it is
+    // the only intent that resolves to a saveable per-direction shape,
+    // and an existing version IS that shape. Without it the reconstructed
+    // answers would sit unresolved and block the edit/read-only views.
+    return {
+      ...base,
+      family: 'selection',
+      selectionMaterial: input.isPerDirectionPricing ? 'different' : 'same',
+      selectionIntent: input.isPerDirectionPricing ? 'pick' : null,
+    }
   }
   if (input.cardType === 'membership') {
     return {
@@ -289,7 +325,15 @@ export function deriveAnswersFromVersion(input: {
       // continued or edited collection reconstructs as same-material.
       return { ...base, family: 'set', layouts: 'several', sameMaterial: 'yes', personalised }
     case 'selection':
-      return { ...base, family: 'selection', selectionMaterial: input.isPerDirectionPricing ? 'different' : 'same' }
+      // selectionIntent: 'pick' for the same reason as in
+      // deriveAnswersFromShape — a persisted per-direction selection
+      // must reconstruct as resolved.
+      return {
+        ...base,
+        family: 'selection',
+        selectionMaterial: input.isPerDirectionPricing ? 'different' : 'same',
+        selectionIntent: input.isPerDirectionPricing ? 'pick' : null,
+      }
     default:
       // Null / unknown shape — fall back to the flags-only mapping.
       return deriveAnswersFromShape({
@@ -342,7 +386,20 @@ const SCENARIOS = {
     'A bar wants to see two different designs for their loyalty card, both on the same matte black metal, then pick the one they prefer.',
   qsDifferent:
     "A client wants to see their card on walnut next to the same design on brushed steel, then pick one and set the other aside. The page won't show pricing, so you'll quote each option manually.",
+  // QS2 — the customer-intent guard (different-material alternatives).
+  qs2Pick:
+    "A bar wants to see two directions, one on walnut, one on steel, and will pick their favourite. Prices can wait until they've chosen a direction.",
+  qs2Prices:
+    'The customer has asked to see matte black metal and satin black plastic with a price on each. Two projects, two links, each pricing correctly.',
+  qs2Unsure:
+    'The thread mentions quantities against both materials, so they may order both. Two projects are right whichever way it goes; abandon anything they drop.',
 } as const
+
+// The one-line question a designer can send when they don't know whether
+// the customer is choosing between materials or ordering both. Shown (and
+// copyable) in the "unsure" guidance on the Selection branch.
+export const ASK_CUSTOMER_QUESTION =
+  'Happy to show you both. Are you looking to choose between the two, or thinking of ordering both?'
 
 // ── Presentational pieces ────────────────────────────────────────────────────
 
@@ -481,6 +538,31 @@ function TooltipCard({
       {children}
     </div>,
     document.body,
+  )
+}
+
+// Copies ASK_CUSTOMER_QUESTION to the clipboard with a brief "Copied"
+// confirmation. The question text is always rendered beside it, so a
+// clipboard failure (blocked permission, http context) costs nothing —
+// the designer can still select and copy by hand.
+function CopyAskButton() {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        navigator.clipboard?.writeText(ASK_CUSTOMER_QUESTION).then(
+          () => {
+            setCopied(true)
+            setTimeout(() => setCopied(false), 2000)
+          },
+          () => {},
+        )
+      }}
+      className="font-semibold underline underline-offset-4 hover:opacity-80"
+    >
+      {copied ? 'Copied' : 'Copy the question'}
+    </button>
   )
 }
 
@@ -629,7 +711,7 @@ export function ProofShapeWizard({
   }
 
   // Clearing helpers, ordered by the question pipeline.
-  const clearAfterFamily = { layouts: null, sameMaterial: null, multiMaterialChoice: null, personalised: null, selectionMaterial: null } as const
+  const clearAfterFamily = { layouts: null, sameMaterial: null, multiMaterialChoice: null, personalised: null, selectionMaterial: null, selectionIntent: null } as const
   const clearAfterLayouts = { sameMaterial: null, multiMaterialChoice: null, personalised: null } as const
   const clearAfterSameMaterial = { multiMaterialChoice: null, personalised: null } as const
 
@@ -648,7 +730,7 @@ export function ProofShapeWizard({
   // Human-readable value for the collapsed Q1 row.
   const familyValue =
     answers.family === 'recipients'
-      ? 'A batch of cards for one or more people'
+      ? "Cards showing each person's own contact details"
       : answers.family === 'set'
         ? 'Cards with no personal contact details'
         : 'Alternatives to choose from'
@@ -680,8 +762,8 @@ export function ProofShapeWizard({
             options={[
               {
                 value: 'recipients',
-                label: 'A batch of cards for one or more people',
-                sub: 'Each named person has their own cards showing their own contact details.',
+                label: "Cards showing each person's own contact details",
+                sub: 'Each named person has their own cards with their own details.',
                 scenario: SCENARIOS.q1Recipients,
               },
               {
@@ -693,7 +775,7 @@ export function ProofShapeWizard({
               {
                 value: 'selection',
                 label: 'Alternatives to choose from',
-                sub: 'You show alternative designs and the customer picks the one they want. The rest are set aside.',
+                sub: 'You show alternative designs side by side and the customer picks the one they want. The rest are set aside.',
                 scenario: SCENARIOS.q1Selection,
               },
             ]}
@@ -815,6 +897,13 @@ export function ProofShapeWizard({
               <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                 Create each material as its own project from the new-project screen, so each one
                 prices and proofs correctly. This proof can't continue as a single set.
+                {!disabled && (
+                  <div className="mt-2">
+                    <Link to="/proofs/new" className="font-semibold underline underline-offset-4 hover:opacity-80">
+                      Start the first project
+                    </Link>
+                  </div>
+                )}
               </div>
             )}
 
@@ -860,26 +949,112 @@ export function ProofShapeWizard({
 
         {/* ── Selection branch ──────────────────────────────────────── */}
         {isSelection && (
-          answers.selectionMaterial == null ? (
-            <QuestionBlock
-              legend="Are the alternatives all on the same material?"
-              name="wizard-selection-material"
-              selected={answers.selectionMaterial}
-              disabled={disabled}
-              onSelect={(v: 'same' | 'different') => set({ selectionMaterial: v })}
-              options={[
-                { value: 'same', label: 'Same material', sub: 'Every alternative is the same material. Only the design differs.', scenario: SCENARIOS.qsSame },
-                { value: 'different', label: 'Different materials', sub: 'Each alternative is on a different material, so each is priced on its own.', scenario: SCENARIOS.qsDifferent },
-              ]}
-            />
-          ) : (
-            <AnsweredRow
-              label="Alternatives"
-              value={answers.selectionMaterial === 'same' ? 'Same material' : 'Different materials'}
-              disabled={disabled}
-              onChange={() => set({ selectionMaterial: null })}
-            />
-          )
+          <>
+            {answers.selectionMaterial == null ? (
+              <QuestionBlock
+                legend="Are the alternatives all on the same material?"
+                name="wizard-selection-material"
+                selected={answers.selectionMaterial}
+                disabled={disabled}
+                onSelect={(v: 'same' | 'different') => set({ selectionMaterial: v, selectionIntent: null })}
+                options={[
+                  { value: 'same', label: 'Same material', sub: 'Every alternative is the same material. Only the design differs. Pricing shows as normal.', scenario: SCENARIOS.qsSame },
+                  { value: 'different', label: 'Different materials', sub: "The page won't show pricing when the alternatives span materials, so you'd quote in the thread.", scenario: SCENARIOS.qsDifferent },
+                ]}
+              />
+            ) : (
+              <AnsweredRow
+                label="Alternatives"
+                value={answers.selectionMaterial === 'same' ? 'Same material' : 'Different materials'}
+                disabled={disabled}
+                onChange={() => set({ selectionMaterial: null, selectionIntent: null })}
+              />
+            )}
+
+            {/* QS2 — the customer-intent guard (different materials only).
+                Only "they'll pick one, prices can wait" keeps the single
+                per-direction page; the other two answers route to split
+                guidance. Mirrors the Set branch's different-materials
+                guard, which this branch previously lacked. */}
+            {answers.selectionMaterial === 'different' && (
+              answers.selectionIntent == null ? (
+                <QuestionBlock
+                  legend="Will they pick one, or might they order both?"
+                  name="wizard-selection-intent"
+                  cols={1}
+                  selected={answers.selectionIntent}
+                  disabled={disabled}
+                  onSelect={(v: 'pick' | 'prices' | 'unsure') => set({ selectionIntent: v })}
+                  note="Alternatives on different materials don't show pricing on the page. Only keep them together when you know the customer is choosing and prices can wait."
+                  options={[
+                    {
+                      value: 'pick',
+                      label: "They'll pick one, prices can wait",
+                      sub: 'One page, both directions, no pricing. Quote in the thread if asked.',
+                      scenario: SCENARIOS.qs2Pick,
+                    },
+                    {
+                      value: 'prices',
+                      label: "They've asked for a price on each",
+                      sub: 'Split into a project per material, so every link shows its own price.',
+                      scenario: SCENARIOS.qs2Prices,
+                    },
+                    {
+                      value: 'unsure',
+                      label: "They might order both, or I'm not sure",
+                      sub: "Split into a project per material. It's right whichever way they go.",
+                      scenario: SCENARIOS.qs2Unsure,
+                    },
+                  ]}
+                />
+              ) : (
+                <AnsweredRow
+                  label="Customer intent"
+                  value={
+                    answers.selectionIntent === 'pick'
+                      ? "They'll pick one, prices can wait"
+                      : answers.selectionIntent === 'prices'
+                        ? 'Asked for a price on each'
+                        : 'Might order both, or unsure'
+                  }
+                  disabled={disabled}
+                  onChange={() => set({ selectionIntent: null })}
+                />
+              )
+            )}
+
+            {/* Intent guard terminals — guidance only, no saveable shape */}
+            {answers.selectionMaterial === 'different' && answers.selectionIntent === 'prices' && (
+              <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                Create a project per material from the new-project screen and send the customer
+                both links together, so each material shows its own price. This proof can't
+                continue as a single selection.
+                {!disabled && (
+                  <div className="mt-2">
+                    <Link to="/proofs/new" className="font-semibold underline underline-offset-4 hover:opacity-80">
+                      Start the first project
+                    </Link>
+                  </div>
+                )}
+              </div>
+            )}
+            {answers.selectionMaterial === 'different' && answers.selectionIntent === 'unsure' && (
+              <div className="rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                Two projects are right whichever way it goes: if they pick one, abandon the other;
+                if they order both, each is already priced. The quickest way to be sure, though,
+                is to ask, for example:
+                <p className="mt-2 italic">“{ASK_CUSTOMER_QUESTION}”</p>
+                {!disabled && (
+                  <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1">
+                    <CopyAskButton />
+                    <Link to="/proofs/new" className="font-semibold underline underline-offset-4 hover:opacity-80">
+                      Start the first project
+                    </Link>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
 
