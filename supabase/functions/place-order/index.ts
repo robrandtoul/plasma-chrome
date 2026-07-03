@@ -245,7 +245,11 @@ function sanitiseInhouseNote(note: string): string {
 // via the Dropbox link in the note.
 const HS_ATTACH_MAX_BYTES = 10 * 1024 * 1024
 const ARTWORK_TOTAL_MAX_BYTES = 20 * 1024 * 1024
-const ARTWORK_MAX_FILES = 10
+// 30 (not 10) so a multi-material Set order — one subfolder per material, easily
+// 20+ files across them — doesn't fill the quota inside the first subfolder and
+// silently drop whole materials (see Order 403822 / OpusApeiro). ARTWORK_TOTAL_MAX_BYTES
+// is still the backstop for very large folders.
+const ARTWORK_MAX_FILES = 30
 
 // Map an artwork filename to a mime type, or null if it's not a file Stock
 // Control would surface on the job card (mirrors its classifyAttachment).
@@ -262,6 +266,14 @@ function artworkMime(name: string): string | null {
   return null
 }
 
+// When a folder holds more artwork than the caps below allow, production needs
+// the print-ready files (PDF / AI / EPS) far more than the low-res proof-preview
+// JPEGs. Rank print-ready formats first so, if the count or byte budget bites,
+// it drops previews rather than the files the printer actually works from.
+function artworkPriority(name: string): number {
+  return /\.(pdf|ai|eps)$/i.test(name) ? 0 : 1
+}
+
 interface FolderEntry { name: string; is_folder: boolean; path: string; size: number }
 type ArtworkPlan = { attach: string[]; skipped: { name: string; reason: string }[] }
 
@@ -270,7 +282,10 @@ type ArtworkPlan = { attach: string[]; skipped: { name: string; reason: string }
 function planArtwork(entries: FolderEntry[]): { plan: ArtworkPlan; toFetch: { name: string; path: string; mime: string }[] } {
   const plan: ArtworkPlan = { attach: [], skipped: [] }
   const toFetch: { name: string; path: string; mime: string }[] = []
-  for (const e of entries) {
+  // Print-ready files first, then previews. V8's sort is stable, so each group
+  // keeps its original folder order; the caps below then bite previews last.
+  const ordered = [...entries].sort((a, b) => artworkPriority(a.name) - artworkPriority(b.name))
+  for (const e of ordered) {
     if (e.is_folder) continue
     const mime = artworkMime(e.name)
     if (!mime) { plan.skipped.push({ name: e.name, reason: 'not an artwork file' }); continue }
