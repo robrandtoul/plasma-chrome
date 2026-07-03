@@ -49,7 +49,11 @@ export function specLabel(
   const material = (materialDisplay ?? '').trim()
   const variant = (variantDisplay ?? '').trim()
   const option = (optionDisplay ?? '').trim()
-  const optionSuffix = option ? ` · ${option}` : ''
+  // Skip the finish when it just repeats the variant — standard paper's
+  // finish-type variants (Standard / UV Spot / Foiling) surface the variant
+  // name as `finish` in admin_search_orders, and "· With Foiling · With
+  // Foiling" would read as a bug.
+  const optionSuffix = option && option !== variant ? ` · ${option}` : ''
   if (customQuoteTotal != null && !material) return 'Custom quote'
   if (variant && variant !== material) return `${material} · ${variant}${optionSuffix}`.replace(/^ · /, '')
   return material ? `${material}${optionSuffix}` : 'Custom quote'
