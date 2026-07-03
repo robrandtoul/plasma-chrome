@@ -266,6 +266,14 @@ function artworkMime(name: string): string | null {
   return null
 }
 
+// When a folder holds more artwork than the caps below allow, production needs
+// the print-ready files (PDF / AI / EPS) far more than the low-res proof-preview
+// JPEGs. Rank print-ready formats first so, if the count or byte budget bites,
+// it drops previews rather than the files the printer actually works from.
+function artworkPriority(name: string): number {
+  return /\.(pdf|ai|eps)$/i.test(name) ? 0 : 1
+}
+
 interface FolderEntry { name: string; is_folder: boolean; path: string; size: number }
 type ArtworkPlan = { attach: string[]; skipped: { name: string; reason: string }[] }
 
@@ -274,7 +282,10 @@ type ArtworkPlan = { attach: string[]; skipped: { name: string; reason: string }
 function planArtwork(entries: FolderEntry[]): { plan: ArtworkPlan; toFetch: { name: string; path: string; mime: string }[] } {
   const plan: ArtworkPlan = { attach: [], skipped: [] }
   const toFetch: { name: string; path: string; mime: string }[] = []
-  for (const e of entries) {
+  // Print-ready files first, then previews. V8's sort is stable, so each group
+  // keeps its original folder order; the caps below then bite previews last.
+  const ordered = [...entries].sort((a, b) => artworkPriority(a.name) - artworkPriority(b.name))
+  for (const e of ordered) {
     if (e.is_folder) continue
     const mime = artworkMime(e.name)
     if (!mime) { plan.skipped.push({ name: e.name, reason: 'not an artwork file' }); continue }
