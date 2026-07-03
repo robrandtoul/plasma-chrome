@@ -22,6 +22,7 @@
     "test:nudges": "tsx supabase/functions/_shared/nudgeDecision.test.ts",
     "test:message-html": "tsx supabase/functions/_shared/messageHtml.test.ts",
     "test:material-match": "tsx src/lib/matchMaterial.test.ts",
+    "test:wizard": "tsx src/components/ProofShapeWizard.test.ts",
     "test:image-match": "tsx src/lib/matchImageToName.test.ts",
     "test:handoff-check": "tsx src/lib/handoffMessageCheck.test.ts",
     "backtest": "tsx scripts/run-backtest.ts",

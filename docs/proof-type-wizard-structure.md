@@ -85,7 +85,7 @@ them into a single three-way first question that maps 1:1 onto the three shapes.
 
 ```
 Q1  Which best describes this proof?
-├─ A batch of cards for one or more people ....... RECIPIENTS   (resolves in one question)
+├─ Cards showing each person's own contact details  RECIPIENTS   (resolves in one question)
 ├─ Cards with no personal contact details ........ → Q2 (Set branch)
 └─ Alternatives to choose from ................... → QS (Selection branch)
 
@@ -107,7 +107,11 @@ Set branch
 Selection branch
   QS  Are the alternatives all on the same material?
   ├─ Same material ............................... SELECTION
-  └─ Different materials ......................... SELECTION (per-direction pricing)
+  └─ Different materials ......................... → QS2 (customer-intent guard, July 2026)
+      QS2  Will they pick one, or might they order both?
+      ├─ They'll pick one, prices can wait ....... SELECTION (per-direction pricing)
+      ├─ They've asked for a price on each ....... terminal guidance: a project per material
+      └─ Might order both, or unsure ............. terminal guidance: a project per material
 ```
 
 There is no longer a card-style step. Both Set shapes emit `cardType=membership` regardless,
@@ -139,12 +143,15 @@ questions (which best describes this, then how many layouts).
 
 > **Which best describes this proof?**
 
-- **A batch of cards for one or more people** — Each named person has their own cards showing
-  their own contact details.
+- **Cards showing each person's own contact details** — Each named person has their own cards
+  with their own details. *(Relabelled July 2026 from "A batch of cards for one or more people"
+  so the first two options are mirror images around the personal-contact-details axis.)*
 - **Cards with no personal contact details** — No card shows an individual's contact details.
   This can be one design or several.
-- **Alternatives to choose from** — You show alternative designs and the customer picks the one
-  they want. The rest are set aside.
+- **Alternatives to choose from** — You show alternative designs side by side and the customer
+  picks the one they want. The rest are set aside. *("side by side" added July 2026: it is the
+  wizard-level defence against reading a sequential replacement (gold rejected, steel next) as
+  "alternatives" — that case is a new version, not a Selection.)*
 
 Q1 no longer carries an explanatory note. The labels themselves now carry the distinction that
 used to need one: a card showing a person's own contact details is per-recipient, while a card
@@ -203,9 +210,28 @@ shown and personalisation stays off.
 
 **QS — Are the alternatives all on the same material?**
 
-- **Same material** — Every alternative is the same material. Only the design differs.
-- **Different materials** — Each alternative is on a different material, so each is priced on its
-  own.
+- **Same material** — Every alternative is the same material. Only the design differs. Pricing
+  shows as normal.
+- **Different materials** — The page won't show pricing when the alternatives span materials, so
+  you'd quote in the thread. *(Reworded July 2026: the previous "each is priced on its own" read
+  as though the page would show a price per direction, when per-direction pricing actually hides
+  the pricing card entirely.)*
+
+**QS2 — Will they pick one, or might they order both?** *(only when "Different materials";
+added July 2026, see §8)*
+
+> *Note (above the options):* Alternatives on different materials don't show pricing on the
+> page. Only keep them together when you know the customer is choosing and prices can wait.
+
+- **They'll pick one, prices can wait** — One page, both directions, no pricing. Quote in the
+  thread if asked. → resolves as Selection (per-direction pricing), exactly the pre-QS2 shape.
+- **They've asked for a price on each** — Split into a project per material, so every link shows
+  its own price. → terminal guidance (reuses the split-guard kind), with a link to the
+  new-project screen.
+- **They might order both, or I'm not sure** — Split into a project per material. It's right
+  whichever way they go. → terminal guidance, plus the suggested one-line question to send the
+  customer ("Happy to show you both. Are you looking to choose between the two, or thinking of
+  ordering both?") with a copy-to-clipboard control.
 
 ### Resolution labels (display only)
 
@@ -364,8 +390,20 @@ resolves to the option it sits on.
   **Selection**.
 - *Different materials* — "A client wants to see their card on walnut next to the same design on
   brushed steel, then pick one and set the other aside. The page won't show pricing, so you'll
-  quote each option manually." → alternatives on different materials = **Selection (per-direction
-  pricing)**. (Pick-one-and-drop, so it is Selection, not a finish/material option dimension.)
+  quote each option manually." → alternatives on different materials = **→ QS2** (Pick-one-and-drop,
+  so it is Selection, not a finish/material option dimension.)
+
+**Selection QS2 — will they pick one, or might they order both?** *(July 2026)*
+
+- *They'll pick one, prices can wait* — "A bar wants to see two directions, one on walnut, one on
+  steel, and will pick their favourite. Prices can wait until they've chosen a direction." →
+  **Selection (per-direction pricing)**.
+- *They've asked for a price on each* — "The customer has asked to see matte black metal and
+  satin black plastic with a price on each. Two projects, two links, each pricing correctly." →
+  terminal split guidance.
+- *They might order both, or I'm not sure* — "The thread mentions quantities against both
+  materials, so they may order both. Two projects are right whichever way it goes; abandon
+  anything they drop." → terminal split guidance.
 
 ### Affordance behaviour
 
@@ -385,3 +423,38 @@ resolves to the option it sits on.
 - **Positioning.** The popover is portaled to `<body>` so the option card can never clip it, is
   placed below the icon (flipping above when there is no room), and is clamped to the viewport
   with a 12px margin so it stays readable on a narrow screen. It never shifts page layout.
+
+---
+
+## 8. July 2026 revision: customer-intent guard (QS2) + copy rewords
+
+Prompted by two real incidents in the week of 29 June 2026: a designer put two
+compare-alternatives materials into one project as v1/v2 (so the customer only ever saw the
+latest version), and separately created a whole new project for a rejected-design revision that
+should have been a v2. The root gap: the Selection branch quietly resolved a different-materials
+answer with no warning that the page would show no pricing, while the equivalent Set-branch
+situation had an explicit split/keep guard.
+
+Changes, all contained in `ProofShapeWizard.tsx` (UI-only; nothing persisted, no schema):
+
+1. **QS2, the customer-intent guard.** Choosing "Different materials" on the Selection branch now
+   asks *"Will they pick one, or might they order both?"* Only *"They'll pick one, prices can
+   wait"* resolves (to the same per-direction Selection as before). *"They've asked for a price
+   on each"* and *"They might order both, or I'm not sure"* both show terminal split guidance —
+   a project per material is correct whichever way those cases go — reusing the existing
+   `split-guard` ResolvedShape kind so no downstream mapping gained a case. The answer key
+   (`selectionIntent`) is UI-only, like `multiMaterialChoice`. Both reverse-derivation functions
+   seed `selectionIntent: 'pick'` for a per-direction version, so persisted selections still
+   reconstruct as resolved (regression-tested).
+2. **Q1 rewords.** First option relabelled "Cards showing each person's own contact details"
+   (mirror image of option 2); "side by side" added to the Alternatives helper so a sequential
+   replacement isn't read as alternatives.
+3. **QS rewords.** "Same material" now says pricing shows as normal; "Different materials" now
+   states the page won't show pricing (the old "each is priced on its own" implied the
+   opposite).
+4. **Dead-end links.** Every terminal split guidance box (Set and Selection) now links to
+   `/proofs/new`; the "unsure" box also shows a suggested one-line question for the customer
+   with a copy-to-clipboard control (`ASK_CUSTOMER_QUESTION`).
+
+Tests: `pnpm test:wizard` (`src/components/ProofShapeWizard.test.ts`) covers every resolution
+path, the form-state/DB mappings, and the reconstruct-as-resolved regressions.
