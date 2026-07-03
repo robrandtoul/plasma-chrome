@@ -198,7 +198,7 @@ Deno.serve(async (req) => {
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, card_discount_type, card_discount_value, ship_dest_country, ship_dest_postcode, payment_reference, expires_at, material_variant_id, material_option_id, material_id, thickness_open, finish_open, quantity, names_count, has_personalisation, order_kind, proof_id')
+    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, card_discount_type, card_discount_value, ship_dest_country, ship_dest_postcode, payment_reference, expires_at, material_variant_id, material_option_id, material_id, thickness_open, finish_open, quantity_open, quantity, names_count, has_personalisation, order_kind, proof_id')
     .eq('id', orderId)
     .eq('token', token)
     .single()
@@ -309,22 +309,26 @@ Deno.serve(async (req) => {
       total_price: Number(t.total_price),
     }))
 
-    // Resolve the quantity. Locked order → use it as-is (may be an
-    // interpolated in-between). Open order → per-person split (sum drives the
-    // price, interpolated if the sum isn't an exact tier), or a single chosen
-    // quantity bound to a listed tier so the price can't be bent client-side.
-    if (order.quantity != null) {
+    // Resolve the quantity. Designer-locked (quantity set, flag off) → use it
+    // as-is (may be an interpolated in-between). Customer-open (quantity_open,
+    // 000302) → the REQUEST wins on every call — per-person split (sum drives
+    // the price) or a single chosen quantity — with a previously-persisted
+    // pick as the fallback for a stale client, exactly like the open-spec
+    // thickness/finish resolution above. The customer can enter any quantity;
+    // the price interpolates between the listed tiers (same as the per-person
+    // split + the Quote compiler); computeOrderTotal returns no_card_price
+    // outside the tier range, surfaced as pricing_not_supported below.
+    const quantityIsOpen = order.quantity_open === true
+    if (!quantityIsOpen && order.quantity != null) {
       resolvedQuantity = order.quantity
     } else if (personQuantities.length > 0) {
       resolvedQuantity = personQuantities.reduce((acc, p) => acc + p.quantity, 0)
     } else if (bodyQuantity != null) {
-      // The customer can enter any quantity; the price interpolates between the
-      // listed tiers (same as the per-person split + the Quote compiler).
-      // computeOrderTotal returns no_card_price below the lowest / above the
-      // highest tier, which we surface as pricing_not_supported below — so the
-      // only guard here is the positive-integer check already applied to
-      // bodyQuantity. No exact-tier requirement.
       resolvedQuantity = bodyQuantity
+    } else if (order.quantity != null) {
+      // Open order, no choice in this request — fall back to the pick a
+      // previous checkout call persisted (stale client / legacy row).
+      resolvedQuantity = order.quantity
     } else {
       return json({
         error: 'quantity_required',
@@ -358,9 +362,10 @@ Deno.serve(async (req) => {
 
     // Sanity cap on a customer-CHOSEN quantity (open order): a designer can
     // lock any quantity, but a customer typing their own number is bounded so
-    // a fat-finger can't auto-price a huge run. Locked orders (order.quantity
-    // set) skip the cap — the designer chose it deliberately.
-    if (order.quantity == null && flatAboveTop && resolvedQuantity > MAX_ONLINE_FLAT_QUANTITY) {
+    // a fat-finger can't auto-price a huge run. Applies whenever the customer
+    // owns the quantity (quantity_open, incl. re-picks over a persisted
+    // figure); designer-locked orders skip it — chosen deliberately.
+    if ((order.quantity_open === true || order.quantity == null) && flatAboveTop && resolvedQuantity > MAX_ONLINE_FLAT_QUANTITY) {
       return json({
         error: 'pricing_not_supported',
         message: 'For an order this large, please reply to the email you received and we’ll confirm the price and send a payment link.',
@@ -601,8 +606,9 @@ Deno.serve(async (req) => {
       // Persist the charged quantity for open orders so the Stripe→Xero
       // webhook itemises the invoice at the quantity actually paid.
       ...(resolvedQuantity != null ? { quantity: resolvedQuantity } : {}),
-      // Persist the per-person split (production instruction) for open orders.
-      ...(order.quantity == null && personQuantities.length > 0
+      // Persist the per-person split (production instruction) for open orders
+      // — including re-picks over a previously-persisted split (quantity_open).
+      ...((order.quantity_open === true || order.quantity == null) && personQuantities.length > 0
         ? { person_quantities: personQuantities }
         : {}),
       // Persist the customer-entered rating destination for fulfilment/records.

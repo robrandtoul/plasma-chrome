@@ -404,6 +404,17 @@ Deno.serve(async (req) => {
     return json({ error: 'An order with the finish left open needs its material (material_id).' }, 400)
   }
 
+  // Open quantity (000302): the durable sibling of thickness_open/finish_open.
+  // A flag rather than "quantity IS NULL" because create-checkout-session
+  // persists the customer's pick onto `quantity` at PaymentIntent time (the
+  // webhook invoices the paid figure) — which would otherwise erase the
+  // "customer chooses" marker and freeze their first pick against revisits.
+  // Offline/prototype/reprint orders already required a quantity above, and a
+  // custom quote has no quantity selector, so this reduces to the online
+  // production grid case.
+  const quantityOpen =
+    quantity == null && customQuoteTotal == null && paymentMethod === 'online' && orderKind === 'production'
+
   // Offline orders are invoiced manually in Xero, so a Xero-contact binding is
   // meaningless there. Null it regardless of what the client sent, so an offline
   // row never carries an irrelevant (never-used) binding even if a direct API
@@ -613,6 +624,7 @@ Deno.serve(async (req) => {
       material_id: materialId,
       thickness_open: thicknessOpen,
       finish_open: finishOpen,
+      quantity_open: quantityOpen,
       xero_contact_id: effectiveXeroContactId,
       xero_contact_name: effectiveXeroContactName,
       quantity,
@@ -686,6 +698,7 @@ Deno.serve(async (req) => {
       material_id: materialId,
       thickness_open: thicknessOpen,
       finish_open: finishOpen,
+      quantity_open: quantityOpen,
       xero_contact_id: effectiveXeroContactId,
       xero_contact_name: effectiveXeroContactName,
       ...(isOffline ? { amount_cards: amountCards, amount_shipping: amountShipping, amount_card_discount: amountCardDiscount } : {}),

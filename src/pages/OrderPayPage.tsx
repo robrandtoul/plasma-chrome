@@ -41,6 +41,13 @@ interface OrderPayload {
   material_id: string | null
   thickness_open: boolean
   finish_open: boolean
+  // Open quantity (000302): durable like the two flags above — a checkout
+  // call persists the customer's pick onto `quantity` (for the invoice), so
+  // the flag, not quantity-is-null, is what keeps the field editable on a
+  // revisit. person_quantities carries a persisted per-person split back so
+  // the inputs can pre-fill.
+  quantity_open: boolean
+  person_quantities: { name: string; quantity: number }[] | null
   quantity: number | null
   names_count: number
   has_personalisation: boolean
@@ -612,6 +619,15 @@ export default function OrderPayPage() {
       // Pre-fill the destination country from the designer's optional hint so
       // the customer usually just adds their postcode.
       if (o.ship_dest_country) setDestCountry(o.ship_dest_country)
+      // Open-quantity revisit: pre-fill the inputs with the pick a previous
+      // checkout call persisted, so the customer sees (and can change) their
+      // earlier choice rather than a mysteriously fixed figure.
+      if (o.quantity_open) {
+        if (o.quantity != null) setChosenQuantity(o.quantity)
+        if (Array.isArray(o.person_quantities) && o.person_quantities.length > 0) {
+          setPersonQty(Object.fromEntries(o.person_quantities.map((p) => [p.name, String(p.quantity)])))
+        }
+      }
       // Reflect a previously-persisted opt-out (a returning customer); default included.
       if (o.us_tariff_opted_out) setTariffOptedOut(true)
       // Best-effort recap: pull the company/customer name, the spec, and
@@ -1279,7 +1295,7 @@ export default function OrderPayPage() {
   // with pricing showing "from …" until tiers land on the thickness pick.
   const openQuantity =
     order.custom_quote_total == null &&
-    order.quantity == null &&
+    (order.quantity_open === true || order.quantity == null) &&
     (order.material_variant_id != null || (thicknessOpen && specVariants.length > 0))
   const isOpenGrid = openQuantity && tiers.length > 0
   const isSplitOpen = openQuantity && personNames.length > 1
@@ -1427,9 +1443,13 @@ export default function OrderPayPage() {
 
   // The quantity we'd charge for, for display. Locked → order.quantity;
   // open → the customer's chosen / per-person total once entered.
-  const displayQty =
-    order.quantity ??
-    (isSplitOpen ? (splitComplete ? splitSum : null) : isSingleOpen ? chosenQuantity : null)
+  // The quantity everything prices/displays at: for an open order the LIVE
+  // inputs win (they're pre-filled from any persisted pick, so a revisit
+  // starts from the earlier choice but re-typing re-prices instantly);
+  // designer-locked orders use the stored figure.
+  const displayQty = openQuantity
+    ? (isSplitOpen ? (splitComplete ? splitSum : null) : chosenQuantity)
+    : order.quantity
   // Pre-checkout preview components, mirroring the post-checkout breakdown so
   // the customer sees Cards / Discount before paying — not an undiscounted
   // lump. Cards base = cards + finish (the discount base); the discount and
