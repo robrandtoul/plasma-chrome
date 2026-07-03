@@ -40,7 +40,7 @@ export interface MetalThicknessNotes {
   standard: ThicknessOption[]
   /** Mini Steel: 200 / 300 / 500µm. */
   mini_steel: ThicknessOption[]
-  /** Full Colour Plastic: 420 / 680 / 760µm. */
+  /** Full Colour Plastic: 760 / 680 / 420µm, thickest first. */
   full_colour_plastic: ThicknessOption[]
   /** Intro paragraph for the Full Colour Plastic set (the shared intro is metal-worded). */
   full_colour_plastic_intro: string
@@ -90,12 +90,16 @@ export const DEFAULT_METAL_THICKNESS_NOTES: MetalThicknessNotes = {
         'The thickest option — it commands attention the moment it is handed over. Rigid and reassuringly weighty.',
     },
   ],
+  // Thickest first (Rob's call, 2026-07-03) — the reverse of the metal
+  // sets. The array order here IS the customer-facing display order, on
+  // both the proof-page panel and the checkout chooser.
   full_colour_plastic: [
     {
-      label: '420µm',
-      name: 'Lightweight',
+      label: '760µm',
+      name: 'Credit card',
       description:
-        'Considerably thinner and much more flexible — ideal where weight is a critical factor, such as postal promotional campaigns.',
+        'Our thickest plastic card — the same thickness as a standard credit card.',
+      badge: 'Most popular',
     },
     {
       label: '680µm',
@@ -104,11 +108,10 @@ export const DEFAULT_METAL_THICKNESS_NOTES: MetalThicknessNotes = {
         'Slightly thinner and more flexible than a credit card. The difference is subtle, and usually only noticeable when comparing the two side by side.',
     },
     {
-      label: '760µm',
-      name: 'Credit card',
+      label: '420µm',
+      name: 'Lightweight',
       description:
-        'Our thickest plastic card — the same thickness as a standard credit card.',
-      badge: 'Most popular',
+        'Considerably thinner and much more flexible — ideal where weight is a critical factor, such as postal promotional campaigns.',
     },
   ],
   full_colour_plastic_intro:

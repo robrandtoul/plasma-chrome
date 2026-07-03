@@ -184,7 +184,7 @@ export default function MetalThicknessNotesSection() {
 
           <ThicknessSetEditor
             heading="Full Colour Plastic"
-            subtitle="420 / 680 / 760µm."
+            subtitle="760 / 680 / 420µm — shown thickest first, in this order."
             rows={draft.full_colour_plastic}
             onChange={(i, field, value) => patchRow('full_colour_plastic', i, field, value)}
           />

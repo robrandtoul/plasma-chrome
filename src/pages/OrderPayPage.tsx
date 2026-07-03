@@ -1289,6 +1289,23 @@ export default function OrderPayPage() {
     ? specFinishes.find((f) => f.id === chosenOptionId)?.display_name ?? null
     : null
 
+  // Thickness cards in the education copy's order when a set exists (the
+  // notes array is the admin-editable display authority — metal reads
+  // thinnest-first, Full Colour Plastic thickest-first), falling back to
+  // catalogue sort_order for materials without copy. Matching is by micron
+  // number, same as thicknessNoteFor; unmatched variants keep their
+  // relative catalogue order at the end (Array.sort is stable).
+  const orderedSpecVariants =
+    thicknessNotes.length === 0
+      ? specVariants
+      : [...specVariants].sort((a, b) => {
+          const pos = (v: SpecVariantChoice) => {
+            const i = thicknessNotes.findIndex((n) => parseInt(n.label, 10) === parseInt(v.display_name, 10))
+            return i === -1 ? Number.MAX_SAFE_INTEGER : i
+          }
+          return pos(a) - pos(b)
+        })
+
   // Open-quantity grid order: the designer left quantity for the customer.
   // Quantity LEADS the form (before thickness/finish) so every option card
   // shows the true price for the customer's actual quantity — so for an
@@ -1622,7 +1639,7 @@ export default function OrderPayPage() {
                           <p className="text-[13px] text-ink-soft">
                             Choose your thickness — the price updates as you pick.
                           </p>
-                          {specVariants.map((v) => {
+                          {orderedSpecVariants.map((v) => {
                             const note = thicknessNoteFor(thicknessNotes, v.display_name)
                             const price =
                               displayQty != null
