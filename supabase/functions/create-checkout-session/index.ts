@@ -123,6 +123,12 @@ Deno.serve(async (req) => {
     typeof body.quantity === 'number' && Number.isInteger(body.quantity) && body.quantity > 0
       ? body.quantity
       : null
+  // Customer-chosen thickness / finish for an open-spec order (000298). Only
+  // honoured when the order's thickness_open / finish_open flag is set, and
+  // validated below against the order's material — never trusted to change a
+  // designer-locked spec or to point at another material's pricing.
+  const bodyVariantId = typeof body.material_variant_id === 'string' ? body.material_variant_id : null
+  const bodyOptionId = typeof body.material_option_id === 'string' ? body.material_option_id : null
   // Per-person split (combined-total pricing). Each entry's quantity must be a
   // positive integer; the combined sum drives the tier price (interpolated if
   // it isn't an exact tier). The breakdown is persisted for production.
@@ -192,7 +198,7 @@ Deno.serve(async (req) => {
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, card_discount_type, card_discount_value, ship_dest_country, ship_dest_postcode, payment_reference, expires_at, material_variant_id, material_option_id, quantity, names_count, has_personalisation, order_kind, proof_id')
+    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, card_discount_type, card_discount_value, ship_dest_country, ship_dest_postcode, payment_reference, expires_at, material_variant_id, material_option_id, material_id, thickness_open, finish_open, quantity, names_count, has_personalisation, order_kind, proof_id')
     .eq('id', orderId)
     .eq('token', token)
     .single()
@@ -204,6 +210,47 @@ Deno.serve(async (req) => {
   if (order.status !== 'sent') return json({ error: 'This order is not payable.' }, 409)
   if (order.expires_at && new Date(order.expires_at).getTime() < Date.now()) {
     return json({ error: 'This order link has expired.' }, 409)
+  }
+
+  // ── Open-spec resolution (000298) ─────────────────────────────────
+  // When the designer left the thickness / finish for the customer, resolve the
+  // effective variant/option from the request — the body wins on every call
+  // while the flag is set (the same request-wins pattern as the rating
+  // destination), so "Edit order details" can change the pick right up to
+  // payment. A previously-persisted choice is the fallback for a stale client.
+  // Choices are validated against the order's material: a value pointing at
+  // another material's (differently-priced) variant is rejected, never priced.
+  let effectiveVariantId = order.material_variant_id as string | null
+  let effectiveOptionId = order.material_option_id as string | null
+  if (order.thickness_open === true && order.custom_quote_total == null) {
+    const requested = bodyVariantId ?? effectiveVariantId
+    if (!requested) {
+      return json({ error: 'variant_required', message: 'Please choose a thickness before paying.' }, 422)
+    }
+    const { data: v } = await admin
+      .from('material_variants')
+      .select('id, material_id, is_active')
+      .eq('id', requested)
+      .maybeSingle()
+    if (!v || v.is_active === false || (order.material_id != null && v.material_id !== order.material_id)) {
+      return json({ error: 'variant_required', message: 'Please choose a thickness before paying.' }, 422)
+    }
+    effectiveVariantId = requested
+  }
+  if (order.finish_open === true && order.custom_quote_total == null) {
+    const requestedOpt = bodyOptionId ?? effectiveOptionId
+    if (!requestedOpt) {
+      return json({ error: 'finish_required', message: 'Please choose a finish before paying.' }, 422)
+    }
+    const { data: mo } = await admin
+      .from('material_options')
+      .select('id, material_id')
+      .eq('id', requestedOpt)
+      .maybeSingle()
+    if (!mo || (order.material_id != null && mo.material_id !== order.material_id)) {
+      return json({ error: 'finish_required', message: 'Please choose a finish before paying.' }, 422)
+    }
+    effectiveOptionId = requestedOpt
   }
 
   // ── Goods total (server-authoritative) ───────────────────────────
@@ -246,7 +293,7 @@ Deno.serve(async (req) => {
     }
     if (order.quantity != null) resolvedQuantity = order.quantity
   } else {
-    if (!order.material_variant_id) {
+    if (!effectiveVariantId) {
       return json({
         error: 'pricing_not_supported',
         message: 'Online checkout for this order isn’t available yet — please reply to the email you received and we’ll take it from there.',
@@ -255,7 +302,7 @@ Deno.serve(async (req) => {
     const { data: tierRows } = await admin
       .from('price_tiers')
       .select('quantity, total_price')
-      .eq('material_variant_id', order.material_variant_id)
+      .eq('material_variant_id', effectiveVariantId)
       .eq('currency', order.currency)
     const tiers: Tier[] = (tierRows ?? []).map((t) => ({
       quantity: t.quantity as number,
@@ -290,7 +337,7 @@ Deno.serve(async (req) => {
     const { data: variant } = await admin
       .from('material_variants')
       .select('material_id, weight_grams, display_name, materials(display_name)')
-      .eq('id', order.material_variant_id)
+      .eq('id', effectiveVariantId)
       .single()
     if (variant?.weight_grams != null) variantWeightGrams = Number(variant.weight_grams)
     let perExtraName: number | null = null
@@ -337,11 +384,11 @@ Deno.serve(async (req) => {
     // the figure equals what the pay-page mirror shows. Base option / no
     // finish → no surcharge rows → 0.
     let optionSurcharge = 0
-    if (order.material_option_id) {
+    if (effectiveOptionId) {
       const { data: surRows } = await admin
         .from('material_option_surcharges')
         .select('quantity, surcharge')
-        .eq('material_option_id', order.material_option_id)
+        .eq('material_option_id', effectiveOptionId)
         .eq('currency', order.currency)
       const surTiers: Tier[] = (surRows ?? []).map((s) => ({
         quantity: s.quantity as number,
@@ -379,11 +426,11 @@ Deno.serve(async (req) => {
     // Steel 500µm — Mirror". Mirrors the webhook's invoice-line naming so the
     // pay-page and the Xero line read the same.
     let optionName = ''
-    if (order.material_option_id) {
+    if (effectiveOptionId) {
       const { data: mo } = await admin
         .from('material_options')
         .select('display_name')
-        .eq('id', order.material_option_id)
+        .eq('id', effectiveOptionId)
         .maybeSingle()
       optionName = (mo?.display_name as string | null) ?? ''
     }
@@ -561,6 +608,12 @@ Deno.serve(async (req) => {
       // Persist the customer-entered rating destination for fulfilment/records.
       ...(resolvedDestCountry ? { ship_dest_country: resolvedDestCountry } : {}),
       ...(resolvedDestPostcode ? { ship_dest_postcode: resolvedDestPostcode } : {}),
+      // Persist the customer-chosen thickness/finish for an open-spec order so
+      // the webhook's Xero item-code resolution + the place-order fulfilment
+      // snapshot read the paid spec. The *_open flags stay true, so a later
+      // "Edit order details" call can still change the pick pre-payment.
+      ...(order.thickness_open === true && effectiveVariantId ? { material_variant_id: effectiveVariantId } : {}),
+      ...(order.finish_open === true && effectiveOptionId ? { material_option_id: effectiveOptionId } : {}),
       amount_cards: amountCards,
       amount_tooling: amountTooling,
       amount_personalisation: amountPersonalisation,
