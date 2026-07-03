@@ -10,6 +10,7 @@ import { FinishChoiceCard } from '../components/FinishChoiceCard'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 import { interpolateValue, flatTopTierTotal, flatUnitTotal, pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
 import { hasThicknessGuide, thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
+import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency, CustomerProofGraph } from '../lib/types'
@@ -212,6 +213,9 @@ interface SpecFinishChoice {
   // from that finish's proof tab, else a text-only card.
   photoUrl: string | null
   swatchUrl: string | null
+  // Education line under the name (000303) — how preference-only finishes
+  // (gloss/matte) explain themselves when no photo can tell the story.
+  description: string | null
 }
 
 const SHIPPING_LABEL: Record<OrderPayload['shipping_treatment'], string> = {
@@ -735,7 +739,13 @@ export default function OrderPayPage() {
             // schedule. A persisted earlier pick pre-selects; its surcharge
             // tiers were captured by the block further up.
             if (o.finish_open && o.material_id && o.currency) {
-              const offeredCodes = new Set(current.material_options ?? [])
+              // Preference-only finishes (gloss/matte, 000303) never appear
+              // as proof tabs — the artwork is identical in both — so the
+              // chooser offers the whole catalogue. Artwork-visible finishes
+              // (metal) stay scoped to the tabs the customer actually saw.
+              const offeredCodes = finishIsPreferenceOnly(current.material_code)
+                ? new Set<string>()
+                : new Set(current.material_options ?? [])
               const finishes: SpecFinishChoice[] = (g.material_options ?? [])
                 .filter((mo) => mo.material_id === o.material_id)
                 .filter((mo) => offeredCodes.size === 0 || offeredCodes.has(mo.code))
@@ -751,6 +761,7 @@ export default function OrderPayPage() {
                     .sort((a, b) => a.quantity - b.quantity),
                   photoUrl: mo.photo_url ?? null,
                   swatchUrl: null,
+                  description: mo.description ?? null,
                 }))
               setSpecFinishes(finishes)
               if (o.material_option_id && finishes.some((f) => f.id === o.material_option_id)) {
@@ -1706,6 +1717,7 @@ export default function OrderPayPage() {
                                   priceLabel={delta > 0 ? `+${formatPrice(delta, order.currency)}` : 'Included'}
                                   imageSrc={f.photoUrl ?? f.swatchUrl}
                                   imageAlt={f.photoUrl ? `${f.display_name} finish` : `Your design in ${f.display_name}`}
+                                  description={f.description}
                                   selected={chosenOptionId === f.id}
                                   onChoose={() => chooseFinish(f.id)}
                                 />

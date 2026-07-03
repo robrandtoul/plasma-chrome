@@ -32,11 +32,17 @@ interface FinishChoiceCardProps {
   priceLabel: string
   imageSrc: string | null
   imageAlt: string
+  /**
+   * Optional education line under the name (material_options.description,
+   * 000303). Carries the story for preference-only finishes like gloss vs
+   * matte, where no photo can show the difference. Omitted when null.
+   */
+  description?: string | null
   selected: boolean
   onChoose: () => void
 }
 
-export function FinishChoiceCard({ name, priceLabel, imageSrc, imageAlt, selected, onChoose }: FinishChoiceCardProps) {
+export function FinishChoiceCard({ name, priceLabel, imageSrc, imageAlt, description, selected, onChoose }: FinishChoiceCardProps) {
   // Hover loupe state — only wired up on hover-capable fine pointers, so
   // touch devices never mount the handlers at all.
   const [canHover] = useState(
@@ -96,6 +102,9 @@ export function FinishChoiceCard({ name, priceLabel, imageSrc, imageAlt, selecte
           <span className="text-sm font-medium text-ink">{name}</span>
           <span className="shrink-0 text-[12px] text-ink-soft">{priceLabel}</span>
         </span>
+        {description && (
+          <span className="mt-1 block text-[12px] leading-[1.5] text-ink-soft">{description}</span>
+        )}
       </button>
 
       {/* Corner zoom badge — sibling of the select button, floated over the

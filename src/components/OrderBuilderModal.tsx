@@ -4,6 +4,7 @@ import { Field, Input, ButtonCoral, ButtonGhost } from '../design'
 import XeroContactPicker, { type XeroContact } from './XeroContactPicker'
 import { supabase } from '../lib/supabase'
 import { customerOrderUrl } from '../lib/customerOrderUrl'
+import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { SHIP_COUNTRIES, REPRESENTATIVE_POSTCODES } from '../lib/shipCountries'
 import { renderTemplate, DEFAULT_BODIES } from '../lib/replyTemplates'
 import { formatPrice } from '../lib/currency'
@@ -210,6 +211,9 @@ export default function OrderBuilderModal({
   const [materialOptions, setMaterialOptions] = useState<MaterialOptionRow[]>([])
   const [optionId, setOptionId] = useState<string | null>(null)
   const [optionLabel, setOptionLabel] = useState<string>('Finish')
+  // materials.code for the selected material — gates the preference-only
+  // finish rule (finishIsPreferenceOnly) without a second lookup.
+  const [materialCode, setMaterialCode] = useState<string | null>(null)
   // True when the order is locked to the single variant the proof showed
   // pricing for (so we display it read-only rather than as a picker).
   const [lockedFromProof, setLockedFromProof] = useState(false)
@@ -378,7 +382,7 @@ export default function OrderBuilderModal({
     // spec the supplier needs. The picker below stays hidden for custom quotes
     // (gated on !isCustomQuote), so the offered/base finish is applied
     // automatically without asking, and now persists onto the order.
-    if (!materialId) { setMaterialOptions([]); setOptionId(null); return }
+    if (!materialId) { setMaterialOptions([]); setOptionId(null); setMaterialCode(null); return }
     let cancelled = false
     void (async () => {
       const [optsRes, matRes] = await Promise.all([
@@ -387,7 +391,7 @@ export default function OrderBuilderModal({
           .select('id, code, display_name, is_base, sort_order')
           .eq('material_id', materialId)
           .order('sort_order'),
-        supabase.from('materials').select('option_label').eq('id', materialId).maybeSingle(),
+        supabase.from('materials').select('code, option_label').eq('id', materialId).maybeSingle(),
       ])
       if (cancelled) return
       const list: MaterialOptionRow[] = (optsRes.data ?? []).map((o) => ({
@@ -397,6 +401,8 @@ export default function OrderBuilderModal({
         is_base: !!o.is_base,
       }))
       setMaterialOptions(list)
+      const code = (matRes.data?.code as string | null) ?? null
+      setMaterialCode(code)
       if (matRes.data?.option_label) setOptionLabel(matRes.data.option_label as string)
       const offered = materialOptionCodes.length === 1 ? list.find((o) => o.code === materialOptionCodes[0]) : null
       const base = list.find((o) => o.is_base) ?? list[0] ?? null
@@ -405,7 +411,14 @@ export default function OrderBuilderModal({
       // proof genuinely offered a choice (2+ finish tabs on the approved
       // version) — a single-finish proof's artwork IS that finish, so it
       // stays locked, matching the artwork-defined rule for variants.
-      setFinishMode(list.length > 1 && materialOptionCodes.length >= 2 ? 'customer' : 'locked')
+      // Preference-only finishes (full-colour plastic gloss/matte) are
+      // invisible on the artwork, so the proof never tabs them — the
+      // catalogue alone opens the choice.
+      setFinishMode(
+        list.length > 1 && (materialOptionCodes.length >= 2 || finishIsPreferenceOnly(code))
+          ? 'customer'
+          : 'locked',
+      )
     })()
     return () => { cancelled = true }
     // materialOptionCodes intentionally omitted — read once at mount; it's
@@ -480,7 +493,9 @@ export default function OrderBuilderModal({
   // strand a stale 'customer' mode in the payload.
   const thicknessEligible =
     !lockedFromProof && variants.length > 1 && variants.every((v) => v.variant_type === 'thickness')
-  const finishEligible = materialOptions.length > 1 && materialOptionCodes.length >= 2
+  const finishEligible =
+    materialOptions.length > 1 &&
+    (materialOptionCodes.length >= 2 || finishIsPreferenceOnly(materialCode))
   const thicknessCustomer = thicknessEligible && thicknessMode === 'customer' && !isCustomQuote && orderType !== 'prototype'
   const finishCustomer = finishEligible && finishMode === 'customer' && !isCustomQuote && orderType !== 'prototype'
   // Estimate weight: the chosen variant's; when the customer will choose the
@@ -1173,9 +1188,11 @@ export default function OrderBuilderModal({
                 asLabel={false}
                 hint={`Which ${optionLabel.toLowerCase()} the customer is ordering — the price includes any ${optionLabel.toLowerCase()} surcharge at checkout.`}
               >
-                {/* Open-spec pills (000298): offered only when the approved
+                {/* Open-spec pills (000298): offered when the approved
                     version carried 2+ finish tabs — a single-finish proof's
-                    artwork IS that finish, so it stays a designer pick. */}
+                    artwork IS that finish, so it stays a designer pick — or
+                    when the finish is preference-only (gloss/matte, 000303),
+                    which never appears on the artwork at all. */}
                 {finishEligible && (
                   <div className="mb-2 flex flex-wrap gap-2">
                     {([['customer', 'Customer chooses at checkout'], ['locked', 'Lock it now']] as const).map(([m, label]) => {

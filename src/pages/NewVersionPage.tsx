@@ -11,6 +11,7 @@ import { CurrencyField } from '../components/CurrencyField'
 import NameChipInput from '../components/NameChipInput'
 import { matchImageToName } from '../lib/matchImageToName'
 import { matchMaterialByLabel } from '../lib/matchMaterial'
+import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { useImageFileDrop } from '../lib/useImageFileDrop'
 import { PageDropOverlay } from '../components/PageDropOverlay'
 import MessageSendPanel from '../components/MessageSendPanel'
@@ -1361,7 +1362,17 @@ export default function NewVersionPage() {
       // as EmptySlot cells on their respective tabs. Intersection
       // with loaded options is defensive — an option code may
       // have been retired or renamed since v1.
-      const options = (optionsResult.data ?? []) as MaterialOption[]
+      //
+      // Preference-only finishes (full-colour plastic gloss/matte,
+      // 000303) are invisible on the artwork, so the proof doesn't
+      // tab them — the version form treats the material as having
+      // no option dimension and the customer settles the finish at
+      // checkout instead (see finishIsPreferenceOnly).
+      const options = finishIsPreferenceOnly(
+        materials.find((m) => m.id === selectedMaterialId)?.code,
+      )
+        ? []
+        : ((optionsResult.data ?? []) as MaterialOption[])
       setAvailableOptions(options)
       if (options.length > 0) {
         let optionsApplied = false
