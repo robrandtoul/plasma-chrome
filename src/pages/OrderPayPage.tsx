@@ -1221,17 +1221,18 @@ export default function OrderPayPage() {
     ? specFinishes.find((f) => f.id === chosenOptionId)?.display_name ?? null
     : null
 
-  // Open-quantity grid order: the designer left quantity for the customer
-  // and the variant has listed tiers (for an open thickness, the chosen
-  // variant's tiers land in `tiers` on pick). Split = a quantity per person;
-  // single = one tier selector.
-  const isOpenGrid =
+  // Open-quantity grid order: the designer left quantity for the customer.
+  // Quantity LEADS the form (before thickness/finish) so every option card
+  // shows the true price for the customer's actual quantity — so for an
+  // open-thickness order the input renders before any variant is chosen,
+  // with pricing showing "from …" until tiers land on the thickness pick.
+  const openQuantity =
     order.custom_quote_total == null &&
-    (order.material_variant_id != null || (thicknessOpen && chosenVariantId != null)) &&
     order.quantity == null &&
-    tiers.length > 0
-  const isSplitOpen = isOpenGrid && personNames.length > 1
-  const isSingleOpen = isOpenGrid && personNames.length <= 1
+    (order.material_variant_id != null || (thicknessOpen && specVariants.length > 0))
+  const isOpenGrid = openQuantity && tiers.length > 0
+  const isSplitOpen = openQuantity && personNames.length > 1
+  const isSingleOpen = openQuantity && personNames.length <= 1
 
   // Base card total for a quantity: exact listed tier, or interpolated
   // between the two bracketing tiers (combined-total basis). Mirrors the
@@ -1281,6 +1282,15 @@ export default function OrderPayPage() {
     return round2(round2(cards + splitName + pers + finish) - discount + shippingAmount + tariffAmount)
   }
 
+  // Quantity bounds: the chosen variant's tiers when known; before a
+  // thickness is picked, the union across the offerable variants (the metal
+  // family shares one quantity grid, so this is exact in practice).
+  const boundsTiers = tiers.length > 0 ? tiers : specVariants.flatMap((v) => v.tiers)
+  const singleMin = boundsTiers.length > 0 ? Math.min(...boundsTiers.map((t) => t.quantity)) : null
+  const singleMax = boundsTiers.length > 0
+    ? (flatAboveTop ? MAX_ONLINE_FLAT_QUANTITY : Math.max(...boundsTiers.map((t) => t.quantity)))
+    : null
+
   // Per-person entries → combined sum. Complete only when every person has a
   // quantity of at least one.
   const personParsed = personNames.map((n) => {
@@ -1297,13 +1307,11 @@ export default function OrderPayPage() {
   // explain why (below the minimum / above the online maximum) rather than
   // just disabling the button silently.
   const splitRangeHint =
-    isSplitOpen && splitComplete && splitTotal == null
+    isSplitOpen && tiers.length > 0 && splitComplete && splitTotal == null
       ? (() => {
-          const min = tiers[0]?.quantity
-          const max = flatAboveTop ? MAX_ONLINE_FLAT_QUANTITY : tiers[tiers.length - 1]?.quantity
-          if (min != null && splitSum < min) return `Our minimum order is ${min.toLocaleString()} cards in total.`
-          if (max != null && splitSum > max)
-            return `For more than ${max.toLocaleString()} cards, please reply to the email you received and we’ll sort it.`
+          if (singleMin != null && splitSum < singleMin) return `Our minimum order is ${singleMin.toLocaleString()} cards in total.`
+          if (singleMax != null && splitSum > singleMax)
+            return `For more than ${singleMax.toLocaleString()} cards, please reply to the email you received and we’ll sort it.`
           return 'We couldn’t price this quantity — please reply to the email you received.'
         })()
       : null
@@ -1314,14 +1322,12 @@ export default function OrderPayPage() {
   // hint and blocks checkout rather than silently failing server-side. For
   // metal the max is the online sanity cap, since it prices flat above the
   // top listed tier up to there.
-  const singleMin = tiers[0]?.quantity ?? null
-  const singleMax = flatAboveTop ? MAX_ONLINE_FLAT_QUANTITY : (tiers[tiers.length - 1]?.quantity ?? null)
   const singleCardTotal =
     isSingleOpen && chosenQuantity != null && (singleMax == null || chosenQuantity <= singleMax)
       ? cardTotalForQty(chosenQuantity)
       : null
   const singleRangeHint =
-    isSingleOpen && chosenQuantity != null && singleCardTotal == null
+    isSingleOpen && tiers.length > 0 && chosenQuantity != null && singleCardTotal == null
       ? singleMin != null && chosenQuantity < singleMin
         ? `Our minimum order is ${singleMin.toLocaleString()} cards.`
         : singleMax != null && chosenQuantity > singleMax
@@ -1329,10 +1335,13 @@ export default function OrderPayPage() {
           : 'We couldn’t price this quantity — please reply to the email you received.'
       : null
 
+  // "Quantity step incomplete" — price-validity only counts once a thickness
+  // has landed tiers (before that, an entered quantity is provisionally fine;
+  // the server re-validates at checkout regardless).
   const awaitingQuantity = isSplitOpen
-    ? splitTotal == null
+    ? !splitComplete || splitOverCap || (tiers.length > 0 && splitTotal == null)
     : isSingleOpen
-      ? chosenQuantity == null || singleCardTotal == null
+      ? chosenQuantity == null || (tiers.length > 0 && singleCardTotal == null)
       : false
   const canCheckout =
     shippingResolvable &&
@@ -1382,6 +1391,47 @@ export default function OrderPayPage() {
         : null
   const previewDiscount = previewCardsBase != null ? cardDiscountForBase(previewCardsBase) : 0
   const previewTooling = perExtraName && order.names_count > 1 ? round2((order.names_count - 1) * perExtraName) : 0
+
+  // Quantity inputs (open-quantity orders). One JSX block, two homes: inside
+  // the "Confirm your card" section ABOVE the thickness/finish cards for
+  // open-spec orders (quantity first, so every option shows its true price
+  // for the customer's quantity — Rob, 2026-07-03), else standalone in the
+  // inputs panel exactly as before.
+  const quantityInputs = isSplitOpen ? (
+    <div className="space-y-2.5">
+      <p className="text-ink-soft">Quantity for each person</p>
+      {personNames.map((name) => (
+        <div key={name} className="flex items-center justify-between gap-4">
+          <label htmlFor={`q-${name}`} className="truncate text-ink">{name}</label>
+          <input id={`q-${name}`} type="number" min={1} step={1} inputMode="numeric"
+            value={personQty[name] ?? ''}
+            onChange={(e) => setPersonQty((prev) => ({ ...prev, [name]: e.target.value }))}
+            placeholder="0"
+            className="h-[38px] w-24 rounded-lg border border-line bg-surface px-3 text-right text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
+        </div>
+      ))}
+      <div className="flex items-center justify-between gap-4 border-t border-line-soft pt-2.5">
+        <span className="text-ink-soft">Total</span>
+        <span className="font-medium text-ink">{splitSum > 0 ? `${splitSum.toLocaleString()} cards` : '—'}</span>
+      </div>
+      {splitRangeHint && <p className="text-[13px] text-low">{splitRangeHint}</p>}
+    </div>
+  ) : isSingleOpen ? (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-4">
+        <label htmlFor="order-quantity" className="text-ink-soft">Quantity</label>
+        <input id="order-quantity" type="number" min={singleMin ?? 1} max={singleMax ?? undefined} step={1} inputMode="numeric"
+          value={chosenQuantity ?? ''}
+          onChange={(e) => { const n = parseInt(e.target.value, 10); setChosenQuantity(Number.isFinite(n) && n > 0 ? n : null) }}
+          placeholder={singleMin != null ? `${singleMin.toLocaleString()}+` : 'e.g. 250'}
+          className="h-[38px] w-28 rounded-lg border border-line bg-surface px-3 text-right text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
+      </div>
+      {singleMin != null && singleMax != null && (
+        <p className="text-right text-[12px] text-ink-mute">Any quantity from {singleMin.toLocaleString()} to {singleMax.toLocaleString()}.</p>
+      )}
+      {singleRangeHint && <p className="text-[13px] text-low">{singleRangeHint}</p>}
+    </div>
+  ) : null
 
   // ── Single-screen checkout ────────────────────────────────────────
   // One page: order recap + cost summary on the left; on the right either the
@@ -1485,6 +1535,11 @@ export default function OrderPayPage() {
                   {(thicknessOpen || finishOpen) && (
                     <div className="space-y-4">
                       <p className="font-medium text-ink">Confirm your card</p>
+
+                      {/* Quantity FIRST, so the thickness prices and finish
+                          premiums below are for the customer's real quantity
+                          rather than "from" figures. */}
+                      {quantityInputs}
 
                       {thicknessOpen && specVariants.length > 0 && (
                         <div className="space-y-2">
@@ -1621,41 +1676,11 @@ export default function OrderPayPage() {
                     </div>
                   )}
 
-                  {isSplitOpen ? (
-                    <div className="space-y-2.5">
-                      <p className="text-ink-soft">Quantity for each person</p>
-                      {personNames.map((name) => (
-                        <div key={name} className="flex items-center justify-between gap-4">
-                          <label htmlFor={`q-${name}`} className="truncate text-ink">{name}</label>
-                          <input id={`q-${name}`} type="number" min={1} step={1} inputMode="numeric"
-                            value={personQty[name] ?? ''}
-                            onChange={(e) => setPersonQty((prev) => ({ ...prev, [name]: e.target.value }))}
-                            placeholder="0"
-                            className="h-[38px] w-24 rounded-lg border border-line bg-surface px-3 text-right text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
-                        </div>
-                      ))}
-                      <div className="flex items-center justify-between gap-4 border-t border-line-soft pt-2.5">
-                        <span className="text-ink-soft">Total</span>
-                        <span className="font-medium text-ink">{splitSum > 0 ? `${splitSum.toLocaleString()} cards` : '—'}</span>
-                      </div>
-                      {splitRangeHint && <p className="text-[13px] text-low">{splitRangeHint}</p>}
-                    </div>
-                  ) : isSingleOpen ? (
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between gap-4">
-                        <label htmlFor="order-quantity" className="text-ink-soft">Quantity</label>
-                        <input id="order-quantity" type="number" min={singleMin ?? 1} max={singleMax ?? undefined} step={1} inputMode="numeric"
-                          value={chosenQuantity ?? ''}
-                          onChange={(e) => { const n = parseInt(e.target.value, 10); setChosenQuantity(Number.isFinite(n) && n > 0 ? n : null) }}
-                          placeholder={singleMin != null ? `${singleMin.toLocaleString()}+` : 'e.g. 250'}
-                          className="h-[38px] w-28 rounded-lg border border-line bg-surface px-3 text-right text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]" />
-                      </div>
-                      {singleMin != null && singleMax != null && (
-                        <p className="text-right text-[12px] text-ink-mute">Any quantity from {singleMin.toLocaleString()} to {singleMax.toLocaleString()}.</p>
-                      )}
-                      {singleRangeHint && <p className="text-[13px] text-low">{singleRangeHint}</p>}
-                    </div>
-                  ) : null}
+                  {/* Standalone quantity inputs for orders with no open spec
+                      (locked thickness/finish, open quantity) — unchanged
+                      position; open-spec orders render them inside the
+                      Confirm-your-card section above instead. */}
+                  {!(thicknessOpen || finishOpen) && quantityInputs}
 
                   {shippingComputedAtCheckout && (
                     <div className="space-y-2.5">
@@ -1725,16 +1750,16 @@ export default function OrderPayPage() {
                   <button type="button" onClick={() => void startCheckout()} disabled={paying || !specResolved || awaitingQuantity || !destinationComplete}
                     className="inline-flex w-full items-center justify-center rounded-lg bg-ink px-5 py-3 text-sm font-semibold text-on-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
                     {paying ? 'Loading secure payment…'
-                      : thicknessOpen && chosenVariantId == null ? 'Choose a thickness to continue'
-                        : finishOpen && chosenOptionId == null ? 'Choose a finish to continue'
-                          : awaitingQuantity ? 'Choose a quantity to continue'
+                      : awaitingQuantity ? 'Choose a quantity to continue'
+                        : thicknessOpen && chosenVariantId == null ? 'Choose a thickness to continue'
+                          : finishOpen && chosenOptionId == null ? 'Choose a finish to continue'
                             : !destinationComplete ? 'Enter delivery country & postcode'
                               : payTotal != null ? `Continue to payment — ${formatPrice(payTotal, order.currency)}`
                                 : 'Continue to payment'}
                   </button>
                   <p className="text-center text-[12px] text-ink-mute" aria-live="polite">
-                    {!specResolved ? 'Confirm your card above to see your total.'
-                      : awaitingQuantity ? 'Select a quantity to see your total.'
+                    {awaitingQuantity ? 'Select a quantity to see exact prices for each option.'
+                      : !specResolved ? 'Confirm your card above to see your total.'
                         : !destinationComplete ? 'Enter where we’re shipping to so we can calculate shipping.'
                           : 'Secured by Stripe.'}
                   </p>
