@@ -214,6 +214,16 @@ export default function OrderBuilderModal({
   // pricing for (so we display it read-only rather than as a picker).
   const [lockedFromProof, setLockedFromProof] = useState(false)
 
+  // Open-spec modes (000298): leave the thickness and/or finish for the
+  // customer to choose on the pay page, with guided copy + live prices —
+  // instead of settling them by email after approval. 'customer' is the
+  // DEFAULT where it makes sense (a multi-thickness material like metal; a
+  // finish the proof actually offered in 2+ tabs); the designer can lock
+  // either per order (e.g. a repeat customer who always orders 800µm).
+  // Offline orders force 'locked' — the customer never sees the pay page.
+  const [thicknessMode, setThicknessMode] = useState<'customer' | 'locked'>('locked')
+  const [finishMode, setFinishMode] = useState<'customer' | 'locked'>('locked')
+
   // Xero customer the paid invoice files under (online orders only). Pre-filled
   // from this customer's last order so a returning customer is one click;
   // designer can change it or leave it blank for a new customer (000275).
@@ -294,6 +304,18 @@ export default function OrderBuilderModal({
         !!fromProofOpt && (fromProofOpt.variant_type === 'ink_count' || fromProofOpt.variant_type === 'finish'),
       )
       setVariantId(fromProofOpt?.id ?? (options.length === 1 ? options[0].id : null))
+      // Default the thickness to "customer chooses at checkout" when the
+      // material genuinely offers a thickness choice (2+ priced thickness
+      // variants — the metal family and friends) and the artwork doesn't pin
+      // the variant. The variantId pre-selection above stays as the designer's
+      // fallback if they switch back to locking it.
+      const artworkPinned =
+        !!fromProofOpt && (fromProofOpt.variant_type === 'ink_count' || fromProofOpt.variant_type === 'finish')
+      setThicknessMode(
+        !artworkPinned && options.length > 1 && options.every((o) => o.variant_type === 'thickness')
+          ? 'customer'
+          : 'locked',
+      )
       setVariantsLoading(false)
     })()
     return () => { cancelled = true }
@@ -379,6 +401,11 @@ export default function OrderBuilderModal({
       const offered = materialOptionCodes.length === 1 ? list.find((o) => o.code === materialOptionCodes[0]) : null
       const base = list.find((o) => o.is_base) ?? list[0] ?? null
       setOptionId((offered ?? base)?.id ?? null)
+      // Default the finish to "customer chooses at checkout" only when the
+      // proof genuinely offered a choice (2+ finish tabs on the approved
+      // version) — a single-finish proof's artwork IS that finish, so it
+      // stays locked, matching the artwork-defined rule for variants.
+      setFinishMode(list.length > 1 && materialOptionCodes.length >= 2 ? 'customer' : 'locked')
     })()
     return () => { cancelled = true }
     // materialOptionCodes intentionally omitted — read once at mount; it's
@@ -447,7 +474,25 @@ export default function OrderBuilderModal({
   // changes don't race. Only runs for full_cost / goodwill on a grid order
   // with a chosen, weighable variant.
   const selectedVariant = variants.find((v) => v.id === variantId) ?? null
-  const estimateWeightGrams = selectedVariant?.weight_grams ?? null
+  // Open-spec eligibility (000298): pills are offered when the choice is real.
+  // The MODE is what's authoritative for the payload; eligibility only drives
+  // the UI + defaults, so a material change that removes the choice can't
+  // strand a stale 'customer' mode in the payload.
+  const thicknessEligible =
+    !lockedFromProof && variants.length > 1 && variants.every((v) => v.variant_type === 'thickness')
+  const finishEligible = materialOptions.length > 1 && materialOptionCodes.length >= 2
+  const thicknessCustomer = thicknessEligible && thicknessMode === 'customer' && !isCustomQuote && orderType !== 'prototype'
+  const finishCustomer = finishEligible && finishMode === 'customer' && !isCustomQuote && orderType !== 'prototype'
+  // Estimate weight: the chosen variant's; when the customer will choose the
+  // thickness at checkout, estimate at the HEAVIEST offered variant so the
+  // indicative figure is the ceiling, not a lowball (the real charge is rated
+  // at checkout against their actual pick).
+  const heaviestVariant = variants.reduce<VariantOption | null>(
+    (acc, v) => (v.weight_grams != null && (acc?.weight_grams == null || v.weight_grams > acc.weight_grams) ? v : acc),
+    null,
+  )
+  const estimateVariant = thicknessCustomer ? heaviestVariant : selectedVariant
+  const estimateWeightGrams = estimateVariant?.weight_grams ?? null
   // Per-person split: whether to use it (locked + multiple names) and its sum.
   const usePerPersonSplit = personNames.length > 1
   const lockedSplitSum = personNames.reduce((acc, n) => {
@@ -626,8 +671,8 @@ export default function OrderBuilderModal({
       setError('This proof has no single currency, so it can’t be ordered here yet.')
       return
     }
-    if (!isPrototype && !isCustomQuote && variants.length > 0 && !variantId) {
-      setError('Please choose which option this order is for.')
+    if (!isPrototype && !isCustomQuote && variants.length > 0 && !variantId && !thicknessCustomer) {
+      setError('Please choose which option this order is for, or let the customer choose at checkout.')
       return
     }
     let quantityValue: number | null = null
@@ -724,6 +769,10 @@ export default function OrderBuilderModal({
     // quantity and a shipping figure we can settle without the pay page. The
     // UI enforces both (locked quantity, free/manual shipping); guard anyway.
     if (paymentMethod === 'offline') {
+      if (thicknessCustomer || finishCustomer) {
+        setError('Offline orders need the thickness and finish locked — the customer never sees the pay page.')
+        return
+      }
       if (quantityValue == null) {
         setError('Offline orders need a locked quantity — switch to “Lock a quantity”.')
         return
@@ -791,8 +840,14 @@ export default function OrderBuilderModal({
           // hand-off with no Thickness/Finish line. Null when none was picked (e.g. a
           // mixed-material variant round), which stays harmless. A prototype attaches
           // the resolved prototype variant (its Xero item code + weight).
-          material_variant_id: isPrototype ? prototypeVariantId : variantId,
-          material_option_id: optionId ?? undefined,
+          material_variant_id: isPrototype ? prototypeVariantId : thicknessCustomer ? null : variantId,
+          material_option_id: finishCustomer ? undefined : (optionId ?? undefined),
+          // Open-spec (000298): the customer chooses these on the pay page.
+          // material_id lets the server validate their pick + the pay page
+          // list the offerable variants when no variant is locked.
+          material_id: materialId ?? undefined,
+          thickness_open: thicknessCustomer,
+          finish_open: finishCustomer,
           // Online only — an offline order is invoiced manually in Xero.
           // Existing → bind to the chosen contact (id + name). New → no id (the
           // webhook lets Xero create one) but we pass the name so the new contact
@@ -1048,11 +1103,42 @@ export default function OrderBuilderModal({
                 server prices against. */}
             {!isPrototype && !isCustomQuote && (
               <Field label="Option" htmlFor="order-variant" hint="Which variant this order is for — sets the price used at checkout.">
+                {/* Open-spec pills (000298): a real thickness choice (metal
+                    etc.) defaults to the customer picking on the pay page,
+                    where they get the thickness guide + live prices. Locking
+                    stays one click away; offline forces locked. */}
+                {thicknessEligible && (
+                  <div className="mb-2 flex flex-wrap gap-2">
+                    {([['customer', 'Customer chooses at checkout'], ['locked', 'Lock it now']] as const).map(([m, label]) => {
+                      const blocked = paymentMethod === 'offline' && m === 'customer'
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          disabled={blocked}
+                          title={blocked ? 'Offline orders never reach the pay page, so the spec must be locked' : undefined}
+                          onClick={() => { setThicknessMode(m); setDirty(true) }}
+                          className={[
+                            'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                            thicknessMode === m ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
+                            blocked ? 'cursor-not-allowed opacity-40' : '',
+                          ].join(' ')}
+                        >
+                          {label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
                 {variantsLoading ? (
                   <p className="text-sm text-ink-mute">Loading options…</p>
                 ) : variants.length === 0 ? (
                   <p className="text-sm text-ink-mute">
                     No priced options found for this material/currency. You can still create the order, but it won&rsquo;t be payable online yet.
+                  </p>
+                ) : thicknessCustomer ? (
+                  <p className="text-sm text-ink-soft">
+                    They&rsquo;ll choose from {variants.map((v) => v.display_name).join(' / ')} on the pay page, with a thickness guide and live prices for each.
                   </p>
                 ) : lockedFromProof ? (
                   <p className="text-sm text-ink">
@@ -1087,21 +1173,53 @@ export default function OrderBuilderModal({
                 asLabel={false}
                 hint={`Which ${optionLabel.toLowerCase()} the customer is ordering — the price includes any ${optionLabel.toLowerCase()} surcharge at checkout.`}
               >
-                <div className="flex flex-wrap gap-2">
-                  {materialOptions.map((o) => (
-                    <button
-                      key={o.id}
-                      type="button"
-                      onClick={() => { setOptionId(o.id); setDirty(true) }}
-                      className={[
-                        'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
-                        optionId === o.id ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
-                      ].join(' ')}
-                    >
-                      {o.display_name}
-                    </button>
-                  ))}
-                </div>
+                {/* Open-spec pills (000298): offered only when the approved
+                    version carried 2+ finish tabs — a single-finish proof's
+                    artwork IS that finish, so it stays a designer pick. */}
+                {finishEligible && (
+                  <div className="mb-2 flex flex-wrap gap-2">
+                    {([['customer', 'Customer chooses at checkout'], ['locked', 'Lock it now']] as const).map(([m, label]) => {
+                      const blocked = paymentMethod === 'offline' && m === 'customer'
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          disabled={blocked}
+                          title={blocked ? 'Offline orders never reach the pay page, so the spec must be locked' : undefined}
+                          onClick={() => { setFinishMode(m); setDirty(true) }}
+                          className={[
+                            'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                            finishMode === m ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
+                            blocked ? 'cursor-not-allowed opacity-40' : '',
+                          ].join(' ')}
+                        >
+                          {label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+                {finishCustomer ? (
+                  <p className="text-sm text-ink-soft">
+                    They&rsquo;ll pick {materialOptions.map((o) => o.display_name).join(' / ')} on the pay page — any {optionLabel.toLowerCase()} surcharge is priced in automatically.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {materialOptions.map((o) => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        onClick={() => { setOptionId(o.id); setDirty(true) }}
+                        className={[
+                          'rounded-full px-4 py-1.5 text-sm font-medium transition-colors',
+                          optionId === o.id ? 'bg-ink text-on-ink' : 'bg-surface text-ink-soft ring-1 ring-line hover:bg-canvas',
+                        ].join(' ')}
+                      >
+                        {o.display_name}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </Field>
             )}
 
@@ -1118,7 +1236,11 @@ export default function OrderBuilderModal({
                       if (m === 'offline') {
                         // Offline records as paid + you invoice in Xero, so the
                         // app doesn't need shipping cost or an in-app discount.
+                        // The customer never sees the pay page, so open-spec
+                        // choices must be locked here too.
                         setQuantityMode('locked')
+                        setThicknessMode('locked')
+                        setFinishMode('locked')
                         setShippingTreatment('free')
                         setCardDiscountType('none')
                       } else {
@@ -1412,7 +1534,7 @@ export default function OrderBuilderModal({
                       <p className="text-ink-mute">
                         {isCustomQuote
                           ? 'Not estimated for custom quotes.'
-                          : variants.length > 1 && !variantId
+                          : variants.length > 1 && !variantId && !thicknessCustomer
                             ? 'Choose an option above to estimate shipping.'
                             : estimateWeightGrams == null
                               ? 'A shipping estimate isn’t available for this option.'
@@ -1440,6 +1562,9 @@ export default function OrderBuilderModal({
                         )}
                         <p className="mt-1 text-[12px] text-ink-mute">
                           Indicative only — the final rate uses the customer&rsquo;s actual postcode at checkout.
+                          {thicknessCustomer && estimateVariant
+                            ? ` Weighed at ${estimateVariant.display_name} (the heaviest they can pick).`
+                            : ''}
                         </p>
                       </>
                     )}

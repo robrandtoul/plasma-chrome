@@ -22,6 +22,13 @@ export interface ThicknessOption {
   name: string
   /** One-line customer-facing description. */
   description: string
+  /**
+   * Optional recommendation badge shown on the pay-page thickness chooser
+   * (open-spec orders), e.g. "Most popular". Editable via the same
+   * settings.metal_thickness_notes JSONB: omit the key to inherit this
+   * default, set it to "" to remove the badge entirely.
+   */
+  badge?: string
 }
 
 export interface MetalThicknessNotes {
@@ -48,6 +55,7 @@ export const DEFAULT_METAL_THICKNESS_NOTES: MetalThicknessNotes = {
       name: 'Mid-weight',
       description:
         'Noticeably more substantial than card stock, with a satisfying presence in the hand.',
+      badge: 'Most popular',
     },
     {
       label: '800µm',
@@ -114,7 +122,15 @@ function normaliseSet(raw: unknown, fallback: ThicknessOption[]): ThicknessOptio
       if (typeof o.label !== 'string' || typeof o.name !== 'string' || typeof o.description !== 'string') {
         return null
       }
-      return { label: o.label, name: o.name, description: o.description }
+      // Badge: an explicit string in the stored JSON wins ("" removes it); a row
+      // without the key inherits the default badge for the same label, so the
+      // live rows seeded before badges existed still show "Most popular".
+      const fallbackBadge = fallback.find((f) => f.label === o.label)?.badge
+      const badge =
+        'badge' in o
+          ? (typeof o.badge === 'string' && o.badge.trim() ? o.badge.trim() : undefined)
+          : fallbackBadge
+      return { label: o.label, name: o.name, description: o.description, ...(badge ? { badge } : {}) }
     })
     .filter((r): r is ThicknessOption => r !== null)
   return rows.length > 0 ? rows : fallback
