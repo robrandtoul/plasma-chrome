@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { Send, Check, Layers, PoundSterling, DollarSign, Euro, BookOpen, Info, Eye, History, type LucideIcon } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { Pill, ButtonInk, ButtonCoral, ButtonGhost, PanelShell, StatusRule, Field, Input, Textarea, tokens, type PillColour } from '../design'
@@ -25,6 +25,7 @@ import {
 } from '../lib/metalThicknessNotes'
 import { QrCodePanel, qrRowsForSlot } from '../components/QrCodePanel'
 import { ActionPanel } from '../components/ActionPanel'
+import { ShareWithTeamPanel } from '../components/ShareWithTeamPanel'
 import DeclineFeedbackPanel from '../components/DeclineFeedbackPanel'
 import { ProofDetailView } from '../components/ProofDetailView'
 import { firstName } from '../lib/firstName'
@@ -49,6 +50,13 @@ function currencyIcon(currency: Currency | null | undefined): LucideIcon {
 
 export default function CustomerProofPage() {
   const { id } = useParams<{ id: string }>()
+  // Team-sharing focus param (migration 000304). A share link carries
+  // ?for=<recipient name>; when it matches a name on the current
+  // version, that recipient's card gets a greeting strip, a brand ring,
+  // and a one-time scroll into view. Honoured regardless of the
+  // team_sharing_enabled toggle so links keep working if the designer
+  // later flips the panel off — the param changes presentation only.
+  const [searchParams] = useSearchParams()
 
   const [proof, setProof] = useState<PublicProof | null>(null)
   const [versions, setVersions] = useState<PublicProofVersion[]>([])
@@ -275,6 +283,22 @@ export default function CustomerProofPage() {
     document.documentElement.classList.add('customer-accent')
     return () => document.documentElement.classList.remove('customer-accent')
   }, [])
+
+  // One-time scroll to the ?for= recipient's card (migration 000304).
+  // No dependency array: the focused card only exists once images have
+  // loaded and the set has rendered, so this probes each render until
+  // the marker appears, scrolls once, then the ref latches it off.
+  // querySelector on a data attribute is cheap enough per render.
+  const focusScrolledRef = useRef(false)
+  useEffect(() => {
+    if (focusScrolledRef.current) return
+    if (!searchParams.get('for')) return
+    const el = document.querySelector<HTMLElement>('[data-focused-recipient="true"]')
+    if (!el) return
+    focusScrolledRef.current = true
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
+  })
 
   // Element that had focus when the panel opened — restored on close
   // so keyboard users land back on the per-recipient Approve /
@@ -920,6 +944,18 @@ export default function CustomerProofPage() {
       .filter((a) => a.state === 'approved')
       .map((a) => a.name),
   )
+  // ?for= share-link focus (migration 000304). Resolved against the
+  // CURRENT version's roster — a name that only existed on an old
+  // version gets no focus treatment. Case-insensitive with trimmed
+  // whitespace so a hand-edited link still matches; the matched value
+  // is the canonical roster spelling, which is what group headings
+  // compare against.
+  const forParam = searchParams.get('for')
+  const focusedName = (() => {
+    if (!forParam || !currentVersion) return null
+    const target = forParam.trim().toLowerCase()
+    return currentVersion.names.find((n) => n.trim().toLowerCase() === target) ?? null
+  })()
   // Slot identities present on the current version. Mirrors the
   // designer-side rule: current version's names[] plus the
   // shared sentinel when the version has any associated_name=null
@@ -2971,6 +3007,28 @@ export default function CustomerProofPage() {
               )
             })()}
 
+          {/* ───── Share with your team (migration 000304) ─────
+              Designer-toggled per version. Current version only (an
+              old version's roster is stale by definition), Recipients
+              shape only, 2+ names, and hidden once the proof is fully
+              approved — at that point there's nothing left to chase.
+              order-4 matches the plates section below; flex stable
+              ordering keeps this panel above it on mobile because it
+              precedes it in the DOM. */}
+          {activeVersion.is_current &&
+            activeVersion.team_sharing_enabled === true &&
+            !activeVersion.is_variant_round &&
+            activeVersion.shape !== 'set_collection' &&
+            activeVersion.names.length >= 2 &&
+            !proofIsApproved && (
+            <ShareWithTeamPanel
+              proofId={id ?? ''}
+              names={activeVersion.names}
+              approvedNames={approvedNamesOnCurrent}
+              company={proof.company ?? null}
+            />
+          )}
+
           {/* ───── Plates ─────
               Near-white section. Groups come from buildImageGroups
               (shared first, then named); each named group gets a
@@ -3286,11 +3344,53 @@ export default function CustomerProofPage() {
                       const sidesLabel = isPair
                         ? '2 sides'
                         : `${group.images.length} ${group.images.length === 1 ? 'side' : 'sides'}`
+                      // ?for= share-link focus (000304): this group's
+                      // recipient arrived via their personal link. The
+                      // card gets a greeting strip + brand ring; the
+                      // top-level effect scrolls it into view once via
+                      // the data attribute below. Current version only
+                      // — focusedName is derived from currentVersion,
+                      // so it's null on older tabs by construction.
+                      const isFocusedRecipient =
+                        focusedName != null &&
+                        heading === focusedName &&
+                        activeVersion.is_current
                       return (
                         <div
                           key={group.heading ?? ''}
-                          className="bg-surface border border-line rounded-[14px] overflow-hidden"
+                          data-focused-recipient={isFocusedRecipient ? 'true' : undefined}
+                          className={[
+                            'bg-surface border rounded-[14px] overflow-hidden',
+                            isFocusedRecipient
+                              ? 'border-brand ring-2 ring-brand scroll-mt-24'
+                              : 'border-line',
+                          ].join(' ')}
                         >
+                          {/* Greeting strip — only on the focused
+                              recipient's card, so it rides with the
+                              card the scroll lands on rather than
+                              sitting at the top of a page the customer
+                              never sees. */}
+                          {isFocusedRecipient && (
+                            <div
+                              className="flex items-start gap-2.5 px-5 py-3 border-b"
+                              style={{
+                                backgroundColor: 'var(--c-brand-50)',
+                                borderColor: 'var(--c-brand-100)',
+                              }}
+                            >
+                              <span aria-hidden="true">👋</span>
+                              <p
+                                className="m-0 text-[13.5px] leading-relaxed"
+                                style={{ color: 'var(--c-brand-900)' }}
+                              >
+                                Hi {firstName(heading!)} — this is your card.
+                                Have a look, then approve it below or request
+                                changes. The rest of the team&rsquo;s cards are
+                                further down the page.
+                              </p>
+                            </div>
+                          )}
                           {/* Card header band: numbered chip + name +
                               optional approval pill on its right + sides
                               indicator far right. */}
@@ -3303,6 +3403,9 @@ export default function CustomerProofPage() {
                                 {bandHeading}
                               </div>
                             </div>
+                            {isFocusedRecipient && (
+                              <Pill colour="brand">Your card</Pill>
+                            )}
                             {pill && (
                               <Pill colour="in-stock">{pill}</Pill>
                             )}

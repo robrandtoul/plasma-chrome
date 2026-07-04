@@ -384,6 +384,14 @@ export default function NewVersionPage() {
   // inheritance. The field is hidden entirely when the gate isn't
   // satisfied, so a flipped state value sticks around but is ignored.
   const [hasPersonalisation, setHasPersonalisation] = useState(false)
+  // Team sharing toggle (migration 000304). Shows the customer-page
+  // "Share with your team" panel when saved true on a version with 2+
+  // names. Defaults ON so new multi-recipient proofs get the panel
+  // without a designer action; inheritance overwrites this with the
+  // previous version's value so an explicit off carries forward. Only
+  // meaningful on the Recipients shape — every other save path writes
+  // false unconditionally.
+  const [teamSharingEnabled, setTeamSharingEnabled] = useState(true)
   // Live per-currency rate + min charge for the checkbox helper
   // text. Reads from personalisation_pricing every (re)mount so an
   // admin rate edit propagates to the designer-facing helper
@@ -639,7 +647,7 @@ export default function NewVersionPage() {
       // default).
       const inheritPromise = supabase
         .from('proof_versions')
-        .select('id, version_number, currency, material_id, displayed_variant_ids, names, ink_names, material_options, card_type, custom_quote, core_colour_id, front_colour_id, back_colour_id, is_variant_round, is_per_direction_pricing, has_personalisation, shape')
+        .select('id, version_number, currency, material_id, displayed_variant_ids, names, ink_names, material_options, card_type, custom_quote, core_colour_id, front_colour_id, back_colour_id, is_variant_round, is_per_direction_pricing, has_personalisation, team_sharing_enabled, shape')
         .eq('proof_id', proofId!)
         .eq('is_current', true)
         .maybeSingle()
@@ -678,6 +686,7 @@ export default function NewVersionPage() {
         is_variant_round: boolean | null
         is_per_direction_pricing: boolean | null
         has_personalisation: boolean | null
+        team_sharing_enabled: boolean | null
         shape: string | null
       } | null
 
@@ -1113,6 +1122,11 @@ export default function NewVersionPage() {
         setHasPersonalisation(
           !!inherited.has_personalisation && !isVariantRoundSource,
         )
+        // Team sharing (000304) carries the previous version's choice
+        // forward so an explicit off stays off. Pre-feature versions
+        // are false at the DB, so old projects default unticked here
+        // and the designer opts in once; the value then inherits.
+        setTeamSharingEnabled(!!inherited.team_sharing_enabled)
         // Seed the proof-type wizard from the inherited version, using
         // the persisted shape column (000210) when present so a
         // collection seeds as a collection rather than mis-seeding as
@@ -3076,6 +3090,9 @@ export default function NewVersionPage() {
           // designs (often via per-direction pricing), so
           // personalisation is unconditionally false on this path.
           has_personalisation: false,
+          // Team sharing (000304) is a named-recipients concept; a
+          // variant round has no per-name slots to share.
+          team_sharing_enabled: false,
           // Resolved proof-type-wizard shape (000210). A variant round
           // always resolves to 'selection'; the wizard is the single
           // source, so we write its mapping rather than re-deriving.
@@ -3280,6 +3297,9 @@ export default function NewVersionPage() {
             && cardType === 'membership'
             && !isCustomQuote
             && hasPersonalisation,
+          // Team sharing (000304): collections are no-name; per-layout
+          // sharing is a possible follow-up but not this feature.
+          team_sharing_enabled: false,
           shape: dbShape(wizardShape),
         })
         .select('id, version_number')
@@ -3701,6 +3721,14 @@ export default function NewVersionPage() {
           && cardType === 'membership'
           && !isCustomQuote
           && hasPersonalisation,
+        // Team sharing (000304). Same stale-state defence as
+        // personalisation above: the toggle only renders on the
+        // Recipients shape with 2+ names, so the save re-applies that
+        // gate rather than trusting whatever the hidden state holds.
+        team_sharing_enabled:
+          cardType === 'business'
+          && names.map((n) => n.trim()).filter(Boolean).length >= 2
+          && teamSharingEnabled,
         // Resolved proof-type-wizard shape (000210). This path handles
         // recipients and set_single; the wizard is the single source so
         // we write its mapping rather than re-deriving from flags.
@@ -5472,6 +5500,31 @@ export default function NewVersionPage() {
                   </p>
                 )}
               </div>
+
+              {/* Team sharing toggle (migration 000304). Only rendered
+                  once the roster makes it meaningful (2+ names); the
+                  save path re-applies the same gate so a hidden-but-
+                  ticked state never persists true on a 0/1-name save. */}
+              {names.map((n) => n.trim()).filter(Boolean).length >= 2 && (
+                <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-line bg-surface px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={teamSharingEnabled}
+                    onChange={(e) => setTeamSharingEnabled(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 cursor-pointer rounded border-line text-ink focus:ring-brand"
+                  />
+                  <div>
+                    <div className="text-sm font-medium text-ink-soft">
+                      Let the team share this proof
+                    </div>
+                    <div className="text-xs text-ink-mute">
+                      Adds a &ldquo;Share with your team&rdquo; panel to the customer
+                      page: one link per name that opens the page focused on that
+                      person&rsquo;s card, with approval progress at a glance.
+                    </div>
+                  </div>
+                </label>
+              )}
             </div>
             )}
 

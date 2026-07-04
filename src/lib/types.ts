@@ -218,6 +218,12 @@ export interface PublicProofVersion {
   // and floor live in personalisation_pricing and update live. Hidden
   // when custom_quote or is_per_direction_pricing is true.
   has_personalisation: boolean
+  // ── Team sharing (migration 000304) ──────────────────────────────────
+  // Designer toggle: when true AND the version carries 2+ names, the
+  // customer page shows the "Share with your team" panel (per-name
+  // links + approval status) above The set. Defaults false at the DB
+  // so pre-feature versions never grow the panel retrospectively.
+  team_sharing_enabled: boolean
   // ── Material code (migration 000177) ─────────────────────────────────
   // Raw material code from the materials table (e.g. 'metal_steel',
   // 'paper_letterpress'). Null on per-direction-pricing variant rounds
