@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, Copy, Mail, Share2 } from 'lucide-react'
+import { Check, ChevronDown, Copy, Mail, Share2 } from 'lucide-react'
 import { Pill } from '../design'
 import { firstName } from '../lib/firstName'
 
@@ -37,6 +37,8 @@ export function shareLinkForName(proofId: string, name: string): string {
 }
 
 export function ShareWithTeamPanel({ proofId, names, approvedNames, company }: ShareWithTeamPanelProps) {
+  // Collapsed at rest — see the header-bar comment below.
+  const [expanded, setExpanded] = useState(false)
   // Which row just had its link copied — keyed by name, cleared on a
   // timer so the tick reverts to the copy icon.
   const [copiedName, setCopiedName] = useState<string | null>(null)
@@ -96,20 +98,24 @@ export function ShareWithTeamPanel({ proofId, names, approvedNames, company }: S
       aria-labelledby="share-team-heading"
       className="order-4 lg:order-none bg-surface border border-line rounded-[14px] overflow-hidden"
     >
-      <div className="flex flex-wrap items-center gap-3 px-5 py-4">
-        <div className="min-w-0">
-          <h2
-            id="share-team-heading"
-            className="font-display font-medium text-ink text-[17px] leading-tight"
-          >
-            Share with your team
-          </h2>
-          <p className="mt-0.5 text-[13px] text-ink-mute">
-            You&rsquo;re welcome to review and approve every card yourself — or,
-            if it&rsquo;s easier, send each person their own link below.
-          </p>
-        </div>
-        <div className="ml-auto flex items-center gap-2.5">
+      {/* Collapsed by default: the page's first job is showing the
+          artwork, so at rest this is one slim bar — heading + live
+          progress — and the rows only render once opened. Return
+          visits get the chase-list count at a glance without the
+          panel's full height pushing The set below the fold. */}
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full flex-wrap items-center gap-3 px-5 py-4 text-left transition-colors hover:bg-canvas"
+      >
+        <h2
+          id="share-team-heading"
+          className="min-w-0 font-display font-medium text-ink text-[17px] leading-tight"
+        >
+          Share with your team
+        </h2>
+        <span className="ml-auto flex items-center gap-2.5">
           <span className="eyebrow text-ink-mute whitespace-nowrap">
             {approvedCount} of {names.length} approved
           </span>
@@ -122,8 +128,22 @@ export function ShareWithTeamPanel({ proofId, names, approvedNames, company }: S
               style={{ width: `${names.length > 0 ? (approvedCount / names.length) * 100 : 0}%` }}
             />
           </span>
-        </div>
-      </div>
+          <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-ink-soft whitespace-nowrap">
+            {expanded ? 'Hide links' : 'Show links'}
+            <ChevronDown
+              size={14}
+              aria-hidden="true"
+              className={`transition-transform ${expanded ? 'rotate-180' : ''}`}
+            />
+          </span>
+        </span>
+      </button>
+
+      {expanded && (<>
+      <p className="m-0 px-5 pb-3 text-[13px] text-ink-mute">
+        You&rsquo;re welcome to review and approve every card yourself — or,
+        if it&rsquo;s easier, send each person their own link below.
+      </p>
 
       <ul className="m-0 list-none p-0">
         {names.map((name) => {
@@ -186,6 +206,7 @@ export function ShareWithTeamPanel({ proofId, names, approvedNames, company }: S
         Anyone with a link can see the whole set — a personal link simply
         opens the page on that person&rsquo;s card.
       </p>
+      </>)}
     </section>
   )
 }
