@@ -385,6 +385,9 @@ export default function ProofDetailPage() {
   const [funnelHelpOpen, setFunnelHelpOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  // Which recipient's team-share link was just copied (migration
+  // 000304) — keyed by name so each row shows its own tick.
+  const [copiedShareName, setCopiedShareName] = useState<string | null>(null)
   const [statusDialog, setStatusDialog] = useState<'approve' | 'reopen' | 'abandon' | 'delete' | null>(null)
   const [statusWorking, setStatusWorking] = useState(false)
   // Required-checkbox gate for reopening a proof whose order was already PLACED:
@@ -608,7 +611,7 @@ export default function ProofDetailPage() {
         .single(),
       supabase
         .from('proof_versions')
-        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, created_by, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, shape, last_reply_sent_at, last_reply_sent_by, displayed_variant_ids, is_variant_round, is_per_direction_pricing, material_options, has_personalisation, front_colour_id, core_colour_id, back_colour_id, materials(display_quantities)')
+        .select('id, version_number, material_id, material_display, ink_names, currency, is_current, created_at, created_by, change_notes, pricing_snapshot, shipping_note, custom_quote, names, card_type, shape, last_reply_sent_at, last_reply_sent_by, displayed_variant_ids, is_variant_round, is_per_direction_pricing, material_options, has_personalisation, team_sharing_enabled, front_colour_id, core_colour_id, back_colour_id, materials(display_quantities)')
         .eq('proof_id', proofId)
         .order('version_number', { ascending: false }),
     ])
@@ -2247,6 +2250,48 @@ export default function ProofDetailPage() {
             </button>
           </dd>
         </div>
+        {/* Per-recipient share links (migration 000304). Shown when the
+            current version has Team sharing on — same links the
+            customer-page panel offers, here so a designer can paste an
+            individual's link straight into a Help Scout reply. */}
+        {currentVersion?.team_sharing_enabled === true &&
+          currentVersion.card_type === 'business' &&
+          (currentVersion.names?.length ?? 0) >= 2 && (
+          <div className="min-w-0">
+            <dt className="eyebrow text-ink-mute">Team share links</dt>
+            <dd className="mt-1 space-y-1">
+              {currentVersion.names.map((name) => {
+                const shareCopied = copiedShareName === name
+                return (
+                  <div key={name} className="flex items-center gap-2">
+                    <span className="truncate text-[13px] text-ink-soft">{name}</span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const url = `${window.location.origin}${customerProofPath(proof.id)}?for=${encodeURIComponent(name)}`
+                        try {
+                          await navigator.clipboard.writeText(url)
+                          setCopiedShareName(name)
+                          window.setTimeout(
+                            () => setCopiedShareName((curr) => (curr === name ? null : curr)),
+                            1600,
+                          )
+                        } catch {
+                          setToast('Could not copy — check clipboard permissions')
+                        }
+                      }}
+                      title={`Copy ${firstName(name)}'s share link`}
+                      aria-label={`Copy ${firstName(name)}'s share link`}
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-ink-mute transition-colors hover:bg-canvas hover:text-ink"
+                    >
+                      {shareCopied ? <CheckIcon size={13} style={{ color: 'var(--c-in-stock)' }} /> : <Copy size={13} />}
+                    </button>
+                  </div>
+                )
+              })}
+            </dd>
+          </div>
+        )}
         <div className="min-w-0">
           <dt className="eyebrow text-ink-mute">Help Scout</dt>
           <dd className="mt-1 flex items-center gap-2 text-[13px]">

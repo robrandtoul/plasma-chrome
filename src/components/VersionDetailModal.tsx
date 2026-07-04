@@ -92,6 +92,10 @@ export interface ModalVersion {
   // matching the customer page's gate. False on every non-membership
   // version and on variant rounds (000173 DB CHECK blocks the combo).
   has_personalisation: boolean
+  // Team sharing toggle (migration 000304). Gates the customer page's
+  // "Share with your team" panel and the per-name share links on
+  // ProofDetailPage. Not rendered inside this modal.
+  team_sharing_enabled: boolean
   materials: { display_quantities: number[] } | null
   // Denormalised hot-path indicator (migration 000103) populated
   // by the send-helpscout-reply edge function on a successful HS

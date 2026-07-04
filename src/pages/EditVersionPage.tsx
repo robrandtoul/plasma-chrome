@@ -175,6 +175,10 @@ export default function EditVersionPage() {
   // the gate.
   const [hasPersonalisation, setHasPersonalisation] = useState(false)
   const [materialSupportsPersonalisation, setMaterialSupportsPersonalisation] = useState(false)
+  // Team sharing toggle (migration 000304). Loaded from the version
+  // row; the checkbox renders only on business-card versions with 2+
+  // names, and the save path re-applies that gate.
+  const [teamSharingEnabled, setTeamSharingEnabled] = useState(false)
   const [cardType, setCardType] = useState<'business' | 'membership'>('business')
   const [shippingNote, setShippingNote] = useState('')
   // Live per-currency rate + min charge for the personalisation
@@ -269,7 +273,7 @@ export default function EditVersionPage() {
       supabase.from('proofs').select('helpscout_conversation_id, contacts(full_name, companies(name))').eq('id', pid).single(),
       supabase
         .from('proof_versions')
-        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, names, core_colour_id, front_colour_id, back_colour_id, is_variant_round, card_type, has_personalisation, shape, materials(code, display_quantities, requires_ink_names, option_label, multi_variant, supports_personalisation)')
+        .select('version_number, material_id, material_display, ink_names, currency, change_notes, pricing_snapshot, shipping_note, material_options, custom_quote, names, core_colour_id, front_colour_id, back_colour_id, is_variant_round, card_type, has_personalisation, team_sharing_enabled, shape, materials(code, display_quantities, requires_ink_names, option_label, multi_variant, supports_personalisation)')
         .eq('id', vid)
         .single(),
       supabase
@@ -308,6 +312,7 @@ export default function EditVersionPage() {
     setMaterialSupportsPersonalisation(!!materialMeta.supports_personalisation)
     setCardType((v.card_type as 'business' | 'membership') ?? 'business')
     setHasPersonalisation(!!v.has_personalisation)
+    setTeamSharingEnabled(!!v.team_sharing_enabled)
     setShape((v.shape as string | null) ?? null)
 
     // Set (collection): load the editable layouts from proof_layouts +
@@ -1222,6 +1227,9 @@ export default function EditVersionPage() {
             && cardType === 'membership'
             && pricingDisplay !== 'custom'
             && hasPersonalisation,
+          // Team sharing (000304): collections are no-name, so the
+          // panel never applies on this path.
+          team_sharing_enabled: false,
         })
         .eq('id', versionId!)
       if (vErr) {
@@ -1460,6 +1468,14 @@ export default function EditVersionPage() {
           && pricingDisplay !== 'custom'
           && !isVariantRound
           && hasPersonalisation,
+        // Team sharing (000304). Same shape of gate: the checkbox only
+        // renders on business-card versions with 2+ names, so the save
+        // lands false whenever the control isn't currently visible.
+        team_sharing_enabled:
+          cardType === 'business'
+          && !isVariantRound
+          && names.map((n) => n.trim()).filter(Boolean).length >= 2
+          && teamSharingEnabled,
       })
       .eq('id', versionId!)
 
@@ -2357,6 +2373,38 @@ export default function EditVersionPage() {
                       const min = personalisationLivePricing?.min_charge ?? 50
                       return `${symbol}${rate.toFixed(2)} per card with a ${symbol}${min.toFixed(0)} minimum charge.`
                     })()}
+                  </div>
+                </div>
+              </label>
+            </section>
+          )}
+
+          {/* Team sharing (migration 000304). Visible only on
+              business-card versions with 2+ names — the shapes where
+              the customer page has per-name approval slots to link to.
+              The save path re-applies this gate, so a version edited
+              down to one name lands false even though the state is
+              stale-true. */}
+          {cardType === 'business'
+            && !isVariantRound
+            && names.map((n) => n.trim()).filter(Boolean).length >= 2 && (
+            <section className="rounded-2xl bg-surface p-6 shadow-sm ring-1 ring-line">
+              <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-ink-dim">Team sharing</h2>
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-line bg-surface px-4 py-3">
+                <input
+                  type="checkbox"
+                  checked={teamSharingEnabled}
+                  onChange={(e) => setTeamSharingEnabled(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 cursor-pointer rounded border-line text-ink focus:ring-brand"
+                />
+                <div>
+                  <div className="text-sm font-medium text-ink-soft">
+                    Let the team share this proof
+                  </div>
+                  <div className="text-xs text-ink-mute">
+                    Adds a &ldquo;Share with your team&rdquo; panel to the customer
+                    page: one link per name that opens the page focused on that
+                    person&rsquo;s card, with approval progress at a glance.
                   </div>
                 </div>
               </label>
