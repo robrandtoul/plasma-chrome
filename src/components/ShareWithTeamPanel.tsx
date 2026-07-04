@@ -105,7 +105,8 @@ export function ShareWithTeamPanel({ proofId, names, approvedNames, company }: S
             Share with your team
           </h2>
           <p className="mt-0.5 text-[13px] text-ink-mute">
-            Each person approves their own card — send them their link.
+            You&rsquo;re welcome to review and approve every card yourself — or,
+            if it&rsquo;s easier, send each person their own link below.
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2.5">
