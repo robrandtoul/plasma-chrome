@@ -20,7 +20,7 @@
 
 import { requireAdmin, json, CORS_HEADERS } from '../_shared/admin.ts'
 import { getAccessContext, buildInvoicePayload } from '../_shared/xero.ts'
-import { buildOrderInvoiceLines, type OrderForInvoice } from '../_shared/invoiceBuild.ts'
+import { buildOrderInvoiceLines, resolveZeroRatedTaxType, type OrderForInvoice } from '../_shared/invoiceBuild.ts'
 
 const XERO_API = 'https://api.xero.com/api.xro/2.0/Invoices'
 const SELFTEST_PREFIX = 'SELFTEST'
@@ -257,6 +257,32 @@ Deno.serve(async (req) => {
     country: 'US',
   })
 
+  // VAT treatment: one EU and one rest-of-world case. A VAT-free invoice
+  // books its lines to the org's "0% EU" / "0% ROW" rates once those are
+  // configured in Admin → Settings (000306) — until then both book as
+  // "No VAT". The assertion stays on the item code; the interesting column
+  // is the tax rate Xero echoes back per line.
+  specs.push({
+    label: 'EU order (EUR → Germany)',
+    group: 'VAT treatment',
+    target: 'product',
+    expectedCode: anchor.xero_item_code,
+    order: { ...EMPTY_ORDER, material_variant_id: anchor.id, quantity: 100, names_count: 1, amount_cards: 100 },
+    currency: 'EUR',
+    expectedTotal: 100,
+    country: 'DE',
+  })
+  specs.push({
+    label: 'Rest-of-world order (USD → United States)',
+    group: 'VAT treatment',
+    target: 'product',
+    expectedCode: anchor.xero_item_code,
+    order: { ...EMPTY_ORDER, material_variant_id: anchor.id, quantity: 100, names_count: 1, amount_cards: 100 },
+    currency: 'USD',
+    expectedTotal: 100,
+    country: 'US',
+  })
+
   // Build each invoice payload through the shared line builder + payload builder.
   const payloads: Record<string, unknown>[] = []
   for (const spec of specs) {
@@ -267,9 +293,12 @@ Deno.serve(async (req) => {
       expectedTotal: spec.expectedTotal,
       country: spec.country,
     })
+    // Same zero-rated EU/ROW resolution the live webhook runs, so a
+    // VAT-free draft books to the same tax rate a real order would.
+    const zeroRatedTaxType = await resolveZeroRatedTaxType(admin, spec.country, spec.currency)
     payloads.push(
       buildInvoicePayload(
-        { contactName: 'Plasma self-test', contactEmail: null, currency: spec.currency, reference, lines: built.lines },
+        { contactName: 'Plasma self-test', contactEmail: null, currency: spec.currency, reference, lines: built.lines, zeroRatedTaxType },
         { status: 'DRAFT' },
       ),
     )

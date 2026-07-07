@@ -48,6 +48,12 @@ interface Settings {
   /** Xero account code of the Stripe clearing account (migration 000242). When
    *  set, paid orders are marked paid in Xero instantly. Null = create-only. */
   xero_stripe_account_code: string | null
+  /** Zero-rated Xero tax rates for non-UK invoices (migration 000306): the
+   *  TaxType codes behind the org's "0% EU" and "0% ROW" rates. A VAT-free
+   *  invoice (EUR/USD, or GBP to the Channel Islands) books every line to
+   *  the one matching its delivery region. Null = book as "No VAT". */
+  xero_eu_tax_type: string | null
+  xero_row_tax_type: string | null
   /** Shipping (migration 000178). */
   fedex_box_weight_grams: number
   fedex_intl_adjust_percent: number
@@ -120,6 +126,7 @@ interface PaymentsStatus {
   }
   verdict: 'test' | 'ready' | 'danger' | 'incomplete'
   bankAccounts?: { name: string; code: string }[]
+  taxRates?: { name: string; taxType: string; effectiveRate: number | null }[]
   stripeAccountCode?: string | null
 }
 
@@ -138,6 +145,8 @@ const AUDIT_ACTION: Record<keyof Settings, string> = {
   decline_recovery_discount_percent: 'setting.decline_recovery_discount_percent_updated',
   payment_mode:                      'setting.payment_mode_updated',
   xero_stripe_account_code:          'setting.xero_stripe_account_code_updated',
+  xero_eu_tax_type:                  'setting.xero_eu_tax_type_updated',
+  xero_row_tax_type:                 'setting.xero_row_tax_type_updated',
   fedex_box_weight_grams:            'setting.fedex_box_weight_grams_updated',
   fedex_intl_adjust_percent:         'setting.fedex_intl_adjust_percent_updated',
   domestic_uk_mainland_rate_gbp:     'setting.domestic_uk_mainland_rate_gbp_updated',
@@ -248,7 +257,7 @@ export default function AdminSettingsPage() {
   async function load() {
     const { data, error } = await supabase
       .from('settings')
-      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, xero_stripe_account_code, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, hot_leads_panel_enabled, push_enabled')
+      .select('default_pricing_display, default_currency, approvals_enabled, approve_confirmation_copy, request_changes_confirmation_copy, ordering_enabled, auto_order_reminders_enabled, order_reminders_max, order_reminder_interval_days, payment_mode, xero_stripe_account_code, xero_eu_tax_type, xero_row_tax_type, fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp, us_tariff_fee_gbp, us_tariff_fee_eur, us_tariff_fee_usd, xero_us_tariff_item_code, us_tariff_intro_copy, us_tariff_optout_warning, customer_tracking_enabled, customer_tracking_config, decline_recovery_discount_enabled, decline_recovery_discount_percent, hot_leads_panel_enabled, push_enabled')
       .eq('id', 1)
       .single()
     if (error || !data) { setLoadError(error?.message ?? 'Settings row missing'); return }
@@ -460,6 +469,17 @@ export default function AdminSettingsPage() {
     const draft = drafts[field]
     if (draft === undefined) return
     void saveField(field, (draft as string).trim())
+  }
+
+  // Blur handler for the zero-rated VAT tax-type fields when they render as
+  // plain code inputs (connection not yet carrying the rate-list scope).
+  // Unlike the tariff item code, empty means "not set" (NULL) — the invoice
+  // then books those lines as "No VAT", the pre-000306 behaviour.
+  function onXeroTaxTypeBlur(field: 'xero_eu_tax_type' | 'xero_row_tax_type') {
+    if (!settings) return
+    const draft = drafts[field]
+    if (draft === undefined) return
+    void saveField(field, (draft as string).trim().toUpperCase() || null)
   }
 
   function recentlySaved(field: keyof Settings): boolean {
@@ -825,6 +845,72 @@ export default function AdminSettingsPage() {
                 </p>
               )}
             </FieldRow>
+          </div>
+
+          {/* Zero-rated VAT rates for non-UK invoices (migration 000306).
+              A VAT-free invoice (EUR/USD, or GBP to the Channel Islands)
+              books every line to the org's "0% EU" or "0% ROW" rate by
+              delivery region, so exports file in the right VAT-return box
+              instead of "No VAT". The pickers list the org's 0% revenue
+              rates via payments-status; until the Xero connection carries
+              the rate-list scope (one reconnect), a plain code field shows
+              instead. */}
+          <div className="border-t border-line-soft pt-5">
+            <p className="text-sm font-medium text-ink">VAT rates on non-UK invoices</p>
+            <p className="mt-1 text-[13px] text-ink-mute">
+              Orders delivered outside the UK are zero-rated. Choose which Xero tax rate each region&rsquo;s invoices book to — EU deliveries use the first, everywhere else the second. An unset field books those invoices as &ldquo;No VAT&rdquo;, as before.
+            </p>
+            <div className="mt-3 space-y-4">
+              {(['xero_eu_tax_type', 'xero_row_tax_type'] as const).map((field) => {
+                const zeroRates = (payStatus?.taxRates ?? []).filter(
+                  (t) => t.effectiveRate === 0 || t.effectiveRate == null,
+                )
+                const isEu = field === 'xero_eu_tax_type'
+                return (
+                  <FieldRow
+                    key={field}
+                    label={isEu ? 'EU deliveries' : 'Rest of the world'}
+                    help={isEu
+                      ? 'The zero rate for deliveries into the EU VAT area — normally your “0% EU” rate.'
+                      : 'The zero rate for deliveries everywhere else, including the Channel Islands — normally your “0% ROW” rate.'}
+                    saved={recentlySaved(field)}
+                    working={working[field]}
+                    error={errors[field]}
+                  >
+                    {zeroRates.length > 0 ? (
+                      <select
+                        value={settings[field] ?? ''}
+                        onChange={(e) => void saveField(field, e.target.value || null)}
+                        disabled={!!working[field]}
+                        className="h-[38px] w-full max-w-sm rounded-[8px] border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                      >
+                        <option value="">Not set — book as &ldquo;No VAT&rdquo;</option>
+                        {zeroRates.map((t) => (
+                          <option key={t.taxType} value={t.taxType}>{t.name} ({t.taxType})</option>
+                        ))}
+                        {settings[field] && !zeroRates.some((t) => t.taxType === settings[field]) && (
+                          <option value={settings[field]}>{settings[field]} (not in the org&rsquo;s current rate list)</option>
+                        )}
+                      </select>
+                    ) : (
+                      <div className="max-w-sm">
+                        <input
+                          type="text"
+                          value={(drafts[field] ?? settings[field] ?? '') as string}
+                          onChange={(e) => setDrafts((d) => ({ ...d, [field]: e.target.value }))}
+                          onBlur={() => onXeroTaxTypeBlur(field)}
+                          placeholder={isEu ? 'e.g. TAX004' : 'e.g. TAX003'}
+                          className="h-[38px] w-full rounded-[8px] border border-line bg-surface px-3 text-sm text-ink focus:border-[var(--c-brand)] focus:outline-2 focus:outline-offset-1 focus:outline-[var(--c-brand)]"
+                        />
+                        <p className="mt-1 text-[12px] text-ink-mute">
+                          The rate&rsquo;s TaxType code. Reconnect Xero (above) to pick from the organisation&rsquo;s rate list instead.
+                        </p>
+                      </div>
+                    )}
+                  </FieldRow>
+                )
+              })}
+            </div>
           </div>
         </div>
       </section>
@@ -1442,6 +1528,8 @@ function humanFieldLabel(field: keyof Settings): string {
     decline_recovery_discount_percent: 'Decline-recovery discount (%)',
     payment_mode: 'Stripe payment mode',
     xero_stripe_account_code: 'Xero Stripe clearing account',
+    xero_eu_tax_type: 'Xero tax rate for EU deliveries',
+    xero_row_tax_type: 'Xero tax rate for rest-of-world deliveries',
     fedex_box_weight_grams: 'FedEx box weight (grams)',
     fedex_intl_adjust_percent: 'International shipping adjustment (%)',
     domestic_uk_mainland_rate_gbp: 'UK mainland shipping rate (£, inc VAT)',

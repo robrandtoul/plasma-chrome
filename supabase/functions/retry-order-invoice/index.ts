@@ -15,7 +15,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { requireDesigner, json, CORS_HEADERS } from '../_shared/admin.ts'
 import { getAccessContext, createSalesInvoice } from '../_shared/xero.ts'
-import { buildOrderInvoiceLines } from '../_shared/invoiceBuild.ts'
+import { buildOrderInvoiceLines, resolveZeroRatedTaxType } from '../_shared/invoiceBuild.ts'
 import { isVatFreeGbpDestination } from '../_shared/ukVatArea.ts'
 import { logAudit } from '../_shared/audit.ts'
 
@@ -32,7 +32,9 @@ interface OrderRow {
   amount_tooling: number | null
   amount_personalisation: number | null
   amount_shipping: number | null
+  amount_us_tariff: number | null
   amount_card_discount: number | null
+  order_kind: string | null
   currency: string
   status: string
   payment_method: string | null
@@ -80,7 +82,7 @@ Deno.serve(async (req) => {
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_card_discount, currency, status, payment_method, xero_invoice_id, xero_contact_id, xero_contact_name, payment_reference, ship_to_name, ship_to_email, ship_to_address, ship_dest_country, proofs(contacts(full_name, email))')
+    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, order_kind, currency, status, payment_method, xero_invoice_id, xero_contact_id, xero_contact_name, payment_reference, ship_to_name, ship_to_email, ship_to_address, ship_dest_country, proofs(contacts(full_name, email))')
     .eq('id', orderId)
     .single<OrderRow>()
   if (orderErr || !order) return json({ error: 'Order not found' }, 404)
@@ -113,14 +115,17 @@ Deno.serve(async (req) => {
   // collapse to a single summary line. Rebuilt from the stamped breakdown:
   // custom quote → agreed figure + shipping; grid → cards (incl. folded-in
   // personalisation and finish) + tooling + personalisation + shipping.
+  // Both include the US tariff when charged — leaving it out shorted a
+  // retried tariff order's invoice against the Stripe charge.
   const cards = Number(order.amount_cards ?? 0)
   const tooling = Number(order.amount_tooling ?? 0)
   const personalisation = Number(order.amount_personalisation ?? 0)
   const shipping = Number(order.amount_shipping ?? 0)
+  const usTariff = Number(order.amount_us_tariff ?? 0)
   const cardDiscount = Number(order.amount_card_discount ?? 0)
   const expectedTotal = order.custom_quote_total != null
-    ? round2(Number(order.custom_quote_total) - cardDiscount + shipping)
-    : round2(cards + tooling + personalisation - cardDiscount + shipping)
+    ? round2(Number(order.custom_quote_total) - cardDiscount + shipping + usTariff)
+    : round2(cards + tooling + personalisation - cardDiscount + shipping + usTariff)
 
   // Delivery country drives the domestic vs international shipping item and
   // the VAT treatment. Prefer the destination the order was RATED against
@@ -129,8 +134,12 @@ Deno.serve(async (req) => {
   // is only the fallback when no rated destination was stored.
   const country = order.ship_dest_country ?? order.ship_to_address?.country ?? null
   // GBP + Channel Islands destination → priced ex-VAT at checkout, so the
-  // invoice books VAT-free (NoTax), exactly as the webhook would have.
+  // invoice books VAT-free, exactly as the webhook would have.
   const vatFree = currency === 'GBP' && isVatFreeGbpDestination(order.ship_dest_country ?? null)
+  // Zero-rated rate for a VAT-free invoice ("0% EU" / "0% ROW", settings
+  // 000306) — same resolution the webhook runs, so a retried invoice books
+  // to the same rate the original would have.
+  const zeroRatedTaxType = await resolveZeroRatedTaxType(admin, country, currency)
 
   const { lines } = await buildOrderInvoiceLines(admin, order, { reference, currency, expectedTotal, country })
 
@@ -168,6 +177,7 @@ Deno.serve(async (req) => {
     address: invoiceAddress,
     contactId: boundContactId,
     vatFree,
+    zeroRatedTaxType,
   })
   let invoiceId = created.invoiceId
   let createdInvoice = created.invoice
@@ -175,7 +185,8 @@ Deno.serve(async (req) => {
 
   // Same single-summary-line fallback the webhook uses for a code Xero won't
   // accept, so a retry degrades the same way rather than failing outright.
-  const wasItemised = lines.some((l) => l.itemCode)
+  // Like the webhook, the fallback drops the zero-rated TaxType too.
+  const wasItemised = lines.some((l) => l.itemCode) || !!zeroRatedTaxType
   if (!invoiceId && wasItemised) {
     const retry = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
       contactName,

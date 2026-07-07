@@ -8,12 +8,13 @@
 // for key presence, and the sk_test_/sk_live_ PREFIX of the selected key (so a
 // "mode=live but a test key is in the live slot" misconfiguration is visible).
 //
-// Auth: admin only (requireAdmin). Read-only; makes one Xero GET /connections
-// call via the existing connection when Xero is connected (NOT GET /Organisation,
-// which needs the accounting.settings scope this app doesn't request).
+// Auth: admin only (requireAdmin). Read-only; when Xero is connected it makes
+// GET /connections (org identity — NOT GET /Organisation, which 401'd under
+// the app's original scopes and made the panel falsely report a Xero error)
+// plus the bank-account and tax-rate list reads behind the admin pickers.
 
 import { requireAdmin, json, CORS_HEADERS } from '../_shared/admin.ts'
-import { getAccessContext, listBankAccounts } from '../_shared/xero.ts'
+import { getAccessContext, listBankAccounts, listTaxRates } from '../_shared/xero.ts'
 
 // Classify a Stripe key by prefix without revealing it. Stripe keys are
 // sk_test_… / sk_live_… (and rk_… restricted keys mirror the same infix).
@@ -71,16 +72,21 @@ Deno.serve(async (req) => {
   } = { connected: false, orgName: null, isDemoCompany: null, baseCurrency: null, error: null }
   // BANK accounts for the Stripe-clearing-account picker (admin only).
   let bankAccounts: { name: string; code: string }[] = []
+  // ACTIVE revenue tax rates for the zero-rated "0% EU" / "0% ROW" pickers.
+  let taxRates: { name: string; taxType: string; effectiveRate: number | null }[] = []
 
   try {
     const acc = await getAccessContext(admin)
     if (!acc) {
       xero = { ...xero, connected: false, error: 'Not connected' }
     } else {
-      // Bank accounts (for the Stripe clearing-account picker) need the
-      // accounting.settings.read scope, which this app doesn't request — so this
-      // returns [] today. Harmless; the picker just stays empty.
+      // Bank accounts + tax rates (for the clearing-account and zero-rated
+      // VAT pickers) need the accounting.settings.read scope. It's in
+      // XERO_SCOPES now, but a connection authorised before it was added
+      // keeps its original grant — both lists stay [] until the admin
+      // reconnects Xero. Harmless; the pickers fall back gracefully.
       bankAccounts = await listBankAccounts(acc.accessToken, acc.tenantId)
+      taxRates = await listTaxRates(acc.accessToken, acc.tenantId)
       // Verify + name the org via GET /connections. We deliberately do NOT call
       // GET /Organisation: that endpoint needs the accounting.settings scope this
       // app never requested, so it always 401s and made the panel falsely report
@@ -134,5 +140,5 @@ Deno.serve(async (req) => {
     verdict = 'incomplete'
   }
 
-  return json({ stripe, xero, verdict, bankAccounts, stripeAccountCode })
+  return json({ stripe, xero, verdict, bankAccounts, taxRates, stripeAccountCode })
 })

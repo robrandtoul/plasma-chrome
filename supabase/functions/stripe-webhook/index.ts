@@ -17,7 +17,7 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { getAccessContext, createSalesInvoice, recordInvoicePayment, emailSalesInvoice, ensureInvoiceEmailRecipient } from '../_shared/xero.ts'
-import { buildOrderInvoiceLines } from '../_shared/invoiceBuild.ts'
+import { buildOrderInvoiceLines, resolveZeroRatedTaxType } from '../_shared/invoiceBuild.ts'
 import { isVatFreeGbpDestination } from '../_shared/ukVatArea.ts'
 import { getAccessToken, fetchConversation, postStaffReply, HsError } from '../_shared/helpscout.ts'
 import { renderTemplate, ORDER_CONFIRMATION_DEFAULT_BODY } from '../_shared/replyTemplates.ts'
@@ -324,6 +324,11 @@ Deno.serve(async (req) => {
           { reference: referenceSafe, currency, expectedTotal, country },
         )
 
+        // Zero-rated rate for a VAT-free invoice ("0% EU" / "0% ROW",
+        // settings 000306), classified from the same delivery country that
+        // drives the shipping line. Null → the legacy "No VAT" treatment.
+        const zeroRatedTaxType = await resolveZeroRatedTaxType(admin, country, currency)
+
         const created = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
           contactName: newContactName,
           contactEmail,
@@ -333,6 +338,7 @@ Deno.serve(async (req) => {
           address: invoiceAddress,
           contactId: boundContactId,
           vatFree,
+          zeroRatedTaxType,
         })
         invoiceId = created.invoiceId
         // The created invoice object echoes back the resolved Contact (incl. the
@@ -351,7 +357,10 @@ Deno.serve(async (req) => {
         // line so an invoice is still created. The sum-mismatch fallback
         // above runs *before* the call; this one catches a post-call
         // rejection. Both degrade gracefully rather than leaving no invoice.
-        const wasItemised = lines.some((l) => l.itemCode)
+        // The retry also drops the zero-rated TaxType — an org that rejects
+        // the item codes may equally not know the custom rate, and a "No
+        // VAT" invoice beats no invoice.
+        const wasItemised = lines.some((l) => l.itemCode) || !!zeroRatedTaxType
         if (!invoiceId && wasItemised) {
           console.warn(`[stripe-webhook] itemised invoice rejected for order ${orderId}; retrying as a single summary line`)
           const retry = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {

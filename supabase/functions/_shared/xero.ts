@@ -18,11 +18,15 @@ const CONNECTIONS_URL = 'https://api.xero.com/connections'
 // customer), accounting.invoices (create the invoice), accounting.payments
 // (record the payment so the invoice marks Paid — without this, PUT /Payments
 // returns 401 AuthorizationUnsuccessful while invoice creation still works),
-// offline_access (refresh token), openid (the connection/identity).
+// accounting.settings.read (list bank accounts + tax rates for the admin
+// clearing-account and zero-rated-VAT pickers — both endpoints 401 without
+// it), offline_access (refresh token), openid (the connection/identity).
 // NOTE: adding/removing a scope requires the admin to RECONNECT Xero so the
 // new consent + token carry it; a token refresh keeps the original grant.
+// Until that reconnect, the two pickers just list nothing — invoicing is
+// unaffected.
 export const XERO_SCOPES =
-  'openid accounting.contacts accounting.invoices accounting.payments offline_access'
+  'openid accounting.contacts accounting.invoices accounting.payments accounting.settings.read offline_access'
 
 function clientId(): string {
   return Deno.env.get('XERO_CLIENT_ID') ?? ''
@@ -185,9 +189,15 @@ export interface InvoiceParams {
   contactId?: string | null
   // GBP order delivering outside the UK VAT area (the Channel Islands — see
   // _shared/ukVatArea.ts): the amounts were charged ex-VAT, so the invoice
-  // must book with the same NoTax treatment EUR/USD invoices use, or Xero
+  // must book with the same no-VAT treatment EUR/USD invoices use, or Xero
   // would carve VAT back out of figures that no longer contain any.
   vatFree?: boolean
+  // TaxType code of the zero-rated tax rate a VAT-free invoice's lines book
+  // to — the org's "0% EU" or "0% ROW" rate, resolved per delivery country
+  // by resolveZeroRatedTaxType (invoiceBuild.ts, settings 000306). Only
+  // consulted when the invoice is VAT-free. Null/unset keeps the legacy
+  // NoTax treatment (every line reads "No VAT").
+  zeroRatedTaxType?: string | null
 }
 
 // The result of a create attempt. `invoiceId` is null on any failure (the
@@ -212,9 +222,16 @@ export function buildInvoicePayload(
   opts: { status?: 'AUTHORISED' | 'DRAFT' } = {},
 ): Record<string, unknown> {
   const today = new Date().toISOString().slice(0, 10)
-  // No-VAT invoices: EUR/USD always; GBP when the order delivered outside
+  // VAT-free invoices: EUR/USD always; GBP when the order delivered outside
   // the UK VAT area (Channel Islands, p.vatFree) and was charged ex-VAT.
   const noTax = p.currency !== 'GBP' || p.vatFree === true
+  // A VAT-free invoice books each line to the org's zero-rated EU/ROW rate
+  // when one is configured — the tax stays 0.00, but the line reads
+  // "0% EU" / "0% ROW" instead of "No VAT" and the VAT return files the
+  // export in the right box. Xero forces TaxType NONE under LineAmountTypes
+  // NoTax, so carrying a real rate needs 'Exclusive' — at 0% the line
+  // amounts, invoice total and Stripe bank-feed match are all identical.
+  const zeroRatedTaxType = noTax ? ((p.zeroRatedTaxType ?? '').trim() || null) : null
   const round2 = (n: number) => Math.round(n * 100) / 100
   // Xero rounds a line's unit price to 2 decimals and computes the line from
   // that, so qty × unit rarely lands on a total built from a round figure
@@ -242,8 +259,9 @@ export function buildInvoicePayload(
     } else {
       li.AccountCode = Deno.env.get('XERO_SALES_ACCOUNT_CODE') ?? '200'
     }
-    // VAT-free invoice: force NoTax on every line regardless of item.
-    if (noTax) li.TaxType = 'NONE'
+    // VAT-free invoice: every line carries the zero-rated EU/ROW rate when
+    // configured, else NONE ("No VAT") — regardless of the item's own rate.
+    if (noTax) li.TaxType = zeroRatedTaxType ?? 'NONE'
     return li
   })
   if (roundingAdjustment !== 0) {
@@ -255,14 +273,14 @@ export function buildInvoicePayload(
       UnitAmount: roundingAdjustment,
       AccountCode: Deno.env.get('XERO_SALES_ACCOUNT_CODE') ?? '200',
     }
-    if (noTax) li.TaxType = 'NONE'
+    if (noTax) li.TaxType = zeroRatedTaxType ?? 'NONE'
     lineItems.push(li)
   }
 
   return {
     Type: 'ACCREC',
     Status: opts.status ?? 'AUTHORISED',
-    LineAmountTypes: noTax ? 'NoTax' : 'Inclusive',
+    LineAmountTypes: noTax ? (zeroRatedTaxType ? 'Exclusive' : 'NoTax') : 'Inclusive',
     Reference: p.reference,
     Date: today,
     DueDate: today,
@@ -303,7 +321,8 @@ export function buildInvoicePayload(
 // record a payment — the existing Stripe bank feed settles the invoice via the
 // shared Reference. GBP is VAT-inclusive (LineAmountTypes Inclusive); EUR/USD —
 // and GBP orders delivered outside the UK VAT area (Channel Islands, p.vatFree)
-// — are VAT-free (NoTax, forced on every line). Lines with an ItemCode let Xero drive
+// — are VAT-free: every line books to the configured zero-rated EU/ROW rate
+// (p.zeroRatedTaxType), or "No VAT" (NoTax) when none is set. Lines with an ItemCode let Xero drive
 // the sales account + tax rate from the item; lines without one fall back to the
 // Sales account (200, override via XERO_SALES_ACCOUNT_CODE). The caller is
 // responsible for ensuring the line amounts sum to the charged total.
@@ -401,6 +420,31 @@ export async function emailSalesInvoice(
   const text = await res.text().catch(() => '<body read failed>')
   console.error('[xero] invoice email failed:', res.status, text)
   return { ok: false, error: `${res.status} ${text}` }
+}
+
+// List the org's ACTIVE tax rates that can apply to revenue (name + TaxType
+// code + rate), for the admin "0% EU" / "0% ROW" pickers. Like the bank
+// accounts, this needs the accounting.settings.read scope — a connection
+// authorised before that scope was added returns [] here until the admin
+// reconnects Xero. [] on any failure (the picker falls back to a text field).
+export async function listTaxRates(
+  accessToken: string,
+  tenantId: string,
+): Promise<{ name: string; taxType: string; effectiveRate: number | null }[]> {
+  const res = await fetch('https://api.xero.com/api.xro/2.0/TaxRates', {
+    headers: { Authorization: `Bearer ${accessToken}`, 'Xero-tenant-id': tenantId, Accept: 'application/json' },
+  })
+  if (!res.ok) return []
+  const data = await res.json().catch(() => null)
+  return ((data?.TaxRates as Array<{
+    Name?: string
+    TaxType?: string
+    Status?: string
+    EffectiveRate?: number
+    CanApplyToRevenue?: boolean
+  }> | undefined) ?? [])
+    .filter((t) => t.Status === 'ACTIVE' && t.CanApplyToRevenue !== false && t.TaxType && t.Name)
+    .map((t) => ({ name: t.Name as string, taxType: t.TaxType as string, effectiveRate: t.EffectiveRate ?? null }))
 }
 
 // List the org's BANK accounts (name + code), for the admin Stripe-clearing-

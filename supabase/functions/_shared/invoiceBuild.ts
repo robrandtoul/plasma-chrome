@@ -16,6 +16,7 @@
 import { type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { type InvoiceLine } from './xero.ts'
 import { isUkVatAreaCountry } from './ukVatArea.ts'
+import { zeroRatedRegion } from './euVatArea.ts'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -64,6 +65,31 @@ export interface InvoiceBuildResult {
   // code Xero echoes back on the created invoice.
   productItemCode: string | null
   domestic: boolean
+}
+
+// The Xero TaxType a VAT-free invoice's lines should carry: the org's
+// "0% EU" rate for deliveries into the EU VAT area, "0% ROW" for everywhere
+// else (see _shared/euVatArea.ts for the classification, including the
+// currency fallback when no delivery country is known). The codes are
+// admin-configured (settings 000306, picked from the org's rate list in
+// Admin → Settings); null — region unresolvable or the code unset — keeps
+// the legacy NoTax treatment, so this can never block an invoice.
+export async function resolveZeroRatedTaxType(
+  admin: SupabaseClient,
+  country: string | null,
+  currency: string,
+): Promise<string | null> {
+  const region = zeroRatedRegion(country, currency)
+  if (!region) return null
+  const { data } = await admin
+    .from('settings')
+    .select('xero_eu_tax_type, xero_row_tax_type')
+    .eq('id', 1)
+    .maybeSingle()
+  const code = region === 'eu'
+    ? (data?.xero_eu_tax_type as string | null | undefined)
+    : (data?.xero_row_tax_type as string | null | undefined)
+  return code?.trim() || null
 }
 
 export async function buildOrderInvoiceLines(
