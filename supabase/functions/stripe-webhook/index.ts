@@ -18,6 +18,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { getAccessContext, createSalesInvoice, recordInvoicePayment, emailSalesInvoice, ensureInvoiceEmailRecipient } from '../_shared/xero.ts'
 import { buildOrderInvoiceLines } from '../_shared/invoiceBuild.ts'
+import { isVatFreeGbpDestination } from '../_shared/ukVatArea.ts'
 import { getAccessToken, fetchConversation, postStaffReply, HsError } from '../_shared/helpscout.ts'
 import { renderTemplate, ORDER_CONFIRMATION_DEFAULT_BODY } from '../_shared/replyTemplates.ts'
 
@@ -268,6 +269,15 @@ Deno.serve(async (req) => {
       // so it's only the fallback when the order has no rated destination
       // (e.g. a free/manual order with no hint).
       const country = (order?.ship_dest_country as string | null) ?? shipAddr?.country ?? null
+      // GBP + Channel Islands destination → the order was priced ex-VAT at
+      // checkout, so the invoice must book VAT-free (NoTax) or Xero would
+      // carve VAT back out of the ex-VAT figures. Derived from the RATED
+      // destination only (ship_dest_country, normalised + persisted by
+      // create-checkout-session) — the same source the pricing used — never
+      // from the card-form address, so the tax treatment always matches the
+      // stamped amounts.
+      const vatFree =
+        currency === 'GBP' && isVatFreeGbpDestination((order?.ship_dest_country as string | null) ?? null)
       const invoiceAddress = shipAddr
         ? {
             line1: shipAddr.line1 ?? null,
@@ -322,6 +332,7 @@ Deno.serve(async (req) => {
           lines,
           address: invoiceAddress,
           contactId: boundContactId,
+          vatFree,
         })
         invoiceId = created.invoiceId
         // The created invoice object echoes back the resolved Contact (incl. the
@@ -351,6 +362,7 @@ Deno.serve(async (req) => {
             lines: [{ description: `Order ${referenceSafe}`, amount: expectedTotal, itemCode: null }],
             address: invoiceAddress,
             contactId: boundContactId,
+            vatFree,
           })
           invoiceId = retry.invoiceId
           if (retry.invoice) createdInvoice = retry.invoice

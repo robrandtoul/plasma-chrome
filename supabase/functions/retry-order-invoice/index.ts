@@ -16,6 +16,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { requireDesigner, json, CORS_HEADERS } from '../_shared/admin.ts'
 import { getAccessContext, createSalesInvoice } from '../_shared/xero.ts'
 import { buildOrderInvoiceLines } from '../_shared/invoiceBuild.ts'
+import { isVatFreeGbpDestination } from '../_shared/ukVatArea.ts'
 import { logAudit } from '../_shared/audit.ts'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -121,9 +122,15 @@ Deno.serve(async (req) => {
     ? round2(Number(order.custom_quote_total) - cardDiscount + shipping)
     : round2(cards + tooling + personalisation - cardDiscount + shipping)
 
-  // Delivery country drives domestic vs international shipping item; prefer the
-  // address Stripe collected, fall back to the rating country we stored.
-  const country = order.ship_to_address?.country ?? order.ship_dest_country ?? null
+  // Delivery country drives the domestic vs international shipping item and
+  // the VAT treatment. Prefer the destination the order was RATED against
+  // (ship_dest_country) — the same preference the webhook uses — so a retried
+  // invoice books exactly as the original would have; the card-form address
+  // is only the fallback when no rated destination was stored.
+  const country = order.ship_dest_country ?? order.ship_to_address?.country ?? null
+  // GBP + Channel Islands destination → priced ex-VAT at checkout, so the
+  // invoice books VAT-free (NoTax), exactly as the webhook would have.
+  const vatFree = currency === 'GBP' && isVatFreeGbpDestination(order.ship_dest_country ?? null)
 
   const { lines } = await buildOrderInvoiceLines(admin, order, { reference, currency, expectedTotal, country })
 
@@ -160,6 +167,7 @@ Deno.serve(async (req) => {
     lines,
     address: invoiceAddress,
     contactId: boundContactId,
+    vatFree,
   })
   let invoiceId = created.invoiceId
   let createdInvoice = created.invoice
@@ -177,6 +185,7 @@ Deno.serve(async (req) => {
       lines: [{ description: `Order ${reference}`, amount: expectedTotal, itemCode: null }],
       address: invoiceAddress,
       contactId: boundContactId,
+      vatFree,
     })
     invoiceId = retry.invoiceId
     if (retry.invoice) createdInvoice = retry.invoice

@@ -183,6 +183,11 @@ export interface InvoiceParams {
   // EmailAddress / Addresses fields whenever a ContactID is supplied, so those
   // are used only on the new-customer fallback where this is null.
   contactId?: string | null
+  // GBP order delivering outside the UK VAT area (the Channel Islands — see
+  // _shared/ukVatArea.ts): the amounts were charged ex-VAT, so the invoice
+  // must book with the same NoTax treatment EUR/USD invoices use, or Xero
+  // would carve VAT back out of figures that no longer contain any.
+  vatFree?: boolean
 }
 
 // The result of a create attempt. `invoiceId` is null on any failure (the
@@ -207,7 +212,9 @@ export function buildInvoicePayload(
   opts: { status?: 'AUTHORISED' | 'DRAFT' } = {},
 ): Record<string, unknown> {
   const today = new Date().toISOString().slice(0, 10)
-  const isGbp = p.currency === 'GBP'
+  // No-VAT invoices: EUR/USD always; GBP when the order delivered outside
+  // the UK VAT area (Channel Islands, p.vatFree) and was charged ex-VAT.
+  const noTax = p.currency !== 'GBP' || p.vatFree === true
   const round2 = (n: number) => Math.round(n * 100) / 100
   // Xero rounds a line's unit price to 2 decimals and computes the line from
   // that, so qty × unit rarely lands on a total built from a round figure
@@ -235,8 +242,8 @@ export function buildInvoicePayload(
     } else {
       li.AccountCode = Deno.env.get('XERO_SALES_ACCOUNT_CODE') ?? '200'
     }
-    // EUR/USD are VAT-free: force NoTax on every line regardless of item.
-    if (!isGbp) li.TaxType = 'NONE'
+    // VAT-free invoice: force NoTax on every line regardless of item.
+    if (noTax) li.TaxType = 'NONE'
     return li
   })
   if (roundingAdjustment !== 0) {
@@ -248,14 +255,14 @@ export function buildInvoicePayload(
       UnitAmount: roundingAdjustment,
       AccountCode: Deno.env.get('XERO_SALES_ACCOUNT_CODE') ?? '200',
     }
-    if (!isGbp) li.TaxType = 'NONE'
+    if (noTax) li.TaxType = 'NONE'
     lineItems.push(li)
   }
 
   return {
     Type: 'ACCREC',
     Status: opts.status ?? 'AUTHORISED',
-    LineAmountTypes: isGbp ? 'Inclusive' : 'NoTax',
+    LineAmountTypes: noTax ? 'NoTax' : 'Inclusive',
     Reference: p.reference,
     Date: today,
     DueDate: today,
@@ -294,8 +301,9 @@ export function buildInvoicePayload(
 // live payment path; the self-test passes status 'DRAFT' so its invoices never
 // hit the ledger and are trivially deletable. Per Architecture rule #2 we do NOT
 // record a payment — the existing Stripe bank feed settles the invoice via the
-// shared Reference. GBP is VAT-inclusive (LineAmountTypes Inclusive); EUR/USD are
-// VAT-free (NoTax, forced on every line). Lines with an ItemCode let Xero drive
+// shared Reference. GBP is VAT-inclusive (LineAmountTypes Inclusive); EUR/USD —
+// and GBP orders delivered outside the UK VAT area (Channel Islands, p.vatFree)
+// — are VAT-free (NoTax, forced on every line). Lines with an ItemCode let Xero drive
 // the sales account + tax rate from the item; lines without one fall back to the
 // Sales account (200, override via XERO_SALES_ACCOUNT_CODE). The caller is
 // responsible for ensuring the line amounts sum to the charged total.

@@ -35,6 +35,7 @@ import {
   type Currency,
 } from '../_shared/shipping.ts'
 import { getFedExToken, requestRate, parseRateResponse, FedExError } from '../_shared/fedex.ts'
+import { exVat, isVatFreeGbpDestination, normaliseShipDestination } from '../_shared/ukVatArea.ts'
 
 function splitNameForCurrency(
   m: { split_name_surcharge_gbp: number | null; split_name_surcharge_eur: number | null; split_name_surcharge_usd: number | null } | null,
@@ -253,6 +254,28 @@ Deno.serve(async (req) => {
     effectiveOptionId = requestedOpt
   }
 
+  // ── Delivery destination + VAT treatment (resolved up front) ─────
+  // The customer-entered destination wins; the order's stored values are the
+  // fallback (the designer's hint, or a previous checkout call's persisted
+  // pick). GB with a Jersey / Guernsey / Isle of Man postcode is normalised
+  // to the island's own ISO code so the pricing, the shipping rating and the
+  // Xero invoice all agree on where the order is really going.
+  const effectiveDestPostcode = (reqDestPostcode ?? order.ship_dest_postcode ?? '').trim()
+  const effectiveDestCountry = normaliseShipDestination(
+    reqDestCountry ?? (order.ship_dest_country as string | null) ?? '',
+    effectiveDestPostcode,
+  )
+  // GBP prices are VAT-inclusive, and the Channel Islands are outside the UK
+  // VAT area — a GBP order delivering there is charged ex-VAT. The strip is
+  // applied to every VAT-inclusive INPUT (tier totals, split-name tooling,
+  // personalisation rates, finish surcharges) before the pricing maths, so
+  // the stamped breakdown and the pay-page mirror run identical sums.
+  // Custom-quote figures and the designer's fixed discount are charged as
+  // agreed. The Isle of Man is INSIDE the UK VAT area — no relief there.
+  // See _shared/ukVatArea.ts.
+  const vatFree = order.currency === 'GBP' && isVatFreeGbpDestination(effectiveDestCountry)
+  const exv = (n: number) => (vatFree ? exVat(n) : n)
+
   // ── Goods total (server-authoritative) ───────────────────────────
   // custom-quote → the agreed figure; grid → priced from tiers + tooling
   // + personalisation via the shared helper. The per-component split is
@@ -306,7 +329,7 @@ Deno.serve(async (req) => {
       .eq('currency', order.currency)
     const tiers: Tier[] = (tierRows ?? []).map((t) => ({
       quantity: t.quantity as number,
-      total_price: Number(t.total_price),
+      total_price: exv(Number(t.total_price)),
     }))
 
     // Resolve the quantity. Designer-locked (quantity set, flag off) → use it
@@ -380,7 +403,7 @@ Deno.serve(async (req) => {
         .select('per_card_rate, min_charge')
         .eq('currency', order.currency)
         .single()
-      if (p) personalisation = { perCardRate: Number(p.per_card_rate), minCharge: Number(p.min_charge) }
+      if (p) personalisation = { perCardRate: exv(Number(p.per_card_rate)), minCharge: exv(Number(p.min_charge)) }
     }
 
     // Material-option (finish) surcharge: when the order pinned a non-base
@@ -397,7 +420,7 @@ Deno.serve(async (req) => {
         .eq('currency', order.currency)
       const surTiers: Tier[] = (surRows ?? []).map((s) => ({
         quantity: s.quantity as number,
-        total_price: Number(s.surcharge),
+        total_price: exv(Number(s.surcharge)),
       }))
       if (surTiers.length > 0) optionSurcharge = cardTotalForQuantity(surTiers, resolvedQuantity, undefined, { flatAboveTop }) ?? 0
     }
@@ -405,7 +428,7 @@ Deno.serve(async (req) => {
     const priced = computeOrderTotal({
       tiers,
       quantity: resolvedQuantity,
-      perExtraNameSurcharge: perExtraName,
+      perExtraNameSurcharge: perExtraName == null ? null : exv(perExtraName),
       namesCount: order.names_count ?? 1,
       personalisation,
       optionSurcharge,
@@ -466,11 +489,14 @@ Deno.serve(async (req) => {
   } else if (order.shipping_treatment === 'manual') {
     shipping = round2(Number(order.shipping_charged ?? 0))
   } else {
-    // full_cost / goodwill — compute the carriage from the destination. The
-    // customer-entered country + postcode (pay-page) win; the order's stored
-    // values are a fallback (e.g. a designer-set country hint).
-    const destCountry = (reqDestCountry ?? order.ship_dest_country ?? '').trim().toUpperCase()
-    const destPostcode = (reqDestPostcode ?? order.ship_dest_postcode ?? '').trim()
+    // full_cost / goodwill — compute the carriage from the destination
+    // resolved up front (customer-entered values win; the order's stored
+    // values are the fallback, e.g. a designer-set country hint). Already
+    // normalised, so a "GB" entry with a Channel Islands / Isle of Man
+    // postcode rates as the island itself (FedEx) rather than getting the
+    // mainland DPD flat rate DPD wouldn't honour there.
+    const destCountry = effectiveDestCountry
+    const destPostcode = effectiveDestPostcode
     if (!destCountry || !destPostcode) {
       return json({
         error: 'shipping_destination_required',
@@ -574,11 +600,9 @@ Deno.serve(async (req) => {
   // ── US tariff & customs handling (server-authoritative) ──────────
   // Added by default to US-bound orders (the US ended the $800 de-minimis
   // import exemption on 2025-08-29); the customer can opt out on the pay-page
-  // and is then responsible for US Customs. Destination is the customer-entered
-  // country (full_cost/goodwill) or the order's stored hint (free/manual + the
-  // designer's pre-fill) — the same resolution shipping uses. Rides on top as
-  // its own line; opt-out / non-US / a 0 fee → 0.
-  const effectiveDestCountry = (reqDestCountry ?? order.ship_dest_country ?? '').trim().toUpperCase()
+  // and is then responsible for US Customs. Destination is the effective
+  // country resolved up front — the same resolution pricing and shipping use.
+  // Rides on top as its own line; opt-out / non-US / a 0 fee → 0.
   const usTariffFee =
     order.currency === 'GBP' ? Number(modeRow?.us_tariff_fee_gbp ?? 0)
     : order.currency === 'EUR' ? Number(modeRow?.us_tariff_fee_eur ?? 0)
@@ -683,6 +707,9 @@ Deno.serve(async (req) => {
     publishable_key: publishableKey,
     amount: total,
     currency: order.currency,
+    // GBP order delivering to the Channel Islands — priced ex-VAT, so the
+    // pay-page swaps its "Includes VAT." caption for the VAT-free one.
+    vat_free: vatFree,
     breakdown: {
       cards: order.custom_quote_total != null ? Number(order.custom_quote_total) : (amountCards ?? 0),
       tooling: amountTooling ?? 0,

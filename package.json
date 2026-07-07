@@ -18,6 +18,7 @@
     "check:briefing-seed": "tsx scripts/briefing-seed.ts --check",
     "test:quote": "tsx src/lib/quote/interpolation.test.ts && tsx src/lib/quote/calculate.test.ts",
     "test:order-pricing": "tsx supabase/functions/_shared/orderPricing.test.ts",
+    "test:vat-area": "tsx supabase/functions/_shared/ukVatArea.test.ts",
     "test:order-snapshot": "tsx supabase/functions/_shared/orderSpecSnapshot.test.ts",
     "test:nudges": "tsx supabase/functions/_shared/nudgeDecision.test.ts",
     "test:message-html": "tsx supabase/functions/_shared/messageHtml.test.ts",

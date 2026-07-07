@@ -9,6 +9,7 @@ import { CustomerHeader } from '../components/CustomerHeader'
 import { FinishChoiceCard } from '../components/FinishChoiceCard'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
 import { interpolateValue, flatTopTierTotal, flatUnitTotal, pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
+import { exVat, isVatFreeGbpDestination, normaliseShipDestination } from '../lib/ukVatArea'
 import { hasThicknessGuide, thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
@@ -372,6 +373,9 @@ export default function OrderPayPage() {
     pk: string
     amount: number
     currency: Currency
+    // Server-confirmed VAT relief (GBP order delivering to the Channel
+    // Islands, priced ex-VAT) — drives the caption by the pay button.
+    vatFree: boolean
     breakdown: { cards: number; tooling: number; personalisation: number; shipping: number; us_tariff: number; card_discount: number }
   } | null>(null)
   // True once the elements are mounted (drives the loading state).
@@ -446,7 +450,7 @@ export default function OrderPayPage() {
             .filter((p) => Number.isFinite(p.quantity) && p.quantity > 0)
         : []
     try {
-      const { data, error } = await supabase.functions.invoke<{ client_secret?: string; publishable_key?: string; amount?: number; currency?: Currency; breakdown?: { cards: number; tooling: number; personalisation: number; shipping: number; us_tariff: number; card_discount: number }; error?: string; message?: string }>(
+      const { data, error } = await supabase.functions.invoke<{ client_secret?: string; publishable_key?: string; amount?: number; currency?: Currency; vat_free?: boolean; breakdown?: { cards: number; tooling: number; personalisation: number; shipping: number; us_tariff: number; card_discount: number }; error?: string; message?: string }>(
         'create-checkout-session',
         {
           body: {
@@ -491,6 +495,7 @@ export default function OrderPayPage() {
         pk: data.publishable_key,
         amount: data.amount,
         currency: data.currency,
+        vatFree: data.vat_free === true,
         breakdown: data.breakdown ?? { cards: data.amount, tooling: 0, personalisation: 0, shipping: 0, us_tariff: 0, card_discount: 0 },
       })
     } catch {
@@ -1001,6 +1006,16 @@ export default function OrderPayPage() {
   function renderConfirmation(confirmed: boolean, o: OrderPayload) {
     const round2 = (n: number) => Math.round(n * 100) / 100
     const amt = (n: number | null) => (n == null ? 0 : Number(n))
+    // Channel Islands orders were charged ex-VAT (see src/lib/ukVatArea.ts) —
+    // the caption must say so rather than claim the total includes VAT.
+    // ship_dest_country is the rated destination create-checkout-session
+    // normalised + persisted; the Stripe postcode is only a belt-and-braces
+    // fallback for orders that never rated (designer hint left as GB).
+    const vatFreeOrder =
+      o.currency === 'GBP' &&
+      isVatFreeGbpDestination(
+        normaliseShipDestination(o.ship_dest_country ?? '', o.ship_to_address?.postal_code ?? ''),
+      )
     const cards = o.custom_quote_total != null ? Number(o.custom_quote_total) : amt(o.amount_cards)
     const tooling = amt(o.amount_tooling)
     const personalisation = amt(o.amount_personalisation)
@@ -1096,7 +1111,11 @@ export default function OrderPayPage() {
                     <span className="font-semibold text-ink">{confirmed ? 'Total paid' : 'Total'}</span>
                     <span className="font-semibold text-ink">{formatPrice(total, o.currency)}</span>
                   </div>
-                  {o.currency === 'GBP' && <p className="text-[12px] text-ink-mute">Includes VAT.</p>}
+                  {o.currency === 'GBP' && (
+                    <p className="text-[12px] text-ink-mute">
+                      {vatFreeOrder ? 'VAT-free — Channel Islands orders are outside UK VAT.' : 'Includes VAT.'}
+                    </p>
+                  )}
                 </div>
               )}
             </PanelShell>
@@ -1281,12 +1300,38 @@ export default function OrderPayPage() {
   const round2 = (n: number) => Math.round(n * 100) / 100
   // US tariff & customs handling. Destination is the customer's pay-page
   // selection (full_cost/goodwill) or the order's stored hint (free/manual) —
-  // mirrors the server's resolution. Fee is from public_settings for the order
-  // currency; a 0 fee disables it. Included by default; drops to 0 on opt-out.
-  const effectiveDestCountry = (shippingComputedAtCheckout ? destCountry : order.ship_dest_country ?? '').toUpperCase()
+  // mirrors the server's resolution, including the GB + Crown-dependency
+  // postcode normalisation (a Jersey customer often picks "United Kingdom").
+  // Fee is from public_settings for the order currency; a 0 fee disables it.
+  // Included by default; drops to 0 on opt-out.
+  const effectiveDestCountry = normaliseShipDestination(
+    shippingComputedAtCheckout ? destCountry : order.ship_dest_country ?? '',
+    shippingComputedAtCheckout ? destPostcode : '',
+  )
   const tariffFee = tariff ? tariff.fees[order.currency] ?? 0 : 0
   const tariffApplies = effectiveDestCountry === 'US' && tariffFee > 0
   const tariffAmount = tariffApplies && !tariffOptedOut ? tariffFee : 0
+  // VAT relief (Channel Islands): GBP prices are VAT-inclusive and Jersey /
+  // Guernsey are outside the UK VAT area, so a GBP order delivering there is
+  // charged ex-VAT. Mirror the server EXACTLY: strip the VAT element from
+  // every VAT-inclusive INPUT (tier totals, tooling, personalisation rates,
+  // finish surcharges) before the interpolation maths — never from a computed
+  // result, because the interpolation's round-up isn't scale-invariant. The
+  // custom-quote figure and a fixed discount stay at face value, matching
+  // create-checkout-session. See src/lib/ukVatArea.ts.
+  const vatRelief = order.currency === 'GBP' && isVatFreeGbpDestination(effectiveDestCountry)
+  const exv = (n: number) => (vatRelief ? exVat(n) : n)
+  const exvTiers = (ts: { quantity: number; total_price: number }[]) =>
+    vatRelief ? ts.map((t) => ({ ...t, total_price: exVat(t.total_price) })) : ts
+  const exvSurTiers = (ts: { quantity: number; surcharge: number }[]) =>
+    vatRelief ? ts.map((t) => ({ ...t, surcharge: exVat(t.surcharge) })) : ts
+  // The tiny caption under money totals: what the shown figure includes.
+  const vatCaption =
+    order.currency === 'GBP'
+      ? vatRelief
+        ? 'VAT-free — Channel Islands orders are outside UK VAT.'
+        : 'Includes VAT.'
+      : null
   // Open-spec (000298): the customer confirms thickness / finish here before
   // the payment form unlocks. Resolved = every open field has a pick.
   const thicknessOpen = order.thickness_open === true && order.custom_quote_total == null
@@ -1335,7 +1380,7 @@ export default function OrderPayPage() {
   // server's cardTotalForQuantity so the shown figure equals the charge;
   // null below the lowest / above the highest tier.
   function cardTotalForQty(qty: number): number | null {
-    return totalFromTiers(tiers, qty, flatAboveTop)
+    return totalFromTiers(exvTiers(tiers), qty, flatAboveTop)
   }
 
   // Finish (material-option) surcharge for a quantity: exact tier or
@@ -1343,7 +1388,7 @@ export default function OrderPayPage() {
   // surcharge schedule. 0 when there's no non-base finish. Out of range → 0
   // (the server treats an unpriceable surcharge as 0 too).
   function finishSurchargeForQty(qty: number): number {
-    return surchargeFromTiers(finishTiers, qty, flatAboveTop)
+    return surchargeFromTiers(exvSurTiers(finishTiers), qty, flatAboveTop)
   }
 
   // Cards discount for a given cards-base, mirroring the server's
@@ -1368,8 +1413,8 @@ export default function OrderPayPage() {
     if (!order || qty <= 0) return null
     const cards = cardTotalForQty(qty)
     if (cards == null) return null
-    const splitName = perExtraName && order.names_count > 1 ? (order.names_count - 1) * perExtraName : 0
-    const pers = personalisation ? Math.max(personalisation.minCharge, qty * personalisation.perCardRate) : 0
+    const splitName = perExtraName && order.names_count > 1 ? (order.names_count - 1) * exv(perExtraName) : 0
+    const pers = personalisation ? Math.max(exv(personalisation.minCharge), qty * exv(personalisation.perCardRate)) : 0
     const finish = finishSurchargeForQty(qty)
     // Designer discount applies to the cards line (cards + finish) only, netted
     // off the total exactly as create-checkout-session does — so the button and
@@ -1490,7 +1535,7 @@ export default function OrderPayPage() {
         ? round2((cardTotalForQty(displayQty) as number) + finishSurchargeForQty(displayQty))
         : null
   const previewDiscount = previewCardsBase != null ? cardDiscountForBase(previewCardsBase) : 0
-  const previewTooling = perExtraName && order.names_count > 1 ? round2((order.names_count - 1) * perExtraName) : 0
+  const previewTooling = perExtraName && order.names_count > 1 ? round2((order.names_count - 1) * exv(perExtraName)) : 0
 
   // Quantity inputs (open-quantity orders). One JSX block, two homes: inside
   // the "Confirm your card" section ABOVE the thickness/finish cards for
@@ -1623,7 +1668,7 @@ export default function OrderPayPage() {
                     <span className="font-semibold text-ink">Total</span>
                     <span className="font-semibold text-ink">{formatPrice(checkout ? checkout.amount : (payTotal as number), order.currency)}</span>
                   </div>
-                  {order.currency === 'GBP' && <p className="mt-1 text-[12px] text-ink-mute">Includes VAT.</p>}
+                  {vatCaption && <p className="mt-1 text-[12px] text-ink-mute">{vatCaption}</p>}
                 </>
               )}
             </PanelShell>
@@ -1654,8 +1699,8 @@ export default function OrderPayPage() {
                             const note = thicknessNoteFor(thicknessNotes, v.display_name)
                             const price =
                               displayQty != null
-                                ? totalFromTiers(v.tiers, displayQty, flatAboveTop)
-                                : v.tiers[0]?.total_price ?? null
+                                ? totalFromTiers(exvTiers(v.tiers), displayQty, flatAboveTop)
+                                : v.tiers[0] != null ? exv(v.tiers[0].total_price) : null
                             const priceLabel =
                               price != null
                                 ? displayQty != null
@@ -1709,7 +1754,7 @@ export default function OrderPayPage() {
                               const delta =
                                 f.is_base || f.surTiers.length === 0
                                   ? 0
-                                  : surchargeFromTiers(f.surTiers, qtyBasis, flatAboveTop)
+                                  : surchargeFromTiers(exvSurTiers(f.surTiers), qtyBasis, flatAboveTop)
                               return (
                                 <FinishChoiceCard
                                   key={f.id}
@@ -1899,7 +1944,7 @@ export default function OrderPayPage() {
                     {submitting ? 'Processing…' : `Pay ${formatPrice(checkout.amount, checkout.currency)}`}
                   </button>
                   <p className="mt-2 text-center text-[12px] text-ink-mute">
-                    Secured by Stripe.{checkout.currency === 'GBP' ? ' Includes VAT.' : ''}
+                    Secured by Stripe.{checkout.currency === 'GBP' ? (checkout.vatFree ? ' VAT-free.' : ' Includes VAT.') : ''}
                   </p>
                   {(isOpenGrid || thicknessOpen || finishOpen || shippingComputedAtCheckout || tariffApplies) && (
                     <button type="button" onClick={() => { setCheckout(null); setFormError(null) }}

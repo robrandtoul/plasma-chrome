@@ -62,6 +62,11 @@ export const SHIP_COUNTRIES: ShipCountry[] = SHIP_COUNTRY_CODES
 // (deliberately not a BT/NI postcode) so the estimate reflects the common case.
 export const REPRESENTATIVE_POSTCODES: Record<string, string> = {
   GB: 'EC1A 1BB',
+  // Crown dependencies (FedEx lanes, not the mainland DPD flat rate): the
+  // capitals' central postcodes.
+  JE: 'JE2 3QA',
+  GG: 'GY1 1WR',
+  IM: 'IM1 1LB',
   IE: 'D02 AF30',
   US: '10001',
   CA: 'M5H 2N2',

@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase'
 import { customerOrderUrl } from '../lib/customerOrderUrl'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { SHIP_COUNTRIES, REPRESENTATIVE_POSTCODES } from '../lib/shipCountries'
+import { isVatFreeGbpDestination } from '../lib/ukVatArea'
 import { renderTemplate, DEFAULT_BODIES } from '../lib/replyTemplates'
 import { formatPrice } from '../lib/currency'
 import { getShippingSettings, type ShippingSettings } from '../lib/shippingSettings'
@@ -1090,7 +1091,7 @@ export default function OrderBuilderModal({
                     </span>
                   </div>
                   <p className="mt-1 text-[12px] text-ink-mute">
-                    Flat fee for 1–3 copies. {currency === 'GBP' ? 'Includes VAT.' : 'VAT-free.'} Shipping calculated at checkout.
+                    Flat fee for 1–3 copies. {currency === 'GBP' ? (isVatFreeGbpDestination(shipDestCountry) ? 'VAT-free (Channel Islands).' : 'Includes VAT.') : 'VAT-free.'} Shipping calculated at checkout.
                   </p>
                 </div>
                 <div className="mt-3">
@@ -1493,6 +1494,11 @@ export default function OrderBuilderModal({
                 {shipDestCountry === 'US' && (
                   <p className="mt-2 rounded-lg border border-low bg-low-soft px-3 py-2 text-[13px] text-ink">
                     US destination — US tariff &amp; customs handling will be added to this order by default. The customer can opt out at checkout (and then deals with US Customs themselves).
+                  </p>
+                )}
+                {currency === 'GBP' && isVatFreeGbpDestination(shipDestCountry) && (
+                  <p className="mt-2 rounded-lg border border-low bg-low-soft px-3 py-2 text-[13px] text-ink">
+                    Channel Islands destination — outside UK VAT, so grid prices are charged ex-VAT at checkout (the GBP list price with the VAT element removed) and the invoice carries no VAT. Custom-quote figures are charged exactly as agreed.
                   </p>
                 )}
               </div>

@@ -21,6 +21,7 @@
 import { json, requireDesigner } from '../_shared/admin.ts'
 import { logAudit } from '../_shared/audit.ts'
 import { cardTotalForQuantity, computeOrderTotal, resolveCardDiscount, pricesFlatAboveTopTier, type Tier } from '../_shared/orderPricing.ts'
+import { exVat, isVatFreeGbpDestination } from '../_shared/ukVatArea.ts'
 import { buildOrderSpecSnapshot } from '../_shared/orderSpecSnapshot.ts'
 
 type ShippingTreatment = 'full_cost' | 'goodwill' | 'free' | 'manual'
@@ -454,6 +455,14 @@ Deno.serve(async (req) => {
   let amountCardDiscount: number | null = null
   if (paymentMethod === 'offline') {
     const round2 = (n: number) => Math.round(n * 100) / 100
+    // GBP orders delivering to the Channel Islands are VAT-free — strip the
+    // VAT element from the price inputs exactly as create-checkout-session
+    // does, so an offline order's stamped record matches what the online
+    // checkout would have charged. Destination = the designer's country hint
+    // (offline orders never collect a customer postcode); a custom-quote
+    // figure stays as agreed either way. See _shared/ukVatArea.ts.
+    const vatFree = currency === 'GBP' && isVatFreeGbpDestination(shipDestCountry)
+    const exv = (n: number) => (vatFree ? exVat(n) : n)
     if (customQuoteTotal != null) {
       amountCards = customQuoteTotal
       amountTooling = 0
@@ -464,7 +473,7 @@ Deno.serve(async (req) => {
         .select('quantity, total_price')
         .eq('material_variant_id', materialVariantId)
         .eq('currency', currency)
-      const tiers: Tier[] = (tierRows ?? []).map((t) => ({ quantity: t.quantity as number, total_price: Number(t.total_price) }))
+      const tiers: Tier[] = (tierRows ?? []).map((t) => ({ quantity: t.quantity as number, total_price: exv(Number(t.total_price)) }))
 
       const { data: variant } = await admin
         .from('material_variants')
@@ -493,7 +502,7 @@ Deno.serve(async (req) => {
           .select('per_card_rate, min_charge')
           .eq('currency', currency)
           .single()
-        if (p) personalisation = { perCardRate: Number(p.per_card_rate), minCharge: Number(p.min_charge) }
+        if (p) personalisation = { perCardRate: exv(Number(p.per_card_rate)), minCharge: exv(Number(p.min_charge)) }
       }
 
       let optionSurcharge = 0
@@ -503,14 +512,14 @@ Deno.serve(async (req) => {
           .select('quantity, surcharge')
           .eq('material_option_id', materialOptionId)
           .eq('currency', currency)
-        const surTiers: Tier[] = (surRows ?? []).map((s) => ({ quantity: s.quantity as number, total_price: Number(s.surcharge) }))
+        const surTiers: Tier[] = (surRows ?? []).map((s) => ({ quantity: s.quantity as number, total_price: exv(Number(s.surcharge)) }))
         if (surTiers.length > 0) optionSurcharge = cardTotalForQuantity(surTiers, quantity as number, undefined, { flatAboveTop }) ?? 0
       }
 
       const priced = computeOrderTotal({
         tiers,
         quantity: quantity as number,
-        perExtraNameSurcharge: perExtraName,
+        perExtraNameSurcharge: perExtraName == null ? null : exv(perExtraName),
         namesCount,
         personalisation,
         optionSurcharge,

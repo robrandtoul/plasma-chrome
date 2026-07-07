@@ -15,6 +15,7 @@
 
 import { type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { type InvoiceLine } from './xero.ts'
+import { isUkVatAreaCountry } from './ukVatArea.ts'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -131,11 +132,13 @@ export async function buildOrderInvoiceLines(
     }
   }
 
-  // Shipping item depends on the delivery country: UK → domestic code, else
-  // international. Null country infers from currency (GBP ⇒ UK), matching the
-  // live fallback when Stripe didn't surface an address.
+  // Shipping item follows the UK VAT AREA: GB + Isle of Man → the domestic
+  // (VAT-bearing) code; the Channel Islands and everywhere else → the
+  // zero-rated international one. Null country infers from currency
+  // (GBP ⇒ UK), matching the live fallback when Stripe didn't surface an
+  // address. See _shared/ukVatArea.ts.
   const country = ctx.country
-  const domestic = country ? country === 'GB' : currency === 'GBP'
+  const domestic = country ? isUkVatAreaCountry(country) : currency === 'GBP'
   const toolingItem = Deno.env.get('XERO_TOOLING_ITEM_CODE') ?? '020'
   const shippingItem = domestic
     ? (Deno.env.get('XERO_SHIPPING_DOMESTIC_ITEM_CODE') ?? '052')
