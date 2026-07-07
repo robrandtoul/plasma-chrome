@@ -1397,13 +1397,21 @@ export default function OrdersPage() {
                 </p>
                 <div className="mt-3 space-y-4">
                   {beingRevised.map((o) => (
-                    <RevisionCard
+                    <OrderCard
                       key={o.id}
                       order={o}
                       thumb={thumbs[o.proof_id] ?? null}
+                      route={routeOf(o)}
+                      supplierLabels={allowedSupplierLabels(o, supplierNames)}
+                      supplierCount={o.material_variants?.materials?.outsourced_supplier_ids?.length ?? 0}
+                      suggested={suggestedDate(o)}
+                      proofMaterialCode={proofMaterialCodes[o.proof_id] ?? null}
+                      busy={busyId === o.id}
                       copied={copiedId === o.id}
                       onReview={() => navigate(`/orders/${o.id}/place`)}
                       onCopy={() => void copyLink(o)}
+                      onSaveField={(patch) => saveOrderField(o.id, patch)}
+                      onRetryInvoice={() => void retryInvoice(o)}
                     />
                   ))}
                 </div>
@@ -1471,70 +1479,6 @@ export default function OrdersPage() {
         )}
       </div>
     </DesignerChrome>
-  )
-}
-
-// A paid/placed order held while the proof is being redesigned (revision). The
-// card is informational + navigational: the authoritative gates (folder verify,
-// re-approval, and — for a previously-placed order — the "old Stock Control job
-// cancelled" confirmation) live on the review & place page, which is where
-// place-order is actually invoked.
-function RevisionCard({
-  order,
-  thumb,
-  copied,
-  onReview,
-  onCopy,
-}: {
-  order: OrderRow
-  thumb: GridImage | null
-  copied: boolean
-  onReview: () => void
-  onCopy: () => void
-}) {
-  const wasPlaced = !!order.fulfilled_at
-  return (
-    <PanelShell>
-      <div className="mb-3 rounded-lg bg-out-soft px-3 py-2 text-[13px] font-semibold text-out ring-1 ring-out">
-        Paid · revision in progress — do not produce the previous artwork.
-      </div>
-      <div className="flex flex-col gap-4 md:flex-row md:items-start">
-        {thumb && (
-          <img
-            src={thumb.signed_url}
-            alt="Proof artwork"
-            className="h-20 w-20 shrink-0 rounded-lg object-cover ring-1 ring-line"
-          />
-        )}
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <Link to={`/proofs/${order.proof_id}`} className="text-base font-semibold text-ink hover:underline">
-              {customerLabel(order)}
-            </Link>
-            <Pill colour="out">Revision</Pill>
-          </div>
-          <p className="mt-0.5 text-sm text-ink-soft">{specLabel(order)}</p>
-          <p className="mt-0.5 text-[13px] text-ink-mute">
-            {order.payment_reference}
-            {order.revised_at ? ` · being revised since ${formatDate(order.revised_at)}` : ''}
-          </p>
-          <p className="mt-2 text-[13px] text-ink-soft">
-            {wasPlaced
-              ? 'Already placed: cancel the old Stock Control job, re-approve the new proof, and replace the Dropbox files before re-placing.'
-              : 'Re-approve the new proof and replace the Dropbox files, then re-place.'}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-col gap-2 md:items-end">
-          <ButtonInk onClick={onReview} className="max-md:w-full max-md:h-[50px] max-md:text-[15px]">Review &amp; place</ButtonInk>
-          <div className="flex gap-2 md:contents">
-            <Link to={`/proofs/${order.proof_id}`} className="max-md:flex-1">
-              <ButtonGhost size="sm" className="max-md:w-full max-md:h-11">View proof &amp; artwork</ButtonGhost>
-            </Link>
-            <ButtonGhost size="sm" onClick={onCopy} className="max-md:flex-1 max-md:h-11">{copied ? 'Copied' : 'Copy order link'}</ButtonGhost>
-          </div>
-        </div>
-      </div>
-    </PanelShell>
   )
 }
 
@@ -1745,8 +1689,19 @@ function OrderCard({
   // which reads the DB, doesn't reject an order whose gate looked green.
   const canOrder = folderVerified && datePersisted && colourReady
 
+  // A revision order (paid/placed, held while the proof was redesigned) uses the
+  // same prep card: an order revised BEFORE its docket was prepped (folder/date/
+  // colour never set) still needs those fields to satisfy the place gate.
+  const isRevision = order.status === 'revision'
+  const wasPlaced = !!order.fulfilled_at
+
   return (
     <PanelShell>
+      {isRevision && (
+        <div className="mb-3 rounded-lg bg-out-soft px-3 py-2 text-[13px] font-semibold text-out ring-1 ring-out">
+          Paid · revision in progress — do not produce the previous artwork.
+        </div>
+      )}
       <div className="flex flex-col gap-4 md:flex-row md:items-start">
         {thumb && (
           <img
@@ -1766,7 +1721,7 @@ function OrderCard({
             {order.order_kind === 'reprint' && (
               <Pill colour="allocated" title="A free remake after a complaint or damage — £0, no payment or invoice. Link a new Dropbox folder (next order number) and place it like any job.">Free reprint</Pill>
             )}
-            <Pill colour="in-stock">Paid</Pill>
+            {isRevision ? <Pill colour="out">Revision</Pill> : <Pill colour="in-stock">Paid</Pill>}
             {/* A reprint is offline too, but "Free reprint" already says so — and it
                 must NOT prompt the manual-invoice path (there's nothing to invoice). */}
             {order.payment_method === 'offline' && order.order_kind !== 'reprint' && (
@@ -1814,7 +1769,16 @@ function OrderCard({
             Ref {order.payment_reference}
             {order.paid_at ? ` · paid ${paidDays === 0 ? 'today' : paidDays === 1 ? 'yesterday' : `${paidDays} days ago`}` : ''}
             {total != null ? ` · ${formatPrice(total, order.currency)}` : ''}
+            {isRevision && order.revised_at ? ` · being revised since ${formatDate(order.revised_at)}` : ''}
           </p>
+
+          {isRevision && (
+            <p className="mt-2 text-[13px] text-ink-soft">
+              {wasPlaced
+                ? 'Already placed: cancel the old Stock Control job, re-approve the new proof, and replace the Dropbox files before re-placing.'
+                : 'Re-approve the new proof and make sure the Dropbox order folder holds the new artwork, then place as normal.'}
+            </p>
+          )}
 
           {order.card_discount_type && order.card_discount_type !== 'none' && (
             <p className="mt-0.5 text-[13px] text-in-stock">
