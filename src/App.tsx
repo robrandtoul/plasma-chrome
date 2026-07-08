@@ -56,6 +56,7 @@ const AdminXeroItemCodesPage = lazyWithRetry(() => import('./pages/admin/AdminXe
 const AdminMaterialOptionsPage = lazyWithRetry(() => import('./pages/admin/AdminMaterialOptionsPage'), 'AdminMaterialOptionsPage')
 const AdminXeroSelfTestPage = lazyWithRetry(() => import('./pages/admin/AdminXeroSelfTestPage'), 'AdminXeroSelfTestPage')
 const AdminAnalyticsPage = lazyWithRetry(() => import('./pages/admin/AdminAnalyticsPage'), 'AdminAnalyticsPage')
+const AdminStrandedApprovalsPage = lazyWithRetry(() => import('./pages/admin/AdminStrandedApprovalsPage'), 'AdminStrandedApprovalsPage')
 const DesignDemo = lazyWithRetry(() => import('./design/_demo'), 'DesignDemo')
 
 // Shown while a lazy route chunk is in flight. Mirrors the centred spinner
@@ -145,6 +146,7 @@ function AppShell() {
           <Route path="pricing/add-ons/:code" element={<AdminAddOnEditor />} />
           <Route path="core-colours" element={<AdminCoreColoursPage />} />
           <Route path="needs-attention" element={<AdminNeedsAttentionPage />} />
+          <Route path="stranded-approvals" element={<AdminStrandedApprovalsPage />} />
           <Route path="activity" element={<AdminActivityPage />} />
           <Route path="templates" element={<AdminTemplatesPage />} />
           <Route path="site-copy" element={<AdminSiteCopyPage />} />

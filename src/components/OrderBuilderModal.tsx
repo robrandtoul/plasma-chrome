@@ -8,6 +8,7 @@ import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { SHIP_COUNTRIES, REPRESENTATIVE_POSTCODES } from '../lib/shipCountries'
 import { isVatFreeGbpDestination } from '../lib/ukVatArea'
 import { renderTemplate, DEFAULT_BODIES } from '../lib/replyTemplates'
+import type { StrandedCard } from '../lib/strandedApprovals'
 import { formatPrice } from '../lib/currency'
 import { getShippingSettings, type ShippingSettings } from '../lib/shippingSettings'
 import { getExchangeRates, gbpToCurrency, type ExchangeRates } from '../lib/exchangeRates'
@@ -96,6 +97,11 @@ interface OrderBuilderModalProps {
   // Whether the proof is linked to a Help Scout conversation — gates the
   // "Send to customer" action in the success step.
   hasHelpScoutConversation: boolean
+  // Cards approved on a superseded version in a DIFFERENT material than the
+  // current one (bundle-orders spec §12.2). This order only covers the current
+  // version's card, so these approved cards can't be ordered from here — we
+  // warn about them by name. Empty in the normal single-product case.
+  strandedApprovals?: StrandedCard[]
   onClose: () => void
   onCreated?: () => void
 }
@@ -113,6 +119,7 @@ export default function OrderBuilderModal({
   hasPersonalisation,
   isCustomQuote,
   hasHelpScoutConversation,
+  strandedApprovals = [],
   onClose,
   onCreated,
 }: OrderBuilderModalProps) {
@@ -1034,6 +1041,29 @@ export default function OrderBuilderModal({
             {currencyMissing && (
               <div className="mb-4 rounded-lg border border-low bg-low-soft px-3 py-2 text-[13px] text-ink">
                 This proof has no single currency (a per-direction-pricing round), so it can&rsquo;t be ordered through this flow yet.
+              </div>
+            )}
+
+            {/* Stranded-approval guard (bundle-orders spec §12.2). Cards
+                approved on a superseded version in a different material can't
+                be ordered from here — only the current version's card is. Warn
+                by name so the designer doesn't assume they're covered. */}
+            {strandedApprovals.length > 0 && (
+              <div className="mb-4 rounded-lg border border-low bg-low-soft p-3 text-[13px] leading-[1.6] text-ink-soft">
+                <p className="font-semibold text-ink">Some approved cards aren’t part of this order</p>
+                <p className="mt-1">
+                  This order covers the current card{materialDisplay ? ` (${materialDisplay})` : ''} only.
+                  These were approved on an earlier version in a different material and{' '}
+                  <strong>can’t be ordered from here</strong>:
+                </p>
+                <ul className="mt-1.5 list-disc space-y-0.5 pl-5">
+                  {strandedApprovals.map((c) => (
+                    <li key={c.versionId}>
+                      {c.names.join(', ')} — v{c.versionNumber}{c.material ? ` (${c.material})` : ''}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-ink-mute">To sell those too, build them as a separate project.</p>
               </div>
             )}
 

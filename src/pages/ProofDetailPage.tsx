@@ -25,6 +25,7 @@ import type {
 } from '../lib/types'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { deriveSharedApprovalState, type SharedApprovalState } from '../lib/sharedApproval'
+import { findStrandedMaterialApprovals } from '../lib/strandedApprovals'
 import { useLiveProofViews } from '../lib/useLiveProofViews'
 import { downloadBlob } from '../lib/downloadFile'
 import { customerProofPath, openDesignerPreview } from '../lib/customerProofUrl'
@@ -3806,6 +3807,7 @@ export default function ProofDetailPage() {
             hasPersonalisation={!!currentVersion.has_personalisation}
             isCustomQuote={!!currentVersion.custom_quote}
             hasHelpScoutConversation={!!proof.helpscout_conversation_id}
+            strandedApprovals={findStrandedMaterialApprovals(versions, approvals)}
             onClose={() => { setShowOrderBuilder(false); invalidateApprovedNoOrderCount(); if (id) void loadProof(id) }}
           />
         )

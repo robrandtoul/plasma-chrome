@@ -20,6 +20,7 @@ import {
   PenLine,
   Sparkles,
   Settings,
+  Unlink,
   type LucideIcon,
 } from 'lucide-react'
 import { DesignerChrome } from '../../design'
@@ -44,6 +45,7 @@ const TABS: { to: string; label: string; icon: LucideIcon }[] = [
   { to: '/admin/customers', label: 'Customers', icon: Building2 },
   { to: '/admin/orders', label: 'Order log', icon: PackageSearch },
   { to: '/admin/needs-attention', label: 'Follow-ups', icon: AlertCircle },
+  { to: '/admin/stranded-approvals', label: 'Stranded approvals', icon: Unlink },
   { to: '/admin/activity', label: 'Activity', icon: ClipboardList },
   { to: '/admin/templates', label: 'Templates', icon: MessageSquareText },
   { to: '/admin/site-copy', label: 'Site copy', icon: PenLine },

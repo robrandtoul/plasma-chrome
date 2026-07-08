@@ -25,6 +25,7 @@ import type { Currency, LetterpressCoreColour, ProofNameApproval } from '../lib/
 import { usePersonalisationPricing } from '../lib/quote/usePersonalisationPricing'
 import { SHARED_APPROVAL_KEY } from '../lib/types'
 import { computeQrArtworkChangedSlots, isQrSlotFlagged, resolveQrEffectiveKeep } from '../lib/qrCarryForward'
+import { rostersAreDisjoint } from '../lib/strandedApprovals'
 import { CoreColourSwatch } from '../components/CoreColourSwatch'
 import { LAYER_COLOUR_MATERIAL_CODES } from '../lib/letterpress'
 import {
@@ -257,6 +258,13 @@ export default function NewVersionPage() {
 
   const [proofName, setProofName] = useState('')
   const [proofCompany, setProofCompany] = useState('')
+  // Contact + company ids for this proof, pulled by the chrome query
+  // below. Only used to pre-fill the "start a separate project" escape
+  // hatch on the material-swap guard (Slice 1 of the bundle-orders
+  // spec) — a new proof for the same customer, so the designer doesn't
+  // re-key the company/contact.
+  const [proofContactId, setProofContactId] = useState<string | null>(null)
+  const [proofCompanyId, setProofCompanyId] = useState<string | null>(null)
   // Linked Help Scout conversation id, populated by the chrome
   // query above. Null means the proof was never linked to a HS
   // thread; the post-save MessageSendPanel reads this flag to
@@ -611,7 +619,7 @@ export default function NewVersionPage() {
       // (Ship 2 of intervention 3) knows whether to render the
       // editor or fall back to the no-conversation path. Fires in
       // parallel; not ordering-sensitive.
-      void supabase.from('proofs').select('helpscout_conversation_id, contacts(full_name, companies(name))').eq('id', proofId!).single()
+      void supabase.from('proofs').select('helpscout_conversation_id, contact_id, contacts(full_name, company_id, companies(name))').eq('id', proofId!).single()
         .then(({ data }) => {
           if (cancelled) return
           const row = data as any
@@ -619,7 +627,9 @@ export default function NewVersionPage() {
           if (c) {
             setProofName(c.full_name ?? '')
             setProofCompany(c.companies?.name ?? '')
+            setProofCompanyId(c.company_id ?? null)
           }
+          setProofContactId(row?.contact_id ?? null)
           setProofHelpScoutConversationId(row?.helpscout_conversation_id ?? null)
         })
 
@@ -4682,6 +4692,30 @@ export default function NewVersionPage() {
     },
   }
 
+  // ── Bundle-orders Slice 1: material-swap guard (spec §12.1) ───────
+  // If this new version switches to a DIFFERENT material AND its
+  // recipients are entirely different people from the version it
+  // replaces, it looks like a second product being smuggled in as a
+  // version bump — not a revision of the same card. A new version
+  // replaces what the customer sees and only the current version can
+  // ever be ordered, so the old card would be left stranded (approved
+  // but unreachable). Warn, don't block: it might still be a genuine
+  // rebrand, so the designer can proceed. The escape hatch pre-fills a
+  // brand-new project with the same company + contact.
+  const materialSwapWarning =
+    inh !== null &&
+    !!inh.materialId &&
+    !!selectedMaterialId &&
+    selectedMaterialId !== inh.materialId &&
+    rostersAreDisjoint(inh.names, names)
+  const separateProjectHref = (() => {
+    const params = new URLSearchParams()
+    if (proofCompanyId) params.set('companyId', proofCompanyId)
+    if (proofContactId) params.set('contactId', proofContactId)
+    const qs = params.toString()
+    return qs ? `/proofs/new?${qs}` : '/proofs/new'
+  })()
+
   // ── QR carry-forward derivations ─────────────────────────────────
   // displayQrEntries decorates each existing QR entry with effective
   // `keep` + `artworkChanged` flags driven by the artwork carry state.
@@ -5197,6 +5231,34 @@ export default function NewVersionPage() {
                 )}
               </div>
             </div>
+
+            {/* Material-swap guard (bundle-orders spec §12.1). Different
+                material + different people = probably a second product, not a
+                revision. Non-blocking — the designer can carry on if it's a
+                genuine rebrand — but offers a one-click route to build it as a
+                separate project so the old card isn't left stranded. */}
+            {materialSwapWarning && (
+              <div className="mb-8 rounded-lg border border-low bg-low-soft p-4 text-[13px] leading-[1.6] text-ink-soft">
+                <p className="font-semibold text-ink">This looks like a different product, not a revision</p>
+                <p className="mt-1">
+                  This version switches to a different material and its names don’t match v{inheritedVersionNumber}.
+                  A new version <strong>replaces</strong> what the customer sees, and only the current version can be
+                  ordered — the v{inheritedVersionNumber} card would no longer be visible or orderable. If the customer
+                  wants both cards, they should be separate cards.
+                </p>
+                <p className="mt-2.5">
+                  <Link
+                    to={separateProjectHref}
+                    className="font-semibold text-ink underline decoration-low underline-offset-2 hover:opacity-80"
+                  >
+                    Start a separate project instead →
+                  </Link>
+                </p>
+                <p className="mt-2 text-ink-mute">
+                  If this really is a revision of the same card, carry on and ignore this.
+                </p>
+              </div>
+            )}
 
             {variantRequired && variants.length > 0 && variantType !== 'default' && (
               <div ref={variantRef} className="mb-8">
