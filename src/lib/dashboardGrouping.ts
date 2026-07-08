@@ -92,6 +92,12 @@ export interface DashboardProject {
   // outstanding request (the bug on multi-slot Set collections + multi-recipient
   // proofs). Self-clears when a new version resets the changed slot.
   has_open_change_request: boolean
+  // 000307: furthest-along payable order state for the proof, so the row can show
+  // the ordering journey past Approved. 'ordered' = an order is paid/fulfilled;
+  // 'awaiting_payment' = a pay link is out and unpaid; null = no live payable
+  // order (draft/expired/cancelled/revision don't count). Non-null only on
+  // approved proofs, and only read by proofBucket on approved proofs.
+  order_status: 'ordered' | 'awaiting_payment' | null
 }
 
 export type SectionKind = 'pinned' | 'team' | 'snoozed' | 'time' | 'company'
@@ -395,8 +401,12 @@ export function recentlyAwakened(p: DashboardProject): boolean {
 //
 // Precedence mirrors the tile predicates in dashboard_tile_counts()
 // (migration 000213) and the established left-cap order:
-//   snoozed > needs-attention > approved > dormant > abandoned >
+//   snoozed > needs-attention > approved* > dormant > abandoned >
 //   changes-requested > customer-replied > awaiting-customer > not-viewed
+// *the approved slot now resolves to Ordered / Awaiting payment / Approved by
+// the proof's furthest-along payable order state (order_status, 000307), so the
+// row shows the ordering journey past approval; the tiles are unaffected (they
+// key off the raw proof status, which stays 'approved' through the order life).
 // changes-requested and customer-replied are the two "customer responded"
 // sub-states (sidebar vs email) that share the one headline tile; the
 // sidebar request ranks higher as the more specific signal.
@@ -408,6 +418,8 @@ export function recentlyAwakened(p: DashboardProject): boolean {
 export type ProofBucket =
   | 'needs_attention'
   | 'approved'
+  | 'awaiting_payment'
+  | 'ordered'
   | 'dormant'
   | 'abandoned'
   | 'changes_requested'
@@ -446,6 +458,8 @@ export interface BucketInput {
   follow_up_rule_code: 'sent_never_viewed' | 'viewed_not_actioned' | null
   // 000279: an outstanding change request on any slot of the current version.
   has_open_change_request: boolean
+  // 000307: furthest-along payable order state — only read on approved proofs.
+  order_status: 'ordered' | 'awaiting_payment' | null
 }
 
 // Label + colour per bucket. Colours are the same tokens/hexes the headline
@@ -467,6 +481,13 @@ const BUCKET_META: Record<ProofBucket, { label: string; colour: string }> = {
   not_viewed:        { label: 'Not viewed',        colour: 'var(--c-low)' },
   snoozed:           { label: 'Snoozed',           colour: '#7c3aed' },
   approved:          { label: 'Approved',          colour: 'var(--c-in-stock)' },
+  // The two post-approval ordering states (000307), shown once a pay link is out
+  // (Awaiting payment) or the order is paid (Ordered). Awaiting payment takes the
+  // amber "we're waiting on the customer" tone; Ordered shares Approved's
+  // happy-path green and is told apart by its label — the same shared-hue,
+  // different-label choice as changes_requested vs customer_replied above.
+  awaiting_payment:  { label: 'Awaiting payment',  colour: 'var(--c-low)' },
+  ordered:           { label: 'Ordered',           colour: 'var(--c-in-stock)' },
   dormant:           { label: 'Dormant',           colour: 'var(--c-ink-mute)' },
   abandoned:         { label: 'Abandoned',         colour: 'var(--c-ink-dim)' },
 }
@@ -521,7 +542,14 @@ export function proofBucket(p: BucketInput): BucketDisplay {
   } else if (p.rule_code != null) {
     bucket = 'needs_attention'
   } else if (p.status === 'approved') {
-    bucket = 'approved'
+    // The approved proof continues down the ordering path: once a pay link is
+    // out it reads Awaiting payment, and once the order is paid it reads
+    // Ordered. Falls back to plain Approved when there's no live payable order
+    // (order_status null). Kept under needs_attention/snoozed, matching the left
+    // cap and how those still take precedence on an approved proof.
+    bucket = p.order_status === 'ordered' ? 'ordered'
+      : p.order_status === 'awaiting_payment' ? 'awaiting_payment'
+      : 'approved'
   } else if (p.status === 'dormant') {
     bucket = 'dormant'
   } else if (p.status === 'abandoned') {

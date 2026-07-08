@@ -82,6 +82,7 @@ function makeProject(overrides: Partial<DashboardProject> = {}): DashboardProjec
     follow_up_max_nudges:       null,
     follow_up_last_sent_at:     null,
     has_open_change_request:    false,
+    order_status:               null,
     ...overrides,
   }
 }
@@ -516,6 +517,41 @@ test('terminal statuses map straight through', () => {
   assertEqual(proofBucket(makeProject({ status: 'approved'  })).bucket, 'approved')
   assertEqual(proofBucket(makeProject({ status: 'dormant'   })).bucket, 'dormant')
   assertEqual(proofBucket(makeProject({ status: 'abandoned' })).bucket, 'abandoned')
+})
+
+// ── order_status extends the approved slot (000307) ─────────────────────────
+test('approved proof with a paid/fulfilled order reads Ordered', () => {
+  const p = makeProject({ status: 'approved', order_status: 'ordered' })
+  assertEqual(proofBucket(p).bucket, 'ordered')
+  assertEqual(proofBucket(p).label, 'Ordered')
+})
+
+test('approved proof with an unpaid pay link reads Awaiting payment', () => {
+  const p = makeProject({ status: 'approved', order_status: 'awaiting_payment' })
+  assertEqual(proofBucket(p).bucket, 'awaiting_payment')
+  assertEqual(proofBucket(p).label, 'Awaiting payment')
+})
+
+test('approved proof with no live payable order still reads Approved', () => {
+  // A cancelled/expired-only proof surfaces order_status null and stays Approved.
+  assertEqual(proofBucket(makeProject({ status: 'approved', order_status: null })).bucket, 'approved')
+})
+
+test('order_status only affects approved proofs, never in_progress', () => {
+  // Defensive: order_status is only ever non-null on approved proofs in the
+  // data, but even if it leaked onto an in_progress row the workflow buckets win.
+  const p = makeProject({
+    status: 'in_progress',
+    current_version_id: 'v1',
+    current_version_viewed_at: hoursAgo(2),
+    order_status: 'ordered',
+  })
+  assertEqual(proofBucket(p).bucket, 'awaiting_customer')
+})
+
+test('needs attention still wins over an ordered proof', () => {
+  const p = makeProject({ status: 'approved', order_status: 'ordered', rule_code: 'approved_no_order' })
+  assertEqual(proofBucket(p).bucket, 'needs_attention')
 })
 
 test('rule_code (needs attention) wins over the in_progress workflow state', () => {
