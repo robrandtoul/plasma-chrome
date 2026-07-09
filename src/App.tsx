@@ -20,6 +20,7 @@ import SetNewPasswordPage from './pages/SetNewPasswordPage'
 // vite.config.ts manualChunks).
 const CustomerProofPage = lazyWithRetry(() => import('./pages/CustomerProofPage'), 'CustomerProofPage')
 const OrderPayPage = lazyWithRetry(() => import('./pages/OrderPayPage'), 'OrderPayPage')
+const OrderGroupPayPage = lazyWithRetry(() => import('./pages/OrderGroupPayPage'), 'OrderGroupPayPage')
 const DashboardPage = lazyWithRetry(() => import('./pages/DashboardPage'), 'DashboardPage')
 const NewProofPage = lazyWithRetry(() => import('./pages/NewProofPage'), 'NewProofPage')
 const ProofDetailPage = lazyWithRetry(() => import('./pages/ProofDetailPage'), 'ProofDetailPage')
@@ -95,6 +96,10 @@ function AppShell() {
       <Routes>
         {/* Public */}
         <Route path="/p/:id" element={<CustomerProofPage />} />
+        {/* The static /order/group segment outranks /order/:id in React
+            Router's matching, so group links never fall into the single-order
+            page. */}
+        <Route path="/order/group/:id" element={<OrderGroupPayPage />} />
         <Route path="/order/:id" element={<OrderPayPage />} />
         <Route path="/login" element={<LoginPage />} />
 

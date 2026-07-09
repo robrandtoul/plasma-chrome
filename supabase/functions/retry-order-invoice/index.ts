@@ -12,10 +12,10 @@
 // Auth: designer or admin (requireDesigner) — the same audience that can see
 // the Orders page. verify_jwt is on at the platform level too.
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { requireDesigner, json, CORS_HEADERS } from '../_shared/admin.ts'
+import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { requireDesigner, json, CORS_HEADERS, type CallerContext } from '../_shared/admin.ts'
 import { getAccessContext, createSalesInvoice } from '../_shared/xero.ts'
-import { buildOrderInvoiceLines, resolveZeroRatedTaxType } from '../_shared/invoiceBuild.ts'
+import { buildOrderInvoiceLines, buildGroupInvoiceLines, resolveZeroRatedTaxType, type OrderForInvoice } from '../_shared/invoiceBuild.ts'
 import { isVatFreeGbpDestination } from '../_shared/ukVatArea.ts'
 import { logAudit } from '../_shared/audit.ts'
 
@@ -63,14 +63,15 @@ Deno.serve(async (req) => {
   const ctxOrResp = await requireDesigner(req)
   if (ctxOrResp instanceof Response) return ctxOrResp
 
-  let body: { order_id?: string }
+  let body: { order_id?: string; group_id?: string }
   try {
     body = await req.json()
   } catch {
     return json({ error: 'Invalid JSON body' }, 400)
   }
   const orderId = typeof body.order_id === 'string' ? body.order_id : null
-  if (!orderId) return json({ error: 'Missing order_id' }, 400)
+  const groupId = typeof body.group_id === 'string' ? body.group_id : null
+  if (!orderId && !groupId) return json({ error: 'Missing order_id' }, 400)
 
   // Service-role client (bypasses RLS) for the reads/writes the webhook also
   // does. The proofs schema is pinned, matching every other order path.
@@ -79,6 +80,11 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     { db: { schema: 'proofs' }, auth: { persistSession: false, autoRefreshToken: false } },
   )
+
+  // Group retry (bundle orders Slice 2): rebuild the ONE combined invoice for
+  // a paid group whose webhook Xero step failed. Same shape as the single
+  // path below, with the lines built per member + one shipping/tariff pair.
+  if (groupId) return await retryGroupInvoice(admin, ctxOrResp, groupId)
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
@@ -245,3 +251,186 @@ Deno.serve(async (req) => {
   })
   return json({ ok: false, error: msg }, 200)
 })
+
+// ── Group invoice retry (bundle orders Slice 2) ─────────────────────────────
+// The group mirror of the single-order retry above: the expected total is
+// rebuilt from every member's stamped goods breakdown plus the group's ONE
+// shipping + tariff figures, and the lines come from the same shared builder
+// the webhook's group path uses — so a retried group invoice is exactly the
+// invoice the webhook would have created.
+async function retryGroupInvoice(
+  admin: SupabaseClient,
+  caller: CallerContext,
+  groupId: string,
+): Promise<Response> {
+  interface GroupRow {
+    id: string
+    status: string
+    currency: string
+    payment_reference: string | null
+    xero_invoice_id: string | null
+    xero_contact_id: string | null
+    xero_contact_name: string | null
+    amount_shipping: number | null
+    amount_us_tariff: number | null
+    ship_dest_country: string | null
+    ship_to_name: string | null
+    ship_to_email: string | null
+    ship_to_address: {
+      line1?: string | null
+      line2?: string | null
+      city?: string | null
+      region?: string | null
+      postal_code?: string | null
+      country?: string | null
+    } | null
+  }
+
+  const { data: group, error: groupErr } = await admin
+    .from('order_groups')
+    .select('id, status, currency, payment_reference, xero_invoice_id, xero_contact_id, xero_contact_name, amount_shipping, amount_us_tariff, ship_dest_country, ship_to_name, ship_to_email, ship_to_address')
+    .eq('id', groupId)
+    .single<GroupRow>()
+  if (groupErr || !group) return json({ error: 'Payment group not found' }, 404)
+
+  if (group.status !== 'paid') {
+    return json({ error: 'Only a paid payment group can be invoiced.' }, 409)
+  }
+  if (group.xero_invoice_id) {
+    return json({ error: 'This payment group already has a Xero invoice.', invoiceId: group.xero_invoice_id }, 409)
+  }
+
+  const { data: memberRows } = await admin
+    .from('orders')
+    .select('proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, order_kind, proofs(contacts(full_name, email))')
+    .eq('order_group_id', groupId)
+    .order('created_at', { ascending: true })
+    .order('id', { ascending: true })
+  type MemberRow = OrderForInvoice & { proofs: { contacts: { full_name: string | null; email: string | null } | null } | null }
+  const members = (memberRows ?? []) as unknown as MemberRow[]
+  if (members.length === 0) return json({ error: 'This payment group has no orders.' }, 409)
+
+  const xctx = await getAccessContext(admin)
+  if (!xctx) {
+    const msg = 'Xero is not connected — reconnect Xero in Settings, then retry.'
+    await admin.from('order_groups').update({ xero_invoice_error: msg }).eq('id', groupId)
+    return json({ ok: false, error: msg }, 200)
+  }
+
+  const currency = String(group.currency ?? 'GBP').toUpperCase()
+  const reference = group.payment_reference ?? groupId
+
+  // The charged total: every member's goods (cards incl. folded finish +
+  // tooling + personalisation, or the custom-quote figure) minus its discount,
+  // plus the group's combined shipping + tariff — the same composition the
+  // group checkout charged.
+  let expectedTotal = 0
+  for (const m of members) {
+    const cardDiscount = Number(m.amount_card_discount ?? 0)
+    if (m.custom_quote_total != null) {
+      expectedTotal += Number(m.custom_quote_total) - cardDiscount
+    } else {
+      expectedTotal +=
+        Number(m.amount_cards ?? 0) + Number(m.amount_tooling ?? 0) + Number(m.amount_personalisation ?? 0) - cardDiscount
+    }
+  }
+  expectedTotal = round2(expectedTotal + Number(group.amount_shipping ?? 0) + Number(group.amount_us_tariff ?? 0))
+
+  const country = group.ship_dest_country ?? group.ship_to_address?.country ?? null
+  const vatFree = currency === 'GBP' && isVatFreeGbpDestination(group.ship_dest_country ?? null)
+  const zeroRatedTaxType = await resolveZeroRatedTaxType(admin, country, currency)
+
+  const { lines } = await buildGroupInvoiceLines(
+    admin,
+    members,
+    { amount_shipping: group.amount_shipping, amount_us_tariff: group.amount_us_tariff },
+    { reference, currency, expectedTotal, country },
+  )
+
+  const firstContact = members[0]?.proofs?.contacts ?? null
+  const contactName = (group.xero_contact_name?.trim() || group.ship_to_name?.trim() || firstContact?.full_name?.trim() || firstContact?.email?.trim() || 'Customer')
+  const contactEmail = group.ship_to_email?.trim() || firstContact?.email?.trim() || null
+
+  const addr = group.ship_to_address
+  const invoiceAddress = addr
+    ? {
+        line1: addr.line1 ?? null,
+        line2: addr.line2 ?? null,
+        city: addr.city ?? null,
+        region: addr.region ?? null,
+        postalCode: addr.postal_code ?? null,
+        country: addr.country ?? null,
+      }
+    : null
+  const boundContactId = group.xero_contact_id ?? null
+
+  const created = await createSalesInvoice(xctx.accessToken, xctx.tenantId, {
+    contactName,
+    contactEmail,
+    currency,
+    reference,
+    lines,
+    address: invoiceAddress,
+    contactId: boundContactId,
+    vatFree,
+    zeroRatedTaxType,
+  })
+  let invoiceId = created.invoiceId
+  let createdInvoice = created.invoice
+  let lastError = created.error
+
+  const wasItemised = lines.some((l) => l.itemCode) || !!zeroRatedTaxType
+  if (!invoiceId && wasItemised) {
+    const retry = await createSalesInvoice(xctx.accessToken, xctx.tenantId, {
+      contactName,
+      contactEmail,
+      currency,
+      reference,
+      lines: [{ description: `Order ${reference}`, amount: expectedTotal, itemCode: null }],
+      address: invoiceAddress,
+      contactId: boundContactId,
+      vatFree,
+    })
+    invoiceId = retry.invoiceId
+    if (retry.invoice) createdInvoice = retry.invoice
+    if (retry.error) lastError = retry.error
+  }
+
+  if (invoiceId) {
+    await admin.from('order_groups').update({ xero_invoice_id: invoiceId, xero_invoice_error: null }).eq('id', groupId)
+    if (!boundContactId) {
+      const c = (createdInvoice?.Contact as { ContactID?: string; Name?: string } | undefined) ?? null
+      if (c?.ContactID) {
+        await admin
+          .from('order_groups')
+          .update({ xero_contact_id: c.ContactID, ...(c.Name ? { xero_contact_name: c.Name } : {}) })
+          .eq('id', groupId)
+      }
+    }
+    await logAudit(admin, {
+      actorId: caller.callerId,
+      actorEmail: caller.callerEmail,
+      actorLabel: caller.callerLabel,
+      action: 'order.invoice_retried',
+      targetType: 'order_group',
+      targetId: groupId,
+      targetLabel: `Payment group ${reference}`,
+      afterValue: { groupId, invoiceId, currency },
+    })
+    return json({ ok: true, invoiceId })
+  }
+
+  const msg = lastError ?? 'Xero did not return an invoice'
+  await admin.from('order_groups').update({ xero_invoice_error: msg }).eq('id', groupId)
+  await logAudit(admin, {
+    actorId: caller.callerId,
+    actorEmail: caller.callerEmail,
+    actorLabel: caller.callerLabel,
+    action: 'order.invoice_retry_failed',
+    targetType: 'order_group',
+    targetId: groupId,
+    targetLabel: `Payment group ${reference}`,
+    afterValue: { groupId, error: msg },
+  })
+  return json({ ok: false, error: msg }, 200)
+}

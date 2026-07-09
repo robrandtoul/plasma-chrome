@@ -92,13 +92,18 @@ export async function resolveZeroRatedTaxType(
   return code?.trim() || null
 }
 
-export async function buildOrderInvoiceLines(
+// The per-order GOODS lines: the product line (custom quote or grid, with the
+// item-code resolution described in the header), the tooling line, and the
+// designer-discount line. NO shipping / US tariff / sum-check — those are the
+// caller's: buildOrderInvoiceLines appends one of each for a standalone order,
+// buildGroupInvoiceLines appends ONE combined pair for a whole order group
+// (bundle orders Slice 2 — a product + tooling line per card, one shipping,
+// one tariff, spec §6).
+export async function buildOrderGoodsLines(
   admin: SupabaseClient,
   order: OrderForInvoice,
-  ctx: InvoiceBuildContext,
-): Promise<InvoiceBuildResult> {
-  const { reference, currency, expectedTotal } = ctx
-
+  reference: string,
+): Promise<{ lines: InvoiceLine[]; productItemCode: string | null }> {
   // Resolve the product's Xero item + a human label for the line.
   let itemCode: string | null = null
   let materialName = ''
@@ -158,24 +163,12 @@ export async function buildOrderInvoiceLines(
     }
   }
 
-  // Shipping item follows the UK VAT AREA: GB + Isle of Man → the domestic
-  // (VAT-bearing) code; the Channel Islands and everywhere else → the
-  // zero-rated international one. Null country infers from currency
-  // (GBP ⇒ UK), matching the live fallback when Stripe didn't surface an
-  // address. See _shared/ukVatArea.ts.
-  const country = ctx.country
-  const domestic = country ? isUkVatAreaCountry(country) : currency === 'GBP'
   const toolingItem = Deno.env.get('XERO_TOOLING_ITEM_CODE') ?? '020'
-  const shippingItem = domestic
-    ? (Deno.env.get('XERO_SHIPPING_DOMESTIC_ITEM_CODE') ?? '052')
-    : (Deno.env.get('XERO_SHIPPING_INTL_ITEM_CODE') ?? '050')
 
   const lines: InvoiceLine[] = []
   const cards = Number(order.amount_cards ?? 0)
   const tooling = Number(order.amount_tooling ?? 0)
   const personalisation = Number(order.amount_personalisation ?? 0)
-  const shipping = Number(order.amount_shipping ?? 0)
-  const usTariff = Number(order.amount_us_tariff ?? 0)
   const cardDiscount = round2(Number(order.amount_card_discount ?? 0))
   // The code that lands on the product line, before any summary-fallback below.
   let productItemCode: string | null = null
@@ -195,7 +188,7 @@ export async function buildOrderInvoiceLines(
     productItemCode = itemCode
   } else if (order.amount_cards != null) {
     // Grid order: product line (cards + personalisation folded in),
-    // then tooling, then shipping. The card count goes in the Qty column
+    // then tooling. The card count goes in the Qty column
     // (with a per-unit price) rather than the description — see the
     // quantity handling in createSalesInvoice.
     const variantSuffix = variantName && variantName !== materialName ? ` ${variantName}` : ''
@@ -224,32 +217,44 @@ export async function buildOrderInvoiceLines(
   if (cardDiscount > 0 && lines.length > 0) {
     lines.push({ description: 'Discount', amount: -cardDiscount, itemCode })
   }
-  if (shipping > 0) {
-    lines.push({
-      description: domestic ? 'Domestic shipping' : 'International shipping',
-      amount: shipping,
-      itemCode: shippingItem,
-    })
-  }
-  // US tariff & customs handling — its own line. The item code is admin-editable
-  // in settings (Rob's choice), unlike the env-based tooling/shipping codes;
-  // read only when there's a tariff to book, and fall back to the known live
-  // item '910' if the column is unset. Xero derives the (export, no-VAT) tax
-  // rate from that item.
-  if (usTariff > 0) {
-    const { data: tariffSettings } = await admin
-      .from('settings')
-      .select('xero_us_tariff_item_code')
-      .eq('id', 1)
-      .maybeSingle()
-    const usTariffItem = (tariffSettings?.xero_us_tariff_item_code as string | null)?.trim() || '910'
-    lines.push({ description: 'US tariff & customs handling', amount: usTariff, itemCode: usTariffItem })
-  }
 
-  // Safety net: the itemised lines MUST sum to the amount Stripe charged, or
-  // the Stripe→Xero bank-feed match breaks. If the breakdown is missing
-  // (legacy order) or drifts by more than a penny, fall back to the single
-  // summary line on the Sales account.
+  return { lines, productItemCode }
+}
+
+// The domestic-vs-international shipping item for a delivery country. Follows
+// the UK VAT AREA: GB + Isle of Man → the domestic (VAT-bearing) code; the
+// Channel Islands and everywhere else → the zero-rated international one. Null
+// country infers from currency (GBP ⇒ UK), matching the live fallback when
+// Stripe didn't surface an address. See _shared/ukVatArea.ts.
+function shippingItemFor(country: string | null, currency: string): { domestic: boolean; shippingItem: string } {
+  const domestic = country ? isUkVatAreaCountry(country) : currency === 'GBP'
+  const shippingItem = domestic
+    ? (Deno.env.get('XERO_SHIPPING_DOMESTIC_ITEM_CODE') ?? '052')
+    : (Deno.env.get('XERO_SHIPPING_INTL_ITEM_CODE') ?? '050')
+  return { domestic, shippingItem }
+}
+
+// US tariff & customs handling — its own line. The item code is admin-editable
+// in settings (Rob's choice), unlike the env-based tooling/shipping codes;
+// read only when there's a tariff to book, and fall back to the known live
+// item '910' if the column is unset. Xero derives the (export, no-VAT) tax
+// rate from that item.
+async function usTariffLine(admin: SupabaseClient, usTariff: number): Promise<InvoiceLine | null> {
+  if (usTariff <= 0) return null
+  const { data: tariffSettings } = await admin
+    .from('settings')
+    .select('xero_us_tariff_item_code')
+    .eq('id', 1)
+    .maybeSingle()
+  const usTariffItem = (tariffSettings?.xero_us_tariff_item_code as string | null)?.trim() || '910'
+  return { description: 'US tariff & customs handling', amount: usTariff, itemCode: usTariffItem }
+}
+
+// Safety net shared by the single-order and group builders: the itemised lines
+// MUST sum to the amount Stripe charged, or the Stripe→Xero bank-feed match
+// breaks. If the breakdown is missing (legacy order) or drifts by more than a
+// penny, fall back to the single summary line on the Sales account.
+function enforceSum(lines: InvoiceLine[], expectedTotal: number, reference: string): boolean {
   const sum = round2(lines.reduce((acc, l) => acc + l.amount, 0))
   if (lines.length === 0 || Math.abs(sum - expectedTotal) > 0.01) {
     if (lines.length > 0) {
@@ -257,8 +262,79 @@ export async function buildOrderInvoiceLines(
     }
     lines.length = 0
     lines.push({ description: `Order ${reference}`, amount: expectedTotal, itemCode: null })
-    productItemCode = null
+    return false
   }
+  return true
+}
+
+export async function buildOrderInvoiceLines(
+  admin: SupabaseClient,
+  order: OrderForInvoice,
+  ctx: InvoiceBuildContext,
+): Promise<InvoiceBuildResult> {
+  const { reference, currency, expectedTotal } = ctx
+
+  const goods = await buildOrderGoodsLines(admin, order, reference)
+  const lines = goods.lines
+  let productItemCode = goods.productItemCode
+
+  const { domestic, shippingItem } = shippingItemFor(ctx.country, currency)
+  const shipping = Number(order.amount_shipping ?? 0)
+  if (shipping > 0) {
+    lines.push({
+      description: domestic ? 'Domestic shipping' : 'International shipping',
+      amount: shipping,
+      itemCode: shippingItem,
+    })
+  }
+  const tariff = await usTariffLine(admin, Number(order.amount_us_tariff ?? 0))
+  if (tariff) lines.push(tariff)
+
+  if (!enforceSum(lines, expectedTotal, reference)) productItemCode = null
 
   return { lines, productItemCode, domestic }
+}
+
+// The group fields the group invoice needs (bundle orders Slice 2 — the money
+// shell over N member orders). Shipping + tariff are billed ONCE at group
+// level; each member contributes only its goods lines.
+export interface GroupForInvoice {
+  amount_shipping: number | null
+  amount_us_tariff: number | null
+}
+
+// One itemised invoice for a whole order group: a product (+ tooling
+// + discount) line per member card, then ONE combined shipping line and ONE
+// US-tariff line from the group row (spec §6). Same expectedTotal safety net —
+// a drifting breakdown collapses to a single summary line so the 1:1
+// payment_reference ↔ invoice bank-feed match can never break.
+export async function buildGroupInvoiceLines(
+  admin: SupabaseClient,
+  members: OrderForInvoice[],
+  group: GroupForInvoice,
+  ctx: InvoiceBuildContext,
+): Promise<{ lines: InvoiceLine[]; domestic: boolean }> {
+  const { reference, currency, expectedTotal } = ctx
+
+  const lines: InvoiceLine[] = []
+  for (const member of members) {
+    const goods = await buildOrderGoodsLines(admin, member, reference)
+    lines.push(...goods.lines)
+  }
+
+  const { domestic, shippingItem } = shippingItemFor(ctx.country, currency)
+  const shipping = Number(group.amount_shipping ?? 0)
+  if (shipping > 0) {
+    lines.push({
+      description: domestic ? 'Domestic shipping' : 'International shipping',
+      amount: shipping,
+      itemCode: shippingItem,
+    })
+  }
+  const tariff = await usTariffLine(admin, Number(group.amount_us_tariff ?? 0))
+  if (tariff) lines.push(tariff)
+
+  enforceSum(lines, expectedTotal, reference)
+
+  return { lines, domestic }
 }

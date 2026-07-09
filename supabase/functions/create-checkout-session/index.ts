@@ -2,6 +2,16 @@
 // Checkout session for one order and returns the hosted payment URL.
 // Step 4 of the Ordering & checkout build (docs/ordering-checkout-spec.md).
 //
+// GROUP MODE (bundle orders Slice 2, docs/bundle-orders-spec.md §13): pass
+// group_id + the GROUP's token instead of order_id, and the function prices
+// every member order of the payment group (goods + tooling per card; open
+// specs resolve from the request's member_choices with the single-order
+// doctrine — request wins while the flag is set, validated, persisted),
+// computes ONE combined shipping figure for the single consignment (+ ONE US
+// tariff line when US-bound), and creates ONE PaymentIntent for the whole
+// group. A member order's own link refuses payment while its group is
+// active, so the same card can never be charged twice.
+//
 // The amount is ALWAYS computed SERVER-SIDE (never trust the client):
 //   * custom-quote orders → the agreed total,
 //   * grid-priced orders → price tiers (+ interpolation for non-standard
@@ -24,7 +34,7 @@
 // public_get_order. Stripe charges only fake money while STRIPE_SECRET_KEY
 // is a test key (sk_test_…).
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { cardTotalForQuantity, computeOrderTotal, resolveCardDiscount, resolveUsTariff, pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY, type Tier } from '../_shared/orderPricing.ts'
 import {
   applyIntlAdjustment,
@@ -110,6 +120,9 @@ Deno.serve(async (req) => {
   }
 
   const orderId = typeof body.order_id === 'string' ? body.order_id : null
+  // Group mode: the id of a proofs.order_groups row; token below is then the
+  // GROUP's token, never a member order's.
+  const groupId = typeof body.group_id === 'string' ? body.group_id : null
   const token = typeof body.token === 'string' ? body.token : null
   // The page passes its own origin so the success/cancel redirects come
   // back to the right host (prod vs a Netlify preview). Must be an
@@ -148,7 +161,43 @@ Deno.serve(async (req) => {
             p != null && p.name !== '' && Number.isInteger(p.quantity) && p.quantity > 0,
         )
     : []
-  if (!orderId || !token) return json({ error: 'Missing order_id or token' }, 400)
+  // Per-member customer choices for a GROUP checkout (the in-bundle open-spec
+  // choosers). Keyed by member order id; each entry carries the same fields the
+  // single-order body does (quantity / person_quantities / material_variant_id /
+  // material_option_id) and earns the same trust: shape-checked here, then
+  // honoured only where that member's *_open flag is set and the id survives
+  // validation against the member's own material.
+  const memberChoices = new Map<string, MemberChoice>()
+  if (Array.isArray(body.member_choices)) {
+    for (const raw of body.member_choices as unknown[]) {
+      if (!raw || typeof raw !== 'object') continue
+      const r = raw as Record<string, unknown>
+      const oid = typeof r.order_id === 'string' ? r.order_id : null
+      if (!oid) continue
+      memberChoices.set(oid, {
+        quantity:
+          typeof r.quantity === 'number' && Number.isInteger(r.quantity) && r.quantity > 0 ? r.quantity : null,
+        personQuantities: Array.isArray(r.person_quantities)
+          ? (r.person_quantities as unknown[])
+              .map((p) =>
+                p && typeof p === 'object'
+                  ? {
+                      name: String((p as Record<string, unknown>).name ?? ''),
+                      quantity: Number((p as Record<string, unknown>).quantity),
+                    }
+                  : null,
+              )
+              .filter(
+                (p): p is { name: string; quantity: number } =>
+                  p != null && p.name !== '' && Number.isInteger(p.quantity) && p.quantity > 0,
+              )
+          : [],
+        materialVariantId: typeof r.material_variant_id === 'string' ? r.material_variant_id : null,
+        materialOptionId: typeof r.material_option_id === 'string' ? r.material_option_id : null,
+      })
+    }
+  }
+  if ((!orderId && !groupId) || !token) return json({ error: 'Missing order_id/group_id or token' }, 400)
   if (!origin || !/^https?:\/\/[^/]+$/.test(origin)) return json({ error: 'Missing or invalid origin' }, 400)
 
   // Customer-entered rating destination for full_cost / goodwill orders. The
@@ -197,9 +246,29 @@ Deno.serve(async (req) => {
     return json({ error: `Payments are not fully configured for ${paymentMode} mode (missing publishable key).` }, 503)
   }
 
+  // ── Group mode (bundle orders Slice 2) ─────────────────────────────
+  if (groupId) {
+    return await handleGroupCheckout({
+      admin,
+      stripeKey,
+      publishableKey,
+      tariffFees: {
+        GBP: Number(modeRow?.us_tariff_fee_gbp ?? 0),
+        EUR: Number(modeRow?.us_tariff_fee_eur ?? 0),
+        USD: Number(modeRow?.us_tariff_fee_usd ?? 0),
+      },
+      groupId,
+      token,
+      reqDestCountry,
+      reqDestPostcode,
+      optedOutOfUsTariff,
+      memberChoices,
+    })
+  }
+
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, card_discount_type, card_discount_value, ship_dest_country, ship_dest_postcode, payment_reference, expires_at, material_variant_id, material_option_id, material_id, thickness_open, finish_open, quantity_open, quantity, names_count, has_personalisation, order_kind, proof_id')
+    .select('id, token, status, currency, custom_quote_total, shipping_treatment, shipping_charged, shipping_discount_percent, card_discount_type, card_discount_value, ship_dest_country, ship_dest_postcode, payment_reference, expires_at, material_variant_id, material_option_id, material_id, thickness_open, finish_open, quantity_open, quantity, names_count, has_personalisation, order_kind, proof_id, order_group_id')
     .eq('id', orderId)
     .eq('token', token)
     .single()
@@ -211,6 +280,28 @@ Deno.serve(async (req) => {
   if (order.status !== 'sent') return json({ error: 'This order is not payable.' }, 409)
   if (order.expires_at && new Date(order.expires_at).getTime() < Date.now()) {
     return json({ error: 'This order link has expired.' }, 409)
+  }
+
+  // A member of a payment group must pay through the group link — paying it
+  // standalone too would charge the same card twice. Blocked whenever the
+  // group is anything other than 'cancelled' (the #438 review fix): 'sent' is
+  // the normal case, and 'paid' covers the freak path where the webhook's
+  // member flip didn't land and a member sits 'sent' under a paid group —
+  // that card's money was already taken, so its own link must never charge.
+  // Only a cancelled group (which releases its members; a lingering pointer
+  // is a husk) falls through to standalone payment.
+  if (order.order_group_id) {
+    const { data: grp } = await admin
+      .from('order_groups')
+      .select('status')
+      .eq('id', order.order_group_id)
+      .maybeSingle()
+    if (grp && grp.status !== 'cancelled') {
+      return json({
+        error: 'order_in_group',
+        message: 'This order is part of a combined payment covering several items — please use the combined payment link we sent you. If you can’t find it, just reply to the email and we’ll re-send it.',
+      }, 409)
+    }
   }
 
   // ── Open-spec resolution (000298) ─────────────────────────────────
@@ -720,3 +811,555 @@ Deno.serve(async (req) => {
     },
   })
 })
+
+// ── Group checkout (bundle orders Slice 2) ──────────────────────────────────
+// Prices EVERY member order of a payment group and creates ONE PaymentIntent.
+// Members were validated at grouping time (order-group `create`): all 'sent',
+// online, one currency, priceable. A member with open specs (thickness_open /
+// finish_open / quantity_open, 000298/000302) resolves the customer's pick
+// from member_choices first — the same request-wins doctrine, validation and
+// persistence as the single-order path above — then prices exactly like a
+// designer-locked single order (the same tier + tooling + personalisation +
+// finish maths as the single path above; kept in step with it). What's new:
+//   * ONE combined shipping figure — the group's own treatment, rated for the
+//     single consignment (UK flat rate, or FedEx on the members' combined
+//     weight) — and ONE US tariff line when US-bound (spec §8 defaults).
+//   * Per-member goods breakdowns are stamped on each member row (their
+//     shipping/tariff stamped 0 — those live on the group), so the webhook
+//     can build the per-card invoice lines without re-pricing.
+//   * metadata.order_group_id on the PaymentIntent routes the webhook into
+//     group mode; metadata.payment_reference is the GROUP's GRP- reference —
+//     the 1:1 payment ↔ invoice spine, exactly as single orders.
+
+interface GroupMemberRow {
+  id: string
+  status: string
+  currency: string
+  custom_quote_total: number | null
+  quantity: number | null
+  names_count: number | null
+  has_personalisation: boolean
+  material_id: string | null
+  material_variant_id: string | null
+  material_option_id: string | null
+  thickness_open: boolean
+  finish_open: boolean
+  quantity_open: boolean
+  card_discount_type: string | null
+  card_discount_value: number | null
+  order_kind: string | null
+  payment_reference: string | null
+}
+
+// One member's picks from the group pay page's choosers — the group-mode
+// counterpart of the single-order body fields (quantity / person_quantities /
+// material_variant_id / material_option_id).
+interface MemberChoice {
+  quantity: number | null
+  personQuantities: { name: string; quantity: number }[]
+  materialVariantId: string | null
+  materialOptionId: string | null
+}
+
+async function handleGroupCheckout(ctx: {
+  admin: SupabaseClient
+  stripeKey: string
+  publishableKey: string
+  tariffFees: Record<'GBP' | 'EUR' | 'USD', number>
+  groupId: string
+  token: string
+  reqDestCountry: string | null
+  reqDestPostcode: string | null
+  optedOutOfUsTariff: boolean
+  memberChoices: Map<string, MemberChoice>
+}): Promise<Response> {
+  const { admin, groupId, token } = ctx
+  const round2 = (n: number) => Math.round(n * 100) / 100
+
+  const { data: group, error: groupErr } = await admin
+    .from('order_groups')
+    .select('id, token, status, currency, shipping_treatment, shipping_charged, shipping_discount_percent, ship_dest_country, ship_dest_postcode, payment_reference, expires_at')
+    .eq('id', groupId)
+    .eq('token', token)
+    .single()
+  if (groupErr || !group) return json({ error: 'Order not found' }, 404)
+
+  if (group.status === 'paid') return json({ error: 'This order has already been paid.' }, 409)
+  if (group.status !== 'sent') return json({ error: 'This order is not payable.' }, 409)
+  if (group.expires_at && new Date(group.expires_at).getTime() < Date.now()) {
+    return json({ error: 'This order link has expired.' }, 409)
+  }
+
+  const { data: memberRows, error: memberErr } = await admin
+    .from('orders')
+    .select('id, status, currency, custom_quote_total, quantity, names_count, has_personalisation, material_id, material_variant_id, material_option_id, thickness_open, finish_open, quantity_open, card_discount_type, card_discount_value, order_kind, payment_reference')
+    .eq('order_group_id', groupId)
+    .order('created_at', { ascending: true })
+    .order('id', { ascending: true })
+  if (memberErr) return json({ error: 'Could not read this order. Please try again.' }, 500)
+  const members = (memberRows ?? []) as GroupMemberRow[]
+  if (members.length === 0) return json({ error: 'This order is not payable.' }, 409)
+  for (const m of members) {
+    // A member cancelled after grouping (or re-opened) makes the combined
+    // total dishonest — refuse with a human explanation rather than charging
+    // a stale sum. The designer releases/fixes the card and the link revives.
+    if (m.status !== 'sent') {
+      return json({
+        error: 'group_member_not_payable',
+        message: 'One of the items in this combined payment has changed — please reply to the email you received and we’ll send an updated link.',
+      }, 409)
+    }
+  }
+
+  // A missing/invalid choice on an open-spec member. Carries the member's
+  // order id so the group pay page can point at the exact card (its own
+  // gating makes this belt-and-braces, but a stale tab can still land here).
+  const choiceRequired = (code: string, m: GroupMemberRow, what: string) =>
+    json({
+      error: code,
+      order_id: m.id,
+      message: `Please choose a ${what} for ${m.payment_reference ?? 'each item'} before paying.`,
+    }, 422)
+
+  // ── Delivery destination + VAT treatment (one for the whole group) ──
+  const effectiveDestPostcode = (ctx.reqDestPostcode ?? group.ship_dest_postcode ?? '').trim()
+  const effectiveDestCountry = normaliseShipDestination(
+    ctx.reqDestCountry ?? (group.ship_dest_country as string | null) ?? '',
+    effectiveDestPostcode,
+  )
+  const vatFree = group.currency === 'GBP' && isVatFreeGbpDestination(effectiveDestCountry)
+  const exv = (n: number) => (vatFree ? exVat(n) : n)
+
+  // ── Price each member (server-authoritative, same maths as single) ──
+  let goodsSum = 0
+  let discountSum = 0
+  // Combined parcel weight; null once any member can't be weighed (custom
+  // quote with no variant/quantity) → international shipping can't be rated.
+  let totalCardsGrams: number | null = 0
+  const memberLines: {
+    order_id: string
+    payment_reference: string | null
+    label: string
+    quantity: number | null
+    goods: number
+    card_discount: number
+  }[] = []
+  const memberStamps: { id: string; patch: Record<string, unknown> }[] = []
+
+  for (const m of members) {
+    let goods: number
+    let amountCards: number | null = null
+    let amountTooling: number | null = null
+    let amountPersonalisation: number | null = null
+    let label = ''
+    let variantWeightGrams: number | null = null
+
+    // ── Open-spec resolution per member (000298/000302) ─────────────
+    // Mirrors the single-order path above, member-scoped: the request's
+    // member_choices entry wins on every call while the member's flag is
+    // set (so "change your mind" works right up to payment), a previously
+    // persisted pick is the fallback for a stale client, and every id is
+    // validated against the member's own material — a value pointing at
+    // another material's (differently-priced) variant is rejected, never
+    // priced.
+    const choice = ctx.memberChoices.get(m.id)
+    let effectiveVariantId = m.material_variant_id
+    let effectiveOptionId = m.material_option_id
+    if (m.thickness_open === true && m.custom_quote_total == null) {
+      const requested = choice?.materialVariantId ?? effectiveVariantId
+      if (!requested) return choiceRequired('variant_required', m, 'thickness')
+      const { data: v } = await admin
+        .from('material_variants')
+        .select('id, material_id, is_active')
+        .eq('id', requested)
+        .maybeSingle()
+      if (!v || v.is_active === false || (m.material_id != null && v.material_id !== m.material_id)) {
+        return choiceRequired('variant_required', m, 'thickness')
+      }
+      effectiveVariantId = requested
+    }
+    if (m.finish_open === true && m.custom_quote_total == null) {
+      const requestedOpt = choice?.materialOptionId ?? effectiveOptionId
+      if (!requestedOpt) return choiceRequired('finish_required', m, 'finish')
+      const { data: mo } = await admin
+        .from('material_options')
+        .select('id, material_id')
+        .eq('id', requestedOpt)
+        .maybeSingle()
+      if (!mo || (m.material_id != null && mo.material_id !== m.material_id)) {
+        return choiceRequired('finish_required', m, 'finish')
+      }
+      effectiveOptionId = requestedOpt
+    }
+    // Quantity: designer-locked → as-is; customer-open (quantity_open) → the
+    // request wins — per-person split (sum drives the price) or a single
+    // chosen figure — falling back to a pick a previous call persisted.
+    const personQuantities = choice?.personQuantities ?? []
+    let resolvedQuantity: number | null
+    if (m.custom_quote_total != null) {
+      resolvedQuantity = m.quantity // prototype-style fixed copies; may be null
+    } else if (m.quantity_open !== true && m.quantity != null) {
+      resolvedQuantity = m.quantity
+    } else if (personQuantities.length > 0) {
+      resolvedQuantity = personQuantities.reduce((acc, p) => acc + p.quantity, 0)
+    } else if (choice?.quantity != null) {
+      resolvedQuantity = choice.quantity
+    } else if (m.quantity != null) {
+      resolvedQuantity = m.quantity
+    } else {
+      return choiceRequired('quantity_required', m, 'quantity')
+    }
+
+    if (m.custom_quote_total != null) {
+      goods = Number(m.custom_quote_total)
+      label = m.order_kind === 'prototype' ? 'Plasma prototype sample' : 'Plasma cards (bespoke quote)'
+      if (m.material_variant_id) {
+        const { data: variant } = await admin
+          .from('material_variants')
+          .select('weight_grams, display_name, materials(display_name)')
+          .eq('id', m.material_variant_id)
+          .maybeSingle()
+        if (variant?.weight_grams != null) variantWeightGrams = Number(variant.weight_grams)
+        const materialName = ((variant?.materials as { display_name?: string } | null)?.display_name) ?? ''
+        if (materialName) {
+          label = m.order_kind === 'prototype' ? `${materialName} — prototype sample` : `${materialName} (bespoke quote)`
+        }
+      }
+    } else {
+      // Grid member — the effective (locked or customer-chosen) variant +
+      // quantity, priced exactly like the single-order path.
+      if (!effectiveVariantId || resolvedQuantity == null) {
+        return json({
+          error: 'group_member_not_payable',
+          message: 'One of the items in this combined payment can’t be priced online — please reply to the email you received.',
+        }, 409)
+      }
+      const { data: tierRows } = await admin
+        .from('price_tiers')
+        .select('quantity, total_price')
+        .eq('material_variant_id', effectiveVariantId)
+        .eq('currency', group.currency)
+      const tiers: Tier[] = (tierRows ?? []).map((t) => ({
+        quantity: t.quantity as number,
+        total_price: exv(Number(t.total_price)),
+      }))
+
+      const { data: variant } = await admin
+        .from('material_variants')
+        .select('material_id, weight_grams, display_name, materials(display_name)')
+        .eq('id', effectiveVariantId)
+        .single()
+      if (variant?.weight_grams != null) variantWeightGrams = Number(variant.weight_grams)
+      let perExtraName: number | null = null
+      let flatAboveTop = false
+      if (variant?.material_id) {
+        const { data: material } = await admin
+          .from('materials')
+          .select('code, split_name_surcharge_gbp, split_name_surcharge_eur, split_name_surcharge_usd')
+          .eq('id', variant.material_id)
+          .single()
+        perExtraName = splitNameForCurrency(material, group.currency)
+        flatAboveTop = pricesFlatAboveTopTier(material?.code as string | null)
+      }
+
+      // Sanity cap on a customer-CHOSEN quantity, exactly as the single path:
+      // a designer can lock any figure, but a fat-fingered customer entry on a
+      // flat-above-top material is bounded rather than auto-priced.
+      if ((m.quantity_open === true || m.quantity == null) && flatAboveTop && resolvedQuantity > MAX_ONLINE_FLAT_QUANTITY) {
+        return json({
+          error: 'pricing_not_supported',
+          order_id: m.id,
+          message: 'For an order this large, please reply to the email you received and we’ll confirm the price and send a payment link.',
+        }, 422)
+      }
+
+      let personalisation: { perCardRate: number; minCharge: number } | null = null
+      if (m.has_personalisation) {
+        const { data: p } = await admin
+          .from('personalisation_pricing')
+          .select('per_card_rate, min_charge')
+          .eq('currency', group.currency)
+          .single()
+        if (p) personalisation = { perCardRate: exv(Number(p.per_card_rate)), minCharge: exv(Number(p.min_charge)) }
+      }
+
+      let optionSurcharge = 0
+      let optionName = ''
+      if (effectiveOptionId) {
+        const { data: surRows } = await admin
+          .from('material_option_surcharges')
+          .select('quantity, surcharge')
+          .eq('material_option_id', effectiveOptionId)
+          .eq('currency', group.currency)
+        const surTiers: Tier[] = (surRows ?? []).map((s) => ({
+          quantity: s.quantity as number,
+          total_price: exv(Number(s.surcharge)),
+        }))
+        if (surTiers.length > 0) optionSurcharge = cardTotalForQuantity(surTiers, resolvedQuantity, undefined, { flatAboveTop }) ?? 0
+        const { data: mo } = await admin
+          .from('material_options')
+          .select('display_name')
+          .eq('id', effectiveOptionId)
+          .maybeSingle()
+        optionName = (mo?.display_name as string | null) ?? ''
+      }
+
+      const priced = computeOrderTotal({
+        tiers,
+        quantity: resolvedQuantity,
+        perExtraNameSurcharge: perExtraName == null ? null : exv(perExtraName),
+        namesCount: m.names_count ?? 1,
+        personalisation,
+        optionSurcharge,
+        flatAboveTop,
+        shipping: 0,
+      })
+      if (!priced.ok) {
+        return json({
+          error: 'group_member_not_payable',
+          message: 'One of the items in this combined payment couldn’t be priced online — please reply to the email you received.',
+        }, 409)
+      }
+      goods = priced.goods
+      amountCards = round2(priced.cards + priced.finish)
+      amountTooling = priced.splitName
+      amountPersonalisation = priced.personalisation
+
+      const variantName = (variant?.display_name as string | null) ?? ''
+      const materialName = ((variant?.materials as { display_name?: string } | null)?.display_name) ?? ''
+      const qtyPrefix = `${resolvedQuantity.toLocaleString()} × `
+      const variantSuffix = variantName && variantName !== materialName ? ` ${variantName}` : ''
+      const optionSuffix = optionName ? ` — ${optionName}` : ''
+      label = `${qtyPrefix}${materialName || 'Cards'}${variantSuffix}${optionSuffix}`.trim()
+    }
+
+    // Combined parcel weight for the FedEx rating below.
+    if (totalCardsGrams != null && variantWeightGrams != null && resolvedQuantity != null) {
+      totalCardsGrams += variantWeightGrams * resolvedQuantity
+    } else {
+      totalCardsGrams = null
+    }
+
+    const cardsBase = m.custom_quote_total != null ? Number(m.custom_quote_total) : (amountCards ?? 0)
+    const cardDiscount = resolveCardDiscount(m.card_discount_type, m.card_discount_value, cardsBase)
+
+    goodsSum = round2(goodsSum + goods)
+    discountSum = round2(discountSum + cardDiscount)
+    memberLines.push({
+      order_id: m.id,
+      payment_reference: m.payment_reference,
+      label,
+      quantity: resolvedQuantity,
+      goods,
+      card_discount: cardDiscount,
+    })
+    memberStamps.push({
+      id: m.id,
+      patch: {
+        // Persist the customer's resolved picks for an open-spec member, the
+        // same durable pattern as the single path: the *_open flags stay set
+        // (openness ≠ resolvedness, 000302), so a later call can re-pick
+        // right up to payment, and the webhook's invoice lines + place-order
+        // fulfilment snapshot read the spec actually paid for.
+        ...(resolvedQuantity != null ? { quantity: resolvedQuantity } : {}),
+        ...((m.quantity_open === true || m.quantity == null) && personQuantities.length > 0
+          ? { person_quantities: personQuantities }
+          : {}),
+        ...(m.thickness_open === true && effectiveVariantId ? { material_variant_id: effectiveVariantId } : {}),
+        ...(m.finish_open === true && effectiveOptionId ? { material_option_id: effectiveOptionId } : {}),
+        // Null for custom-quote members, exactly like the single online path —
+        // display + invoicing read custom_quote_total directly, and stamping
+        // it here too would risk a double-count anywhere that sums both.
+        amount_cards: amountCards,
+        amount_tooling: amountTooling,
+        amount_personalisation: amountPersonalisation,
+        // Shipping + US tariff are billed ONCE at group level — zero here so
+        // the member's stamped breakdown sums to its own goods figure and the
+        // group invoice's per-card lines don't double-book carriage.
+        amount_shipping: 0,
+        amount_us_tariff: 0,
+        amount_card_discount: cardDiscount,
+      },
+    })
+  }
+
+  // ── ONE combined shipping figure (the group's own treatment) ────────
+  let shipping = 0
+  let resolvedDestCountry: string | null = null
+  let resolvedDestPostcode: string | null = null
+  if (group.shipping_treatment === 'free') {
+    shipping = 0
+  } else if (group.shipping_treatment === 'manual') {
+    shipping = round2(Number(group.shipping_charged ?? 0))
+  } else {
+    const destCountry = effectiveDestCountry
+    const destPostcode = effectiveDestPostcode
+    if (!destCountry || !destPostcode) {
+      return json({
+        error: 'shipping_destination_required',
+        message: 'Please enter the delivery country and postcode so we can calculate shipping.',
+      }, 422)
+    }
+    resolvedDestCountry = destCountry
+    resolvedDestPostcode = destPostcode
+
+    const { data: settings } = await admin
+      .from('settings')
+      .select('fedex_box_weight_grams, fedex_intl_adjust_percent, domestic_uk_mainland_rate_gbp, domestic_uk_ni_rate_gbp')
+      .eq('id', 1)
+      .single()
+    const boxTareGrams = Number(settings?.fedex_box_weight_grams ?? 250)
+    const intlAdjustPercent = Number(settings?.fedex_intl_adjust_percent ?? 0)
+    const mainlandGbp = Number(settings?.domestic_uk_mainland_rate_gbp ?? 12.90)
+    const niGbp = Number(settings?.domestic_uk_ni_rate_gbp ?? 18.90)
+
+    let baseGbp: number | null = null
+    let shipReason = ''
+    if (destCountry === 'GB') {
+      baseGbp = resolveDomesticGbp(destPostcode, mainlandGbp, niGbp)
+      shipReason = 'domestic_uk'
+    } else {
+      // International — FedEx on the members' COMBINED weight (one
+      // consignment, spec §8). splitIntoBoxes works off cards-weight × qty,
+      // so pass the summed grams with qty 1.
+      const boxes = totalCardsGrams != null && totalCardsGrams > 0
+        ? splitIntoBoxes(totalCardsGrams, 1, boxTareGrams)
+        : null
+      const apiKey = Deno.env.get('FEDEX_API_KEY')
+      const apiSecret = Deno.env.get('FEDEX_API_SECRET')
+      const accountNumber = Deno.env.get('FEDEX_ACCOUNT_NUMBER')
+      if (!boxes) {
+        shipReason = 'no_parcel_weight'
+      } else if (!apiKey || !apiSecret || !accountNumber) {
+        shipReason = 'fedex_creds_missing'
+      } else {
+        try {
+          const fxToken = await getFedExToken(apiKey, apiSecret)
+          const raw = await requestRate(fxToken, {
+            destCountry,
+            destPostcode: destPostcode.toUpperCase(),
+            boxWeightsKg: boxes.map((g) => g / 1000),
+            currency: 'GBP',
+            accountNumber,
+          })
+          const parsed = parseRateResponse(raw, 'GBP')
+          if (parsed.available && parsed.netCharge != null) {
+            baseGbp = applyIntlAdjustment(parsed.netCharge, intlAdjustPercent)
+            shipReason = 'fedex_ok'
+          } else {
+            shipReason = 'fedex_unavailable'
+          }
+        } catch (err) {
+          shipReason = 'fedex_error'
+          const detail = err instanceof FedExError ? `${err.status} ${err.message}` : String(err)
+          console.error('[create-checkout-session] group fedex rate failed:', detail)
+        }
+      }
+    }
+
+    console.log('[create-checkout-session] group shipping', JSON.stringify({
+      group_id: group.id,
+      treatment: group.shipping_treatment,
+      destCountry,
+      destPostcode,
+      members: members.length,
+      totalCardsGrams,
+      baseGbp,
+      reason: shipReason,
+    }))
+
+    if (baseGbp == null) {
+      return json({
+        error: 'shipping_not_supported',
+        reason: shipReason,
+        message: 'We couldn’t confirm shipping for this destination online — please reply to the email you received and we’ll send a payment link with shipping included.',
+      }, 422)
+    }
+
+    const rates = await fetchGbpRates()
+    const baseInCurrency = baseGbp * gbpToCurrency(group.currency as Currency, rates)
+    const discountPercent =
+      group.shipping_treatment === 'goodwill'
+        ? Math.max(0, Math.min(100, Number(group.shipping_discount_percent ?? 0)))
+        : 0
+    shipping = round2(baseInCurrency * (1 - discountPercent / 100))
+  }
+
+  // ── ONE US tariff line for the group (one customs entry, spec §8) ───
+  const usTariffFee = ctx.tariffFees[(group.currency as 'GBP' | 'EUR' | 'USD')] ?? 0
+  const usTariff = resolveUsTariff(effectiveDestCountry, usTariffFee, ctx.optedOutOfUsTariff)
+
+  // ── Stamp the breakdowns (best-effort, mirrors the single path) ─────
+  const nowIso = new Date().toISOString()
+  for (const stamp of memberStamps) {
+    await admin
+      .from('orders')
+      .update({
+        ...stamp.patch,
+        // The whole group ships to ONE place — copy the rated destination to
+        // each member so fulfilment + records read the same address.
+        ...(resolvedDestCountry ? { ship_dest_country: resolvedDestCountry } : {}),
+        ...(resolvedDestPostcode ? { ship_dest_postcode: resolvedDestPostcode } : {}),
+        updated_at: nowIso,
+      })
+      .eq('id', stamp.id)
+  }
+  await admin
+    .from('order_groups')
+    .update({
+      amount_shipping: shipping,
+      amount_us_tariff: usTariff,
+      us_tariff_opted_out: ctx.optedOutOfUsTariff,
+      ...(resolvedDestCountry ? { ship_dest_country: resolvedDestCountry } : {}),
+      ...(resolvedDestPostcode ? { ship_dest_postcode: resolvedDestPostcode } : {}),
+      updated_at: nowIso,
+    })
+    .eq('id', group.id)
+
+  // ── ONE PaymentIntent for the whole group ───────────────────────────
+  const total = round2(goodsSum - discountSum + shipping + usTariff)
+  const currency = String(group.currency).toLowerCase()
+  const ref = group.payment_reference ?? group.id
+  const params = new URLSearchParams()
+  params.set('amount', String(minorUnits(total)))
+  params.set('currency', currency)
+  params.set('automatic_payment_methods[enabled]', 'true')
+  params.set('description', `Combined payment — ${members.length} card orders (${ref})`)
+  params.set('metadata[order_group_id]', group.id)
+  params.set('metadata[payment_reference]', ref)
+
+  let stripeRes: Response
+  try {
+    stripeRes = await fetch('https://api.stripe.com/v1/payment_intents', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${ctx.stripeKey}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params.toString(),
+    })
+  } catch {
+    return json({ error: 'Could not reach the payment provider. Please try again.' }, 502)
+  }
+
+  const intent = await stripeRes.json().catch(() => null)
+  if (!stripeRes.ok || !intent?.client_secret) {
+    console.error('[create-checkout-session] group stripe error:', JSON.stringify(intent))
+    return json({ error: 'Could not start checkout. Please try again, or reply to your email.' }, 502)
+  }
+
+  return json({
+    client_secret: intent.client_secret as string,
+    publishable_key: ctx.publishableKey,
+    amount: total,
+    currency: group.currency,
+    vat_free: vatFree,
+    members: memberLines,
+    breakdown: {
+      goods: goodsSum,
+      card_discount: discountSum,
+      shipping,
+      us_tariff: usTariff,
+    },
+  })
+}

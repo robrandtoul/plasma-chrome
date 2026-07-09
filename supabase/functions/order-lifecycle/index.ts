@@ -187,7 +187,7 @@ Deno.serve(async (req) => {
   // Load the order for the proof link + the before-status audit value.
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, proof_id, status, payment_reference')
+    .select('id, proof_id, status, payment_reference, order_group_id')
     .eq('id', orderId)
     .maybeSingle()
   if (orderErr) return json({ error: `Order lookup failed: ${orderErr.message}` }, 500)
@@ -212,6 +212,31 @@ Deno.serve(async (req) => {
   if (updErr) return json({ error: `Order update failed: ${updErr.message}` }, 500)
   if (!updated) {
     return json({ error: `Order is '${beforeStatus}', cannot ${action} it.` }, 409)
+  }
+
+  // A cancelled order can't stay in a combined-payment group — the group's
+  // total would silently include a dead card. Release it, and cancel a group
+  // this leaves empty (bundle orders Slice 2). Best-effort: the cancel above
+  // already succeeded, so a miss here is repairable from the Orders page.
+  if (action === 'cancel' && order.order_group_id) {
+    const groupIdOfCancelled = order.order_group_id as string
+    await admin
+      .from('orders')
+      .update({ order_group_id: null, updated_at: new Date().toISOString() })
+      .eq('id', orderId)
+      .then(undefined, () => {})
+    const { count } = await admin
+      .from('orders')
+      .select('id', { count: 'exact', head: true })
+      .eq('order_group_id', groupIdOfCancelled)
+    if ((count ?? 0) === 0) {
+      await admin
+        .from('order_groups')
+        .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+        .eq('id', groupIdOfCancelled)
+        .eq('status', 'sent')
+        .then(undefined, () => {})
+    }
   }
 
   // ── Audit (caller-attributed; before.status carries paid-vs-placed) ──

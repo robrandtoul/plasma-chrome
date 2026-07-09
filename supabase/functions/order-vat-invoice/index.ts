@@ -41,8 +41,12 @@ Deno.serve(async (req) => {
     return json({ error: 'Invalid JSON body' }, 400)
   }
   const orderId = typeof body.order_id === 'string' ? body.order_id : null
+  // Group mode (bundle orders Slice 2): the combined payment's ONE invoice
+  // lives on proofs.order_groups; the group pay page asks with group_id + the
+  // group's token. Everything downstream is identical.
+  const groupId = typeof body.group_id === 'string' ? body.group_id : null
   const token = typeof body.token === 'string' ? body.token : null
-  if (!orderId || !token) return json({ error: 'Missing order_id or token' }, 400)
+  if ((!orderId && !groupId) || !token) return json({ error: 'Missing order_id/group_id or token' }, 400)
 
   const admin = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
@@ -50,15 +54,23 @@ Deno.serve(async (req) => {
     { db: { schema: 'proofs' }, auth: { persistSession: false, autoRefreshToken: false } },
   )
 
-  const { data: order, error: orderErr } = await admin
-    .from('orders')
-    .select('id, token, status, xero_invoice_id, xero_invoice_error')
-    .eq('id', orderId)
-    .eq('token', token)
-    .single()
+  const { data: order, error: orderErr } = groupId
+    ? await admin
+        .from('order_groups')
+        .select('id, token, status, xero_invoice_id, xero_invoice_error')
+        .eq('id', groupId)
+        .eq('token', token)
+        .single()
+    : await admin
+        .from('orders')
+        .select('id, token, status, xero_invoice_id, xero_invoice_error')
+        .eq('id', orderId)
+        .eq('token', token)
+        .single()
   if (orderErr || !order) return json({ error: 'Order not found' }, 404)
 
   // Only meaningful for a paid order that actually has a Xero invoice.
+  // (A group is never 'fulfilled' — fulfilment lives on its member orders.)
   if (order.status !== 'paid' && order.status !== 'fulfilled') {
     return json({ ready: false, reason: 'not_paid' })
   }

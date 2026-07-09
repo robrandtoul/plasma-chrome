@@ -15,9 +15,9 @@
 // and authenticates via the Stripe-Signature header, which we verify
 // against STRIPE_WEBHOOK_SECRET below. Do not add a Supabase JWT gate.
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { getAccessContext, createSalesInvoice, recordInvoicePayment, emailSalesInvoice, ensureInvoiceEmailRecipient } from '../_shared/xero.ts'
-import { buildOrderInvoiceLines, resolveZeroRatedTaxType } from '../_shared/invoiceBuild.ts'
+import { buildOrderInvoiceLines, buildGroupInvoiceLines, resolveZeroRatedTaxType, type OrderForInvoice } from '../_shared/invoiceBuild.ts'
 import { isVatFreeGbpDestination } from '../_shared/ukVatArea.ts'
 import { getAccessToken, fetchConversation, postStaffReply, HsError } from '../_shared/helpscout.ts'
 import { renderTemplate, ORDER_CONFIRMATION_DEFAULT_BODY } from '../_shared/replyTemplates.ts'
@@ -142,10 +142,12 @@ Deno.serve(async (req) => {
   //   * payment_intent.succeeded   — the current Stripe Elements pay-page.
   //   * checkout.session.completed — the older hosted/embedded Checkout, kept
   //     so any in-flight session still fulfils.
-  // We capture: order id, delivery name/email/address (StripeAddr shape:
+  // We capture: order id (or the order GROUP id for a combined payment —
+  // bundle orders Slice 2), delivery name/email/address (StripeAddr shape:
   // state + postal_code), the charged total (major units), currency, and the
   // shared payment reference.
   let orderId: string | undefined
+  let groupId: string | undefined
   let reference: string | undefined
   let currencyUpper = 'GBP'
   let amountMajor: number | undefined
@@ -155,9 +157,11 @@ Deno.serve(async (req) => {
 
   if (event.type === 'checkout.session.completed') {
     const session = event.data?.object ?? {}
-    orderId = (session.metadata as Record<string, unknown> | undefined)?.order_id as string | undefined
+    const meta = (session.metadata ?? {}) as Record<string, unknown>
+    orderId = meta.order_id as string | undefined
+    groupId = meta.order_group_id as string | undefined
     const paymentStatus = session.payment_status as string | undefined
-    if (!orderId || paymentStatus !== 'paid') return new Response('ok', { status: 200 })
+    if ((!orderId && !groupId) || paymentStatus !== 'paid') return new Response('ok', { status: 200 })
     const ship = extractShipping(session)
     shipName = ship.name
     shipEmail = ship.email
@@ -171,19 +175,21 @@ Deno.serve(async (req) => {
           country: ship.address.country,
         }
       : null
-    reference = (session.metadata as { payment_reference?: string } | undefined)?.payment_reference ?? orderId
+    reference = (meta.payment_reference as string | undefined) ?? orderId ?? groupId
     currencyUpper = String(session.currency ?? 'gbp').toUpperCase()
     const amt = session.amount_total as number | undefined
     amountMajor = typeof amt === 'number' ? amt / 100 : undefined
   } else if (event.type === 'payment_intent.succeeded') {
     const pi = event.data?.object ?? {}
-    orderId = (pi.metadata as Record<string, unknown> | undefined)?.order_id as string | undefined
-    if (!orderId) return new Response('ok', { status: 200 })
+    const meta = (pi.metadata ?? {}) as Record<string, unknown>
+    orderId = meta.order_id as string | undefined
+    groupId = meta.order_group_id as string | undefined
+    if (!orderId && !groupId) return new Response('ok', { status: 200 })
     const shipping = pi.shipping as { name?: string; address?: StripeAddr } | undefined
     shipName = shipping?.name ?? null
     shipEmail = (pi.receipt_email as string | undefined) ?? null
     shipAddr = shipping?.address ?? null
-    reference = (pi.metadata as { payment_reference?: string } | undefined)?.payment_reference ?? orderId
+    reference = (meta.payment_reference as string | undefined) ?? orderId ?? groupId
     currencyUpper = String(pi.currency ?? 'gbp').toUpperCase()
     const amt = pi.amount as number | undefined
     amountMajor = typeof amt === 'number' ? amt / 100 : undefined
@@ -210,6 +216,25 @@ Deno.serve(async (req) => {
         country: shipAddr.country ?? null,
       }
     : null
+
+  // ── Group mode (bundle orders Slice 2) ─────────────────────────────
+  // metadata.order_group_id routes here: flip the group + EVERY member order
+  // to paid, then run the money side ONCE at group level — one itemised Xero
+  // invoice (a product + tooling line per card, one shipping, one tariff),
+  // one clearing payment, one VAT-invoice email, one HS confirmation. All
+  // gated on the group's done-once columns so Stripe retries can't double up.
+  if (groupId) {
+    return await handleGroupPaid(admin, groupId, {
+      reference,
+      currencyUpper,
+      amountMajor,
+      shipName,
+      shipEmail,
+      shipAddr,
+      storedAddress,
+    })
+  }
+  if (!orderId) return new Response('ok', { status: 200 })
 
   // Idempotent: only flip from 'sent' → 'paid'. A Stripe retry (or a
   // duplicate event) finds the row already paid and updates nothing.
@@ -576,3 +601,320 @@ Deno.serve(async (req) => {
 
   return new Response('ok', { status: 200 })
 })
+
+// ── Group payment fulfilment (bundle orders Slice 2) ────────────────────────
+// The group-mode mirror of the single-order flow above, structured the same
+// way and gated on the group's own done-once columns:
+//   1. Flip the group 'sent' → 'paid' (idempotent), then EVERY member order —
+//      each card enters the To-order queue on its own, exactly like a
+//      standalone paid order (making fans out, spec §6).
+//   2. ONE itemised Xero invoice, gated on group.xero_invoice_id: a product
+//      (+ tooling + discount) line per card from each member's stamped
+//      breakdown, plus ONE combined shipping line and ONE US-tariff line from
+//      the group row. Reference = the group's GRP- payment_reference, so the
+//      Stripe→Xero bank-feed match stays exactly 1:1.
+//   3. Optional clearing-account payment, then ONE VAT-invoice email (gated
+//      on group.invoice_emailed_at).
+//   4. ONE branded confirmation on the Help Scout thread of the group's first
+//      member that has a linked conversation (gated on
+//      group.confirmation_sent_at); sender resolved from group.created_by.
+// Steps 2–4 are best-effort: failures log / stamp xero_invoice_error and never
+// fail the webhook (Stripe must get its 200 once the flips have landed).
+async function handleGroupPaid(
+  admin: SupabaseClient,
+  groupId: string,
+  evt: {
+    reference: string | undefined
+    currencyUpper: string
+    amountMajor: number | undefined
+    shipName: string | null
+    shipEmail: string | null
+    shipAddr: StripeAddr | null
+    storedAddress: Record<string, unknown> | null
+  },
+): Promise<Response> {
+  const nowIso = new Date().toISOString()
+
+  // 1. Flip the group, then its members. Conditional updates keep both
+  // idempotent — a duplicate event matches nothing. Member flips also carry
+  // the Stripe delivery details so each card's fulfilment surface reads the
+  // same address a standalone order would.
+  const { error: groupFlipErr } = await admin
+    .from('order_groups')
+    .update({
+      status: 'paid',
+      paid_at: nowIso,
+      ship_to_name: evt.shipName,
+      ship_to_email: evt.shipEmail,
+      ship_to_address: evt.storedAddress,
+      updated_at: nowIso,
+    })
+    .eq('id', groupId)
+    .eq('status', 'sent')
+  if (groupFlipErr) {
+    console.error('[stripe-webhook] group update failed:', groupFlipErr.message)
+    // 500 → Stripe retries, which is what we want on a transient DB error.
+    return new Response('update failed', { status: 500 })
+  }
+  const { error: memberFlipErr } = await admin
+    .from('orders')
+    .update({
+      status: 'paid',
+      paid_at: nowIso,
+      ship_to_name: evt.shipName,
+      ship_to_email: evt.shipEmail,
+      ship_to_address: evt.storedAddress,
+      updated_at: nowIso,
+    })
+    .eq('order_group_id', groupId)
+    .eq('status', 'sent')
+  if (memberFlipErr) {
+    console.error('[stripe-webhook] group member update failed:', memberFlipErr.message)
+    return new Response('update failed', { status: 500 })
+  }
+
+  // 2. ONE Xero invoice for the whole group (best-effort from here on).
+  try {
+    const ctx = await getAccessContext(admin)
+    if (ctx && typeof evt.amountMajor === 'number') {
+      const { data: group } = await admin
+        .from('order_groups')
+        .select('payment_reference, currency, ship_dest_country, amount_shipping, amount_us_tariff, xero_invoice_id, xero_contact_id, xero_contact_name, invoice_emailed_at')
+        .eq('id', groupId)
+        .single()
+      const { data: memberRows } = await admin
+        .from('orders')
+        .select('id, proof_id, material_variant_id, material_option_id, quantity, names_count, custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff, amount_card_discount, order_kind')
+        .eq('order_group_id', groupId)
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+      const members = (memberRows ?? []) as (OrderForInvoice & { id: string })[]
+
+      const referenceSafe = (group?.payment_reference as string | null) ?? evt.reference ?? groupId
+      const currency = evt.currencyUpper
+      const expectedTotal = evt.amountMajor
+      let invoiceId: string | null = (group?.xero_invoice_id as string | null) ?? null
+      const boundContactId = (group?.xero_contact_id as string | null) ?? null
+
+      // Delivery country: the destination the GROUP was rated against (one
+      // address per group), falling back to the card-form country — the same
+      // precedence as single orders, for the same reason.
+      const country = (group?.ship_dest_country as string | null) ?? evt.shipAddr?.country ?? null
+      const vatFree =
+        currency === 'GBP' && isVatFreeGbpDestination((group?.ship_dest_country as string | null) ?? null)
+      const invoiceAddress = evt.shipAddr
+        ? {
+            line1: evt.shipAddr.line1 ?? null,
+            line2: evt.shipAddr.line2 ?? null,
+            city: evt.shipAddr.city ?? null,
+            region: evt.shipAddr.state ?? null,
+            postalCode: evt.shipAddr.postal_code ?? null,
+            country: evt.shipAddr.country ?? null,
+          }
+        : null
+
+      const payerName = evt.shipName || evt.shipEmail || 'Customer'
+      const contactEmail = evt.shipEmail
+      const newContactName = (group?.xero_contact_name as string | null)?.trim() || payerName
+
+      if (!invoiceId && members.length > 0 && group) {
+        const { lines } = await buildGroupInvoiceLines(
+          admin,
+          members,
+          {
+            amount_shipping: group.amount_shipping as number | null,
+            amount_us_tariff: group.amount_us_tariff as number | null,
+          },
+          { reference: referenceSafe, currency, expectedTotal, country },
+        )
+        const zeroRatedTaxType = await resolveZeroRatedTaxType(admin, country, currency)
+
+        const created = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
+          contactName: newContactName,
+          contactEmail,
+          currency,
+          reference: referenceSafe,
+          lines,
+          address: invoiceAddress,
+          contactId: boundContactId,
+          vatFree,
+          zeroRatedTaxType,
+        })
+        invoiceId = created.invoiceId
+        let createdInvoice = created.invoice
+        let lastError = created.error
+
+        // Same single-summary-line degradation as single orders: an org that
+        // rejects an item code (or the custom tax rate) still gets an invoice
+        // that matches the charge.
+        const wasItemised = lines.some((l) => l.itemCode) || !!zeroRatedTaxType
+        if (!invoiceId && wasItemised) {
+          console.warn(`[stripe-webhook] itemised group invoice rejected for group ${groupId}; retrying as a single summary line`)
+          const retry = await createSalesInvoice(ctx.accessToken, ctx.tenantId, {
+            contactName: newContactName,
+            contactEmail,
+            currency,
+            reference: referenceSafe,
+            lines: [{ description: `Order ${referenceSafe}`, amount: expectedTotal, itemCode: null }],
+            address: invoiceAddress,
+            contactId: boundContactId,
+            vatFree,
+          })
+          invoiceId = retry.invoiceId
+          if (retry.invoice) createdInvoice = retry.invoice
+          if (retry.error) lastError = retry.error
+        }
+        if (invoiceId) {
+          await admin.from('order_groups').update({ xero_invoice_id: invoiceId, xero_invoice_error: null }).eq('id', groupId)
+
+          // Auto-remember a newly-created Xero contact on the group (mirror of
+          // the single-order path; the members' own bindings are untouched).
+          if (!boundContactId) {
+            const c = (createdInvoice?.Contact as { ContactID?: string; Name?: string } | undefined) ?? null
+            if (c?.ContactID) {
+              await admin
+                .from('order_groups')
+                .update({ xero_contact_id: c.ContactID, ...(c.Name ? { xero_contact_name: c.Name } : {}) })
+                .eq('id', groupId)
+            }
+          }
+
+          const { data: payCfg } = await admin.from('settings').select('xero_stripe_account_code').eq('id', 1).single()
+          const stripeAcctCode = payCfg?.xero_stripe_account_code as string | null | undefined
+          if (stripeAcctCode) {
+            const pay = await recordInvoicePayment(ctx.accessToken, ctx.tenantId, {
+              invoiceId,
+              accountCode: stripeAcctCode,
+              amount: expectedTotal,
+            })
+            if (!pay.ok) console.error(`[stripe-webhook] xero payment record failed for group ${groupId}:`, pay.error)
+          }
+        } else {
+          console.error(`[stripe-webhook] xero invoice not created for group ${groupId}:`, lastError)
+          await admin.from('order_groups').update({ xero_invoice_error: lastError ?? 'Xero did not return an invoice' }).eq('id', groupId)
+        }
+      }
+
+      // 3. Email the group's VAT invoice once (gated on invoice_emailed_at).
+      if (invoiceId && !group?.invoice_emailed_at) {
+        if (!contactEmail) {
+          console.warn('[stripe-webhook] group invoice email skipped: no buyer email', { groupId, invoiceId })
+        } else {
+          if (boundContactId) {
+            const rec = await ensureInvoiceEmailRecipient(ctx.accessToken, ctx.tenantId, boundContactId, contactEmail, payerName)
+            if (!rec.ok) console.warn('[stripe-webhook] could not add payer as invoice email recipient (group)', { groupId, error: rec.error })
+          }
+          const emailed = await emailSalesInvoice(ctx.accessToken, ctx.tenantId, invoiceId)
+          if (emailed.ok) {
+            await admin.from('order_groups').update({ invoice_emailed_at: nowIso }).eq('id', groupId)
+            console.log('[stripe-webhook] group invoice emailed', { groupId, invoiceId })
+          } else {
+            console.warn('[stripe-webhook] group invoice email failed', { groupId, error: emailed.error })
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[stripe-webhook] group xero invoice failed:', (e as Error).message)
+    await admin.from('order_groups').update({ xero_invoice_error: (e as Error).message }).eq('id', groupId).then(undefined, () => {})
+  }
+
+  // 4. ONE branded confirmation, on the first member's linked Help Scout
+  // conversation. Mirrors the single-order confirmation block; the order_url
+  // is the GROUP pay page (its paid state doubles as the receipt).
+  try {
+    const { data: grp } = await admin
+      .from('order_groups')
+      .select('payment_reference, confirmation_sent_at, created_by, token')
+      .eq('id', groupId)
+      .single()
+    if (grp && !grp.confirmation_sent_at) {
+      // First member (by creation) whose proof has a linked conversation.
+      const { data: memberProofs } = await admin
+        .from('orders')
+        .select('proof_id, created_at, proofs(helpscout_conversation_id, contacts:contact_id ( full_name, companies:company_id ( name ) ))')
+        .eq('order_group_id', groupId)
+        .order('created_at', { ascending: true })
+      type MemberProof = {
+        proof_id: string
+        proofs: {
+          helpscout_conversation_id: string | null
+          contacts: { full_name?: string | null; companies?: { name?: string | null } | null } | null
+        } | null
+      }
+      const withConv = ((memberProofs ?? []) as unknown as MemberProof[]).find(
+        (m) => m.proofs?.helpscout_conversation_id,
+      )
+      const conversationId = withConv?.proofs?.helpscout_conversation_id ?? null
+      const appId = Deno.env.get('HELPSCOUT_APP_ID')
+      const appSecret = Deno.env.get('HELPSCOUT_APP_SECRET')
+      if (!conversationId) {
+        console.log('[stripe-webhook] group confirmation skipped: no member has a linked conversation', { groupId })
+      } else if (!appId || !appSecret) {
+        console.warn('[stripe-webhook] group confirmation skipped: Help Scout not configured')
+      } else {
+        const token = await getAccessToken(appId, appSecret)
+        const conv = await fetchConversation(token, conversationId)
+        const primaryCustomerId = conv?.primaryCustomer?.id ?? null
+        if (!conv || primaryCustomerId == null) {
+          console.warn('[stripe-webhook] group confirmation skipped: conversation/customer missing', { conversationId })
+        } else {
+          // Sender resolution, same ladder as single orders: the designer who
+          // created the GROUP → conversation assignee → env default → skip.
+          let senderId: number | null = null
+          const createdBy = (grp.created_by as string | null) ?? null
+          if (createdBy) {
+            const { data: profileRow } = await admin.from('profiles').select('helpscout_user_id').eq('id', createdBy).maybeSingle()
+            const value = (profileRow as { helpscout_user_id: number | null } | null)?.helpscout_user_id ?? null
+            if (typeof value === 'number' && Number.isInteger(value) && value > 0) senderId = value
+          }
+          if (senderId == null && conv.assignee?.id != null) senderId = conv.assignee.id
+          if (senderId == null) {
+            const raw = Deno.env.get('HELPSCOUT_DEFAULT_USER_ID')?.trim()
+            if (raw) {
+              const parsed = Number(raw)
+              if (Number.isInteger(parsed) && parsed > 0) senderId = parsed
+            }
+          }
+          if (senderId == null) {
+            console.warn('[stripe-webhook] group confirmation skipped: no sender resolvable', { groupId, createdBy })
+          } else {
+            const contact = withConv?.proofs?.contacts ?? null
+            const fullName = contact?.full_name ?? null
+            const firstName = (fullName?.trim().split(/\s+/)[0]) || (conv.primaryCustomer?.first ?? '') || 'there'
+            const company = contact?.companies?.name ?? ''
+            const baseUrl = (Deno.env.get('PROOF_VIEWER_BASE_URL')?.trim() ?? '').replace(/\/+$/, '')
+            const groupToken = (grp.token as string | null) ?? ''
+            const orderUrl = baseUrl && groupToken ? `${baseUrl}/order/group/${groupId}?token=${encodeURIComponent(groupToken)}` : ''
+            const { data: tplRow } = await admin
+              .from('reply_templates')
+              .select('body')
+              .eq('id', 'order_paid_confirmation')
+              .maybeSingle()
+            const body = renderTemplate(
+              ((tplRow as { body: string } | null)?.body) ?? ORDER_CONFIRMATION_DEFAULT_BODY,
+              {
+                first_name: firstName,
+                company,
+                payment_reference: (grp.payment_reference as string | null) ?? evt.reference ?? groupId,
+                order_url: orderUrl,
+              },
+            )
+            const replyThreadId = await postStaffReply(token, conversationId, {
+              text: body,
+              userId: senderId,
+              customerId: primaryCustomerId,
+            })
+            await admin.from('order_groups').update({ confirmation_sent_at: new Date().toISOString() }).eq('id', groupId)
+            console.log('[stripe-webhook] group confirmation reply sent', { groupId, senderId, replyThreadId })
+          }
+        }
+      }
+    }
+  } catch (e) {
+    const msg = e instanceof HsError ? `${e.status} ${e.message}` : (e as Error).message
+    console.warn('[stripe-webhook] group confirmation reply failed:', msg)
+  }
+
+  return new Response('ok', { status: 200 })
+}

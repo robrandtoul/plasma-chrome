@@ -7,12 +7,15 @@ import { Lock } from 'lucide-react'
 import { Pill, PanelShell } from '../design'
 import { CustomerHeader } from '../components/CustomerHeader'
 import { FinishChoiceCard } from '../components/FinishChoiceCard'
+import { ArtworkFade, buildRecapTiles } from '../components/ArtworkFade'
 import { LoadingProofAnimation } from '../components/LoadingProofAnimation'
-import { interpolateValue, flatTopTierTotal, flatUnitTotal, pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
+import { pricesFlatAboveTopTier, MAX_ONLINE_FLAT_QUANTITY } from '../lib/quote/interpolation'
+import { totalFromTiers, surchargeFromTiers, thicknessNoteFor, type SpecVariantChoice, type SpecFinishChoice } from '../lib/openSpecTiers'
 import { exVat, isVatFreeGbpDestination, normaliseShipDestination } from '../lib/ukVatArea'
 import { hasThicknessGuide, thicknessSetForMaterial, type ThicknessOption } from '../lib/metalThicknessNotes'
 import { finishIsPreferenceOnly } from '../lib/materialTraits'
 import { SHIP_COUNTRIES } from '../lib/shipCountries'
+import { loadStripeJs, type StripeLike, type StripeElementsLike } from '../lib/stripeJs'
 import type { GridImage } from '../components/ImageGrid'
 import type { Currency, CustomerProofGraph } from '../lib/types'
 
@@ -101,6 +104,12 @@ interface OrderPayload {
   // switch + the per-route/per-supplier disclosure rules are resolved entirely
   // server-side, so the raw production status / supplier dates never reach here).
   tracking_projection?: TrackingProjection
+  // Combined-payment group membership (bundle orders Slice 2, migration
+  // 000309). While the group is active ('sent'), this order pays through the
+  // GROUP's link — checkout here would double-charge, so the page shows a
+  // quiet redirect message instead of the pay form.
+  order_group_id: string | null
+  order_group_status: 'sent' | 'paid' | 'cancelled' | null
 }
 
 // Only the projected result crosses to the client — never a raw Stock Control
@@ -136,89 +145,6 @@ function variantLabel(variant: string): string {
   return /micron|µm|\bum\b/i.test(variant) ? 'Thickness' : 'Option'
 }
 
-// Pure tier maths shared by the locked-path calculators below and the
-// open-spec thickness/finish cards (which price CANDIDATE variants the
-// customer hasn't picked yet). Mirrors the server's cardTotalForQuantity:
-// exact tier, else interpolated between the bracketing tiers; flat at the
-// top per-card rate above the top tier for metal-style materials.
-function totalFromTiers(
-  tiers: { quantity: number; total_price: number }[],
-  qty: number,
-  flatAboveTop: boolean,
-): number | null {
-  if (tiers.length === 0 || qty <= 0) return null
-  const exact = tiers.find((t) => t.quantity === qty)
-  if (exact) return exact.total_price
-  let lower: { quantity: number; total_price: number } | null = null
-  let upper: { quantity: number; total_price: number } | null = null
-  for (const t of tiers) {
-    if (t.quantity < qty) lower = t
-    else if (t.quantity > qty) { upper = t; break }
-  }
-  if (lower && upper) {
-    return interpolateValue(lower.quantity, lower.total_price, upper.quantity, upper.total_price, qty)
-  }
-  if (flatAboveTop) return flatTopTierTotal(tiers, qty)
-  return null
-}
-
-// Same shape over a finish-surcharge schedule; out of range → 0 (matching the
-// server's treatment of an unpriceable surcharge).
-function surchargeFromTiers(
-  surTiers: { quantity: number; surcharge: number }[],
-  qty: number,
-  flatAboveTop: boolean,
-): number {
-  if (surTiers.length === 0 || qty <= 0) return 0
-  const exact = surTiers.find((t) => t.quantity === qty)
-  if (exact) return exact.surcharge
-  let lower: { quantity: number; surcharge: number } | null = null
-  let upper: { quantity: number; surcharge: number } | null = null
-  for (const t of surTiers) {
-    if (t.quantity < qty) lower = t
-    else if (t.quantity > qty) { upper = t; break }
-  }
-  if (lower && upper) {
-    return interpolateValue(lower.quantity, lower.surcharge, upper.quantity, upper.surcharge, qty)
-  }
-  if (flatAboveTop) {
-    const top = surTiers[surTiers.length - 1]
-    if (top && qty > top.quantity) return flatUnitTotal(top.quantity, top.surcharge, qty)
-  }
-  return 0
-}
-
-// Match an open-spec variant ("300 micron" / "300µm") to its admin-editable
-// thickness note row ("300µm — Slim, …") by the leading number. Null when the
-// material has no notes (non-metal open-spec) — the card renders name-only.
-function thicknessNoteFor(notes: ThicknessOption[], variantName: string): ThicknessOption | null {
-  const n = parseInt(variantName, 10)
-  if (!Number.isFinite(n)) return null
-  return notes.find((o) => parseInt(o.label, 10) === n) ?? null
-}
-
-// Chooser card shapes (open-spec orders).
-interface SpecVariantChoice {
-  id: string
-  display_name: string
-  tiers: { quantity: number; total_price: number }[]
-}
-interface SpecFinishChoice {
-  id: string
-  code: string
-  display_name: string
-  is_base: boolean
-  surTiers: { quantity: number; surcharge: number }[]
-  // Visual, in preference order: the admin's studio photo of the finish
-  // (material_options.photo_url, 000299), else the customer's own artwork
-  // from that finish's proof tab, else a text-only card.
-  photoUrl: string | null
-  swatchUrl: string | null
-  // Education line under the name (000303) — how preference-only finishes
-  // (gloss/matte) explain themselves when no photo can tell the story.
-  description: string | null
-}
-
 const SHIPPING_LABEL: Record<OrderPayload['shipping_treatment'], string> = {
   full_cost: 'Standard shipping',
   goodwill: 'Shipping (partly covered by us)',
@@ -226,57 +152,11 @@ const SHIPPING_LABEL: Record<OrderPayload['shipping_treatment'], string> = {
   manual: 'Shipping',
 }
 
-// Load Stripe.js from Stripe's CDN (required — Stripe.js must not be bundled,
-// for PCI). Resolves the global Stripe factory, loading the script once and
-// reusing it on subsequent calls. Returns null if the script can't load.
-const STRIPE_JS_SRC = 'https://js.stripe.com/v3/'
-function loadStripeJs(): Promise<((key: string) => StripeLike) | null> {
-  const w = window as unknown as { Stripe?: (key: string) => StripeLike }
-  if (w.Stripe) return Promise.resolve(w.Stripe)
-  return new Promise((resolve) => {
-    const existing = document.querySelector(`script[src="${STRIPE_JS_SRC}"]`) as HTMLScriptElement | null
-    if (existing) {
-      existing.addEventListener('load', () => resolve(w.Stripe ?? null))
-      existing.addEventListener('error', () => resolve(null))
-      if (w.Stripe) resolve(w.Stripe)
-      return
-    }
-    const s = document.createElement('script')
-    s.src = STRIPE_JS_SRC
-    s.async = true
-    s.onload = () => resolve(w.Stripe ?? null)
-    s.onerror = () => resolve(null)
-    document.head.appendChild(s)
-  })
-}
-
-// Minimal shapes of the bits of Stripe.js Elements we use — avoids a bundled
-// @stripe/stripe-js dependency (Stripe.js is loaded from their CDN). We build
-// our own checkout layout and mount Stripe's Payment / Address / Link elements
-// into it, then confirm the PaymentIntent.
-interface StripeElementLike {
-  mount: (selector: string) => void
-  unmount?: () => void
-  // Link / address elements emit a 'change' event carrying the entered value.
-  // We listen on the Link element to capture the buyer's email (see below).
-  on?: (event: string, handler: (e: { value?: { email?: string } }) => void) => void
-}
-interface StripeElementsLike {
-  create: (type: string, options?: Record<string, unknown>) => StripeElementLike
-}
-interface StripeConfirmResult {
-  error?: { message?: string }
-}
-interface StripeLike {
-  elements: (options: { clientSecret: string; appearance?: Record<string, unknown> }) => StripeElementsLike
-  confirmPayment: (options: {
-    elements: StripeElementsLike
-    // receipt_email must be passed explicitly — Stripe does NOT auto-promote the
-    // Link element's email onto the PaymentIntent. Without it the webhook gets a
-    // null email and the Xero VAT invoice can't be sent.
-    confirmParams: { return_url: string; receipt_email?: string }
-  }) => Promise<StripeConfirmResult>
-}
+// Stripe.js loader + the minimal Elements types — shared with the group pay
+// page via src/lib/stripeJs.ts (extracted verbatim; one copy of the
+// PCI-relevant loading code). We build our own checkout layout and mount
+// Stripe's Payment / Address / Link elements into it, then confirm the
+// PaymentIntent.
 
 export default function OrderPayPage() {
   const { id } = useParams<{ id: string }>()
@@ -1184,51 +1064,18 @@ export default function OrderPayPage() {
     order.status === 'expired' ||
     (order.status === 'sent' && order.expires_at != null && new Date(order.expires_at).getTime() < Date.now())
 
-  // Recap thumbnails, finish-aware: one front + one back from the current
-  // version, filtered to the ACTIVE finish — the live pick on an open-spec
-  // order (falling back to a persisted/locked finish), so choosing Mirror
-  // swaps the big preview to the mirror artwork and the paid screen shows
-  // the finish they actually bought. Images with no finish tab (null
-  // material_option = shared across finishes) always qualify; a proof with
-  // no per-finish tabs, or no match, falls back to the whole set exactly as
-  // before.
+  // Recap thumbnails, finish-aware, with cross-fade layers while the finish
+  // is still switchable — shared derivation with the group pay page (see
+  // src/components/ArtworkFade.tsx for the full story).
   const activeFinishCode =
     (order.finish_open === true ? specFinishes.find((f) => f.id === chosenOptionId)?.code ?? null : null) ??
     lockedFinishCode
-  const recapPool =
-    activeFinishCode && versionImages.some((i) => i.material_option === activeFinishCode)
-      ? versionImages.filter((i) => i.material_option === activeFinishCode || i.material_option == null)
-      : versionImages
-  const recapFront = recapPool.find((i) => i.side === 'front')
-  const recapBack = recapPool.find((i) => i.side === 'back')
-  const recapBySide = [recapFront, recapBack].filter((i): i is GridImage => !!i)
-  const thumbs = recapBySide.length > 0 ? recapBySide : recapPool.slice(0, 2)
-
-  // Cross-fade stacks for the recap: while the customer can switch finishes,
-  // mount EVERY finish's front/back as layers in one tile and toggle opacity
-  // to the active one. Mounting all the layers IS the preload — switching
-  // finishes never shows a loading pop, just a smooth fade. One image per
-  // finish tab (plus any shared image) per side, first by sort order.
-  // Single-finish / locked recaps render the plain active image as before.
-  const finishCodesForStack = specFinishes.map((f) => f.code)
-  const stackForSide = (side: string | null | undefined): GridImage[] => {
-    const seen = new Set<string>()
-    return versionImages.filter((i) => {
-      if (i.side !== side) return false
-      if (i.material_option != null && !finishCodesForStack.includes(i.material_option)) return false
-      const group = i.material_option ?? '__shared__'
-      if (seen.has(group)) return false
-      seen.add(group)
-      return true
-    })
-  }
-  const recapTiles =
-    order.finish_open === true && specFinishes.length > 1 && recapBySide.length > 0
-      ? recapBySide.map((active) => {
-          const layers = stackForSide(active.side)
-          return { active, layers: layers.some((l) => l.id === active.id) ? layers : [active] }
-        })
-      : thumbs.map((t) => ({ active: t, layers: [t] }))
+  const recapTiles = buildRecapTiles(
+    versionImages,
+    activeFinishCode,
+    specFinishes.map((f) => f.code),
+    order.finish_open === true && specFinishes.length > 1,
+  )
 
   if (order.status === 'paid' || order.status === 'fulfilled') {
     return renderConfirmation(true, order)
@@ -1258,6 +1105,26 @@ export default function OrderPayPage() {
           <h1 className="text-lg font-semibold text-ink">We&rsquo;re updating your cards</h1>
           <p className="mt-2 text-sm text-ink-soft">
             We&rsquo;re making changes to your artwork. A new proof will follow once it&rsquo;s ready — there&rsquo;s nothing you need to do right now.
+          </p>
+        </PanelShell>
+      </Screen>
+    )
+  }
+
+  // Member of a combined-payment group (bundle orders Slice 2): this order is
+  // paid through the group's own link, so the standalone form stays closed
+  // (the server refuses its checkout too). Blocked whenever the group is
+  // anything but 'cancelled' (the #438 review fix) — a paid group normally
+  // flips this order to paid, but if that flip ever misses, the member's own
+  // link must still never take a second payment. A cancelled group releases
+  // its members, so that's the only state that falls through.
+  if (order.status === 'sent' && order.order_group_id && order.order_group_status != null && order.order_group_status !== 'cancelled') {
+    return (
+      <Screen>
+        <PanelShell className="max-w-md text-center">
+          <h1 className="text-lg font-semibold text-ink">This order is part of a combined payment</h1>
+          <p className="mt-2 text-sm text-ink-soft">
+            We&rsquo;ve sent you a single payment link covering this and other items together. Please use that link to pay — if you can&rsquo;t find it, just reply to the email you received and we&rsquo;ll re-send it.
           </p>
         </PanelShell>
       </Screen>
@@ -1996,37 +1863,6 @@ function formatApprovedDate(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-}
-
-// Layered artwork tile: every candidate finish's image mounted at once (the
-// mount IS the preload), with opacity cross-fading to the active layer.
-// Layer 0 stays in normal flow to size the tile; the rest stack absolutely —
-// the layers are the same design in different finishes, so dimensions match
-// in practice, with object-cover guarding any drift. Hidden layers are
-// aria-hidden so screen readers see exactly one artwork image.
-function ArtworkFade({ layers, activeId }: { layers: GridImage[]; activeId: string }) {
-  if (layers.length <= 1) {
-    const img = layers[0]
-    if (!img) return null
-    return <img src={img.signed_url} alt="Approved proof artwork" className="w-full rounded-lg bg-surface ring-1 ring-line" />
-  }
-  return (
-    <span className="relative block">
-      {layers.map((im, i) => (
-        <img
-          key={im.id}
-          src={im.signed_url}
-          alt={im.id === activeId ? 'Approved proof artwork' : ''}
-          aria-hidden={im.id !== activeId}
-          className={[
-            i === 0 ? 'relative' : 'absolute inset-0 h-full w-full object-cover',
-            'block w-full rounded-lg bg-surface ring-1 ring-line transition-opacity duration-300',
-            im.id === activeId ? 'opacity-100' : 'opacity-0',
-          ].join(' ')}
-        />
-      ))}
-    </span>
-  )
 }
 
 function Row({ label, value, bold = false }: { label: string; value: string; bold?: boolean }) {

@@ -17,3 +17,14 @@ export function customerOrderUrl(orderId: string, token: string): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   return `${origin}${customerOrderPath(orderId, token)}`
 }
+
+// Combined-payment group pay page (bundle orders Slice 2): one link covering
+// every order in the group, gated by the GROUP's own bearer token.
+export function customerOrderGroupPath(groupId: string, token: string): string {
+  return `/order/group/${groupId}?token=${encodeURIComponent(token)}`
+}
+
+export function customerOrderGroupUrl(groupId: string, token: string): string {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  return `${origin}${customerOrderGroupPath(groupId, token)}`
+}

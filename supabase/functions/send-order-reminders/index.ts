@@ -208,14 +208,21 @@ async function run(admin: Admin): Promise<Response> {
   // for reminder 1 without wrestling PostgREST's .or() timestamp parsing.
   const { data: orderRowsRaw, error: ordersErr } = await admin
     .from('orders')
-    .select('id, proof_id, sent_at, expires_at, token, currency')
+    .select('id, proof_id, sent_at, expires_at, token, currency, order_group_id')
     .eq('status', 'sent')
     .not('sent_at', 'is', null)
   if (ordersErr) return json({ error: `orders: ${ordersErr.message}` }, 500)
 
+  // Members of a combined-payment group are excluded entirely: a reminder
+  // would carry the member's OWN pay link, which refuses payment while the
+  // group is active — chasing the customer to a dead link. Group-level
+  // reminders are a deferred follow-up (docs/order-groups-slice2.md).
+  const grouped = (orderRowsRaw ?? []).filter((o) => o.order_group_id != null)
   const live = (orderRowsRaw ?? []).filter((o) =>
-    o.expires_at == null || Date.parse(o.expires_at as string) > now.getTime()
+    o.order_group_id == null
+    && (o.expires_at == null || Date.parse(o.expires_at as string) > now.getTime())
   ) as OrderRow[]
+  skipped += grouped.length
 
   // Dedupe to the LATEST live order per proof. A proof can accumulate several
   // 'sent' orders (a reissued link, or test spam — the live data already has

@@ -5,7 +5,7 @@ import { DesignerChrome, PanelShell, Pill, ButtonInk, ButtonGhost, Textarea } fr
 import { useAuth } from '../lib/auth'
 import { formatPrice } from '../lib/currency'
 import { getExchangeRates, currencyToGbp, type ExchangeRates } from '../lib/exchangeRates'
-import { customerOrderUrl } from '../lib/customerOrderUrl'
+import { customerOrderUrl, customerOrderGroupUrl } from '../lib/customerOrderUrl'
 import { orderTotal, specLabel as specLabelShared, customerLabel as customerLabelShared } from '../lib/orderDisplay'
 import { logAudit } from '../lib/audit'
 import { getOrderingEnabled } from '../lib/orderingEnabled'
@@ -17,6 +17,7 @@ import type { Currency } from '../lib/types'
 import { relativeTime, formatAbsoluteDateTime } from '../lib/relativeTime'
 import OrdersPipelineCard from '../components/OrdersPipelineCard'
 import OrderBuilderModal from '../components/OrderBuilderModal'
+import GroupOrdersModal, { type GroupCandidate } from '../components/GroupOrdersModal'
 import RecordOfflinePaymentModal from '../components/RecordOfflinePaymentModal'
 import EditOrderModal from '../components/EditOrderModal'
 import DesignerAvatar from '../components/DesignerAvatar'
@@ -53,6 +54,10 @@ interface OrderRow {
   help_requested_at: string | null
   thickness_open: boolean
   finish_open: boolean
+  quantity_open: boolean
+  // Combined-payment group membership (bundle orders Slice 2, migration
+  // 000309). Non-null = this order pays through the group's one link.
+  order_group_id: string | null
   material_variant_id: string | null
   material_option_id: string | null
   currency: Currency
@@ -86,6 +91,9 @@ interface OrderRow {
   // Specific Stock Control colour for plastic/acrylic cards (000289).
   stock_colour: string | null
   person_quantities: { name: string; quantity: number }[] | null
+  // The designer's destination hint / the customer's rated destination —
+  // pre-fills the combine modal's country picker.
+  ship_dest_country: string | null
   ship_to_name: string | null
   ship_to_email: string | null
   ship_to_address: {
@@ -109,20 +117,23 @@ interface OrderRow {
     // Thread-wide reply stamps (000208) — drive the specific grace-pause label.
     helpscout_last_reply_at: string | null
     helpscout_last_customer_reply_at: string | null
+    // Whether a Help Scout conversation is linked — gates the combine modal's
+    // "Send to customer" action (bundle orders Slice 2).
+    helpscout_conversation_id: string | null
     contacts: { full_name: string | null; companies: { name: string | null } | null } | null
   } | null
 }
 
 const SELECT = `
-  id, status, token, expires_at, sent_at, pay_link_opened_at, help_requested_at, thickness_open, finish_open, material_variant_id, material_option_id, currency, quantity, names_count, has_personalisation,
+  id, status, token, expires_at, sent_at, pay_link_opened_at, help_requested_at, thickness_open, finish_open, quantity_open, order_group_id, material_variant_id, material_option_id, currency, quantity, names_count, has_personalisation,
   custom_quote_total, amount_cards, amount_tooling, amount_personalisation, amount_shipping, amount_us_tariff,
   card_discount_type, card_discount_value, amount_card_discount, payment_method, order_kind,
   payment_reference, xero_invoice_id, xero_invoice_error, paid_at, fulfilled_at, revised_at,
   date_required, dropbox_folder_url, stock_order_number, project_name, stock_colour, person_quantities,
-  ship_to_name, ship_to_email, ship_to_address, proof_id,
+  ship_to_name, ship_to_email, ship_to_address, ship_dest_country, proof_id,
   material_variants(display_name, materials(code, display_name, production_route, lead_time_max_days, outsourced_supplier_ids)),
   material_options(display_name),
-  proofs(helpscout_last_reply_at, helpscout_last_customer_reply_at, contacts(full_name, companies(name)))
+  proofs(helpscout_last_reply_at, helpscout_last_customer_reply_at, helpscout_conversation_id, contacts(full_name, companies(name)))
 `
 
 // The dropbox-folder edge function response (uniform { ok } shape).
@@ -147,6 +158,33 @@ type FolderLookup =
 // pushes expires_at forward.
 function isExpired(o: OrderRow): boolean {
   return o.status === 'sent' && o.expires_at != null && new Date(o.expires_at).getTime() < Date.now()
+}
+
+// A combined-payment group this page's orders belong to (bundle orders
+// Slice 2, proofs.order_groups). Only the fields the banner + actions need.
+interface OrderGroupRow {
+  id: string
+  status: 'sent' | 'paid' | 'cancelled'
+  currency: Currency
+  token: string
+  payment_reference: string | null
+  expires_at: string | null
+  xero_invoice_id: string | null
+  xero_invoice_error: string | null
+}
+
+// Can this awaiting-payment order join a combined payment? Mirrors the
+// order-group edge function's rules so the checkbox only appears where create
+// would succeed: online, not already grouped, priceable. Open-spec orders
+// (customer picks quantity/thickness/finish) qualify — the group pay page
+// runs the same guided choosers as a single-order link.
+function canJoinGroup(o: OrderRow): boolean {
+  return (
+    o.status === 'sent' &&
+    (o.payment_method ?? 'online') === 'online' &&
+    o.order_group_id == null &&
+    (o.quantity != null || o.quantity_open || o.custom_quote_total != null)
+  )
 }
 
 // Production route from the order's material. 'supplier' is the outsourced
@@ -563,6 +601,13 @@ export default function OrdersPage() {
   // The awaiting-payment order being recorded as paid offline (bank transfer),
   // or null when the modal is closed.
   const [recordOffline, setRecordOffline] = useState<OrderRow | null>(null)
+  // Combined-payment groups (bundle orders Slice 2): the groups referenced by
+  // the loaded orders, keyed by id; the ticked order ids while picking a set
+  // to combine; and whether the combine modal is open.
+  const [groups, setGroups] = useState<Record<string, OrderGroupRow>>({})
+  const [groupSelect, setGroupSelect] = useState<Set<string>>(new Set())
+  const [selectMode, setSelectMode] = useState(false)
+  const [groupModalOpen, setGroupModalOpen] = useState(false)
   // The unpaid order being edited in place (thickness/quantity/etc.), if any.
   const [editingOrder, setEditingOrder] = useState<OrderRow | null>(null)
   const navigate = useNavigate()
@@ -785,6 +830,24 @@ export default function OrdersPage() {
       setCapped(rows.length >= 300)
       setLoading(false)
 
+      // The combined-payment groups those orders belong to (banner + actions).
+      const groupIds = Array.from(new Set(rows.map((r) => r.order_group_id).filter((g): g is string => !!g)))
+      if (groupIds.length > 0) {
+        void supabase
+          .from('order_groups')
+          .select('id, status, currency, token, payment_reference, expires_at, xero_invoice_id, xero_invoice_error')
+          .in('id', groupIds)
+          .then(({ data: groupRows }) => {
+            if (cancelled || !groupRows) return
+            setGroups(Object.fromEntries((groupRows as unknown as OrderGroupRow[]).map((g) => [g.id, g])))
+          })
+      } else {
+        setGroups({})
+      }
+      // Selection can't survive a refetch — a ticked order may have changed.
+      setGroupSelect(new Set())
+      setSelectMode(false)
+
       // Current-version material per proof — the Stock colour picker keys off
       // this (not the order's priced variant, which is null on a custom quote),
       // matching the material place-order reads when it composes the hand-off.
@@ -993,6 +1056,108 @@ export default function OrdersPage() {
     }
   }
 
+  // ── Combined-payment group actions (bundle orders Slice 2) ─────────
+  function toggleGroupSelect(orderId: string) {
+    setGroupSelect((prev) => {
+      const next = new Set(prev)
+      if (next.has(orderId)) next.delete(orderId)
+      else next.add(orderId)
+      return next
+    })
+  }
+
+  async function copyGroupLink(g: OrderGroupRow) {
+    try {
+      await navigator.clipboard.writeText(customerOrderGroupUrl(g.id, g.token))
+      setCopiedId(g.id)
+      window.setTimeout(() => setCopiedId((c) => (c === g.id ? null : c)), 2000)
+    } catch {
+      // Clipboard blocked — designer can retry.
+    }
+  }
+
+  async function reactivateGroup(g: OrderGroupRow) {
+    setBusyId(g.id)
+    try {
+      const nextExpiry = new Date(Date.now() + ORDER_EXPIRY_DAYS * 24 * 60 * 60 * 1000).toISOString()
+      const { error } = await supabase
+        .from('order_groups')
+        .update({ expires_at: nextExpiry, updated_at: new Date().toISOString() })
+        .eq('id', g.id)
+        .eq('status', 'sent')
+      if (!error) {
+        setGroups((prev) => ({ ...prev, [g.id]: { ...prev[g.id], expires_at: nextExpiry } }))
+        void logAudit({
+          action: 'order.link_reactivated',
+          targetType: 'order_group',
+          targetId: g.id,
+          targetLabel: `Payment group ${g.payment_reference ?? g.id}`,
+          beforeValue: { expires_at: g.expires_at },
+          afterValue: { expires_at: nextExpiry },
+        })
+      }
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  // Release one order back out of an unpaid group (its own pay link becomes
+  // the live one again — "release a ready card early", spec §7.1).
+  async function releaseFromGroup(o: OrderRow) {
+    if (!o.order_group_id) return
+    setBusyId(o.id)
+    try {
+      const { data, error } = await supabase.functions.invoke<{ ok?: boolean; remaining?: number; error?: string }>(
+        'order-group',
+        { body: { action: 'release', group_id: o.order_group_id, order_id: o.id } },
+      )
+      if (error || !data?.ok) {
+        window.alert(`Could not release the order: ${data?.error ?? error?.message ?? 'unknown error'}`)
+        return
+      }
+      setReloadKey((k) => k + 1)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  // Unwind a whole unpaid group — every order back to its own pay link.
+  async function dissolveGroup(g: OrderGroupRow) {
+    if (!window.confirm('Split this combined payment back into separate orders? Each will go back to its own pay link.')) return
+    setBusyId(g.id)
+    try {
+      const { data, error } = await supabase.functions.invoke<{ ok?: boolean; released?: number; error?: string }>(
+        'order-group',
+        { body: { action: 'dissolve', group_id: g.id } },
+      )
+      if (error || !data?.ok) {
+        window.alert(`Could not split the combined payment: ${data?.error ?? error?.message ?? 'unknown error'}`)
+        return
+      }
+      setReloadKey((k) => k + 1)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function retryGroupInvoice(g: OrderGroupRow) {
+    setBusyId(g.id)
+    try {
+      const { data, error } = await supabase.functions.invoke<{ ok: boolean; invoiceId?: string; error?: string }>(
+        'retry-order-invoice',
+        { body: { group_id: g.id } },
+      )
+      if (error || !data?.ok) {
+        const msg = data?.error ?? error?.message ?? 'Could not create the invoice. Please try again.'
+        setGroups((prev) => ({ ...prev, [g.id]: { ...prev[g.id], xero_invoice_error: msg } }))
+        return
+      }
+      setGroups((prev) => ({ ...prev, [g.id]: { ...prev[g.id], xero_invoice_id: data.invoiceId ?? null, xero_invoice_error: null } }))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   // After the record-offline-payment edge function flips a sent order to
   // paid/offline, refetch that single row so its newly-stamped amounts
   // (cards / tooling / shipping) are accurate. The useMemo re-buckets it from
@@ -1099,15 +1264,17 @@ export default function OrdersPage() {
     const q = search.trim().toLowerCase()
     const filtered = orders.filter((o) => matchesSearch(o, q))
     return {
-      // Awaiting payment: expired links (need reactivating) float up, then the
-      // longest-outstanding first so the oldest chases surface at the top.
+      // Awaiting payment: expired links (need reactivating) float up, then
+      // NEWEST first — a just-created order lands at the top of the section,
+      // right under the Combine-payments control (Rob, 9 Jul). The oldest
+      // unpaid chases still surface via the Cold sidebar.
       awaitingPayment: filtered
         .filter((o) => o.status === 'sent')
         .sort((a, b) => {
           const ae = isExpired(a) ? 0 : 1
           const be = isExpired(b) ? 0 : 1
           if (ae !== be) return ae - be
-          return new Date(a.sent_at ?? 0).getTime() - new Date(b.sent_at ?? 0).getTime()
+          return new Date(b.sent_at ?? 0).getTime() - new Date(a.sent_at ?? 0).getTime()
         }),
       // To order: paid, not yet placed. A blocking problem (failed invoice)
       // floats to the top; otherwise newest-paid-first so the most recently
@@ -1150,6 +1317,34 @@ export default function OrdersPage() {
   }, [approvedNoOrder, search, linksSort, notesByProof])
 
   const showSection = (key: ViewKey) => view === 'all' || view === key
+
+  // Combined-payment derivations (bundle orders Slice 2). Eligible = the
+  // awaiting-payment orders the combine action could actually group; active
+  // groups = the unpaid groups whose members are in the list (each gets a
+  // banner above the cards). The modal receives display-ready candidates.
+  const eligibleForGroup = awaitingPayment.filter(canJoinGroup)
+  const selectedCandidates: GroupCandidate[] = awaitingPayment
+    .filter((o) => groupSelect.has(o.id))
+    .map((o) => ({
+      id: o.id,
+      proofId: o.proof_id,
+      label: customerLabel(o),
+      // Flag open choices so the designer sees which cards the customer will
+      // configure on the group page (same phrasing as the pay-link rows).
+      spec:
+        specLabel(o) +
+        (o.thickness_open && o.material_variant_id == null ? ' · customer picks thickness' : '') +
+        (o.finish_open && o.material_option_id == null ? ' · customer picks finish' : '') +
+        (o.quantity_open && o.quantity == null ? ' · customer picks quantity' : ''),
+      quantity: o.quantity,
+      currency: o.currency,
+      reference: o.payment_reference,
+      shipDestCountry: o.ship_dest_country,
+      hasHelpScoutConversation: !!o.proofs?.helpscout_conversation_id,
+    }))
+  const activeGroups = Object.values(groups)
+    .filter((g) => g.status === 'sent' && awaitingPayment.some((o) => o.order_group_id === g.id))
+    .sort((a, b) => (a.payment_reference ?? '').localeCompare(b.payment_reference ?? ''))
 
   // Whole-pipeline counts for the header tiles (unfiltered — the header is a
   // status overview, independent of the queue's search/filter). The £ on To
@@ -1317,12 +1512,83 @@ export default function OrdersPage() {
 
             {showSection('awaiting') && awaitingPayment.length > 0 && (
               <section className="mt-6">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">
-                  Awaiting payment · {awaitingPayment.length}
-                </h2>
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-ink-mute">
+                    Awaiting payment · {awaitingPayment.length}
+                  </h2>
+                  {/* Combine payments (bundle orders Slice 2): tick 2+ orders
+                      for one customer → one pay link, one payment, one
+                      invoice. Only shown when at least two orders could join.
+                      A solid primary button — the subtle pill was too easy to
+                      miss (Rob, 9 Jul). */}
+                  {eligibleForGroup.length >= 2 && (
+                    <ButtonInk
+                      size="sm"
+                      onClick={() => { setSelectMode((v) => !v); setGroupSelect(new Set()) }}
+                    >
+                      {selectMode ? 'Done selecting' : 'Combine payments…'}
+                    </ButtonInk>
+                  )}
+                </div>
                 <p className="mt-1 text-[13px] text-ink-mute">
                   Payment links that have been sent but not paid yet. Copy a link to re-send it, or reactivate an expired one (extends it {ORDER_EXPIRY_DAYS} days).
+                  {selectMode ? ' Tick two or more orders for the same customer to combine them into one payment.' : ''}
                 </p>
+
+                {/* Selection action bar. */}
+                {selectMode && groupSelect.size > 0 && (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-canvas px-3 py-2">
+                    <p className="text-[13px] text-ink-soft">
+                      {groupSelect.size} selected
+                      {new Set(selectedCandidates.map((c) => c.currency)).size > 1 ? ' · different currencies — a combined payment needs one' : ''}
+                    </p>
+                    <ButtonInk
+                      size="sm"
+                      onClick={() => setGroupModalOpen(true)}
+                      disabled={groupSelect.size < 2 || new Set(selectedCandidates.map((c) => c.currency)).size > 1}
+                    >
+                      Combine into one payment
+                    </ButtonInk>
+                  </div>
+                )}
+
+                {/* One banner per unpaid combined payment: the group's link is
+                    the live one (member cards below carry a matching pill). */}
+                {activeGroups.map((g) => {
+                  const memberOrders = awaitingPayment.filter((o) => o.order_group_id === g.id)
+                  const groupExpired = g.expires_at != null && new Date(g.expires_at).getTime() < Date.now()
+                  return (
+                    <div key={g.id} className="mt-3 rounded-xl border border-[var(--c-brand)]/40 bg-canvas px-4 py-3">
+                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-ink">
+                            Combined payment {g.payment_reference}
+                            <span className="font-normal text-ink-soft"> · {memberOrders.length} orders, one pay link</span>
+                            {groupExpired && <span className="font-normal text-out"> · link expired</span>}
+                          </p>
+                          <p className="mt-0.5 text-[13px] text-ink-mute">
+                            {memberOrders.map((o) => customerLabel(o)).filter((v, i, a) => a.indexOf(v) === i).join(' · ')}
+                            {g.expires_at ? ` · ${groupExpired ? 'expired' : 'expires'} ${formatDate(g.expires_at)}` : ''}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 flex-wrap gap-2">
+                          <ButtonGhost size="sm" onClick={() => void copyGroupLink(g)}>
+                            {copiedId === g.id ? 'Copied' : 'Copy combined link'}
+                          </ButtonGhost>
+                          {groupExpired && (
+                            <ButtonInk size="sm" onClick={() => void reactivateGroup(g)} disabled={busyId === g.id}>
+                              {busyId === g.id ? 'Reactivating…' : 'Reactivate link'}
+                            </ButtonInk>
+                          )}
+                          <ButtonGhost size="sm" onClick={() => void dissolveGroup(g)} disabled={busyId === g.id}>
+                            Split back up
+                          </ButtonGhost>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+
                 <div className="mt-3 space-y-3">
                   {awaitingPayment.map((o) => (
                     <AwaitingPaymentCard
@@ -1334,6 +1600,11 @@ export default function OrdersPage() {
                       copied={copiedId === o.id}
                       summary={reminders[o.id] ?? null}
                       cadence={cadence}
+                      group={o.order_group_id ? groups[o.order_group_id] ?? null : null}
+                      selectable={selectMode && canJoinGroup(o)}
+                      selected={groupSelect.has(o.id)}
+                      onToggleSelect={() => toggleGroupSelect(o.id)}
+                      onRelease={() => void releaseFromGroup(o)}
                       onCopy={() => void copyLink(o)}
                       onReactivate={() => void reactivate(o)}
                       onEdit={() => setEditingOrder(o)}
@@ -1354,6 +1625,28 @@ export default function OrdersPage() {
                   </h2>
                   {toOrder.length > 0 && <span className="text-[12px] text-ink-mute">Newest paid first</span>}
                 </div>
+
+                {/* A paid combined payment whose ONE Xero invoice failed: the
+                    error lives on the GROUP (not any member order), so surface
+                    + retry it here where its paid members now sit. */}
+                {Object.values(groups)
+                  .filter((g) => g.status === 'paid' && !g.xero_invoice_id && !!g.xero_invoice_error && toOrder.some((o) => o.order_group_id === g.id))
+                  .map((g) => (
+                    <div key={g.id} className="mt-3 rounded-xl border border-out bg-out-soft px-4 py-3">
+                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-ink">
+                            Combined payment {g.payment_reference} — invoice failed
+                          </p>
+                          <p className="mt-0.5 break-words text-[13px] text-ink-soft">{friendlyInvoiceError(g.xero_invoice_error)}</p>
+                        </div>
+                        <ButtonInk size="sm" onClick={() => void retryGroupInvoice(g)} disabled={busyId === g.id} className="shrink-0">
+                          {busyId === g.id ? 'Retrying…' : 'Retry invoice'}
+                        </ButtonInk>
+                      </div>
+                    </div>
+                  ))}
+
                 <div className="mt-3">
                   {toOrder.length === 0 ? (
                     !search.trim() && (
@@ -1475,6 +1768,14 @@ export default function OrdersPage() {
             materialDisplay={specLabel(editingOrder)}
             onClose={() => setEditingOrder(null)}
             onUpdated={() => void refetchOrder(editingOrder.id)}
+          />
+        )}
+
+        {groupModalOpen && (
+          <GroupOrdersModal
+            candidates={selectedCandidates}
+            onClose={() => { setGroupModalOpen(false); setReloadKey((k) => k + 1) }}
+            onCreated={() => { setSelectMode(false); setGroupSelect(new Set()) }}
           />
         )}
       </div>
@@ -2005,6 +2306,11 @@ function AwaitingPaymentCard({
   copied,
   summary,
   cadence,
+  group,
+  selectable,
+  selected,
+  onToggleSelect,
+  onRelease,
   onCopy,
   onReactivate,
   onEdit,
@@ -2018,6 +2324,17 @@ function AwaitingPaymentCard({
   copied: boolean
   summary: ReminderSummary | null
   cadence: ReminderCadence
+  // The combined-payment group this order belongs to (bundle orders Slice 2),
+  // when one exists in the loaded set. While it's active ('sent'), the
+  // member's own link isn't payable, so the per-link actions swap for a
+  // "Release" that returns the order to standalone.
+  group: { id: string; status: string; payment_reference: string | null } | null
+  // Combine-payments selection mode: whether this card can be ticked, and
+  // whether it currently is.
+  selectable: boolean
+  selected: boolean
+  onToggleSelect: () => void
+  onRelease: () => void
   onCopy: () => void
   onReactivate: () => void
   onEdit: () => void
@@ -2025,6 +2342,7 @@ function AwaitingPaymentCard({
   onRecordOffline: () => void
 }) {
   const total = orderTotal(order)
+  const inActiveGroup = group?.status === 'sent'
 
   // Auto-chase progress for this order. "Next due" is computed the same way
   // the edge function decides: reminder (highestSent+1) is due once that many
@@ -2057,6 +2375,17 @@ function AwaitingPaymentCard({
   return (
     <PanelShell>
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        {selectable && (
+          <label className="flex shrink-0 items-start pt-1">
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={onToggleSelect}
+              aria-label={`Include ${customerLabel(order)} in the combined payment`}
+              className="h-5 w-5 rounded border-line accent-[var(--c-brand)]"
+            />
+          </label>
+        )}
         {thumb && (
           <img
             src={thumb.signed_url}
@@ -2069,7 +2398,11 @@ function AwaitingPaymentCard({
             <Link to={`/proofs/${order.proof_id}`} className="text-base font-semibold text-ink hover:underline">
               {customerLabel(order)}
             </Link>
-            {expired ? <Pill colour="out">Expired</Pill> : <Pill colour="low">Awaiting payment</Pill>}
+            {inActiveGroup ? (
+              <Pill colour="brand" title="Part of a combined payment — the customer pays every order in it with one link.">
+                Combined payment{group?.payment_reference ? ` · ${group.payment_reference}` : ''}
+              </Pill>
+            ) : expired ? <Pill colour="out">Expired</Pill> : <Pill colour="low">Awaiting payment</Pill>}
             {order.help_requested_at && (
               <Pill colour="brand" title={`Asked from the pay page ${relativeTime(order.help_requested_at)} — reply on the Help Scout thread.`}>
                 Asked for help
@@ -2095,39 +2428,63 @@ function AwaitingPaymentCard({
               : 'Pay link not opened yet'}
           </p>
           {/* Auto-chase progress: how many reminders have gone, what's next,
-              and any problem stopping the chase. */}
+              and any problem stopping the chase. A grouped member is skipped
+              by the reminder sender (its own link isn't payable), so the
+              chase lines give way to a one-line explanation. */}
           <div className="mt-1 space-y-0.5 text-[13px]">
-            {sentCount > 0 && (
-              <span className="block text-ink-soft">
-                {sentCount} of {cadence.max} reminder{cadence.max === 1 ? '' : 's'} sent
-                {summary?.lastSentAt ? ` · last ${formatDate(summary.lastSentAt)}` : ''}
+            {inActiveGroup ? (
+              <span className="block text-ink-mute">
+                Paid through the combined payment link — automatic reminders pause while it&rsquo;s grouped.
               </span>
+            ) : (
+              <>
+                {sentCount > 0 && (
+                  <span className="block text-ink-soft">
+                    {sentCount} of {cadence.max} reminder{cadence.max === 1 ? '' : 's'} sent
+                    {summary?.lastSentAt ? ` · last ${formatDate(summary.lastSentAt)}` : ''}
+                  </span>
+                )}
+                {note ? (
+                  <span className={`block ${note.kind === 'problem' ? 'text-out' : 'text-ink-mute'}`}>
+                    {note.kind === 'problem' ? '⚠ ' : ''}{note.text}
+                  </span>
+                ) : allRemindersSent ? (
+                  <span className="block text-ink-mute">All {cadence.max} reminders sent — no more scheduled.</span>
+                ) : nextDue ? (
+                  <span className="block text-ink-mute">Next reminder {nextDue}.</span>
+                ) : !cadence.autoEnabled && sentCount === 0 ? (
+                  <span className="block text-ink-mute">Automatic reminders are off.</span>
+                ) : null}
+              </>
             )}
-            {note ? (
-              <span className={`block ${note.kind === 'problem' ? 'text-out' : 'text-ink-mute'}`}>
-                {note.kind === 'problem' ? '⚠ ' : ''}{note.text}
-              </span>
-            ) : allRemindersSent ? (
-              <span className="block text-ink-mute">All {cadence.max} reminders sent — no more scheduled.</span>
-            ) : nextDue ? (
-              <span className="block text-ink-mute">Next reminder {nextDue}.</span>
-            ) : !cadence.autoEnabled && sentCount === 0 ? (
-              <span className="block text-ink-mute">Automatic reminders are off.</span>
-            ) : null}
           </div>
         </div>
         <div className="flex shrink-0 flex-col gap-2 md:items-end">
-          <ButtonGhost size="sm" onClick={onCopy} className="max-md:w-full max-md:h-11">{copied ? 'Copied' : 'Copy link'}</ButtonGhost>
-          {expired && (
-            <ButtonInk onClick={onReactivate} disabled={busy} className="max-md:w-full max-md:h-[50px] max-md:text-[15px]">
-              {busy ? 'Reactivating…' : 'Reactivate link'}
-            </ButtonInk>
+          {inActiveGroup ? (
+            // Grouped member: its own link isn't payable (the group's is), so
+            // the per-link actions give way to Release — the "ready card can
+            // go early" move — plus Cancel (which auto-releases server-side).
+            <>
+              <ButtonGhost size="sm" onClick={onRelease} disabled={busy} className="max-md:w-full max-md:h-11">
+                {busy ? 'Releasing…' : 'Release from combined payment'}
+              </ButtonGhost>
+              <ButtonGhost size="sm" onClick={onCancel} disabled={busy} className="max-md:w-full max-md:h-11">Cancel order</ButtonGhost>
+            </>
+          ) : (
+            <>
+              <ButtonGhost size="sm" onClick={onCopy} className="max-md:w-full max-md:h-11">{copied ? 'Copied' : 'Copy link'}</ButtonGhost>
+              {expired && (
+                <ButtonInk onClick={onReactivate} disabled={busy} className="max-md:w-full max-md:h-[50px] max-md:text-[15px]">
+                  {busy ? 'Reactivating…' : 'Reactivate link'}
+                </ButtonInk>
+              )}
+              <ButtonGhost size="sm" onClick={onRecordOffline} disabled={busy} className="max-md:w-full max-md:h-11">Record offline payment</ButtonGhost>
+              {(order.order_kind ?? 'production') === 'production' && (
+                <ButtonGhost size="sm" onClick={onEdit} disabled={busy} className="max-md:w-full max-md:h-11">Edit order</ButtonGhost>
+              )}
+              <ButtonGhost size="sm" onClick={onCancel} disabled={busy} className="max-md:w-full max-md:h-11">Cancel order</ButtonGhost>
+            </>
           )}
-          <ButtonGhost size="sm" onClick={onRecordOffline} disabled={busy} className="max-md:w-full max-md:h-11">Record offline payment</ButtonGhost>
-          {(order.order_kind ?? 'production') === 'production' && (
-            <ButtonGhost size="sm" onClick={onEdit} disabled={busy} className="max-md:w-full max-md:h-11">Edit order</ButtonGhost>
-          )}
-          <ButtonGhost size="sm" onClick={onCancel} disabled={busy} className="max-md:w-full max-md:h-11">Cancel order</ButtonGhost>
         </div>
       </div>
     </PanelShell>
